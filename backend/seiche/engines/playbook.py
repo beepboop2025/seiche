@@ -79,13 +79,16 @@ def analyze(
             if n < PLAYBOOK_MIN_N:
                 row["horizons"][f"{h}d"] = {"n_days": n, "insufficient": True}
                 continue
+            n_indep = max(1, n // h)
             row["horizons"][f"{h}d"] = {
                 "median": round(float(fwd.median()), 2),
                 "p25": round(float(fwd.quantile(0.25)), 2),
                 "p75": round(float(fwd.quantile(0.75)), 2),
                 "pct_positive": round(float((fwd > 0).mean() * 100.0), 0),
                 "n_days": n,
-                "n_independent": max(1, n // h),
+                "n_independent": n_indep,
+                # fewer than 8 non-overlapping windows = an anecdote, not a table
+                "low_confidence": n_indep < 8,
             }
         tables.append(row)
 

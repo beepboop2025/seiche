@@ -115,11 +115,24 @@ def cmd_backtest(args) -> int:
     cap = bt["event_capture"]
     s = bt["sample"]
     print(f"{BOLD}PROOF{END} sample {s['start']} → {s['end']} · {s['n_events']} funding events")
+    rci = cap.get("recall_ci95") or ["?", "?"]
+    pci = cap.get("precision_runs_ci95") or ["?", "?"]
     print(
-        f"  recall {cap['recall']:.0%} · precision {cap['precision']:.0%} "
-        f"(base rate {cap['base_rate']:.0%}) · alert = ≥{cap['alert_pctl']:.0f}th pctl"
+        f"  recall {cap['recall']:.0%} (95% CI {rci[0]:.0%}-{rci[1]:.0%}) · "
+        f"run-precision {cap['precision_runs']:.0%} (CI {pci[0]:.0%}-{pci[1]:.0%}, "
+        f"{cap['runs_hit']}/{cap['n_alert_runs']} runs) · base rate {cap['base_rate']:.0%}"
     )
     print(f"  median alert run-up before events: {cap['median_lead_d']:.0f}d")
+    o = bt.get("orthogonal", {})
+    if o.get("ok"):
+        oc = o["event_capture"]
+        orci = oc.get("recall_ci95") or ["?", "?"]
+        print(f"{BOLD}ORTHOGONAL{END} (no spread/tails in the signal)")
+        print(
+            f"  recall {oc['recall']:.0%} (CI {orci[0]:.0%}-{orci[1]:.0%}) · "
+            f"run-precision {oc['precision_runs']:.0%} ({oc['runs_hit']}/{oc['n_alert_runs']} runs) — "
+            "the claim survives without the target's own variables"
+        )
     print(f"{BOLD}episodes{END}")
     for ep in bt["episodes"]:
         if not ep.get("in_sample"):
@@ -143,7 +156,13 @@ def cmd_ml(args) -> int:
     print(f"{BOLD}ML LAB{END} P(funding event, 5bd) = {ml['p_event_5bd']:.1%}  ·  {ml['verdict']}")
     print(f"  OOS: {v['oos_days']}d / {v['oos_events']} events (base rate {v['base_rate']:.1%})")
     rule = f" vs rule-based {v['auroc_rule_based']:.3f}" if v.get("auroc_rule_based") is not None else ""
-    print(f"  AUROC {v['auroc']:.3f}{rule} · Brier {v['brier']:.4f} vs climatology {v['brier_climatology']:.4f}")
+    print(f"  AUROC {v['auroc']:.3f}{rule} · Brier {v['brier']:.4f} vs climatology {v['brier_climatology']:.4f} · embargo {v.get('embargo_bd')}bd")
+    u = ml.get("utility") or {}
+    if u:
+        print(f"  utility/yr (false alarm −{u['cost_per_false_alarm']}): ML@25% {u['ml_at_25pct']} · ML@50% {u['ml_at_50pct']} · rule@80th {u['rule_at_80pctl']}")
+    om = ml.get("orthogonal") or {}
+    if om.get("auroc") is not None:
+        print(f"  {BOLD}orthogonal{END} (no spread/tail features): AUROC {om['auroc']:.3f} · utility@25% {(om.get('utility') or {}).get('ml_at_25pct')}")
     print(f"{BOLD}reliability{END} (predicted vs realized)")
     for r in ml.get("reliability", []):
         print(f"  {r['bin']:>10}  pred {r['mean_pred']:.3f}  real {r['realized']:.3f}  n={r['n']}")

@@ -196,3 +196,43 @@ the honest feature history, and no assistant to read the board aloud.
   free smart tiers serve reasoning models that leak chain-of-thought; a stripper
   handles the leak when smart is the only survivor), else SEICHE_LLM_* env endpoint,
   else fails open returning the pack itself. Surfaces: /api/ask, `seiche ask`, BOARD.
+
+---
+
+# v2.2 addendum — the orthogonal test + gap closures (2026-07-07)
+
+Driven by an honest self-review. Every criticism got a fix or a declaration:
+
+- **Orthogonal signal test (the centerpiece).** Criticism: the lite index contains
+  spread/tail terms and the event IS a spread spike — partial self-prediction.
+  Fix: rebuild the index with `exclude=("tails",)` (leaving kink-proxy, confession,
+  rvxray, auctions, buffers — none derived from the target variable) and rerun
+  event capture. Result: recall 0.692 [Wilson 0.42–0.87] vs 0.615 full signal;
+  run-precision ~2× base rate; orthogonal signal at 98th–100th pctl with 42d leads
+  before Sep/Dec-2025 and 84th/34d before SVB. Claim upgraded from "correlated
+  gauge" to "structural leading signal". Same treatment for ML: dropping the whole
+  spread family moves OOS AUROC only 0.826 → 0.812.
+- **Small-n honesty.** Wilson 95% intervals on every backtest rate; RUN-level
+  precision (2/20 runs) is the headline because alert days are serially
+  correlated; resonance publishes `amplification_ex_max` (largest recent slosh
+  removed) + low-n flags; playbook cells with <8 independent windows render dimmed.
+- **Boundary-label leakage in ML.** Training rows whose 5bd-forward labels see
+  into the test block are now embargoed. Consequence, published: the earlier
+  Brier "win" vs climatology was partly leakage — embargoed Brier 0.0402 vs
+  0.0388 climatology. Verdict split into ranking (beats rule, 0.826 vs 0.806)
+  vs calibration (fails — "use for ranking/alerting, not literal odds").
+- **Decision-utility scoring** (Jane Street competition lineage): +1 per caught
+  event, −0.25 per false alarm, per year. ML@25% = +1.2/yr, orthogonal ML = +1.5/yr,
+  rule@80th = −9.2/yr — the rule index is a REGIME gauge, the model is the action
+  filter. Reframing surfaced by the metric itself.
+- **Turn Barometer self-demotion hardened**: model must beat naive by >0.05 LOO
+  skill to take the headline; both forecasts always published.
+- **Deep-cache failure poisoning fixed**: a blob computed with any failed layer
+  lives 30 minutes, not 12 hours.
+- **CI gate**: publish workflow now runs the 25-test suite before exporting.
+- **Station-Keeping** (satellite-repo method transfer): propagate expected
+  TGA/RRP/WALCL state, CUSUM the innovations, alarm on unmodeled burns (caught
+  the +$294B April-2026 TGA build). GNSS-interference canary (gpsjam) probed and
+  REJECTED — data endpoint not publicly fetchable; declared, not scraped.
+- **PIT record now running**: launchd agent loaded (08:15/16:45 daily) — the
+  as-published track record accrues from today.

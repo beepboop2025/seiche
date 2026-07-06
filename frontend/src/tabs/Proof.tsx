@@ -1,6 +1,55 @@
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
+function OrthogonalCard({ o }: { o: Any }) {
+  if (!o?.ok) {
+    return (
+      <div className="card span12">
+        <h2>Orthogonal Signal Test</h2>
+        <div className="faults">unavailable — {o?.reason ?? "not computed"}</div>
+      </div>
+    );
+  }
+  const c = o.event_capture ?? {};
+  return (
+    <div className="card span12">
+      <h2>Orthogonal Signal Test</h2>
+      <div className="sub">
+        the skeptic's question answered: the index contains spread/tail terms and the event IS a spread
+        spike — so here is the same test with the target's own variable family REMOVED from the signal
+        (components: {Object.keys(o.weights ?? {}).join(", ")})
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">recall (95% CI)</div>
+          <div className="v">{fmt((c.recall ?? 0) * 100, 0)}%
+            <span className="dimsmall"> [{fmt((c.recall_ci95?.[0] ?? 0) * 100, 0)}–{fmt((c.recall_ci95?.[1] ?? 0) * 100, 0)}]</span>
+          </div></div>
+        <div className="item"><div className="k">run-precision (95% CI)</div>
+          <div className="v">{fmt((c.precision_runs ?? 0) * 100, 0)}%
+            <span className="dimsmall"> [{fmt((c.precision_runs_ci95?.[0] ?? 0) * 100, 0)}–{fmt((c.precision_runs_ci95?.[1] ?? 0) * 100, 0)}] · {c.runs_hit}/{c.n_alert_runs} runs</span>
+          </div></div>
+        <div className="item"><div className="k">base rate</div><div className="v">{fmt((c.base_rate ?? 0) * 100, 0)}%</div></div>
+        <div className="item"><div className="k">median run-up</div><div className="v">{fmt(c.median_lead_d, 0)}d</div></div>
+      </div>
+      <table className="mini">
+        <thead><tr><th>episode</th><th>max pctl (T−30…T−1)</th><th>first alert</th></tr></thead>
+        <tbody>
+          {(o.episodes ?? []).filter((ep: Any) => ep.in_sample).map((ep: Any) => (
+            <tr key={ep.date}>
+              <td>{ep.episode}</td>
+              <td className="num">{fmt(ep.max_pctl_30d_before, 0)}</td>
+              <td className="num" style={{ color: ep.first_alert_lead_d ? "#37c88b" : "#e5484d" }}>
+                {ep.first_alert_lead_d ? `${ep.first_alert_lead_d}d early` : "not alerted"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{o.why} — if this still leads events, the claim is causal structure, not autocorrelation</Method>
+    </div>
+  );
+}
+
 function MLCard({ ml }: { ml: Any }) {
   if (!ml?.ok) {
     return (
@@ -28,7 +77,22 @@ function MLCard({ ml }: { ml: Any }) {
         <div className="item"><div className="k">Brier / climatology</div><div className="v">{fmt(v.brier, 4)} / {fmt(v.brier_climatology, 4)}</div></div>
         <div className="item"><div className="k">OOS sample</div><div className="v">{v.oos_days}d · {v.oos_events} events</div></div>
         <div className="item"><div className="k">base rate</div><div className="v">{fmt((v.base_rate ?? 0) * 100, 1)}%</div></div>
+        <div className="item"><div className="k">embargo</div><div className="v">{v.embargo_bd}bd</div></div>
       </div>
+      {ml.utility && (
+        <div className="sub" style={{ marginTop: 4 }}>
+          decision utility (net caught-events/yr, false alarm −{ml.utility.cost_per_false_alarm}):
+          {" "}ML@25% <b>{fmt(ml.utility.ml_at_25pct, 2)}</b> · ML@50% <b>{fmt(ml.utility.ml_at_50pct, 2)}</b> ·
+          rule@80th <b style={{ color: (ml.utility.rule_at_80pctl ?? 0) < 0 ? "#e5484d" : undefined }}>{fmt(ml.utility.rule_at_80pctl, 2)}</b> —
+          the rule index is a regime gauge; the model is the better action filter
+        </div>
+      )}
+      {ml.orthogonal?.auroc != null && (
+        <div className="sub">
+          orthogonal feature set (no spread/tail family): AUROC <b>{fmt(ml.orthogonal.auroc, 3)}</b> ·
+          utility@25% <b>{fmt(ml.orthogonal.utility?.ml_at_25pct, 2)}</b> — ranking survives without the target's own variables
+        </div>
+      )}
       <Chart rows={ml.p_series} series={[{ label: "P(event, 5bd) — walk-forward OOS", color: "#e88a3a" }]} height={150} />
       <div className="warehouse-row" style={{ marginTop: 8 }}>
         <table className="mini" style={{ maxWidth: 380 }}>
@@ -72,14 +136,20 @@ export default function Proof({ snap }: { snap: Any }) {
           {" "}{s.n_events} funding events over {s.start} → {s.end}. If the numbers were unimpressive, they'd publish anyway.
         </div>
         <div className="kv">
-          <div className="item"><div className="k">recall</div><div className="v">{fmt((cap.recall ?? 0) * 100, 0)}%</div></div>
-          <div className="item"><div className="k">precision</div><div className="v">{fmt((cap.precision ?? 0) * 100, 0)}%</div></div>
+          <div className="item"><div className="k">recall (95% CI)</div>
+            <div className="v">{fmt((cap.recall ?? 0) * 100, 0)}%
+              <span className="dimsmall"> [{fmt((cap.recall_ci95?.[0] ?? 0) * 100, 0)}–{fmt((cap.recall_ci95?.[1] ?? 0) * 100, 0)}]</span>
+            </div></div>
+          <div className="item"><div className="k">run-precision (95% CI)</div>
+            <div className="v">{fmt((cap.precision_runs ?? 0) * 100, 0)}%
+              <span className="dimsmall"> [{fmt((cap.precision_runs_ci95?.[0] ?? 0) * 100, 0)}–{fmt((cap.precision_runs_ci95?.[1] ?? 0) * 100, 0)}] · {cap.runs_hit}/{cap.n_alert_runs} runs</span>
+            </div></div>
           <div className="item"><div className="k">base rate</div><div className="v">{fmt((cap.base_rate ?? 0) * 100, 0)}%</div></div>
-          <div className="item"><div className="k">precision lift</div>
-            <div className="v">{cap.base_rate ? fmt(cap.precision / cap.base_rate, 1) : "—"}×</div></div>
+          <div className="item"><div className="k">day precision</div>
+            <div className="v">{fmt((cap.precision ?? 0) * 100, 0)}% <span className="dimsmall">(serially correlated)</span></div></div>
           <div className="item"><div className="k">median alert run-up</div><div className="v">{fmt(cap.median_lead_d, 0)}d</div></div>
           <div className="item"><div className="k">alert line</div><div className="v">≥{fmt(cap.alert_pctl, 0)}th pctl</div></div>
-          <div className="item"><div className="k">event def</div><div className="v">+{fmt(cap.spike_def_bp, 0)}bp spike</div></div>
+          <div className="item"><div className="k">event def</div><div className="v">+{fmt(cap.spike_def_bp, 0)}bp · n={cap.n_events}</div></div>
         </div>
         <Chart
           rows={bt.signal_series}
@@ -137,6 +207,8 @@ export default function Proof({ snap }: { snap: Any }) {
           <div className="caveat" key={i}>▸ {c}</div>
         ))}
       </div>
+
+      <OrthogonalCard o={bt.orthogonal} />
 
       <MLCard ml={snap.deep?.ml} />
 

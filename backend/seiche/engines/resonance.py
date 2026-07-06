@@ -147,11 +147,18 @@ def analyze(spread_bp: pd.Series) -> dict:
         sloshes = np.array([r["slosh_bp"] for r in resp])
         halves = np.array([r["half_life_d"] for r in resp])
         n_recent = min(RESONANCE_RECENT_N, len(resp) // 2)
-        recent_med = float(np.median(sloshes[-n_recent:]))
+        recent = sloshes[-n_recent:]
+        recent_med = float(np.median(recent))
         prior_med = float(np.median(sloshes[:-n_recent]))
         # Amplification vs a 1bp floor: a basin that never sloshed before and
         # now moves 3bp is a real regime change, not a divide-by-zero artifact.
         amplification = recent_med / max(prior_med, 1.0)
+        # Sensitivity check: recompute with the single largest recent slosh
+        # removed. If amplification collapses, one event is doing the talking.
+        amp_ex_max = None
+        if len(recent) >= 3:
+            ex = np.sort(recent)[:-1]
+            amp_ex_max = float(np.median(ex)) / max(prior_med, 1.0)
         decay_recent = float(np.median(halves[-n_recent:]))
         decay_prior = float(np.median(halves[:-n_recent]))
 
@@ -164,10 +171,13 @@ def analyze(spread_bp: pd.Series) -> dict:
             "ok": True,
             "label": MODE_LABELS[mode],
             "n": len(resp),
+            "n_recent": int(n_recent),
+            "low_n": len(resp) < 10,
             "last": resp[-1],
             "recent_median_bp": round(recent_med, 1),
             "prior_median_bp": round(prior_med, 1),
             "amplification": round(amplification, 2),
+            "amplification_ex_max": round(amp_ex_max, 2) if amp_ex_max is not None else None,
             "decay_recent_d": round(decay_recent, 1),
             "decay_prior_d": round(decay_prior, 1),
             "score": round(float(amp_part + level_part), 1),
@@ -199,6 +209,8 @@ def analyze(spread_bp: pd.Series) -> dict:
             f"median slosh last {RESONANCE_RECENT_N} events / prior events; decay = days to give "
             f"back half the slosh (censored {RESONANCE_DECAY_D}d). Modes disjoint; weights: "
             + ", ".join(f"{m} {w}" for m, w in MODE_WEIGHTS.items())
+            + ". ex-max = amplification with the largest recent slosh removed (one-event "
+            "sensitivity); modes with n<10 carry a low-n flag"
         ),
     }
 

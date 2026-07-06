@@ -68,13 +68,15 @@ function PlaybookCard({ p }: { p: Any }) {
                 const c = row.horizons?.[h];
                 if (!c || c.insufficient)
                   return <td key={h} colSpan={3} className="dimsmall">n/a (n={c?.n_days ?? 0})</td>;
+                const dim = c.low_confidence ? { opacity: 0.45 } : undefined;
                 return (
                   <>
-                    <td key={h + "m"} className="num" style={{ color: c.median > 0 ? "#37c88b" : c.median < 0 ? "#e5484d" : undefined }}>
+                    <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? "#37c88b" : c.median < 0 ? "#e5484d" : undefined }}
+                        title={c.low_confidence ? "fewer than 8 non-overlapping windows — an anecdote, not a distribution" : undefined}>
                       {c.median > 0 ? "+" : ""}{fmt(c.median, 2)}
                     </td>
-                    <td key={h + "i"} className="num dimsmall">{fmt(c.p25, 1)} / {fmt(c.p75, 1)}</td>
-                    <td key={h + "n"} className="num dimsmall">{fmt(c.pct_positive, 0)}% · {c.n_days}({c.n_independent})</td>
+                    <td key={h + "i"} className="num dimsmall" style={dim}>{fmt(c.p25, 1)} / {fmt(c.p75, 1)}</td>
+                    <td key={h + "n"} className="num dimsmall" style={dim}>{fmt(c.pct_positive, 0)}% · {c.n_days}({c.n_independent})</td>
                   </>
                 );
               })}

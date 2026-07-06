@@ -35,19 +35,22 @@ function ResonanceCard({ e }: { e: Any }) {
         <thead>
           <tr>
             <th>mode</th><th>n</th><th>last slosh</th><th>recent med</th><th>prior med</th>
-            <th>amplification</th><th>decay (prior→recent)</th><th>score</th>
+            <th>amplification</th><th>ex-max</th><th>decay (prior→recent)</th><th>score</th>
           </tr>
         </thead>
         <tbody>
           {modes.map(([m, d]) => (
             <tr key={m}>
-              <td>{d.label}</td>
+              <td>{d.label}{d.low_n && <span className="dimsmall" title="fewer than 10 events"> †low-n</span>}</td>
               <td className="num">{d.n}</td>
               <td className="num">{fmt(d.last?.slosh_bp, 1)}bp ({d.last?.date})</td>
               <td className="num">{fmt(d.recent_median_bp, 1)}bp</td>
               <td className="num">{fmt(d.prior_median_bp, 1)}bp</td>
               <td className="num" style={{ color: d.amplification >= 2 ? "#e5484d" : d.amplification >= 1.3 ? "#d9b23a" : undefined }}>
                 {fmt(d.amplification, 2)}×
+              </td>
+              <td className="num dimsmall" title="amplification with the largest recent slosh removed — one-event sensitivity">
+                {d.amplification_ex_max == null ? "—" : `${fmt(d.amplification_ex_max, 2)}×`}
               </td>
               <td className="num">{fmt(d.decay_prior_d, 1)}d → {fmt(d.decay_recent_d, 1)}d</td>
               <td className="num">{fmt(d.score, 0)}</td>
@@ -128,12 +131,50 @@ function SonarCard({ e }: { e: Any }) {
   );
 }
 
+function StationKeepingCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Station-Keeping" reason={e?.reason} span={12} />;
+  return (
+    <div className="card span12">
+      <h2>Station-Keeping</h2>
+      <div className="sub">
+        orbit-determination transfer: propagate the reserve system's expected state, watch the
+        residuals — a persistent innovation is a burn the model didn't know about
+        {e.any_active && <span style={{ color: "#e88a3a" }}> · BURN IN PROGRESS</span>}
+      </div>
+      <div className="kv">
+        {Object.entries<Any>(e.channels ?? {}).map(([ch, c]) => (
+          <div className="item" key={ch}>
+            <div className="k">{ch} {c.active ? "· active" : ""}</div>
+            <div className={`v ${c.active ? "warn" : ""}`}>S⁺{fmt(c.s_pos, 1)} / S⁻{fmt(c.s_neg, 1)}</div>
+          </div>
+        ))}
+      </div>
+      <table className="mini">
+        <thead><tr><th>alarm</th><th>channel</th><th>run start</th><th>direction</th><th>size</th></tr></thead>
+        <tbody>
+          {(e.recent_maneuvers ?? []).map((m: Any, i: number) => (
+            <tr key={i}>
+              <td className="num">{m.date}</td>
+              <td>{m.channel}</td>
+              <td className="num">{m.start}</td>
+              <td style={{ color: m.direction === "drain" ? "#e5484d" : "#37c88b" }}>{m.direction}</td>
+              <td className="num">${fmt(Math.abs(m.cum_b), 0)}B</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{e.method}</Method>
+    </div>
+  );
+}
+
 export default function Resonance({ snap }: { snap: Any }) {
   return (
     <div className="grid">
       <ResonanceCard e={snap.engines.resonance} />
       <HydrophoneCard e={snap.engines.hydrophone} />
       <EdgesCard e={snap.engines.hydrophone} />
+      <StationKeepingCard e={snap.engines.stationkeeping} />
       <SonarCard e={snap.engines.sonar} />
     </div>
   );

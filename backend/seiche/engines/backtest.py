@@ -22,6 +22,8 @@ vintage caveat printed. If the numbers are unimpressive, they publish anyway.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -33,6 +35,17 @@ from seiche.config import (
     EPISODES,
     PLAYBOOK_OUTCOMES,
 )
+
+
+def _wilson(k: int, n: int, z: float = 1.96) -> list[float] | None:
+    """Wilson score interval for a proportion — honest small-n error bars."""
+    if n <= 0:
+        return None
+    p = k / n
+    denom = 1.0 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return [round(max(0.0, center - half), 3), round(min(1.0, center + half), 3)]
 
 PCTL_BUCKETS = [(0, 60, "0-60"), (60, 80, "60-80"), (80, 90, "80-90"), (90, 101, "90-100")]
 
@@ -49,24 +62,16 @@ def _funding_events(spread_bp: pd.Series) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(kept)
 
 
-def run(
-    lite_pctl: pd.Series,           # expanding percentile of Seiche-lite (0-100)
-    spread_bp: pd.Series,           # SOFR - IORB bp
-    outcomes: dict[str, pd.Series], # market level series
-) -> dict:
-    pct = lite_pctl.dropna()
-    if len(pct) < BACKTEST_MIN_WARMUP_D + 100:
-        return {"ok": False, "reason": "insufficient scored history"}
-    pct = pct.iloc[BACKTEST_MIN_WARMUP_D:]
+def _capture_stats(pct: pd.Series, events: pd.DatetimeIndex) -> dict:
+    """Event capture with honest error bars.
 
-    events = _funding_events(spread_bp)
-    events = events[(events >= pct.index[0]) & (events <= pct.index[-1])]
-
+    - recall CI: Wilson over the (declustered, ~independent) events.
+    - day-level precision is kept for continuity but alert DAYS are serially
+      correlated, so the load-bearing number is RUN-level precision: contiguous
+      alert runs are the independent-ish trials, Wilson over those.
+    """
     alert = pct >= BACKTEST_ALERT_PCTL
 
-    # --- 1. Event capture -------------------------------------------------
-    # Lead time = start of the continuous alert run the event landed in (not
-    # just the capture-window boundary), capped at 60 calendar days.
     lead_times, captured = [], 0
     for ev in events:
         loc = pct.index.searchsorted(ev)
@@ -80,9 +85,6 @@ def run(
             lead_times.append(min(lead, 60))
     recall = captured / len(events) if len(events) else None
 
-    # Precision: alert days followed by an event within the forward window.
-    # Same 5bd (~9 calendar day) window is used for the all-days base rate so
-    # precision and base rate are directly comparable.
     def _event_within(d: pd.Timestamp) -> bool:
         return bool(((events > d) & (events <= d + pd.Timedelta(days=9))).any())
 
@@ -96,17 +98,53 @@ def run(
         sum(1 for d in pct.index if _event_within(d)) / len(pct) if len(pct) else None
     )
 
-    # --- 2. Episode lead table --------------------------------------------
-    episode_rows = []
+    # Alert runs: contiguous stretches of alert==True.
+    runs: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    in_run = False
+    for i, flag in enumerate(alert):
+        if flag and not in_run:
+            start = pct.index[i]
+            in_run = True
+        elif not flag and in_run:
+            runs.append((start, pct.index[i - 1]))
+            in_run = False
+    if in_run:
+        runs.append((start, pct.index[-1]))
+    runs_hit = sum(
+        1 for s, e in runs
+        if bool(((events >= s) & (events <= e + pd.Timedelta(days=9))).any())
+    )
+    precision_runs = runs_hit / len(runs) if runs else None
+
+    return {
+        "spike_def_bp": BACKTEST_SPIKE_BP,
+        "alert_pctl": BACKTEST_ALERT_PCTL,
+        "n_events": int(len(events)),
+        "recall": round(recall, 3) if recall is not None else None,
+        "recall_ci95": _wilson(captured, len(events)),
+        "precision": round(precision, 3) if precision is not None else None,
+        "precision_note": "day-level; alert days are serially correlated — use run-level",
+        "base_rate": round(base_rate, 3) if base_rate is not None else None,
+        "n_alert_runs": len(runs),
+        "runs_hit": runs_hit,
+        "precision_runs": round(precision_runs, 3) if precision_runs is not None else None,
+        "precision_runs_ci95": _wilson(runs_hit, len(runs)),
+        "lead_times_d": lead_times,
+        "median_lead_d": float(np.median(lead_times)) if lead_times else None,
+    }
+
+
+def _episode_rows(pct: pd.Series) -> list[dict]:
+    rows = []
     for ep_date, label in EPISODES.items():
         ts = pd.Timestamp(ep_date)
         if ts < pct.index[0] or ts > pct.index[-1]:
-            episode_rows.append({"episode": label, "date": ep_date, "in_sample": False})
+            rows.append({"episode": label, "date": ep_date, "in_sample": False})
             continue
         loc = pct.index.searchsorted(ts)
         runup = pct.iloc[max(loc - 30, 0) : loc]
         crossed = runup[runup >= BACKTEST_ALERT_PCTL]
-        episode_rows.append(
+        rows.append(
             {
                 "episode": label,
                 "date": ep_date,
@@ -115,6 +153,39 @@ def run(
                 "first_alert_lead_d": int((ts - crossed.index[0]).days) if not crossed.empty else None,
             }
         )
+    return rows
+
+
+def capture(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
+    """Event capture + episode leads only — the orthogonal-test entry point."""
+    pct = lite_pctl.dropna()
+    if len(pct) < BACKTEST_MIN_WARMUP_D + 100:
+        return {"ok": False, "reason": "insufficient scored history"}
+    pct = pct.iloc[BACKTEST_MIN_WARMUP_D:]
+    events = _funding_events(spread_bp)
+    events = events[(events >= pct.index[0]) & (events <= pct.index[-1])]
+    return {
+        "ok": True,
+        "event_capture": _capture_stats(pct, events),
+        "episodes": _episode_rows(pct),
+    }
+
+
+def run(
+    lite_pctl: pd.Series,           # expanding percentile of Seiche-lite (0-100)
+    spread_bp: pd.Series,           # SOFR - IORB bp
+    outcomes: dict[str, pd.Series], # market level series
+) -> dict:
+    pct = lite_pctl.dropna()
+    if len(pct) < BACKTEST_MIN_WARMUP_D + 100:
+        return {"ok": False, "reason": "insufficient scored history"}
+    pct = pct.iloc[BACKTEST_MIN_WARMUP_D:]
+
+    events = _funding_events(spread_bp)
+    events = events[(events >= pct.index[0]) & (events <= pct.index[-1])]
+
+    capture_stats = _capture_stats(pct, events)
+    episode_rows = _episode_rows(pct)
 
     # --- 3. Market outcomes by signal bucket -------------------------------
     outcome_tables = []
@@ -155,15 +226,7 @@ def run(
             "n_events": int(len(events)),
             "event_dates": [d.date().isoformat() for d in events],
         },
-        "event_capture": {
-            "spike_def_bp": BACKTEST_SPIKE_BP,
-            "alert_pctl": BACKTEST_ALERT_PCTL,
-            "recall": round(recall, 3) if recall is not None else None,
-            "precision": round(precision, 3) if precision is not None else None,
-            "base_rate": round(base_rate, 3) if base_rate is not None else None,
-            "lead_times_d": lead_times,
-            "median_lead_d": float(np.median(lead_times)) if lead_times else None,
-        },
+        "event_capture": capture_stats,
         "episodes": episode_rows,
         "outcome_tables": outcome_tables,
         "signal_series": [
@@ -175,6 +238,8 @@ def run(
             "final-vintage data (weekly H.4.1 aggregates are lightly revised; daily market prints effectively are not)",
             "overlapping forward windows: n_independent ≈ n_days / horizon is shown",
             "Seiche-lite excludes live-only engines (weather/resonance/hydrophone/warehouse) — the live index has MORE information than this backtest",
+            "event count is small — Wilson 95% intervals are printed next to every rate; run-level precision is the load-bearing number (alert days are serially correlated)",
+            "the lite index contains spread/tail terms and the event is a spread spike — see the ORTHOGONAL test for the same claim with the target's own variables removed",
         ],
         "method": (
             f"event = SOFR−IORB ≥ +{BACKTEST_SPIKE_BP}bp vs trailing 5d median (clusters "

@@ -33,7 +33,8 @@ layer none of them have: **honest evidence about itself**.
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
-| **ML Lab** | Learned P(funding event within 5bd): walk-forward only, benchmarked against climatology AND the rule-based index, reliability table published. Verdict at build: beats both (OOS AUROC 0.813 vs 0.806 rule-based). |
+| **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
+| **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
 | **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
 
 ★ = methods invented for this tool.
@@ -55,8 +56,14 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 - **Playbook** — what S&P/VIX/OAS/yields did the last N times the board looked like
   this, in native units, with n printed. Decision support, not advice.
 - **PROOF** — the backtest lab: the index rebuilt with expanding-window statistics
-  only (no look-ahead — enforced by a unit test), recall/precision vs base rate,
-  episode-by-episode lead times *including the ones it missed*.
+  only (no look-ahead — enforced by a unit test), recall/precision with Wilson 95%
+  intervals, run-level precision (alert days are serially correlated; runs are the
+  honest trials), episode-by-episode lead times *including the ones it missed* —
+  and the **orthogonal signal test**: the same event-capture with the target's own
+  variable family (spread/tails) removed from the signal. At build: orthogonal
+  recall 69% [CI 42–87] vs 62% full, with the structural components alone at the
+  98th–100th percentile 42 days before the Sep/Dec-2025 squeezes. The claim is
+  causal structure, not autocorrelation.
 - **Time Machine** — replay the whole board as of any date since ~2018. Replayed to
   **Sep 12 2019**, the board reads EROSION with reserves $576B below the kink and
   flags **Sep 16 2019** — the exact day the repo market broke — as a crunch window.

@@ -18,10 +18,12 @@ function TurnCard({ t }: { t: Any }) {
       <div className="kv">
         <div className="item"><div className="k">next turn</div><div className="v">{nt.date}</div></div>
         <div className="item"><div className="k">mode</div><div className="v">{nt.mode?.replace("_", "-")}</div></div>
-        <div className="item"><div className="k">forecast slosh</div>
+        <div className="item"><div className="k">forecast slosh ({nt.published})</div>
           <div className={`v ${nt.severity >= 4 ? "bad" : nt.severity >= 3 ? "warn" : ""}`}>
             {nt.forecast_bp > 0 ? "+" : ""}{fmt(nt.forecast_bp, 1)}bp
           </div></div>
+        <div className="item"><div className="k">model / naive</div>
+          <div className="v dimsmall" style={{ fontSize: 13 }}>{fmt(nt.forecast_model_bp, 1)} / {fmt(nt.forecast_naive_bp, 1)}bp</div></div>
         <div className="item"><div className="k">20/80 band</div><div className="v">{fmt(nt.band_bp?.[0], 1)} … {fmt(nt.band_bp?.[1], 1)}</div></div>
         <div className="item"><div className="k">severity</div>
           <div className={`v ${nt.severity >= 4 ? "bad" : nt.severity >= 3 ? "warn" : ""}`}>{nt.severity}/5</div></div>

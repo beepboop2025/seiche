@@ -132,7 +132,12 @@ def build_features(
     return X[keep], y[keep]
 
 
-def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
+# Labels look BACKTEST_EVENT_FWD_D days ahead, so the last rows of any
+# training slice would see into the test block — they are embargoed.
+EMBARGO_BD = BACKTEST_EVENT_FWD_D
+
+
+def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dict:
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.metrics import brier_score_loss, roc_auc_score
 
@@ -150,7 +155,8 @@ def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
     preds = pd.Series(np.nan, index=X.index)
     for start in range(ML_WARMUP_D, len(X), ML_REFIT_EVERY_BD):
         end = min(start + ML_REFIT_EVERY_BD, len(X))
-        Xt, yt = X.iloc[:start], y.iloc[:start]
+        train_end = max(start - EMBARGO_BD, 0)  # boundary-label embargo
+        Xt, yt = X.iloc[:train_end], y.iloc[:train_end]
         if yt.sum() < 5:
             continue
         # Histories start on different dates (crypto ~2021): a column that is
@@ -161,7 +167,10 @@ def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
         model.fit(Xt[cols], yt)
         preds.iloc[start:end] = model.predict_proba(X.iloc[start:end][cols])[:, 1]
 
-    oos = pd.concat({"p": preds, "y": y, "rule": X["lite_pctl"]}, axis=1).dropna()
+    # The rule-based comparator column is absent in the orthogonal feature set
+    # (it contains the target's variable family) — compare only when present.
+    rule = X["lite_pctl"] if "lite_pctl" in X.columns else pd.Series(np.nan, index=X.index)
+    oos = pd.concat({"p": preds, "y": y, "rule": rule}, axis=1).dropna(subset=["p", "y"])
     if len(oos) < 200 or oos["y"].sum() < 5:
         return {"ok": False, "reason": "not enough out-of-sample coverage"}
 
@@ -170,7 +179,8 @@ def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
     brier = float(brier_score_loss(oos["y"], oos["p"]))
     brier_clim = float(brier_score_loss(oos["y"], np.full(len(oos), base_rate)))
     try:
-        auroc_rule = float(roc_auc_score(oos["y"], oos["rule"]))
+        rule_ok = oos["rule"].notna().all()
+        auroc_rule = float(roc_auc_score(oos["y"], oos["rule"])) if rule_ok else None
     except ValueError:
         auroc_rule = None
 
@@ -193,27 +203,56 @@ def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
     final.fit(X[final_cols], y)
     p_now = float(final.predict_proba(X[final_cols].iloc[[-1]])[0, 1])
 
-    from sklearn.inspection import permutation_importance
-    tail_n = min(300, len(X))
-    imp = permutation_importance(
-        final, X[final_cols].iloc[-tail_n:], y.iloc[-tail_n:], n_repeats=5, random_state=7,
-        scoring="roc_auc" if y.iloc[-tail_n:].nunique() > 1 else None,
-    )
-    order = np.argsort(-imp.importances_mean)[:10]
-    top_features = [
-        {"feature": final_cols[i], "importance": round(float(imp.importances_mean[i]), 4)}
-        for i in order
-    ]
+    top_features: list[dict] = []
+    if full_report:
+        from sklearn.inspection import permutation_importance
+        tail_n = min(300, len(X))
+        imp = permutation_importance(
+            final, X[final_cols].iloc[-tail_n:], y.iloc[-tail_n:], n_repeats=5, random_state=7,
+            scoring="roc_auc" if y.iloc[-tail_n:].nunique() > 1 else None,
+        )
+        order = np.argsort(-imp.importances_mean)[:10]
+        top_features = [
+            {"feature": final_cols[i], "importance": round(float(imp.importances_mean[i]), 4)}
+            for i in order
+        ]
 
+    # Ranking and calibration are different skills — judge them separately.
     beats_clim = brier < brier_clim
-    beats_rule = auroc_rule is None or auroc > auroc_rule
-    verdict = (
-        "model beats climatology and the rule-based index out-of-sample"
-        if (beats_clim and beats_rule)
-        else "model beats climatology but NOT the rule-based index — rule stays primary"
-        if beats_clim
-        else "model does NOT beat climatology out-of-sample — treat as experimental"
+    beats_rule = auroc_rule is not None and auroc > auroc_rule
+    rank_part = (
+        f"ranks events better than the rule-based index ({auroc:.3f} vs {auroc_rule:.3f})"
+        if beats_rule
+        else f"does not out-rank the rule-based index ({auroc:.3f} vs {auroc_rule:.3f})"
+        if auroc_rule is not None
+        else f"AUROC {auroc:.3f} (no rule comparator in this feature set)"
     )
+    cal_part = (
+        "probability levels beat climatology"
+        if beats_clim
+        else "probability LEVELS do not beat climatology — use for ranking/alerting, not as literal odds"
+    )
+    verdict = f"{rank_part}; {cal_part}"
+
+    # Decision utility (Jane Street competition lineage): score the signal by
+    # what ACTING on it is worth — +1 per alert followed by an event, −cost
+    # per false alarm. Thresholds fixed in config-land, not fitted to OOS.
+    cost = 0.25
+    years = max(len(oos) / 252.0, 1e-9)
+
+    def _utility(act: pd.Series) -> float:
+        hits = float(oos.loc[act, "y"].sum())
+        misses = float(act.sum() - hits)
+        return round((hits - cost * misses) / years, 2)
+
+    utility = {
+        "cost_per_false_alarm": cost,
+        "unit": "net caught-events per year (false alarms charged at cost)",
+        "ml_at_25pct": _utility(oos["p"] >= 0.25),
+        "ml_at_50pct": _utility(oos["p"] >= 0.50),
+        "rule_at_80pctl": _utility(oos["rule"] >= 80.0) if auroc_rule is not None else None,
+        "never_act": 0.0,
+    }
 
     return {
         "ok": True,
@@ -230,23 +269,34 @@ def walk_forward(X: pd.DataFrame, y: pd.Series) -> dict:
             "brier_climatology": round(brier_clim, 4),
             "refit_every_bd": ML_REFIT_EVERY_BD,
             "warmup_d": ML_WARMUP_D,
+            "embargo_bd": EMBARGO_BD,
         },
+        "utility": utility,
         "reliability": reliability,
         "top_features": top_features,
         "p_series": [
             [d.date().isoformat(), round(float(v), 3)]
             for d, v in preds.dropna().iloc[::3].items()
-        ],
+        ] if full_report else [],
         "n_features": int(X.shape[1]),
         "caveats": [
             "events are rare — AUROC on few positives deserves humility",
             "walk-forward only; no shuffled CV (leakage on time series)",
+            f"{EMBARGO_BD}bd boundary embargo: training rows whose labels see into the test block are dropped",
             "features trailing-only; labels final-vintage (same caveat as PROOF)",
             "probabilities are raw model outputs; check the reliability table before trusting a level",
         ],
         "method": (
             f"HistGradientBoosting (depth 3), expanding walk-forward refits every "
-            f"{ML_REFIT_EVERY_BD}bd after {ML_WARMUP_D}d warmup; target = funding event "
-            f"(+{BACKTEST_SPIKE_BP}bp vs 5d median) within {BACKTEST_EVENT_FWD_D}bd"
+            f"{ML_REFIT_EVERY_BD}bd after {ML_WARMUP_D}d warmup, {EMBARGO_BD}bd embargo; "
+            f"target = funding event (+{BACKTEST_SPIKE_BP}bp vs 5d median) within {BACKTEST_EVENT_FWD_D}bd"
         ),
     }
+
+
+# Features derived from the target's own variable family — removed in the
+# orthogonal test so autocorrelation can't flatter the score. lite/lite_pctl
+# contain tails+spread terms and go too.
+ORTHOGONAL_DROP = [
+    "spread_lvl", "spread_chg5", "spread_ez", "tail_lvl", "tail_ez", "lite", "lite_pctl",
+]

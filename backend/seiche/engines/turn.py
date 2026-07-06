@@ -170,15 +170,26 @@ def analyze(
     if feats_now is None:
         return {"ok": False, "reason": "current features unavailable"}
 
-    use_model = skill > 0.0
-    if use_model:
-        xn = np.concatenate([[1.0], (np.array(feats_now) - mu) / sd])
-        point = float(xn @ beta)
-    else:
-        mode_hist = [t for (_, m, _, t) in rows if m == nxt_mode]
-        point = float(np.median(mode_hist[-4:])) if mode_hist else float(np.median(y))
+    # Both forecasts are always computed and published; the model only gets
+    # the headline when its LOO skill is MEANINGFULLY positive (>0.05), not
+    # merely nonzero — skill of 0.02 is naive wearing a lab coat.
+    xn = np.concatenate([[1.0], (np.array(feats_now) - mu) / sd])
+    model_point = float(xn @ beta)
+    mode_hist = [t for (_, m, _, t) in rows if m == nxt_mode]
+    naive_point = float(np.median(mode_hist[-4:])) if mode_hist else float(np.median(y))
+
+    use_model = skill > 0.05
+    point = model_point if use_model else naive_point
 
     lo, hi = np.percentile(residuals, [20, 80])
+    if use_model:
+        note = None
+    elif skill > 0.0:
+        note = (f"model skill vs naive is only {skill:.3f} on LOO-CV — statistically "
+                "indistinguishable from naive, so the naive same-mode median is published")
+    else:
+        note = ("model shows NO skill vs naive on LOO-CV — publishing the naive "
+                "same-mode median instead (that honesty is the feature)")
     return {
         "ok": True,
         "asof": today.date().isoformat(),
@@ -186,6 +197,9 @@ def analyze(
             "date": nxt.date().isoformat(),
             "mode": nxt_mode,
             "forecast_bp": round(point, 1),
+            "forecast_model_bp": round(model_point, 1),
+            "forecast_naive_bp": round(naive_point, 1),
+            "published": "model" if use_model else "naive",
             "band_bp": [round(point + lo, 1), round(point + hi, 1)],
             "severity": _severity(point),
             "severity_scale": "1 calm .. 5 extreme "
@@ -197,9 +211,7 @@ def analyze(
             "naive_mae_bp": round(mae_naive, 2),
             "skill_vs_naive": round(skill, 3),
             "model_used": use_model,
-            "note": None if use_model else
-                "model shows NO skill vs naive on LOO-CV — publishing the naive "
-                "same-mode median instead (that honesty is the feature)",
+            "note": note,
         },
         "features": dict(zip(FEATURE_NAMES, [round(float(v), 2) for v in feats_now])),
         "recent_turns": [

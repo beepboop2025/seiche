@@ -374,3 +374,106 @@ def test_context_pack_is_compact_and_json_safe():
     assert len(blob) < 60_000
     assert pack["composite"]["regime"] == "STRAIN"
     assert pack["provenance_staleness"] == {"fresh": 1}
+
+
+# --------------------------------------------------------------------------
+# Gap fixes: Wilson CIs, orthogonal support, embargo, station-keeping
+# --------------------------------------------------------------------------
+
+def test_wilson_ci_sane():
+    from seiche.engines.backtest import _wilson
+    lo, hi = _wilson(8, 13)
+    assert 0.0 <= lo <= 8 / 13 <= hi <= 1.0
+    assert _wilson(13, 13)[1] == 1.0
+    assert _wilson(0, 13)[0] == 0.0
+    assert _wilson(1, 0) is None
+
+
+def test_history_exclude_builds_orthogonal_index(rng):
+    h = history.build(**_hist_inputs(800, rng), exclude=("tails",))
+    assert "tails" not in h["weights"]
+    assert "tails" in h["excluded"]
+    assert abs(sum(h["weights"].values()) - 1.0) < 0.01
+    assert len(h["index"]) > 300
+
+
+def test_backtest_capture_and_run_share_stats(rng):
+    idx = _bdays(1200)
+    spread = pd.Series(rng.normal(0, 1, len(idx)), index=idx)
+    for loc in range(400, 1100, 150):
+        spread.iloc[loc] += 25.0
+    pctl = pd.Series(10.0, index=idx)
+    for loc in range(400, 1100, 150):
+        pctl.iloc[loc - 4 : loc + 1] = 95.0
+    cap = backtest.capture(pctl, spread)
+    assert cap["ok"]
+    ec = cap["event_capture"]
+    assert ec["recall_ci95"] is not None and ec["precision_runs_ci95"] is not None
+    assert ec["n_alert_runs"] >= 1
+    assert ec["precision_runs"] >= ec["base_rate"]
+
+
+def test_ml_orthogonal_runs_without_rule_column(rng):
+    from seiche.engines import mlpred
+    inputs = _ml_inputs(rng)
+    for loc in range(600, 1300, 60):
+        inputs["spread_bp"].iloc[loc] += 25.0
+    X, y = mlpred.build_features(**inputs)
+    keep = [c for c in X.columns if c not in mlpred.ORTHOGONAL_DROP]
+    r = mlpred.walk_forward(X[keep], y, full_report=False)
+    assert r["ok"], r.get("reason")
+    assert r["validation"]["auroc_rule_based"] is None
+    assert r["top_features"] == [] and r["p_series"] == []
+    assert r["utility"]["rule_at_80pctl"] is None
+    assert r["validation"]["embargo_bd"] == mlpred.EMBARGO_BD
+
+
+def test_turn_publishes_both_forecasts(rng):
+    idx = _bdays(1500)
+    spread = pd.Series(rng.normal(0, 1, len(idx)), index=idx)
+    events = resonance._classify_events(idx)
+    for m in ("month_end", "quarter_end", "year_end"):
+        for ev in events[m]:
+            loc = idx.searchsorted(ev)
+            if loc < len(idx):
+                spread.iloc[loc] += 6.0
+    r = turn.analyze(
+        spread,
+        pd.Series(np.linspace(2400, 0, len(idx)), index=idx),
+        pd.Series(np.abs(rng.normal(4, 1, len(idx))), index=idx),
+        pd.Series(np.linspace(1.0, 0.0, len(idx)), index=idx),
+    )
+    nt = r["next_turn"]
+    assert "forecast_model_bp" in nt and "forecast_naive_bp" in nt
+    assert nt["published"] in ("model", "naive")
+    expected = nt["forecast_model_bp"] if nt["published"] == "model" else nt["forecast_naive_bp"]
+    assert nt["forecast_bp"] == expected
+
+
+def test_resonance_reports_ex_max_sensitivity(rng):
+    idx = _bdays(1600)
+    spread = pd.Series(rng.normal(0, 0.4, len(idx)), index=idx)
+    events = resonance._classify_events(idx)
+    for k, ev in enumerate(events["quarter_end"]):
+        loc = idx.searchsorted(ev)
+        if loc < len(idx):
+            spread.iloc[loc] += 2.0 + 0.8 * k
+    r = resonance.analyze(spread)
+    q = r["modes"]["quarter_end"]
+    assert q.get("amplification_ex_max") is not None
+    assert q["amplification_ex_max"] <= q["amplification"] + 0.5
+    assert "low_n" in q
+
+
+def test_stationkeeping_flags_injected_burn(rng):
+    from seiche.engines import stationkeeping
+    idx = _bdays(1200)
+    widx = pd.date_range(idx[0], idx[-1], freq="W-WED")
+    tga = pd.Series(500.0 + np.cumsum(rng.normal(0, 2, len(idx))), index=idx)
+    tga.iloc[800:812] += np.cumsum(np.full(12, 25.0))  # +$300B unscheduled build
+    rrp = pd.Series(np.abs(rng.normal(5, 1, len(idx))), index=idx)
+    walcl = pd.Series(7_000_000 - np.arange(len(widx)) * 5000.0, index=widx)
+    r = stationkeeping.analyze(tga, rrp, walcl)
+    assert r["ok"]
+    tga_alarms = [m for m in r["recent_maneuvers"] if m["channel"] == "TGA"]
+    assert tga_alarms, "a $300B unscheduled build must alarm"

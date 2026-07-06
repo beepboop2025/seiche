@@ -28,7 +28,10 @@ jobs:
           cache: pip
 
       - name: Install backend
-        run: pip install -e ./backend
+        run: pip install -e "./backend[dev]"
+
+      - name: Engine tests (publish gates on green)
+        run: python -m pytest backend/tests -q
 
       - name: Run engines, export snapshot
         run: python backend/scripts/export_snapshot.py frontend/public/data/overview.json

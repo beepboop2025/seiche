@@ -55,6 +55,7 @@ def build(
     res_gdp: pd.Series,          # reserves/GDP ratio, weekly
     pair_b: pd.Series,           # RV pair proxy, $B, weekly (CFTC)
     digestion: pd.Series,        # auction digestion index, per-auction dates
+    exclude: tuple[str, ...] = (),   # components to leave out (orthogonal tests)
 ) -> dict:
     idx = pd.bdate_range(spread_bp.dropna().index.min(), spread_bp.dropna().index.max())
     f = lambda s: s.reindex(idx).ffill(limit=10) if not s.dropna().empty else pd.Series(index=idx, dtype=float)
@@ -92,13 +93,17 @@ def build(
     # buffers — same closed form as the live engine
     comps["buffers"] = ((1.0 - f(rrp_b) / 400.0).clip(0, 1) * 100.0)
 
-    w = {k: COMPOSITE_WEIGHTS[k] for k in LITE_COMPONENTS}
+    active = [k for k in LITE_COMPONENTS if k not in exclude]
+    if not active:
+        raise ValueError("exclude removed every component")
+    w = {k: COMPOSITE_WEIGHTS[k] for k in active}
     wsum = sum(w.values())
     weights = pd.Series({k: v / wsum for k, v in w.items()})
 
-    avail = comps.notna()
+    used = comps[active]
+    avail = used.notna()
     eff_w = avail.mul(weights, axis=1)
-    index = (comps.fillna(0.0) * eff_w).sum(axis=1) / eff_w.sum(axis=1).replace(0, np.nan)
+    index = (used.fillna(0.0) * eff_w).sum(axis=1) / eff_w.sum(axis=1).replace(0, np.nan)
     index = index.dropna()
 
     pctl = _epctl(index) * 100.0
@@ -111,7 +116,7 @@ def build(
         "pctl": pctl.reindex(index.index),
         "components": comps.reindex(index.index),
         "weights": {k: round(v / wsum, 3) for k, v in w.items()},
-        "excluded": [k for k in COMPOSITE_WEIGHTS if k not in LITE_COMPONENTS],
+        "excluded": [k for k in COMPOSITE_WEIGHTS if k not in active],
         "regime_series": index.map(regime_of),
         "method": (
             "Seiche-lite: expanding-window standardization only (no look-ahead); "

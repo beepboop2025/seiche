@@ -56,6 +56,7 @@ from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
+from seiche.engines import stationkeeping as eng_stationkeeping
 from seiche.engines import tails as eng_tails
 from seiche.engines import turn as eng_turn
 from seiche.engines import warehouse as eng_warehouse
@@ -345,6 +346,13 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         usdt_peg_bp=drv["usdt_peg_bp"],
     ))
 
+    # --- Station-Keeping (maneuver detection) ---
+    run("stationkeeping", lambda: eng_stationkeeping.analyze(
+        tga_daily=drv["tga"],
+        rrp_daily=drv["rrp"],
+        walcl_weekly=_pts(fred_s, "WALCL"),
+    ))
+
     # --- Stablecoin moorings ---
     stable = (src.get("crypto") or {}).get("stable", {})
     run("moorings", lambda: eng_moorings.analyze(
@@ -412,9 +420,23 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     if spread.empty:
         return {"ok": False, "reason": "no spread history"}
     cache_key = f"deep:{spread.index[-1].date().isoformat()}"
-    cached = store.load_blob(cache_key, DEEP_TTL_MIN)
+    # Failure-aware cache: a blob computed with any failed layer only lives 30
+    # minutes, so a transient fault can't poison the whole data-day (bit us
+    # twice during the v2 build).
+    cached = store.load_blob(cache_key)
     if cached is not None:
-        return cached
+        ttl_min = DEEP_TTL_MIN if cached.get("_all_ok") else 30
+        ts = cached.get("_computed_at")
+        try:
+            from datetime import datetime, timedelta, timezone
+            fresh = ts is not None and (
+                datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+                < timedelta(minutes=ttl_min)
+            )
+        except (TypeError, ValueError):
+            fresh = False
+        if fresh:
+            return cached
 
     fred_s = src.get("fred", {})
     out: dict = {"ok": True}
@@ -494,6 +516,39 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
     run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
 
+    # Orthogonal signal test: rebuild the index WITHOUT the tails component
+    # (which contains the spread/tail variables the event is defined on) and
+    # rerun event capture. If this still leads events, the claim is causal
+    # structure, not autocorrelation.
+    def _orthogonal():
+        hist_o = eng_history.build(
+            spread_bp=spread,
+            tail_bp=drv["tail_bp"],
+            srf_accepted=drv["srf"],
+            dw_b=drv["dw_b"],
+            rrp_b=drv["rrp"],
+            res_gdp=drv["res_gdp"],
+            pair_b=engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float)),
+            digestion=engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float)),
+            exclude=("tails",),
+        )
+        cap = eng_backtest.capture(hist_o["pctl"], spread)
+        if cap.get("ok"):
+            cap["weights"] = hist_o["weights"]
+            cap["excluded_components"] = hist_o["excluded"]
+            cap["why"] = (
+                "same event-capture test with the target's own variable family removed "
+                "from the signal (no spread, no tails) — kink-proxy/confession/rvxray/"
+                "auctions/buffers only"
+            )
+        return cap
+    if out.get("backtest", {}).get("ok"):
+        try:
+            out["backtest"]["orthogonal"] = _orthogonal()
+        except Exception as e:
+            faults.append({"source": "deep:orthogonal", "detail": f"{type(e).__name__}: {e}"})
+            out["backtest"]["orthogonal"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
     def _ml():
         stable = (src.get("crypto") or {}).get("stable", {})
         X, y = eng_mlpred.build_features(
@@ -514,9 +569,35 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             usdt_peg_bp=drv["usdt_peg_bp"],
             stable_total_b=stable.get("total", pd.Series(dtype=float)),
         )
-        return eng_mlpred.walk_forward(X, y)
+        res = eng_mlpred.walk_forward(X, y)
+        # Orthogonal ML: drop the target's variable family from the features
+        # and re-evaluate. The honest AUROC for "the model knows something
+        # beyond spread autocorrelation" is THIS one.
+        if res.get("ok"):
+            keep = [c for c in X.columns if c not in eng_mlpred.ORTHOGONAL_DROP]
+            orth = eng_mlpred.walk_forward(X[keep], y, full_report=False)
+            res["orthogonal"] = (
+                {
+                    "auroc": orth["validation"]["auroc"],
+                    "brier": orth["validation"]["brier"],
+                    "brier_climatology": orth["validation"]["brier_climatology"],
+                    "p_event_5bd": orth["p_event_5bd"],
+                    "verdict": orth["verdict"],
+                    "utility": orth.get("utility"),
+                    "dropped_features": [c for c in eng_mlpred.ORTHOGONAL_DROP if c in X.columns],
+                }
+                if orth.get("ok")
+                else orth
+            )
+        return res
     run("ml", _ml)
 
+    out["_all_ok"] = all(
+        isinstance(v, dict) and v.get("ok")
+        for k, v in out.items()
+        if k not in ("ok",) and not str(k).startswith("_")
+    )
+    out["_computed_at"] = utcnow_iso()
     store.save_blob(cache_key, out)
     return out
 
