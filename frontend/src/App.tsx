@@ -46,8 +46,9 @@ function KinkCard({ e }: { e: Any }) {
         <div className="item"><div className="k">reserves</div><div className="v">${fmt(e.current_reserves_b, 0)}B</div></div>
         <div className="item"><div className="k">distance</div><div className={`v ${risky ? "bad" : ""}`}>${fmt(e.distance_b, 0)}B</div></div>
         <div className="item"><div className="k">drain /bday</div><div className="v">{fmt(e.drain_per_bday_b, 1)}B</div></div>
-        <div className="item"><div className="k">days to kink</div><div className={`v ${e.days_to_kink && e.days_to_kink < 60 ? "bad" : ""}`}>{e.days_to_kink ?? "n/a"}</div></div>
+        <div className="item"><div className="k">days to kink</div><div className={`v ${e.days_to_kink && e.days_to_kink < 60 ? "bad" : ""}`}>{e.distance_b < 0 ? "below kink" : e.days_to_kink ?? "n/a"}</div></div>
         <div className="item"><div className="k">fit R²</div><div className="v">{fmt(e.r2, 2)}</div></div>
+        <div className="item"><div className="k">model vs mkt</div><div className={`v ${e.consistency < 0.7 ? "warn" : ""}`}>{fmt(e.predicted_spread_now_bp, 0)}bp / {fmt(e.observed_spread_now_bp, 0)}bp</div></div>
       </div>
       <div className="method">{e.method} · asof {e.asof}</div>
     </div>

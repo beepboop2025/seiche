@@ -14,6 +14,10 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DATA_DIR / "seiche.sqlite"
 
 USER_AGENT = "seiche/0.1 (open-source funding-stress monitor)"
+# FRED's CDN bot-detection (verified 2026-07-06): custom UAs like "seiche/0.1"
+# hang forever, and a Chrome UA over Python TLS gets tarpitted (JA3 mismatch).
+# The one profile that consistently passes is httpx's own default UA — so the
+# FRED collector sends NO custom User-Agent. Do not "fix" this by adding one.
 
 # ---------------------------------------------------------------------------
 # Series registry: everything the collectors pull, with cadence-aware TTLs.
@@ -40,12 +44,13 @@ FRED_SERIES = [
     SeriesSpec("IOER", "fred", "IOER", "Interest on excess reserves (pre-2021 splice leg)", "%", "D", 100000),
     SeriesSpec("EFFR", "fred", "EFFR", "Effective federal funds rate", "%", "D", 360),
     SeriesSpec("SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", 360),
-    SeriesSpec("BGCR", "fred", "BGCR", "Broad general collateral rate", "%", "D", 360),
-    SeriesSpec("TGCR", "fred", "TGCR", "Tri-party general collateral rate", "%", "D", 360),
     SeriesSpec("GDP", "fred", "GDP", "Nominal GDP (SAAR)", "$B", "Q", 10080),
 ]
 
 OFR_SERIES = [
+    # TGCR/BGCR are 404 on FRED's CSV endpoint — sourced from OFR instead.
+    SeriesSpec("BGCR", "ofr", "FNYR-BGCR-A", "Broad general collateral rate", "%", "D", 360),
+    SeriesSpec("TGCR", "ofr", "FNYR-TGCR-A", "Tri-party general collateral rate", "%", "D", 360),
     SeriesSpec("DVP_VOL", "ofr", "REPO-DVP_TV_TOT-P", "DVP repo total volume (preliminary)", "$B", "D", 360),
     SeriesSpec("TRI_VOL", "ofr", "REPO-TRI_TV_TOT-P", "Tri-party repo total volume (preliminary)", "$B", "D", 360),
     SeriesSpec("DVP_RATE_OO", "ofr", "REPO-DVP_AR_OO-P", "DVP overnight/open avg rate", "%", "D", 360),

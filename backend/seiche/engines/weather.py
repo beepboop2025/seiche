@@ -98,18 +98,32 @@ def forecast(
     lo_band = [p - h for p, h in zip(path, hi_err)]
     hi_band = [p - l for p, l in zip(path, lo_err)]
 
+    # When reserves are already at/below the estimated kink, "kink proximity"
+    # is true every day and stops discriminating — in that regime only the
+    # calendar pressure dates (quarter/month-end, corporate tax) are flagged.
+    below_kink = kink_b is not None and res_now <= kink_b
     crunches = []
     for i, ts in enumerate(future):
-        cushion = CRUNCH_CUSHION_QEND_B if (ts.is_quarter_end or ts.is_month_end) else CRUNCH_CUSHION_B
-        if kink_b is not None and lo_band[i] < kink_b + cushion:
-            crunches.append(
-                {
-                    "date": ts.date().isoformat(),
-                    "forecast_reserves_b": round(path[i], 1),
-                    "worst_case_b": round(lo_band[i], 1),
-                    "reason": "quarter/month-end + kink proximity" if cushion == CRUNCH_CUSHION_QEND_B else "kink proximity",
-                }
-            )
+        is_pressure_date = ts.is_quarter_end or ts.is_month_end or _day_bucket(ts) == "tax"
+        if kink_b is None:
+            continue
+        if below_kink:
+            if not is_pressure_date:
+                continue
+            reason = "calendar pressure date while reserves sit below the estimated kink"
+        else:
+            cushion = CRUNCH_CUSHION_QEND_B if is_pressure_date else CRUNCH_CUSHION_B
+            if lo_band[i] >= kink_b + cushion:
+                continue
+            reason = "quarter/month-end + kink proximity" if is_pressure_date else "kink proximity"
+        crunches.append(
+            {
+                "date": ts.date().isoformat(),
+                "forecast_reserves_b": round(path[i], 1),
+                "worst_case_b": round(lo_band[i], 1),
+                "reason": reason,
+            }
+        )
 
     min_i = int(np.argmin(path))
     return {

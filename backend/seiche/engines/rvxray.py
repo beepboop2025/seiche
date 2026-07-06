@@ -54,6 +54,8 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
     size_z = float(z.iloc[-1])
 
     dvp_now = float(dvp_vol.dropna().iloc[-1]) if not dvp_vol.dropna().empty else None
+    if dvp_now is not None and dvp_now > 1e6:
+        dvp_now /= 1e9  # OFR volume mnemonics are raw dollars, not $B
 
     # Margin-shock scenarios: adverse basis moves of 5/15/30 bp.
     scenarios = []

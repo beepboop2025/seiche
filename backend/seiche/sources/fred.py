@@ -7,16 +7,21 @@ that need administered-rate history back to 2018 get one continuous series.
 
 from __future__ import annotations
 
+import asyncio
 import io
+import random
 
 import httpx
 import pandas as pd
 
 from seiche import store
-from seiche.config import ALL_SERIES, USER_AGENT, SeriesSpec
+from seiche.config import ALL_SERIES, SeriesSpec
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+# fredgraph.csv throttles bursts hard — keep concurrency low and back off.
+_sem = asyncio.Semaphore(2)
 
 
 async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str = "2017-01-01") -> Series:
@@ -27,19 +32,21 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str =
     try:
         r = None
         last_exc: Exception | None = None
-        for attempt in range(3):  # fredgraph.csv is occasionally slow — retry
+        for attempt in range(4):  # fredgraph.csv is slow and throttles — retry w/ backoff
             try:
-                r = await client.get(
-                    BASE,
-                    params={"id": spec.remote_id, "cosd": start},
-                    headers={"User-Agent": USER_AGENT},
-                    timeout=60,
-                )
+                async with _sem:
+                    # No custom User-Agent here — see FRED note in config.py.
+                    r = await client.get(
+                        BASE,
+                        params={"id": spec.remote_id, "cosd": start},
+                        timeout=45,
+                    )
                 r.raise_for_status()
                 break
             except Exception as exc:
                 last_exc = exc
                 r = None
+                await asyncio.sleep(1.5 * (2 ** attempt) + random.random())
         if r is None:
             raise last_exc  # type: ignore[misc]
         df = pd.read_csv(io.StringIO(r.text))

@@ -102,7 +102,7 @@ def _run_engines(src: dict, faults: list[dict]) -> dict:
         comps = {
             "sofr_iorb": (pts(fred_s, "SOFR") - iorb_spliced.reindex(pts(fred_s, "SOFR").index).ffill()),
             "effr_iorb": (pts(fred_s, "EFFR") - iorb_spliced.reindex(pts(fred_s, "EFFR").index).ffill()),
-            "bgcr_sofr": (pts(fred_s, "BGCR") - pts(fred_s, "SOFR")),
+            "bgcr_sofr": (pts(ofr_s, "BGCR") - pts(fred_s, "SOFR")),
             "rrp": pts(fred_s, "RRPONTSYD"),
             "tga_chg5": tga.diff(5),
             "reserves_chg4w": pts(fred_s, "WRESBAL").diff(4),

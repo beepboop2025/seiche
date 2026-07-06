@@ -49,12 +49,12 @@ async def fetch_secured_rates(client: httpx.AsyncClient, start: str = "2018-04-0
     df["effectiveDate"] = pd.to_datetime(df["effectiveDate"])
     for rate_type, grp in df.groupby("type"):
         g = grp.set_index("effectiveDate").sort_index()
-        frames[rate_type] = g[
-            [c for c in (
-                "percentRate", "percentPercentile1", "percentPercentile25",
-                "percentPercentile75", "percentPercentile99", "volumeInBillions",
-            ) if c in g.columns]
-        ].astype(float)
+        cols = [c for c in (
+            "percentRate", "percentPercentile1", "percentPercentile25",
+            "percentPercentile75", "percentPercentile99", "volumeInBillions",
+        ) if c in g.columns]
+        # API emits literal 'NA' strings on unpublished percentile days.
+        frames[rate_type] = g[cols].apply(pd.to_numeric, errors="coerce")
     return {"fetched_at": cached["fetched_at"], "frames": frames}
 
 

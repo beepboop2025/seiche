@@ -26,8 +26,12 @@ def fit_kink(
     # Weekly-align: average the spread over each reserve week, scale reserves by GDP.
     spread_w = spread_daily.resample("W-WED").mean()
     res_b = (reserves_weekly / 1000.0).resample("W-WED").last()  # $M -> $B
-    gdp_w = gdp_quarterly.resample("W-WED").ffill()
-    df = pd.concat({"spread": spread_w, "res": res_b, "gdp": gdp_w}, axis=1).dropna()
+    df = pd.concat({"spread": spread_w, "res": res_b}, axis=1).dropna()
+    # GDP publishes with a ~quarter lag — carry the latest print forward to
+    # the present instead of truncating the sample at GDP's last obs date.
+    gdp_w = gdp_quarterly.sort_index().reindex(df.index, method="ffill")
+    df["gdp"] = gdp_w
+    df = df.dropna()
     if len(df) < 60:
         return {"ok": False, "reason": f"insufficient overlap ({len(df)} weeks)"}
 
@@ -63,12 +67,23 @@ def fit_kink(
     drain_per_bd = float((tail.iloc[-1] - tail.iloc[0]) / (5 * (len(tail) - 1))) if len(tail) > 3 else 0.0
     days_to_kink = distance_b / -drain_per_bd if drain_per_bd < -1e-9 and distance_b > 0 else None
 
+    # Model-vs-market consistency: what spread does the fit predict at today's
+    # reserve level, and what is the market actually printing? Disagreement
+    # discounts the sub-score (confidence-native, not silently trusted).
+    x_now = x[-1]
+    predicted_now_bp = best["intercept"] + best["slope"] * max(0.0, best["kink_ratio"] - x_now)
+    observed_now_bp = float(np.mean(y[-4:]))
+    consistency = float(np.clip(1.0 - abs(predicted_now_bp - observed_now_bp) / 12.0, 0.35, 1.0))
+
     curve = [
         [round(float(xi), 5), round(float(yi), 2)]
         for xi, yi in zip(x[-156:], y[-156:])  # last ~3y of weekly points for the scatter
     ]
     return {
         "ok": True,
+        "predicted_spread_now_bp": round(predicted_now_bp, 1),
+        "observed_spread_now_bp": round(observed_now_bp, 1),
+        "consistency": round(consistency, 2),
         "kink_reserves_b": round(kink_b, 1),
         "current_reserves_b": round(res_now, 1),
         "distance_b": round(distance_b, 1),
@@ -84,11 +99,20 @@ def fit_kink(
 
 
 def kink_score(fit: dict) -> float:
-    """0-100 sub-score: proximity to the kink, discounted by fit quality."""
+    """0-100 sub-score: proximity to the kink, then depth into it.
+
+    Crossing the breakpoint isn't binary doom — the fitted slope says how
+    steep the scarcity region actually is. Approach ramps 0->60; beyond the
+    kink, 60->100 scales with the model-implied spread (15bp+ = saturated).
+    Fit quality and model-vs-market consistency discount the whole thing.
+    """
     if not fit.get("ok"):
         return 0.0
     dist = fit["distance_b"]
-    # 0 when >= $600B above the kink; 100 at/below the kink.
-    raw = float(np.clip(1.0 - dist / 600.0, 0.0, 1.0)) * 100.0
+    if dist > 0:
+        raw = float(np.clip(1.0 - dist / 600.0, 0.0, 1.0)) * 60.0
+    else:
+        implied_bp = max(fit.get("predicted_spread_now_bp") or 0.0, 0.0)
+        raw = 60.0 + 40.0 * float(np.clip(implied_bp / 15.0, 0.0, 1.0))
     conf = float(np.clip(fit.get("r2", 0.0) / 0.35, 0.3, 1.0))  # r2>=0.35 -> full weight
-    return raw * conf
+    return raw * conf * fit.get("consistency", 1.0)
