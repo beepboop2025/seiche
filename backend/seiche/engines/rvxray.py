@@ -23,17 +23,17 @@ import pandas as pd
 from seiche.config import UST_CONTRACTS
 
 
-def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
-    if tff.empty:
-        return {"ok": False, "reason": "no TFF data"}
-
+def position_history(tff: pd.DataFrame) -> pd.DataFrame:
+    """Weekly pair-proxy / gross-short / DV01 history from TFF rows."""
     rows = []
     for date, grp in tff.groupby("date"):
         pair_notional = 0.0
         gross_short = 0.0
         dv01 = 0.0
         for _, r in grp.iterrows():
-            c = UST_CONTRACTS[r["contract"]]
+            c = UST_CONTRACTS.get(r["contract"])
+            if c is None:  # crowding-panel extras (FF/SOFR/ES) — not RV legs
+                continue
             ls = float(r.get("lev_money_positions_short_all") or 0)
             al = float(r.get("asset_mgr_positions_long_all") or 0)
             pair_notional += min(ls, al) * c["face"]
@@ -42,7 +42,16 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
         rows.append(
             {"date": date, "pair_b": pair_notional / 1e9, "gross_short_b": gross_short / 1e9, "dv01_m": dv01 / 1e6}
         )
-    hist = pd.DataFrame(rows).set_index("date").sort_index()
+    return pd.DataFrame(rows).set_index("date").sort_index()
+
+
+def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
+    if tff.empty:
+        return {"ok": False, "reason": "no TFF data"}
+
+    hist = position_history(tff)
+    if hist.empty:
+        return {"ok": False, "reason": "no UST contracts in TFF data"}
     latest = hist.iloc[-1]
 
     chg_13w = (
@@ -73,6 +82,7 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
         )
 
     return {
+        "_pair_full": hist["pair_b"],  # pd.Series for the history layer; stripped from payloads
         "ok": True,
         "asof": hist.index[-1].date().isoformat(),
         "pair_proxy_b": round(float(latest["pair_b"]), 1),
@@ -100,3 +110,48 @@ def rvxray_score(result: dict) -> float:
     if grow > 50:  # +$50B in 13 weeks = rapid build
         base = min(base + 15.0, 100.0)
     return float(np.clip(base, 0.0, 100.0))
+
+
+def crowding(tff: pd.DataFrame, lookback_weeks: int = 156) -> dict:
+    """Positioning crowding per contract: leveraged-fund NET position as a
+    share of open interest, z-scored and percentiled vs its own trailing
+    history. Crowded shorts in duration + crowded longs in equities is the
+    classic pre-unwind constellation (Apr 2025). T+3 provenance as always."""
+    if tff.empty:
+        return {"ok": False, "reason": "no TFF data"}
+    out = []
+    for contract, grp in tff.groupby("contract"):
+        g = grp.sort_values("date")
+        oi = g["open_interest_all"].astype(float)
+        net = (
+            g["lev_money_positions_long_all"].fillna(0)
+            - g["lev_money_positions_short_all"].fillna(0)
+        )
+        share = (net / oi.replace(0, np.nan)).dropna()
+        if len(share) < 60:
+            continue
+        hist = share.tail(lookback_weeks)
+        cur = float(hist.iloc[-1])
+        sd = float(hist.std()) or np.nan
+        z = (cur - float(hist.mean())) / sd if np.isfinite(sd) else 0.0
+        pctl = float((hist <= cur).mean() * 100.0)
+        out.append(
+            {
+                "contract": contract,
+                "lev_net_share_oi": round(cur, 3),
+                "z": round(float(z), 2),
+                "pctl": round(pctl, 0),
+                "asof": g["date"].iloc[-1].date().isoformat(),
+            }
+        )
+    if not out:
+        return {"ok": False, "reason": "no contracts with enough history"}
+    out.sort(key=lambda r: -abs(r["z"]))
+    return {
+        "ok": True,
+        "rows": out,
+        "method": (
+            "leveraged-fund net position / open interest per contract; z and percentile "
+            f"vs trailing {lookback_weeks}w; |z| ranks the board (extremes = crowding)"
+        ),
+    }

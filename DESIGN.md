@@ -82,3 +82,82 @@ seiche/
 - No paid data, no scraping behind logins. No intraday tick data (daily cadence + ops results is the honest granularity of the free stack).
 - No auth/multi-tenant. Local-first side project; deployable later.
 - Swap-spread levels (needs paid swap data) — RV X-Ray proxies the *funding leg* which is the fragility that matters.
+
+---
+
+# v2 "Deep Water" addendum — 2026-07-07
+
+## What v2 adds (design intent)
+
+v1 was a monitor: it told you stress was building. v2 is an instrument: it tells you
+what to look at, what it predicts, and — critically — how good its own predictions
+have been. Three design moves:
+
+**1. Novel structural engines (fragility invisible in levels).**
+- *Resonance Engine* — the seiche metaphor made mathematical. Calendar forcings
+  (month-end, quarter-end, year-end, mid-month settlements, tax dates — disjoint
+  modes) recur with near-identical size; the market's RESPONSE to them is the
+  measurable. Slosh amplitude per event, amplification trend (recent vs prior
+  median), post-event decay half-life. A basin that rings louder and longer to the
+  same bell is losing damping. Live finding at build time: year-end amplification
+  6.3×, quarter-end 2.6× with decay 1.0d → 2.5d.
+- *Hydrophone Array* — Kritzman absorption ratio applied to funding plumbing (11
+  standardized daily-change series) + a lead-lag map (max lagged cross-correlation)
+  of which pipe is upstream. Densifying network = shocks transmit, not absorb.
+- *Warehouse* — NY Fed primary-dealer positions by maturity bucket; saturation
+  percentile. Live finding: dealer net UST inventory at its 99th percentile,
+  11–21y bucket at its 100th.
+- *Global Basin Coupling* — same physics across basins: US (SOFR−IORB), euro area
+  (€STR−DFR via ECB Data Portal), UK (SONIA), channels (broad dollar, foreign
+  official RRP, H.4.1 swap lines). The Tide = common-component share; swap-line
+  draws ex small-value tests = the global confession channel. Out-of-scope basins
+  (Japan/China/Russia/Africa: no keyless daily feed meeting the provenance bar)
+  are declared, not faked.
+
+**2. The money layer (what a user does with it).**
+- *The Tell* = plumbing percentile − market-priced-stress percentile (VIX, HY/IG
+  OAS, 10y realized vol; official FRED series only — Yahoo/Stooq refused bots and
+  were dropped for provenance). Positive Tell = hedges are cheap relative to what
+  the plumbing knows.
+- *Turn Barometer* = amplitude forecast for the next known-date turn, LOO-CV'd,
+  benchmarked vs naive, self-demoting when it can't beat naive.
+- *Playbook* = state-conditioned forward outcome tables in native units with n and
+  overlap disclosed.
+
+**3. The honesty layer (what makes it pitchable).**
+- *PROOF* — Seiche-lite index rebuilt under expanding-window statistics only; the
+  no-look-ahead property is enforced by a unit test (value at T must be identical
+  when future data is appended). Recall/precision vs base rate, episode lead
+  times including the misses (Mar-2020 and Apr-2025 were exogenous, not plumbing —
+  an honest funding gauge should not claim them).
+- *Time Machine* — /api/asof/{date}: every engine is a pure function of its input
+  series, so truncation replays the historical board faithfully (final-vintage
+  caveat printed). Sep-12-2019 replay flags Sep-16 as a crunch window.
+- *PIT record* — every live snapshot appends the as-published index to `pit:*`;
+  from v2 onward the tool accrues an untouchable forward track record.
+
+## v2 data additions (all verified live 2026-07-07)
+
+| Source | New pulls |
+|---|---|
+| FRED | VIXCLS, HY/IG OAS, DGS2/10/30, DTB3/DTB4WK, SP500, NFCI, WLCFLPCL (discount window), ECBDFR, IUDSOIA (SONIA), SWPT (swap lines), DTWEXBGS (broad dollar), WLRRAFOIAL (foreign official RRP) |
+| NY Fed | primary-dealer positions (`/pd/get/{keyid}.json`, spliced weekly history), USD FX-swap operations (`/fxs/usdollar/last/N.json`, small-value test ops flagged) |
+| ECB Data Portal | €STR daily (`EST/B.EU000A2X2A25.WT`, csvdata) |
+| CFTC TFF | + FED FUNDS, SOFR-1M, SOFR-3M, E-MINI S&P 500 (crowding panel) |
+| FiscalData | TGA extended to 2019 (pre-2021 label "Federal Reserve Account"), auctions to 2018, upcoming auctions wired into Weather as settlement calendar |
+
+Composite v2 weights (config.py): tails .18, kink .14, weather .12, confession .12
+(SRF + discount window, max), rvxray .12, resonance .10, hydrophone .08,
+auctions .06, warehouse .04, buffers .04. Echo, Tell and Basin Coupling are
+reported alongside, never weighted in (context/signal, not stress evidence).
+
+## Also considered and rejected
+
+- Yahoo Finance / Stooq ETF prices — both block or throttle non-browser clients;
+  a flaky feed can't sit under a provenance-honest instrument. Market leg uses
+  FRED official series; playbook outcomes speak native units instead of ETF PnL.
+- Weighting Echo or The Tell into the composite — resemblance and divergence are
+  not stress evidence; they stay context.
+- Faking global coverage (Japan/China/Russia/Africa) from monthly or scraped
+  data — declared out of scope instead; basins plug into config when a
+  qualifying feed exists.

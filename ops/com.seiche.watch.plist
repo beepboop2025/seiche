@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Seiche morning pull + alerts via launchd.
+
+  Install:
+    1. Edit the two paths below (venv python + repo) for your machine.
+    2. cp ops/com.seiche.watch.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.seiche.watch.plist
+
+  Runs `seiche alert -\-force` weekdays at 08:15 and 16:45 ET-ish local time —
+  after the SOFR print lands and after the H.4.1/PD afternoon drops. Alerts
+  dedupe by state, so extra runs are harmless. Set SEICHE_WEBHOOK_URL in
+  EnvironmentVariables to also POST alerts to Slack/Telegram/ntfy.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.seiche.watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/mrinal/dev/seiche/backend/.venv/bin/seiche</string>
+    <string>alert</string>
+    <string>--force</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/mrinal/dev/seiche/backend</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>45</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/tmp/seiche.watch.log</string>
+  <key>StandardErrorPath</key><string>/tmp/seiche.watch.err</string>
+  <!--
+  <key>EnvironmentVariables</key>
+  <dict><key>SEICHE_WEBHOOK_URL</key><string>https://your-webhook</string></dict>
+  -->
+</dict>
+</plist>

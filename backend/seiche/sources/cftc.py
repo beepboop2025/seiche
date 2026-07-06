@@ -11,7 +11,14 @@ import httpx
 import pandas as pd
 
 from seiche import store
-from seiche.config import CFTC_TTL_MIN, TFF_DATASET, USER_AGENT, UST_CONTRACTS
+from seiche.config import (
+    CFTC_START,
+    CFTC_TTL_MIN,
+    CROWD_EXTRA_CONTRACTS,
+    TFF_DATASET,
+    USER_AGENT,
+    UST_CONTRACTS,
+)
 from seiche.sources.base import SourceFault, utcnow_iso
 
 BASE = f"https://publicreporting.cftc.gov/resource/{TFF_DATASET}.json"
@@ -34,20 +41,28 @@ def _match_contract(name: str) -> str | None:
     for key in UST_CONTRACTS:
         if key in up:
             return key
+    # Crowding-panel extras need EXACT matches: "FED FUNDS" as a substring
+    # would also catch hypothetical variants, and "E-MINI S&P 500" must not
+    # swallow "MICRO E-MINI S&P 500 INDEX".
+    if up.strip() in CROWD_EXTRA_CONTRACTS:
+        return up.strip()
     return None
 
 
-async def fetch_tff_ust(client: httpx.AsyncClient, start: str = "2022-01-01") -> dict:
+async def fetch_tff_ust(client: httpx.AsyncClient, start: str = CFTC_START) -> dict:
     key = "cftc_tff_ust"
     cached = store.load_blob(key, CFTC_TTL_MIN)
     if cached is None:
         try:
+            extra = " OR ".join(
+                f"upper(contract_market_name) = '{c}'" for c in CROWD_EXTRA_CONTRACTS
+            )
             params = {
                 "$select": ",".join(FIELDS),
                 "$where": (
                     f"report_date_as_yyyy_mm_dd >= '{start}T00:00:00.000' AND "
                     "(upper(contract_market_name) like '%UST%' OR "
-                    "upper(contract_market_name) like '%TREASURY%')"
+                    f"upper(contract_market_name) like '%TREASURY%' OR {extra})"
                 ),
                 "$limit": 50000,
             }

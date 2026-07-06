@@ -86,11 +86,16 @@ async def fetch_many(
 
 
 def splice_iorb(iorb: Series, ioer: Series) -> Series:
-    """One continuous administered-rate series: IOER through 2021-07, IORB after."""
-    cutover = iorb.points.dropna().index.min()
+    """One continuous administered-rate series: IOER through 2021-07, IORB after.
+
+    Degrades to whichever leg exists — a Time Machine replay truncated before
+    2021-07 has no IORB observations at all."""
+    new = iorb.points.dropna()
     old = ioer.points.dropna()
-    old = old[old.index < cutover]
-    pts = pd.concat([old, iorb.points.dropna()]).sort_index()
+    if new.empty:
+        pts = old
+    else:
+        pts = pd.concat([old[old.index < new.index.min()], new]).sort_index()
     return Series(
         "IORB_SPLICED", "fred", "IOER+IORB", "Administered rate (IOER/IORB spliced)",
         "%", "D", iorb.fetched_at, pts,

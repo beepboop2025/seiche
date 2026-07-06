@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/chart.tsx","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/chart.tsx","./src/lib.tsx","./src/main.tsx","./src/tabs/board.tsx","./src/tabs/calendar.tsx","./src/tabs/global.tsx","./src/tabs/market.tsx","./src/tabs/positioning.tsx","./src/tabs/proof.tsx","./src/tabs/resonance.tsx","./src/tabs/system.tsx","./src/tabs/timemachine.tsx"],"version":"5.9.3"}

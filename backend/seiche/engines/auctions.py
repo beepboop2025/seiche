@@ -66,6 +66,7 @@ def analyze(auctions: pd.DataFrame) -> dict:
     recent = s.tail(15)[["date", "tenor", "btc", "btc_z", "pd_share", "pd_share_z", "score"]]
     recent = recent.assign(date=recent["date"].dt.date.astype(str))
     return {
+        "_index_full": index,  # pd.Series for the history layer; stripped from payloads
         "ok": True,
         "asof": s["date"].iloc[-1].date().isoformat(),
         "digestion_index": round(float(index.iloc[-1]), 2),

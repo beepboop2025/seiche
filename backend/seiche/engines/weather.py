@@ -26,8 +26,30 @@ from seiche.config import (
     CORPORATE_TAX_DAYS,
     CRUNCH_CUSHION_B,
     CRUNCH_CUSHION_QEND_B,
+    SETTLEMENT_FLAG_B,
     WEATHER_HORIZON_BDAYS,
 )
+
+
+def settlement_calendar(upcoming: pd.DataFrame) -> pd.Series:
+    """Gross auction settlement ($B) by issue date from the upcoming-auctions
+    feed. Settlement days are known reserve-drain days (issuance settles ->
+    TGA builds -> reserves fall, with no RRP buffer left to absorb it)."""
+    if upcoming is None or upcoming.empty or "issue_date" not in upcoming.columns:
+        return pd.Series(dtype=float)
+    df = upcoming.copy()
+    df["issue_date"] = pd.to_datetime(df["issue_date"], errors="coerce")
+    amt_col = next(
+        (c for c in ("offering_amt", "total_accepted", "currently_outstanding") if c in df.columns),
+        None,
+    )
+    if amt_col is None:
+        return pd.Series(dtype=float)
+    df["amt_b"] = (
+        pd.to_numeric(df[amt_col].astype(str).str.replace(",", ""), errors="coerce") / 1e9
+    )
+    df = df.dropna(subset=["issue_date", "amt_b"])
+    return df.groupby("issue_date")["amt_b"].sum().sort_index()
 
 
 def _day_bucket(d: pd.Timestamp) -> str:
@@ -73,6 +95,7 @@ def forecast(
     walcl_weekly: pd.Series,      # WALCL $M weekly
     tga_daily: pd.Series,         # $B daily (DTS)
     kink_b: float | None,         # from Kink Engine ($B), may be None
+    settlements: pd.Series | None = None,  # $B by issue date (upcoming auctions)
 ) -> dict:
     res_b = (reserves_weekly.dropna() / 1000.0)
     if res_b.empty or tga_daily.dropna().empty:
@@ -102,28 +125,48 @@ def forecast(
     # is true every day and stops discriminating — in that regime only the
     # calendar pressure dates (quarter/month-end, corporate tax) are flagged.
     below_kink = kink_b is not None and res_now <= kink_b
+    settle = settlements if settlements is not None else pd.Series(dtype=float)
     crunches = []
     for i, ts in enumerate(future):
-        is_pressure_date = ts.is_quarter_end or ts.is_month_end or _day_bucket(ts) == "tax"
+        settle_b = float(settle.get(ts, 0.0)) if not settle.empty else 0.0
+        heavy_settle = settle_b >= SETTLEMENT_FLAG_B
+        is_pressure_date = (
+            ts.is_quarter_end or ts.is_month_end or _day_bucket(ts) == "tax" or heavy_settle
+        )
         if kink_b is None:
             continue
         if below_kink:
             if not is_pressure_date:
                 continue
             reason = "calendar pressure date while reserves sit below the estimated kink"
+            if heavy_settle:
+                reason = f"${settle_b:.0f}B auction settlement while reserves sit below the estimated kink"
         else:
             cushion = CRUNCH_CUSHION_QEND_B if is_pressure_date else CRUNCH_CUSHION_B
             if lo_band[i] >= kink_b + cushion:
                 continue
             reason = "quarter/month-end + kink proximity" if is_pressure_date else "kink proximity"
+            if heavy_settle:
+                reason = f"${settle_b:.0f}B auction settlement + kink proximity"
         crunches.append(
             {
                 "date": ts.date().isoformat(),
                 "forecast_reserves_b": round(path[i], 1),
                 "worst_case_b": round(lo_band[i], 1),
+                "settlement_b": round(settle_b, 1) if settle_b else None,
                 "reason": reason,
             }
         )
+
+    upcoming_settlements = (
+        [
+            {"date": d.date().isoformat(), "amount_b": round(float(v), 1)}
+            for d, v in settle.items()
+            if future[0] <= d <= future[-1] and float(v) >= 20.0
+        ]
+        if not settle.empty
+        else []
+    )
 
     min_i = int(np.argmin(path))
     return {
@@ -138,7 +181,12 @@ def forecast(
         "min_forecast_b": round(path[min_i], 1),
         "min_forecast_date": future[min_i].date().isoformat(),
         "crunch_windows": crunches,
-        "method": "reserves + trailing-8wk WALCL drift - seasonal dTGA (day-of-month median buckets, tax/qtr-end aware); bands = 20/80% backtested cumulative error",
+        "upcoming_settlements": upcoming_settlements,
+        "method": (
+            "reserves + trailing-8wk WALCL drift - seasonal dTGA (day-of-month median "
+            "buckets, tax/qtr-end aware); bands = 20/80% backtested cumulative error; "
+            f"auction settlement days >= ${SETTLEMENT_FLAG_B:.0f}B flagged"
+        ),
     }
 
 

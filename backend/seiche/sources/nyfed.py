@@ -13,7 +13,13 @@ import httpx
 import pandas as pd
 
 from seiche import store
-from seiche.config import NYFED_TTL_MIN, USER_AGENT
+from seiche.config import (
+    NYFED_RATES_START,
+    NYFED_TTL_MIN,
+    PD_POSITION_SERIES,
+    PD_TTL_MIN,
+    USER_AGENT,
+)
 from seiche.sources.base import SourceFault, utcnow_iso
 
 BASE = "https://markets.newyorkfed.org/api"
@@ -25,7 +31,7 @@ async def _get_json(client: httpx.AsyncClient, path: str) -> dict:
     return r.json()
 
 
-async def fetch_secured_rates(client: httpx.AsyncClient, start: str = "2018-04-01") -> dict:
+async def fetch_secured_rates(client: httpx.AsyncClient, start: str = NYFED_RATES_START) -> dict:
     """All secured rates with percentiles, as {rate_type: DataFrame}-shaped dict."""
     key = "nyfed_secured_rates"
     cached = store.load_blob(key, NYFED_TTL_MIN)
@@ -89,3 +95,77 @@ async def fetch_srf_ops(client: httpx.AsyncClient, n_ops: int = 900) -> dict:
     df["date"] = pd.to_datetime(df["date"])
     daily = df.groupby("date")[["accepted", "submitted"]].sum().sort_index()
     return {"fetched_at": cached["fetched_at"], "daily": daily}
+
+
+async def fetch_pd_positions(client: httpx.AsyncClient) -> dict:
+    """Primary dealer net outright UST positions by maturity bucket ($M -> $B).
+
+    The no-seriesbreak endpoint returns the full spliced weekly history
+    (verified 2026-07-07). This is the dealer 'warehouse': how much duration
+    the street already holds when the next auction lands.
+    """
+    key = "nyfed_pd_positions"
+    cached = store.load_blob(key, PD_TTL_MIN)
+    if cached is None:
+        try:
+            out: dict[str, list] = {}
+            for keyid in PD_POSITION_SERIES:
+                raw = await _get_json(client, f"/pd/get/{keyid}.json")
+                rows = raw.get("pd", {}).get("timeseries", [])
+                out[keyid] = [
+                    [r.get("asofdate"), r.get("value")]
+                    for r in rows
+                    if r.get("asofdate") and r.get("value") not in (None, "", "*")
+                ]
+            cached = {"fetched_at": utcnow_iso(), "series": out}
+            store.save_blob(key, cached)
+        except Exception as exc:
+            cached = store.load_blob(key)
+            if cached is None:
+                raise SourceFault("nyfed", f"pd positions: {exc}") from exc
+    frames = {}
+    for keyid, rows in cached["series"].items():
+        if not rows:
+            continue
+        s = pd.Series(
+            [float(v) for _, v in rows],
+            index=pd.DatetimeIndex([d for d, _ in rows]),
+            dtype=float,
+        ).sort_index() / 1000.0  # $M -> $B
+        frames[keyid] = s[~s.index.duplicated(keep="last")]
+    return {"fetched_at": cached["fetched_at"], "positions": frames}
+
+
+async def fetch_fx_swaps(client: httpx.AsyncClient, n_ops: int = 90) -> dict:
+    """USD liquidity swap operations — the GLOBAL confession channel. A
+    foreign central bank drawing the swap line means a bank in its
+    jurisdiction could not find dollars privately at any acceptable rate."""
+    key = "nyfed_fx_swaps"
+    cached = store.load_blob(key, NYFED_TTL_MIN)
+    if cached is None:
+        try:
+            raw = await _get_json(client, f"/fxs/usdollar/last/{n_ops}.json")
+            ops = raw.get("fxSwaps", {}).get("operations", [])
+            cached = {
+                "fetched_at": utcnow_iso(),
+                "ops": [
+                    {
+                        "trade_date": o.get("tradeDate"),
+                        "counterparty": o.get("counterparty"),
+                        "amount_m": float(o.get("amount") or 0) / 1e6,
+                        "term_days": o.get("termInDays"),
+                        "rate": o.get("interestRate"),
+                        # arrives as ''/'true'/boolean depending on the day —
+                        # bool('false') would be wrongly truthy
+                        "is_small_value": str(o.get("isSmallValue") or "").strip().lower()
+                                          in ("true", "t", "y", "1"),
+                    }
+                    for o in ops
+                ],
+            }
+            store.save_blob(key, cached)
+        except Exception as exc:
+            cached = store.load_blob(key)
+            if cached is None:
+                raise SourceFault("nyfed", f"fx swaps: {exc}") from exc
+    return {"fetched_at": cached["fetched_at"], "ops": cached["ops"]}

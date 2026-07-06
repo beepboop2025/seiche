@@ -1,0 +1,140 @@
+import Chart from "../Chart";
+import { Any, fmt, Fault, Method } from "../lib";
+
+const MODE_COLORS: Record<string, string> = {
+  quarter_end: "#e88a3a",
+  year_end: "#e5484d",
+  month_end: "#4cc3ff",
+  mid_month: "#3d4654",
+  tax_date: "#d9b23a",
+};
+
+function ResonanceCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Resonance Engine" reason={e?.reason} span={12} />;
+  const modes = Object.entries<Any>(e.modes ?? {}).filter(([, d]) => d.ok);
+  // Split the scatter into one series per mode for coloring.
+  const modeKeys = Object.keys(MODE_COLORS).filter((m) => (e.events_scatter ?? []).some((r: Any) => r[2] === m));
+  const rows = (e.events_scatter ?? []).map((r: Any) => [
+    r[0],
+    ...modeKeys.map((m) => (r[2] === m ? r[1] : null)),
+  ]);
+  return (
+    <div className="card span12">
+      <h2>Resonance Engine</h2>
+      <div className="sub">
+        the seiche made literal — does the same calendar forcing produce a bigger slosh than it used to?
+        · score {fmt(e.score, 0)} · loudest: {e.worst_mode?.label} at {fmt(e.worst_mode?.amplification, 2)}×
+      </div>
+      <Chart
+        rows={rows}
+        series={modeKeys.map((m) => ({ label: m.replace("_", "-"), color: MODE_COLORS[m], pointsOnly: true }))}
+        height={190}
+        yLabel="slosh bp"
+      />
+      <table className="mini">
+        <thead>
+          <tr>
+            <th>mode</th><th>n</th><th>last slosh</th><th>recent med</th><th>prior med</th>
+            <th>amplification</th><th>decay (prior→recent)</th><th>score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {modes.map(([m, d]) => (
+            <tr key={m}>
+              <td>{d.label}</td>
+              <td className="num">{d.n}</td>
+              <td className="num">{fmt(d.last?.slosh_bp, 1)}bp ({d.last?.date})</td>
+              <td className="num">{fmt(d.recent_median_bp, 1)}bp</td>
+              <td className="num">{fmt(d.prior_median_bp, 1)}bp</td>
+              <td className="num" style={{ color: d.amplification >= 2 ? "#e5484d" : d.amplification >= 1.3 ? "#d9b23a" : undefined }}>
+                {fmt(d.amplification, 2)}×
+              </td>
+              <td className="num">{fmt(d.decay_prior_d, 1)}d → {fmt(d.decay_recent_d, 1)}d</td>
+              <td className="num">{fmt(d.score, 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{e.method}</Method>
+    </div>
+  );
+}
+
+function HydrophoneCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Hydrophone Array" reason={e?.reason} span={7} />;
+  return (
+    <div className="card span7">
+      <h2>Hydrophone Array</h2>
+      <div className="sub">absorption ratio — decoupled pipes absorb shocks; a densifying network transmits them</div>
+      <div className="kv">
+        <div className="item"><div className="k">absorption</div><div className="v">{fmt(e.absorption, 3)}</div></div>
+        <div className="item"><div className="k">percentile</div>
+          <div className={`v ${e.absorption_pctl >= 80 ? "bad" : ""}`}>{fmt(e.absorption_pctl, 0)}th</div></div>
+        <div className="item"><div className="k">Δ 60d</div><div className={`v ${e.trend_60d > 0.05 ? "warn" : ""}`}>{e.trend_60d > 0 ? "+" : ""}{fmt(e.trend_60d, 3)}</div></div>
+        <div className="item"><div className="k">series in panel</div><div className="v">{e.n_series}</div></div>
+      </div>
+      <Chart rows={e.series} series={[{ label: "absorption (top-2 PC share)", color: "#37c88b" }]} />
+      <Method>{e.method}</Method>
+    </div>
+  );
+}
+
+function EdgesCard({ e }: { e: Any }) {
+  if (!e?.ok) return null;
+  return (
+    <div className="card span5">
+      <h2>Lead-Lag Map</h2>
+      <div className="sub">which pipe is upstream right now — the map reorganizing is itself a signal</div>
+      <table className="mini">
+        <thead><tr><th>leads</th><th></th><th>follows</th><th>lag</th><th>r</th></tr></thead>
+        <tbody>
+          {(e.edges ?? []).map((ed: Any, i: number) => (
+            <tr key={i}>
+              <td>{ed.lead}</td><td>→</td><td>{ed.follows}</td>
+              <td className="num">{ed.lag_d}d</td>
+              <td className="num" style={{ color: Math.abs(ed.corr) >= 0.45 ? "#e88a3a" : undefined }}>{fmt(ed.corr, 2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(e.edges ?? []).length === 0 && <div className="allclear">▮ no edges above threshold — pipes decoupled</div>}
+    </div>
+  );
+}
+
+function SonarCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="SONAR" reason={"sweep unavailable"} span={12} />;
+  return (
+    <div className="card span12">
+      <h2>SONAR</h2>
+      <div className="sub">daily anomaly sweep across every series — {e.n_flagged} of {e.n_scanned} flagged beyond ±2.5 robust z</div>
+      <table className="mini">
+        <thead><tr><th>series</th><th>last</th><th>Δ 1d</th><th>level z</th><th>change z</th><th>asof</th></tr></thead>
+        <tbody>
+          {(e.movers ?? []).map((m: Any) => (
+            <tr key={m.name} style={{ opacity: m.flag ? 1 : 0.55 }}>
+              <td>{m.label}</td>
+              <td className="num">{fmt(m.last, 2)} {m.unit}</td>
+              <td className="num">{m.chg_1d == null ? "—" : `${m.chg_1d > 0 ? "+" : ""}${fmt(m.chg_1d, 2)}`}</td>
+              <td className="num" style={{ color: Math.abs(m.level_z ?? 0) >= 2.5 ? "#e5484d" : undefined }}>{fmt(m.level_z, 2)}</td>
+              <td className="num" style={{ color: Math.abs(m.change_z ?? 0) >= 2.5 ? "#e5484d" : undefined }}>{fmt(m.change_z, 2)}</td>
+              <td className="num">{m.asof}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{e.method}</Method>
+    </div>
+  );
+}
+
+export default function Resonance({ snap }: { snap: Any }) {
+  return (
+    <div className="grid">
+      <ResonanceCard e={snap.engines.resonance} />
+      <HydrophoneCard e={snap.engines.hydrophone} />
+      <EdgesCard e={snap.engines.hydrophone} />
+      <SonarCard e={snap.engines.sonar} />
+    </div>
+  );
+}

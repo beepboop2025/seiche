@@ -13,18 +13,28 @@ import pandas as pd
 from seiche.config import COMPOSITE_WEIGHTS, REGIMES
 
 
-def srf_score(srf_daily: pd.DataFrame) -> float:
-    """SRF usage is the confession channel: paying the ceiling rate means no
-    cheaper private funding existed. Score on 20d max accepted ($B)."""
-    if srf_daily is None or srf_daily.empty:
-        return 0.0
-    recent = float(srf_daily["accepted"].tail(20).max())
-    # $0 -> 0; $5B -> ~35; $20B -> ~70; $75B (Dec-2025 record) -> ~100
-    return float(np.clip(100.0 * (1.0 - np.exp(-recent / 22.0)), 0.0, 100.0))
+def confession_score(srf_daily: pd.DataFrame, dw_b: pd.Series | None = None) -> float:
+    """The confession channels. SRF usage: paying the ceiling rate means no
+    cheaper private funding existed. Discount window primary credit: an even
+    stronger admission (stigma priced in; ~$2B is ambient noise). Score =
+    max of the two — either confession alone is the signal."""
+    srf_part = 0.0
+    if srf_daily is not None and not srf_daily.empty:
+        recent = float(srf_daily["accepted"].tail(20).max())
+        # $0 -> 0; $5B -> ~35; $20B -> ~70; $75B (Dec-2025 record) -> ~100
+        srf_part = float(np.clip(100.0 * (1.0 - np.exp(-recent / 22.0)), 0.0, 100.0))
+    dw_part = 0.0
+    if dw_b is not None and not dw_b.dropna().empty:
+        dw_now = float(dw_b.dropna().iloc[-1])
+        # $2B ambient -> 0; $10B -> ~49; $25B -> ~85
+        dw_part = float(np.clip(100.0 * (1.0 - np.exp(-max(dw_now - 2.0, 0.0) / 12.0)), 0.0, 100.0))
+    # Both channels absent is the assembler's problem (it passes None -> DEAD);
+    # here quiet channels legitimately score 0.
+    return max(srf_part, dw_part)
 
 
 def buffers_score(rrp_b: float | None) -> float:
-    """Emptiness of the ON RRP shock absorber. $2.5T -> 0; $0 -> 100."""
+    """Emptiness of the ON RRP shock absorber. $400B+ -> 0; $0 -> 100."""
     if rrp_b is None:
         return 0.0
     return float(np.clip((1.0 - rrp_b / 400.0), 0.0, 1.0) * 100.0)

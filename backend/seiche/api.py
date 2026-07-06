@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
+import re
+import sqlite3
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from seiche import assemble, store
-from seiche.config import ALL_SERIES
+from seiche.config import (
+    ALERT_RULES,
+    ALL_SERIES,
+    COMPOSITE_WEIGHTS,
+    DB_PATH,
+    EPISODES,
+    REGIMES,
+)
 
-app = FastAPI(title="Seiche", version="0.1.0",
+app = FastAPI(title="Seiche", version=assemble.VERSION,
               description="Funding-stress & leveraged-positioning early-warning terminal")
 
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @app.get("/api/overview")
@@ -31,6 +44,24 @@ async def engine(name: str):
     return snap["engines"][name]
 
 
+@app.get("/api/asof/{date}")
+async def asof(date: str):
+    """Time Machine: the whole light board replayed as of a historical date."""
+    if not _DATE_RE.match(date):
+        raise HTTPException(422, "date must be YYYY-MM-DD")
+    payload = await assemble.snapshot_asof(date)
+    if payload.get("ok") is False:
+        raise HTTPException(404, payload.get("reason", "replay unavailable"))
+    return payload
+
+
+@app.get("/api/deep")
+async def deep():
+    """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
+    snap = await assemble.snapshot()
+    return snap.get("deep", {})
+
+
 @app.get("/api/series/{mnemonic}")
 async def series(mnemonic: str, n: int = 750):
     if mnemonic not in ALL_SERIES:
@@ -42,11 +73,69 @@ async def series(mnemonic: str, n: int = 750):
     return {"provenance": s.provenance(), "points": s.tail_records(n)}
 
 
+@app.get("/api/config")
+async def config_view():
+    """The editorial voice, read-only: what the operator can tune and where."""
+    return {
+        "composite_weights": COMPOSITE_WEIGHTS,
+        "regimes": [{"below": c, "name": n} for c, n in REGIMES],
+        "episodes": EPISODES,
+        "alert_rules": ALERT_RULES,
+        "tuning_file": "backend/seiche/config.py",
+    }
+
+
+@app.get("/api/alerts")
+async def alerts(n: int = 50):
+    """Recent alert log (written by `seiche alert` / `seiche watch`)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT fired_at, rule, state_key, message FROM alerts ORDER BY fired_at DESC LIMIT ?",
+            (n,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        conn.close()
+    return {
+        "alerts": [
+            {"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]} for r in rows
+        ]
+    }
+
+
+@app.get("/api/brief", response_class=PlainTextResponse)
+async def brief_text():
+    """This morning's desk note, rendered as markdown."""
+    from seiche import brief as brief_mod
+
+    snap = await assemble.snapshot()
+    return brief_mod.render_markdown(snap)
+
+
+@app.get("/api/pit")
+async def pit(n: int = 400):
+    """The forward-accruing as-published index record (no reconstruction)."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT key, payload FROM blobs WHERE key LIKE 'pit:%' ORDER BY key DESC LIMIT ?",
+            (n,),
+        ).fetchall()
+    finally:
+        conn.close()
+    import json as _json
+
+    return {"records": [_json.loads(p) for _, p in reversed(rows)]}
+
+
 @app.get("/api/health")
 async def health():
     snap = await assemble.snapshot()
     return {
         "generated_at": snap["generated_at"],
+        "version": snap.get("version"),
         "faults": snap["faults"],
         "provenance": snap["provenance"],
     }

@@ -7,6 +7,8 @@ export interface ChartSeries {
   color: string;
   dash?: number[];
   fill?: string;
+  /** render as unconnected points (scatter) */
+  pointsOnly?: boolean;
 }
 
 interface Props {
@@ -17,9 +19,11 @@ interface Props {
   yLabel?: string;
   /** horizontal reference line value (e.g. the kink) */
   refLine?: { value: number; color: string; label: string } | null;
+  /** vertical event markers (e.g. episode dates) */
+  vlines?: { dates: string[]; color: string } | null;
 }
 
-export default function Chart({ rows, series, height = 170, yLabel, refLine }: Props) {
+export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -30,6 +34,43 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine }: P
       xs,
       ...series.map((_, i) => rows.map((r) => (r[i + 1] == null ? null : Number(r[i + 1])))),
     ] as uPlot.AlignedData;
+
+    const drawHooks: ((u: uPlot) => void)[] = [];
+    if (refLine) {
+      drawHooks.push((u) => {
+        const y = u.valToPos(refLine.value, "y", true);
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.strokeStyle = refLine.color;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(u.bbox.left, y);
+        ctx.lineTo(u.bbox.left + u.bbox.width, y);
+        ctx.stroke();
+        ctx.fillStyle = refLine.color;
+        ctx.font = "10px SF Mono, monospace";
+        ctx.fillText(refLine.label, u.bbox.left + 6, y - 5);
+        ctx.restore();
+      });
+    }
+    if (vlines && vlines.dates.length) {
+      drawHooks.push((u) => {
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.strokeStyle = vlines.color;
+        ctx.setLineDash([2, 4]);
+        for (const d of vlines.dates) {
+          const t = new Date(d).getTime() / 1000;
+          if (t < (u.scales.x.min ?? 0) || t > (u.scales.x.max ?? Infinity)) continue;
+          const x = u.valToPos(t, "x", true);
+          ctx.beginPath();
+          ctx.moveTo(x, u.bbox.top);
+          ctx.lineTo(x, u.bbox.top + u.bbox.height);
+          ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
 
     const opts: uPlot.Options = {
       width: ref.current.clientWidth,
@@ -56,34 +97,17 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine }: P
         {},
         ...series.map((s) => ({
           label: s.label,
-          stroke: s.color,
-          width: 1.4,
+          stroke: s.pointsOnly ? "transparent" : s.color,
+          width: s.pointsOnly ? 0 : 1.4,
           dash: s.dash,
           fill: s.fill,
-          points: { show: false },
+          paths: s.pointsOnly ? () => null : undefined,
+          points: s.pointsOnly
+            ? { show: true, size: 6, fill: s.color, stroke: s.color }
+            : { show: false },
         })),
       ],
-      hooks: refLine
-        ? {
-            draw: [
-              (u) => {
-                const y = u.valToPos(refLine.value, "y", true);
-                const ctx = u.ctx;
-                ctx.save();
-                ctx.strokeStyle = refLine.color;
-                ctx.setLineDash([5, 5]);
-                ctx.beginPath();
-                ctx.moveTo(u.bbox.left, y);
-                ctx.lineTo(u.bbox.left + u.bbox.width, y);
-                ctx.stroke();
-                ctx.fillStyle = refLine.color;
-                ctx.font = "10px SF Mono, monospace";
-                ctx.fillText(refLine.label, u.bbox.left + 6, y - 5);
-                ctx.restore();
-              },
-            ],
-          }
-        : undefined,
+      hooks: drawHooks.length ? { draw: drawHooks } : undefined,
     };
 
     plotRef.current?.destroy();
@@ -99,7 +123,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine }: P
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [rows, series, height, yLabel, refLine]);
+  }, [rows, series, height, yLabel, refLine, vlines]);
 
   return <div className="uplot-wrap" ref={ref} />;
 }
