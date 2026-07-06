@@ -48,7 +48,32 @@ jobs:
           npm ci
           npm run build
 
-      - name: Deploy to Cloudflare Pages
+      # Primary 24/7 publish: push the built site + snapshot to the PUBLIC
+      # seiche-site repo (GitHub Pages) — no tokens beyond the deploy key,
+      # no user hands, survives forever on the free tier.
+      - name: Publish to GitHub Pages (seiche-site)
+        env:
+          DEPLOY_KEY: ${{ secrets.SEICHE_SITE_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/site_key
+          chmod 600 ~/.ssh/site_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site || \
+            (mkdir /tmp/site && cd /tmp/site && git init -b main && git remote add origin git@github.com:beepboop2025/seiche-site.git)
+          rsync -a --delete --exclude .git frontend/dist/ /tmp/site/
+          touch /tmp/site/.nojekyll
+          cd /tmp/site
+          git config user.name "seiche-publish"
+          git config user.email "noreply@seiche"
+          git add -A
+          git diff --cached --quiet || git commit -q -m "snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q origin main
+
+      # Secondary: Cloudflare Pages — works the day CLOUDFLARE_API_TOKEN is
+      # minted; until then this step fails without failing the publish.
+      - name: Deploy to Cloudflare Pages (optional)
+        continue-on-error: true
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
