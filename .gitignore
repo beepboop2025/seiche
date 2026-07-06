@@ -7,4 +7,5 @@ venv/
 backend/data/*.sqlite*
 node_modules/
 frontend/dist/
+frontend/public/data/
 .DS_Store

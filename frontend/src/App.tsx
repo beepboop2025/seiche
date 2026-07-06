@@ -229,9 +229,21 @@ export default function App() {
   const [snap, setSnap] = useState<Any | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Live API first (dev / self-hosted); fall back to the static snapshot
+  // published by CI (Cloudflare Pages deploy has no backend process).
   const load = () =>
     fetch("/api/overview")
-      .then((r) => r.json())
+      .then((r) => {
+        const ct = r.headers.get("content-type") ?? "";
+        if (!r.ok || !ct.includes("json")) throw new Error("no live api");
+        return r.json();
+      })
+      .catch(() =>
+        fetch("data/overview.json").then((r) => {
+          if (!r.ok) throw new Error("no live API and no static snapshot");
+          return r.json();
+        })
+      )
       .then(setSnap)
       .catch((e) => setErr(String(e)));
 
