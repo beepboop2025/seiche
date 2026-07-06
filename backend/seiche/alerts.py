@@ -131,6 +131,28 @@ def evaluate(snap: dict) -> list[dict]:
                            f"USD swap lines drawn ${swap['ops_30d_total_m']:.0f}M over 30d "
                            f"({', '.join(list(swap.get('ops_30d_by_counterparty', {}))[:3])}) — global dollar confession"))
 
+    moor = eng.get("moorings") or {}
+    thr = ALERT_RULES.get("peg_dev_bp")
+    if thr is not None and moor.get("ok"):
+        for p in moor.get("pegs", []):
+            if p.get("dev_bp") is not None and abs(p["dev_bp"]) >= thr:
+                candidates.append(("peg", f"{p['symbol']}:{(moor.get('usdt') or {}).get('asof', '')}",
+                                   f"{p['symbol']} peg {p['dev_bp']:+.0f}bp off $1 "
+                                   f"(${p.get('circulating_b')}B circulating) — offshore dollar strain"))
+    thr = ALERT_RULES.get("stable_drain_30d_pct")
+    dem = (moor.get("demand") or {})
+    if thr is not None and dem.get("chg_30d_pct") is not None and dem["chg_30d_pct"] <= thr:
+        candidates.append(("stable_drain", dem.get("asof", "?"),
+                           f"stablecoin circulation {dem['chg_30d_pct']:+.1f}%/30d "
+                           f"(${dem.get('chg_30d_b')}B) — offshore dollar redemptions"))
+
+    ml = (deep.get("ml") or {})
+    thr = ALERT_RULES.get("ml_event_prob")
+    if thr is not None and ml.get("ok") and (ml.get("p_event_5bd") or 0.0) >= thr:
+        candidates.append(("ml_event", ml.get("asof", "?"),
+                           f"ML Lab: P(funding event, 5bd) = {ml['p_event_5bd']:.0%} "
+                           f"({ml.get('verdict', '')[:60]})"))
+
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):
             if d.get("status") == "DEAD":

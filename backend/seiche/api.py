@@ -114,6 +114,17 @@ async def brief_text():
     return brief_mod.render_markdown(snap)
 
 
+@app.get("/api/ask")
+async def ask(q: str):
+    """Desk assistant: answers grounded strictly in the live board."""
+    from seiche import ai
+
+    if not q or len(q) > 600:
+        raise HTTPException(422, "q must be 1-600 characters")
+    snap = await assemble.snapshot()
+    return await ai.ask(q, snap)
+
+
 @app.get("/api/pit")
 async def pit(n: int = 400):
     """The forward-accruing as-published index record (no reconstruction)."""

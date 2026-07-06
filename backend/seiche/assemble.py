@@ -30,10 +30,12 @@ from seiche import store
 from seiche.config import (
     ALL_SERIES,
     CROWD_LOOKBACK_WEEKS,
+    CRYPTO_PRODUCTS,
     ECB_SERIES,
     FOMC_DECISION_DATES,
     FRED_SERIES,
     GLOBAL_FRED_SERIES,
+    INDIA_FRED_SERIES,
     MARKET_SERIES,
     OFR_SERIES,
     PLAYBOOK_OUTCOMES,
@@ -48,6 +50,8 @@ from seiche.engines import history as eng_history
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
 from seiche.engines import market as eng_market
+from seiche.engines import mlpred as eng_mlpred
+from seiche.engines import moorings as eng_moorings
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import rvxray as eng_rvxray
@@ -56,7 +60,7 @@ from seiche.engines import tails as eng_tails
 from seiche.engines import turn as eng_turn
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import cftc, ecb, fiscaldata, fred, nyfed, ofr
+from seiche.sources import cftc, crypto, ecb, fiscaldata, fred, nyfed, ofr
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -84,11 +88,15 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             except Exception as e:  # unexpected — still fail loud
                 faults.append({"source": name, "detail": f"{type(e).__name__}: {e}"})
 
-        fred_mnems = [s.mnemonic for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES]
+        fred_mnems = [
+            s.mnemonic
+            for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
+        ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
+            guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
             guard("nyfed_rates", nyfed.fetch_secured_rates(client)),
             guard("nyfed_srf", nyfed.fetch_srf_ops(client)),
             guard("nyfed_pd", nyfed.fetch_pd_positions(client)),
@@ -115,6 +123,19 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     out["nyfed_fxs"] = {
         "fetched_at": (src.get("nyfed_fxs") or {}).get("fetched_at"),
         "ops": [o for o in fxs if (o.get("trade_date") or "") <= asof.date().isoformat()],
+    }
+    cr = src.get("crypto") or {}
+    stable = cr.get("stable") or {}
+    total = stable.get("total", pd.Series(dtype=float))
+    out["crypto"] = {
+        "fetched_at": cr.get("fetched_at"),
+        "candles": {
+            m: Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq,
+                      s.fetched_at, s.points[s.points.index <= asof])
+            for m, s in (cr.get("candles") or {}).items()
+        },
+        # peg board is a spot-only feed — a replay has no vintage for it
+        "stable": {"board": [], "total": total[total.index <= asof] if not total.empty else total},
     }
     nr = src.get("nyfed_rates") or {}
     out["nyfed_rates"] = {
@@ -207,6 +228,14 @@ def _derived(src: dict) -> dict:
     d["tga"] = (src.get("tga") or {}).get("tga", pd.Series(dtype=float))
     d["dvp_vol_b"] = _vol_b(_pts(ofr_s, "DVP_VOL"))
     d["tri_vol_b"] = _vol_b(_pts(ofr_s, "TRI_VOL"))
+
+    candles = (src.get("crypto") or {}).get("candles", {})
+    usdt = candles.get("USDT_USD")
+    d["usdt_peg_bp"] = (
+        ((usdt.points.dropna() - 1.0) * 10_000.0) if usdt is not None else pd.Series(dtype=float)
+    )
+    btc = candles.get("BTC_USD")
+    d["btc"] = btc.points.dropna() if btc is not None else pd.Series(dtype=float)
     return d
 
 
@@ -312,6 +341,19 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         swap_lines_m=_pts(fred_s, "SWAP_LINES"),
         foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
         fx_ops=(src.get("nyfed_fxs") or {}).get("ops", []),
+        inr=_pts(fred_s, "INR"),
+        usdt_peg_bp=drv["usdt_peg_bp"],
+    ))
+
+    # --- Stablecoin moorings ---
+    stable = (src.get("crypto") or {}).get("stable", {})
+    run("moorings", lambda: eng_moorings.analyze(
+        board=stable.get("board", []),
+        usdt_usd=(src.get("crypto") or {}).get("candles", {}).get("USDT_USD").points
+        if (src.get("crypto") or {}).get("candles", {}).get("USDT_USD") is not None
+        else pd.Series(dtype=float),
+        stable_total_b=stable.get("total", pd.Series(dtype=float)),
+        btc_usd=drv["btc"],
     ))
 
     # --- SONAR ---
@@ -328,6 +370,12 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         series_map["SOFR_TAIL"] = ("SOFR P99-P50 tail", "bp", drv["tail_bp"])
         series_map["SRF"] = ("SRF accepted", "$B", drv["srf"])
         series_map["TGA"] = ("Treasury General Account", "$B", drv["tga"])
+        for m, s in ((src.get("crypto") or {}).get("candles") or {}).items():
+            spec = ALL_SERIES.get(m)
+            series_map[m] = (spec.label if spec else m, spec.unit if spec else "", s.points.dropna())
+        stable_total = ((src.get("crypto") or {}).get("stable") or {}).get("total")
+        if stable_total is not None and not stable_total.dropna().empty:
+            series_map["STABLE_TOTAL"] = ("Total stablecoin circulation", "$B", stable_total.dropna())
         return eng_sonar.sweep(series_map)
     run("sonar", _sonar)
 
@@ -406,7 +454,14 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         store.save_blob(cache_key, out)
         return out
 
-    outcomes = {m: _pts(fred_s, m) for m in PLAYBOOK_OUTCOMES}
+    candles = (src.get("crypto") or {}).get("candles", {})
+
+    def _outcome_series(m: str) -> pd.Series:
+        if m in candles:
+            return candles[m].points.dropna()
+        return _pts(fred_s, m)
+
+    outcomes = {m: _outcome_series(m) for m in PLAYBOOK_OUTCOMES}
 
     def run(name: str, fn):
         try:
@@ -438,6 +493,29 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
     run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
+
+    def _ml():
+        stable = (src.get("crypto") or {}).get("stable", {})
+        X, y = eng_mlpred.build_features(
+            spread_bp=spread,
+            tail_bp=drv["tail_bp"],
+            srf=drv["srf"],
+            dw_b=drv["dw_b"],
+            rrp_b=drv["rrp"],
+            res_gdp_pctl=drv["res_gdp_pctl"],
+            pair_b=engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float)),
+            digestion=engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float)),
+            lite_index=idx,
+            lite_pctl=pctl,
+            vix=_pts(fred_s, "VIX"),
+            hy_oas=_pts(fred_s, "HY_OAS"),
+            dgs10=_pts(fred_s, "DGS10"),
+            inr=_pts(fred_s, "INR"),
+            usdt_peg_bp=drv["usdt_peg_bp"],
+            stable_total_b=stable.get("total", pd.Series(dtype=float)),
+        )
+        return eng_mlpred.walk_forward(X, y)
+    run("ml", _ml)
 
     store.save_blob(cache_key, out)
     return out
@@ -544,6 +622,11 @@ def _provenance(src: dict) -> list[dict]:
     for group in ("fred", "ofr", "ecb"):
         for s in (src.get(group) or {}).values():
             prov.append(s.provenance())
+    for s in ((src.get("crypto") or {}).get("candles") or {}).values():
+        prov.append(s.provenance())
+    st = store.load_series("STABLE_TOTAL")
+    if st is not None:
+        prov.append(st.provenance())
     for key, label in (
         ("nyfed_rates", "NY Fed secured rates"),
         ("nyfed_srf", "NY Fed repo ops"),

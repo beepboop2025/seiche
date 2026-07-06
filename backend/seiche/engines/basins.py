@@ -52,9 +52,13 @@ def analyze(
     swap_lines_m: pd.Series,     # H.4.1 swaps outstanding, $M, weekly
     foreign_rrp_m: pd.Series,    # foreign official RRP, $M, weekly
     fx_ops: list[dict],          # NY Fed USD swap operations
+    inr: pd.Series | None = None,       # INR per USD (FRED DEXINUS)
+    usdt_peg_bp: pd.Series | None = None,  # USDT peg deviation, bp (crypto basin)
 ) -> dict:
     if spread_us_bp.dropna().empty:
         return {"ok": False, "reason": "no US spread history"}
+    inr = inr if inr is not None else pd.Series(dtype=float)
+    usdt_peg_bp = usdt_peg_bp if usdt_peg_bp is not None else pd.Series(dtype=float)
 
     # --- basin states -----------------------------------------------------
     eur_spread_bp = pd.Series(dtype=float)
@@ -85,6 +89,27 @@ def analyze(
             "z": round(_rolling_z(uk.diff().dropna()) or 0.0, 2),
             "asof": uk.index[-1].date().isoformat(),
         })
+    inr_d = inr.dropna()
+    if not inr_d.empty:
+        # FX channel only: CCIL is HTML-only and RBI DBIE presents a broken
+        # SSL chain (probed 2026-07-07) — a rates anchor joins when a feed
+        # meets the keyless bar. INR weakness/vol still couples the basin.
+        inr_vol = (inr_d.pct_change().rolling(10).std() * np.sqrt(252) * 100.0).dropna()
+        basins.append({
+            "basin": "INDIA", "anchor": "INR/USD (FX channel only — rates feed pending)",
+            "value_bp": round(float(inr_d.iloc[-1]), 2),
+            "z": round(_rolling_z(inr_d) or 0.0, 2),
+            "vol_z": round(_rolling_z(inr_vol) or 0.0, 2) if not inr_vol.empty else None,
+            "asof": inr_d.index[-1].date().isoformat(),
+        })
+    peg = usdt_peg_bp.dropna()
+    if not peg.empty:
+        basins.append({
+            "basin": "CRYPTO (offshore $)", "anchor": "USDT peg deviation",
+            "value_bp": round(float(peg.iloc[-1]), 1),
+            "z": round(_rolling_z(peg.abs()) or 0.0, 2),
+            "asof": peg.index[-1].date().isoformat(),
+        })
 
     # --- the tide -----------------------------------------------------------
     panel = {
@@ -94,6 +119,8 @@ def analyze(
         "Dollar idx": dxy.dropna(),
         "Foreign RRP": (foreign_rrp_m.dropna() / 1000.0),
         "Swap lines": (swap_lines_m.dropna() / 1000.0),
+        "INR": inr_d,
+        "USDT peg": peg,
     }
     panel = {k: v for k, v in panel.items() if not v.empty}
     df = pd.concat(panel, axis=1).sort_index().asfreq("B").ffill(limit=6)
@@ -191,8 +218,9 @@ def analyze(
         },
         "out_of_scope": (
             "Japan (TONA), China, Russia, African markets: no keyless daily feed that "
-            "meets the provenance bar — excluded rather than faked; basins plug into "
-            "config when a qualifying feed exists"
+            "meets the provenance bar — excluded rather than faked. India rides the FX "
+            "channel only (CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); a "
+            "rates anchor joins when a qualifying feed exists"
         ),
         "method": (
             f"tide = top-2 PC variance share of {BASIN_WINDOW_D}bd standardized daily "

@@ -94,6 +94,25 @@ BASIN_WINDOW_D = 120           # rolling window for cross-basin coupling
 BASIN_EDGE_MIN_ABS = 0.25      # min |lagged corr| for a cross-basin edge
 SWAP_LINE_OPS_N = 90           # NY Fed FX-swap operations to pull
 
+# India: CCIL serves HTML only and RBI DBIE presents a broken SSL chain
+# (probed 2026-07-07) — neither meets the keyless-reliable bar, so India
+# joins through the FX channel (FRED's official daily INR) with the rates
+# feed declared pending, not faked.
+INDIA_FRED_SERIES = [
+    SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
+]
+
+# Crypto: stablecoins are money market instruments now (USDT/USDC hold
+# $200B+ of T-bills); a peg break is a dollar-funding event and crypto is
+# the only dollar market open on weekends. DeFiLlama + Coinbase Exchange,
+# both keyless (verified 2026-07-07).
+CRYPTO_PRODUCTS = ["BTC-USD", "ETH-USD", "USDT-USD"]   # Coinbase daily candles
+CRYPTO_CANDLE_YEARS = 4
+CRYPTO_TTL_MIN = 240
+STABLE_TOP_N = 6               # stablecoins shown on the peg board
+PEG_DEV_FLAG_BP = 30.0         # |peg deviation| worth flagging
+STABLE_DRAIN_FLAG_PCT = -3.0   # 30d total-mcap change that reads as redemptions
+
 OFR_SERIES = [
     # TGCR/BGCR are 404 on FRED's CSV endpoint — sourced from OFR instead.
     SeriesSpec("BGCR", "ofr", "FNYR-BGCR-A", "Broad general collateral rate", "%", "D", 360),
@@ -138,9 +157,18 @@ PD_POSITION_SERIES = {
     "PDPOSGSC-G21": "Coupons >21y",
 }
 
+# Crypto series live in the same store/provenance envelope as everything else.
+CRYPTO_SERIES = [
+    SeriesSpec("BTC_USD", "crypto", "coinbase:BTC-USD", "Bitcoin (Coinbase daily close)", "$", "D", CRYPTO_TTL_MIN),
+    SeriesSpec("ETH_USD", "crypto", "coinbase:ETH-USD", "Ether (Coinbase daily close)", "$", "D", CRYPTO_TTL_MIN),
+    SeriesSpec("USDT_USD", "crypto", "coinbase:USDT-USD", "Tether/USD (the peg, daily close)", "$", "D", CRYPTO_TTL_MIN),
+    SeriesSpec("STABLE_TOTAL", "crypto", "defillama:total", "Total stablecoin circulation", "$B", "D", CRYPTO_TTL_MIN),
+]
+
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
-    for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + OFR_SERIES + ECB_SERIES
+    for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
+    + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
 }
 
 # ---------------------------------------------------------------------------
@@ -283,6 +311,7 @@ PLAYBOOK_OUTCOMES = {
     "IG_OAS": ("IG OAS change (bp)", "diff_bp"),
     "DGS10": ("10y yield change (bp)", "diff_bp"),
     "DGS2": ("2y yield change (bp)", "diff_bp"),
+    "BTC_USD": ("BTC return", "pct"),
 }
 PLAYBOOK_MIN_N = 8              # below this sample size a cell renders as "n/a"
 
@@ -297,6 +326,17 @@ BACKTEST_SPIKE_BP = 10.0        # "funding event" = SOFR-IORB jumps >= this vs t
 BACKTEST_EVENT_FWD_D = 5        # within this many business days
 BACKTEST_ALERT_PCTL = 80.0      # index percentile treated as an "alert"
 BACKTEST_MIN_WARMUP_D = 250     # expanding-z warmup before scoring starts
+
+# ---------------------------------------------------------------------------
+# ML Lab. Same event definition as the backtest; the model must beat BOTH
+# climatology and the rule-based index out-of-sample or it says so. Trailing-
+# only features, walk-forward refits — no shuffled CV (that's leakage on
+# time series), no test-set peeking.
+# ---------------------------------------------------------------------------
+
+ML_WARMUP_D = 500               # days of history before the first OOS prediction
+ML_REFIT_EVERY_BD = 42          # walk-forward refit cadence (~2 months)
+ML_PROB_ALERT = 0.5             # alert when P(event within 5bd) crosses this
 
 # ---------------------------------------------------------------------------
 # FOMC calendar (static; update annually from federalreserve.gov —
@@ -358,6 +398,9 @@ ALERT_RULES = {
     "crunch_within_d": 10,          # crunch window enters this horizon
     "turn_severity": 4,             # forecast turn severity >= this (1..5)
     "swap_line_usd_m": 1000.0,      # USD swap-line ops, 30d total >= $1B
+    "peg_dev_bp": PEG_DEV_FLAG_BP,  # any major stablecoin |peg dev| >= this
+    "stable_drain_30d_pct": STABLE_DRAIN_FLAG_PCT,  # offshore dollar redemptions
+    "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)

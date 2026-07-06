@@ -1,5 +1,46 @@
+import { useState } from "react";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method, Stat, Decomp } from "../lib";
+
+function AskCard({ live }: { live: boolean }) {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<Any | null>(null);
+  if (!live) return null;
+  const go = () => {
+    if (!q.trim()) return;
+    setBusy(true);
+    fetch(`/api/ask?q=${encodeURIComponent(q.trim())}`)
+      .then((r) => r.json())
+      .then(setRes)
+      .catch((e) => setRes({ ok: false, reason: String(e) }))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="card span12">
+      <h2>Ask the desk</h2>
+      <div className="sub">answers are restricted to the live board (every number cited to its engine) — not advice</div>
+      <div className="tmcontrols">
+        <input
+          type="text" value={q} placeholder='e.g. "why is the index elevated?" · "what should I watch this week?"'
+          style={{ flex: 1, minWidth: 280, background: "var(--bg)", border: "1px solid var(--panel-edge)",
+                   color: "var(--text)", fontFamily: "var(--mono)", fontSize: 12, padding: "8px 10px", borderRadius: 4 }}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && go()}
+        />
+        <button onClick={go} disabled={busy || !q.trim()}>{busy ? "reading the board…" : "ask"}</button>
+      </div>
+      {res && (res.ok ? (
+        <div className="askanswer">
+          {res.answer}
+          <div className="method" style={{ marginTop: 8 }}>[{res.route}] {res.grounding}</div>
+        </div>
+      ) : (
+        <div className="faults">{res.reason}</div>
+      ))}
+    </div>
+  );
+}
 
 function KinkCard({ e }: { e: Any }) {
   if (!e?.ok) return <Fault name="Kink Engine" reason={e?.reason} />;
@@ -97,10 +138,11 @@ function EchoCard({ e }: { e: Any }) {
   );
 }
 
-export default function Board({ snap }: { snap: Any }) {
+export default function Board({ snap, live }: { snap: Any; live: boolean }) {
   const c = snap.engines.composite ?? {};
   const kinkB = snap.engines.kink?.ok ? snap.engines.kink.kink_reserves_b : null;
   const tell = snap.deep?.tell ?? {};
+  const ml = snap.deep?.ml ?? {};
 
   return (
     <>
@@ -113,6 +155,11 @@ export default function Board({ snap }: { snap: Any }) {
             {tell.ok && (
               <div className={`tellchip ${tell.tell >= 15 ? "hot" : tell.tell <= -15 ? "cold" : ""}`}>
                 TELL {tell.tell > 0 ? "+" : ""}{fmt(tell.tell, 0)} · {tell.reading}
+              </div>
+            )}
+            {ml.ok && (
+              <div className={`tellchip ${ml.p_event_5bd >= 0.5 ? "hot" : ""}`} style={{ marginLeft: 6 }}>
+                ML P(event 5bd) {fmt(ml.p_event_5bd * 100, 1)}%
               </div>
             )}
           </div>
@@ -138,6 +185,7 @@ export default function Board({ snap }: { snap: Any }) {
         <KinkCard e={snap.engines.kink} />
         <TailsCard e={snap.engines.tails} />
         <EchoCard e={snap.engines.echo} />
+        <AskCard live={live} />
       </div>
     </>
   );

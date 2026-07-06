@@ -275,3 +275,102 @@ def test_rvxray_ignores_non_ust_contracts(rng):
     hist = rvxray.position_history(df)
     # only the UST contract contributes: min(40k, 35k) * $200k face = $7.0B
     assert round(float(hist["pair_b"].iloc[0]), 1) == 7.0
+
+
+# --------------------------------------------------------------------------
+# Moorings
+# --------------------------------------------------------------------------
+
+def test_moorings_flags_depeg_and_drain(rng):
+    from seiche.engines import moorings
+    idx = _bdays(400)
+    cal = pd.date_range(idx[0], idx[-1], freq="D")
+    usdt = pd.Series(1.0 + rng.normal(0, 0.0003, len(cal)), index=cal)
+    usdt.iloc[-1] = 0.99  # -100bp depeg today
+    total = pd.Series(300.0, index=cal)
+    total.iloc[-40:] = np.linspace(300, 270, 40)  # -10% in ~40 days = real redemptions
+    btc = pd.Series(60000 * np.exp(np.cumsum(rng.normal(0, 0.02, len(cal)))), index=cal)
+    board = [{"symbol": "USDT", "circulating_b": 180.0, "price": 0.99}]
+    r = moorings.analyze(board, usdt, total, btc)
+    assert r["ok"]
+    assert r["pegs"][0]["flag"], "-100bp must flag"
+    assert r["demand"]["draining"]
+    assert r["score"] > 30
+
+
+# --------------------------------------------------------------------------
+# ML Lab
+# --------------------------------------------------------------------------
+
+def _ml_inputs(rng, n=1400):
+    idx = _bdays(n)
+    cal_w = pd.date_range(idx[0], idx[-1], freq="W-WED")
+    spread = pd.Series(rng.normal(0, 1.5, len(idx)), index=idx)
+    return dict(
+        spread_bp=spread,
+        tail_bp=pd.Series(np.abs(rng.normal(4, 2, len(idx))), index=idx),
+        srf=pd.Series(0.0, index=idx),
+        dw_b=pd.Series(2.0, index=cal_w),
+        rrp_b=pd.Series(np.linspace(2000, 0, len(idx)), index=idx),
+        res_gdp_pctl=pd.Series(np.linspace(1, 0, len(cal_w)), index=cal_w),
+        pair_b=pd.Series(np.linspace(300, 900, len(cal_w)), index=cal_w),
+        digestion=pd.Series(rng.normal(0, 0.5, len(cal_w)), index=cal_w),
+        lite_index=pd.Series(30.0, index=idx),
+        lite_pctl=pd.Series(rng.uniform(0, 100, len(idx)), index=idx),
+        vix=pd.Series(np.abs(rng.normal(18, 4, len(idx))), index=idx),
+        hy_oas=pd.Series(np.abs(rng.normal(3.5, 0.5, len(idx))), index=idx),
+        dgs10=pd.Series(4 + np.cumsum(rng.normal(0, 0.02, len(idx))), index=idx),
+        inr=pd.Series(90 + np.cumsum(rng.normal(0, 0.1, len(idx))), index=idx),
+        usdt_peg_bp=pd.Series(rng.normal(0, 3, len(idx)), index=idx),
+        stable_total_b=pd.Series(np.linspace(150, 310, len(idx)), index=idx),
+    )
+
+
+def test_ml_features_label_matches_event_definition(rng):
+    from seiche.engines import mlpred
+    inputs = _ml_inputs(rng)
+    # inject a known spike far from the sample edges
+    inputs["spread_bp"].iloc[700] += 30.0
+    X, y = mlpred.build_features(**inputs)
+    spike_date = inputs["spread_bp"].index[700]
+    # the 5 business days BEFORE the spike must be labeled 1
+    prior = y.loc[: spike_date].iloc[-6:-1]
+    assert prior.sum() >= 4, "days ahead of an injected spike must carry positive labels"
+
+
+def test_ml_walkforward_survives_late_starting_features(rng):
+    from seiche.engines import mlpred
+    inputs = _ml_inputs(rng)
+    # crypto-style column: entirely NaN for the first 800 days
+    inputs["usdt_peg_bp"].iloc[:800] = np.nan
+    for loc in range(600, 1300, 60):
+        inputs["spread_bp"].iloc[loc] += 25.0
+    X, y = mlpred.build_features(**inputs)
+    r = mlpred.walk_forward(X, y)
+    assert r["ok"], r.get("reason")
+    assert 0.0 <= r["p_event_5bd"] <= 1.0
+    assert r["validation"]["oos_events"] >= 5
+    assert "verdict" in r
+
+
+# --------------------------------------------------------------------------
+# AI context pack
+# --------------------------------------------------------------------------
+
+def test_context_pack_is_compact_and_json_safe():
+    import json as _json
+    from seiche import ai
+    snap = {
+        "generated_at": "2026-07-07T00:00:00+00:00", "version": "test",
+        "engines": {"composite": {"value": 47.7, "regime": "STRAIN", "coverage_pct": 100.0,
+                                  "dead_inputs": [], "decomposition": []},
+                    "sonar": {"movers": []}, "weather": {}, "kink": {}, "resonance": {},
+                    "warehouse": {}, "echo": {}, "basins": {}, "moorings": {}},
+        "deep": {"tell": {}, "turn": {}, "ml": {}, "playbook": {}, "backtest": {}},
+        "headline": {}, "calendar": {}, "faults": [], "provenance": [{"staleness": "fresh"}],
+    }
+    pack = ai.context_pack(snap)
+    blob = _json.dumps(pack, default=str)
+    assert len(blob) < 60_000
+    assert pack["composite"]["regime"] == "STRAIN"
+    assert pack["provenance_staleness"] == {"fresh": 1}

@@ -132,6 +132,43 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_ml(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    ml = snap.get("deep", {}).get("ml", {})
+    if not ml.get("ok"):
+        print(f"{RED}ML Lab unavailable:{END} {ml.get('reason')}", file=sys.stderr)
+        return 1
+    v = ml["validation"]
+    print(f"{BOLD}ML LAB{END} P(funding event, 5bd) = {ml['p_event_5bd']:.1%}  ·  {ml['verdict']}")
+    print(f"  OOS: {v['oos_days']}d / {v['oos_events']} events (base rate {v['base_rate']:.1%})")
+    rule = f" vs rule-based {v['auroc_rule_based']:.3f}" if v.get("auroc_rule_based") is not None else ""
+    print(f"  AUROC {v['auroc']:.3f}{rule} · Brier {v['brier']:.4f} vs climatology {v['brier_climatology']:.4f}")
+    print(f"{BOLD}reliability{END} (predicted vs realized)")
+    for r in ml.get("reliability", []):
+        print(f"  {r['bin']:>10}  pred {r['mean_pred']:.3f}  real {r['realized']:.3f}  n={r['n']}")
+    print(f"{BOLD}top features{END}")
+    for f in ml.get("top_features", [])[:6]:
+        print(f"  {f['feature']:<18} {f['importance']:+.4f}")
+    for c in ml.get("caveats", []):
+        print(f"{DIM}  caveat: {c}{END}")
+    return 0
+
+
+def cmd_ask(args) -> int:
+    from seiche import ai, assemble
+    snap = asyncio.run(assemble.snapshot())
+    res = asyncio.run(ai.ask(" ".join(args.question), snap))
+    if res.get("ok"):
+        print(f"{DIM}[{res['route']}]{END} {res['answer']}")
+        print(f"{DIM}{res['grounding']}{END}")
+        return 0
+    print(f"{RED}{res.get('reason')}{END}", file=sys.stderr)
+    print(f"{DIM}{res.get('hint')}{END}", file=sys.stderr)
+    print(json.dumps(res.get("context_pack", {}), indent=1, default=str)[:4000])
+    return 1
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("seiche.api:app", host=args.host, port=args.port, reload=False)
@@ -163,6 +200,12 @@ def main() -> None:
     p.set_defaults(fn=cmd_replay)
 
     sub.add_parser("backtest", help="PROOF summary").set_defaults(fn=cmd_backtest)
+
+    sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
+
+    p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
+    p.add_argument("question", nargs="+", help="your question")
+    p.set_defaults(fn=cmd_ask)
 
     p = sub.add_parser("serve", help="run API + UI")
     p.add_argument("--host", default="127.0.0.1")

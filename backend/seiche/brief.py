@@ -128,6 +128,25 @@ def render_markdown(snap: dict) -> str:
     if echo.get("ok") and echo.get("top"):
         t = echo["top"]
         lines.append(f"- Echo: {t['similarity']:.2f} similar to T−{t['lead_days']}d before {echo['matches'][0]['episode']}")
+    moor = eng.get("moorings", {})
+    if moor.get("ok"):
+        u = moor.get("usdt") or {}
+        dem = moor.get("demand") or {}
+        bits = []
+        if u.get("dev_bp") is not None:
+            bits.append(f"USDT peg {u['dev_bp']:+.0f}bp")
+        if dem.get("total_b") is not None:
+            bits.append(f"stablecoins ${dem['total_b']:.0f}B ({dem.get('chg_30d_pct', 0):+.1f}%/30d)")
+        can = moor.get("canary") or {}
+        if can.get("btc_rv10_z") is not None and abs(can["btc_rv10_z"]) >= 1.5:
+            bits.append(f"BTC vol z {can['btc_rv10_z']}")
+        if bits:
+            lines.append(f"- Moorings: {' · '.join(bits)}")
+    basins_e = eng.get("basins", {})
+    if basins_e.get("ok"):
+        hot = [b for b in basins_e.get("basins", []) if abs(b.get("z") or 0) >= 1.5]
+        for b in hot[:2]:
+            lines.append(f"- Basin {b['basin']}: {b['value_bp']} ({b['anchor']}) z {b['z']}")
     lines.append("")
 
     faults = snap.get("faults") or []

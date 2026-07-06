@@ -1,6 +1,59 @@
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
+function MooringsCard({ m }: { m: Any }) {
+  if (!m?.ok) return <Fault name="Stablecoin Moorings" reason={m?.reason} span={12} />;
+  const u = m.usdt ?? {};
+  const d = m.demand ?? {};
+  const c = m.canary ?? {};
+  return (
+    <div className="card span12">
+      <h2>Stablecoin Moorings</h2>
+      <div className="sub">
+        the offshore-dollar basin's tie lines — stablecoins hold $200B+ of T-bills; a peg break is a
+        funding event and crypto trades when funding markets sleep · score {fmt(m.score, 0)}
+      </div>
+      <div className="basingrid">
+        {(m.pegs ?? []).map((p: Any) => (
+          <div className={`basin ${p.flag ? "hot" : ""}`} key={p.symbol}>
+            <div className="name">{p.symbol}</div>
+            <div className="rate">{p.dev_bp == null ? "—" : `${p.dev_bp > 0 ? "+" : ""}${fmt(p.dev_bp, 1)}bp`}</div>
+            <div className="z" style={{ color: "#6b7686" }}>${fmt(p.circulating_b, 1)}B circulating</div>
+          </div>
+        ))}
+        <div className="basin">
+          <div className="name">OFFSHORE $ DEMAND</div>
+          <div className="rate">${fmt(d.total_b, 0)}B</div>
+          <div className="z" style={{ color: d.draining ? "#e88a3a" : "#6b7686" }}>
+            {d.chg_30d_pct > 0 ? "+" : ""}{fmt(d.chg_30d_pct, 1)}%/30d ({fmt(d.chg_30d_b, 1)}B)
+          </div>
+        </div>
+        <div className="basin">
+          <div className="name">24/7 CANARY (BTC)</div>
+          <div className="rate">${fmt(c.btc_last, 0)}</div>
+          <div className="z" style={{ color: Math.abs(c.btc_rv10_z ?? 0) >= 1.5 ? "#e88a3a" : "#6b7686" }}>
+            rv10 {fmt(c.btc_rv10_pct, 0)}% (z {fmt(c.btc_rv10_z, 2)}) · max wknd move {fmt(c.max_weekend_move_4w_pct, 1)}%
+          </div>
+        </div>
+      </div>
+      <div className="warehouse-row">
+        <div className="warehouse-chart">
+          {u.series?.length > 0 && (
+            <Chart rows={u.series} series={[{ label: "USDT peg deviation bp", color: "#37c88b" }]}
+                   refLine={{ value: 0, color: "#3d4654", label: "" }} height={140} />
+          )}
+        </div>
+        <div className="warehouse-chart">
+          {d.series?.length > 0 && (
+            <Chart rows={d.series} series={[{ label: "total stablecoins $B", color: "#8a63d2" }]} height={140} />
+          )}
+        </div>
+      </div>
+      <Method>{m.caveat} · {m.method}</Method>
+    </div>
+  );
+}
+
 export default function Global({ snap }: { snap: Any }) {
   const e = snap.engines?.basins ?? {};
   if (!e.ok) return <div className="grid"><Fault name="Global Basins" reason={e.reason} span={12} /></div>;
@@ -110,6 +163,8 @@ export default function Global({ snap }: { snap: Any }) {
         </table>
         <Method>NY Fed FX swap operations + H.4.1 weekly outstanding · the 2020 peak was ~$450B</Method>
       </div>
+
+      <MooringsCard m={snap.engines?.moorings} />
     </div>
   );
 }

@@ -161,3 +161,38 @@ reported alongside, never weighted in (context/signal, not stress evidence).
 - Faking global coverage (Japan/China/Russia/Africa) from monthly or scraped
   data — declared out of scope instead; basins plug into config when a
   qualifying feed exists.
+
+---
+
+# v2.1 addendum — crypto, India, ML Lab, desk assistant (2026-07-07)
+
+**Gap audit verdict that drove this round:** v2 had no offshore-dollar coverage
+(stablecoins ARE money market funds now — $200B+ of T-bills — and crypto is the only
+dollar market open on weekends), no India coverage (home turf), no learned layer over
+the honest feature history, and no assistant to read the board aloud.
+
+- **Stablecoin Moorings** — DeFiLlama peg board + ~8y total-circulation history,
+  Coinbase USDT-USD daily closes as the peg-history series, BTC 10d realized vol +
+  largest-weekend-move canary. Context engine: never weighted into the composite.
+  Small-value swap-test discipline carried over: USDC/DAI pegs are spot-only and say so.
+- **India basin** — CCIL (HTML-only) and RBI DBIE (broken SSL chain) fail the keyless
+  bar, both probed 2026-07-07. India joins through the FX channel (FRED DEXINUS daily,
+  official): level z + realized-vol z + a coupling row in the Tide panel. Declared
+  partial, not faked; a rates anchor (WACR/MIBOR) plugs in when a qualifying feed exists.
+- **ML Lab** (`engines/mlpred.py`, sklearn HistGradientBoosting) — P(funding event
+  within 5bd), same event definition as PROOF. 22 trailing-only features (plumbing,
+  market, crypto, calendar distances). Walk-forward refits every 42bd after 500d
+  warmup; NO shuffled CV. Benchmarked against climatology AND the rule-based index;
+  the verdict self-demotes when it loses. Build-time result: OOS AUROC 0.813 vs
+  0.806 rule-based, Brier beats climatology; reliability table shows top-bin
+  overconfidence (printed, not hidden). Top feature: bd_to_month_end — the calendar
+  dominates, independently confirming the Resonance thesis. Known trap fixed: an
+  all-NaN column (crypto pre-2021) crashes the HGB binner — columns drop per-fit
+  until they have data.
+- **Desk assistant** (`ai.py`) — deterministic context pack (composite decomposition,
+  headline, Tell/Turn/ML, calendar, movers, faults, staleness counts) is the model's
+  ONLY world; system prompt requires engine+asof citations and "not on the board"
+  over improvisation. Routed via free-llm-router free tiers (fast tier preferred —
+  free smart tiers serve reasoning models that leak chain-of-thought; a stripper
+  handles the leak when smart is the only survivor), else SEICHE_LLM_* env endpoint,
+  else fails open returning the pack itself. Surfaces: /api/ask, `seiche ask`, BOARD.

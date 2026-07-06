@@ -95,7 +95,7 @@ export default function App() {
         </div>
       )}
 
-      {tab === "BOARD" && <Board snap={snap} />}
+      {tab === "BOARD" && <Board snap={snap} live={live} />}
       {tab === "MARKET" && <Market snap={snap} />}
       {tab === "GLOBAL" && <Global snap={snap} />}
       {tab === "CALENDAR" && <Calendar snap={snap} />}

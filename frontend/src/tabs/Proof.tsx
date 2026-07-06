@@ -1,6 +1,61 @@
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
+function MLCard({ ml }: { ml: Any }) {
+  if (!ml?.ok) {
+    return (
+      <div className="card span12">
+        <h2>ML Lab</h2>
+        <div className="faults">unavailable — {ml?.reason ?? "not computed"}</div>
+      </div>
+    );
+  }
+  const v = ml.validation ?? {};
+  return (
+    <div className="card span12">
+      <h2>ML Lab</h2>
+      <div className="sub">
+        learned P(funding event within 5bd) — walk-forward only, benchmarked against climatology AND the
+        rule-based index · <b>{ml.verdict}</b>
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">P(event, 5bd) now</div>
+          <div className={`v ${ml.p_event_5bd >= 0.5 ? "bad" : ml.p_event_5bd >= 0.25 ? "warn" : ""}`}>
+            {fmt(ml.p_event_5bd * 100, 1)}%
+          </div></div>
+        <div className="item"><div className="k">OOS AUROC</div><div className="v">{fmt(v.auroc, 3)}</div></div>
+        <div className="item"><div className="k">rule-based AUROC</div><div className="v">{fmt(v.auroc_rule_based, 3)}</div></div>
+        <div className="item"><div className="k">Brier / climatology</div><div className="v">{fmt(v.brier, 4)} / {fmt(v.brier_climatology, 4)}</div></div>
+        <div className="item"><div className="k">OOS sample</div><div className="v">{v.oos_days}d · {v.oos_events} events</div></div>
+        <div className="item"><div className="k">base rate</div><div className="v">{fmt((v.base_rate ?? 0) * 100, 1)}%</div></div>
+      </div>
+      <Chart rows={ml.p_series} series={[{ label: "P(event, 5bd) — walk-forward OOS", color: "#e88a3a" }]} height={150} />
+      <div className="warehouse-row" style={{ marginTop: 8 }}>
+        <table className="mini" style={{ maxWidth: 380 }}>
+          <thead><tr><th colSpan={4}>reliability (trust a level only if these match)</th></tr>
+            <tr><th>bin</th><th>predicted</th><th>realized</th><th>n</th></tr></thead>
+          <tbody>
+            {(ml.reliability ?? []).map((r: Any) => (
+              <tr key={r.bin}><td>{r.bin}</td><td className="num">{fmt(r.mean_pred, 3)}</td>
+                <td className="num">{fmt(r.realized, 3)}</td><td className="num">{r.n}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        <table className="mini" style={{ maxWidth: 320 }}>
+          <thead><tr><th colSpan={2}>top features (permutation)</th></tr></thead>
+          <tbody>
+            {(ml.top_features ?? []).slice(0, 8).map((f: Any) => (
+              <tr key={f.feature}><td>{f.feature}</td><td className="num">{fmt(f.importance, 4)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(ml.caveats ?? []).map((c: string, i: number) => <div className="caveat" key={i}>▸ {c}</div>)}
+      <Method>{ml.method}</Method>
+    </div>
+  );
+}
+
 export default function Proof({ snap }: { snap: Any }) {
   const bt = snap.deep?.backtest ?? {};
   const hist = snap.deep?.history ?? {};
@@ -82,6 +137,8 @@ export default function Proof({ snap }: { snap: Any }) {
           <div className="caveat" key={i}>▸ {c}</div>
         ))}
       </div>
+
+      <MLCard ml={snap.deep?.ml} />
 
       {(bt.outcome_tables ?? []).length > 0 && (
         <div className="card span12">

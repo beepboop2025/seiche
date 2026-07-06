@@ -4,10 +4,11 @@
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
 **Seiche is a funding-stress, positioning and divergence terminal** for the dollar
-funding system — US money markets, the Treasury capital-market complex, and the
-global basins connected to them through the swap lines. Zero data cost: built
+funding system — US money markets, the Treasury capital-market complex, the global
+basins connected to them through the swap lines, and the offshore-dollar crypto
+basin moored to the T-bill market through stablecoins. Zero data cost: built
 entirely on free, keyless public APIs (FRED, NY Fed Markets, OFR STFM, Treasury
-FiscalData, CFTC, ECB Data Portal).
+FiscalData, CFTC, ECB Data Portal, DeFiLlama, Coinbase Exchange).
 
 Every 2025–26 stress event (Sep 15 2025 tax-date squeeze, Oct/Dec 2025 record SRF
 draws, Apr 2025 basis unwind) was front-run by *plumbing* signals while price screens
@@ -30,10 +31,18 @@ layer none of them have: **honest evidence about itself**.
 | **Warehouse** | How full is the primary-dealer balance sheet — the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
 | **Resonance Engine** ★ | *The seiche made literal:* does the same calendar forcing (month-end, quarter-end, year-end, tax dates) produce a bigger slosh than it used to? Amplification = damping loss = fragility rising while levels look calm. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
-| **Global Basin Coupling** ★ | Are the US, euro-area and UK basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
+| **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
+| **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
+| **ML Lab** | Learned P(funding event within 5bd): walk-forward only, benchmarked against climatology AND the rule-based index, reliability table published. Verdict at build: beats both (OOS AUROC 0.813 vs 0.806 rule-based). |
 | **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
 
 ★ = methods invented for this tool.
+
+**The desk assistant**: `seiche ask "why is the index elevated?"` (or the Ask box on
+BOARD) answers strictly from a deterministic context pack of the live board — every
+number cited to its engine and as-of date, "not on the board" instead of improvisation.
+Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint via
+`SEICHE_LLM_BASE_URL`; with neither configured it returns the context pack itself.
 
 **The analytics layers on top:**
 
@@ -86,6 +95,8 @@ seiche alert              # evaluate alert rules once (cron/launchd-friendly; ex
 seiche watch -i 1800      # pull + alert on a loop
 seiche replay 2019-09-12  # Time Machine in the terminal
 seiche backtest           # PROOF summary
+seiche ml                 # ML Lab: event probability + honest validation
+seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 ```
 
