@@ -66,6 +66,23 @@ def _notify_webhook(message: str) -> None:
         pass
 
 
+def _notify_telegram(message: str) -> None:
+    """Native Telegram delivery: set SEICHE_TELEGRAM_BOT_TOKEN and
+    SEICHE_TELEGRAM_CHAT_ID (bot must have been /start-ed once)."""
+    token = os.environ.get("SEICHE_TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("SEICHE_TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        httpx.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": f"SEICHE: {message}"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def evaluate(snap: dict) -> list[dict]:
     """Evaluate all rules against a snapshot; fire + persist new alerts."""
     eng = snap.get("engines", {})
@@ -167,6 +184,7 @@ def evaluate(snap: dict) -> list[dict]:
             _record(conn, rule, state_key, message)
             _notify_macos(message)
             _notify_webhook(message)
+            _notify_telegram(message)
             fired.append({"rule": rule, "state": state_key, "message": message})
     finally:
         conn.close()
