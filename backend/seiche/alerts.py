@@ -180,6 +180,17 @@ def evaluate(snap: dict) -> list[dict]:
                            f"saw a funding event within 5bd (base rate {odds.get('base_rate', 0):.0%}, "
                            f"water {nov})"))
 
+    book_today = ((deep.get("book") or {}).get("today") or {}) if (deep.get("book") or {}).get("ok") else {}
+    if ALERT_RULES.get("book_flip") and book_today.get("stance"):
+        sig = ",".join(
+            f"{p.get('sleeve')}{p.get('weight'):+.1f}"
+            for p in book_today.get("positions", []) if p.get("weight")
+        ) or "flat"
+        candidates.append(("book_flip", f"{book_today['stance']}:{sig}",
+                           f"the Book is {book_today['stance']} ({sig}) — "
+                           f"P(event,5bd)={book_today.get('p_ensemble')}, "
+                           f"dispersion {book_today.get('dispersion')}"))
+
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):
             if d.get("status") == "DEAD":

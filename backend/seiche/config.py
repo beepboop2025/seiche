@@ -170,6 +170,8 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
     + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
 }
+# PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
+# (they are declared later in the file to keep the Far Basin block coherent).
 
 # ---------------------------------------------------------------------------
 # Staleness classification (fail-loud provenance).
@@ -358,6 +360,88 @@ ML_REFIT_EVERY_BD = 42          # walk-forward refit cadence (~2 months)
 ML_PROB_ALERT = 0.5             # alert when P(event within 5bd) crosses this
 
 # ---------------------------------------------------------------------------
+# The Stack — walk-forward ensemble of the three P(event) streams + The Tell.
+# Fleet doctrine: the fitted stack must beat the zero-parameter equal-weight
+# mean of its members out-of-sample or the mean is published instead (same
+# publish-naive rule as the Turn Barometer). Member disagreement (dispersion)
+# is itself an output: when the fleet splits, conviction drops.
+# ---------------------------------------------------------------------------
+
+STACK_WARMUP_D = 250            # scored member history before the first OOS stack print
+STACK_REFIT_EVERY_BD = 42       # same cadence as ML_REFIT_EVERY_BD
+STACK_L2_C = 1.0                # logistic regularization, fixed — never fitted to OOS
+STACK_MIN_MEMBERS = 2           # a row is scored only with >= this many live members
+
+# ---------------------------------------------------------------------------
+# The Book (HELM tab) — the signal made accountable: explicit daily positions
+# on a small liquid universe, walk-forward P&L with costs, and an accruing
+# hash-chained as-published record. PAPER PROXY, stated everywhere: duration
+# sleeves are constant-maturity par-yield approximations (carry + duration +
+# convexity), not tradeable futures; close-to-close only; not investment advice.
+# Every constant here is editorial, frozen, and disclosed.
+# ---------------------------------------------------------------------------
+
+BOOK_SLEEVES = {
+    # duration proxies: r ≈ y/252 (carry) − D·Δy + ½·C·Δy²; D/C are rough
+    # constant-maturity values — the approximation is printed, not hidden.
+    "ust2y":  {"proxy": "DGS2",    "kind": "duration", "mod_dur": 1.90, "convexity": 4.5,  "tcost_bp": 1.0,  "label": "2y UST duration"},
+    "ust10y": {"proxy": "DGS10",   "kind": "duration", "mod_dur": 7.90, "convexity": 70.0, "tcost_bp": 2.0,  "label": "10y UST duration"},
+    "spx":    {"proxy": "SP500",   "kind": "price",    "tcost_bp": 3.0,  "label": "S&P 500"},
+    "btc":    {"proxy": "BTC_USD", "kind": "price",    "tcost_bp": 15.0, "label": "Bitcoin"},
+}
+BOOK_CASH_PROXY = "TB3M"        # cash accrual y/252 (discount-rate convention, stated)
+# Direction per sleeve per stance. Economic prior (funding stress = risk-off,
+# flight-to-quality bid for the front end), cross-checked against the PROOF
+# outcome tables and FROZEN — changing these reruns history, and the caveat
+# that they were chosen knowing that history is printed verbatim.
+BOOK_STANCE_MAP = {
+    "risk_off": {"ust2y": 1.0, "ust10y": 0.5, "spx": -1.0, "btc": -0.5},
+    "risk_on":  {"ust2y": 0.0, "ust10y": 0.0, "spx": 1.0,  "btc": 0.5},
+    "neutral":  {"ust2y": 0.0, "ust10y": 0.0, "spx": 0.0,  "btc": 0.0},
+}
+BOOK_P_ENTER_RISKOFF = 0.35     # hysteresis: enter high…
+BOOK_P_EXIT_RISKOFF = 0.22      # …exit lower (turnover control)
+BOOK_P_RISKON = 0.08            # risk_on needs quiet plumbing AND price panicking:
+BOOK_TELL_RISKON = -15.0        # Tell <= this (price leads plumbing)
+BOOK_DISPERSION_GATE = 0.25     # member-prob std above this forces neutral
+BOOK_VOL_TARGET_ANN = 0.10      # per-sleeve annualized vol target
+BOOK_VOL_LOOKBACK_D = 63
+BOOK_VOL_MIN_PERIODS = 21
+BOOK_MAX_WEIGHT = 1.0           # per-sleeve |w| cap
+BOOK_MAX_GROSS = 2.0            # Σ|w| cap (proportional scale-down)
+BOOK_SIGNAL_LAG_BD = 1          # weights formed at t earn returns at t+1
+BOOK_BENCH_STATIC = {"ust2y": 0.20, "ust10y": 0.15, "spx": 0.50, "btc": 0.05}
+BOOK_BOOT_BLOCK_D = 21          # stationary block bootstrap for the Sharpe CI
+BOOK_BOOT_N = 2000
+BOOK_LIVE_MIN_D = 60            # live Sharpe printed only past this many as-published days
+
+# ---------------------------------------------------------------------------
+# Far Basin — Palimpsest (palimpsest.info): the policy-fear channel. What the
+# Chinese state rushes to delete is a real-time stress read no market vendor
+# carries. Keyless CI-published JSON; palimpsest.info primary with the GitHub
+# raw mirror as fallback. HONEST SCOPE: the feeds are days old as a public
+# series — they accrue in the local store and are labeled NOT YET BACKTESTABLE
+# until they clear FARBASIN_MIN_OBS. Never weighted into the composite.
+# ---------------------------------------------------------------------------
+
+PALIMPSEST_BASES = [
+    "https://palimpsest.info/readings",
+    "https://raw.githubusercontent.com/beepboop2025/palimpsest/main/readings",
+]
+PALIMPSEST_TTL_MIN = 240
+FARBASIN_MIN_OBS = 250          # daily obs before the channel may enter any model
+
+PALIMPSEST_SERIES = [
+    SeriesSpec("PALIMPSEST_FEAR", "palimpsest", "ddti-history.jsonl:top_threat",
+               "Censor deletion-threat (top-term threat score)", "score", "D", PALIMPSEST_TTL_MIN),
+    SeriesSpec("PALIMPSEST_NEW", "palimpsest", "ddti-history.jsonl:n_new",
+               "Newly censor-targeted terms", "terms", "D", PALIMPSEST_TTL_MIN),
+    SeriesSpec("PALIMPSEST_GFI", "palimpsest", "history.jsonl:gfi",
+               "Generative Firewall Index (LLM refusal tomography)", "0-100", "D", PALIMPSEST_TTL_MIN),
+]
+ALL_SERIES.update({s.mnemonic: s for s in PALIMPSEST_SERIES})
+
+# ---------------------------------------------------------------------------
 # FOMC calendar (static; update annually from federalreserve.gov —
 # verified 2026-07-07). Dates are the DECISION day (second meeting day).
 # ---------------------------------------------------------------------------
@@ -421,6 +505,7 @@ ALERT_RULES = {
     "stable_drain_30d_pct": STABLE_DRAIN_FLAG_PCT,  # offshore dollar redemptions
     "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
     "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
+    "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)

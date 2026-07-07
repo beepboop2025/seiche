@@ -258,6 +258,9 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dic
         "ok": True,
         "asof": X.index[-1].date().isoformat(),
         "p_event_5bd": round(p_now, 3),
+        # full walk-forward OOS probability series — private ('_' keys are
+        # stripped before serialization); the Stack trains on this.
+        "_p_daily": preds.dropna(),
         "verdict": verdict,
         "validation": {
             "oos_days": int(len(oos)),

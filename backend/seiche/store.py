@@ -91,6 +91,16 @@ def save_blob(key: str, payload: object) -> None:
         )
 
 
+def load_pit_records(limit: int = 2000) -> list[dict]:
+    """As-published point-in-time records (pit:YYYY-MM-DD blobs), oldest first."""
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM blobs WHERE key LIKE 'pit:%' ORDER BY key DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [json.loads(r[0]) for r in reversed(rows)]
+
+
 def load_blob(key: str, ttl_minutes: int | None = None) -> object | None:
     with _lock, _conn() as conn:
         row = conn.execute(

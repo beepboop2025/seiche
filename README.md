@@ -17,7 +17,19 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
-## v2 "Deep Water" — thirteen engines, five analytics layers, nine tabs
+## v2 "Deep Water" — engines, analytics layers, and the Book
+
+> **v2.3 "Letters of Marque"** adds the layer that makes every other layer
+> accountable: **The Stack** (walk-forward ensemble of all three event
+> forecasters + The Tell, with a disagreement gauge), **The Book** (HELM tab —
+> explicit daily positions on 2y/10y duration proxies, S&P and BTC over a
+> T-bill base, walk-forward P&L with costs, block-bootstrap Sharpe CIs and
+> mandatory benchmarks, verdict printed even when it loses), a **hash-chained
+> as-published track record** shipped inside the static publish (nobody,
+> including the operator, can quietly rewrite a bad month), and the **Far
+> Basin** — Palimpsest's censorship-fear channel (palimpsest.info), a policy
+> confession signal no market data vendor carries, honestly quarantined until
+> it accrues testable history. Strategy doc: [docs/STRATEGY.md](docs/STRATEGY.md).
 
 | Engine | Question it answers |
 |---|---|
@@ -36,6 +48,9 @@ layer none of them have: **honest evidence about itself**.
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
 | **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
 | **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
+| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab and Tide Tables calibrated per-member and blended walk-forward (with regime dummies, ~8 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, and publishes member DISPERSION — when the fleet disagrees, conviction drops. |
+| **The Book** ★ | The signal made accountable (HELM tab): a FROZEN rulebook maps the ensemble to explicit daily long/short/flat weights (2y/10y UST duration proxies, S&P 500, BTC over T-bill cash; hysteresis bands, a disagreement gate, vol targeting, per-sleeve cost haircuts), then walk-forward P&L — signal t earns returns t+1, enforced in one place and unit-tested — with stationary-block-bootstrap Sharpe CIs, Newey–West t-stats, per-episode attribution, doubled-cost rerun, and benchmarks through the identical pipeline. If it doesn't beat the static mix after costs, the page says so in bold. Every day's positions land in a **hash-chained as-published ledger** carried by the published site — tamper-evident by construction. Paper proxy; not advice. |
+| **Far Basin** ★ | The policy-fear channel: Palimpsest (palimpsest.info) measures what the Chinese state rushes to delete — the DDTI deletion-threat index, newly-targeted terms, the Generative Firewall Index — CI-published, keyless, mirrored on GitHub raw. A confession channel one basin further out, carried by no market data vendor. Honest scope: days old as a public series, so it accrues locally and stays QUARANTINED (context only, never in the composite, never a model feature) until it clears 250 daily observations. |
 | **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
 
 ★ = methods invented for this tool.
@@ -105,6 +120,7 @@ seiche replay 2019-09-12  # Time Machine in the terminal
 seiche backtest           # PROOF summary
 seiche ml                 # ML Lab: event probability + honest validation
 seiche analogs            # Tide Tables: nearest historical analogs + forward fan
+seiche book               # the Book: today's positions + walk-forward P&L verdict
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 ```

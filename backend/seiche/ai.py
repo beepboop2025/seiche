@@ -96,6 +96,22 @@ def context_pack(snap: dict) -> dict:
         } if eng.get("resonance", {}).get("ok") else None,
         "warehouse": {k: eng.get("warehouse", {}).get(k) for k in ("total_net_b", "total_pctl", "long_end_share_pct", "asof")} if eng.get("warehouse", {}).get("ok") else None,
         "echo_top": eng.get("echo", {}).get("top"),
+        "book": {
+            "today": deep.get("book", {}).get("today"),
+            "verdict": (deep.get("book", {}).get("backtest") or {}).get("verdict"),
+            "live": deep.get("book", {}).get("live"),
+        } if (deep.get("book") or {}).get("ok") else None,
+        "stacker": {
+            "p_now": deep.get("stacker", {}).get("p_now"),
+            "published": deep.get("stacker", {}).get("published"),
+            "dispersion_now": deep.get("stacker", {}).get("dispersion_now"),
+            "verdict": deep.get("stacker", {}).get("verdict"),
+        } if (deep.get("stacker") or {}).get("ok") else None,
+        "farbasin": {
+            "channels": {k: {kk: vv for kk, vv in (v or {}).items() if kk != "series"}
+                          for k, v in (eng.get("farbasin", {}).get("channels") or {}).items()},
+            "status": eng.get("farbasin", {}).get("status"),
+        } if eng.get("farbasin", {}).get("ok") else None,
         "tidetables": {
             "event_odds": deep.get("tidetables", {}).get("event_odds"),
             "novelty": deep.get("tidetables", {}).get("novelty"),

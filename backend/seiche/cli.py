@@ -175,6 +175,44 @@ def cmd_ml(args) -> int:
     return 0
 
 
+def cmd_book(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    deep = snap.get("deep", {})
+    bk = deep.get("book", {})
+    if not bk.get("ok"):
+        print(f"{RED}Book unavailable:{END} {bk.get('reason')}", file=sys.stderr)
+        return 1
+    t = bk["today"]
+    col = RED if t["stance"] == "risk_off" else GRN if t["stance"] == "risk_on" else DIM
+    print(f"{BOLD}THE BOOK{END} {col}{t['stance'].upper()}{END}  ·  {t['rationale']}")
+    for p in t["positions"]:
+        mark = "·" if p["weight"] == 0 else ("▲" if p["weight"] > 0 else "▼")
+        print(f"  {mark} {p['label']:<16} w={p['weight']:+.3f}  ({p['direction']}, "
+              f"vol {p['vol_ann_pct']}%/yr, cost {p['tcost_bp']}bp)")
+    stk = deep.get("stacker", {})
+    if stk.get("ok"):
+        print(f"{BOLD}ensemble{END} P(event,5bd)={stk['p_now']} [{stk['published']}] "
+              f"dispersion {stk['dispersion_now']} — {stk['verdict']}")
+    b = bk["backtest"]
+    ci = b.get("ci95") or ["?", "?"]
+    print(f"{BOLD}walk-forward{END} {b['sample']['start']} → {b['sample']['end']}")
+    print(f"  net Sharpe {b.get('sharpe')} (CI {ci[0]}–{ci[1]}, NW t={b.get('nw_tstat')}) · "
+          f"{b.get('ann_return_pct')}%/yr vol {b.get('ann_vol_pct')}% · maxDD {b.get('max_dd_pct')}% · "
+          f"turnover {b.get('turnover_ann')}x · cost drag {b.get('cost_drag_bp_ann')}bp/yr")
+    for name, m in (b.get("benchmarks") or {}).items():
+        print(f"  {DIM}vs {name:<12} Sharpe {m.get('sharpe')} · {m.get('ann_return_pct')}%/yr · "
+              f"maxDD {m.get('max_dd_pct')}%{END}")
+    print(f"  {BOLD}{b.get('verdict')}{END}")
+    lv = bk.get("live", {})
+    print(f"{BOLD}live record{END} {lv.get('n_days', 0)}d as-published"
+          + (f" since {lv['since']} · cum {lv['cum_return_pct']}%" if lv.get("since") else "")
+          + f" — {lv.get('note', '')}")
+    for c in bk.get("caveats", []):
+        print(f"{DIM}  caveat: {c}{END}")
+    return 0
+
+
 def cmd_analogs(args) -> int:
     from seiche import assemble
     snap = asyncio.run(assemble.snapshot())
@@ -255,6 +293,8 @@ def main() -> None:
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
 
     sub.add_parser("analogs", help="Tide Tables: nearest historical analogs + forward fan").set_defaults(fn=cmd_analogs)
+
+    sub.add_parser("book", help="the Book: today's positions + walk-forward P&L verdict").set_defaults(fn=cmd_book)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

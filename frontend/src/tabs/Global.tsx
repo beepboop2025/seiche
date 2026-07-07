@@ -54,6 +54,59 @@ function MooringsCard({ m }: { m: Any }) {
   );
 }
 
+function FarBasinCard({ f }: { f: Any }) {
+  if (!f?.ok) return <Fault name="Far Basin — Palimpsest" reason={f?.reason} span={12} />;
+  const ch = f.channels ?? {};
+  const st = f.status ?? {};
+  const order: [string, Any][] = [["fear", ch.fear], ["n_new", ch.n_new], ["gfi", ch.gfi]];
+  return (
+    <div className="card span12">
+      <h2>Far Basin — Palimpsest ★</h2>
+      <div className="sub">
+        the policy-fear channel: what the Chinese state rushes to delete, read as a confession —
+        censorship intensity from palimpsest.info, a signal no market data vendor carries · asof {f.asof}
+      </div>
+      <div className="basingrid">
+        {order.map(([k, c]) =>
+          c ? (
+            <div className="basin" key={k}>
+              <div className="name">{c.label?.toUpperCase()}</div>
+              <div className="rate">{fmt(c.last, 2)}</div>
+              <div className="z" style={{ color: (c.chg_vs_prior10 ?? 0) > 0 ? "#e88a3a" : "#6b7686" }}>
+                {c.chg_vs_prior10 != null ? `${c.chg_vs_prior10 > 0 ? "+" : ""}${fmt(c.chg_vs_prior10, 2)} vs prior 10` : c.unit} · {c.n_obs} obs
+              </div>
+              <div className="asof" style={{ color: "#3d4654", fontSize: 10 }}>{c.asof}</div>
+            </div>
+          ) : null
+        )}
+        <div className="basin">
+          <div className="name">MODEL STATUS</div>
+          <div className="rate" style={{ color: st.backtestable ? "#37c88b" : "#e88a3a", fontSize: 14 }}>
+            {st.backtestable ? "CLEARED" : "QUARANTINED"}
+          </div>
+          <div className="z" style={{ color: "#6b7686" }}>{st.n_obs}/{st.min_obs} daily obs accrued</div>
+        </div>
+      </div>
+      {(f.top_targets ?? []).length > 0 && (
+        <table className="mini">
+          <thead><tr><th>censor target (now)</th><th>domain</th><th>threat</th><th></th></tr></thead>
+          <tbody>
+            {(f.top_targets ?? []).slice(0, 6).map((t: Any, i: number) => (
+              <tr key={i}>
+                <td>{t.term}</td>
+                <td className="dimsmall">{t.domain}</td>
+                <td className="num" style={{ color: (t.threat ?? 0) >= 2 ? "#e5484d" : undefined }}>{fmt(t.threat, 2)}</td>
+                <td className="dimsmall">{t.is_new ? "NEW" : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <Method>{st.note} · {f.why} · {f.method}</Method>
+    </div>
+  );
+}
+
 export default function Global({ snap }: { snap: Any }) {
   const e = snap.engines?.basins ?? {};
   if (!e.ok) return <div className="grid"><Fault name="Global Basins" reason={e.reason} span={12} /></div>;
@@ -165,6 +218,7 @@ export default function Global({ snap }: { snap: Any }) {
       </div>
 
       <MooringsCard m={snap.engines?.moorings} />
+      <FarBasinCard f={snap.engines?.farbasin} />
     </div>
   );
 }
