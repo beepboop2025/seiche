@@ -458,6 +458,70 @@ BREAKWATER_INTERVENTIONS = [
 BREAKWATER_PROXIMITY_FLOOR_PCTL = 50.0   # below this percentile, proximity reads 0
 
 # ---------------------------------------------------------------------------
+# The physics layer (v2.6 "Bathysphere") — four engines that treat the basin
+# as the dynamical system it is named after. All of them are mathematics with
+# a pedigree (Fokker–Planck/Kramers, Koopman operator theory, Takens
+# embedding, extreme value theory), none of them are decoration: each one
+# publishes walk-forward evidence or expanding percentiles vs its own past,
+# under the same truncation-equality bar as everything else.
+# ---------------------------------------------------------------------------
+
+# Bathymetry lives in the forecast layer (see its block near Swell after the
+# v2.6 merge): its state variable is the PROOF event's own pop statistic, so
+# it is a forecast/diagnosis engine — never composite evidence.
+
+# Merian Modes — the seiche eigenmodes, estimated instead of assumed.
+# Merian's formula gives a real basin's standing-wave period from its
+# geometry; we go the other way and read the funding basin's actual modes
+# out of the data with Hankel-DMD (a finite-dimensional estimate of the
+# Koopman operator — classical dynamics in the Hilbert-space clothes of
+# Koopman–von Neumann mechanics). A mode with |λ| > 1 is a growing
+# oscillation: instability visible before levels move.
+MERIAN_WINDOW_D = 250          # trailing window per DMD fit (bd)
+MERIAN_DELAYS = 5              # Hankel (time-delay) embedding depth
+MERIAN_RANK_MAX = 8            # max SVD rank kept
+MERIAN_ENERGY = 0.90           # SVD energy cutoff
+MERIAN_MIN_SERIES = 4          # min panel series before the engine speaks
+MERIAN_MIN_HISTORY_D = 400
+MERIAN_SAMPLE_BD = 5           # instability-index sampling cadence (bd)
+MERIAN_PERIOD_BAND_BD = (4.0, 84.0)  # reported mode-period band
+MERIAN_TOP_MODES = 5
+
+# The Gyre — is prediction possible at all? Takens delay embedding +
+# empirical dynamic modeling (Sugihara): simplex-projection skill by horizon
+# (the determinism fingerprint — chaos decays, noise never had skill),
+# a phase-randomized surrogate gate, the S-map θ test for state-dependent
+# (nonlinear) dynamics, and the S-map Jacobian's local expansion rate as a
+# live stability gauge. Tide Tables asks WHICH history rhymes; the Gyre asks
+# whether the basin's dynamics are deterministic enough to rhyme at all.
+GYRE_DETREND_D = 30            # same residual as Undertow (comparability)
+GYRE_MIN_HISTORY_D = 600
+GYRE_EMBED_SCAN = (2, 8)       # embedding-dimension scan range (inclusive)
+GYRE_HORIZONS_BD = (1, 2, 3, 5, 8, 13, 21)
+GYRE_THETAS = (0.0, 0.5, 1.0, 2.0, 4.0, 8.0)
+GYRE_WARMUP_D = 500            # library-only warmup before hindcast scoring
+GYRE_MIN_LIB = 300             # min library vectors before a prediction
+GYRE_SURROGATES = 20           # phase-randomized surrogates (determinism gate)
+GYRE_SEED = 7                  # surrogate rng seed — the board is deterministic
+
+# Rogue Wave — the tail law. Peaks-over-threshold GPD (probability-weighted
+# moments — no distributional hand-waving, CIs printed) on the SAME
+# declustered pop statistic as PROOF. The empirical exceedance curves the
+# Swell uses stop dead at the largest pop ever seen; the GPD is the honest
+# instrument for the wave that is NOT in the sample yet — return levels and
+# P(pop ≥ x) beyond history, with the uncertainty stated.
+ROGUE_DECLUSTER_BD = 5         # an episode is one wave (same rule as PROOF)
+ROGUE_THRESHOLD_PCTL = 80.0    # GPD threshold: expanding pctl of declustered pops
+ROGUE_MIN_EXCEED = 40          # min exceedances before a fit prints
+ROGUE_MIN_HISTORY_D = 500
+ROGUE_RETURN_YEARS = (1.0, 5.0, 10.0)
+ROGUE_SEVERITIES_BP = (10.0, 15.0, 25.0, 35.0)  # P(pop ≥ x within h)
+ROGUE_HORIZONS_BD = (5, 21, 63)
+ROGUE_BOOT_N = 400             # bootstrap reps for the CIs (fixed seed)
+ROGUE_SEED = 7
+ROGUE_SENS_PCTLS = (70.0, 80.0, 85.0, 90.0)  # threshold-sensitivity table
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -625,6 +689,11 @@ COMPOSITE_WEIGHTS = {
     "warehouse": 0.03,    # dealer balance-sheet saturation
     "buffers": 0.03,      # RRP buffer emptiness (0 = no shock absorber left)
 }
+# v2.6 note: NONE of the physics engines join the composite. Bathymetry's
+# state variable is the PROOF event's own pop statistic (forecast layer, its
+# escape probability joins the Stack instead); Merian, Gyre and Rogue Wave
+# are amplifier/forecast context, not stress evidence — the same doctrine
+# that keeps Echo and Tell out. The composite stays a nowcast.
 
 REGIMES = [
     (25.0, "CALM"),
@@ -661,6 +730,7 @@ ALERT_RULES = {
     "stack_dispersion": STACK_DISPERSION_WARN,  # member dispersion reads as ambiguity
     "riptide_sticky": 0.6,          # live pop classified as a current
     "breakwater_proximity": 90.0,   # board near historical rescue conditions
+    "merian_instability": 95.0,     # growing-mode index percentile >= this
     "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }

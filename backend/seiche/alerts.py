@@ -208,6 +208,15 @@ def evaluate(snap: dict) -> list[dict]:
                            f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
                            f"{'present' if lv.get('rrp_cosigned') else 'ABSENT — genuine scarcity'})"))
 
+    mer = eng.get("merian") or {}
+    thr = ALERT_RULES.get("merian_instability")
+    inst = (mer.get("instability") or {}) if mer.get("ok") else {}
+    if thr is not None and inst.get("pctl") is not None and inst["pctl"] >= thr \
+            and (inst.get("g_now") or 0.0) > 0.0:
+        candidates.append(("merian_instability", mer.get("asof", "?"),
+                           f"Merian Modes: a growing mode is live (growth {inst['g_now']:+.3f}/bd, "
+                           f"{inst['pctl']:.0f}th pctl vs own history) — instability before levels move"))
+
     bw = eng.get("breakwater") or {}
     thr = ALERT_RULES.get("breakwater_proximity")
     if thr is not None and bw.get("ok") and (bw.get("rescue_proximity") or 0.0) >= thr:

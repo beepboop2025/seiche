@@ -133,6 +133,25 @@ def context_pack(snap: dict) -> dict:
             "validation_verdict": (deep.get("swell", {}).get("validation") or {}).get("verdict"),
             "asof": deep.get("swell", {}).get("asof"),
         } if (deep.get("swell") or {}).get("ok") else None,
+        "merian": {
+            "instability": eng.get("merian", {}).get("instability"),
+            "modes": (eng.get("merian", {}).get("modes") or [])[:3],
+            "asof": eng.get("merian", {}).get("asof"),
+        } if eng.get("merian", {}).get("ok") else None,
+        "gyre": {
+            "determinism_verdict": (deep.get("gyre", {}).get("determinism") or {}).get("verdict"),
+            "nonlinearity_verdict": (deep.get("gyre", {}).get("nonlinearity") or {}).get("verdict"),
+            "stability": deep.get("gyre", {}).get("stability"),
+            "forecast": deep.get("gyre", {}).get("forecast"),
+            "asof": deep.get("gyre", {}).get("asof"),
+        } if (deep.get("gyre") or {}).get("ok") else None,
+        "roguewave": {
+            "tail_verdict": eng.get("roguewave", {}).get("tail_verdict"),
+            "fit": eng.get("roguewave", {}).get("fit"),
+            "return_levels": eng.get("roguewave", {}).get("return_levels"),
+            "sample_max_bp": eng.get("roguewave", {}).get("sample_max_bp"),
+            "asof": eng.get("roguewave", {}).get("asof"),
+        } if eng.get("roguewave", {}).get("ok") else None,
         "basins": basins.get("basins") if basins.get("ok") else None,
         "swap_lines_30d_m": (basins.get("swap_lines") or {}).get("ops_30d_total_m") if basins.get("ok") else None,
         "moorings": {

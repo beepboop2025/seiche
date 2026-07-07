@@ -412,3 +412,93 @@ including: the co-sign grammar is learnable on synthetic worlds (AUROC
 gate), open windows carry no verdict while early resolutions do, rescues at
 stress peaks reveal high thresholds, and Venn–Abers overrides a
 miscalibrated point forecast.
+
+
+---
+
+# v2.6 addendum — "Bathysphere": the physics layer (2026-07-07)
+
+Design intent: the tool is NAMED after a physical phenomenon and already
+carries two genuinely physical engines (Resonance = forced response,
+Undertow = free decay / critical slowing down). v2.6 completes the physical
+examination of the basin with four engines whose mathematics has a pedigree —
+Fokker–Planck/Kramers, Koopman operator theory, Takens embedding, extreme
+value theory — held to the same honesty bar as everything else: expanding
+statistics only (truncation-equality unit tests), walk-forward validation vs
+climatology where a forecast is made, self-demoting verdicts, small-n CIs.
+The quantum-mechanical formalism appears exactly where it is honest
+(Hilbert-space operator spectra) and nowhere else. No quantum woo.
+
+**1. Bathymetry (`engines/bathymetry.py`)** — built in the sibling session
+(PR #6) and adopted here as the fourth physics engine; see its own v2.6
+addendum below for the full design. One estimated object (the expanding
+binned transition operator of the shared pop statistic) feeds four blocks:
+the FLOOR (Kramers–Moyal potential, wall stiffness, barrier in k_BT), the
+SPECTRUM (Fokker–Planck↔Schrödinger dual energy levels, gap = slowest
+relaxation time, read on visited bins only), the ARROW (Schnakenberg entropy
+production — how hard the basin is driven from equilibrium), and the ESCAPE
+(absorbing-boundary first passage: exact P(event ≤ h bd) + expected days to
+next event, walk-forward validated, a Stack member with its own record).
+Doctrine resolution between the two sessions, recorded: this session had
+drafted a composite-weighted landscape engine on a 60bd-detrended residual;
+the sibling's design wins because its state variable IS the PROOF pop
+statistic — a forecast-layer citizen that joins the Stack, never the
+composite. The composite weights therefore stay at their v2.3 values.
+
+**2. Merian Modes (`engines/merian.py`)** — the seiche eigenmodes, estimated
+instead of assumed. Hankel-DMD over the hydrophone's plumbing panel
+(expanding-z standardized, trailing windows) estimates the Koopman operator's
+spectrum: each mode carries a period, a growth rate ln|λ| and its CURRENT
+excitation (amplitude from the latest snapshot). A high-amplitude ~21bd mode
+is the month-end forcing seen a second, independent way (cross-checks
+Resonance); a growing mode (|λ|>1) with real amplitude is instability before
+levels move — published as an expanding percentile vs the gauge's own
+history. The linear mode-propagation forecast is scored vs persistence and
+expected to lose; the verdict says so and reframes (modes are structure).
+Koopman–von Neumann lineage stated for what it is: classical dynamics in
+Hilbert-space clothes.
+
+**3. The Gyre (`engines/gyre.py`)** — is prediction possible at all? Takens
+embedding + EDM: simplex-projection skill by horizon (the determinism
+fingerprint: chaos decays, noise never had skill), a phase-randomized
+surrogate gate (preserves linear autocorrelation exactly — what survives is
+NONLINEAR structure), the S-map θ test for state dependence, and the S-map
+Jacobian's local expansion rate as a live stability gauge. E chosen once on
+the warmup segment and frozen (truncation-stable). Relationship to Tide
+Tables stated: analogs ask WHICH history rhymes; the Gyre asks whether the
+dynamics are deterministic enough to rhyme at all — if the surrogate gate
+fails, analog forecasts inherit only linear skill and the page says so.
+Deep-layer citizen (blob-cached); forecast-context, never composite evidence.
+
+**4. Rogue Wave (`engines/roguewave.py`)** — the tail law. POT/GPD
+(probability-weighted moments, no scipy) on the SAME declustered pop
+statistic as PROOF (cluster maxima, not first days — EVT wants magnitudes;
+the difference from PROOF's lead-time convention is a printed caveat).
+Return levels (1/5/10y waves) and P(pop ≥ x within h) for severities beyond
+the sample maximum — the number Swell's empirical exceedance tables cannot
+produce, with bootstrap CIs, a threshold-sensitivity table, and annual
+expanding ξ refits answering "is the tail getting heavier as the buffers
+drain?". Context engine: never weighted into the composite.
+
+**Wiring:** new PHYSICS tab (custom XY SVG for the potential landscape and
+skill-decay curves — uPlot is date-axis only), `seiche physics` CLI, alerts
+`bathymetry_escape` (P(escape,5bd) ≥ 0.40) and `merian_instability` (growth
+pctl ≥ 95 with g>0), brief watchlist lines, desk-assistant context entries
+for all four, composite rebalance (see config note), VERSION → 0.4.0
+(invalidates pre-physics deep blobs). Bathymetry/Merian/Rogue Wave live in
+the light layer — Time-Machine replayable; the Gyre lives in the deep layer.
+
+**Also considered and rejected (v2.6):**
+- Anything sold as "quantum finance" (path-integral option pricing, quantum
+  amplitude estimation): no honest daily-cadence claim survives contact with
+  the provenance bar. The Hilbert-space formalism enters only as spectral
+  methods for classical operators, labeled as such.
+- Hawkes self-excitation (again): still ~20 declustered events; the Rogue
+  Wave's cluster handling covers the aftershock intuition at the magnitude
+  level. Revisit with a micro-event definition.
+- Wavelet ridge tracking for time-varying modes: Hankel-DMD's trailing
+  window already yields a mode history at 5bd cadence; a second
+  time-frequency view would be decoration.
+- RMT (Marchenko–Pastur) eigenvalue cleaning of the hydrophone correlation
+  matrix: the absorption ratio already carries the connectivity signal; the
+  noise-floor refinement did not change any verdict on synthetic worlds.
