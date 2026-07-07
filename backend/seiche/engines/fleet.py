@@ -37,54 +37,68 @@ from seiche.config import (
     BACKTEST_EVENT_FWD_D,
     BACKTEST_SPIKE_BP,
     FLEET_DISAGREE_WARN,
+    FLEET_MIN_SKILL,
     SWELL_WARMUP_D,
 )
+from seiche.engines.backtest import PCTL_BUCKETS, pop_bp
 
-_PCTL_BUCKETS = ((0.0, 60.0), (60.0, 80.0), (80.0, 90.0), (90.0, 101.0))
+# same edges PROOF publishes its outcome tables under — shared, not re-declared
+_BUCKET_EDGES = [hi for _, hi, _ in PCTL_BUCKETS[:-1]]   # [60, 80, 90]
 
 
 def _labels_5bd(spread_bp: pd.Series, grid: pd.DatetimeIndex) -> np.ndarray:
-    """y[i] = 1 if a pop >= BACKTEST_SPIKE_BP lands within the next 5bd
-    (the shared event definition). NaN where the window is open/unobserved."""
-    sp = spread_bp.dropna().reindex(grid)
-    pop = (sp - sp.rolling(5, min_periods=3).median().shift(1)).to_numpy()
+    """y[i] = 1 if a pop >= BACKTEST_SPIKE_BP lands within the next 5bd (the
+    shared event definition via backtest.pop_bp). NaN where the forward
+    window is open (runs past the sample) or entirely unobserved."""
+    pop = pop_bp(spread_bp, grid)
+    fwd = BACKTEST_EVENT_FWD_D
+    # max over the next `fwd` pops = reversed trailing rolling max, shifted
+    fwd_max = pop[::-1].rolling(fwd, min_periods=1).max()[::-1].shift(-1)
+    y = (fwd_max >= BACKTEST_SPIKE_BP).astype(float).to_numpy().copy()
+    y[fwd_max.isna().to_numpy()] = np.nan
     n = len(grid)
-    y = np.full(n, np.nan)
-    for i in range(n - BACKTEST_EVENT_FWD_D):
-        f = pop[i + 1 : i + 1 + BACKTEST_EVENT_FWD_D]
-        if not np.all(np.isnan(f)):
-            y[i] = float(np.nanmax(f) >= BACKTEST_SPIKE_BP)
+    if fwd > 0:
+        y[max(n - fwd, 0):] = np.nan   # open windows: no verdict yet
     return y
 
 
 def rule_probability(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
     """Map the rule index percentile to P(event within 5bd) through expanding
-    per-bucket event rates — predict first, update after, like everything."""
+    per-bucket event rates. Honesty detail that costs real skill points: the
+    label for day j is only OBSERVABLE at close of day j+5, so the tables at
+    prediction time i contain labels through day i−5 only (the same boundary
+    embargo the ML Lab applies). Updating with y[i−1..i−4] would leak pops on
+    days i..i+4 into the very forecast they score."""
     pct = lite_pctl.dropna()
     if len(pct) < SWELL_WARMUP_D:
         return {"ok": False, "reason": "insufficient rule history"}
     grid = pd.DatetimeIndex(pct.index)
     y = _labels_5bd(spread_bp, grid)
+    v = pct.to_numpy(dtype=float)
+    bidx = np.digitize(v, _BUCKET_EDGES)   # 0..3, ties match lo <= v < hi
 
-    hits = {b: 0 for b in _PCTL_BUCKETS}
-    ns = {b: 0 for b in _PCTL_BUCKETS}
-    all_hits = all_n = 0
-    ps, ys = [], []
+    fwd = BACKTEST_EVENT_FWD_D
+    hits = np.zeros(len(PCTL_BUCKETS))
+    ns = np.zeros(len(PCTL_BUCKETS))
+    all_hits = all_n = 0.0
+    ps, ys, scored_pos = [], [], []
     p_now = None
     for i in range(len(grid)):
-        v = float(pct.iloc[i])
-        b = next(bb for bb in _PCTL_BUCKETS if bb[0] <= v < bb[1])
-        if i >= SWELL_WARMUP_D:
+        j = i - fwd   # newest label whose window has closed by day i
+        if j >= 0 and not np.isnan(y[j]):
+            b = bidx[j]
+            hits[b] += y[j]
+            ns[b] += 1
+            all_hits += y[j]
+            all_n += 1
+        if i >= SWELL_WARMUP_D and all_n > 0:
+            b = bidx[i]
             p = (hits[b] + 0.5) / (ns[b] + 1.0) if ns[b] >= 30 else (all_hits + 0.5) / (all_n + 1.0)
             p_now = p
             if not np.isnan(y[i]):
                 ps.append(p)
                 ys.append(y[i])
-        if not np.isnan(y[i]):
-            hits[b] += int(y[i])
-            ns[b] += 1
-            all_hits += int(y[i])
-            all_n += 1
+                scored_pos.append(i)
     if p_now is None or len(ps) < 100:
         return {"ok": False, "reason": "not enough scored rule history"}
     pa, ya = np.array(ps), np.array(ys)
@@ -98,6 +112,10 @@ def rule_probability(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
         "brier_climatology": round(brier_clim, 4),
         "n_scored": len(ps),
         "base_rate_5bd": round(base, 3),
+        "embargo_bd": fwd,
+        # walk-forward p per scored day — no-look-ahead test hook (never
+        # serialized: rule_probability's dict stays internal to analyze())
+        "_p_series": pd.Series(pa, index=grid[scored_pos]),
     }
 
 
@@ -163,10 +181,12 @@ def analyze(
     clim = rule.get("base_rate_5bd") if rule.get("ok") else None
 
     # Skill-proportional weights; a view that never beat its own climatology
-    # carries zero weight (it self-demoted — honor that verdict).
+    # carries zero weight (it self-demoted — honor that verdict). The deadband
+    # keeps a view oscillating around zero skill from flipping the blend's
+    # identity day to day on sampling noise.
     for v in live:
         s = v.get("skill")
-        v["weight"] = round(max(float(s), 0.0), 3) if s is not None else 0.0
+        v["weight"] = round(float(s), 3) if s is not None and s >= FLEET_MIN_SKILL else 0.0
     wsum = sum(v["weight"] for v in live)
     if wsum > 0:
         blend = sum(v["p"] * v["weight"] for v in live) / wsum
@@ -188,7 +208,6 @@ def analyze(
     return {
         "ok": True,
         "views": views,
-        "n_live": len(live),
         "blend_p_5bd": round(float(blend), 3) if blend is not None else None,
         "blend_source": blend_src,
         "climatology_p_5bd": clim,
@@ -201,10 +220,12 @@ def analyze(
             "the blend inherits every component's final-vintage caveat",
         ],
         "method": (
-            "views: rule (expanding bucket event-rates over lite pctl), ML Lab, Tide Tables analogs, "
-            "Swell 5bd integral — all targeting P(pop ≥ "
-            f"{BACKTEST_SPIKE_BP:g}bp within {BACKTEST_EVENT_FWD_D}bd). Blend weights ∝ "
-            "max(1 − Brier/Brier_climatology, 0) from each view's own walk-forward record; all-zero "
-            "skills → climatology published. Disagreement = max − min across live views"
+            "views: rule (expanding bucket event-rates over lite pctl, labels embargoed "
+            f"{BACKTEST_EVENT_FWD_D}bd — a forward label enters the tables only once its window "
+            "closes), ML Lab, Tide Tables analogs, Swell 5bd integral — all targeting P(pop ≥ "
+            f"{BACKTEST_SPIKE_BP:g}bp within {BACKTEST_EVENT_FWD_D}bd). Blend weights ∝ Brier "
+            f"skill from each view's own walk-forward record, zeroed below {FLEET_MIN_SKILL} "
+            "(deadband against identity churn); all-zero skills → climatology published. "
+            "Disagreement = max − min across live views"
         ),
     }

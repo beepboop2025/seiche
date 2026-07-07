@@ -50,9 +50,20 @@ def _wilson(k: int, n: int, z: float = 1.96) -> list[float] | None:
 PCTL_BUCKETS = [(0, 60, "0-60"), (60, 80, "60-80"), (80, 90, "80-90"), (90, 101, "90-100")]
 
 
+def pop_bp(spread_bp: pd.Series, grid: pd.DatetimeIndex | None = None) -> pd.Series:
+    """THE event statistic, defined once: spread minus its trailing 5bd median
+    (yesterday's yardstick). _funding_events thresholds it at BACKTEST_SPIKE_BP;
+    Swell's hazard tables and the Fleet's labels read it raw. Tune it here and
+    every layer moves together — a fork of this definition is a methodology bug."""
+    s = spread_bp.dropna()
+    if grid is not None:
+        s = s.reindex(grid)
+    return s - s.rolling(5, min_periods=3).median().shift(1)
+
+
 def _funding_events(spread_bp: pd.Series) -> pd.DatetimeIndex:
     s = spread_bp.dropna()
-    jump = s - s.rolling(5, min_periods=3).median().shift(1)
+    jump = pop_bp(spread_bp)
     ev_days = s.index[jump >= BACKTEST_SPIKE_BP]
     # Collapse clusters: keep the first day of any run within 5bd.
     kept: list[pd.Timestamp] = []

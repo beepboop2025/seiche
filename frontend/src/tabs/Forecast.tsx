@@ -14,7 +14,9 @@ function SwellCard({ s }: { s: Any }) {
   if (!s?.ok) return <Fault name="Swell Forecast" reason={s?.reason} span={12} />;
   const hz = s.event_by_horizon ?? {};
   const v = s.validation ?? {};
-  const beats = v.ok && v.brier < v.brier_climatology;
+  // must match the backend's own verdict condition (Brier AND AUROC) — never
+  // paint a self-demoting verdict green
+  const beats = v.ok && v.brier < v.brier_climatology && (v.auroc ?? 0) > 0.55;
   const state = s.state ?? {};
   const rows: (string | number | null)[][] = (s.curve ?? []).map((r: Any) => [
     r.date,
@@ -36,6 +38,7 @@ function SwellCard({ s }: { s: Any }) {
           <div className="tellreading">
             P(funding event within 5bd) · 10bd {fmt((hz.h10 ?? 0) * 100, 0)}% · 21bd {fmt((hz.h21 ?? 0) * 100, 0)}% ·
             {" "}{s.horizon_bd}bd {fmt((hz[`h${s.horizon_bd}`] ?? 0) * 100, 0)}%
+            <span className="dimsmall"> (h≥10 assume day-independence — upper bounds; only 5bd is validated)</span>
           </div>
           <div className="coverage">
             peak day <b style={{ color: "#e88a3a" }}>{s.peak?.date}</b> ({s.peak?.bucket?.replace("_", "-")},

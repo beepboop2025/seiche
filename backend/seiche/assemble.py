@@ -29,6 +29,7 @@ import pandas as pd
 from seiche import store
 from seiche.config import (
     ALL_SERIES,
+    COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
     ECB_SERIES,
@@ -73,7 +74,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.2.0 deep-water"
+VERSION = "0.3.0 forecast-layer"
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +428,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     spread = drv["spread_bp"]
     if spread.empty:
         return {"ok": False, "reason": "no spread history"}
-    cache_key = f"deep:{spread.index[-1].date().isoformat()}"
+    # VERSION in the key: a release that adds deep blocks (tidetables/swell/
+    # fleet in v2.3) must not serve a pre-upgrade blob for up to 12h.
+    cache_key = f"deep:{VERSION}:{spread.index[-1].date().isoformat()}"
     # Failure-aware cache: a blob computed with any failed layer only lives 30
     # minutes, so a transient fault can't poison the whole data-day (bit us
     # twice during the v2 build).
@@ -807,6 +810,9 @@ def _record_pit(engines: dict, deep: dict) -> None:
             "regime": comp.get("regime"),
             "coverage_pct": comp.get("coverage_pct"),
             "subscores": comp.get("subscores"),
+            # the weight vector that produced this value — without it a future
+            # rebalance puts an undetectable structural break in the record
+            "weights": dict(COMPOSITE_WEIGHTS),
             "tell": (deep or {}).get("tell", {}).get("tell"),
             "forecasts": {
                 "blend_p_5bd": fleet.get("blend_p_5bd"),

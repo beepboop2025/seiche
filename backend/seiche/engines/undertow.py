@@ -41,9 +41,9 @@ import pandas as pd
 from seiche.config import (
     UNDERTOW_DETREND_D,
     UNDERTOW_MIN_HISTORY_D,
+    UNDERTOW_POP_DECLUSTER_BD,
     UNDERTOW_RECOVERY_CENSOR_D,
     UNDERTOW_RECOVERY_MIN_POPS,
-    UNDERTOW_TREND_D,
     UNDERTOW_WINDOW_D,
 )
 
@@ -81,23 +81,33 @@ def _indicators(series: pd.Series) -> dict | None:
     if phi is not None and 0.0 < phi < 0.999:
         tau = float(-1.0 / np.log(phi))
 
-    # Perturbation recovery: every pop of the residual above its EXPANDING
-    # 90th percentile is a natural experiment; half-life = business days until
-    # the residual gives back half the pop (censored). Recent year vs prior.
+    # Perturbation recovery: pops of the residual above its EXPANDING 90th
+    # percentile are natural experiments; half-life = business days until the
+    # residual gives back half the pop (censored). Recent year vs prior.
+    # Two honesty guards: pops are DECLUSTERED (a multi-day episode is one
+    # experiment, not nine — same reasoning as the backtest's event collapse),
+    # and pops whose observation window runs off the end of the sample are
+    # EXCLUDED, not censored (an unresolved pop must neither inflate the
+    # recent stretch nor change value when future data arrives).
     thr = resid.expanding(120).quantile(0.90).shift(1)  # yesterday's yardstick
     pops = resid.index[(resid >= thr) & thr.notna()]
     halves: list[tuple[pd.Timestamp, int]] = []
     vals = resid.to_numpy()
     locs = resid.index.get_indexer(pops)
+    last_kept = -10**9
     for loc in locs:
+        if loc - last_kept < UNDERTOW_POP_DECLUSTER_BD:
+            continue
+        if loc + UNDERTOW_RECOVERY_CENSOR_D >= len(vals):
+            continue  # window not yet closed — no verdict on this pop
         peak = vals[loc]
         if peak <= 0:
             continue
+        last_kept = loc
         hl = UNDERTOW_RECOVERY_CENSOR_D  # censored default
         for k in range(1, UNDERTOW_RECOVERY_CENSOR_D + 1):
-            if loc + k >= len(vals):
-                break
-            if vals[loc + k] <= peak / 2.0:
+            v = vals[loc + k]
+            if not np.isnan(v) and v <= peak / 2.0:
                 hl = k
                 break
         halves.append((resid.index[loc], hl))
@@ -119,15 +129,9 @@ def _indicators(series: pd.Series) -> dict | None:
 
     ac1_now = float(ac1_pctl.iloc[-1]) if not ac1_pctl.empty else None
     var_now = float(var_pctl.iloc[-1]) if not var_pctl.empty else None
-    ac1_chg = (
-        float(ac1.dropna().iloc[-1] - ac1.dropna().iloc[-UNDERTOW_TREND_D])
-        if len(ac1.dropna()) > UNDERTOW_TREND_D
-        else None
-    )
     return {
         "ac1": round(phi, 3) if phi is not None else None,
         "ac1_pctl": round(ac1_now, 0) if ac1_now is not None else None,
-        "ac1_chg_60d": round(ac1_chg, 3) if ac1_chg is not None else None,
         "tau_bd": round(tau, 1) if tau is not None else None,
         "var_pctl": round(var_now, 0) if var_now is not None else None,
         "recovery": recovery,
@@ -172,23 +176,28 @@ def analyze(spread_bp: pd.Series, tail_bp: pd.Series) -> dict:
     # Chart: AC1 of both series (thinned) — the slowing-down is visible.
     base = inds.get("spread") or next(iter(inds.values()))
     grid = base["_ac1_series"].index
-    rows = []
-    for d in grid[::2]:
-        row = [d.date().isoformat()]
-        for k in ("spread", "tail"):
-            v = inds.get(k, {}).get("_ac1_series")
-            row.append(round(float(v.loc[d]), 3) if v is not None and d in v.index else None)
-        rows.append(row)
+    mat = pd.concat(
+        {k: inds[k]["_ac1_series"] for k in ("spread", "tail") if k in inds}, axis=1
+    ).reindex(columns=["spread", "tail"]).reindex(grid[::2])
+    rows = [
+        [d.date().isoformat()]
+        + [round(float(v), 3) if pd.notna(v) else None for v in vals]
+        for d, vals in zip(mat.index, mat.to_numpy())
+    ]
 
     # The damping-state series Swell conditions on: blended AC1 expanding
-    # percentile (trailing-only by construction).
+    # percentile (trailing-only by construction). Weights renormalize PER ROW
+    # over the series that actually have a value — a missing tail warmup must
+    # not read as "tail at the 0th percentile" and cap the blend below the
+    # hot-state threshold (same effective-weight pattern as history.build).
     pctl_frames = {
         k: v["_ac1_pctl_series"] for k, v in inds.items() if v.get("_ac1_pctl_series") is not None
     }
     blend = pd.concat(pctl_frames, axis=1)
+    w = pd.Series({k: SERIES_WEIGHTS[k] for k in blend.columns})
+    eff_w = blend.notna().mul(w, axis=1)
     damping_pctl = (
-        blend.mul(pd.Series({k: SERIES_WEIGHTS[k] for k in blend.columns}), axis=1).sum(axis=1)
-        / sum(SERIES_WEIGHTS[k] for k in blend.columns)
+        (blend.fillna(0.0) * eff_w).sum(axis=1) / eff_w.sum(axis=1).replace(0.0, np.nan)
     ).dropna()
 
     out = {
@@ -211,9 +220,12 @@ def analyze(spread_bp: pd.Series, tail_bp: pd.Series) -> dict:
             f"per series: residual = x − rolling {UNDERTOW_DETREND_D}bd median; AC1 = rolling "
             f"{UNDERTOW_WINDOW_D}bd lag-1 autocorr; tau = −1/ln(AC1) bd; variance over the same "
             f"window; both scored as EXPANDING percentiles vs own past. Recovery = median "
-            f"half-life after pops above the expanding 90th pctl (censored {UNDERTOW_RECOVERY_CENSOR_D}bd), "
+            f"half-life after pops above the expanding 90th pctl (declustered "
+            f"{UNDERTOW_POP_DECLUSTER_BD}bd — an episode is one experiment; censored "
+            f"{UNDERTOW_RECOVERY_CENSOR_D}bd; unresolved end-of-sample pops excluded, not censored), "
             f"trailing year vs prior. Score: AC1 pctl 45 / var pctl 30 / recovery stretch 25; "
-            f"series blend spread {SERIES_WEIGHTS['spread']} / tail {SERIES_WEIGHTS['tail']}"
+            f"series blend spread {SERIES_WEIGHTS['spread']} / tail {SERIES_WEIGHTS['tail']}, "
+            f"renormalized per row over the series with data"
         ),
     }
     return out

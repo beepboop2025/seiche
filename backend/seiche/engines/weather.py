@@ -31,18 +31,25 @@ from seiche.config import (
 )
 
 
-def settlement_calendar(upcoming: pd.DataFrame) -> pd.Series:
-    """Gross auction settlement ($B) by issue date from the upcoming-auctions
-    feed. Settlement days are known reserve-drain days (issuance settles ->
-    TGA builds -> reserves fall, with no RRP buffer left to absorb it)."""
+def settlement_calendar(
+    upcoming: pd.DataFrame,
+    *,
+    exclude_bills: bool = False,
+    amount_cols: tuple[str, ...] = ("offering_amt", "total_accepted", "currently_outstanding"),
+) -> pd.Series:
+    """Gross auction settlement ($B) by issue date. Settlement days are known
+    reserve-drain days (issuance settles -> TGA builds -> reserves fall, with
+    no RRP buffer left to absorb it). The one parser for both feeds: Weather
+    uses it on upcoming offerings as-is; Swell uses it coupon-only
+    (exclude_bills — bills roll weekly and mostly net out) preferring
+    realized `total_accepted` for the historical frame."""
     if upcoming is None or upcoming.empty or "issue_date" not in upcoming.columns:
         return pd.Series(dtype=float)
     df = upcoming.copy()
+    if exclude_bills and "security_type" in df.columns:
+        df = df[~df["security_type"].astype(str).str.contains("Bill", case=False, na=False)]
     df["issue_date"] = pd.to_datetime(df["issue_date"], errors="coerce")
-    amt_col = next(
-        (c for c in ("offering_amt", "total_accepted", "currently_outstanding") if c in df.columns),
-        None,
-    )
+    amt_col = next((c for c in amount_cols if c in df.columns), None)
     if amt_col is None:
         return pd.Series(dtype=float)
     df["amt_b"] = (

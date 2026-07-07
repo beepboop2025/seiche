@@ -214,7 +214,7 @@ def test_tidetables_refuses_short_history(rng):
 def test_composite_renormalizes_and_reports_dead():
     subs = {"tails": 50.0, "kink": None, "weather": 20.0, "confession": 0.0,
             "rvxray": None, "resonance": 40.0, "hydrophone": 10.0,
-            "auctions": 30.0, "warehouse": 60.0, "buffers": 90.0}
+            "undertow": 30.0, "auctions": 30.0, "warehouse": 60.0, "buffers": 90.0}
     out = composite.compose(subs)
     assert out["ok"]
     assert "kink" in out["dead_inputs"] and "rvxray" in out["dead_inputs"]
@@ -720,3 +720,44 @@ def test_fleet_flags_disagreement(rng):
     assert r["ok"]
     assert r["disagreement"] >= 0.30
     assert "DISAGREES" in r["verdict"]
+
+
+# --------------------------------------------------------------------------
+# Review-pass invariants: fleet rule embargo, undertow unresolved pops
+# --------------------------------------------------------------------------
+
+def test_fleet_rule_probability_no_look_ahead(rng):
+    from seiche.engines import fleet
+    n = 1400
+    idx = _bdays(n)
+    spread = pd.Series(rng.normal(0, 1.5, n), index=idx)
+    for loc in range(600, n - 60, 90):
+        spread.iloc[loc] += 25.0
+    # a percentile signal that ramps ahead of each spike (so buckets differ)
+    lite = pd.Series(rng.uniform(0, 60, n), index=idx)
+    for loc in range(600, n - 60, 90):
+        lite.iloc[loc - 6 : loc + 1] = 95.0
+    full = fleet.rule_probability(lite, spread)
+    trunc = fleet.rule_probability(lite.iloc[:-60], spread.iloc[:-60])
+    assert full["ok"] and trunc["ok"]
+    t = trunc["_p_series"].index[-1]
+    assert abs(float(full["_p_series"].loc[t]) - float(trunc["_p_series"].loc[t])) < 1e-12, \
+        "rule probability at T changed when future data was appended — embargo leak"
+    assert full["embargo_bd"] == 5
+
+
+def test_undertow_unresolved_pops_do_not_inflate_recovery(rng):
+    from seiche.engines import undertow
+    n = 1200
+    idx = _bdays(n)
+    quiet = pd.Series(rng.normal(0, 1.0, n), index=idx)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=idx)
+    loud = quiet.copy()
+    loud.iloc[-2] += 60.0  # giant pop 2bd before asof — window still open
+    a = undertow.analyze(quiet, tail)
+    b = undertow.analyze(loud, tail)
+    ra = a["per_series"]["spread"]["recovery"]
+    rb = b["per_series"]["spread"]["recovery"]
+    assert ra["n_recent"] == rb["n_recent"], \
+        "an unresolved end-of-sample pop must be excluded, not counted as censored-slow"
+    assert rb["halflife_recent_d"] == ra["halflife_recent_d"]

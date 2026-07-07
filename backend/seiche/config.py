@@ -358,8 +358,8 @@ TIDE_NOVELTY_UNCHARTED = 90.0  # NN-distance pctl at/above which water is "uncha
 
 UNDERTOW_DETREND_D = 30          # rolling-median detrend window (bd)
 UNDERTOW_WINDOW_D = 120          # rolling window for AC1 / variance (bd)
-UNDERTOW_TREND_D = 60            # AC1 change horizon reported (bd)
 UNDERTOW_RECOVERY_CENSOR_D = 10  # recovery half-life censoring (bd)
+UNDERTOW_POP_DECLUSTER_BD = 5    # min bd between recovery pops (episode = 1 trial)
 UNDERTOW_RECOVERY_MIN_POPS = 8   # pops per era before the stretch counts
 UNDERTOW_MIN_HISTORY_D = 400     # refuse to speak below this
 
@@ -389,6 +389,7 @@ SWELL_P_CAP = 0.90               # single-day probability ceiling
 # ---------------------------------------------------------------------------
 
 FLEET_DISAGREE_WARN = 0.30       # max−min across views that reads as ambiguity
+FLEET_MIN_SKILL = 0.02           # Brier skill below this earns zero blend weight
 
 # ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH

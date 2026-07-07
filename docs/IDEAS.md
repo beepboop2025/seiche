@@ -22,7 +22,7 @@ history (expanding-z, de-clustered, no shared days, forward outcomes closed) →
 forward SOFR−IORB fan, funding-event odds vs climatology with Wilson CI, a
 novelty gauge that flags the fan as extrapolation when today's water is
 uncharted, and a walk-forward hindcast (Brier/AUROC vs climatology) printed
-next to the forecast. Lives on the MARKET tab; `analog_event_odds` alert rule.
+next to the forecast. Lives on the FORECAST tab; `analog_event_odds` alert rule.
 
 ## 2. Undertow — the damping gauge (critical slowing down) ✅ *shipped*
 

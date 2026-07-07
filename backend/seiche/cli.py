@@ -246,7 +246,9 @@ def cmd_fleet(args) -> int:
     if not f.get("ok"):
         print(f"{RED}Fleet unavailable:{END} {f.get('reason')}", file=sys.stderr)
         return 1
-    print(f"{BOLD}FLEET{END} blended P(funding event, 5bd) = {f['blend_p_5bd']:.0%} "
+    blend = f.get("blend_p_5bd")
+    blend_txt = f"{blend:.0%}" if blend is not None else "— (no view has skill and no climatology baseline yet)"
+    print(f"{BOLD}FLEET{END} blended P(funding event, 5bd) = {blend_txt} "
           f"{DIM}({f['blend_source']}){END}")
     for v in f.get("views", []):
         p = f"{v['p']:.0%}" if v.get("p") is not None else "—"

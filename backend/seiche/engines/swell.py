@@ -41,6 +41,7 @@ import pandas as pd
 from seiche.config import (
     BACKTEST_EVENT_FWD_D,
     BACKTEST_SPIKE_BP,
+    CORPORATE_TAX_DAYS,
     SETTLEMENT_FLAG_B,
     SWELL_HORIZON_BD,
     SWELL_LIFT_CAP,
@@ -51,7 +52,9 @@ from seiche.config import (
     SWELL_STATE_PCTL,
     SWELL_WARMUP_D,
 )
-from seiche.engines.backtest import _wilson
+from seiche.engines import weather as eng_weather
+from seiche.engines.backtest import _wilson, pop_bp
+from seiche.engines.tidetables import _auroc
 
 BUCKET_LABELS = {
     "year_turn": "Year turn (G-SIB snapshot)",
@@ -64,41 +67,47 @@ BUCKET_LABELS = {
 _SETTLE_BUCKETS = ("mid_month", "plain")  # where the settlement lift applies
 
 
+_TAX_MONTHS = sorted({m for m, _ in CORPORATE_TAX_DAYS})   # one source of truth
+_QTR_MONTHS = (3, 6, 9)
+
+
 def classify_days(grid: pd.DatetimeIndex) -> pd.Series:
     """One disjoint forcing bucket per business day. Turn buckets span the
     boundary (last bd of the month + first bd of the next); tax/mid-month is
-    the first bd on/after the 15th."""
-    out = []
-    n = len(grid)
-    for i, d in enumerate(grid):
-        nxt = grid[i + 1] if i + 1 < n else d + pd.offsets.BDay(1)
-        prv = grid[i - 1] if i > 0 else d - pd.offsets.BDay(1)
-        b = None
-        if nxt.month != d.month:  # last bd of month m
-            b = "year_turn" if d.month == 12 else "quarter_turn" if d.month in (3, 6, 9) else "month_end"
-        elif prv.month != d.month:  # first bd after the turn
-            pm = prv.month
-            b = "year_turn" if pm == 12 else "quarter_turn" if pm in (3, 6, 9) else "month_end"
-        elif d.day >= 15 and (prv.day < 15 or prv.month != d.month):
-            b = "tax_date" if d.month in (3, 4, 6, 9, 12) else "mid_month"
-        out.append(b or "plain")
+    the first bd on/after the 15th. Vectorized — this runs on every snapshot."""
+    m = grid.month.to_numpy()
+    dd = grid.day.to_numpy()
+    nxt_m = np.roll(m, -1)
+    nxt_m[-1] = (grid[-1] + pd.offsets.BDay(1)).month
+    prv_m = np.roll(m, 1)
+    prv_m[0] = (grid[0] - pd.offsets.BDay(1)).month
+    prv_d = np.roll(dd, 1)
+    prv_d[0] = (grid[0] - pd.offsets.BDay(1)).day
+
+    last_bd = nxt_m != m           # last business day of month m
+    first_bd = prv_m != m          # first business day after a turn
+
+    out = np.full(len(grid), "plain", dtype=object)
+    mid = ~last_bd & ~first_bd & (dd >= 15) & (prv_d < 15)
+    out[mid] = np.where(np.isin(m[mid], _TAX_MONTHS), "tax_date", "mid_month")
+    turn_first = np.where(
+        prv_m == 12, "year_turn", np.where(np.isin(prv_m, _QTR_MONTHS), "quarter_turn", "month_end")
+    )
+    out[first_bd] = turn_first[first_bd]
+    turn_last = np.where(
+        m == 12, "year_turn", np.where(np.isin(m, _QTR_MONTHS), "quarter_turn", "month_end")
+    )
+    out[last_bd] = turn_last[last_bd]
     return pd.Series(out, index=grid)
 
 
 def coupon_settlements(auctions: pd.DataFrame) -> pd.Series:
-    """$B of note/bond settlement by issue date (bills roll weekly and mostly
-    net out; coupons are the classic dealer-balance-sheet pile)."""
-    if auctions is None or auctions.empty or "issue_date" not in auctions.columns:
-        return pd.Series(dtype=float)
-    df = auctions.copy()
-    df = df[~df["security_type"].astype(str).str.contains("Bill", case=False, na=False)]
-    df["issue_date"] = pd.to_datetime(df["issue_date"], errors="coerce")
-    amt_col = next((c for c in ("total_accepted", "offering_amt") if c in df.columns), None)
-    if amt_col is None:
-        return pd.Series(dtype=float)
-    df["amt_b"] = pd.to_numeric(df[amt_col].astype(str).str.replace(",", ""), errors="coerce") / 1e9
-    df = df.dropna(subset=["issue_date", "amt_b"])
-    return df.groupby("issue_date")["amt_b"].sum().sort_index()
+    """$B of note/bond settlement by issue date — the shared Weather parser,
+    coupon-only (bills roll weekly and mostly net out), preferring realized
+    total_accepted over the offering amount."""
+    return eng_weather.settlement_calendar(
+        auctions, exclude_bills=True, amount_cols=("total_accepted", "offering_amt")
+    )
 
 
 class _Tables:
@@ -113,6 +122,10 @@ class _Tables:
         self.state_hits, self.state_n = z(), 0
         self.settle_hits, self.settle_n = z(), 0          # heavy-settle mid/plain days
         self.settle_pool_hits, self.settle_pool_n = z(), 0  # all mid/plain days
+        # rates are constant between update() calls; the walk-forward loop
+        # asks for the same handful per day — memoize per counter version
+        self._ver = 0
+        self._cache: dict = {}
 
     def update(self, bucket: str, pop: float, state_hot: bool, settle_heavy: bool) -> None:
         if np.isnan(pop):
@@ -135,6 +148,8 @@ class _Tables:
             self.settle_pool_n += 1
             if settle_heavy:
                 self.settle_n += 1
+        self._ver += 1
+        self._cache.clear()
 
     # Shrinkage parents: a year turn IS a turn day (2/year can never fill its
     # own bucket — without this, Dec 31, the riskiest known day of the year,
@@ -161,7 +176,7 @@ class _Tables:
         r_all = self.all_hits[x] / max(self.all_n, 1)
         if r_all <= 0:
             return 1.0
-        return float(np.clip(r_state / r_all, *SWELL_LIFT_CAP))
+        return min(max(r_state / r_all, SWELL_LIFT_CAP[0]), SWELL_LIFT_CAP[1])
 
     def settle_lift(self, x: float) -> float:
         if self.settle_n < 30 or self.settle_pool_n < 200:
@@ -170,15 +185,21 @@ class _Tables:
         r_pool = self.settle_pool_hits[x] / max(self.settle_pool_n, 1)
         if r_pool <= 0:
             return 1.0
-        return float(np.clip(r_settle / r_pool, *SWELL_LIFT_CAP))
+        return min(max(r_settle / r_pool, SWELL_LIFT_CAP[0]), SWELL_LIFT_CAP[1])
 
     def p(self, bucket: str, x: float, state_hot: bool, settle_heavy: bool) -> float:
+        key = (bucket, x, state_hot, settle_heavy)
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
         p = self.base_rate(bucket, x)
         if state_hot:
             p *= self.state_lift(x)
         if settle_heavy and bucket in _SETTLE_BUCKETS:
             p *= self.settle_lift(x)
-        return float(min(p, SWELL_P_CAP))
+        p = float(min(p, SWELL_P_CAP))
+        self._cache[key] = p
+        return p
 
 
 def analyze(
@@ -194,8 +215,7 @@ def analyze(
 
     grid = pd.bdate_range(s.index.min(), s.index.max() + pd.offsets.BDay(horizon))
     today_pos = int(grid.searchsorted(s.index.max()))
-    sp = s.reindex(grid)
-    pop = (sp - sp.rolling(5, min_periods=3).median().shift(1)).to_numpy()
+    pop = pop_bp(s, grid).to_numpy()   # THE shared event statistic (backtest.pop_bp)
 
     buckets = classify_days(grid)
     b_arr = buckets.to_numpy()
@@ -243,11 +263,7 @@ def analyze(
         pa, ya, ca = np.array(ps), np.array(ys), np.array(cs)
         brier = float(np.mean((pa - ya) ** 2))
         brier_clim = float(np.mean((ca - ya) ** 2))
-        pos, neg = pa[ya == 1], pa[ya == 0]
-        auroc = None
-        if len(pos) and len(neg):
-            ranks = pd.Series(np.concatenate([pos, neg])).rank().to_numpy()
-            auroc = float((ranks[: len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
+        auroc = _auroc(ya, pa)   # shared estimator (tidetables) — one AUROC per repo
         reliability = []
         for lo, hi in ((0.0, 0.10), (0.10, 0.20), (0.20, 0.35), (0.35, 1.01)):
             g = (pa >= lo) & (pa < hi)
@@ -280,7 +296,7 @@ def analyze(
     # ---- live forward curve: full-history tables ---------------------------
     state_now = bool(state_hot[today_pos])
     curve = []
-    surv = {x: 1.0 for x in SWELL_SEVERITIES_BP}
+    surv10 = 1.0
     for j in range(today_pos + 1, min(today_pos + 1 + horizon, len(grid))):
         row: dict = {"date": grid[j].date().isoformat(), "bucket": b_arr[j]}
         prev = 1.0  # per-severity lifts can cross; exceedance must not rise in x
@@ -288,18 +304,19 @@ def analyze(
             pj = min(tables.p(b_arr[j], x, state_now, bool(settle_heavy[j])), prev)
             prev = pj
             row[f"p{x:g}"] = round(pj, 3)
-            surv[x] *= 1.0 - pj
-        row["cum10"] = round(1.0 - surv[10.0], 3)
+            if x == BACKTEST_SPIKE_BP:
+                surv10 *= 1.0 - pj
+        row["cum10"] = round(1.0 - surv10, 3)
         if settle_b.iloc[j] > 0:
             row["settle_b"] = round(float(settle_b.iloc[j]), 1)
         curve.append(row)
 
-    horizons = {}
-    for h in (5, 10, 21, horizon):
-        q = 1.0
-        for j in range(today_pos + 1, min(today_pos + 1 + h, len(grid))):
-            q *= 1.0 - tables.p(b_arr[j], ev_x, state_now, bool(settle_heavy[j]))
-        horizons[f"h{h}"] = round(1.0 - q, 3)
+    # Horizons read off the SAME clamped curve the tab shows — one code path
+    # for one quantity (the alert p and the displayed cum10 must never differ).
+    horizons = {
+        f"h{h}": (curve[min(h, len(curve)) - 1]["cum10"] if curve else None)
+        for h in (5, 10, 21, horizon)
+    }
 
     peak = max(curve, key=lambda r: r["p10"]) if curve else None
 
@@ -326,7 +343,6 @@ def analyze(
         "ok": True,
         "asof": s.index.max().date().isoformat(),
         "horizon_bd": horizon,
-        "severities_bp": list(SWELL_SEVERITIES_BP),
         # walk-forward p5 per scored day — test hook for the no-look-ahead
         # invariant (value at T must not change when future data arrives);
         # popped before serialization like tidetables' _hindcast.
@@ -352,6 +368,7 @@ def analyze(
         "validation": validation,
         "caveats": [
             "forward days condition on TODAY'S damping state held constant — state drift over the horizon is not modeled (stated, not hidden)",
+            "multi-week horizons compound daily rates as if pop-days were independent; pops CLUSTER, so h≥10 cumulative numbers are upper bounds — only the 5bd integral is walk-forward validated",
             "year turns see ~2 obs/year by construction — their rates borrow strength from quarter-turn evidence via shrinkage (low-n flagged), Wilson CIs printed on the raw counts",
             "check the reliability table before reading any probability as literal odds; the verdict self-demotes on levels",
             "replay note: the announced-settlement overlay has no historical vintage — Time Machine replays run calendar-only",
