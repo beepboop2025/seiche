@@ -841,3 +841,124 @@ def test_walk_forward_with_pretrain_scores_same_days(rng):
         "pretraining adds training mass, never scored days"
     assert pooled["validation"]["pretrain_rows"] == len(X_pre)
     assert 0.0 <= pooled["p_event_5bd"] <= 1.0
+
+
+# --------------------------------------------------------------------------
+# Riptide: pop grammar, discriminators, walk-forward honesty
+# --------------------------------------------------------------------------
+
+def _riptide_world(rng, n=3200):
+    """Turn pops co-signed by RRP mean-revert; plain-day pops without the
+    co-sign stick and escalate — the grammar Riptide must learn."""
+    from seiche.engines import swell as sw
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(0, 0.8, n), index=idx)
+    rrp = pd.Series(np.abs(rng.normal(50, 5, n)), index=idx)
+    buckets = sw.classify_days(idx).to_numpy()
+    for i in range(60, n - 25):
+        if buckets[i] in ("quarter_turn", "year_turn"):
+            s.iloc[i] += 8.0                    # scheduled pop...
+            rrp.iloc[i] += 60.0                 # ...with its RRP co-sign; fades next day
+        elif rng.uniform() < 0.02:
+            s.iloc[i : i + 6] += 9.0            # scarcity pop: sticks, no co-sign
+            if rng.uniform() < 0.5:
+                s.iloc[i + 4] += 6.0            # and sometimes escalates
+    return s, rrp
+
+
+def test_riptide_learns_the_cosign_grammar(rng):
+    from seiche.engines import riptide
+    s, rrp = _riptide_world(rng)
+    r = riptide.analyze(s, rrp)
+    assert r["ok"], r.get("reason")
+    v = r["validation"]["sticky"]
+    assert v.get("auroc") is not None and v["auroc"] > 0.65, \
+        f"co-sign grammar must be learnable (AUROC {v.get('auroc')})"
+    P = riptide.extract_pops(s, rrp, None)
+    # turn pops carry the co-sign; plain scarcity pops don't
+    turn = P[P["is_turn"] == 1.0]
+    plain = P[P["is_turn"] == 0.0]
+    if len(turn) > 5 and len(plain) > 5:
+        assert turn["rrp_co_z"].median() > plain["rrp_co_z"].median()
+        assert plain["sticky"].mean(skipna=True) > turn["sticky"].mean(skipna=True)
+
+
+def test_riptide_open_windows_get_no_verdict(rng):
+    from seiche.engines import riptide
+    s, rrp = _riptide_world(rng)
+    # a pop 2bd before the sample end that has NOT given back — undecidable
+    s.iloc[-2] += 9.0
+    s.iloc[-1] = s.iloc[-2] + 0.2   # still riding high at the sample edge
+    P = riptide.extract_pops(s, rrp, None)
+    last = P.iloc[-1]
+    assert last["date"] == s.index[-2]
+    assert pd.isna(last["sticky"]), "an undecided open window must carry NO verdict"
+    assert pd.isna(last["escalates"])
+    # but early resolution IS a verdict: a pop that gives back half by day 1
+    # is decidedly chop, and appending future data can never change that
+    s2, rrp2 = _riptide_world(rng)
+    s2.iloc[-2] += 9.0              # noise next day = immediate give-back
+    P2 = riptide.extract_pops(s2, rrp2, None)
+    assert P2.iloc[-1]["sticky"] == 0.0
+
+
+def test_riptide_refuses_thin_history(rng):
+    from seiche.engines import riptide
+    idx = _bdays(300)
+    r = riptide.analyze(pd.Series(rng.normal(0, 0.5, 300), index=idx),
+                        pd.Series(50.0, index=idx))
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Breakwater: the revealed reaction function
+# --------------------------------------------------------------------------
+
+def test_breakwater_reveals_the_pain_threshold(rng):
+    from seiche.engines import breakwater
+    n = 2000
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(2, 1.0, n), index=idx)
+    interventions = []
+    for loc in (600, 1100, 1600):
+        s.iloc[loc - 15 : loc] += np.linspace(2, 18, 15)   # stress builds...
+        interventions.append({"date": idx[loc].date().isoformat(),
+                              "label": f"rescue {loc}", "kind": "test"})
+        s.iloc[loc : loc + 10] -= np.linspace(0, 12, 10)   # ...rescue fades it
+    srf = pd.Series(0.0, index=idx)
+    r = breakwater.analyze(s, srf, interventions=interventions)
+    assert r["ok"], r.get("reason")
+    assert r["revealed_threshold"]["n"] == 3
+    assert r["revealed_threshold"]["median_pctl"] > 90, \
+        "rescues that arrive at stress peaks must reveal a high threshold"
+    assert r["current"]["spread_pctl"] < r["revealed_threshold"]["median_pctl"]
+    assert 0 <= r["rescue_proximity"] <= 100
+
+
+def test_breakwater_refuses_thin_catalog(rng):
+    from seiche.engines import breakwater
+    idx = _bdays(900)
+    s = pd.Series(rng.normal(2, 1, 900), index=idx)
+    r = breakwater.analyze(s, pd.Series(0.0, index=idx),
+                           interventions=[{"date": "2010-01-01", "label": "x", "kind": "y"}])
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Venn-Abers: the calibrated band's finite-sample sanity
+# --------------------------------------------------------------------------
+
+def test_venn_abers_band_is_ordered_and_bounded(rng):
+    from seiche.engines.stacker import _venn_abers
+    p = rng.uniform(0, 1, 400)
+    y = (rng.uniform(size=400) < p).astype(float)   # perfectly calibrated world
+    band = _venn_abers(p, y, 0.3)
+    assert band is not None
+    assert 0.0 <= band["p0"] <= band["p1"] <= 1.0
+    assert band["p1"] - band["p0"] < 0.3, "dense calibrated data must give a tight band"
+    # miscalibrated world: model says 0.8, reality is 0.2 — band must drag down
+    p2 = np.full(400, 0.8) + rng.normal(0, 0.02, 400)
+    y2 = (rng.uniform(size=400) < 0.2).astype(float)
+    band2 = _venn_abers(p2, y2, 0.8)
+    assert band2 is not None and band2["p1"] < 0.5, \
+        "Venn-Abers must override a miscalibrated point forecast"

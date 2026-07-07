@@ -91,6 +91,25 @@ def _fit_1d(x: np.ndarray, y: np.ndarray):
     return m
 
 
+def _venn_abers(p_hist: np.ndarray, y_hist: np.ndarray, p_now: float) -> dict | None:
+    """Inductive Venn-Abers band for one point: isotonic calibration fitted
+    twice, once with (p_now, 0) appended and once with (p_now, 1); the two
+    fits' predictions at p_now bracket the calibrated probability with
+    finite-sample validity (no distributional assumptions)."""
+    from sklearn.isotonic import IsotonicRegression
+
+    try:
+        lo_hi = []
+        for forced in (0.0, 1.0):
+            iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip")
+            iso.fit(np.append(p_hist, p_now), np.append(y_hist, forced))
+            lo_hi.append(float(iso.predict([p_now])[0]))
+        p0, p1 = sorted(lo_hi)
+        return {"p0": round(p0, 3), "p1": round(p1, 3), "method": "Venn-Abers (finite-sample validity)"}
+    except Exception:  # noqa: BLE001 — a band is an upgrade, never a blocker
+        return None
+
+
 def walk_forward_stack(
     M: pd.DataFrame,
     y: pd.Series,
@@ -222,6 +241,14 @@ def walk_forward_stack(
     )
 
     p_now = float(p_pub.dropna().iloc[-1]) if not p_pub.dropna().empty else None
+
+    # Venn-Abers calibrated band: isotonic fits with today's point forced to
+    # label 0 and to label 1 give [p0, p1] — an interval with FINITE-SAMPLE
+    # validity guarantees (Vovk), not an asymptotic hope. Wide band = the
+    # OOS record has little to say about probabilities in this region.
+    band = None
+    if p_now is not None and len(oos) >= 100:
+        band = _venn_abers(oos[published].to_numpy(), oos["y"].to_numpy(), p_now)
     disp_now = float(dispersion.dropna().iloc[-1]) if not dispersion.dropna().empty else None
     members_now = {
         m: (round(float(cal[m].dropna().iloc[-1]), 3) if not cal[m].dropna().empty else None)
@@ -233,6 +260,7 @@ def walk_forward_stack(
         "ok": True,
         "asof": M.index[-1].date().isoformat(),
         "p_now": round(p_now, 3) if p_now is not None else None,
+        "calibrated_band": band,
         "published": published,
         "members_now": members_now,
         "dispersion_now": round(disp_now, 3) if disp_now is not None else None,

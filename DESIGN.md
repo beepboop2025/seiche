@@ -369,3 +369,46 @@ Also considered and rejected (v2.4): letting the Navigator into the Stack
 open-book); LLM-scored statements as the primary text signal (model drift
 under a vintage record); scraping FOMC minutes (3-week lag, HTML shape
 unverified — statements carry the signal).
+
+
+---
+
+# v2.5 addendum — Riptide, the Breakwater, Venn–Abers (2026-07-07)
+
+**Riptide (`engines/riptide.py`)** — the design panel's top pick, shipped:
+the pop as the unit of analysis. Declustered pops ≥ 4bp (shared PROOF
+statistic) become ~independent trials; targets STICKY (half-give-back time
+≥ 3bd, 15bd window, unresolved windows carry NO verdict — but early
+give-back IS a verdict and is truncation-stable) and ESCALATES (full ≥10bp
+event within 10bd). Discriminators as-of the pop-day close: RRP co-sign
+(expanding robust z of the ON-RRP daily change — choreography vs scarcity),
+calendar bucket, Undertow damping percentile. Tiny expanding logistic
+across pops; features with no history yet drop per-fit (the ML Lab rule).
+Speaks only on a live pop; flat water is a reading, not an absence.
+
+**The Breakwater (`engines/breakwater.py`)** — the genuinely unshipped idea:
+the rescuer as an endogenous player. Every public forecaster treats the Fed
+as weather; the Breakwater treats each dated intervention in the public
+record (config catalog, editorial dating flagged, append-only) as a revealed
+preference: replay the board as of the day BEFORE each announcement
+(expanding percentile only) and the distribution of pre-intervention states
+IS the reaction function. Outputs the revealed threshold (median/range/n),
+live rescue proximity (0–100), and the posture note (a standing facility is
+a goalie who never leaves the net). Zero fitted parameters; n≈7 and says so;
+context-only — and the caveat that matters: a forecast miss after an
+intervention is a SAVE, and an honest scoreboard must say which misses were
+saves. Light layer: Time Machine replays it.
+
+**Venn–Abers band (stacker)** — today's ensemble probability now ships with
+[p0, p1]: isotonic calibration fitted twice with the current point forced to
+each label; the bracket carries finite-sample validity guarantees (Vovk), no
+distributional assumptions. Wide band = the OOS record is silent about this
+region — uncertainty about the uncertainty, quantified.
+
+Wiring: FORECAST tab (Riptide atop, Breakwater below), HELM (band in the
+Stack card), alerts `riptide_sticky` (a live pop classified as a current)
+and `breakwater_proximity`, desk-assistant context entries. Tests 58 → 64,
+including: the co-sign grammar is learnable on synthetic worlds (AUROC
+gate), open windows carry no verdict while early resolutions do, rescues at
+stress peaks reveal high thresholds, and Venn–Abers overrides a
+miscalibrated point forecast.
