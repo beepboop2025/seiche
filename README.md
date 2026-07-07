@@ -158,6 +158,23 @@ Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.
 
+## Deploying on a VPS (Hetzner etc.)
+
+```bash
+# first time, as root — clones to /opt/seiche, runs the test gate, builds,
+# installs systemd units (API on 127.0.0.1:8787 + a 30-min alert timer)
+bash ops/deploy/install.sh
+
+# every release after that — pull main, re-gate, rebuild, restart
+bash /opt/seiche/ops/deploy/update.sh
+```
+
+Put a TLS reverse proxy in front (Caddy: `reverse_proxy 127.0.0.1:8787`).
+The SQLite cache AND the PIT/Navigator as-published record live in
+`/opt/seiche/backend/data` — back that directory up; it is the track record.
+LLM keys for the desk assistant/Navigator and Telegram alert credentials go
+in the `[Service]` environment of `ops/deploy/seiche.service`.
+
 ## Tuning the editorial voice
 
 `backend/seiche/config.py` quarantines every judgment call: composite weights, regime

@@ -1,0 +1,27 @@
+# Seiche — production API + UI (single process; uvicorn serves frontend/dist)
+# Install: see ops/deploy/install.sh   Update: ops/deploy/update.sh
+[Unit]
+Description=Seiche funding-stress terminal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seiche
+Group=seiche
+WorkingDirectory=/opt/seiche/backend
+ExecStart=/opt/seiche/backend/.venv/bin/uvicorn seiche.api:app --host 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=5
+# the SQLite cache + PIT record live here — back this directory up
+ReadWritePaths=/opt/seiche/backend/data
+# optional: LLM endpoint for the desk assistant + the Navigator
+# Environment=SEICHE_LLM_BASE_URL=...
+# Environment=SEICHE_LLM_API_KEY=...
+# optional: alert delivery
+# Environment=SEICHE_WEBHOOK_URL=...
+# Environment=SEICHE_TELEGRAM_BOT_TOKEN=...
+# Environment=SEICHE_TELEGRAM_CHAT_ID=...
+
+[Install]
+WantedBy=multi-user.target

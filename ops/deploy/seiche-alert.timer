@@ -1,0 +1,10 @@
+[Unit]
+Description=Run seiche alert every 30 minutes (market hours are handled by data cadence)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

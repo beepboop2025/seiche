@@ -1,0 +1,13 @@
+# One-shot alert evaluation (paired with seiche-alert.timer)
+[Unit]
+Description=Seiche alert rules evaluation
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche
+Group=seiche
+WorkingDirectory=/opt/seiche/backend
+ExecStart=/opt/seiche/backend/.venv/bin/seiche alert
+# exit 2 means "alerts fired" — success, not failure
+SuccessExitStatus=0 2
