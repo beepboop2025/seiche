@@ -1,0 +1,46 @@
+name: deploy-hetzner
+
+# Auto-deploy to the Hetzner box on every merge to main.
+# Needs two repo secrets (Settings → Secrets → Actions):
+#   HETZNER_HOST     e.g. 167.233.225.54
+#   HETZNER_SSH_KEY  private key whose public half is in root's authorized_keys
+# Until they exist this workflow skips cleanly (says so in the log).
+# First-time server setup: ops/deploy/install.sh (see README "Deploying on a VPS").
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Deploy over SSH (test-gated update.sh on the box)
+        env:
+          HOST: ${{ secrets.HETZNER_HOST }}
+          KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          if [ -z "$HOST" ] || [ -z "$KEY" ]; then
+            echo "::notice::HETZNER_HOST / HETZNER_SSH_KEY secrets not set — skipping server deploy."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$KEY" > ~/.ssh/hetzner_key
+          chmod 600 ~/.ssh/hetzner_key
+          ssh -i ~/.ssh/hetzner_key -o StrictHostKeyChecking=accept-new "root@$HOST" '
+            set -e
+            if [ -x /opt/seiche/ops/deploy/update.sh ]; then
+              bash /opt/seiche/ops/deploy/update.sh
+            else
+              echo "Seiche not installed yet — bootstrapping via install.sh"
+              git clone https://github.com/beepboop2025/seiche.git /tmp/seiche-bootstrap 2>/dev/null || true
+              bash /tmp/seiche-bootstrap/ops/deploy/install.sh || {
+                echo "bootstrap failed — run ops/deploy/install.sh on the box once (private repo needs a deploy key)"; exit 1; }
+            fi
+          '

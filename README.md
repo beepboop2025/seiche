@@ -169,7 +169,22 @@ bash ops/deploy/install.sh
 bash /opt/seiche/ops/deploy/update.sh
 ```
 
-Put a TLS reverse proxy in front (Caddy: `reverse_proxy 127.0.0.1:8787`).
+Put a TLS reverse proxy in front. The box already serving another site
+(e.g. Palimpsest) just adds a vhost — nginx:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name seiche.example.com;   # certbot --nginx -d seiche.example.com
+    location / { proxy_pass http://127.0.0.1:8787; proxy_set_header Host $host; }
+}
+```
+
+**Auto-deploy on every merge to main**: add two repo secrets —
+`HETZNER_HOST` (the server IP) and `HETZNER_SSH_KEY` (a private key whose
+public half is in root's `authorized_keys`) — and
+`.github/workflows/deploy-hetzner.yml` runs the test-gated `update.sh` on the
+box after each push to main. Without the secrets it skips cleanly.
 The SQLite cache AND the PIT/Navigator as-published record live in
 `/opt/seiche/backend/data` — back that directory up; it is the track record.
 LLM keys for the desk assistant/Navigator and Telegram alert credentials go
