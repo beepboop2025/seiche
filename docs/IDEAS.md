@@ -24,7 +24,7 @@ novelty gauge that flags the fan as extrapolation when today's water is
 uncharted, and a walk-forward hindcast (Brier/AUROC vs climatology) printed
 next to the forecast. Lives on the MARKET tab; `analog_event_odds` alert rule.
 
-## 2. Undertow — the damping gauge (critical slowing down)
+## 2. Undertow — the damping gauge (critical slowing down) ✅ *shipped*
 
 **Pattern:** systems approaching a regime shift relax more slowly — rising
 lag-1 autocorrelation and variance of the *detrended* state are early-warning
@@ -50,7 +50,7 @@ labeled episodes; report "stage k of N, historically T−x days from the break,"
 with the stages that fired out of order flagged (out-of-order cascades were
 false alarms historically — that's the discriminator).
 
-## 4. Fleet of Forecasts — disagreement as a signal
+## 4. Fleet of Forecasts — disagreement as a signal ✅ *shipped*
 
 **Pattern:** the rule index, ML Lab and Tide Tables now emit three independent
 P(event)-shaped views. Ensembles beat components, and *forecast dispersion*
@@ -124,6 +124,22 @@ direction strengthens (the 2019 and Mar-2020 signature).
 
 ---
 
+## 11. Swell Forecast — the funding-stress forward curve ✅ *shipped*
+
+**Pattern:** the basin's forcing schedule is PUBLIC — turn dates, tax dates and
+coupon settlements are known weeks ahead, and each forcing class keeps
+reproducing its own distribution of spread pops. Nobody publishes the term
+structure that falls out of that.
+
+**Tool:** P(pop ≥ 2/5/10/20bp) per business day for 42bd from expanding
+calendar-bucket exceedance distributions (small severities lend the rare big
+ones statistical mass), lifted by the Undertow damping state and announced
+coupon settlements, compounded to P(event by horizon), walk-forward validated
+vs climatology with the reliability table printed. FORECAST tab + `seiche
+swell` + `swell_event_prob` alert.
+
+---
+
 *Naming note: engines keep the hydrology metaphor — the pattern layer is now
-Echo (rhyme), Resonance (forced response), Tide Tables (analog prediction);
-Undertow and Cascade would extend it.*
+Echo (rhyme), Resonance (forced response), Undertow (free decay), Tide Tables
+(analog prediction), Swell (the forward curve); Cascade would extend it.*

@@ -46,6 +46,7 @@ from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
 from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
+from seiche.engines import fleet as eng_fleet
 from seiche.engines import history as eng_history
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
@@ -57,9 +58,11 @@ from seiche.engines import resonance as eng_resonance
 from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
 from seiche.engines import stationkeeping as eng_stationkeeping
+from seiche.engines import swell as eng_swell
 from seiche.engines import tails as eng_tails
 from seiche.engines import tidetables as eng_tidetables
 from seiche.engines import turn as eng_turn
+from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche.sources import cftc, crypto, ecb, fiscaldata, fred, nyfed, ofr
@@ -308,6 +311,9 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     # --- Resonance ---
     run("resonance", lambda: eng_resonance.analyze(drv["spread_bp"]))
 
+    # --- Undertow (free decay — the other half of the resonance physics) ---
+    run("undertow", lambda: eng_undertow.analyze(drv["spread_bp"], drv["tail_bp"]))
+
     # --- Hydrophone ---
     def _hydro():
         sofr = _pts(fred_s, "SOFR")
@@ -401,6 +407,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         "rvxray": eng_rvxray.rvxray_score(results["rvxray"]) if results["rvxray"].get("ok") else None,
         "resonance": eng_resonance.resonance_score(results["resonance"]) if results["resonance"].get("ok") else None,
         "hydrophone": eng_hydrophone.hydrophone_score(results["hydrophone"]) if results["hydrophone"].get("ok") else None,
+        "undertow": eng_undertow.undertow_score(results["undertow"]) if results["undertow"].get("ok") else None,
         "auctions": eng_auctions.auctions_score(results["auctions"]) if results["auctions"].get("ok") else None,
         "warehouse": eng_warehouse.warehouse_score(results["warehouse"]) if results["warehouse"].get("ok") else None,
         "buffers": eng_composite.buffers_score(float(drv["rrp"].iloc[-1])) if not drv["rrp"].empty else None,
@@ -541,6 +548,20 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         return res
     run("tidetables", _tidetables)
 
+    # Swell Forecast — the funding-stress forward curve: calendar-bucket
+    # exceedance hazards + Undertow damping state + coupon settlements,
+    # compounded over the next 42bd and walk-forward validated.
+    def _swell():
+        res = eng_swell.analyze(
+            spread_bp=spread,
+            damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
+            auctions=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+            upcoming=(src.get("upcoming") or {}).get("upcoming", pd.DataFrame()),
+        )
+        res.pop("_p5_series", None)  # test hook, not JSON-serializable
+        return res
+    run("swell", _swell)
+
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and
     # rerun event capture. If this still leads events, the claim is causal
@@ -616,6 +637,16 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             )
         return res
     run("ml", _ml)
+
+    # Fleet of Forecasts — every P(event, 5bd) view on one bridge, blended by
+    # each one's own published skill, with the disagreement meter.
+    run("fleet", lambda: eng_fleet.analyze(
+        lite_pctl=pctl,
+        spread_bp=spread,
+        ml=out.get("ml"),
+        tide=out.get("tidetables"),
+        swell=out.get("swell"),
+    ))
 
     out["_all_ok"] = all(
         isinstance(v, dict) and v.get("ok")
@@ -760,11 +791,14 @@ def _strip_private(obj):
 
 
 def _record_pit(engines: dict, deep: dict) -> None:
-    """Forward-accruing as-published record: today's index, subscores, tell."""
+    """Forward-accruing as-published record: today's index, subscores, tell —
+    and every forecast view, so the fleet accrues a track record no
+    reconstruction can polish."""
     comp = engines.get("composite", {})
     if not comp.get("ok"):
         return
     day = utcnow_iso()[:10]
+    fleet = (deep or {}).get("fleet", {})
     store.save_blob(
         f"pit:{day}",
         {
@@ -774,6 +808,13 @@ def _record_pit(engines: dict, deep: dict) -> None:
             "coverage_pct": comp.get("coverage_pct"),
             "subscores": comp.get("subscores"),
             "tell": (deep or {}).get("tell", {}).get("tell"),
+            "forecasts": {
+                "blend_p_5bd": fleet.get("blend_p_5bd"),
+                "disagreement": fleet.get("disagreement"),
+                "views": {
+                    v["name"]: v.get("p") for v in fleet.get("views", []) if isinstance(v, dict)
+                } if fleet.get("ok") else None,
+            },
         },
     )
 

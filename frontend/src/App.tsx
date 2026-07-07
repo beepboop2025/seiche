@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Any, fmt } from "./lib";
 import Board from "./tabs/Board";
 import Market from "./tabs/Market";
+import Forecast from "./tabs/Forecast";
 import Global from "./tabs/Global";
 import Calendar from "./tabs/Calendar";
 import Positioning from "./tabs/Positioning";
@@ -11,7 +12,7 @@ import Proof from "./tabs/Proof";
 import System from "./tabs/System";
 
 const TABS = [
-  "BOARD", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
+  "BOARD", "FORECAST", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
   "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -96,6 +97,7 @@ export default function App() {
       )}
 
       {tab === "BOARD" && <Board snap={snap} live={live} />}
+      {tab === "FORECAST" && <Forecast snap={snap} />}
       {tab === "MARKET" && <Market snap={snap} />}
       {tab === "GLOBAL" && <Global snap={snap} />}
       {tab === "CALENDAR" && <Calendar snap={snap} />}

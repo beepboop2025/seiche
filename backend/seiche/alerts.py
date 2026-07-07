@@ -180,6 +180,24 @@ def evaluate(snap: dict) -> list[dict]:
                            f"saw a funding event within 5bd (base rate {odds.get('base_rate', 0):.0%}, "
                            f"water {nov})"))
 
+    sw = deep.get("swell") or {}
+    thr = ALERT_RULES.get("swell_event_prob")
+    if thr is not None and sw.get("ok") and (sw.get("p_event_5bd") or 0.0) >= thr:
+        peak = sw.get("peak") or {}
+        candidates.append(("swell_event", sw.get("asof", "?"),
+                           f"Swell curve: P(funding event, 5bd) = {sw['p_event_5bd']:.0%}; "
+                           f"peak day {peak.get('date')} ({peak.get('bucket')}, "
+                           f"P(≥10bp) {peak.get('p10', 0):.0%})"))
+
+    fl = deep.get("fleet") or {}
+    thr = ALERT_RULES.get("fleet_disagree")
+    if thr is not None and fl.get("ok") and (fl.get("disagreement") or 0.0) >= thr:
+        vs = {v["name"]: v.get("p") for v in fl.get("views", [])}
+        candidates.append(("fleet_disagree", (snap.get("generated_at") or "")[:10],
+                           f"forecast fleet disagrees ({fl['disagreement']:.0%} spread): "
+                           + ", ".join(f"{k} {p:.0%}" for k, p in vs.items() if p is not None)
+                           + " — regime ambiguity, trust ranges not points"))
+
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):
             if d.get("status") == "DEAD":

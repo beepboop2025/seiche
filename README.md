@@ -17,7 +17,7 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
-## v2 "Deep Water" — thirteen engines, five analytics layers, nine tabs
+## v2 "Deep Water" — sixteen engines, six analytics layers, ten tabs
 
 | Engine | Question it answers |
 |---|---|
@@ -31,6 +31,8 @@ layer none of them have: **honest evidence about itself**.
 | **Auction Digestion** | Is the market choking on Treasury supply? |
 | **Warehouse** | How full is the primary-dealer balance sheet — the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
 | **Resonance Engine** ★ | *The seiche made literal:* does the same calendar forcing (month-end, quarter-end, year-end, tax dates) produce a bigger slosh than it used to? Amplification = damping loss = fragility rising while levels look calm. |
+| **Undertow** ★ | The free-decay half of the resonance physics: critical slowing down (Scheffer et al.), measured continuously. Rising lag-1 autocorrelation + variance of the detrended spread/tail and a stretching recovery half-life after everyday pops = the basin losing damping on days when NOTHING is happening. Expanding percentiles only; weighted into the composite as structural evidence. |
+| **Swell Forecast** ★ | The funding-stress **forward curve** — a term structure nobody publishes, not even the $32k terminals: P(SOFR−IORB pop ≥ 2/5/10/20bp) for each of the next 42 business days, built from the PUBLIC forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops — small severities lend the rare big ones statistical mass), lifted by the live damping state and announced coupon settlements. Compounds to P(event by horizon), walk-forward validated vs climatology with the reliability table printed, and the verdict self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
@@ -51,6 +53,14 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 - **The Tell** — plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
   OAS, rates vol). Positive = the basin is sloshing and the screens haven't noticed.
   The whole thesis in one tradeable number.
+- **Fleet of Forecasts** — the rule index, ML Lab, Tide Tables analogs and the Swell
+  curve all emit P(funding event, 5bd); the Fleet blends them weighted by each view's
+  OWN published walk-forward skill (a view that can't beat its base rate gets zero
+  weight — it already self-demoted), and publishes the **disagreement meter**:
+  forecast dispersion spikes exactly when the regime is ambiguous, which is when an
+  operator should trust ranges, not points. Every view's daily forecast is appended
+  to the PIT record, so the fleet accrues an as-published track record no
+  reconstruction can polish.
 - **Turn Barometer** — forecasts the *next* month/quarter-end turn's severity with
   leave-one-out cross-validation, always benchmarked against a naive forecast. When
   the model can't beat naive, it says so and publishes naive instead.
@@ -105,6 +115,8 @@ seiche replay 2019-09-12  # Time Machine in the terminal
 seiche backtest           # PROOF summary
 seiche ml                 # ML Lab: event probability + honest validation
 seiche analogs            # Tide Tables: nearest historical analogs + forward fan
+seiche swell              # the funding-stress forward curve, 6 weeks out
+seiche fleet              # every forecast view + skill-weighted blend + disagreement
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 ```

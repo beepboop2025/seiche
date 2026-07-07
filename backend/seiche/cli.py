@@ -7,6 +7,8 @@
   seiche replay DATE         Time Machine: the board as of YYYY-MM-DD
   seiche backtest            PROOF summary in the terminal
   seiche analogs             Tide Tables: nearest analogs + forward fan
+  seiche swell               the funding-stress forward curve, 6 weeks out
+  seiche fleet               every forecast view + blend + disagreement
   seiche serve [--port]      run the API + UI
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
@@ -206,6 +208,56 @@ def cmd_analogs(args) -> int:
     return 0
 
 
+def cmd_swell(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    s = snap.get("deep", {}).get("swell", {})
+    if not s.get("ok"):
+        print(f"{RED}Swell unavailable:{END} {s.get('reason')}", file=sys.stderr)
+        return 1
+    hz = s.get("event_by_horizon", {})
+    print(
+        f"{BOLD}SWELL FORECAST{END} P(funding event) "
+        f"5bd {hz.get('h5', 0):.0%} · 10bd {hz.get('h10', 0):.0%} · "
+        f"21bd {hz.get('h21', 0):.0%} · {s['horizon_bd']}bd {hz.get('h' + str(s['horizon_bd']), 0):.0%}"
+    )
+    pk = s.get("peak") or {}
+    print(f"  peak day: {pk.get('date')} ({pk.get('bucket')}) P(≥10bp) {pk.get('p10', 0):.0%}")
+    st = s.get("state", {})
+    if st.get("available"):
+        hot = f"{RED}HOT{END} (lift {st['lift_10bp']}x)" if st.get("hot") else f"{DIM}calm{END}"
+        print(f"  damping state (Undertow): {hot}")
+    print(f"{BOLD}next 10 days{END}")
+    for row in s.get("curve", [])[:10]:
+        bar = "█" * int(round(row["p10"] * 40))
+        settle = f" · settles ${row['settle_b']}B" if row.get("settle_b") else ""
+        print(f"  {row['date']}  {row['p10']:6.1%} {bar} {DIM}{row['bucket']}{settle}{END}")
+    v = s.get("validation", {})
+    if v.get("ok"):
+        print(f"  validation: AUROC {v['auroc']} · Brier {v['brier']:.4f} vs climatology "
+              f"{v['brier_climatology']:.4f} — {v['verdict']}")
+    return 0
+
+
+def cmd_fleet(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    f = snap.get("deep", {}).get("fleet", {})
+    if not f.get("ok"):
+        print(f"{RED}Fleet unavailable:{END} {f.get('reason')}", file=sys.stderr)
+        return 1
+    print(f"{BOLD}FLEET{END} blended P(funding event, 5bd) = {f['blend_p_5bd']:.0%} "
+          f"{DIM}({f['blend_source']}){END}")
+    for v in f.get("views", []):
+        p = f"{v['p']:.0%}" if v.get("p") is not None else "—"
+        sk = f"{v['skill']:+.3f}" if v.get("skill") is not None else "  —  "
+        w = f"{v.get('weight', 0):.0%}" if v.get("weight") is not None else "—"
+        print(f"  {v['name']:<8} p {p:>5} · skill {sk} · weight {w}  {DIM}{v['label']}{END}")
+    col = RED if f["disagreement"] >= f["disagree_warn"] else DIM
+    print(f"  disagreement {col}{f['disagreement']:.0%}{END} — {f['verdict']}")
+    return 0
+
+
 def cmd_ask(args) -> int:
     from seiche import ai, assemble
     snap = asyncio.run(assemble.snapshot())
@@ -255,6 +307,10 @@ def main() -> None:
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
 
     sub.add_parser("analogs", help="Tide Tables: nearest historical analogs + forward fan").set_defaults(fn=cmd_analogs)
+
+    sub.add_parser("swell", help="funding-stress forward curve (6 weeks)").set_defaults(fn=cmd_swell)
+
+    sub.add_parser("fleet", help="forecast views + blend + disagreement").set_defaults(fn=cmd_fleet)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

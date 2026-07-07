@@ -102,6 +102,30 @@ def context_pack(snap: dict) -> dict:
             "skill_verdict": (deep.get("tidetables", {}).get("skill") or {}).get("verdict"),
             "asof": deep.get("tidetables", {}).get("asof"),
         } if (deep.get("tidetables") or {}).get("ok") else None,
+        "undertow": {
+            "score": eng.get("undertow", {}).get("score"),
+            "per_series": {
+                k: {kk: v.get(kk) for kk in ("ac1_pctl", "tau_bd", "var_pctl")}
+                for k, v in (eng.get("undertow", {}).get("per_series") or {}).items()
+            },
+            "asof": eng.get("undertow", {}).get("asof"),
+        } if eng.get("undertow", {}).get("ok") else None,
+        "swell": {
+            "p_event_5bd": deep.get("swell", {}).get("p_event_5bd"),
+            "event_by_horizon": deep.get("swell", {}).get("event_by_horizon"),
+            "peak": deep.get("swell", {}).get("peak"),
+            "validation_verdict": (deep.get("swell", {}).get("validation") or {}).get("verdict"),
+            "asof": deep.get("swell", {}).get("asof"),
+        } if (deep.get("swell") or {}).get("ok") else None,
+        "fleet": {
+            "blend_p_5bd": deep.get("fleet", {}).get("blend_p_5bd"),
+            "disagreement": deep.get("fleet", {}).get("disagreement"),
+            "verdict": deep.get("fleet", {}).get("verdict"),
+            "views": [
+                {k: v.get(k) for k in ("name", "p", "skill", "weight")}
+                for v in deep.get("fleet", {}).get("views", [])
+            ],
+        } if (deep.get("fleet") or {}).get("ok") else None,
         "basins": basins.get("basins") if basins.get("ok") else None,
         "swap_lines_30d_m": (basins.get("swap_lines") or {}).get("ops_30d_total_m") if basins.get("ok") else None,
         "moorings": {

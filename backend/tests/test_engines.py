@@ -547,3 +547,176 @@ def test_stationkeeping_flags_injected_burn(rng):
     assert r["ok"]
     tga_alarms = [m for m in r["recent_maneuvers"] if m["channel"] == "TGA"]
     assert tga_alarms, "a $300B unscheduled build must alarm"
+
+
+# --------------------------------------------------------------------------
+# Undertow: critical slowing down must fire on a basin losing damping and
+# stay quiet on a stationary one; expanding percentiles must not look ahead
+# --------------------------------------------------------------------------
+
+def _ar1_series(rng, n, phi):
+    """AR(1) with per-step phi array."""
+    x = np.zeros(n)
+    for t in range(1, n):
+        x[t] = phi[t] * x[t - 1] + rng.normal(0, 1.0)
+    return pd.Series(x, index=_bdays(n))
+
+
+def test_undertow_detects_losing_damping(rng):
+    from seiche.engines import undertow
+    n = 1500
+    phi_flat = np.full(n, 0.5)
+    phi_crit = np.full(n, 0.5)
+    phi_crit[-300:] = np.linspace(0.5, 0.95, 300)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=_bdays(n))
+    calm = undertow.analyze(_ar1_series(rng, n, phi_flat), tail)
+    hot = undertow.analyze(_ar1_series(rng, n, phi_crit), tail)
+    assert calm["ok"] and hot["ok"]
+    assert hot["per_series"]["spread"]["ac1_pctl"] >= 90, "phi->0.95 must read as top-decile AC1"
+    assert hot["score"] > calm["score"] + 15
+
+
+def test_undertow_no_look_ahead(rng):
+    from seiche.engines import undertow
+    n = 1500
+    phi = np.full(n, 0.6)
+    spread = _ar1_series(rng, n, phi)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=_bdays(n))
+    full = undertow.analyze(spread, tail)
+    trunc = undertow.analyze(spread.iloc[:-120], tail.iloc[:-120])
+    t = trunc["_damping_pctl"].index[-1]
+    assert abs(float(full["_damping_pctl"].loc[t]) - float(trunc["_damping_pctl"].loc[t])) < 1e-9, \
+        "damping percentile at T changed when future data was appended — look-ahead leak"
+
+
+def test_undertow_refuses_short_history(rng):
+    from seiche.engines import undertow
+    short = pd.Series(rng.normal(0, 1, 100), index=_bdays(100))
+    r = undertow.analyze(short, short)
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Swell: the forward curve must find the calendar, validate honestly, and
+# never look ahead
+# --------------------------------------------------------------------------
+
+def _calendar_spiked_spread(rng, n=1600, spike=14.0):
+    from seiche.engines import swell
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(0, 1.2, n), index=idx)
+    buckets = swell.classify_days(idx)
+    hot = buckets.isin(["quarter_turn", "year_turn"]).to_numpy()
+    s[hot] += spike
+    return s
+
+
+def test_swell_buckets_are_disjoint_and_complete():
+    from seiche.engines import swell
+    idx = _bdays(900)
+    b = swell.classify_days(idx)
+    assert len(b) == len(idx)
+    assert set(b.unique()) <= set(swell.BUCKET_LABELS)
+    # spot checks: 2019-12-31 is the year turn; 2019-09-30 the quarter turn
+    assert b.loc[pd.Timestamp("2019-12-31")] == "year_turn"
+    assert b.loc[pd.Timestamp("2020-01-01")] == "year_turn"  # first bd after
+    assert b.loc[pd.Timestamp("2019-09-30")] == "quarter_turn"
+
+
+def test_swell_finds_the_calendar(rng):
+    from seiche.engines import swell
+    r = swell.analyze(_calendar_spiked_spread(rng))
+    assert r["ok"]
+    by = {b["bucket"]: b for b in r["buckets"]}
+    assert by["quarter_turn"]["p10"] > by["plain"]["p10"] + 0.2, \
+        "quarter turns carry the injected spikes — the curve must know"
+    # year turns have ~2 obs/year — shrinkage toward quarter-turn evidence
+    # must keep them hot instead of diluting them to plain days
+    assert by["year_turn"]["p10"] > by["plain"]["p10"] + 0.15, \
+        "year-turn risk must survive its tiny sample via hierarchical shrinkage"
+    v = r["validation"]
+    assert v["ok"] and v["auroc"] > 0.7 and v["brier"] < v["brier_climatology"]
+    assert r["peak"] is not None and r["peak"]["bucket"] in ("quarter_turn", "year_turn")
+
+
+def test_swell_no_look_ahead(rng):
+    from seiche.engines import swell
+    s = _calendar_spiked_spread(rng)
+    full = swell.analyze(s)
+    trunc = swell.analyze(s.iloc[:-90])
+    t = trunc["_p5_series"].index[-1]
+    assert abs(float(full["_p5_series"].loc[t]) - float(trunc["_p5_series"].loc[t])) < 1e-9, \
+        "walk-forward p5 at T changed when future data was appended — look-ahead leak"
+
+
+def test_swell_state_lift_capped_and_directional(rng):
+    from seiche.engines import swell
+    n = 1600
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(0, 1.0, n), index=idx)
+    # hot regime in the middle third carries extra pops
+    damping = pd.Series(0.0, index=idx)
+    damping.iloc[n // 3 : 2 * n // 3] = 90.0
+    hot = damping >= 67.0
+    s[hot.to_numpy() & (rng.uniform(size=n) < 0.10)] += 12.0
+    r = swell.analyze(s, damping_pctl=damping)
+    assert r["ok"]
+    lift = r["state"]["lift_10bp"]
+    assert 0.5 <= lift <= 3.0
+    assert lift > 1.2, "exceedances concentrated in the hot state must lift the rate"
+
+
+def test_swell_refuses_short_history(rng):
+    from seiche.engines import swell
+    r = swell.analyze(pd.Series(rng.normal(0, 1, 200), index=_bdays(200)))
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Fleet: self-demoted views carry zero weight; disagreement is a signal
+# --------------------------------------------------------------------------
+
+def _fleet_inputs(rng, n=1400):
+    idx = _bdays(n)
+    spread = pd.Series(rng.normal(0, 1.5, n), index=idx)
+    for loc in range(600, n - 60, 90):
+        spread.iloc[loc] += 25.0
+    lite = pd.Series(rng.uniform(0, 100, n), index=idx)  # skill-less by design
+    return lite, spread
+
+
+def test_fleet_zero_weights_skill_less_views(rng):
+    from seiche.engines import fleet
+    lite, spread = _fleet_inputs(rng)
+    ml = {"ok": True, "p_event_5bd": 0.40,
+          "validation": {"brier": 0.03, "brier_climatology": 0.05}}
+    r = fleet.analyze(lite, spread, ml=ml, tide=None, swell=None)
+    assert r["ok"]
+    views = {v["name"]: v for v in r["views"]}
+    assert views["ml"]["weight"] == 1.0, "the only skilled view takes the whole blend"
+    assert views["rule"]["weight"] == 0.0, "a random rule cannot buy weight"
+    assert abs(r["blend_p_5bd"] - 0.40) < 1e-9
+
+
+def test_fleet_publishes_climatology_when_no_view_has_skill(rng):
+    from seiche.engines import fleet
+    lite, spread = _fleet_inputs(rng)
+    ml = {"ok": True, "p_event_5bd": 0.40,
+          "validation": {"brier": 0.06, "brier_climatology": 0.05}}  # worse than clim
+    r = fleet.analyze(lite, spread, ml=ml, tide=None, swell=None)
+    assert r["ok"]
+    assert "climatology" in r["blend_source"]
+    assert r["blend_p_5bd"] == r["climatology_p_5bd"]
+
+
+def test_fleet_flags_disagreement(rng):
+    from seiche.engines import fleet
+    lite, spread = _fleet_inputs(rng)
+    ml = {"ok": True, "p_event_5bd": 0.70,
+          "validation": {"brier": 0.03, "brier_climatology": 0.05}}
+    tide = {"ok": True, "event_odds": {"p": 0.05},
+            "skill": {"ok": True, "brier": 0.04, "brier_climatology": 0.05}}
+    r = fleet.analyze(lite, spread, ml=ml, tide=tide, swell=None)
+    assert r["ok"]
+    assert r["disagreement"] >= 0.30
+    assert "DISAGREES" in r["verdict"]

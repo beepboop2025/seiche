@@ -347,6 +347,50 @@ TIDE_Z_MIN_PERIODS = 120    # expanding-z warmup (matches history MIN_Z_PERIODS)
 TIDE_NOVELTY_UNCHARTED = 90.0  # NN-distance pctl at/above which water is "uncharted"
 
 # ---------------------------------------------------------------------------
+# Undertow — the damping gauge (critical slowing down, Scheffer et al.).
+# Resonance measures the FORCED response to the calendar bell; Undertow
+# measures the FREE decay on ordinary days: rising lag-1 autocorrelation and
+# variance of the detrended spread/tail + lengthening recovery after everyday
+# pops = the basin losing damping while levels look calm. Expanding
+# percentiles only (no look-ahead); weighted into the composite as
+# structural-fragility evidence alongside resonance/hydrophone.
+# ---------------------------------------------------------------------------
+
+UNDERTOW_DETREND_D = 30          # rolling-median detrend window (bd)
+UNDERTOW_WINDOW_D = 120          # rolling window for AC1 / variance (bd)
+UNDERTOW_TREND_D = 60            # AC1 change horizon reported (bd)
+UNDERTOW_RECOVERY_CENSOR_D = 10  # recovery half-life censoring (bd)
+UNDERTOW_RECOVERY_MIN_POPS = 8   # pops per era before the stretch counts
+UNDERTOW_MIN_HISTORY_D = 400     # refuse to speak below this
+
+# ---------------------------------------------------------------------------
+# Swell Forecast — the funding-stress forward curve. For each of the next 42
+# business days: P(spread pop >= x bp) from expanding calendar-bucket
+# exceedance distributions (the forcing schedule is public), a damping-state
+# lift (Undertow) and a coupon-settlement lift — compounded into P(event by
+# horizon) and walk-forward validated vs climatology. A forecast, not
+# evidence: reported alongside the index, never weighted in.
+# ---------------------------------------------------------------------------
+
+SWELL_SEVERITIES_BP = (2.0, 5.0, 10.0, 20.0)  # 10bp = the PROOF event
+SWELL_HORIZON_BD = 42            # matches Liquidity Weather's horizon
+SWELL_MIN_BUCKET_N = 20          # below this a bucket falls back to pooled
+SWELL_WARMUP_D = 500             # expanding-table warmup before scoring
+SWELL_STATE_PCTL = 67.0          # Undertow damping pctl at/above = "hot"
+SWELL_STATE_MIN_N = 60           # hot-state days before the lift activates
+SWELL_LIFT_CAP = (0.5, 3.0)      # conditional lifts clipped to this range
+SWELL_P_CAP = 0.90               # single-day probability ceiling
+
+# ---------------------------------------------------------------------------
+# Fleet of Forecasts — rule / ML / analogs / swell views of the SAME
+# P(event within 5bd) target, blended by each view's own published Brier
+# skill (zero-skill views keep zero weight — they already self-demoted),
+# plus a disagreement meter: dispersion is a signal, not noise to average.
+# ---------------------------------------------------------------------------
+
+FLEET_DISAGREE_WARN = 0.30       # max−min across views that reads as ambiguity
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -373,21 +417,23 @@ FOMC_DECISION_DATES = [
 # Rationale for defaults: tails + spreads are the fastest-moving true signals
 # (every 2025/26 episode), kink/weather capture the structural runway,
 # confession channels (SRF + discount window) are slower but unambiguous,
-# resonance/hydrophone capture structural fragility invisible in levels,
-# positioning/auctions/warehouse are amplifier terms, buffers the absorber.
+# resonance/hydrophone/undertow capture structural fragility invisible in
+# levels (forced response, connectivity, free decay), positioning/auctions/
+# warehouse are amplifier terms, buffers the absorber.
 # ---------------------------------------------------------------------------
 
 COMPOSITE_WEIGHTS = {
-    "tails": 0.18,        # Tail Seismograph (incl. SOFR-IORB pressure)
-    "kink": 0.14,         # proximity to reserve-scarcity kink
-    "weather": 0.12,      # forward crunch-window risk
+    "tails": 0.17,        # Tail Seismograph (incl. SOFR-IORB pressure)
+    "kink": 0.13,         # proximity to reserve-scarcity kink
+    "weather": 0.11,      # forward crunch-window risk
     "confession": 0.12,   # SRF usage + discount window (paying up = admission)
-    "rvxray": 0.12,       # RV complex size/fragility
+    "rvxray": 0.11,       # RV complex size/fragility
     "resonance": 0.10,    # basin amplification (louder ring to same forcing)
     "hydrophone": 0.08,   # plumbing connectivity (shock transmission)
+    "undertow": 0.06,     # damping loss (slower free decay = critical slowing)
     "auctions": 0.06,     # supply digestion
-    "warehouse": 0.04,    # dealer balance-sheet saturation
-    "buffers": 0.04,      # RRP buffer emptiness (0 = no shock absorber left)
+    "warehouse": 0.03,    # dealer balance-sheet saturation
+    "buffers": 0.03,      # RRP buffer emptiness (0 = no shock absorber left)
 }
 
 REGIMES = [
@@ -421,6 +467,8 @@ ALERT_RULES = {
     "stable_drain_30d_pct": STABLE_DRAIN_FLAG_PCT,  # offshore dollar redemptions
     "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
     "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
+    "swell_event_prob": 0.5,        # Swell curve P(event within 5bd) >= this
+    "fleet_disagree": FLEET_DISAGREE_WARN,  # forecast dispersion reads as ambiguity
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)
