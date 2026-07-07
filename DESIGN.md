@@ -412,3 +412,97 @@ including: the co-sign grammar is learnable on synthetic worlds (AUROC
 gate), open windows carry no verdict while early resolutions do, rescues at
 stress peaks reveal high thresholds, and Venn–Abers overrides a
 miscalibrated point forecast.
+
+---
+
+# v2.6 addendum — Bathymetry: the physics layer completed (2026-07-07)
+
+Driven by one demand: make the whole tool a PREDICTION MACHINE grounded in
+physics — not physics as metaphor (the fleet already had that: resonance,
+damping, critical slowing down) but physics as ESTIMATOR. Every prior engine
+reads observables off the surface; v2.6 reconstructs the equation of motion
+the surface obeys, and derives the forecast from it. One engine, four blocks,
+one estimated object (`engines/bathymetry.py`):
+
+**1. The Floor (empirical Langevin / Kramers–Moyal).** The daily pop
+statistic x (SOFR−IORB minus trailing 5bd median — THE shared PROOF event
+statistic, so every layer keeps speaking the same variable) is modeled as a
+diffusion dx = D1(x)dt + √(2·D2(x))·dW, with drift and diffusion estimated
+from binned conditional moments of observed daily increments (Friedrich &
+Peinke's method, standard in turbulence and climate). The effective
+potential V(x) = −∫D1 dx is the basin floor made literal: the well is where
+the spread rests, V″ at the well is the restoring stiffness, and the barrier
+between the well and the event region prints in units of the well's own
+diffusion — "the wall is N k_BT high." A flattening well is damping loss
+expressed by the dynamics themselves, not by a proxy statistic.
+
+**2. The Spectrum (the quantum block).** The same transitions, on fixed
+editorial bins, give an expanding-count Markov transition operator — the
+discretized Fokker–Planck propagator. Under detailed balance that operator
+maps EXACTLY to a Schrödinger Hamiltonian (the textbook FP↔QM duality):
+stationary density = |ground state|², eigenvalue moduli = energy levels
+E_k = −ln|λ_k| per business day, and the gap between ground and first
+excited state is the inverse of the slowest relaxation time. A closing gap
+is critical slowing down measured operator-theoretically — Undertow's
+thesis confirmed by an independent estimator on an independent
+decomposition. Honesty: markets are not perfectly reversible, so the
+mapping is stated as approximate, the spectrum is read on moduli, and the
+spectrum is computed on the VISITED sub-chain only — in unvisited corners
+of state space the smoothed operator is pure prior, and a prior's slow
+random walk across empty bins would masquerade as a slow physical mode
+(caught on the synthetic testbed; no evidence, no eigenvalue).
+
+**3. The Arrow (stochastic thermodynamics).** A system in equilibrium
+produces no entropy; a driven system does. Schnakenberg entropy production
+σ = ½ Σ (J_ij − J_ji) ln(J_ij/J_ji) over stationary probability currents
+measures how hard the basin is being forced away from detailed balance, in
+nats/day — provably ≥ 0, zero iff reversible. Calm funding markets relax;
+stressed ones are pumped. Published as level + expanding percentile, and it
+doubles as the printed qualifier on the spectrum block's QM mapping.
+
+**4. The Escape (the prediction machine).** Make the event bins (pop ≥
+10bp) absorbing and the operator answers the desk question exactly, no
+simulation: P(event within h bd | today's bin) = 1 − e_x′Q^h·1, and the
+mean first-passage time (I−Q)⁻¹·1 is the expected business days to the
+next funding event under frozen dynamics — Kramers' escape problem solved
+on the measured landscape. Walk-forward validated the house way (expanding
+counts only, AUROC/Brier vs climatology, reliability table, self-demoting
+verdict), and the daily probability joins the Stack as a sixth member with
+its own record. On the regime-switching synthetic testbed the walk-forward
+first-passage forecast ranks at AUROC 0.78 vs climatology; the live number
+computes on first run and publishes itself.
+
+**Deliberate division of labor:** Bathymetry reads ONLY the autonomous
+dynamics — the calendar is not an input, because Swell owns the calendar.
+The two forecasts disagree exactly where forcing rather than dynamics
+drives the risk, and the Stack's dispersion gauge turns that disagreement
+into a published signal.
+
+**Wiring:** deep layer + blob cache (VERSION bumped to 0.4.0 so no stale
+pre-physics blob serves), Stack member `bathy`, PIT record via the Stack's
+members_now, FORECAST tab card (potential landscape SVG with the ball at
+today's state, τ/entropy time series, energy levels), `seiche bathymetry`
+CLI, `bathymetry_event_prob` alert rule, desk-assistant context entries.
+Tests 64 → 70: recovers a known OU well (drift sign, stiffness, well
+location), spectral gap closes as φ→1, entropy production ≥ 0 and ~4×
+larger for a cyclically driven world than a reversible one, a flat hot well
+escapes faster than a deep calm one (with the walk-forward required to
+rank), truncation-equality (no look-ahead), refuses short history.
+
+## Also considered and rejected (v2.6)
+
+- Path-integral Monte Carlo for the forward distribution — the absorbing-
+  boundary matrix computation gives the SAME quantity exactly and
+  deterministically; simulation would add seed-dependence to a record that
+  must replay bit-identically.
+- Actual quantum computing / quantum amplitude estimation — buzzword, not
+  estimator: no keyless QPU meets the provenance bar, and nothing in a
+  19-state first-passage problem needs one. The quantum content here is the
+  legitimate FP↔Schrödinger duality, stated with its detailed-balance
+  caveat printed.
+- Data-dependent (quantile) state bins — sharper resolution where the data
+  lives, but bin edges that move when data arrives would leak the future
+  into the past; fixed editorial edges instead (config).
+- Random-matrix (Marchenko–Pastur) cleaning of the Hydrophone correlation
+  panel — real candidate, but it upgrades an existing diagnostic rather
+  than adding a prediction; deferred to the ideas ledger.

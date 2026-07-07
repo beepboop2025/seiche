@@ -46,6 +46,7 @@ from seiche.config import (
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
+from seiche.engines import bathymetry as eng_bathymetry
 from seiche.engines import book as eng_book
 from seiche.engines import breakwater as eng_breakwater
 from seiche.engines import communique as eng_communique
@@ -81,7 +82,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.3.0 forecast-layer"
+VERSION = "0.4.0 physics-layer"
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +623,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         return res
     run("swell", _swell)
 
+    # Bathymetry — the basin floor mapped: empirical Langevin potential,
+    # the quantum-dual relaxation spectrum, entropy production, and the
+    # first-passage event forecast (joins the Stack as its own member).
+    run("bathymetry", lambda: eng_bathymetry.analyze(spread))
+
     # Riptide — the pop prognosis: chop or current? (speaks on live pops)
     run("riptide", lambda: eng_riptide.analyze(
         spread_bp=spread,
@@ -741,6 +747,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             tide_p=tide_blk.get("_hindcast") if tide_blk.get("ok") else None,
             swell_p=(out.get("swell") or {}).get("_p5_series")
             if (out.get("swell") or {}).get("ok") else None,
+            bathy_p=(out.get("bathymetry") or {}).get("_p5_series")
+            if (out.get("bathymetry") or {}).get("ok") else None,
             tell=full_tell if not full_tell.empty else None,
         )
         yv = eng_stacker.event_labels(spread, M.index)
@@ -766,7 +774,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     # Nested private keys are pandas objects — json blob cache would crash on
     # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
-    for key in ("ml", "tidetables", "stacker", "swell"):
+    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry"):
         blk = out.get(key)
         if isinstance(blk, dict):
             for k in [k for k in blk if str(k).startswith("_")]:

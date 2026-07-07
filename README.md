@@ -17,7 +17,7 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
-## v2 "Deep Water" — eighteen engines, seven analytics layers, eleven tabs
+## v2 "Deep Water" — nineteen engines, seven analytics layers, eleven tabs
 
 > **v2.3 "Letters of Marque"** (built in tandem across two sessions) adds the
 > forecast layer and the layer that makes every other layer accountable:
@@ -57,7 +57,8 @@ layer none of them have: **honest evidence about itself**.
 | **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
 | **Riptide** ★ | The pop prognosis — the one morning the whole desk asks the same question, answered: *chop or current?* Every declustered spread pop becomes a trial; the discriminators (RRP co-sign — a pop WITHOUT its mechanical quarter-end co-move is genuine scarcity, the 2025 signature; calendar bucket; damping state) feed a deliberately tiny walk-forward logistic that classifies the live pop as calendar mechanics or the start of a squeeze, with P(sticky) and P(escalates) validated pop-by-pop against the base rate. Speaks only when there is a live pop; flat water is itself the reading. |
 | **The Breakwater** ★ | The rescuer modeled — the feature no forecaster ships: the Fed is not weather, it is a PLAYER, and every intervention in the public record is a confession of where its pain threshold sat that day. A zero-parameter revealed-preference catalog (repo ops '19, QE '20, SRF '21, BTFP '23, QT taper '24, RMPs '25) replayed against the board as of the day before each announcement yields the revealed threshold and a live **rescue proximity** gauge — which cuts both ways, and the engine says so: a forecast miss after an intervention is a save, not a false alarm. |
-| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab and Tide Tables calibrated per-member and blended walk-forward (with regime dummies, ~8 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, publishes member DISPERSION — when the fleet disagrees, conviction drops — and wraps today's number in a **Venn–Abers calibrated band** [p0, p1] with finite-sample validity guarantees: not "our probability is 7%" but "the calibrated probability is provably between these bounds". |
+| **Bathymetry** ★ | The basin floor mapped from the water's motion — the physics program end to end. The daily pop statistic is treated as a diffusion and its dynamics are RECONSTRUCTED from the data (Kramers–Moyal / empirical Langevin): drift → the **effective potential** (the well the spread rests in, its restoring stiffness, and the escape barrier printed in units of thermal energy k_BT); the binned transition operator → the **quantum-dual energy spectrum** (Fokker–Planck ↔ Schrödinger: stationary density = ground state, eigenvalue moduli = energy levels, spectral gap = inverse of the slowest relaxation time — critical slowing down measured operator-theoretically, corroborating Undertow by an independent estimator); stationary probability currents → **entropy production** (Schnakenberg, nats/day — the arrow of time: a calm basin relaxes, a stressed one is pumped); and absorbing-boundary **first passage** → P(funding event within h bd | today's state) and the expected business days to the next event, Kramers' escape problem solved exactly on the measured landscape, no simulation. Expanding counts only, walk-forward validated vs climatology, and the daily probability joins the Stack as its own member with its own record. |
+| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab, Tide Tables, Swell and Bathymetry calibrated per-member and blended walk-forward (with regime dummies, ~10 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, publishes member DISPERSION — when the fleet disagrees, conviction drops — and wraps today's number in a **Venn–Abers calibrated band** [p0, p1] with finite-sample validity guarantees: not "our probability is 7%" but "the calibrated probability is provably between these bounds". |
 | **The Book** ★ | The signal made accountable (HELM tab): a FROZEN rulebook maps the ensemble to explicit daily long/short/flat weights (2y/10y UST duration proxies, S&P 500, BTC over T-bill cash; hysteresis bands, a disagreement gate, vol targeting, per-sleeve cost haircuts), then walk-forward P&L — signal t earns returns t+1, enforced in one place and unit-tested — with stationary-block-bootstrap Sharpe CIs, Newey–West t-stats, per-episode attribution, doubled-cost rerun, and benchmarks through the identical pipeline. If it doesn't beat the static mix after costs, the page says so in bold. Every day's positions land in a **hash-chained as-published ledger** carried by the published site — tamper-evident by construction. Paper proxy; not advice. |
 | **Far Basin** ★ | The policy-fear channel: Palimpsest (palimpsest.info) measures what the Chinese state rushes to delete — the DDTI deletion-threat index, newly-targeted terms, the Generative Firewall Index — CI-published, keyless, mirrored on GitHub raw. A confession channel one basin further out, carried by no market data vendor. Honest scope: days old as a public series, so it accrues locally and stays QUARANTINED (context only, never in the composite, never a model feature) until it clears 250 daily observations. |
 | **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
@@ -88,8 +89,8 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
   funding-stress record (2008/2011/2016) in the same feature slots,
   down-weighted, and publishes the transfer gain vs the SOFR-only model
   either way.
-- **The Stack + The Book** — the rule index, ML Lab, Tide Tables analogs and the
-  Swell curve all emit P(funding event, 5bd); the Stack calibrates and blends them
+- **The Stack + The Book** — the rule index, ML Lab, Tide Tables analogs, the
+  Swell curve and Bathymetry's first-passage odds all emit P(funding event, 5bd); the Stack calibrates and blends them
   walk-forward (publishing the equal-weight mean whenever the fitted blend can't
   beat it), publishes member **dispersion** as a first-class ambiguity signal, and
   the Book converts the result into explicit daily paper positions with costs,
@@ -151,6 +152,7 @@ seiche backtest           # PROOF summary
 seiche ml                 # ML Lab: event probability + honest validation
 seiche analogs            # Tide Tables: nearest historical analogs + forward fan
 seiche swell              # the funding-stress forward curve, 6 weeks out
+seiche bathymetry         # the basin floor: potential, spectrum, entropy, first passage
 seiche book               # the Book: today's positions + walk-forward P&L verdict
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI

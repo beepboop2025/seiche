@@ -8,9 +8,9 @@ flagship, but only if the admiral is honest about it:
 
   - each member is CALIBRATED individually (1-D logistic, walk-forward) so a
     percentile and a raw model output speak the same probability language;
-  - the stack is a deliberately tiny logistic (4 members + regime dummies,
-    ~8 parameters against ~6 historical episodes — anything bigger is a
-    memorization engine);
+  - the stack is a deliberately tiny logistic (a handful of members + regime
+    dummies, ~10 parameters against ~6 historical episodes — anything bigger
+    is a memorization engine);
   - the fitted stack must beat the ZERO-PARAMETER equal-weight mean of its
     calibrated members out-of-sample, or the mean is published instead (the
     same publish-naive rule the Turn Barometer lives by);
@@ -48,6 +48,7 @@ def build_member_matrix(
     tide_p: pd.Series | None,
     tell: pd.Series | None,
     swell_p: pd.Series | None = None,
+    bathy_p: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Daily member panel on the rule signal's business-day grid.
 
@@ -65,6 +66,10 @@ def build_member_matrix(
         M["tide"] = tide_p.reindex(idx).ffill(limit=3)
     if swell_p is not None and not swell_p.dropna().empty:
         M["swell"] = swell_p.reindex(idx).ffill(limit=3)
+    if bathy_p is not None and not bathy_p.dropna().empty:
+        # Bathymetry's first-passage probability (its walk-forward has gaps on
+        # days already inside the event bin — ffill bridges them like the rest)
+        M["bathy"] = bathy_p.reindex(idx).ffill(limit=3)
     if tell is not None and not tell.dropna().empty:
         M["tell"] = ((tell + 100.0) / 200.0).reindex(idx).ffill(limit=3)
     return M
@@ -273,7 +278,7 @@ def walk_forward_stack(
         ],
         "caveats": [
             "members share upstream data — dispersion understates true model disagreement",
-            "~6 historical episodes: the stack is capped at ~8 parameters on purpose",
+            "~6 historical episodes: the stack is capped at ~10 parameters on purpose",
             "walk-forward with boundary embargo; members are themselves walk-forward outputs (no peeking anywhere in the chain)",
             "missing members imputed with train-window means; per-member coverage published",
         ],
