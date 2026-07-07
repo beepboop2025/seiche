@@ -6,6 +6,7 @@
   seiche watch [-i SECONDS]  pull + alert on a loop
   seiche replay DATE         Time Machine: the board as of YYYY-MM-DD
   seiche backtest            PROOF summary in the terminal
+  seiche analogs             Tide Tables: nearest analogs + forward fan
   seiche serve [--port]      run the API + UI
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
@@ -174,6 +175,37 @@ def cmd_ml(args) -> int:
     return 0
 
 
+def cmd_analogs(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    t = snap.get("deep", {}).get("tidetables", {})
+    if not t.get("ok"):
+        print(f"{RED}Tide Tables unavailable:{END} {t.get('reason')}", file=sys.stderr)
+        return 1
+    o, nov, sk = t["event_odds"], t["novelty"], t.get("skill", {})
+    ci = o.get("ci95") or ["?", "?"]
+    print(
+        f"{BOLD}TIDE TABLES{END} {o['p']:.0%} of the {o['n']} nearest analogs saw a funding "
+        f"event within 5bd (CI {ci[0]:.0%}-{ci[1]:.0%}) · base rate {o['base_rate']:.0%} · "
+        f"lift {o.get('lift')}x"
+    )
+    col = RED if nov.get("verdict") == "uncharted" else DIM
+    print(f"  water: {col}{nov.get('verdict')}{END} (NN-distance {nov.get('pctl')}th pctl)")
+    if sk.get("ok"):
+        print(f"  hindcast: Brier {sk['brier']:.4f} vs climatology {sk['brier_climatology']:.4f} "
+              f"· AUROC {sk.get('auroc')} — {sk['verdict']}")
+    print(f"{BOLD}nearest analogs{END}")
+    for a in t.get("analogs", [])[:8]:
+        ev = f"{RED}event{END}" if a["event_within_5bd"] else f"{DIM}quiet{END}"
+        ep = f" · {a['episode']}" if a.get("episode") else ""
+        print(f"  {a['end_date']}  dist {a['distance']:.2f}  next-5bd max {a['max_move_5bd_bp']:+.1f}bp  {ev}{ep}")
+    if t.get("fan"):
+        last = t["fan"][-1]
+        print(f"{DIM}fan @ +{t['horizon_bd']}bd: p25 {last['p25']} / median {last['median']} / p75 {last['p75']} bp "
+              f"(spread now {t['spread_now_bp']}bp){END}")
+    return 0
+
+
 def cmd_ask(args) -> int:
     from seiche import ai, assemble
     snap = asyncio.run(assemble.snapshot())
@@ -221,6 +253,8 @@ def main() -> None:
     sub.add_parser("backtest", help="PROOF summary").set_defaults(fn=cmd_backtest)
 
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
+
+    sub.add_parser("analogs", help="Tide Tables: nearest historical analogs + forward fan").set_defaults(fn=cmd_analogs)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

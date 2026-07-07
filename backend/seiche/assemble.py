@@ -58,6 +58,7 @@ from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
 from seiche.engines import stationkeeping as eng_stationkeeping
 from seiche.engines import tails as eng_tails
+from seiche.engines import tidetables as eng_tidetables
 from seiche.engines import turn as eng_turn
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
@@ -515,6 +516,30 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
     run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
+
+    # Tide Tables — analog forecast over the same plumbing state Echo matches
+    # on, but expanding-z (no look-ahead) and against ALL history.
+    def _tidetables():
+        iorb = drv["iorb"]
+        if iorb is None:
+            return {"ok": False, "reason": "IORB/SOFR unavailable"}
+        ofr_s = src.get("ofr", {})
+        effr = _pts(fred_s, "EFFR")
+        comps = {
+            "sofr_iorb": spread,
+            "effr_iorb": ((effr - iorb.reindex(effr.index).ffill()) * 100.0),
+            "bgcr_sofr": ((_pts(ofr_s, "BGCR") - _pts(fred_s, "SOFR")) * 100.0),
+            "tail": drv["tail_bp"],
+            "rrp": drv["rrp"],
+            "tga_chg5": drv["tga"].diff(5),
+            "reserves_chg4w": _pts(fred_s, "WRESBAL").diff(4),
+            "srf": drv["srf"],
+        }
+        res = eng_tidetables.analyze(
+            {k: v for k, v in comps.items() if not v.dropna().empty}, spread)
+        res.pop("_hindcast", None)  # test hook, not JSON-serializable
+        return res
+    run("tidetables", _tidetables)
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and

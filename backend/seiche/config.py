@@ -328,6 +328,25 @@ BACKTEST_ALERT_PCTL = 80.0      # index percentile treated as an "alert"
 BACKTEST_MIN_WARMUP_D = 250     # expanding-z warmup before scoring starts
 
 # ---------------------------------------------------------------------------
+# Tide Tables — analog forecasting (the pattern layer made predictive).
+# k-nearest-neighbor over trailing state trajectories, all history, labeled
+# or not: publish what actually followed the closest matches (forward spread
+# fan + funding-event odds vs climatology), how charted today's water is
+# (novelty), and a walk-forward hindcast that says whether analogs beat the
+# base rate. Reported alongside the index, not weighted into it.
+# ---------------------------------------------------------------------------
+
+TIDE_WINDOW_D = 20          # trailing trajectory length (bd) to match on
+TIDE_K = 25                 # nearest analogs in the fan / odds
+TIDE_HORIZON_BD = 10        # forward fan length (bd)
+TIDE_EVENT_FWD_D = 5        # event-odds horizon — same as BACKTEST_EVENT_FWD_D
+TIDE_MIN_SEP_D = 10         # min bd between analog end dates (de-clustering)
+TIDE_WARMUP_D = 400         # scored history before the hindcast/novelty start
+TIDE_MIN_CANDIDATES = 60    # min candidate windows before the engine speaks
+TIDE_Z_MIN_PERIODS = 120    # expanding-z warmup (matches history MIN_Z_PERIODS)
+TIDE_NOVELTY_UNCHARTED = 90.0  # NN-distance pctl at/above which water is "uncharted"
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -401,6 +420,7 @@ ALERT_RULES = {
     "peg_dev_bp": PEG_DEV_FLAG_BP,  # any major stablecoin |peg dev| >= this
     "stable_drain_30d_pct": STABLE_DRAIN_FLAG_PCT,  # offshore dollar redemptions
     "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
+    "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)

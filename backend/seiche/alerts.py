@@ -170,6 +170,16 @@ def evaluate(snap: dict) -> list[dict]:
                            f"ML Lab: P(funding event, 5bd) = {ml['p_event_5bd']:.0%} "
                            f"({ml.get('verdict', '')[:60]})"))
 
+    tide = deep.get("tidetables") or {}
+    thr = ALERT_RULES.get("analog_event_odds")
+    odds = (tide.get("event_odds") or {}) if tide.get("ok") else {}
+    if thr is not None and odds.get("p") is not None and odds["p"] >= thr:
+        nov = (tide.get("novelty") or {}).get("verdict", "?")
+        candidates.append(("analog_event", tide.get("asof", "?"),
+                           f"Tide Tables: {odds['p']:.0%} of the {odds.get('n')} nearest analogs "
+                           f"saw a funding event within 5bd (base rate {odds.get('base_rate', 0):.0%}, "
+                           f"water {nov})"))
+
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):
             if d.get("status") == "DEAD":

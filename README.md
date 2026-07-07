@@ -17,7 +17,7 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
-## v2 "Deep Water" — twelve engines, five analytics layers, nine tabs
+## v2 "Deep Water" — thirteen engines, five analytics layers, nine tabs
 
 | Engine | Question it answers |
 |---|---|
@@ -25,6 +25,7 @@ layer none of them have: **honest evidence about itself**.
 | **Liquidity Weather** | What does the reserve path look like 6 weeks out — and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
 | **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median — the first tell of every squeeze? |
 | **Echo Engine** | Does today's 30-day trajectory rhyme with the run-up to any historical stress episode? |
+| **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z — no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
 | **RV X-Ray** | How big is the leveraged Treasury RV complex, and what does a 5/15/30bp shock do to it? |
 | **Crowding** | Where are leveraged funds most crowded relative to their own history (UST curve, SOFR/FF futures, S&P)? |
 | **Auction Digestion** | Is the market choking on Treasury supply? |
@@ -103,6 +104,7 @@ seiche watch -i 1800      # pull + alert on a loop
 seiche replay 2019-09-12  # Time Machine in the terminal
 seiche backtest           # PROOF summary
 seiche ml                 # ML Lab: event probability + honest validation
+seiche analogs            # Tide Tables: nearest historical analogs + forward fan
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 ```

@@ -20,6 +20,7 @@ from seiche.engines import (
     playbook,
     resonance,
     sonar,
+    tidetables,
     turn,
 )
 from seiche.engines import rvxray, weather
@@ -135,6 +136,75 @@ def test_history_publishes_exclusions(rng):
     h = history.build(**_hist_inputs(800, rng))
     assert "weather" in h["excluded"] and "resonance" in h["excluded"]
     assert abs(sum(h["weights"].values()) - 1.0) < 0.01
+
+
+# --------------------------------------------------------------------------
+# Tide Tables — analog forecasting
+# --------------------------------------------------------------------------
+
+def _planted_motif_spread(rng, n=1200, ramp_d=15, period=70, first=250):
+    """Noise with a recurring precursor motif: a ramp that is always followed
+    by a spike the next day. The LAST motif ends on the final day — ramp
+    complete, spike not yet happened. An analog engine must see it coming."""
+    idx = _bdays(n)
+    spread = pd.Series(rng.normal(0, 0.3, n), index=idx)
+    starts = list(range(first, n - ramp_d - 6, period)) + [n - ramp_d]
+    for s in starts:
+        spread.iloc[s : s + ramp_d] += np.linspace(0, 10, ramp_d)
+        if s + ramp_d < n - 3:  # historical motifs get their spike
+            spread.iloc[s + ramp_d] += 25.0
+            spread.iloc[s + ramp_d + 1 : s + ramp_d + 4] += [12.0, 6.0, 3.0]
+    return spread
+
+
+def test_tidetables_predicts_planted_pattern(rng):
+    spread = _planted_motif_spread(rng)
+    r = tidetables.analyze({"x": spread}, spread, warmup=350, k=8)
+    assert r["ok"]
+    odds = r["event_odds"]
+    assert odds["p"] >= 0.7, f"analogs of the planted precursor must flag the spike (got {odds})"
+    assert odds["base_rate"] < 0.3
+    assert odds["lift"] is not None and odds["lift"] >= 2.0
+    # the fan must lean sharply upward: the analogs' next days contain spikes
+    assert r["fan"], "forward fan missing"
+    assert r["fan"][0]["p75"] > r["spread_now_bp"] + 5.0
+    # a repeating motif is well-charted water, not novelty
+    assert r["novelty"]["verdict"] != "uncharted"
+    # and the hindcast must beat climatology on a sample this rigged
+    assert r["skill"]["ok"] and r["skill"]["brier"] < r["skill"]["brier_climatology"]
+
+
+def test_tidetables_no_look_ahead(rng):
+    idx = _bdays(1150)
+    spread = pd.Series(rng.normal(0, 2.0, len(idx)), index=idx)
+    for s in range(200, 1100, 55):  # real events so the odds vary
+        spread.iloc[s] += 18.0
+    full = tidetables.analyze({"x": spread}, spread, warmup=300)
+    assert full["ok"] and "_hindcast" in full
+    hind = full["_hindcast"]
+    t = hind.index[-10]
+    trunc = spread[spread.index <= t]
+    part = tidetables.analyze({"x": trunc}, trunc, warmup=300, with_hindcast=False)
+    assert part["ok"]
+    assert abs(part["event_odds"]["p"] - float(hind.loc[t])) < 1e-6, \
+        "hindcast probability at T differs from the live forecast computed with data up to T only"
+
+
+def test_tidetables_flags_uncharted_water(rng):
+    idx = _bdays(900)
+    spread = pd.Series(rng.normal(0, 1.0, len(idx)), index=idx)
+    spread.iloc[-20:] = 40.0  # a state the sample has never seen
+    r = tidetables.analyze({"x": spread}, spread, warmup=300, with_hindcast=False)
+    assert r["ok"]
+    assert r["novelty"]["pctl"] is not None and r["novelty"]["pctl"] >= 90
+    assert r["novelty"]["verdict"] == "uncharted"
+
+
+def test_tidetables_refuses_short_history(rng):
+    idx = _bdays(200)
+    spread = pd.Series(rng.normal(0, 1.0, len(idx)), index=idx)
+    r = tidetables.analyze({"x": spread}, spread)
+    assert not r["ok"]
 
 
 # --------------------------------------------------------------------------

@@ -96,6 +96,12 @@ def context_pack(snap: dict) -> dict:
         } if eng.get("resonance", {}).get("ok") else None,
         "warehouse": {k: eng.get("warehouse", {}).get(k) for k in ("total_net_b", "total_pctl", "long_end_share_pct", "asof")} if eng.get("warehouse", {}).get("ok") else None,
         "echo_top": eng.get("echo", {}).get("top"),
+        "tidetables": {
+            "event_odds": deep.get("tidetables", {}).get("event_odds"),
+            "novelty": deep.get("tidetables", {}).get("novelty"),
+            "skill_verdict": (deep.get("tidetables", {}).get("skill") or {}).get("verdict"),
+            "asof": deep.get("tidetables", {}).get("asof"),
+        } if (deep.get("tidetables") or {}).get("ok") else None,
         "basins": basins.get("basins") if basins.get("ok") else None,
         "swap_lines_30d_m": (basins.get("swap_lines") or {}).get("ops_30d_total_m") if basins.get("ok") else None,
         "moorings": {
