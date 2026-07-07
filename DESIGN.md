@@ -418,47 +418,99 @@ miscalibrated point forecast.
 
 # v2.6 addendum — "Bathysphere": the physics layer (2026-07-07)
 
-Design intent: the tool is NAMED after a physical phenomenon and already
-carries two genuinely physical engines (Resonance = forced response,
-Undertow = free decay / critical slowing down). v2.6 completes the physical
-examination of the basin with four engines whose mathematics has a pedigree —
-Fokker–Planck/Kramers, Koopman operator theory, Takens embedding, extreme
-value theory — held to the same honesty bar as everything else: expanding
-statistics only (truncation-equality unit tests), walk-forward validation vs
-climatology where a forecast is made, self-demoting verdicts, small-n CIs.
-The quantum-mechanical formalism appears exactly where it is honest
-(Hilbert-space operator spectra) and nowhere else. No quantum woo.
+Built in tandem across two sessions, the v2.3 pattern repeated: session A
+(PR #6) shipped **Bathymetry** — physics as ESTIMATOR, not metaphor:
+reconstruct the equation of motion the pop statistic obeys and derive the
+forecast from it. Session B shipped the other three physics engines
+(**Merian Modes**, **the Gyre**, **Rogue Wave**), the PHYSICS tab and the
+`seiche physics` board, adopted session A's Bathymetry over its own draft,
+and merged the two. Doctrine resolution, recorded: session B had drafted a
+composite-weighted landscape engine on a 60bd-detrended residual; session
+A's design wins because its state variable IS the PROOF pop statistic — a
+forecast-layer citizen whose escape probability joins the Stack, never the
+composite. The composite weights stay at their v2.3 values; NONE of the
+physics engines are composite evidence.
 
-**1. Bathymetry (`engines/bathymetry.py`)** — built in the sibling session
-(PR #6) and adopted here as the fourth physics engine; see its own v2.6
-addendum below for the full design. One estimated object (the expanding
-binned transition operator of the shared pop statistic) feeds four blocks:
-the FLOOR (Kramers–Moyal potential, wall stiffness, barrier in k_BT), the
-SPECTRUM (Fokker–Planck↔Schrödinger dual energy levels, gap = slowest
-relaxation time, read on visited bins only), the ARROW (Schnakenberg entropy
-production — how hard the basin is driven from equilibrium), and the ESCAPE
-(absorbing-boundary first passage: exact P(event ≤ h bd) + expected days to
-next event, walk-forward validated, a Stack member with its own record).
-Doctrine resolution between the two sessions, recorded: this session had
-drafted a composite-weighted landscape engine on a 60bd-detrended residual;
-the sibling's design wins because its state variable IS the PROOF pop
-statistic — a forecast-layer citizen that joins the Stack, never the
-composite. The composite weights therefore stay at their v2.3 values.
+The shared bar, held by all four: mathematics with a pedigree
+(Fokker–Planck/Kramers, Koopman operator theory, stochastic thermodynamics,
+Takens embedding, extreme value theory), expanding statistics only
+(truncation-equality unit tests), walk-forward validation vs climatology
+wherever a forecast is made, self-demoting verdicts, small-n CIs. The
+quantum-mechanical formalism appears exactly where it is honest
+(Hilbert-space operator spectra, the FP↔Schrödinger duality) and nowhere
+else. No quantum woo.
 
-**2. Merian Modes (`engines/merian.py`)** — the seiche eigenmodes, estimated
+## Bathymetry — one engine, four blocks, one estimated object
+
+**1. The Floor (empirical Langevin / Kramers–Moyal).** The daily pop
+statistic x (SOFR−IORB minus trailing 5bd median — THE shared PROOF event
+statistic, so every layer keeps speaking the same variable) is modeled as a
+diffusion dx = D1(x)dt + √(2·D2(x))·dW, with drift and diffusion estimated
+from binned conditional moments of observed daily increments (Friedrich &
+Peinke's method, standard in turbulence and climate). The effective
+potential V(x) = −∫D1 dx is the basin floor made literal: the well is where
+the spread rests, V″ at the well is the restoring stiffness, and the barrier
+between the well and the event region prints in units of the well's own
+diffusion — "the wall is N k_BT high." A flattening well is damping loss
+expressed by the dynamics themselves, not by a proxy statistic.
+
+**2. The Spectrum (the quantum block).** The same transitions, on fixed
+editorial bins, give an expanding-count Markov transition operator — the
+discretized Fokker–Planck propagator. Under detailed balance that operator
+maps EXACTLY to a Schrödinger Hamiltonian (the textbook FP↔QM duality):
+stationary density = |ground state|², eigenvalue moduli = energy levels
+E_k = −ln|λ_k| per business day, and the gap between ground and first
+excited state is the inverse of the slowest relaxation time. A closing gap
+is critical slowing down measured operator-theoretically — Undertow's
+thesis confirmed by an independent estimator on an independent
+decomposition. Honesty: markets are not perfectly reversible, so the
+mapping is stated as approximate, the spectrum is read on moduli, and the
+spectrum is computed on the VISITED sub-chain only — in unvisited corners
+of state space the smoothed operator is pure prior, and a prior's slow
+random walk across empty bins would masquerade as a slow physical mode
+(caught on the synthetic testbed; no evidence, no eigenvalue).
+
+**3. The Arrow (stochastic thermodynamics).** A system in equilibrium
+produces no entropy; a driven system does. Schnakenberg entropy production
+σ = ½ Σ (J_ij − J_ji) ln(J_ij/J_ji) over stationary probability currents
+measures how hard the basin is being forced away from detailed balance, in
+nats/day — provably ≥ 0, zero iff reversible. Calm funding markets relax;
+stressed ones are pumped. Published as level + expanding percentile, and it
+doubles as the printed qualifier on the spectrum block's QM mapping.
+
+**4. The Escape (the prediction machine).** Make the event bins (pop ≥
+10bp) absorbing and the operator answers the desk question exactly, no
+simulation: P(event within h bd | today's bin) = 1 − e_x′Q^h·1, and the
+mean first-passage time (I−Q)⁻¹·1 is the expected business days to the
+next funding event under frozen dynamics — Kramers' escape problem solved
+on the measured landscape. Walk-forward validated the house way (expanding
+counts only, AUROC/Brier vs climatology, reliability table, self-demoting
+verdict), and the daily probability joins the Stack as a sixth member with
+its own record. On the regime-switching synthetic testbed the walk-forward
+first-passage forecast ranks at AUROC 0.78 vs climatology; the live number
+computes on first run and publishes itself.
+**Deliberate division of labor:** Bathymetry reads ONLY the autonomous
+dynamics — the calendar is not an input, because Swell owns the calendar.
+The two forecasts disagree exactly where forcing rather than dynamics
+drives the risk, and the Stack's dispersion gauge turns that disagreement
+into a published signal.
+
+## The other three instruments
+
+**Merian Modes (`engines/merian.py`)** — the seiche eigenmodes, estimated
 instead of assumed. Hankel-DMD over the hydrophone's plumbing panel
-(expanding-z standardized, trailing windows) estimates the Koopman operator's
-spectrum: each mode carries a period, a growth rate ln|λ| and its CURRENT
-excitation (amplitude from the latest snapshot). A high-amplitude ~21bd mode
-is the month-end forcing seen a second, independent way (cross-checks
-Resonance); a growing mode (|λ|>1) with real amplitude is instability before
-levels move — published as an expanding percentile vs the gauge's own
-history. The linear mode-propagation forecast is scored vs persistence and
-expected to lose; the verdict says so and reframes (modes are structure).
-Koopman–von Neumann lineage stated for what it is: classical dynamics in
-Hilbert-space clothes.
+(expanding-z standardized, trailing windows) estimates the Koopman
+operator's spectrum: each mode carries a period, a growth rate ln|λ| and
+its CURRENT excitation (amplitude from the latest snapshot). A
+high-amplitude ~21bd mode is the month-end forcing seen a second,
+independent way (cross-checks Resonance); a growing mode (|λ|>1) with real
+amplitude is instability before levels move — published as an expanding
+percentile vs the gauge's own history. The linear mode-propagation forecast
+is scored vs persistence and expected to lose; the verdict says so and
+reframes (modes are structure, not a crystal ball). Koopman–von Neumann
+lineage stated for what it is: classical dynamics in Hilbert-space clothes.
 
-**3. The Gyre (`engines/gyre.py`)** — is prediction possible at all? Takens
+**The Gyre (`engines/gyre.py`)** — is prediction possible at all? Takens
 embedding + EDM: simplex-projection skill by horizon (the determinism
 fingerprint: chaos decays, noise never had skill), a phase-randomized
 surrogate gate (preserves linear autocorrelation exactly — what survives is
@@ -470,7 +522,7 @@ dynamics are deterministic enough to rhyme at all — if the surrogate gate
 fails, analog forecasts inherit only linear skill and the page says so.
 Deep-layer citizen (blob-cached); forecast-context, never composite evidence.
 
-**4. Rogue Wave (`engines/roguewave.py`)** — the tail law. POT/GPD
+**Rogue Wave (`engines/roguewave.py`)** — the tail law. POT/GPD
 (probability-weighted moments, no scipy) on the SAME declustered pop
 statistic as PROOF (cluster maxima, not first days — EVT wants magnitudes;
 the difference from PROOF's lead-time convention is a printed caveat).
@@ -480,25 +532,47 @@ produce, with bootstrap CIs, a threshold-sensitivity table, and annual
 expanding ξ refits answering "is the tail getting heavier as the buffers
 drain?". Context engine: never weighted into the composite.
 
-**Wiring:** new PHYSICS tab (custom XY SVG for the potential landscape and
-skill-decay curves — uPlot is date-axis only), `seiche physics` CLI, alerts
-`bathymetry_escape` (P(escape,5bd) ≥ 0.40) and `merian_instability` (growth
-pctl ≥ 95 with g>0), brief watchlist lines, desk-assistant context entries
-for all four, composite rebalance (see config note), VERSION → 0.4.0
-(invalidates pre-physics deep blobs). Bathymetry/Merian/Rogue Wave live in
-the light layer — Time-Machine replayable; the Gyre lives in the deep layer.
+## Wiring
 
-**Also considered and rejected (v2.6):**
-- Anything sold as "quantum finance" (path-integral option pricing, quantum
-  amplitude estimation): no honest daily-cadence claim survives contact with
-  the provenance bar. The Hilbert-space formalism enters only as spectral
-  methods for classical operators, labeled as such.
-- Hawkes self-excitation (again): still ~20 declustered events; the Rogue
+Bathymetry: deep layer + blob cache (VERSION bumped to 0.4.0 so no stale
+pre-physics blob serves), Stack member `bathy`, PIT record via the Stack's
+members_now, FORECAST tab card (potential landscape SVG with the ball at
+today's state, τ/entropy time series, energy levels), `seiche bathymetry`
+CLI, `bathymetry_event_prob` alert rule, desk-assistant context entries.
+The layer: new PHYSICS tab (all four engines; custom XY SVG for the
+potential landscape and skill-decay curves — uPlot is date-axis only),
+`seiche physics` CLI board, `merian_instability` alert (growth pctl ≥ 95
+with g > 0), brief watchlist lines, desk-assistant context entries for all
+four. Merian and Rogue Wave live in the light layer — Time-Machine
+replayable; Bathymetry and the Gyre live in the deep layer.
+Bathymetry tests (in test_engines.py) 64 → 70: recovers a known OU well
+(drift sign, stiffness, well location), spectral gap closes as φ→1, entropy
+production ≥ 0 and ~4× larger for a cyclically driven world than a
+reversible one, a flat hot well escapes faster than a deep calm one (with
+the walk-forward required to rank), truncation-equality (no look-ahead),
+refuses short history. Merian/Gyre/Rogue Wave ship their own test files
+under the same invariants.
+
+## Also considered and rejected (v2.6)
+
+- Path-integral Monte Carlo for the forward distribution — the absorbing-
+  boundary matrix computation gives the SAME quantity exactly and
+  deterministically; simulation would add seed-dependence to a record that
+  must replay bit-identically.
+- Actual quantum computing / quantum amplitude estimation / anything sold
+  as "quantum finance" — buzzword, not estimator: no keyless QPU meets the
+  provenance bar, and nothing in a 19-state first-passage problem needs
+  one. The quantum content here is the legitimate FP↔Schrödinger duality
+  and the Koopman operator formalism, stated with their caveats printed.
+- Data-dependent (quantile) state bins — sharper resolution where the data
+  lives, but bin edges that move when data arrives would leak the future
+  into the past; fixed editorial edges instead (config).
+- Hawkes self-excitation (again): still ~20 declustered events; Rogue
   Wave's cluster handling covers the aftershock intuition at the magnitude
   level. Revisit with a micro-event definition.
 - Wavelet ridge tracking for time-varying modes: Hankel-DMD's trailing
   window already yields a mode history at 5bd cadence; a second
   time-frequency view would be decoration.
-- RMT (Marchenko–Pastur) eigenvalue cleaning of the hydrophone correlation
-  matrix: the absorption ratio already carries the connectivity signal; the
-  noise-floor refinement did not change any verdict on synthetic worlds.
+- Random-matrix (Marchenko–Pastur) cleaning of the Hydrophone correlation
+  panel — real candidate, but it upgrades an existing diagnostic rather
+  than adding a prediction; deferred to the ideas ledger.

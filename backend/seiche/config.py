@@ -402,6 +402,24 @@ SWELL_LIFT_CAP = (0.5, 3.0)      # conditional lifts clipped to this range
 SWELL_P_CAP = 0.90               # single-day probability ceiling
 
 # ---------------------------------------------------------------------------
+# Bathymetry — the shape of the basin floor: empirical Langevin/Fokker–Planck
+# reconstruction of the pop statistic's dynamics. Drift → effective potential
+# (the floor), transition-operator eigenvalues → the quantum-dual energy
+# spectrum and relaxation time, stationary currents → entropy production (the
+# arrow of time), absorbing-boundary first passage → P(event) and expected
+# days to the next event. Expanding counts only; fixed editorial bins.
+# A forecast/diagnosis layer — never weighted into the composite.
+# ---------------------------------------------------------------------------
+
+BATHY_X_MIN_BP = -8.0            # state-space floor edge (bp); below clips in
+BATHY_BIN_BP = 1.0               # fixed bin width (data-dependent bins would leak)
+BATHY_SHRINK_K = 15.0            # pseudo-count weight of the pooled increment kernel
+BATHY_BIN_MIN_N = 5              # bins thinner than this interpolate in the potential
+BATHY_WARMUP_D = 500             # transitions before the walk-forward speaks
+BATHY_SPECTRUM_EVERY_BD = 10     # spectral/entropy series recompute cadence
+BATHY_MFPT_CAP_BD = 750          # beyond ~3y the MFPT prints as "beyond horizon"
+
+# ---------------------------------------------------------------------------
 # Forecast-dispersion alert: when the Stack's calibrated members disagree,
 # the regime is ambiguous — that is a signal, not noise to average away.
 # ---------------------------------------------------------------------------
@@ -727,6 +745,7 @@ ALERT_RULES = {
     "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
     "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
     "swell_event_prob": 0.5,        # Swell curve P(event within 5bd) >= this
+    "bathymetry_event_prob": 0.5,   # first-passage P(event within 5bd) >= this
     "stack_dispersion": STACK_DISPERSION_WARN,  # member dispersion reads as ambiguity
     "riptide_sticky": 0.6,          # live pop classified as a current
     "breakwater_proximity": 90.0,   # board near historical rescue conditions

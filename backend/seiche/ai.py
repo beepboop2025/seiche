@@ -126,6 +126,19 @@ def context_pack(snap: dict) -> dict:
             },
             "asof": eng.get("undertow", {}).get("asof"),
         } if eng.get("undertow", {}).get("ok") else None,
+        "bathymetry": {
+            "p_event_5bd": deep.get("bathymetry", {}).get("p_event_5bd"),
+            "mfpt_bd": deep.get("bathymetry", {}).get("mfpt_bd"),
+            "floor": {
+                k: (deep.get("bathymetry", {}).get("floor") or {}).get(k)
+                for k in ("well_bp", "stiffness", "barrier_kt")
+            },
+            "tau_bd": (deep.get("bathymetry", {}).get("spectrum") or {}).get("tau_bd"),
+            "tau_pctl": (deep.get("bathymetry", {}).get("spectrum") or {}).get("tau_pctl"),
+            "entropy_pctl": (deep.get("bathymetry", {}).get("arrow") or {}).get("pctl"),
+            "validation_verdict": (deep.get("bathymetry", {}).get("validation") or {}).get("verdict"),
+            "asof": deep.get("bathymetry", {}).get("asof"),
+        } if (deep.get("bathymetry") or {}).get("ok") else None,
         "swell": {
             "p_event_5bd": deep.get("swell", {}).get("p_event_5bd"),
             "event_by_horizon": deep.get("swell", {}).get("event_by_horizon"),

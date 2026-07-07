@@ -8,7 +8,8 @@
   seiche backtest            PROOF summary in the terminal
   seiche analogs             Tide Tables: nearest analogs + forward fan
   seiche swell               the funding-stress forward curve, 6 weeks out
-  seiche physics             the physics board: landscape, modes, determinism, tail law
+  seiche physics             the physics board: floor, modes, determinism, tail law
+  seiche bathymetry          the basin floor in detail: potential, spectrum, first passage
   seiche serve [--port]      run the API + UI
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
@@ -344,6 +345,44 @@ def cmd_physics(args) -> int:
     return 0
 
 
+def cmd_bathymetry(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    b = snap.get("deep", {}).get("bathymetry", {})
+    if not b.get("ok"):
+        print(f"{RED}Bathymetry unavailable:{END} {b.get('reason')}", file=sys.stderr)
+        return 1
+    hz = b.get("p_by_horizon", {})
+    print(
+        f"{BOLD}BATHYMETRY{END} first-passage P(funding event) "
+        f"1bd {hz.get('h1', 0):.0%} · 5bd {hz.get('h5', 0):.0%} · 10bd {hz.get('h10', 0):.0%}"
+    )
+    mfpt = b.get("mfpt_bd")
+    if b.get("state_now", {}).get("in_event_bin"):
+        print(f"  {RED}state is already inside the event bin{END} (pop {b['state_now']['pop_bp']}bp)")
+    elif mfpt is not None:
+        print(f"  expected first passage to the event bin: {mfpt:.0f}bd (frozen dynamics)")
+    else:
+        print(f"  expected first passage: {DIM}beyond {b.get('mfpt_cap_bd')}bd — the well holds{END}")
+    fl = b.get("floor", {})
+    if fl.get("ok"):
+        print(f"{BOLD}the floor{END} well at {fl['well_bp']}bp · stiffness {fl['stiffness']}/bd · "
+              f"temperature {fl['temperature_bp2_bd']}bp²/bd · escape barrier {fl['barrier_kt']} kT")
+    sp = b.get("spectrum", {})
+    print(f"{BOLD}the spectrum{END} gap {sp.get('gap')} · slowest relaxation τ {sp.get('tau_bd')}bd "
+          f"({sp.get('tau_pctl')}th pctl vs own history) · levels {sp.get('energy_levels')}")
+    ar = b.get("arrow", {})
+    print(f"{BOLD}the arrow{END} entropy production {ar.get('sigma_nats_bd')} nats/bd "
+          f"({ar.get('pctl')}th pctl) — how hard the basin is being driven")
+    v = b.get("validation", {})
+    if v.get("ok"):
+        print(f"  validation: AUROC {v['auroc']} · Brier {v['brier']:.4f} vs climatology "
+              f"{v['brier_climatology']:.4f} — {v['verdict']}")
+    for c in b.get("caveats", []):
+        print(f"{DIM}  caveat: {c}{END}")
+    return 0
+
+
 def cmd_navigator(args) -> int:
     from seiche import assemble
     snap = asyncio.run(assemble.snapshot())
@@ -415,6 +454,8 @@ def main() -> None:
     sub.add_parser("analogs", help="Tide Tables: nearest historical analogs + forward fan").set_defaults(fn=cmd_analogs)
 
     sub.add_parser("swell", help="funding-stress forward curve (6 weeks)").set_defaults(fn=cmd_swell)
+
+    sub.add_parser("bathymetry", help="the basin floor: potential, spectrum, entropy, first passage").set_defaults(fn=cmd_bathymetry)
 
     sub.add_parser("book", help="the Book: today's positions + walk-forward P&L verdict").set_defaults(fn=cmd_book)
 
