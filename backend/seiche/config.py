@@ -418,6 +418,46 @@ STACK_DISPERSION_WARN = 0.30     # member std-dev that reads as ambiguity
 NAVIGATOR_MIN_RESOLVED = 20      # resolved forward forecasts before a verdict prints
 
 # ---------------------------------------------------------------------------
+# Riptide — the pop prognosis: the morning the spread pops, chop or current?
+# Unit of analysis = the declustered pop; discriminators = RRP co-sign,
+# calendar bucket, damping state. Speaks only when there is a live pop.
+# ---------------------------------------------------------------------------
+
+RIPTIDE_POP_BP = 4.0            # pop threshold (smallest turn-firming in every sample year)
+RIPTIDE_STICKY_MIN_BD = 3       # half-give-back at/after this = STICKY (a current)
+RIPTIDE_WINDOW_BD = 15          # sticky observation window
+RIPTIDE_ESCALATE_BD = 10        # horizon for escalation to a full PROOF event
+RIPTIDE_MIN_POPS = 30           # warmup pops before the walk-forward speaks
+RIPTIDE_LIVE_BD = 5             # a pop this recent makes the question live
+
+# ---------------------------------------------------------------------------
+# The Breakwater — the rescuer modeled. A dated catalog of Fed plumbing
+# interventions (public record; editorial dating flagged). Each is a
+# confession of where the reaction threshold sat that day. Zero fitted
+# parameters; append entries as history happens, never rewrite them.
+# ---------------------------------------------------------------------------
+
+BREAKWATER_INTERVENTIONS = [
+    {"date": "2019-09-17", "label": "ad-hoc overnight repo operations resume (first since 2008)",
+     "kind": "operations"},
+    {"date": "2019-10-11", "label": "T-bill purchases $60B/mo announced (reserve management)",
+     "kind": "purchases"},
+    {"date": "2020-03-15", "label": "QE restart, swap-line enhancement, discount-window cut",
+     "kind": "crisis package"},
+    {"date": "2021-07-28", "label": "Standing Repo Facility established",
+     "kind": "standing facility"},
+    {"date": "2023-03-12", "label": "Bank Term Funding Program (SVB weekend)",
+     "kind": "facility"},
+    {"date": "2024-06-01", "label": "QT taper: Treasury runoff cap $60B → $25B/mo",
+     "kind": "parameter", "dating": "effective date, editorial"},
+    {"date": "2025-12-01", "label": "QT ends",
+     "kind": "parameter"},
+    {"date": "2025-12-12", "label": "Reserve Management Purchases ~$40B/mo bills",
+     "kind": "purchases", "dating": "approximate, editorial"},
+]
+BREAKWATER_PROXIMITY_FLOOR_PCTL = 50.0   # below this percentile, proximity reads 0
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -619,6 +659,8 @@ ALERT_RULES = {
     "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
     "swell_event_prob": 0.5,        # Swell curve P(event within 5bd) >= this
     "stack_dispersion": STACK_DISPERSION_WARN,  # member dispersion reads as ambiguity
+    "riptide_sticky": 0.6,          # live pop classified as a current
+    "breakwater_proximity": 90.0,   # board near historical rescue conditions
     "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }

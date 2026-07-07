@@ -10,6 +10,99 @@ const BUCKET_COLORS: Record<string, string> = {
   plain: "#3d4654",
 };
 
+function RiptideCard({ r }: { r: Any }) {
+  if (!r?.ok) return <Fault name="Riptide" reason={r?.reason} span={12} />;
+  const lv = r.live;
+  const v = r.validation?.sticky ?? {};
+  return (
+    <div className="card span12">
+      <h2>Riptide ★</h2>
+      <div className="sub">
+        the pop prognosis — the morning the spread pops: chop (calendar mechanics) or current
+        (genuine scarcity)? discriminators: RRP co-sign, calendar, damping state
+      </div>
+      {lv ? (
+        <div className="tellhero">
+          <div className={`tellvalue ${(lv.p_sticky ?? 0) >= 0.5 ? "hot" : ""}`}>
+            {lv.p_sticky != null ? `${fmt(lv.p_sticky * 100, 0)}%` : "—"}
+          </div>
+          <div>
+            <div className="tellreading">{lv.verdict}</div>
+            <div className="coverage">
+              {lv.pop_bp}bp pop on {lv.date} ({lv.bucket?.replace("_", "-")}, {lv.age_bd}bd ago) ·
+              P(escalates to ≥10bp) {lv.p_escalates != null ? `${fmt(lv.p_escalates * 100, 0)}%` : "—"} ·
+              RRP co-sign <b style={{ color: lv.rrp_cosigned ? undefined : "#e5484d" }}>
+                {lv.rrp_cosigned ? "present (choreography)" : "ABSENT (scarcity)"}</b>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="allclear">▮ flat water — no live pop in the last {5} business days; that IS the reading</div>
+      )}
+      <table className="mini">
+        <thead><tr><th>pop</th><th>size</th><th>bucket</th><th>RRP co-z</th><th>stuck</th><th>escalated</th></tr></thead>
+        <tbody>
+          {(r.receipts ?? []).map((p: Any) => (
+            <tr key={p.date}>
+              <td>{p.date}</td>
+              <td className="num">{fmt(p.pop_bp, 1)}bp</td>
+              <td>{p.bucket?.replace("_", "-")}</td>
+              <td className="num">{fmt(p.rrp_co_z, 1)}</td>
+              <td style={{ color: p.stuck ? "#e5484d" : undefined }}>{p.stuck ? "yes" : "no"}</td>
+              <td style={{ color: p.escalated ? "#e5484d" : undefined }}>{p.escalated == null ? "—" : p.escalated ? "yes" : "no"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="coverage">
+        sticky base rate {fmt((r.sticky_base?.rate ?? 0) * 100, 0)}%
+        {r.sticky_base?.ci95 ? ` (CI ${fmt(r.sticky_base.ci95[0] * 100, 0)}–${fmt(r.sticky_base.ci95[1] * 100, 0)}%)` : ""} over {r.n_resolved} resolved pops ·
+        walk-forward: AUROC {fmt(v.auroc, 2)} · Brier {fmt(v.brier, 4)} vs base {fmt(v.brier_base, 4)}
+      </div>
+      <Method>{(r.caveats ?? []).join(" · ")} · {r.method}</Method>
+    </div>
+  );
+}
+
+function BreakwaterCard({ b }: { b: Any }) {
+  if (!b?.ok) return <Fault name="The Breakwater" reason={b?.reason} span={12} />;
+  const t = b.revealed_threshold ?? {};
+  return (
+    <div className="card span12">
+      <h2>The Breakwater ★</h2>
+      <div className="sub">
+        the rescuer modeled — every Fed intervention is a confession of where its pain threshold sat;
+        nobody else instruments the goalie
+      </div>
+      <div className="tellhero">
+        <div className={`tellvalue ${(b.rescue_proximity ?? 0) >= 90 ? "hot" : ""}`}>{fmt(b.rescue_proximity, 0)}%</div>
+        <div>
+          <div className="tellreading">
+            rescue proximity — board at the {fmt(b.current?.spread_pctl, 0)}th pctl vs revealed threshold
+            median {fmt(t.median_pctl, 0)}th (range {fmt(t.min_pctl, 0)}–{fmt(t.max_pctl, 0)}, n={t.n})
+          </div>
+          <div className="coverage">{b.reading} · {b.posture}</div>
+        </div>
+      </div>
+      <table className="mini">
+        <thead><tr><th>intervention</th><th>kind</th><th>board pctl day before</th><th>20d max spread</th><th>20d max SRF</th></tr></thead>
+        <tbody>
+          {(b.interventions ?? []).filter((r: Any) => r.in_sample).map((r: Any) => (
+            <tr key={r.date}>
+              <td>{r.date} — {r.label}{r.dating && r.dating !== "public record" && <span className="dimsmall"> †{r.dating}</span>}</td>
+              <td>{r.kind}</td>
+              <td className="num">{fmt(r.spread_pctl_before, 0)}th</td>
+              <td className="num">{fmt(r.spread_max20_bp, 1)}bp</td>
+              <td className="num">{r.srf_max20_b != null ? `$${fmt(r.srf_max20_b, 1)}B` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{(b.caveats ?? []).join(" · ")} · {b.method}</Method>
+    </div>
+  );
+}
+
 function SwellCard({ s }: { s: Any }) {
   if (!s?.ok) return <Fault name="Swell Forecast" reason={s?.reason} span={12} />;
   const hz = s.event_by_horizon ?? {};
@@ -194,8 +287,10 @@ export default function Forecast({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   return (
     <div className="grid">
+      <RiptideCard r={deep.riptide} />
       <SwellCard s={deep.swell} />
       <TideTablesCard t={deep.tidetables} />
+      <BreakwaterCard b={snap.engines?.breakwater} />
     </div>
   );
 }

@@ -47,6 +47,7 @@ from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
 from seiche.engines import book as eng_book
+from seiche.engines import breakwater as eng_breakwater
 from seiche.engines import communique as eng_communique
 from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
@@ -60,6 +61,7 @@ from seiche.engines import moorings as eng_moorings
 from seiche.engines import navigator as eng_navigator
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
+from seiche.engines import riptide as eng_riptide
 from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
 from seiche.engines import stacker as eng_stacker
@@ -342,6 +344,9 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     run("communique", lambda: eng_communique.analyze(
         (src.get("fedtext") or {}).get("texts", {})))
 
+    # --- The Breakwater (the rescuer's revealed reaction function) ---
+    run("breakwater", lambda: eng_breakwater.analyze(drv["spread_bp"], drv["srf"]))
+
     # --- Hydrophone ---
     def _hydro():
         sofr = _pts(fred_s, "SOFR")
@@ -616,6 +621,13 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         # member; the private-key sweep below pops it before the blob cache.
         return res
     run("swell", _swell)
+
+    # Riptide — the pop prognosis: chop or current? (speaks on live pops)
+    run("riptide", lambda: eng_riptide.analyze(
+        spread_bp=spread,
+        rrp_b=drv["rrp"],
+        damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
+    ))
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and

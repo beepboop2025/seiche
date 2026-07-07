@@ -56,7 +56,10 @@ function EnsembleCard({ s }: { s: Any }) {
       <h2>The Stack</h2>
       <div className="sub">every forecast Seiche makes, calibrated and blended · published = {s.published}</div>
       <div className="kv">
-        <div className="item"><div className="k">P(event, 5bd)</div><div className="v">{fmt(s.p_now, 3)}</div></div>
+        <div className="item"><div className="k">P(event, 5bd)</div><div className="v">{fmt(s.p_now, 3)}
+          {s.calibrated_band && <span className="dimsmall" title={s.calibrated_band.method}>
+            {" "}[{fmt(s.calibrated_band.p0, 2)}–{fmt(s.calibrated_band.p1, 2)}]</span>}
+        </div></div>
         <div className="item"><div className="k">dispersion</div><div className="v">{fmt(s.dispersion_now, 3)}</div></div>
         {Object.entries<number | null>(s.members_now ?? {}).map(([m, p]) => (
           <div className="item" key={m}><div className="k">{m}</div><div className="v">{p == null ? "—" : fmt(p, 3)}</div></div>

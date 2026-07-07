@@ -198,6 +198,23 @@ def evaluate(snap: dict) -> list[dict]:
                            + ", ".join(f"{k} {p:.0%}" for k, p in vs.items() if p is not None)
                            + " — regime ambiguity, trust ranges not points"))
 
+    rt = (deep.get("riptide") or {})
+    thr = ALERT_RULES.get("riptide_sticky")
+    lv = rt.get("live") if rt.get("ok") else None
+    if thr is not None and lv and (lv.get("p_sticky") or 0.0) >= thr:
+        candidates.append(("riptide_sticky", lv.get("date", "?"),
+                           f"Riptide: the {lv.get('pop_bp')}bp pop on {lv.get('date')} reads as a "
+                           f"CURRENT (P(sticky) {lv['p_sticky']:.0%}, P(escalates) "
+                           f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
+                           f"{'present' if lv.get('rrp_cosigned') else 'ABSENT — genuine scarcity'})"))
+
+    bw = eng.get("breakwater") or {}
+    thr = ALERT_RULES.get("breakwater_proximity")
+    if thr is not None and bw.get("ok") and (bw.get("rescue_proximity") or 0.0) >= thr:
+        candidates.append(("breakwater", bw.get("asof", "?"),
+                           f"Breakwater: board at {bw['rescue_proximity']:.0f}% of historical rescue "
+                           f"conditions ({bw.get('reading', '')})"))
+
     book_today = ((deep.get("book") or {}).get("today") or {}) if (deep.get("book") or {}).get("ok") else {}
     if ALERT_RULES.get("book_flip") and book_today.get("stance"):
         sig = ",".join(

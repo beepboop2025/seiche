@@ -145,6 +145,16 @@ def context_pack(snap: dict) -> dict:
             "flags": eng.get("communique", {}).get("flags"),
             "n_statements": eng.get("communique", {}).get("n_statements"),
         } if eng.get("communique", {}).get("ok") else None,
+        "riptide": {
+            "live": deep.get("riptide", {}).get("live"),
+            "flat_water": deep.get("riptide", {}).get("flat_water"),
+            "asof": deep.get("riptide", {}).get("asof"),
+        } if (deep.get("riptide") or {}).get("ok") else None,
+        "breakwater": {
+            "rescue_proximity": eng.get("breakwater", {}).get("rescue_proximity"),
+            "revealed_threshold": eng.get("breakwater", {}).get("revealed_threshold"),
+            "reading": eng.get("breakwater", {}).get("reading"),
+        } if eng.get("breakwater", {}).get("ok") else None,
         "sonar_flagged": [m for m in sonar.get("movers", []) if m.get("flag")][:6],
         "calendar": snap.get("calendar", {}),
         "playbook": deep.get("playbook", {}).get("tables") if (deep.get("playbook") or {}).get("ok") else None,
