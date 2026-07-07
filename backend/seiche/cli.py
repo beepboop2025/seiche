@@ -6,6 +6,8 @@
   seiche watch [-i SECONDS]  pull + alert on a loop
   seiche replay DATE         Time Machine: the board as of YYYY-MM-DD
   seiche backtest            PROOF summary in the terminal
+  seiche analogs             Tide Tables: nearest analogs + forward fan
+  seiche swell               the funding-stress forward curve, 6 weeks out
   seiche serve [--port]      run the API + UI
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
@@ -174,6 +176,126 @@ def cmd_ml(args) -> int:
     return 0
 
 
+def cmd_book(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    deep = snap.get("deep", {})
+    bk = deep.get("book", {})
+    if not bk.get("ok"):
+        print(f"{RED}Book unavailable:{END} {bk.get('reason')}", file=sys.stderr)
+        return 1
+    t = bk["today"]
+    col = RED if t["stance"] == "risk_off" else GRN if t["stance"] == "risk_on" else DIM
+    print(f"{BOLD}THE BOOK{END} {col}{t['stance'].upper()}{END}  ·  {t['rationale']}")
+    for p in t["positions"]:
+        mark = "·" if p["weight"] == 0 else ("▲" if p["weight"] > 0 else "▼")
+        print(f"  {mark} {p['label']:<16} w={p['weight']:+.3f}  ({p['direction']}, "
+              f"vol {p['vol_ann_pct']}%/yr, cost {p['tcost_bp']}bp)")
+    stk = deep.get("stacker", {})
+    if stk.get("ok"):
+        print(f"{BOLD}ensemble{END} P(event,5bd)={stk['p_now']} [{stk['published']}] "
+              f"dispersion {stk['dispersion_now']} — {stk['verdict']}")
+    b = bk["backtest"]
+    ci = b.get("ci95") or ["?", "?"]
+    print(f"{BOLD}walk-forward{END} {b['sample']['start']} → {b['sample']['end']}")
+    print(f"  net Sharpe {b.get('sharpe')} (CI {ci[0]}–{ci[1]}, NW t={b.get('nw_tstat')}) · "
+          f"{b.get('ann_return_pct')}%/yr vol {b.get('ann_vol_pct')}% · maxDD {b.get('max_dd_pct')}% · "
+          f"turnover {b.get('turnover_ann')}x · cost drag {b.get('cost_drag_bp_ann')}bp/yr")
+    for name, m in (b.get("benchmarks") or {}).items():
+        print(f"  {DIM}vs {name:<12} Sharpe {m.get('sharpe')} · {m.get('ann_return_pct')}%/yr · "
+              f"maxDD {m.get('max_dd_pct')}%{END}")
+    print(f"  {BOLD}{b.get('verdict')}{END}")
+    lv = bk.get("live", {})
+    print(f"{BOLD}live record{END} {lv.get('n_days', 0)}d as-published"
+          + (f" since {lv['since']} · cum {lv['cum_return_pct']}%" if lv.get("since") else "")
+          + f" — {lv.get('note', '')}")
+    for c in bk.get("caveats", []):
+        print(f"{DIM}  caveat: {c}{END}")
+    return 0
+
+
+def cmd_analogs(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    t = snap.get("deep", {}).get("tidetables", {})
+    if not t.get("ok"):
+        print(f"{RED}Tide Tables unavailable:{END} {t.get('reason')}", file=sys.stderr)
+        return 1
+    o, nov, sk = t["event_odds"], t["novelty"], t.get("skill", {})
+    ci = o.get("ci95") or ["?", "?"]
+    print(
+        f"{BOLD}TIDE TABLES{END} {o['p']:.0%} of the {o['n']} nearest analogs saw a funding "
+        f"event within 5bd (CI {ci[0]:.0%}-{ci[1]:.0%}) · base rate {o['base_rate']:.0%} · "
+        f"lift {o.get('lift')}x"
+    )
+    col = RED if nov.get("verdict") == "uncharted" else DIM
+    print(f"  water: {col}{nov.get('verdict')}{END} (NN-distance {nov.get('pctl')}th pctl)")
+    if sk.get("ok"):
+        print(f"  hindcast: Brier {sk['brier']:.4f} vs climatology {sk['brier_climatology']:.4f} "
+              f"· AUROC {sk.get('auroc')} — {sk['verdict']}")
+    print(f"{BOLD}nearest analogs{END}")
+    for a in t.get("analogs", [])[:8]:
+        ev = f"{RED}event{END}" if a["event_within_5bd"] else f"{DIM}quiet{END}"
+        ep = f" · {a['episode']}" if a.get("episode") else ""
+        print(f"  {a['end_date']}  dist {a['distance']:.2f}  next-5bd max {a['max_move_5bd_bp']:+.1f}bp  {ev}{ep}")
+    if t.get("fan"):
+        last = t["fan"][-1]
+        print(f"{DIM}fan @ +{t['horizon_bd']}bd: p25 {last['p25']} / median {last['median']} / p75 {last['p75']} bp "
+              f"(spread now {t['spread_now_bp']}bp){END}")
+    return 0
+
+
+def cmd_swell(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    s = snap.get("deep", {}).get("swell", {})
+    if not s.get("ok"):
+        print(f"{RED}Swell unavailable:{END} {s.get('reason')}", file=sys.stderr)
+        return 1
+    hz = s.get("event_by_horizon", {})
+    print(
+        f"{BOLD}SWELL FORECAST{END} P(funding event) "
+        f"5bd {hz.get('h5', 0):.0%} · 10bd {hz.get('h10', 0):.0%} · "
+        f"21bd {hz.get('h21', 0):.0%} · {s['horizon_bd']}bd {hz.get('h' + str(s['horizon_bd']), 0):.0%}"
+    )
+    pk = s.get("peak") or {}
+    print(f"  peak day: {pk.get('date')} ({pk.get('bucket')}) P(≥10bp) {pk.get('p10', 0):.0%}")
+    st = s.get("state", {})
+    if st.get("available"):
+        hot = f"{RED}HOT{END} (lift {st['lift_10bp']}x)" if st.get("hot") else f"{DIM}calm{END}"
+        print(f"  damping state (Undertow): {hot}")
+    print(f"{BOLD}next 10 days{END}")
+    for row in s.get("curve", [])[:10]:
+        bar = "█" * int(round(row["p10"] * 40))
+        settle = f" · settles ${row['settle_b']}B" if row.get("settle_b") else ""
+        print(f"  {row['date']}  {row['p10']:6.1%} {bar} {DIM}{row['bucket']}{settle}{END}")
+    v = s.get("validation", {})
+    if v.get("ok"):
+        print(f"  validation: AUROC {v['auroc']} · Brier {v['brier']:.4f} vs climatology "
+              f"{v['brier_climatology']:.4f} — {v['verdict']}")
+    return 0
+
+
+def cmd_navigator(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    n = snap.get("navigator", {})
+    if not n.get("ok"):
+        print(f"{RED}Navigator ashore:{END} {n.get('reason')}", file=sys.stderr)
+        return 1
+    print(f"{BOLD}NAVIGATOR{END} committed P(funding event, 5bd) = {n['p_event_5bd']:.0%} "
+          f"{DIM}({n['asof']}{', cached' if n.get('cached') else ''}){END}")
+    print(f"  {n.get('rationale', '')}")
+    rec = n.get("record") or {}
+    if rec.get("ok") and rec.get("brier") is not None:
+        col = GRN if rec["brier"] < rec["brier_climatology"] else RED
+        print(f"  forward record: {col}Brier {rec['brier']:.4f}{END} vs climatology "
+              f"{rec['brier_climatology']:.4f} over {rec['n_resolved']} resolved — {rec['verdict']}")
+    elif rec.get("verdict"):
+        print(f"  {DIM}{rec['verdict']}{END}")
+    return 0
+
+
 def cmd_ask(args) -> int:
     from seiche import ai, assemble
     snap = asyncio.run(assemble.snapshot())
@@ -221,6 +343,14 @@ def main() -> None:
     sub.add_parser("backtest", help="PROOF summary").set_defaults(fn=cmd_backtest)
 
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
+
+    sub.add_parser("analogs", help="Tide Tables: nearest historical analogs + forward fan").set_defaults(fn=cmd_analogs)
+
+    sub.add_parser("swell", help="funding-stress forward curve (6 weeks)").set_defaults(fn=cmd_swell)
+
+    sub.add_parser("book", help="the Book: today's positions + walk-forward P&L verdict").set_defaults(fn=cmd_book)
+
+    sub.add_parser("navigator", help="the LLM's committed daily forecast + forward record").set_defaults(fn=cmd_navigator)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

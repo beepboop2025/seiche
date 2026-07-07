@@ -236,3 +236,136 @@ Driven by an honest self-review. Every criticism got a fix or a declaration:
   REJECTED — data endpoint not publicly fetchable; declared, not scraped.
 - **PIT record now running**: launchd agent loaded (08:15/16:45 daily) — the
   as-published track record accrues from today.
+
+---
+
+# v2.3 addendum — the forecast layer (2026-07-07)
+
+Built in tandem across two Claude Code sessions: session A shipped **Tide
+Tables** (analog forecasting, PR #1) with a pattern-first roadmap
+(docs/IDEAS.md); session B built on top of that branch, shipping the roadmap's
+highest-ranked items plus the piece neither list had. Design intent: v2 told
+you how stressed the basin is TODAY; v2.3 tells you WHEN — with every forecast
+carrying its own walk-forward evidence.
+
+**1. Undertow — the damping gauge (critical slowing down).** Systems
+approaching a regime shift relax more slowly (Scheffer et al., Nature 2009 —
+the literature is literally about lakes). Rolling lag-1 autocorrelation +
+variance of the rolling-median-detrended SOFR−IORB and tail series, an
+implied relaxation time τ = −1/ln(AC1), and the unconditional version of
+Resonance's decay measurement: median recovery half-life after every pop
+above the expanding 90th percentile, trailing year vs prior. Completes the
+physics pair — Resonance = forced response to the calendar bell, Undertow =
+free decay on ordinary days. Expanding percentiles only (truncation-equality
+unit test); joins the composite at 0.06 as structural-fragility evidence
+(weights rebalanced: tails .17, kink .13, weather .11, rvxray .11,
+warehouse/buffers .03 each). EWS pitfall handled: indicator series are
+serially correlated, so Kendall-tau p-values are anti-conservative — the
+engine publishes percentiles vs own history, never trend significance.
+
+**2. Swell Forecast — the funding-stress forward curve (the new invention).**
+Nobody — not Bloomberg, not OFR — publishes a term structure of funding
+stress, yet the basin's forcing schedule is public. For each of the next 42
+business days: P(pop ≥ 2/5/10/20bp), where pop = SOFR−IORB minus trailing
+5bd median (the exact PROOF event statistic). Estimator learned from a failed
+spike: per-cell empirical hazards starve on rare buckets (~4 quarter-ends a
+year), so each bucket keeps its FULL expanding distribution of pops and every
+severity reads off the same exceedance curve — small sloshes lend the big
+ones statistical mass (AUROC 0.53 → 0.88 on the synthetic testbed). Disjoint
+buckets: year/quarter/month turn (spanning the boundary), tax date,
+mid-month, plain. Two capped multiplicative lifts, estimated expanding:
+damping state (Undertow pctl ≥ 67) and announced coupon settlements ≥ $90B
+(estimated within mid-month/plain buckets only, so the calendar isn't
+double-counted). Compounds to P(event by horizon); walk-forward validated
+(expanding tables only, truncation-equality unit test) vs climatology with
+reliability table; the verdict self-demotes to "trust the dates, not the
+levels" when levels stop earning it. A forecast, not evidence: never
+weighted into the composite.
+
+**3. Fleet of Forecasts — disagreement as a signal.** *(Superseded at the
+branch merge by The Stack — same target, richer walk-forward calibration; the
+disagreement meter lives on as the Stack's dispersion output and the Book's
+conviction gate. The rule-view label embargo described below was carried into
+the Stack's shared event labels.)* Four views now target
+the same P(event within 5bd): rule index (mapped through expanding
+percentile-bucket event rates, computed with the same predict-then-update
+discipline), ML Lab, Tide Tables analogs, Swell 5bd integral. Blend weights
+∝ max(1 − Brier/Brier_climatology, 0) from each view's OWN published
+walk-forward record — a view that never beat its base rate gets zero weight
+(it already self-demoted; averaging it back in would smuggle it past its own
+verdict). All-zero skills → the blend IS climatology and says so. The
+disagreement meter (max−min) is published as a first-class signal. Every
+view's daily forecast now lands in the PIT record — the fleet accrues an
+as-published track record from today.
+
+**Surfaces:** new FORECAST tab (Swell curve + Fleet + Tide Tables, moved from
+MARKET so the prediction layer has one home), Undertow on RESONANCE (forced
+response and free decay side by side), `seiche swell` / `seiche fleet` CLI,
+`swell_event_prob` + `fleet_disagree` alert rules, desk-assistant context
+pack entries for all three.
+
+**Validation honesty (build-time, this container):** the CI environment's
+network policy blocks the upstream data APIs, so v2.3 shipped with the
+synthetic-data test suite only (15 new tests, 40 total — including
+no-look-ahead truncation-equality for Undertow and Swell, calendar-detection,
+lift caps, zero-weight-for-skill-less-views, and disagreement flagging). The
+live walk-forward numbers (AUROC/Brier/reliability vs climatology on real
+2018–2026 history) compute on first live run and publish themselves on the
+FORECAST tab; no live claim is made here that the page won't verify itself.
+
+## Also considered and rejected (v2.3)
+
+- Hawkes self-excitation / branching ratio on funding events — ~20 declustered
+  events since 2018 cannot identify a Hawkes MLE; the aftershock intuition is
+  partially captured by Undertow's recovery stretch instead. Revisit if a
+  micro-event definition (2bp pops, hundreds of events) proves stable.
+- Kendall-tau trend tests on EWS indicators — anti-conservative on serially
+  correlated series (verified on the synthetic testbed: a stationary control
+  produced |tau| = 0.42 with p ≈ 1e-22); percentiles-vs-own-history instead.
+- Weighting any forecast (Swell/Fleet/Tide/ML) into the composite — forecasts
+  are not evidence of stress; the composite stays a nowcast.
+
+---
+
+# v2.4 addendum — the Navigator, the Communiqué, the TED bridge (2026-07-07)
+
+Driven by one question: how does a tool predict from the whole macro picture
+when the target has ~20 events of history? Three answers, each honest about
+what it is:
+
+**1. The Navigator (`engines/navigator.py`).** An LLM forecaster made
+accountable. The model's whole world is the deterministic context pack; it
+must COMMIT one P(funding event, 5bd) per data-day (blob-cached — a re-run
+can never revise the morning's number), and the commitment lands in the
+hash-chained PIT record. The unique honesty problem is stated in the module
+docstring: an LLM member CANNOT be backtested (it has read the history), so
+it gets no backtest, no stack membership and no weight anywhere until its
+FORWARD record earns a hearing (NAVIGATOR_MIN_RESOLVED). Fails loud without
+an endpoint. Surfaces: HELM card, `seiche navigator`, PIT forecasts.views.
+
+**2. The Communiqué (`engines/communique.py` + `sources/fedtext.py`).** FOMC
+statements are free, keyless, archived for decades, and stamped with exact
+release times — text signals with true vintage discipline. Scoring is a
+FROZEN deterministic lexicon (hawk−dove, balance-sheet bias, funding-stress
+vocabulary, per 1,000 words) because a scorer that drifts cannot sit under
+a vintage-stamped record; the change vs the previous statement is the
+signal. Time Machine truncates statements by release date. Degenerate-quiet
+history handled: a first break from flat flags even though MAD=0. Statement
+URL pattern unverified-live from the build container — collector fails loud
+per date, coverage prints.
+
+**3. The TED bridge (`mlpred.build_pretrain_rows`).** Funding stress predates
+SOFR: TED (1990–2018 slice) carries 2008/2011/2016 in the same
+funding-spread abstraction. TED-era rows join every expanding train slice at
+weight 0.30 in the SAME feature slots (spread level/chg/z + the era-invariant
+calendar distances); labels are TED pops ≥ 15bp. The fold-skip guard depends
+on SOFR-era events ONLY so pooled and solo score identical OOS days —
+comparability beats an earlier start — and the published `transfer` block
+says whether pretraining helped, either way. TEDRATE fetch unverified-live
+from the build container.
+
+Also considered and rejected (v2.4): letting the Navigator into the Stack
+(no honest calibration window can exist for a member whose hindcasts are
+open-book); LLM-scored statements as the primary text signal (model drift
+under a vintage record); scraping FOMC minutes (3-week lag, HTML shape
+unverified — statements carry the signal).

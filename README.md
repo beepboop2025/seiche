@@ -17,7 +17,24 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
-## v2 "Deep Water" — twelve engines, five analytics layers, nine tabs
+## v2 "Deep Water" — eighteen engines, seven analytics layers, eleven tabs
+
+> **v2.3 "Letters of Marque"** (built in tandem across two sessions) adds the
+> forecast layer and the layer that makes every other layer accountable:
+> **Undertow** (critical slowing down — the basin's damping, measured on
+> ordinary days), the **Swell Forecast** (the funding-stress forward curve —
+> P(pop ≥ x bp) by date, six weeks out, from the public forcing calendar),
+> **The Stack** (walk-forward ensemble of every event forecaster — rule, ML,
+> analogs, Swell — plus The Tell, with a disagreement gauge), **The Book**
+> (HELM tab — explicit daily positions on 2y/10y duration proxies, S&P and
+> BTC over a T-bill base, walk-forward P&L with costs, block-bootstrap Sharpe
+> CIs and mandatory benchmarks, verdict printed even when it loses), a
+> **hash-chained as-published track record** shipped inside the static
+> publish (nobody, including the operator, can quietly rewrite a bad month),
+> and the **Far Basin** — Palimpsest's censorship-fear channel
+> (palimpsest.info), a policy confession signal no market data vendor
+> carries, honestly quarantined until it accrues testable history.
+> Strategy doc: [docs/STRATEGY.md](docs/STRATEGY.md).
 
 | Engine | Question it answers |
 |---|---|
@@ -25,16 +42,22 @@ layer none of them have: **honest evidence about itself**.
 | **Liquidity Weather** | What does the reserve path look like 6 weeks out — and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
 | **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median — the first tell of every squeeze? |
 | **Echo Engine** | Does today's 30-day trajectory rhyme with the run-up to any historical stress episode? |
+| **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z — no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
 | **RV X-Ray** | How big is the leveraged Treasury RV complex, and what does a 5/15/30bp shock do to it? |
 | **Crowding** | Where are leveraged funds most crowded relative to their own history (UST curve, SOFR/FF futures, S&P)? |
 | **Auction Digestion** | Is the market choking on Treasury supply? |
 | **Warehouse** | How full is the primary-dealer balance sheet — the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
 | **Resonance Engine** ★ | *The seiche made literal:* does the same calendar forcing (month-end, quarter-end, year-end, tax dates) produce a bigger slosh than it used to? Amplification = damping loss = fragility rising while levels look calm. |
+| **Undertow** ★ | The free-decay half of the resonance physics: critical slowing down (Scheffer et al.), measured continuously. Rising lag-1 autocorrelation + variance of the detrended spread/tail and a stretching recovery half-life after everyday pops = the basin losing damping on days when NOTHING is happening. Expanding percentiles only; weighted into the composite as structural evidence. |
+| **Swell Forecast** ★ | The funding-stress **forward curve** — a term structure nobody publishes, not even the $32k terminals: P(SOFR−IORB pop ≥ 2/5/10/20bp) for each of the next 42 business days, built from the PUBLIC forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops — small severities lend the rare big ones statistical mass), lifted by the live damping state and announced coupon settlements. Compounds to P(event by horizon), walk-forward validated vs climatology with the reliability table printed, and the verdict self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
 | **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
 | **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
+| **The Stack** ★ | One P(funding event, 5bd) from the whole fleet: rule index, ML Lab and Tide Tables calibrated per-member and blended walk-forward (with regime dummies, ~8 params on purpose). Publishes the equal-weight mean instead whenever the fitted stack fails to beat it OOS, and publishes member DISPERSION — when the fleet disagrees, conviction drops. |
+| **The Book** ★ | The signal made accountable (HELM tab): a FROZEN rulebook maps the ensemble to explicit daily long/short/flat weights (2y/10y UST duration proxies, S&P 500, BTC over T-bill cash; hysteresis bands, a disagreement gate, vol targeting, per-sleeve cost haircuts), then walk-forward P&L — signal t earns returns t+1, enforced in one place and unit-tested — with stationary-block-bootstrap Sharpe CIs, Newey–West t-stats, per-episode attribution, doubled-cost rerun, and benchmarks through the identical pipeline. If it doesn't beat the static mix after costs, the page says so in bold. Every day's positions land in a **hash-chained as-published ledger** carried by the published site — tamper-evident by construction. Paper proxy; not advice. |
+| **Far Basin** ★ | The policy-fear channel: Palimpsest (palimpsest.info) measures what the Chinese state rushes to delete — the DDTI deletion-threat index, newly-targeted terms, the Generative Firewall Index — CI-published, keyless, mirrored on GitHub raw. A confession channel one basin further out, carried by no market data vendor. Honest scope: days old as a public series, so it accrues locally and stays QUARANTINED (context only, never in the composite, never a model feature) until it clears 250 daily observations. |
 | **Seiche Index** | One 0–100 number with full decomposition and a regime call: CALM / EROSION / STRAIN / STRESS. |
 
 ★ = methods invented for this tool.
@@ -50,6 +73,27 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 - **The Tell** — plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
   OAS, rates vol). Positive = the basin is sloshing and the screens haven't noticed.
   The whole thesis in one tradeable number.
+- **The Navigator** — an LLM forecaster made accountable: one committed
+  P(funding event, 5bd) per data-day, grounded strictly in the live board,
+  written into the hash-chained record. An LLM cannot be honestly backtested
+  (it has read the history), so its FORWARD record is its only evidence and
+  its weight stays zero until that record earns a hearing. `seiche navigator`.
+- **The Communiqué** — FOMC statements read as vintage-stamped data: frozen
+  deterministic lexicons score policy direction, balance-sheet bias and
+  funding-stress vocabulary per statement; the change vs the previous
+  statement is the signal, and the Time Machine replays text as it stood.
+- **The TED bridge** — the ML Lab pretrains on the TED spread's 1990–2018
+  funding-stress record (2008/2011/2016) in the same feature slots,
+  down-weighted, and publishes the transfer gain vs the SOFR-only model
+  either way.
+- **The Stack + The Book** — the rule index, ML Lab, Tide Tables analogs and the
+  Swell curve all emit P(funding event, 5bd); the Stack calibrates and blends them
+  walk-forward (publishing the equal-weight mean whenever the fitted blend can't
+  beat it), publishes member **dispersion** as a first-class ambiguity signal, and
+  the Book converts the result into explicit daily paper positions with costs,
+  benchmarks and bootstrap CIs. Every view's daily forecast and every position is
+  appended to the hash-chained PIT record — a track record no reconstruction can
+  polish.
 - **Turn Barometer** — forecasts the *next* month/quarter-end turn's severity with
   leave-one-out cross-validation, always benchmarked against a naive forecast. When
   the model can't beat naive, it says so and publishes naive instead.
@@ -103,6 +147,9 @@ seiche watch -i 1800      # pull + alert on a loop
 seiche replay 2019-09-12  # Time Machine in the terminal
 seiche backtest           # PROOF summary
 seiche ml                 # ML Lab: event probability + honest validation
+seiche analogs            # Tide Tables: nearest historical analogs + forward fan
+seiche swell              # the funding-stress forward curve, 6 weeks out
+seiche book               # the Book: today's positions + walk-forward P&L verdict
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 ```
@@ -110,6 +157,23 @@ seiche serve              # API + UI
 Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.
+
+## Deploying on a VPS (Hetzner etc.)
+
+```bash
+# first time, as root — clones to /opt/seiche, runs the test gate, builds,
+# installs systemd units (API on 127.0.0.1:8787 + a 30-min alert timer)
+bash ops/deploy/install.sh
+
+# every release after that — pull main, re-gate, rebuild, restart
+bash /opt/seiche/ops/deploy/update.sh
+```
+
+Put a TLS reverse proxy in front (Caddy: `reverse_proxy 127.0.0.1:8787`).
+The SQLite cache AND the PIT/Navigator as-published record live in
+`/opt/seiche/backend/data` — back that directory up; it is the track record.
+LLM keys for the desk assistant/Navigator and Telegram alert credentials go
+in the `[Service]` environment of `ops/deploy/seiche.service`.
 
 ## Tuning the editorial voice
 

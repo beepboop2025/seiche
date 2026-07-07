@@ -96,6 +96,43 @@ def context_pack(snap: dict) -> dict:
         } if eng.get("resonance", {}).get("ok") else None,
         "warehouse": {k: eng.get("warehouse", {}).get(k) for k in ("total_net_b", "total_pctl", "long_end_share_pct", "asof")} if eng.get("warehouse", {}).get("ok") else None,
         "echo_top": eng.get("echo", {}).get("top"),
+        "book": {
+            "today": deep.get("book", {}).get("today"),
+            "verdict": (deep.get("book", {}).get("backtest") or {}).get("verdict"),
+            "live": deep.get("book", {}).get("live"),
+        } if (deep.get("book") or {}).get("ok") else None,
+        "stacker": {
+            "p_now": deep.get("stacker", {}).get("p_now"),
+            "published": deep.get("stacker", {}).get("published"),
+            "dispersion_now": deep.get("stacker", {}).get("dispersion_now"),
+            "verdict": deep.get("stacker", {}).get("verdict"),
+        } if (deep.get("stacker") or {}).get("ok") else None,
+        "farbasin": {
+            "channels": {k: {kk: vv for kk, vv in (v or {}).items() if kk != "series"}
+                          for k, v in (eng.get("farbasin", {}).get("channels") or {}).items()},
+            "status": eng.get("farbasin", {}).get("status"),
+        } if eng.get("farbasin", {}).get("ok") else None,
+        "tidetables": {
+            "event_odds": deep.get("tidetables", {}).get("event_odds"),
+            "novelty": deep.get("tidetables", {}).get("novelty"),
+            "skill_verdict": (deep.get("tidetables", {}).get("skill") or {}).get("verdict"),
+            "asof": deep.get("tidetables", {}).get("asof"),
+        } if (deep.get("tidetables") or {}).get("ok") else None,
+        "undertow": {
+            "score": eng.get("undertow", {}).get("score"),
+            "per_series": {
+                k: {kk: v.get(kk) for kk in ("ac1_pctl", "tau_bd", "var_pctl")}
+                for k, v in (eng.get("undertow", {}).get("per_series") or {}).items()
+            },
+            "asof": eng.get("undertow", {}).get("asof"),
+        } if eng.get("undertow", {}).get("ok") else None,
+        "swell": {
+            "p_event_5bd": deep.get("swell", {}).get("p_event_5bd"),
+            "event_by_horizon": deep.get("swell", {}).get("event_by_horizon"),
+            "peak": deep.get("swell", {}).get("peak"),
+            "validation_verdict": (deep.get("swell", {}).get("validation") or {}).get("verdict"),
+            "asof": deep.get("swell", {}).get("asof"),
+        } if (deep.get("swell") or {}).get("ok") else None,
         "basins": basins.get("basins") if basins.get("ok") else None,
         "swap_lines_30d_m": (basins.get("swap_lines") or {}).get("ops_30d_total_m") if basins.get("ok") else None,
         "moorings": {
@@ -103,6 +140,11 @@ def context_pack(snap: dict) -> dict:
             "stable_total_b": (moor.get("demand") or {}).get("total_b"),
             "stable_chg_30d_pct": (moor.get("demand") or {}).get("chg_30d_pct"),
         } if moor.get("ok") else None,
+        "communique": {
+            "latest": eng.get("communique", {}).get("latest"),
+            "flags": eng.get("communique", {}).get("flags"),
+            "n_statements": eng.get("communique", {}).get("n_statements"),
+        } if eng.get("communique", {}).get("ok") else None,
         "sonar_flagged": [m for m in sonar.get("movers", []) if m.get("flag")][:6],
         "calendar": snap.get("calendar", {}),
         "playbook": deep.get("playbook", {}).get("tables") if (deep.get("playbook") or {}).get("ok") else None,

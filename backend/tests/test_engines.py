@@ -20,6 +20,7 @@ from seiche.engines import (
     playbook,
     resonance,
     sonar,
+    tidetables,
     turn,
 )
 from seiche.engines import rvxray, weather
@@ -138,13 +139,82 @@ def test_history_publishes_exclusions(rng):
 
 
 # --------------------------------------------------------------------------
+# Tide Tables — analog forecasting
+# --------------------------------------------------------------------------
+
+def _planted_motif_spread(rng, n=1200, ramp_d=15, period=70, first=250):
+    """Noise with a recurring precursor motif: a ramp that is always followed
+    by a spike the next day. The LAST motif ends on the final day — ramp
+    complete, spike not yet happened. An analog engine must see it coming."""
+    idx = _bdays(n)
+    spread = pd.Series(rng.normal(0, 0.3, n), index=idx)
+    starts = list(range(first, n - ramp_d - 6, period)) + [n - ramp_d]
+    for s in starts:
+        spread.iloc[s : s + ramp_d] += np.linspace(0, 10, ramp_d)
+        if s + ramp_d < n - 3:  # historical motifs get their spike
+            spread.iloc[s + ramp_d] += 25.0
+            spread.iloc[s + ramp_d + 1 : s + ramp_d + 4] += [12.0, 6.0, 3.0]
+    return spread
+
+
+def test_tidetables_predicts_planted_pattern(rng):
+    spread = _planted_motif_spread(rng)
+    r = tidetables.analyze({"x": spread}, spread, warmup=350, k=8)
+    assert r["ok"]
+    odds = r["event_odds"]
+    assert odds["p"] >= 0.7, f"analogs of the planted precursor must flag the spike (got {odds})"
+    assert odds["base_rate"] < 0.3
+    assert odds["lift"] is not None and odds["lift"] >= 2.0
+    # the fan must lean sharply upward: the analogs' next days contain spikes
+    assert r["fan"], "forward fan missing"
+    assert r["fan"][0]["p75"] > r["spread_now_bp"] + 5.0
+    # a repeating motif is well-charted water, not novelty
+    assert r["novelty"]["verdict"] != "uncharted"
+    # and the hindcast must beat climatology on a sample this rigged
+    assert r["skill"]["ok"] and r["skill"]["brier"] < r["skill"]["brier_climatology"]
+
+
+def test_tidetables_no_look_ahead(rng):
+    idx = _bdays(1150)
+    spread = pd.Series(rng.normal(0, 2.0, len(idx)), index=idx)
+    for s in range(200, 1100, 55):  # real events so the odds vary
+        spread.iloc[s] += 18.0
+    full = tidetables.analyze({"x": spread}, spread, warmup=300)
+    assert full["ok"] and "_hindcast" in full
+    hind = full["_hindcast"]
+    t = hind.index[-10]
+    trunc = spread[spread.index <= t]
+    part = tidetables.analyze({"x": trunc}, trunc, warmup=300, with_hindcast=False)
+    assert part["ok"]
+    assert abs(part["event_odds"]["p"] - float(hind.loc[t])) < 1e-6, \
+        "hindcast probability at T differs from the live forecast computed with data up to T only"
+
+
+def test_tidetables_flags_uncharted_water(rng):
+    idx = _bdays(900)
+    spread = pd.Series(rng.normal(0, 1.0, len(idx)), index=idx)
+    spread.iloc[-20:] = 40.0  # a state the sample has never seen
+    r = tidetables.analyze({"x": spread}, spread, warmup=300, with_hindcast=False)
+    assert r["ok"]
+    assert r["novelty"]["pctl"] is not None and r["novelty"]["pctl"] >= 90
+    assert r["novelty"]["verdict"] == "uncharted"
+
+
+def test_tidetables_refuses_short_history(rng):
+    idx = _bdays(200)
+    spread = pd.Series(rng.normal(0, 1.0, len(idx)), index=idx)
+    r = tidetables.analyze({"x": spread}, spread)
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
 # Composite
 # --------------------------------------------------------------------------
 
 def test_composite_renormalizes_and_reports_dead():
     subs = {"tails": 50.0, "kink": None, "weather": 20.0, "confession": 0.0,
             "rvxray": None, "resonance": 40.0, "hydrophone": 10.0,
-            "auctions": 30.0, "warehouse": 60.0, "buffers": 90.0}
+            "undertow": 30.0, "auctions": 30.0, "warehouse": 60.0, "buffers": 90.0}
     out = composite.compose(subs)
     assert out["ok"]
     assert "kink" in out["dead_inputs"] and "rvxray" in out["dead_inputs"]
@@ -477,3 +547,297 @@ def test_stationkeeping_flags_injected_burn(rng):
     assert r["ok"]
     tga_alarms = [m for m in r["recent_maneuvers"] if m["channel"] == "TGA"]
     assert tga_alarms, "a $300B unscheduled build must alarm"
+
+
+# --------------------------------------------------------------------------
+# Undertow: critical slowing down must fire on a basin losing damping and
+# stay quiet on a stationary one; expanding percentiles must not look ahead
+# --------------------------------------------------------------------------
+
+def _ar1_series(rng, n, phi):
+    """AR(1) with per-step phi array."""
+    x = np.zeros(n)
+    for t in range(1, n):
+        x[t] = phi[t] * x[t - 1] + rng.normal(0, 1.0)
+    return pd.Series(x, index=_bdays(n))
+
+
+def test_undertow_detects_losing_damping(rng):
+    from seiche.engines import undertow
+    n = 1500
+    phi_flat = np.full(n, 0.5)
+    phi_crit = np.full(n, 0.5)
+    phi_crit[-300:] = np.linspace(0.5, 0.95, 300)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=_bdays(n))
+    calm = undertow.analyze(_ar1_series(rng, n, phi_flat), tail)
+    hot = undertow.analyze(_ar1_series(rng, n, phi_crit), tail)
+    assert calm["ok"] and hot["ok"]
+    assert hot["per_series"]["spread"]["ac1_pctl"] >= 90, "phi->0.95 must read as top-decile AC1"
+    assert hot["score"] > calm["score"] + 15
+
+
+def test_undertow_no_look_ahead(rng):
+    from seiche.engines import undertow
+    n = 1500
+    phi = np.full(n, 0.6)
+    spread = _ar1_series(rng, n, phi)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=_bdays(n))
+    full = undertow.analyze(spread, tail)
+    trunc = undertow.analyze(spread.iloc[:-120], tail.iloc[:-120])
+    t = trunc["_damping_pctl"].index[-1]
+    assert abs(float(full["_damping_pctl"].loc[t]) - float(trunc["_damping_pctl"].loc[t])) < 1e-9, \
+        "damping percentile at T changed when future data was appended — look-ahead leak"
+
+
+def test_undertow_refuses_short_history(rng):
+    from seiche.engines import undertow
+    short = pd.Series(rng.normal(0, 1, 100), index=_bdays(100))
+    r = undertow.analyze(short, short)
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Swell: the forward curve must find the calendar, validate honestly, and
+# never look ahead
+# --------------------------------------------------------------------------
+
+def _calendar_spiked_spread(rng, n=1600, spike=14.0):
+    from seiche.engines import swell
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(0, 1.2, n), index=idx)
+    buckets = swell.classify_days(idx)
+    hot = buckets.isin(["quarter_turn", "year_turn"]).to_numpy()
+    s[hot] += spike
+    return s
+
+
+def test_swell_buckets_are_disjoint_and_complete():
+    from seiche.engines import swell
+    idx = _bdays(900)
+    b = swell.classify_days(idx)
+    assert len(b) == len(idx)
+    assert set(b.unique()) <= set(swell.BUCKET_LABELS)
+    # spot checks: 2019-12-31 is the year turn; 2019-09-30 the quarter turn
+    assert b.loc[pd.Timestamp("2019-12-31")] == "year_turn"
+    assert b.loc[pd.Timestamp("2020-01-01")] == "year_turn"  # first bd after
+    assert b.loc[pd.Timestamp("2019-09-30")] == "quarter_turn"
+
+
+def test_swell_finds_the_calendar(rng):
+    from seiche.engines import swell
+    r = swell.analyze(_calendar_spiked_spread(rng))
+    assert r["ok"]
+    by = {b["bucket"]: b for b in r["buckets"]}
+    assert by["quarter_turn"]["p10"] > by["plain"]["p10"] + 0.2, \
+        "quarter turns carry the injected spikes — the curve must know"
+    # year turns have ~2 obs/year — shrinkage toward quarter-turn evidence
+    # must keep them hot instead of diluting them to plain days
+    assert by["year_turn"]["p10"] > by["plain"]["p10"] + 0.15, \
+        "year-turn risk must survive its tiny sample via hierarchical shrinkage"
+    v = r["validation"]
+    assert v["ok"] and v["auroc"] > 0.7 and v["brier"] < v["brier_climatology"]
+    assert r["peak"] is not None and r["peak"]["bucket"] in ("quarter_turn", "year_turn")
+
+
+def test_swell_no_look_ahead(rng):
+    from seiche.engines import swell
+    s = _calendar_spiked_spread(rng)
+    full = swell.analyze(s)
+    trunc = swell.analyze(s.iloc[:-90])
+    t = trunc["_p5_series"].index[-1]
+    assert abs(float(full["_p5_series"].loc[t]) - float(trunc["_p5_series"].loc[t])) < 1e-9, \
+        "walk-forward p5 at T changed when future data was appended — look-ahead leak"
+
+
+def test_swell_state_lift_capped_and_directional(rng):
+    from seiche.engines import swell
+    n = 1600
+    idx = _bdays(n)
+    s = pd.Series(rng.normal(0, 1.0, n), index=idx)
+    # hot regime in the middle third carries extra pops
+    damping = pd.Series(0.0, index=idx)
+    damping.iloc[n // 3 : 2 * n // 3] = 90.0
+    hot = damping >= 67.0
+    s[hot.to_numpy() & (rng.uniform(size=n) < 0.10)] += 12.0
+    r = swell.analyze(s, damping_pctl=damping)
+    assert r["ok"]
+    lift = r["state"]["lift_10bp"]
+    assert 0.5 <= lift <= 3.0
+    assert lift > 1.2, "exceedances concentrated in the hot state must lift the rate"
+
+
+def test_swell_refuses_short_history(rng):
+    from seiche.engines import swell
+    r = swell.analyze(pd.Series(rng.normal(0, 1, 200), index=_bdays(200)))
+    assert not r["ok"]
+
+
+# --------------------------------------------------------------------------
+# Review-pass invariants: fleet rule embargo, undertow unresolved pops
+# --------------------------------------------------------------------------
+
+def test_undertow_unresolved_pops_do_not_inflate_recovery(rng):
+    from seiche.engines import undertow
+    n = 1200
+    idx = _bdays(n)
+    quiet = pd.Series(rng.normal(0, 1.0, n), index=idx)
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=idx)
+    loud = quiet.copy()
+    loud.iloc[-2] += 60.0  # giant pop 2bd before asof — window still open
+    a = undertow.analyze(quiet, tail)
+    b = undertow.analyze(loud, tail)
+    ra = a["per_series"]["spread"]["recovery"]
+    rb = b["per_series"]["spread"]["recovery"]
+    assert ra["n_recent"] == rb["n_recent"], \
+        "an unresolved end-of-sample pop must be excluded, not counted as censored-slow"
+    assert rb["halflife_recent_d"] == ra["halflife_recent_d"]
+
+
+# --------------------------------------------------------------------------
+# The Navigator: commitment discipline + forward-only scoring
+# --------------------------------------------------------------------------
+
+def test_navigator_parses_and_bounds_commitments():
+    from seiche.engines import navigator
+    good = navigator.parse_commitment('{"p_event_5bd": 0.07, "rationale": "tails calm (2026-07-07); kink runway wide"}')
+    assert good == {"p_event_5bd": 0.07, "rationale": "tails calm (2026-07-07); kink runway wide"}
+    fenced = navigator.parse_commitment('```json\n{"p_event_5bd": 0.5, "rationale": "x"}\n```')
+    assert fenced is not None and fenced["p_event_5bd"] == 0.5
+    assert navigator.parse_commitment('{"p_event_5bd": 1.7, "rationale": "overconfident"}') is None
+    assert navigator.parse_commitment("the vibes feel risky, maybe 40%?") is None
+    assert navigator.parse_commitment(None) is None
+
+
+def test_navigator_commits_once_per_day(rng, tmp_path, monkeypatch):
+    import asyncio
+    from seiche import store
+    from seiche.engines import navigator
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "nav.sqlite")
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    calls = {"n": 0}
+
+    async def llm(messages):
+        calls["n"] += 1
+        return '{"p_event_5bd": 0.12, "rationale": "test"}'
+
+    first = asyncio.run(navigator.commit({"composite": {}}, "2026-07-07", llm=llm))
+    second = asyncio.run(navigator.commit({"composite": {}}, "2026-07-07", llm=llm))
+    assert first["ok"] and second["ok"]
+    assert calls["n"] == 1, "the model must not be consulted twice for one data-day"
+    assert second.get("cached") is True
+    assert second["p_event_5bd"] == first["p_event_5bd"]
+
+
+def test_navigator_fails_loud_without_endpoint(tmp_path, monkeypatch):
+    import asyncio
+    from seiche import store
+    from seiche.engines import navigator
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "nav.sqlite")
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+
+    async def llm(messages):
+        return None
+
+    r = asyncio.run(navigator.commit({}, "2026-07-08", llm=llm))
+    assert not r["ok"] and "ashore" in r["reason"]
+
+    async def garbage(messages):
+        return "I think markets will be fine."
+
+    r = asyncio.run(navigator.commit({}, "2026-07-09", llm=garbage))
+    assert not r["ok"] and "malformed" in r["reason"]
+
+
+def test_navigator_scores_forward_record_only(rng):
+    from seiche.engines import navigator
+    n = 400
+    idx = _bdays(n, "2024-01-01")
+    spread = pd.Series(rng.normal(0, 1, n), index=idx)
+    spread.iloc[150] += 25.0  # one real event
+    # 30 as-published forecasts: high p right before the event, low elsewhere
+    recs = []
+    for i in range(100, 160, 2):
+        p = 0.8 if 144 <= i < 150 else 0.05
+        recs.append({"date": idx[i].date().isoformat(),
+                     "forecasts": {"views": {"navigator": p}}})
+    # plus one too fresh to resolve (window still open)
+    recs.append({"date": idx[-2].date().isoformat(),
+                 "forecasts": {"views": {"navigator": 0.5}}})
+    out = navigator.score_record(recs, spread)
+    assert out["ok"]
+    assert out["n_resolved"] == 30
+    assert out["n_pending"] == 1
+    assert out["brier"] < out["brier_climatology"], "prescient synthetic forecasts must beat climatology"
+
+
+# --------------------------------------------------------------------------
+# Communiqué: deterministic lexicon scoring on vintage-stamped statements
+# --------------------------------------------------------------------------
+
+def test_communique_scores_and_flags_stress_language():
+    from seiche.engines import communique
+    calm = ("The Committee decided to maintain the target range. Inflation has cooled and "
+            "longer-term expectations remain well anchored. Economic activity expanded at a "
+            "moderate pace. " * 12)
+    stressy = ("The Committee decided to maintain the target range. Money market conditions "
+               "warrant attention: funding pressures emerged in repurchase agreement markets "
+               "and the standing repo facility supported smooth market functioning amid "
+               "liquidity strains. " * 12)
+    texts = {f"2024-0{m}-01": calm for m in range(1, 8)}
+    texts["2024-09-01"] = stressy
+    r = communique.analyze(texts)
+    assert r["ok"] and r["n_statements"] == 8
+    assert r["latest"]["stress_score"] > 0
+    assert r["latest"]["stress_score_chg"] > 0
+    assert any("funding-stress vocabulary" in f for f in r["flags"]), \
+        "a statement suddenly full of repo vocabulary must flag"
+    assert not communique.analyze({})["ok"]
+
+
+def test_communique_is_deterministic():
+    from seiche.engines import communique
+    text = "The Committee remains vigilant; further tightening and balance sheet reduction continue."
+    assert communique.score_text(text) == communique.score_text(text)
+    s = communique.score_text(text)
+    assert s["hawk_score"] > 0 and s["bs_tighten"] > 0
+
+
+# --------------------------------------------------------------------------
+# Transfer learning: TED-era pretraining mechanics
+# --------------------------------------------------------------------------
+
+def test_pretrain_rows_share_feature_slots(rng):
+    from seiche.engines import mlpred
+    idx = pd.bdate_range("1995-01-01", periods=4000)
+    ted = pd.Series(np.abs(rng.normal(0.4, 0.15, len(idx))), index=idx)
+    ted.iloc[2000] += 1.2  # a 120bp TED pop
+    pre = mlpred.build_pretrain_rows(ted)
+    assert pre is not None
+    X_pre, y_pre = pre
+    assert {"spread_lvl", "spread_chg5", "spread_ez", "bd_to_mend", "bd_to_qend", "bd_to_tax"} \
+        <= set(X_pre.columns)
+    assert y_pre.sum() >= 1, "the injected TED pop must label"
+    assert X_pre.index.max() < pd.Timestamp("2018-04-01"), "no overlap with the SOFR era"
+    # too little history refuses
+    assert mlpred.build_pretrain_rows(ted.iloc[:100]) is None
+
+
+def test_walk_forward_with_pretrain_scores_same_days(rng):
+    from seiche.engines import mlpred
+    inputs = _ml_inputs(rng)
+    for loc in range(600, 1300, 60):
+        inputs["spread_bp"].iloc[loc] += 25.0
+    X, y = mlpred.build_features(**inputs)
+    pre_idx = pd.bdate_range("2012-01-01", periods=1500)
+    X_pre = pd.DataFrame({
+        "spread_lvl": np.abs(rng.normal(20, 8, len(pre_idx))),
+        "spread_chg5": rng.normal(0, 4, len(pre_idx)),
+    }, index=pre_idx)
+    y_pre = pd.Series((rng.uniform(size=len(pre_idx)) < 0.03).astype(float), index=pre_idx)
+    solo = mlpred.walk_forward(X, y, full_report=False)
+    pooled = mlpred.walk_forward(X, y, full_report=False, pre=(X_pre, y_pre))
+    assert solo["ok"] and pooled["ok"]
+    assert pooled["validation"]["oos_days"] == solo["validation"]["oos_days"], \
+        "pretraining adds training mass, never scored days"
+    assert pooled["validation"]["pretrain_rows"] == len(X_pre)
+    assert 0.0 <= pooled["p_event_5bd"] <= 1.0

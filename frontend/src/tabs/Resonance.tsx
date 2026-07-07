@@ -63,6 +63,48 @@ function ResonanceCard({ e }: { e: Any }) {
   );
 }
 
+function UndertowCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Undertow" reason={e?.reason} span={12} />;
+  const sp = e.per_series?.spread ?? {};
+  const tl = e.per_series?.tail ?? {};
+  const rec = sp.recovery ?? {};
+  return (
+    <div className="card span12">
+      <h2>Undertow</h2>
+      <div className="sub">
+        critical slowing down — the free-decay half of the physics: a basin losing damping forgets
+        perturbations slowly (rising AC1 + variance, stretching recovery) even while levels look calm
+        · score {fmt(e.score, 0)}
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">spread AC1</div>
+          <div className={`v ${sp.ac1_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.ac1, 2)} <span className="dimsmall">({fmt(sp.ac1_pctl, 0)}th)</span></div></div>
+        <div className="item"><div className="k">relaxation τ</div>
+          <div className="v">{sp.tau_bd != null ? `${fmt(sp.tau_bd, 1)}d` : "—"}</div></div>
+        <div className="item"><div className="k">spread var pctl</div>
+          <div className={`v ${sp.var_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.var_pctl, 0)}th</div></div>
+        <div className="item"><div className="k">tail AC1 pctl</div>
+          <div className={`v ${tl.ac1_pctl >= 85 ? "bad" : ""}`}>{tl.ac1_pctl != null ? `${fmt(tl.ac1_pctl, 0)}th` : "—"}</div></div>
+        <div className="item"><div className="k">recovery half-life</div>
+          <div className={`v ${rec.stretch >= 1.5 ? "warn" : ""}`}>
+            {rec.halflife_prior_d != null ? `${fmt(rec.halflife_prior_d, 1)}d → ${fmt(rec.halflife_recent_d, 1)}d` : "—"}
+            {rec.stretch != null && ` (${fmt(rec.stretch, 2)}×)`}
+            {rec.low_n && <span className="dimsmall" title="too few pops in one of the eras"> †low-n</span>}
+          </div></div>
+      </div>
+      <Chart
+        rows={e.ac1_rows ?? []}
+        series={[
+          { label: "AC1 · SOFR−IORB", color: "#5aa9e6" },
+          { label: "AC1 · tail", color: "#8a63d2", dash: [4, 3] },
+        ]}
+        yLabel="lag-1 autocorr"
+      />
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
 function HydrophoneCard({ e }: { e: Any }) {
   if (!e?.ok) return <Fault name="Hydrophone Array" reason={e?.reason} span={7} />;
   return (
@@ -172,6 +214,7 @@ export default function Resonance({ snap }: { snap: Any }) {
   return (
     <div className="grid">
       <ResonanceCard e={snap.engines.resonance} />
+      <UndertowCard e={snap.engines.undertow} />
       <HydrophoneCard e={snap.engines.hydrophone} />
       <EdgesCard e={snap.engines.hydrophone} />
       <StationKeepingCard e={snap.engines.stationkeeping} />

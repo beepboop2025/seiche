@@ -30,6 +30,9 @@ from seiche.config import (
     BACKTEST_SPIKE_BP,
     ML_REFIT_EVERY_BD,
     ML_WARMUP_D,
+    PRETRAIN_CUTOFF,
+    PRETRAIN_SPIKE_BP,
+    PRETRAIN_WEIGHT,
 )
 
 
@@ -52,6 +55,54 @@ def _bdays_until(idx: pd.DatetimeIndex, targets: pd.DatetimeIndex) -> pd.Series:
         if pos < len(t_sorted):
             out[i] = np.busday_count(d.date(), t_sorted[pos].date())
     return pd.Series(out, index=idx)
+
+
+def _calendar_cols(idx: pd.DatetimeIndex) -> dict[str, pd.Series]:
+    """Distances to the known forcing dates — identical in any era, which is
+    what lets pre-SOFR rows share a feature space with the SOFR era."""
+    months = pd.period_range(idx.min(), idx.max() + pd.offsets.QuarterEnd(1), freq="M")
+    month_ends = pd.DatetimeIndex([pd.bdate_range(p.start_time, p.end_time)[-1] for p in months])
+    qtr_ends = pd.DatetimeIndex([d for d in month_ends if d.month in (3, 6, 9, 12)])
+    tax = pd.DatetimeIndex([
+        pd.Timestamp(year=y, month=m, day=15)
+        for y in range(idx.min().year, idx.max().year + 2)
+        for m in (3, 4, 6, 9, 12)
+    ])
+    return {
+        "bd_to_mend": _bdays_until(idx, month_ends),
+        "bd_to_qend": _bdays_until(idx, qtr_ends),
+        "bd_to_tax": _bdays_until(idx, tax),
+    }
+
+
+def build_pretrain_rows(ted_pct: pd.Series) -> tuple[pd.DataFrame, pd.Series] | None:
+    """The TED era as extra training mass. TED (3M LIBOR − 3M T-bill) IS the
+    funding spread of its era, so its level/change/z land in the SAME feature
+    slots as SOFR−IORB (spread_lvl/chg5/ez) — the transfer claim is that the
+    funding-stress grammar, not the instrument, is what generalizes. Every
+    other column is honestly absent (HGB treats NaN natively). Labels: TED
+    pop ≥ PRETRAIN_SPIKE_BP within the shared 5bd window (wider threshold —
+    TED runs wider than SOFR−IORB; stated in config)."""
+    t = (ted_pct.dropna() * 100.0)  # % -> bp
+    t = t[t.index < pd.Timestamp(PRETRAIN_CUTOFF)]  # no overlap with the SOFR era
+    if len(t) < 500:
+        return None
+    idx = pd.bdate_range(t.index.min(), t.index.max())
+    tt = t.reindex(idx)
+    X = pd.DataFrame(index=idx)
+    X["spread_lvl"] = tt
+    X["spread_chg5"] = tt.diff(5)
+    X["spread_ez"] = _ez(tt)
+    for col, vals in _calendar_cols(idx).items():
+        X[col] = vals
+    pop = tt - tt.rolling(5, min_periods=3).median().shift(1)
+    fwd_max = pd.concat(
+        [pop.shift(-k) for k in range(1, BACKTEST_EVENT_FWD_D + 1)], axis=1
+    ).max(axis=1)
+    y = (fwd_max >= PRETRAIN_SPIKE_BP).astype(float)
+    y[fwd_max.isna()] = np.nan
+    keep = X["spread_lvl"].notna() & y.notna()
+    return X[keep], y[keep]
 
 
 def build_features(
@@ -108,17 +159,8 @@ def build_features(
     X["stable_chg30_pct"] = (st.pct_change(30) * 100.0).reindex(idx).ffill(limit=5)
 
     # Calendar distances — the forcing schedule is known in advance.
-    months = pd.period_range(idx.min(), idx.max() + pd.offsets.QuarterEnd(1), freq="M")
-    month_ends = pd.DatetimeIndex([pd.bdate_range(p.start_time, p.end_time)[-1] for p in months])
-    qtr_ends = pd.DatetimeIndex([d for d in month_ends if d.month in (3, 6, 9, 12)])
-    tax = pd.DatetimeIndex([
-        pd.Timestamp(year=y, month=m, day=15)
-        for y in range(idx.min().year, idx.max().year + 2)
-        for m in (3, 4, 6, 9, 12)
-    ])
-    X["bd_to_mend"] = _bdays_until(idx, month_ends)
-    X["bd_to_qend"] = _bdays_until(idx, qtr_ends)
-    X["bd_to_tax"] = _bdays_until(idx, tax)
+    for col, vals in _calendar_cols(idx).items():
+        X[col] = vals
 
     # Label: same event the PROOF lab tests (spike vs trailing median).
     base = sp.rolling(5, min_periods=3).median()
@@ -137,7 +179,12 @@ def build_features(
 EMBARGO_BD = BACKTEST_EVENT_FWD_D
 
 
-def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dict:
+def walk_forward(
+    X: pd.DataFrame,
+    y: pd.Series,
+    full_report: bool = True,
+    pre: tuple[pd.DataFrame, pd.Series] | None = None,
+) -> dict:
     from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.metrics import brier_score_loss, roc_auc_score
 
@@ -152,20 +199,39 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dic
             min_samples_leaf=30, early_stopping=False, random_state=7,
         )
 
+    X_pre, y_pre = (pre if pre is not None else (None, None))
+
+    def _train_slices(train_end: int):
+        Xt, yt = X.iloc[:train_end], y.iloc[:train_end]
+        if X_pre is None:
+            return Xt, yt, None
+        # pretrain rows precede the era chronologically — they belong in every
+        # expanding train slice, down-weighted (they are analogs, not samples)
+        Xt = pd.concat([X_pre, Xt], axis=0)
+        yt = pd.concat([y_pre, yt], axis=0)
+        sw = np.concatenate([
+            np.full(len(X_pre), PRETRAIN_WEIGHT), np.ones(train_end)
+        ])
+        return Xt, yt, sw
+
     preds = pd.Series(np.nan, index=X.index)
     for start in range(ML_WARMUP_D, len(X), ML_REFIT_EVERY_BD):
         end = min(start + ML_REFIT_EVERY_BD, len(X))
         train_end = max(start - EMBARGO_BD, 0)  # boundary-label embargo
-        Xt, yt = X.iloc[:train_end], y.iloc[:train_end]
-        if yt.sum() < 5:
+        Xt, yt, sw = _train_slices(train_end)
+        # guard on SOFR-era events ONLY: pretrain mass must never change WHICH
+        # folds are scored, or the pooled-vs-solo comparison stops being
+        # apples-to-apples (comparability beats an earlier OOS start)
+        if y.iloc[:train_end].sum() < 5:
             continue
         # Histories start on different dates (crypto ~2021): a column that is
         # entirely NaN in this training slice crashes the HGB binner — drop it
         # for this fit; it re-enters once it has data.
         cols = Xt.columns[Xt.notna().any()]
         model = make_model()
-        model.fit(Xt[cols], yt)
-        preds.iloc[start:end] = model.predict_proba(X.iloc[start:end][cols])[:, 1]
+        model.fit(Xt[cols], yt, sample_weight=sw)
+        preds.iloc[start:end] = model.predict_proba(
+            X.iloc[start:end].reindex(columns=cols))[:, 1]
 
     # The rule-based comparator column is absent in the orthogonal feature set
     # (it contains the target's variable family) — compare only when present.
@@ -198,10 +264,11 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dic
             })
 
     # Final model on ALL history -> today's probability + importances.
-    final_cols = X.columns[X.notna().any()]
+    Xf, yf, swf = _train_slices(len(X))
+    final_cols = Xf.columns[Xf.notna().any()]
     final = make_model()
-    final.fit(X[final_cols], y)
-    p_now = float(final.predict_proba(X[final_cols].iloc[[-1]])[0, 1])
+    final.fit(Xf[final_cols], yf, sample_weight=swf)
+    p_now = float(final.predict_proba(X.reindex(columns=final_cols).iloc[[-1]])[0, 1])
 
     top_features: list[dict] = []
     if full_report:
@@ -258,6 +325,9 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dic
         "ok": True,
         "asof": X.index[-1].date().isoformat(),
         "p_event_5bd": round(p_now, 3),
+        # full walk-forward OOS probability series — private ('_' keys are
+        # stripped before serialization); the Stack trains on this.
+        "_p_daily": preds.dropna(),
         "verdict": verdict,
         "validation": {
             "oos_days": int(len(oos)),
@@ -270,6 +340,9 @@ def walk_forward(X: pd.DataFrame, y: pd.Series, full_report: bool = True) -> dic
             "refit_every_bd": ML_REFIT_EVERY_BD,
             "warmup_d": ML_WARMUP_D,
             "embargo_bd": EMBARGO_BD,
+            "pretrain_rows": int(len(X_pre)) if X_pre is not None else 0,
+            "pretrain_events": int(y_pre.sum()) if y_pre is not None else 0,
+            "pretrain_weight": PRETRAIN_WEIGHT if X_pre is not None else None,
         },
         "utility": utility,
         "reliability": reliability,

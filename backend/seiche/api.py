@@ -62,6 +62,13 @@ async def deep():
     return snap.get("deep", {})
 
 
+@app.get("/api/book")
+async def book():
+    """The Book: today's positions, walk-forward P&L, live track record."""
+    snap = await assemble.snapshot()
+    return snap.get("deep", {}).get("book", {"ok": False, "reason": "unavailable"})
+
+
 @app.get("/api/series/{mnemonic}")
 async def series(mnemonic: str, n: int = 750):
     if mnemonic not in ALL_SERIES:

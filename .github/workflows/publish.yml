@@ -36,6 +36,15 @@ jobs:
       - name: Run engines, export snapshot
         run: python backend/scripts/export_snapshot.py frontend/public/data/overview.json
 
+      # The Book's ledger: pull the previously published hash-chained history
+      # from the live site, verify it, append today's as-published record.
+      # The site repo's git history is the append-only backbone.
+      - name: Append Book record (hash-chained ledger)
+        run: |
+          curl -sf https://beepboop2025.github.io/seiche-site/data/book_history.json \
+            -o /tmp/book_history.json || echo "[]" > /tmp/book_history.json
+          python backend/scripts/append_book_record.py /tmp/book_history.json frontend/public/data/book_history.json
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

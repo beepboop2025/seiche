@@ -38,6 +38,7 @@ class SeriesSpec:
     unit: str
     freq: str = "D"
     ttl_minutes: int = 360
+    start: str = "2017-01-01"   # history start (pretrain series reach back decades)
 
 
 FRED_SERIES = [
@@ -101,6 +102,23 @@ SWAP_LINE_OPS_N = 90           # NY Fed FX-swap operations to pull
 INDIA_FRED_SERIES = [
     SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
 ]
+
+# ---------------------------------------------------------------------------
+# Transfer learning: funding stress predates SOFR. The TED spread (3M LIBOR −
+# 3M T-bill, 1986–2022 on FRED) is the same funding-spread abstraction in its
+# era's clothes — 2008, 2011, 2016 live in it. The ML Lab pretrains on
+# TED-era pops (down-weighted), then reports the transfer gain vs the
+# SOFR-only model honestly — including when there is none.
+# TEDRATE fetch unverified-live from the build container; fails loud.
+# ---------------------------------------------------------------------------
+
+PRETRAIN_FRED_SERIES = [
+    SeriesSpec("TED", "fred", "TEDRATE", "TED spread (3M LIBOR − 3M T-bill, discontinued 2022)",
+               "%", "D", 100000, start="1990-01-01"),
+]
+PRETRAIN_SPIKE_BP = 15.0    # TED-era pop threshold (TED runs wider than SOFR−IORB)
+PRETRAIN_WEIGHT = 0.30      # sample weight of a pretrain row vs a SOFR-era row
+PRETRAIN_CUTOFF = "2018-04-01"  # pretrain rows end where the SOFR era begins
 
 # Crypto: stablecoins are money market instruments now (USDT/USDC hold
 # $200B+ of T-bills); a peg break is a dollar-funding event and crypto is
@@ -168,8 +186,10 @@ CRYPTO_SERIES = [
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-    + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
 }
+# PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
+# (they are declared later in the file to keep the Far Basin block coherent).
 
 # ---------------------------------------------------------------------------
 # Staleness classification (fail-loud provenance).
@@ -328,6 +348,76 @@ BACKTEST_ALERT_PCTL = 80.0      # index percentile treated as an "alert"
 BACKTEST_MIN_WARMUP_D = 250     # expanding-z warmup before scoring starts
 
 # ---------------------------------------------------------------------------
+# Tide Tables — analog forecasting (the pattern layer made predictive).
+# k-nearest-neighbor over trailing state trajectories, all history, labeled
+# or not: publish what actually followed the closest matches (forward spread
+# fan + funding-event odds vs climatology), how charted today's water is
+# (novelty), and a walk-forward hindcast that says whether analogs beat the
+# base rate. Reported alongside the index, not weighted into it.
+# ---------------------------------------------------------------------------
+
+TIDE_WINDOW_D = 20          # trailing trajectory length (bd) to match on
+TIDE_K = 25                 # nearest analogs in the fan / odds
+TIDE_HORIZON_BD = 10        # forward fan length (bd)
+TIDE_EVENT_FWD_D = 5        # event-odds horizon — same as BACKTEST_EVENT_FWD_D
+TIDE_MIN_SEP_D = 10         # min bd between analog end dates (de-clustering)
+TIDE_WARMUP_D = 400         # scored history before the hindcast/novelty start
+TIDE_MIN_CANDIDATES = 60    # min candidate windows before the engine speaks
+TIDE_Z_MIN_PERIODS = 120    # expanding-z warmup (matches history MIN_Z_PERIODS)
+TIDE_NOVELTY_UNCHARTED = 90.0  # NN-distance pctl at/above which water is "uncharted"
+
+# ---------------------------------------------------------------------------
+# Undertow — the damping gauge (critical slowing down, Scheffer et al.).
+# Resonance measures the FORCED response to the calendar bell; Undertow
+# measures the FREE decay on ordinary days: rising lag-1 autocorrelation and
+# variance of the detrended spread/tail + lengthening recovery after everyday
+# pops = the basin losing damping while levels look calm. Expanding
+# percentiles only (no look-ahead); weighted into the composite as
+# structural-fragility evidence alongside resonance/hydrophone.
+# ---------------------------------------------------------------------------
+
+UNDERTOW_DETREND_D = 30          # rolling-median detrend window (bd)
+UNDERTOW_WINDOW_D = 120          # rolling window for AC1 / variance (bd)
+UNDERTOW_RECOVERY_CENSOR_D = 10  # recovery half-life censoring (bd)
+UNDERTOW_POP_DECLUSTER_BD = 5    # min bd between recovery pops (episode = 1 trial)
+UNDERTOW_RECOVERY_MIN_POPS = 8   # pops per era before the stretch counts
+UNDERTOW_MIN_HISTORY_D = 400     # refuse to speak below this
+
+# ---------------------------------------------------------------------------
+# Swell Forecast — the funding-stress forward curve. For each of the next 42
+# business days: P(spread pop >= x bp) from expanding calendar-bucket
+# exceedance distributions (the forcing schedule is public), a damping-state
+# lift (Undertow) and a coupon-settlement lift — compounded into P(event by
+# horizon) and walk-forward validated vs climatology. A forecast, not
+# evidence: reported alongside the index, never weighted in.
+# ---------------------------------------------------------------------------
+
+SWELL_SEVERITIES_BP = (2.0, 5.0, 10.0, 20.0)  # 10bp = the PROOF event
+SWELL_HORIZON_BD = 42            # matches Liquidity Weather's horizon
+SWELL_MIN_BUCKET_N = 20          # below this a bucket falls back to pooled
+SWELL_WARMUP_D = 500             # expanding-table warmup before scoring
+SWELL_STATE_PCTL = 67.0          # Undertow damping pctl at/above = "hot"
+SWELL_STATE_MIN_N = 60           # hot-state days before the lift activates
+SWELL_LIFT_CAP = (0.5, 3.0)      # conditional lifts clipped to this range
+SWELL_P_CAP = 0.90               # single-day probability ceiling
+
+# ---------------------------------------------------------------------------
+# Forecast-dispersion alert: when the Stack's calibrated members disagree,
+# the regime is ambiguous — that is a signal, not noise to average away.
+# ---------------------------------------------------------------------------
+
+STACK_DISPERSION_WARN = 0.30     # member std-dev that reads as ambiguity
+
+# ---------------------------------------------------------------------------
+# The Navigator — an LLM forecaster made accountable. One commitment per
+# data-day into the hash-chained record; NO backtest is possible for an LLM
+# member (it has read the history), so its forward record is its only
+# evidence and its weight stays zero until that record earns a hearing.
+# ---------------------------------------------------------------------------
+
+NAVIGATOR_MIN_RESOLVED = 20      # resolved forward forecasts before a verdict prints
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -337,6 +427,88 @@ BACKTEST_MIN_WARMUP_D = 250     # expanding-z warmup before scoring starts
 ML_WARMUP_D = 500               # days of history before the first OOS prediction
 ML_REFIT_EVERY_BD = 42          # walk-forward refit cadence (~2 months)
 ML_PROB_ALERT = 0.5             # alert when P(event within 5bd) crosses this
+
+# ---------------------------------------------------------------------------
+# The Stack — walk-forward ensemble of the three P(event) streams + The Tell.
+# Fleet doctrine: the fitted stack must beat the zero-parameter equal-weight
+# mean of its members out-of-sample or the mean is published instead (same
+# publish-naive rule as the Turn Barometer). Member disagreement (dispersion)
+# is itself an output: when the fleet splits, conviction drops.
+# ---------------------------------------------------------------------------
+
+STACK_WARMUP_D = 250            # scored member history before the first OOS stack print
+STACK_REFIT_EVERY_BD = 42       # same cadence as ML_REFIT_EVERY_BD
+STACK_L2_C = 1.0                # logistic regularization, fixed — never fitted to OOS
+STACK_MIN_MEMBERS = 2           # a row is scored only with >= this many live members
+
+# ---------------------------------------------------------------------------
+# The Book (HELM tab) — the signal made accountable: explicit daily positions
+# on a small liquid universe, walk-forward P&L with costs, and an accruing
+# hash-chained as-published record. PAPER PROXY, stated everywhere: duration
+# sleeves are constant-maturity par-yield approximations (carry + duration +
+# convexity), not tradeable futures; close-to-close only; not investment advice.
+# Every constant here is editorial, frozen, and disclosed.
+# ---------------------------------------------------------------------------
+
+BOOK_SLEEVES = {
+    # duration proxies: r ≈ y/252 (carry) − D·Δy + ½·C·Δy²; D/C are rough
+    # constant-maturity values — the approximation is printed, not hidden.
+    "ust2y":  {"proxy": "DGS2",    "kind": "duration", "mod_dur": 1.90, "convexity": 4.5,  "tcost_bp": 1.0,  "label": "2y UST duration"},
+    "ust10y": {"proxy": "DGS10",   "kind": "duration", "mod_dur": 7.90, "convexity": 70.0, "tcost_bp": 2.0,  "label": "10y UST duration"},
+    "spx":    {"proxy": "SP500",   "kind": "price",    "tcost_bp": 3.0,  "label": "S&P 500"},
+    "btc":    {"proxy": "BTC_USD", "kind": "price",    "tcost_bp": 15.0, "label": "Bitcoin"},
+}
+BOOK_CASH_PROXY = "TB3M"        # cash accrual y/252 (discount-rate convention, stated)
+# Direction per sleeve per stance. Economic prior (funding stress = risk-off,
+# flight-to-quality bid for the front end), cross-checked against the PROOF
+# outcome tables and FROZEN — changing these reruns history, and the caveat
+# that they were chosen knowing that history is printed verbatim.
+BOOK_STANCE_MAP = {
+    "risk_off": {"ust2y": 1.0, "ust10y": 0.5, "spx": -1.0, "btc": -0.5},
+    "risk_on":  {"ust2y": 0.0, "ust10y": 0.0, "spx": 1.0,  "btc": 0.5},
+    "neutral":  {"ust2y": 0.0, "ust10y": 0.0, "spx": 0.0,  "btc": 0.0},
+}
+BOOK_P_ENTER_RISKOFF = 0.35     # hysteresis: enter high…
+BOOK_P_EXIT_RISKOFF = 0.22      # …exit lower (turnover control)
+BOOK_P_RISKON = 0.08            # risk_on needs quiet plumbing AND price panicking:
+BOOK_TELL_RISKON = -15.0        # Tell <= this (price leads plumbing)
+BOOK_DISPERSION_GATE = 0.25     # member-prob std above this forces neutral
+BOOK_VOL_TARGET_ANN = 0.10      # per-sleeve annualized vol target
+BOOK_VOL_LOOKBACK_D = 63
+BOOK_VOL_MIN_PERIODS = 21
+BOOK_MAX_WEIGHT = 1.0           # per-sleeve |w| cap
+BOOK_MAX_GROSS = 2.0            # Σ|w| cap (proportional scale-down)
+BOOK_SIGNAL_LAG_BD = 1          # weights formed at t earn returns at t+1
+BOOK_BENCH_STATIC = {"ust2y": 0.20, "ust10y": 0.15, "spx": 0.50, "btc": 0.05}
+BOOK_BOOT_BLOCK_D = 21          # stationary block bootstrap for the Sharpe CI
+BOOK_BOOT_N = 2000
+BOOK_LIVE_MIN_D = 60            # live Sharpe printed only past this many as-published days
+
+# ---------------------------------------------------------------------------
+# Far Basin — Palimpsest (palimpsest.info): the policy-fear channel. What the
+# Chinese state rushes to delete is a real-time stress read no market vendor
+# carries. Keyless CI-published JSON; palimpsest.info primary with the GitHub
+# raw mirror as fallback. HONEST SCOPE: the feeds are days old as a public
+# series — they accrue in the local store and are labeled NOT YET BACKTESTABLE
+# until they clear FARBASIN_MIN_OBS. Never weighted into the composite.
+# ---------------------------------------------------------------------------
+
+PALIMPSEST_BASES = [
+    "https://palimpsest.info/readings",
+    "https://raw.githubusercontent.com/beepboop2025/palimpsest/main/readings",
+]
+PALIMPSEST_TTL_MIN = 240
+FARBASIN_MIN_OBS = 250          # daily obs before the channel may enter any model
+
+PALIMPSEST_SERIES = [
+    SeriesSpec("PALIMPSEST_FEAR", "palimpsest", "ddti-history.jsonl:top_threat",
+               "Censor deletion-threat (top-term threat score)", "score", "D", PALIMPSEST_TTL_MIN),
+    SeriesSpec("PALIMPSEST_NEW", "palimpsest", "ddti-history.jsonl:n_new",
+               "Newly censor-targeted terms", "terms", "D", PALIMPSEST_TTL_MIN),
+    SeriesSpec("PALIMPSEST_GFI", "palimpsest", "history.jsonl:gfi",
+               "Generative Firewall Index (LLM refusal tomography)", "0-100", "D", PALIMPSEST_TTL_MIN),
+]
+ALL_SERIES.update({s.mnemonic: s for s in PALIMPSEST_SERIES})
 
 # ---------------------------------------------------------------------------
 # FOMC calendar (static; update annually from federalreserve.gov —
@@ -349,26 +521,69 @@ FOMC_DECISION_DATES = [
 ]
 
 # ---------------------------------------------------------------------------
+# Communiqué — the policy text read as plumbing data. Statement dates back to
+# 2023 (decision day; the statement URL keys off this date). The lexicons are
+# FROZEN opinions: a scorer that drifts cannot sit under a vintage-stamped
+# record. Tune by appending, never by rewriting history's scores.
+# URL pattern unverified-live from the build container — collector fails
+# loud per date and coverage prints on the board.
+# ---------------------------------------------------------------------------
+
+FOMC_STATEMENT_DATES = [
+    "2023-02-01", "2023-03-22", "2023-05-03", "2023-06-14",
+    "2023-07-26", "2023-09-20", "2023-11-01", "2023-12-13",
+    "2024-01-31", "2024-03-20", "2024-05-01", "2024-06-12",
+    "2024-07-31", "2024-09-18", "2024-11-07", "2024-12-18",
+    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+    "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
+] + FOMC_DECISION_DATES
+FEDTEXT_TTL_MIN = 24 * 60          # re-check for a new statement daily
+
+COMMUNIQUE_LEXICON_HAWKISH = (
+    "inflation remains elevated", "further tightening", "restrictive",
+    "raise the target range", "upside risks to inflation", "vigilant",
+    "additional firming",
+)
+COMMUNIQUE_LEXICON_DOVISH = (
+    "lower the target range", "accommodative", "downside risks", "easing",
+    "has softened", "cooled", "well anchored",
+)
+COMMUNIQUE_LEXICON_BS_TIGHT = (
+    "reduce its holdings", "runoff", "balance sheet reduction",
+    "redemption of Treasury securities",
+)
+COMMUNIQUE_LEXICON_BS_EASE = (
+    "purchases of Treasury securities", "reinvesting", "increase its holdings",
+    "reserve management purchases",
+)
+COMMUNIQUE_LEXICON_STRESS = (
+    "money market", "repurchase agreement", "funding pressures",
+    "market functioning", "liquidity strains", "standing repo facility",
+)
+
+# ---------------------------------------------------------------------------
 # Seiche Index: composite weights and regime thresholds.
 # TUNING POINT — this is the tool's editorial voice. Weights sum to 1.
 # Rationale for defaults: tails + spreads are the fastest-moving true signals
 # (every 2025/26 episode), kink/weather capture the structural runway,
 # confession channels (SRF + discount window) are slower but unambiguous,
-# resonance/hydrophone capture structural fragility invisible in levels,
-# positioning/auctions/warehouse are amplifier terms, buffers the absorber.
+# resonance/hydrophone/undertow capture structural fragility invisible in
+# levels (forced response, connectivity, free decay), positioning/auctions/
+# warehouse are amplifier terms, buffers the absorber.
 # ---------------------------------------------------------------------------
 
 COMPOSITE_WEIGHTS = {
-    "tails": 0.18,        # Tail Seismograph (incl. SOFR-IORB pressure)
-    "kink": 0.14,         # proximity to reserve-scarcity kink
-    "weather": 0.12,      # forward crunch-window risk
+    "tails": 0.17,        # Tail Seismograph (incl. SOFR-IORB pressure)
+    "kink": 0.13,         # proximity to reserve-scarcity kink
+    "weather": 0.11,      # forward crunch-window risk
     "confession": 0.12,   # SRF usage + discount window (paying up = admission)
-    "rvxray": 0.12,       # RV complex size/fragility
+    "rvxray": 0.11,       # RV complex size/fragility
     "resonance": 0.10,    # basin amplification (louder ring to same forcing)
     "hydrophone": 0.08,   # plumbing connectivity (shock transmission)
+    "undertow": 0.06,     # damping loss (slower free decay = critical slowing)
     "auctions": 0.06,     # supply digestion
-    "warehouse": 0.04,    # dealer balance-sheet saturation
-    "buffers": 0.04,      # RRP buffer emptiness (0 = no shock absorber left)
+    "warehouse": 0.03,    # dealer balance-sheet saturation
+    "buffers": 0.03,      # RRP buffer emptiness (0 = no shock absorber left)
 }
 
 REGIMES = [
@@ -401,6 +616,10 @@ ALERT_RULES = {
     "peg_dev_bp": PEG_DEV_FLAG_BP,  # any major stablecoin |peg dev| >= this
     "stable_drain_30d_pct": STABLE_DRAIN_FLAG_PCT,  # offshore dollar redemptions
     "ml_event_prob": ML_PROB_ALERT, # ML Lab P(funding event, 5bd) >= this
+    "analog_event_odds": 0.5,       # Tide Tables share of analogs hit within 5bd
+    "swell_event_prob": 0.5,        # Swell curve P(event within 5bd) >= this
+    "stack_dispersion": STACK_DISPERSION_WARN,  # member dispersion reads as ambiguity
+    "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)
