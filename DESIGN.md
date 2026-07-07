@@ -282,7 +282,11 @@ reliability table; the verdict self-demotes to "trust the dates, not the
 levels" when levels stop earning it. A forecast, not evidence: never
 weighted into the composite.
 
-**3. Fleet of Forecasts — disagreement as a signal.** Four views now target
+**3. Fleet of Forecasts — disagreement as a signal.** *(Superseded at the
+branch merge by The Stack — same target, richer walk-forward calibration; the
+disagreement meter lives on as the Stack's dispersion output and the Book's
+conviction gate. The rule-view label embargo described below was carried into
+the Stack's shared event labels.)* Four views now target
 the same P(event within 5bd): rule index (mapped through expanding
 percentile-bucket event rates, computed with the same predict-then-update
 discipline), ML Lab, Tide Tables analogs, Swell 5bd integral. Blend weights

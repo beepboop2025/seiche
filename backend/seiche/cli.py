@@ -8,7 +8,6 @@
   seiche backtest            PROOF summary in the terminal
   seiche analogs             Tide Tables: nearest analogs + forward fan
   seiche swell               the funding-stress forward curve, 6 weeks out
-  seiche fleet               every forecast view + blend + disagreement
   seiche serve [--port]      run the API + UI
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
@@ -177,6 +176,44 @@ def cmd_ml(args) -> int:
     return 0
 
 
+def cmd_book(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    deep = snap.get("deep", {})
+    bk = deep.get("book", {})
+    if not bk.get("ok"):
+        print(f"{RED}Book unavailable:{END} {bk.get('reason')}", file=sys.stderr)
+        return 1
+    t = bk["today"]
+    col = RED if t["stance"] == "risk_off" else GRN if t["stance"] == "risk_on" else DIM
+    print(f"{BOLD}THE BOOK{END} {col}{t['stance'].upper()}{END}  ·  {t['rationale']}")
+    for p in t["positions"]:
+        mark = "·" if p["weight"] == 0 else ("▲" if p["weight"] > 0 else "▼")
+        print(f"  {mark} {p['label']:<16} w={p['weight']:+.3f}  ({p['direction']}, "
+              f"vol {p['vol_ann_pct']}%/yr, cost {p['tcost_bp']}bp)")
+    stk = deep.get("stacker", {})
+    if stk.get("ok"):
+        print(f"{BOLD}ensemble{END} P(event,5bd)={stk['p_now']} [{stk['published']}] "
+              f"dispersion {stk['dispersion_now']} — {stk['verdict']}")
+    b = bk["backtest"]
+    ci = b.get("ci95") or ["?", "?"]
+    print(f"{BOLD}walk-forward{END} {b['sample']['start']} → {b['sample']['end']}")
+    print(f"  net Sharpe {b.get('sharpe')} (CI {ci[0]}–{ci[1]}, NW t={b.get('nw_tstat')}) · "
+          f"{b.get('ann_return_pct')}%/yr vol {b.get('ann_vol_pct')}% · maxDD {b.get('max_dd_pct')}% · "
+          f"turnover {b.get('turnover_ann')}x · cost drag {b.get('cost_drag_bp_ann')}bp/yr")
+    for name, m in (b.get("benchmarks") or {}).items():
+        print(f"  {DIM}vs {name:<12} Sharpe {m.get('sharpe')} · {m.get('ann_return_pct')}%/yr · "
+              f"maxDD {m.get('max_dd_pct')}%{END}")
+    print(f"  {BOLD}{b.get('verdict')}{END}")
+    lv = bk.get("live", {})
+    print(f"{BOLD}live record{END} {lv.get('n_days', 0)}d as-published"
+          + (f" since {lv['since']} · cum {lv['cum_return_pct']}%" if lv.get("since") else "")
+          + f" — {lv.get('note', '')}")
+    for c in bk.get("caveats", []):
+        print(f"{DIM}  caveat: {c}{END}")
+    return 0
+
+
 def cmd_analogs(args) -> int:
     from seiche import assemble
     snap = asyncio.run(assemble.snapshot())
@@ -239,27 +276,6 @@ def cmd_swell(args) -> int:
     return 0
 
 
-def cmd_fleet(args) -> int:
-    from seiche import assemble
-    snap = asyncio.run(assemble.snapshot())
-    f = snap.get("deep", {}).get("fleet", {})
-    if not f.get("ok"):
-        print(f"{RED}Fleet unavailable:{END} {f.get('reason')}", file=sys.stderr)
-        return 1
-    blend = f.get("blend_p_5bd")
-    blend_txt = f"{blend:.0%}" if blend is not None else "— (no view has skill and no climatology baseline yet)"
-    print(f"{BOLD}FLEET{END} blended P(funding event, 5bd) = {blend_txt} "
-          f"{DIM}({f['blend_source']}){END}")
-    for v in f.get("views", []):
-        p = f"{v['p']:.0%}" if v.get("p") is not None else "—"
-        sk = f"{v['skill']:+.3f}" if v.get("skill") is not None else "  —  "
-        w = f"{v.get('weight', 0):.0%}" if v.get("weight") is not None else "—"
-        print(f"  {v['name']:<8} p {p:>5} · skill {sk} · weight {w}  {DIM}{v['label']}{END}")
-    col = RED if f["disagreement"] >= f["disagree_warn"] else DIM
-    print(f"  disagreement {col}{f['disagreement']:.0%}{END} — {f['verdict']}")
-    return 0
-
-
 def cmd_ask(args) -> int:
     from seiche import ai, assemble
     snap = asyncio.run(assemble.snapshot())
@@ -312,7 +328,7 @@ def main() -> None:
 
     sub.add_parser("swell", help="funding-stress forward curve (6 weeks)").set_defaults(fn=cmd_swell)
 
-    sub.add_parser("fleet", help="forecast views + blend + disagreement").set_defaults(fn=cmd_fleet)
+    sub.add_parser("book", help="the Book: today's positions + walk-forward P&L verdict").set_defaults(fn=cmd_book)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

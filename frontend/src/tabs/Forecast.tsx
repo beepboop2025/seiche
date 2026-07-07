@@ -114,52 +114,6 @@ function SwellCard({ s }: { s: Any }) {
   );
 }
 
-function FleetCard({ f }: { f: Any }) {
-  if (!f?.ok) return <Fault name="Fleet of Forecasts" reason={f?.reason} span={12} />;
-  const disagree = f.disagreement >= f.disagree_warn;
-  return (
-    <div className="card span12">
-      <h2>Fleet of Forecasts</h2>
-      <div className="sub">
-        every P(funding event, 5bd) view on one bridge — blended by each view's own published skill;
-        a view that can't beat its base rate gets zero weight (it already self-demoted)
-      </div>
-      <div className="tellhero">
-        <div className={`tellvalue ${(f.blend_p_5bd ?? 0) >= 0.5 ? "hot" : ""}`}>
-          {f.blend_p_5bd != null ? `${fmt(f.blend_p_5bd * 100, 0)}%` : "—"}
-        </div>
-        <div>
-          <div className="tellreading">blended P(funding event within 5bd) · {f.blend_source}</div>
-          <div className="coverage">
-            climatology {f.climatology_p_5bd != null ? `${fmt(f.climatology_p_5bd * 100, 0)}%` : "—"} ·
-            disagreement <b style={{ color: disagree ? "#e5484d" : undefined }}>{fmt(f.disagreement * 100, 0)}%</b>
-            {" "}— {f.verdict}
-          </div>
-        </div>
-      </div>
-      <table className="mini">
-        <thead>
-          <tr><th>view</th><th>P(event, 5bd)</th><th>skill vs climatology</th><th>blend weight</th><th></th></tr>
-        </thead>
-        <tbody>
-          {(f.views ?? []).map((v: Any) => (
-            <tr key={v.name} style={{ opacity: v.p == null ? 0.45 : 1 }}>
-              <td>{v.name}</td>
-              <td className="num">{v.p != null ? `${fmt(v.p * 100, 0)}%` : "—"}</td>
-              <td className="num" style={{ color: (v.skill ?? 0) > 0 ? "#37c88b" : "#e5484d" }}>
-                {v.skill != null ? fmt(v.skill, 3) : "—"}
-              </td>
-              <td className="num">{v.weight != null ? `${fmt(v.weight * 100, 0)}%` : "—"}</td>
-              <td className="dimsmall">{v.label}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <Method>{(f.caveats ?? []).join(" · ")} · {f.method}</Method>
-    </div>
-  );
-}
-
 export function TideTablesCard({ t }: { t: Any }) {
   if (!t?.ok) return <Fault name="Tide Tables" reason={t?.reason} span={12} />;
   const odds = t.event_odds ?? {}, nov = t.novelty ?? {}, skill = t.skill ?? {};
@@ -241,7 +195,6 @@ export default function Forecast({ snap }: { snap: Any }) {
   return (
     <div className="grid">
       <SwellCard s={deep.swell} />
-      <FleetCard f={deep.fleet} />
       <TideTablesCard t={deep.tidetables} />
     </div>
   );

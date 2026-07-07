@@ -189,14 +189,25 @@ def evaluate(snap: dict) -> list[dict]:
                            f"peak day {peak.get('date')} ({peak.get('bucket')}, "
                            f"P(≥10bp) {peak.get('p10', 0):.0%})"))
 
-    fl = deep.get("fleet") or {}
-    thr = ALERT_RULES.get("fleet_disagree")
-    if thr is not None and fl.get("ok") and (fl.get("disagreement") or 0.0) >= thr:
-        vs = {v["name"]: v.get("p") for v in fl.get("views", [])}
-        candidates.append(("fleet_disagree", (snap.get("generated_at") or "")[:10],
-                           f"forecast fleet disagrees ({fl['disagreement']:.0%} spread): "
+    stk = deep.get("stacker") or {}
+    thr = ALERT_RULES.get("stack_dispersion")
+    if thr is not None and stk.get("ok") and (stk.get("dispersion_now") or 0.0) >= thr:
+        vs = stk.get("members_now") or {}
+        candidates.append(("stack_dispersion", stk.get("asof", "?"),
+                           f"forecast members disagree (dispersion {stk['dispersion_now']:.2f}): "
                            + ", ".join(f"{k} {p:.0%}" for k, p in vs.items() if p is not None)
                            + " — regime ambiguity, trust ranges not points"))
+
+    book_today = ((deep.get("book") or {}).get("today") or {}) if (deep.get("book") or {}).get("ok") else {}
+    if ALERT_RULES.get("book_flip") and book_today.get("stance"):
+        sig = ",".join(
+            f"{p.get('sleeve')}{p.get('weight'):+.1f}"
+            for p in book_today.get("positions", []) if p.get("weight")
+        ) or "flat"
+        candidates.append(("book_flip", f"{book_today['stance']}:{sig}",
+                           f"the Book is {book_today['stance']} ({sig}) — "
+                           f"P(event,5bd)={book_today.get('p_ensemble')}, "
+                           f"dispersion {book_today.get('dispersion')}"))
 
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):

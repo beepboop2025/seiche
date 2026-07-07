@@ -45,9 +45,10 @@ from seiche.config import (
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
+from seiche.engines import book as eng_book
 from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
-from seiche.engines import fleet as eng_fleet
+from seiche.engines import farbasin as eng_farbasin
 from seiche.engines import history as eng_history
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
@@ -58,6 +59,7 @@ from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
+from seiche.engines import stacker as eng_stacker
 from seiche.engines import stationkeeping as eng_stationkeeping
 from seiche.engines import swell as eng_swell
 from seiche.engines import tails as eng_tails
@@ -66,7 +68,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import cftc, crypto, ecb, fiscaldata, fred, nyfed, ofr
+from seiche.sources import cftc, crypto, ecb, fiscaldata, fred, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -111,6 +113,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("auctions", fiscaldata.fetch_auctions(client)),
             guard("upcoming", fiscaldata.fetch_upcoming_auctions(client)),
             guard("tff", cftc.fetch_tff_ust(client)),
+            guard("palimpsest", palimpsest.fetch_all(client, faults)),
         )
     return out, faults
 
@@ -171,6 +174,16 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     if not tff.empty:
         tff = tff[tff["date"] <= asof]
     out["tff"] = {"fetched_at": (src.get("tff") or {}).get("fetched_at"), "tff": tff}
+    pal = src.get("palimpsest") or {}
+    out["palimpsest"] = {
+        "fetched_at": pal.get("fetched_at"),
+        "series": {
+            m: Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq,
+                      s.fetched_at, s.points[s.points.index <= asof])
+            for m, s in (pal.get("series") or {}).items()
+        },
+        "latest": {},  # spot board — a replay has no vintage for it
+    }
     return out
 
 
@@ -361,6 +374,21 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         walcl_weekly=_pts(fred_s, "WALCL"),
     ))
 
+    # --- Far Basin (Palimpsest policy-fear channel) ---
+    pal = src.get("palimpsest") or {}
+    pal_series = pal.get("series") or {}
+
+    def _pal_pts(m: str) -> pd.Series | None:
+        s = pal_series.get(m)
+        return s.points.dropna() if s is not None else None
+
+    run("farbasin", lambda: eng_farbasin.analyze(
+        fear=_pal_pts("PALIMPSEST_FEAR"),
+        n_new=_pal_pts("PALIMPSEST_NEW"),
+        gfi=_pal_pts("PALIMPSEST_GFI"),
+        latest=pal.get("latest"),
+    ))
+
     # --- Stablecoin moorings ---
     stable = (src.get("crypto") or {}).get("stable", {})
     run("moorings", lambda: eng_moorings.analyze(
@@ -392,6 +420,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         stable_total = ((src.get("crypto") or {}).get("stable") or {}).get("total")
         if stable_total is not None and not stable_total.dropna().empty:
             series_map["STABLE_TOTAL"] = ("Total stablecoin circulation", "$B", stable_total.dropna())
+        for m, s in ((src.get("palimpsest") or {}).get("series") or {}).items():
+            spec = ALL_SERIES.get(m)
+            if s is not None and not s.points.dropna().empty:
+                series_map[m] = (spec.label if spec else m, spec.unit if spec else "", s.points.dropna())
         return eng_sonar.sweep(series_map)
     run("sonar", _sonar)
 
@@ -429,7 +461,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     if spread.empty:
         return {"ok": False, "reason": "no spread history"}
     # VERSION in the key: a release that adds deep blocks (tidetables/swell/
-    # fleet in v2.3) must not serve a pre-upgrade blob for up to 12h.
+    # stacker/book in v2.3) must not serve a pre-upgrade blob for up to 12h.
     cache_key = f"deep:{VERSION}:{spread.index[-1].date().isoformat()}"
     # Failure-aware cache: a blob computed with any failed layer only lives 30
     # minutes, so a transient fault can't poison the whole data-day (bit us
@@ -507,6 +539,18 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         idx, _pts(fred_s, "VIX"), _pts(fred_s, "HY_OAS"),
         _pts(fred_s, "IG_OAS"), _pts(fred_s, "DGS10")))
 
+    # Full-overlap Tell series, shared by Playbook, the Stack and the Book
+    # (the payload's tell series is tail-limited).
+    try:
+        mkt_stress, _ = eng_market.market_stress(
+            _pts(fred_s, "VIX"), _pts(fred_s, "HY_OAS"),
+            _pts(fred_s, "IG_OAS"), _pts(fred_s, "DGS10"))
+        plumb_p = eng_market._rpctl(idx.dropna())
+        _both = pd.concat({"p": plumb_p, "m": mkt_stress}, axis=1).dropna()
+        full_tell = _both["p"] - _both["m"]
+    except Exception:
+        full_tell = pd.Series(dtype=float)
+
     def _playbook():
         tell_rows = out.get("tell", {}).get("series") or []
         tell_series = pd.Series(
@@ -514,13 +558,6 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             index=pd.DatetimeIndex([r[0] for r in tell_rows]),
             dtype=float,
         )
-        # series is tail-limited; recompute full overlap via market_stress
-        mkt, _ = eng_market.market_stress(
-            _pts(fred_s, "VIX"), _pts(fred_s, "HY_OAS"),
-            _pts(fred_s, "IG_OAS"), _pts(fred_s, "DGS10"))
-        plumb = eng_market._rpctl(idx.dropna())
-        both = pd.concat({"p": plumb, "m": mkt}, axis=1).dropna()
-        full_tell = both["p"] - both["m"]
         return eng_playbook.analyze(idx, full_tell if not full_tell.empty else tell_series, outcomes)
     run("playbook", _playbook)
 
@@ -545,11 +582,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             "reserves_chg4w": _pts(fred_s, "WRESBAL").diff(4),
             "srf": drv["srf"],
         }
-        res = eng_tidetables.analyze(
+        return eng_tidetables.analyze(
             {k: v for k, v in comps.items() if not v.dropna().empty}, spread)
-        res.pop("_hindcast", None)  # test hook, not JSON-serializable
-        return res
     run("tidetables", _tidetables)
+    # (_hindcast stays on the result until the Stack consumes it; all nested
+    # private keys are popped together before the blob cache below.)
 
     # Swell Forecast — the funding-stress forward curve: calendar-bucket
     # exceedance hazards + Undertow damping state + coupon settlements,
@@ -561,7 +598,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             auctions=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
             upcoming=(src.get("upcoming") or {}).get("upcoming", pd.DataFrame()),
         )
-        res.pop("_p5_series", None)  # test hook, not JSON-serializable
+        # _p5_series stays on the result until the Stack consumes it as a
+        # member; the private-key sweep below pops it before the blob cache.
         return res
     run("swell", _swell)
 
@@ -641,15 +679,46 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         return res
     run("ml", _ml)
 
-    # Fleet of Forecasts — every P(event, 5bd) view on one bridge, blended by
-    # each one's own published skill, with the disagreement meter.
-    run("fleet", lambda: eng_fleet.analyze(
-        lite_pctl=pctl,
-        spread_bp=spread,
-        ml=out.get("ml"),
-        tide=out.get("tidetables"),
-        swell=out.get("swell"),
-    ))
+    # --- The Stack + The Book (the signal made accountable) -----------------
+    def _stacker():
+        ml_blk = out.get("ml", {})
+        tide_blk = out.get("tidetables", {})
+        M = eng_stacker.build_member_matrix(
+            rule_pctl=pctl,
+            ml_p=ml_blk.get("_p_daily") if ml_blk.get("ok") else None,
+            tide_p=tide_blk.get("_hindcast") if tide_blk.get("ok") else None,
+            swell_p=(out.get("swell") or {}).get("_p5_series")
+            if (out.get("swell") or {}).get("ok") else None,
+            tell=full_tell if not full_tell.empty else None,
+        )
+        yv = eng_stacker.event_labels(spread, M.index)
+        return eng_stacker.walk_forward_stack(M, yv, regime=hist["regime_series"])
+    run("stacker", _stacker)
+
+    def _book():
+        stk = out.get("stacker", {})
+        if not stk.get("ok"):
+            return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
+        rets = eng_book.build_returns(
+            dgs2=_pts(fred_s, "DGS2"),
+            dgs10=_pts(fred_s, "DGS10"),
+            sp500=_pts(fred_s, "SP500"),
+            btc=drv["btc"],
+            tb3m=_pts(fred_s, "TB3M"),
+        )
+        return eng_book.run(
+            stk["_p"], stk["_member_probs"], stk["_dispersion"],
+            full_tell, rets, pit_records=store.load_pit_records(),
+        )
+    run("book", _book)
+
+    # Nested private keys are pandas objects — json blob cache would crash on
+    # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
+    for key in ("ml", "tidetables", "stacker", "swell"):
+        blk = out.get(key)
+        if isinstance(blk, dict):
+            for k in [k for k in blk if str(k).startswith("_")]:
+                blk.pop(k)
 
     out["_all_ok"] = all(
         isinstance(v, dict) and v.get("ok")
@@ -764,6 +833,8 @@ def _provenance(src: dict) -> list[dict]:
             prov.append(s.provenance())
     for s in ((src.get("crypto") or {}).get("candles") or {}).values():
         prov.append(s.provenance())
+    for s in ((src.get("palimpsest") or {}).get("series") or {}).values():
+        prov.append(s.provenance())
     st = store.load_series("STABLE_TOTAL")
     if st is not None:
         prov.append(st.provenance())
@@ -794,14 +865,15 @@ def _strip_private(obj):
 
 
 def _record_pit(engines: dict, deep: dict) -> None:
-    """Forward-accruing as-published record: today's index, subscores, tell —
-    and every forecast view, so the fleet accrues a track record no
-    reconstruction can polish."""
+    """Forward-accruing as-published record: today's index, subscores, tell,
+    every forecast view, and the Book's positions — the primitives the live
+    track record replays; no reconstruction can polish them."""
     comp = engines.get("composite", {})
     if not comp.get("ok"):
         return
     day = utcnow_iso()[:10]
-    fleet = (deep or {}).get("fleet", {})
+    stk = (deep or {}).get("stacker", {})
+    book_today = ((deep or {}).get("book") or {}).get("today") or {}
     store.save_blob(
         f"pit:{day}",
         {
@@ -815,12 +887,19 @@ def _record_pit(engines: dict, deep: dict) -> None:
             "weights": dict(COMPOSITE_WEIGHTS),
             "tell": (deep or {}).get("tell", {}).get("tell"),
             "forecasts": {
-                "blend_p_5bd": fleet.get("blend_p_5bd"),
-                "disagreement": fleet.get("disagreement"),
-                "views": {
-                    v["name"]: v.get("p") for v in fleet.get("views", []) if isinstance(v, dict)
-                } if fleet.get("ok") else None,
-            },
+                "p_ensemble": stk.get("p_now"),
+                "dispersion": stk.get("dispersion_now"),
+                "views": stk.get("members_now"),
+            } if stk.get("ok") else None,
+            "book": {
+                "stance": book_today.get("stance"),
+                "p_ensemble": book_today.get("p_ensemble"),
+                "dispersion": book_today.get("dispersion"),
+                "positions": [
+                    [p.get("sleeve"), p.get("weight")]
+                    for p in book_today.get("positions", [])
+                ],
+            } if book_today else None,
         },
     )
 

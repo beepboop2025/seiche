@@ -673,78 +673,8 @@ def test_swell_refuses_short_history(rng):
 
 
 # --------------------------------------------------------------------------
-# Fleet: self-demoted views carry zero weight; disagreement is a signal
-# --------------------------------------------------------------------------
-
-def _fleet_inputs(rng, n=1400):
-    idx = _bdays(n)
-    spread = pd.Series(rng.normal(0, 1.5, n), index=idx)
-    for loc in range(600, n - 60, 90):
-        spread.iloc[loc] += 25.0
-    lite = pd.Series(rng.uniform(0, 100, n), index=idx)  # skill-less by design
-    return lite, spread
-
-
-def test_fleet_zero_weights_skill_less_views(rng):
-    from seiche.engines import fleet
-    lite, spread = _fleet_inputs(rng)
-    ml = {"ok": True, "p_event_5bd": 0.40,
-          "validation": {"brier": 0.03, "brier_climatology": 0.05}}
-    r = fleet.analyze(lite, spread, ml=ml, tide=None, swell=None)
-    assert r["ok"]
-    views = {v["name"]: v for v in r["views"]}
-    assert views["ml"]["weight"] == 1.0, "the only skilled view takes the whole blend"
-    assert views["rule"]["weight"] == 0.0, "a random rule cannot buy weight"
-    assert abs(r["blend_p_5bd"] - 0.40) < 1e-9
-
-
-def test_fleet_publishes_climatology_when_no_view_has_skill(rng):
-    from seiche.engines import fleet
-    lite, spread = _fleet_inputs(rng)
-    ml = {"ok": True, "p_event_5bd": 0.40,
-          "validation": {"brier": 0.06, "brier_climatology": 0.05}}  # worse than clim
-    r = fleet.analyze(lite, spread, ml=ml, tide=None, swell=None)
-    assert r["ok"]
-    assert "climatology" in r["blend_source"]
-    assert r["blend_p_5bd"] == r["climatology_p_5bd"]
-
-
-def test_fleet_flags_disagreement(rng):
-    from seiche.engines import fleet
-    lite, spread = _fleet_inputs(rng)
-    ml = {"ok": True, "p_event_5bd": 0.70,
-          "validation": {"brier": 0.03, "brier_climatology": 0.05}}
-    tide = {"ok": True, "event_odds": {"p": 0.05},
-            "skill": {"ok": True, "brier": 0.04, "brier_climatology": 0.05}}
-    r = fleet.analyze(lite, spread, ml=ml, tide=tide, swell=None)
-    assert r["ok"]
-    assert r["disagreement"] >= 0.30
-    assert "DISAGREES" in r["verdict"]
-
-
-# --------------------------------------------------------------------------
 # Review-pass invariants: fleet rule embargo, undertow unresolved pops
 # --------------------------------------------------------------------------
-
-def test_fleet_rule_probability_no_look_ahead(rng):
-    from seiche.engines import fleet
-    n = 1400
-    idx = _bdays(n)
-    spread = pd.Series(rng.normal(0, 1.5, n), index=idx)
-    for loc in range(600, n - 60, 90):
-        spread.iloc[loc] += 25.0
-    # a percentile signal that ramps ahead of each spike (so buckets differ)
-    lite = pd.Series(rng.uniform(0, 60, n), index=idx)
-    for loc in range(600, n - 60, 90):
-        lite.iloc[loc - 6 : loc + 1] = 95.0
-    full = fleet.rule_probability(lite, spread)
-    trunc = fleet.rule_probability(lite.iloc[:-60], spread.iloc[:-60])
-    assert full["ok"] and trunc["ok"]
-    t = trunc["_p_series"].index[-1]
-    assert abs(float(full["_p_series"].loc[t]) - float(trunc["_p_series"].loc[t])) < 1e-12, \
-        "rule probability at T changed when future data was appended — embargo leak"
-    assert full["embargo_bd"] == 5
-
 
 def test_undertow_unresolved_pops_do_not_inflate_recovery(rng):
     from seiche.engines import undertow
