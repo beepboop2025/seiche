@@ -140,6 +140,11 @@ def context_pack(snap: dict) -> dict:
             "stable_total_b": (moor.get("demand") or {}).get("total_b"),
             "stable_chg_30d_pct": (moor.get("demand") or {}).get("chg_30d_pct"),
         } if moor.get("ok") else None,
+        "communique": {
+            "latest": eng.get("communique", {}).get("latest"),
+            "flags": eng.get("communique", {}).get("flags"),
+            "n_statements": eng.get("communique", {}).get("n_statements"),
+        } if eng.get("communique", {}).get("ok") else None,
         "sonar_flagged": [m for m in sonar.get("movers", []) if m.get("flag")][:6],
         "calendar": snap.get("calendar", {}),
         "playbook": deep.get("playbook", {}).get("tables") if (deep.get("playbook") or {}).get("ok") else None,

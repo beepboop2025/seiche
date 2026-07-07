@@ -324,3 +324,48 @@ FORECAST tab; no live claim is made here that the page won't verify itself.
   produced |tau| = 0.42 with p ≈ 1e-22); percentiles-vs-own-history instead.
 - Weighting any forecast (Swell/Fleet/Tide/ML) into the composite — forecasts
   are not evidence of stress; the composite stays a nowcast.
+
+---
+
+# v2.4 addendum — the Navigator, the Communiqué, the TED bridge (2026-07-07)
+
+Driven by one question: how does a tool predict from the whole macro picture
+when the target has ~20 events of history? Three answers, each honest about
+what it is:
+
+**1. The Navigator (`engines/navigator.py`).** An LLM forecaster made
+accountable. The model's whole world is the deterministic context pack; it
+must COMMIT one P(funding event, 5bd) per data-day (blob-cached — a re-run
+can never revise the morning's number), and the commitment lands in the
+hash-chained PIT record. The unique honesty problem is stated in the module
+docstring: an LLM member CANNOT be backtested (it has read the history), so
+it gets no backtest, no stack membership and no weight anywhere until its
+FORWARD record earns a hearing (NAVIGATOR_MIN_RESOLVED). Fails loud without
+an endpoint. Surfaces: HELM card, `seiche navigator`, PIT forecasts.views.
+
+**2. The Communiqué (`engines/communique.py` + `sources/fedtext.py`).** FOMC
+statements are free, keyless, archived for decades, and stamped with exact
+release times — text signals with true vintage discipline. Scoring is a
+FROZEN deterministic lexicon (hawk−dove, balance-sheet bias, funding-stress
+vocabulary, per 1,000 words) because a scorer that drifts cannot sit under
+a vintage-stamped record; the change vs the previous statement is the
+signal. Time Machine truncates statements by release date. Degenerate-quiet
+history handled: a first break from flat flags even though MAD=0. Statement
+URL pattern unverified-live from the build container — collector fails loud
+per date, coverage prints.
+
+**3. The TED bridge (`mlpred.build_pretrain_rows`).** Funding stress predates
+SOFR: TED (1990–2018 slice) carries 2008/2011/2016 in the same
+funding-spread abstraction. TED-era rows join every expanding train slice at
+weight 0.30 in the SAME feature slots (spread level/chg/z + the era-invariant
+calendar distances); labels are TED pops ≥ 15bp. The fold-skip guard depends
+on SOFR-era events ONLY so pooled and solo score identical OOS days —
+comparability beats an earlier start — and the published `transfer` block
+says whether pretraining helped, either way. TEDRATE fetch unverified-live
+from the build container.
+
+Also considered and rejected (v2.4): letting the Navigator into the Stack
+(no honest calibration window can exist for a member whose hindcasts are
+open-book); LLM-scored statements as the primary text signal (model drift
+under a vintage record); scraping FOMC minutes (3-week lag, HTML shape
+unverified — statements carry the signal).

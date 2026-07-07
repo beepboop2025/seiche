@@ -40,12 +40,14 @@ from seiche.config import (
     MARKET_SERIES,
     OFR_SERIES,
     PLAYBOOK_OUTCOMES,
+    PRETRAIN_FRED_SERIES,
     SWAP_LINE_OPS_N,
 )
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
 from seiche.engines import book as eng_book
+from seiche.engines import communique as eng_communique
 from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
 from seiche.engines import farbasin as eng_farbasin
@@ -55,6 +57,7 @@ from seiche.engines import kink as eng_kink
 from seiche.engines import market as eng_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
+from seiche.engines import navigator as eng_navigator
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import rvxray as eng_rvxray
@@ -68,7 +71,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import cftc, crypto, ecb, fiscaldata, fred, nyfed, ofr, palimpsest
+from seiche.sources import cftc, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -99,6 +102,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
         fred_mnems = [
             s.mnemonic
             for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
+            + PRETRAIN_FRED_SERIES
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
@@ -114,6 +118,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("upcoming", fiscaldata.fetch_upcoming_auctions(client)),
             guard("tff", cftc.fetch_tff_ust(client)),
             guard("palimpsest", palimpsest.fetch_all(client, faults)),
+            guard("fedtext", fedtext.fetch_all(client, faults)),
         )
     return out, faults
 
@@ -170,6 +175,11 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
         au = au[mask]
     out["auctions"] = {"fetched_at": (src.get("auctions") or {}).get("fetched_at"), "auctions": au}
     out["upcoming"] = {"upcoming": pd.DataFrame()}  # current-state feed: no historical vintage
+    fedtexts = (src.get("fedtext") or {}).get("texts", {})
+    out["fedtext"] = {
+        "fetched_at": (src.get("fedtext") or {}).get("fetched_at"),
+        "texts": {d: t for d, t in fedtexts.items() if d <= asof.date().isoformat()},
+    }
     tff = (src.get("tff") or {}).get("tff", pd.DataFrame())
     if not tff.empty:
         tff = tff[tff["date"] <= asof]
@@ -327,6 +337,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
 
     # --- Undertow (free decay — the other half of the resonance physics) ---
     run("undertow", lambda: eng_undertow.analyze(drv["spread_bp"], drv["tail_bp"]))
+
+    # --- Communiqué (the policy text read as data; vintage-stamped) ---
+    run("communique", lambda: eng_communique.analyze(
+        (src.get("fedtext") or {}).get("texts", {})))
 
     # --- Hydrophone ---
     def _hydro():
@@ -656,7 +670,33 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             usdt_peg_bp=drv["usdt_peg_bp"],
             stable_total_b=stable.get("total", pd.Series(dtype=float)),
         )
-        res = eng_mlpred.walk_forward(X, y)
+        # Transfer learning: TED-era rows (1990–2018) as down-weighted extra
+        # training mass — same funding-spread feature slots, older clothes.
+        # The gain vs the SOFR-only model is reported either way; the
+        # orthogonal run below deliberately gets NO pretrain (its rows are
+        # the spread family being excluded).
+        pre = eng_mlpred.build_pretrain_rows(_pts(fred_s, "TED"))
+        res = eng_mlpred.walk_forward(X, y, pre=pre)
+        if res.get("ok") and pre is not None:
+            solo = eng_mlpred.walk_forward(X, y, full_report=False)
+            if solo.get("ok"):
+                gain = round(res["validation"]["auroc"] - solo["validation"]["auroc"], 3)
+                res["transfer"] = {
+                    "auroc_pooled": res["validation"]["auroc"],
+                    "auroc_solo": solo["validation"]["auroc"],
+                    "brier_pooled": res["validation"]["brier"],
+                    "brier_solo": solo["validation"]["brier"],
+                    "gain_auroc": gain,
+                    "pretrain_rows": res["validation"].get("pretrain_rows"),
+                    "pretrain_events": res["validation"].get("pretrain_events"),
+                    "verdict": (
+                        f"TED-era pretraining helps out-of-sample (+{gain} AUROC) — "
+                        "the funding-stress grammar generalizes across eras"
+                        if gain > 0.005 else
+                        f"TED-era pretraining does NOT help ({gain:+} AUROC) — "
+                        "the SOFR era speaks for itself; pretraining kept for robustness only"
+                    ),
+                }
         # Orthogonal ML: drop the target's variable family from the features
         # and re-evaluate. The honest AUROC for "the model knows something
         # beyond spread autocorrelation" is THIS one.
@@ -864,16 +904,20 @@ def _strip_private(obj):
     return obj
 
 
-def _record_pit(engines: dict, deep: dict) -> None:
+def _record_pit(engines: dict, deep: dict, navigator: dict | None = None) -> None:
     """Forward-accruing as-published record: today's index, subscores, tell,
-    every forecast view, and the Book's positions — the primitives the live
-    track record replays; no reconstruction can polish them."""
+    every forecast view (the Navigator included), and the Book's positions —
+    the primitives the live track record replays; no reconstruction can
+    polish them."""
     comp = engines.get("composite", {})
     if not comp.get("ok"):
         return
     day = utcnow_iso()[:10]
     stk = (deep or {}).get("stacker", {})
     book_today = ((deep or {}).get("book") or {}).get("today") or {}
+    views = dict(stk.get("members_now") or {}) if stk.get("ok") else {}
+    if navigator and navigator.get("ok"):
+        views["navigator"] = navigator.get("p_event_5bd")
     store.save_blob(
         f"pit:{day}",
         {
@@ -887,10 +931,10 @@ def _record_pit(engines: dict, deep: dict) -> None:
             "weights": dict(COMPOSITE_WEIGHTS),
             "tell": (deep or {}).get("tell", {}).get("tell"),
             "forecasts": {
-                "p_ensemble": stk.get("p_now"),
-                "dispersion": stk.get("dispersion_now"),
-                "views": stk.get("members_now"),
-            } if stk.get("ok") else None,
+                "p_ensemble": stk.get("p_now") if stk.get("ok") else None,
+                "dispersion": stk.get("dispersion_now") if stk.get("ok") else None,
+                "views": views,
+            } if views else None,
             "book": {
                 "stance": book_today.get("stance"),
                 "p_ensemble": book_today.get("p_ensemble"),
@@ -926,7 +970,24 @@ async def snapshot(force: bool = False) -> dict:
             "faults": faults,
             "provenance": _provenance(src),
         }
-        _record_pit(engines, deep)
+        # The Navigator commits AFTER the board is assembled (its whole world
+        # is the context pack of this payload), once per data-day, cached —
+        # a re-run must never let the model revise the morning's number.
+        nav: dict = {"ok": False, "reason": "no spread data-day to commit against"}
+        if not drv["spread_bp"].empty:
+            try:
+                from seiche import ai as _ai
+                nav = await eng_navigator.commit(
+                    _ai.context_pack(payload),
+                    drv["spread_bp"].index[-1].date().isoformat(),
+                )
+            except Exception as e:  # noqa: BLE001 — fail loud, never block the board
+                nav = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+            if nav.get("ok"):
+                nav = {**nav, "record": eng_navigator.score_record(
+                    store.load_pit_records(), drv["spread_bp"])}
+        payload["navigator"] = nav
+        _record_pit(engines, deep, nav)
         _cache.update(at=time.time(), payload=payload)
         return payload
 

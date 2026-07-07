@@ -73,6 +73,19 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 - **The Tell** — plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
   OAS, rates vol). Positive = the basin is sloshing and the screens haven't noticed.
   The whole thesis in one tradeable number.
+- **The Navigator** — an LLM forecaster made accountable: one committed
+  P(funding event, 5bd) per data-day, grounded strictly in the live board,
+  written into the hash-chained record. An LLM cannot be honestly backtested
+  (it has read the history), so its FORWARD record is its only evidence and
+  its weight stays zero until that record earns a hearing. `seiche navigator`.
+- **The Communiqué** — FOMC statements read as vintage-stamped data: frozen
+  deterministic lexicons score policy direction, balance-sheet bias and
+  funding-stress vocabulary per statement; the change vs the previous
+  statement is the signal, and the Time Machine replays text as it stood.
+- **The TED bridge** — the ML Lab pretrains on the TED spread's 1990–2018
+  funding-stress record (2008/2011/2016) in the same feature slots,
+  down-weighted, and publishes the transfer gain vs the SOFR-only model
+  either way.
 - **The Stack + The Book** — the rule index, ML Lab, Tide Tables analogs and the
   Swell curve all emit P(funding event, 5bd); the Stack calibrates and blends them
   walk-forward (publishing the equal-weight mean whenever the fitted blend can't

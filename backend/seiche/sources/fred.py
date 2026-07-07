@@ -24,7 +24,7 @@ BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 _sem = asyncio.Semaphore(2)
 
 
-async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str = "2017-01-01") -> Series:
+async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str | None = None) -> Series:
     if store.is_fresh(spec.mnemonic, spec.ttl_minutes):
         cached = store.load_series(spec.mnemonic)
         if cached is not None:
@@ -38,7 +38,7 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec, start: str =
                     # No custom User-Agent here — see FRED note in config.py.
                     r = await client.get(
                         BASE,
-                        params={"id": spec.remote_id, "cosd": start},
+                        params={"id": spec.remote_id, "cosd": start or spec.start},
                         timeout=45,
                     )
                 r.raise_for_status()

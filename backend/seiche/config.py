@@ -38,6 +38,7 @@ class SeriesSpec:
     unit: str
     freq: str = "D"
     ttl_minutes: int = 360
+    start: str = "2017-01-01"   # history start (pretrain series reach back decades)
 
 
 FRED_SERIES = [
@@ -101,6 +102,23 @@ SWAP_LINE_OPS_N = 90           # NY Fed FX-swap operations to pull
 INDIA_FRED_SERIES = [
     SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
 ]
+
+# ---------------------------------------------------------------------------
+# Transfer learning: funding stress predates SOFR. The TED spread (3M LIBOR −
+# 3M T-bill, 1986–2022 on FRED) is the same funding-spread abstraction in its
+# era's clothes — 2008, 2011, 2016 live in it. The ML Lab pretrains on
+# TED-era pops (down-weighted), then reports the transfer gain vs the
+# SOFR-only model honestly — including when there is none.
+# TEDRATE fetch unverified-live from the build container; fails loud.
+# ---------------------------------------------------------------------------
+
+PRETRAIN_FRED_SERIES = [
+    SeriesSpec("TED", "fred", "TEDRATE", "TED spread (3M LIBOR − 3M T-bill, discontinued 2022)",
+               "%", "D", 100000, start="1990-01-01"),
+]
+PRETRAIN_SPIKE_BP = 15.0    # TED-era pop threshold (TED runs wider than SOFR−IORB)
+PRETRAIN_WEIGHT = 0.30      # sample weight of a pretrain row vs a SOFR-era row
+PRETRAIN_CUTOFF = "2018-04-01"  # pretrain rows end where the SOFR era begins
 
 # Crypto: stablecoins are money market instruments now (USDT/USDC hold
 # $200B+ of T-bills); a peg break is a dollar-funding event and crypto is
@@ -168,7 +186,7 @@ CRYPTO_SERIES = [
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-    + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
 # (they are declared later in the file to keep the Far Basin block coherent).
@@ -391,6 +409,15 @@ SWELL_P_CAP = 0.90               # single-day probability ceiling
 STACK_DISPERSION_WARN = 0.30     # member std-dev that reads as ambiguity
 
 # ---------------------------------------------------------------------------
+# The Navigator — an LLM forecaster made accountable. One commitment per
+# data-day into the hash-chained record; NO backtest is possible for an LLM
+# member (it has read the history), so its forward record is its only
+# evidence and its weight stays zero until that record earns a hearing.
+# ---------------------------------------------------------------------------
+
+NAVIGATOR_MIN_RESOLVED = 20      # resolved forward forecasts before a verdict prints
+
+# ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
 # only features, walk-forward refits — no shuffled CV (that's leakage on
@@ -492,6 +519,47 @@ FOMC_DECISION_DATES = [
     "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
     "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
 ]
+
+# ---------------------------------------------------------------------------
+# Communiqué — the policy text read as plumbing data. Statement dates back to
+# 2023 (decision day; the statement URL keys off this date). The lexicons are
+# FROZEN opinions: a scorer that drifts cannot sit under a vintage-stamped
+# record. Tune by appending, never by rewriting history's scores.
+# URL pattern unverified-live from the build container — collector fails
+# loud per date and coverage prints on the board.
+# ---------------------------------------------------------------------------
+
+FOMC_STATEMENT_DATES = [
+    "2023-02-01", "2023-03-22", "2023-05-03", "2023-06-14",
+    "2023-07-26", "2023-09-20", "2023-11-01", "2023-12-13",
+    "2024-01-31", "2024-03-20", "2024-05-01", "2024-06-12",
+    "2024-07-31", "2024-09-18", "2024-11-07", "2024-12-18",
+    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+    "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
+] + FOMC_DECISION_DATES
+FEDTEXT_TTL_MIN = 24 * 60          # re-check for a new statement daily
+
+COMMUNIQUE_LEXICON_HAWKISH = (
+    "inflation remains elevated", "further tightening", "restrictive",
+    "raise the target range", "upside risks to inflation", "vigilant",
+    "additional firming",
+)
+COMMUNIQUE_LEXICON_DOVISH = (
+    "lower the target range", "accommodative", "downside risks", "easing",
+    "has softened", "cooled", "well anchored",
+)
+COMMUNIQUE_LEXICON_BS_TIGHT = (
+    "reduce its holdings", "runoff", "balance sheet reduction",
+    "redemption of Treasury securities",
+)
+COMMUNIQUE_LEXICON_BS_EASE = (
+    "purchases of Treasury securities", "reinvesting", "increase its holdings",
+    "reserve management purchases",
+)
+COMMUNIQUE_LEXICON_STRESS = (
+    "money market", "repurchase agreement", "funding pressures",
+    "market functioning", "liquidity strains", "standing repo facility",
+)
 
 # ---------------------------------------------------------------------------
 # Seiche Index: composite weights and regime thresholds.

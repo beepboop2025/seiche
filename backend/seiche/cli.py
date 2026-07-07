@@ -276,6 +276,26 @@ def cmd_swell(args) -> int:
     return 0
 
 
+def cmd_navigator(args) -> int:
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    n = snap.get("navigator", {})
+    if not n.get("ok"):
+        print(f"{RED}Navigator ashore:{END} {n.get('reason')}", file=sys.stderr)
+        return 1
+    print(f"{BOLD}NAVIGATOR{END} committed P(funding event, 5bd) = {n['p_event_5bd']:.0%} "
+          f"{DIM}({n['asof']}{', cached' if n.get('cached') else ''}){END}")
+    print(f"  {n.get('rationale', '')}")
+    rec = n.get("record") or {}
+    if rec.get("ok") and rec.get("brier") is not None:
+        col = GRN if rec["brier"] < rec["brier_climatology"] else RED
+        print(f"  forward record: {col}Brier {rec['brier']:.4f}{END} vs climatology "
+              f"{rec['brier_climatology']:.4f} over {rec['n_resolved']} resolved — {rec['verdict']}")
+    elif rec.get("verdict"):
+        print(f"  {DIM}{rec['verdict']}{END}")
+    return 0
+
+
 def cmd_ask(args) -> int:
     from seiche import ai, assemble
     snap = asyncio.run(assemble.snapshot())
@@ -329,6 +349,8 @@ def main() -> None:
     sub.add_parser("swell", help="funding-stress forward curve (6 weeks)").set_defaults(fn=cmd_swell)
 
     sub.add_parser("book", help="the Book: today's positions + walk-forward P&L verdict").set_defaults(fn=cmd_book)
+
+    sub.add_parser("navigator", help="the LLM's committed daily forecast + forward record").set_defaults(fn=cmd_navigator)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")

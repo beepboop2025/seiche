@@ -181,15 +181,54 @@ function LiveCard({ lv }: { lv: Any }) {
   );
 }
 
+function NavigatorCard({ n }: { n: Any }) {
+  if (!n?.ok) return <Fault name="The Navigator" reason={n?.reason} span={12} />;
+  const rec = n.record ?? {};
+  const judged = rec.ok && rec.brier != null;
+  const beats = judged && rec.brier < rec.brier_climatology;
+  return (
+    <div className="card span12">
+      <h2>The Navigator</h2>
+      <div className="sub">
+        an LLM forecaster made accountable — one committed P(event, 5bd) per data-day into the
+        hash-chained record; no backtest is possible for an LLM (it has read the history), so the
+        forward record below is its only evidence
+      </div>
+      <div className="tellhero">
+        <div className={`tellvalue ${n.p_event_5bd >= 0.5 ? "hot" : ""}`}>{fmt(n.p_event_5bd * 100, 0)}%</div>
+        <div>
+          <div className="tellreading">{n.rationale}</div>
+          <div className="coverage" style={{ color: judged ? (beats ? "#37c88b" : "#e5484d") : undefined }}>
+            forward record: {rec.ok
+              ? judged
+                ? `Brier ${fmt(rec.brier, 4)} vs climatology ${fmt(rec.brier_climatology, 4)} over ${rec.n_resolved} resolved — ${rec.verdict}`
+                : rec.verdict
+              : rec.reason ?? "no record yet"} · committed {n.asof}{n.cached ? " (cached — today's number is already on the record)" : ""}
+          </div>
+        </div>
+      </div>
+      <Method>{(n.caveats ?? []).join(" · ")} · {n.method}</Method>
+    </div>
+  );
+}
+
 export default function Helm({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   const bk = deep.book ?? {};
-  if (!bk.ok) return <div className="grid"><Fault name="The Book" reason={bk.reason} span={12} /></div>;
+  if (!bk.ok) {
+    return (
+      <div className="grid">
+        <Fault name="The Book" reason={bk.reason} span={12} />
+        <NavigatorCard n={snap.navigator} />
+      </div>
+    );
+  }
   return (
     <div className="grid">
       <TodayCard t={bk.today ?? {}} stk={deep.stacker} />
       <BacktestCard b={bk.backtest ?? {}} />
       <EnsembleCard s={deep.stacker} />
+      <NavigatorCard n={snap.navigator} />
       <EpisodesCard rows={bk.backtest?.episodes ?? []} />
       <LiveCard lv={bk.live ?? {}} />
       <div className="card span12">
