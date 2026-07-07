@@ -138,6 +138,39 @@ coupon settlements, compounded to P(event by horizon), walk-forward validated
 vs climatology with the reliability table printed. FORECAST tab + `seiche
 swell` + `swell_event_prob` alert.
 
+## 12. Riptide — the pop prognosis (next up: an ideation panel's top pick)
+
+**Pattern:** the morning the spread pops, the only question on the desk is
+*chop or current?* Three discriminators say it's answerable at the pop-day
+close: (1) a pop WITH its expected ON-RRP quarter-end co-spike is regulatory
+mechanics; a pop WITHOUT one (the 2025 signature, RRP ~$0) is genuine cash
+scarcity; (2) the scarcity ladder's diagnostic transition is exactly when
+calendar pops STOP mean-reverting in one day; (3) pop context (reserves vs
+kink, damping state, settlement pile) separates one-day chop from currents.
+
+**Tool:** unit of analysis = the POP, not the day. Pops = PROOF jump statistic
+≥ 4bp, declustered like `_funding_events` (~200–350 trials since 2018).
+Targets per pop, walk-forward: (a) sticky — stays ≥3bd above its prior
+baseline; (b) escalates — reaches a ≥10bp PROOF event within 10bd. Features
+strictly as-of pop-day close (RRP co-spike present/absent, bucket, damping,
+reserves headroom). Fires only when a pop happens — speaks exactly when the
+operator is staring at the screen.
+
+## 13. Microseism — the shock catalog nobody kept
+
+**Pattern:** funding tremors cluster, but only in scarce-reserve regimes
+(2021–22 calendar pops were one-day and dead; Sep–Dec 2025 recurred at every
+turn until reserves were added). Is that true self-excitation or common
+calendar forcing? The identification question (Filimonov–Sornette vs
+Hardiman–Bouchaud) is answerable with a calendar-gated Hawkes.
+
+**Tool:** micro-shock catalog (pops ≥ 2bp, ~150–350 events, sensitivity rows
+at 1.5/3bp published), mainshocks imported from `_funding_events` verbatim.
+Gauges: calendar-gated branching ratio (self-excitation net of the known
+forcing), aftershock decay, b-value analog (size distribution tilt), regime
+gate. Self-demotes if the hazard can't beat CALENDAR climatology — the honest
+comparator, not flat climatology.
+
 ---
 
 *Naming note: engines keep the hydrology metaphor — the pattern layer is now
