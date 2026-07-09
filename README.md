@@ -160,7 +160,27 @@ seiche bathymetry         # the basin floor in detail: potential, spectrum, entr
 seiche book               # the Book: today's positions + walk-forward P&L verdict
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
+seiche mcp                # serve the board to AI agents over MCP (stdio)
 ```
+
+## For AI agents (MCP)
+
+Seiche is also a [Model Context Protocol](https://modelcontextprotocol.io)
+server — any MCP-capable agent (Claude Code, Codex, your own) can read the live
+board as tools. Where a data feed hands an agent raw macro numbers, Seiche hands
+it the conclusion: a regime read, forward event odds, historical analogs, and an
+honest backtest. Stdlib-only, no new dependencies.
+
+```bash
+claude mcp add seiche -- seiche-mcp          # Claude Code, local (stdio)
+SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
+```
+
+Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
+(`https://api.seiche.info/mcp`) — anonymous callers get the free public surface;
+a subscriber bearer token unlocks the full surface, metered per tier.
+
+Full setup, the tool catalogue, client config, and metering: **[docs/MCP.md](docs/MCP.md)**.
 
 Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
