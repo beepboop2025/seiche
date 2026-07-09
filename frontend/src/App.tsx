@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "./apiBase";
 import { Any, fmt } from "./lib";
+import Dispatches from "./tabs/Dispatches";
 import Board from "./tabs/Board";
 import Helm from "./tabs/Helm";
 import Market from "./tabs/Market";
@@ -15,14 +16,15 @@ import Proof from "./tabs/Proof";
 import System from "./tabs/System";
 
 const TABS = [
-  "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
+  "DISPATCHES", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
   "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM",
 ] as const;
 type Tab = (typeof TABS)[number];
 
 const hashToTab = (): Tab => {
-  const h = decodeURIComponent(window.location.hash.replace("#", "")).toUpperCase();
-  return (TABS as readonly string[]).includes(h) ? (h as Tab) : "BOARD";
+  const raw = decodeURIComponent(window.location.hash.replace("#", ""));
+  const h = raw.split("/")[0].toUpperCase();
+  return (TABS as readonly string[]).includes(h) ? (h as Tab) : "DISPATCHES";
 };
 
 export default function App() {
@@ -102,6 +104,7 @@ export default function App() {
         </div>
       )}
 
+      {tab === "DISPATCHES" && <Dispatches />}
       {tab === "BOARD" && <Board snap={snap} live={live} />}
       {tab === "FORECAST" && <Forecast snap={snap} />}
       {tab === "PHYSICS" && <Physics snap={snap} />}
