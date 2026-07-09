@@ -68,6 +68,24 @@ def _bearer_identity(authorization: str | None) -> dict | None:
     return accounts.verify_token(authorization.removeprefix("Bearer "))
 
 
+DISPATCH_DIR = Path(__file__).parent / "dispatches"
+
+
+@app.get("/api/dispatch/{slug}")
+async def dispatch_paid(slug: str, authorization: str | None = Header(default=None)):
+    """The paid continuation of a dispatch. The free section is a public static
+    asset; this returns the subscriber-only part and ONLY to a valid token —
+    the paid markdown never ships to the public site."""
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,80}$", slug):
+        raise HTTPException(422, "bad slug")
+    if _bearer_identity(authorization) is None:
+        raise HTTPException(401, "the desk's read is a subscriber feature — sign in")
+    path = DISPATCH_DIR / f"{slug}.paid.md"
+    if not path.exists():
+        raise HTTPException(404, "no paid section for this dispatch")
+    return {"slug": slug, "paid": path.read_text()}
+
+
 @app.get("/api/me")
 async def me(authorization: str | None = Header(default=None)):
     ident = _bearer_identity(authorization)

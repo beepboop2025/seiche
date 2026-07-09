@@ -1,14 +1,24 @@
 // Compact markdown -> HTML for dispatch bodies. Content is authored by the
-// desk (trusted), so this handles the subset we actually write: headings,
-// bold/italic, links, inline + block code, lists, blockquotes, rules,
-// paragraphs. No dependency — same stdlib-only ethos as the backend.
-function inline(s: string): string {
+// desk, but we still escape defensively and refuse dangerous URL schemes so
+// a stray link or a future content pipeline can't inject script. No
+// dependency — same stdlib-only ethos as the backend.
+function esc(s: string): string {
   return s
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function inline(s: string): string {
+  return esc(s)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, text, url) => {
+      // url is already entity-escaped by esc(); allow only safe schemes.
+      const u = String(url).trim();
+      const safe = /^(https?:|mailto:|#|\/)/i.test(u) ? u : "#";
+      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+    });
 }
 
 export function renderMarkdown(src: string): string {
@@ -26,7 +36,7 @@ export function renderMarkdown(src: string): string {
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++;
-      out.push("<pre><code>" + buf.join("\n").replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</code></pre>");
+      out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
       continue;
     }
     if (/^\s*$/.test(line)) { closeList(); i++; continue; }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { renderMarkdown } from "../md";
-import { getToken } from "../auth";
+import { API_BASE } from "../apiBase";
+import { authHeaders, getToken } from "../auth";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
 
-const PAYWALL = "<!--PAYWALL-->";
+const HAS_PAID = "<!--HAS-PAID-->";
 
 function slugFromHash(): string | null {
   const h = decodeURIComponent(window.location.hash.replace("#", ""));
@@ -16,6 +17,7 @@ export default function Dispatches() {
   const [index, setIndex] = useState<Index | null>(null);
   const [slug, setSlug] = useState<string | null>(slugFromHash());
   const [body, setBody] = useState<string | null>(null);
+  const [paid, setPaid] = useState<string | null>(null);
   const signedIn = getToken() !== null;
 
   useEffect(() => {
@@ -26,10 +28,16 @@ export default function Dispatches() {
   }, []);
 
   useEffect(() => {
-    if (!slug) { setBody(null); return; }
-    setBody(null);
+    if (!slug) { setBody(null); setPaid(null); return; }
+    setBody(null); setPaid(null);
     fetch(`dispatches/${slug}.md`).then((r) => (r.ok ? r.text() : Promise.reject())).then(setBody).catch(() => setBody(""));
-  }, [slug]);
+    if (signedIn) {
+      fetch(`${API_BASE}/api/dispatch/${slug}`, { headers: authHeaders() })
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((j) => setPaid(j.paid ?? null))
+        .catch(() => setPaid(null));
+    }
+  }, [slug, signedIn]);
 
   // ---- single dispatch ----
   if (slug) {
@@ -41,7 +49,8 @@ export default function Dispatches() {
         <a className="dispatch-back" href="#dispatches">← all dispatches</a>
       </div>
     );
-    const [free, paid] = body.includes(PAYWALL) ? body.split(PAYWALL) : [body, ""];
+    const hasPaid = body.includes(HAS_PAID);
+    const free = body.replace(HAS_PAID, "").trim();
     return (
       <div className="dispatch" style={{ marginTop: 18 }}>
         <a className="dispatch-back" href="#dispatches">← all dispatches</a>
@@ -52,7 +61,7 @@ export default function Dispatches() {
           </div>
         )}
         <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
-        {paid.trim() && (signedIn ? (
+        {hasPaid && (signedIn && paid ? (
           <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(paid) }} />
         ) : (
           <div className="paywall">

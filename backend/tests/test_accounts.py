@@ -62,3 +62,26 @@ def test_login_endpoint_and_gate(accounts, monkeypatch):
     assert r.status_code == 401
     r = client.get("/api/asof/not-a-date", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 422   # authed but bad date — gate passed, validation ran
+
+
+def test_dispatch_paid_is_token_gated(accounts, tmp_path, monkeypatch):
+    from seiche import api as api_mod
+    from seiche.api import app
+    # point the dispatch dir at a temp file
+    monkeypatch.setattr(api_mod, "DISPATCH_DIR", tmp_path)
+    (tmp_path / "test-slug.paid.md").write_text("## the paid read\nsecret desk take")
+    client = TestClient(app)
+    accounts.add_user("desk_01", "correct horse battery")
+
+    # no token -> 401, no leak
+    r = client.get("/api/dispatch/test-slug")
+    assert r.status_code == 401
+    assert "secret desk take" not in r.text
+
+    # valid token -> the paid body
+    tok = client.post("/api/auth/login", json={"username": "desk_01", "password": "correct horse battery"}).json()["token"]
+    r = client.get("/api/dispatch/test-slug", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200 and "secret desk take" in r.json()["paid"]
+
+    # bad slug rejected
+    assert client.get("/api/dispatch/../etc/passwd", headers={"Authorization": f"Bearer {tok}"}).status_code in (404, 422)
