@@ -1,0 +1,44 @@
+# api.seiche.info — read-only public window + subscriber auth.
+# Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
+# Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
+api.seiche.info {
+    @public {
+        method GET
+        path /api/overview /api/public /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs
+    }
+    @login {
+        method POST
+        path /api/auth/login /api/alerts/prefs
+    }
+    handle @public {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header X-Content-Type-Options "nosniff"
+        reverse_proxy 127.0.0.1:8787
+    }
+    handle @login {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        reverse_proxy 127.0.0.1:8787
+    }
+    @preflight method OPTIONS
+    handle @preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature"
+        respond 204
+    }
+    @mcp {
+        path /mcp /mcp/usage /api/provision
+    }
+    handle @mcp {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature"
+        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
+        header X-Content-Type-Options "nosniff"
+        reverse_proxy 127.0.0.1:8787
+    }
+    handle {
+        respond "not here" 404
+    }
+}
