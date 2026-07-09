@@ -111,6 +111,34 @@ async def me(authorization: str | None = Header(default=None)):
     return ident
 
 
+class AlertPrefsBody(BaseModel):
+    email: str = ""
+    alerts_on: bool = False
+
+
+@app.get("/api/alerts/prefs")
+async def get_alert_prefs(authorization: str | None = Header(default=None)):
+    ident = _bearer_identity(authorization)
+    if ident is None:
+        raise HTTPException(401, "not signed in")
+    return accounts.get_alert_prefs(ident["username"])
+
+
+@app.post("/api/alerts/prefs")
+async def set_alert_prefs(body: AlertPrefsBody,
+                          authorization: str | None = Header(default=None)):
+    """Subscriber email alerts: set the address and toggle. When on, the box's
+    pull cycle emails you on regime change, Tell/crunch thresholds, and dead
+    inputs. Off by default; requires an email to enable."""
+    ident = _bearer_identity(authorization)
+    if ident is None:
+        raise HTTPException(401, "not signed in")
+    try:
+        return accounts.set_alert_prefs(ident["username"], body.email, body.alerts_on)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
 @app.get("/api/asof/{date}")
 async def asof(date: str, authorization: str | None = Header(default=None)):
     """Time Machine: the whole light board replayed as of a historical date.

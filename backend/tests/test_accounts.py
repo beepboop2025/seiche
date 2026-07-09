@@ -104,3 +104,32 @@ def test_board_gated_public_free(accounts, monkeypatch):
     assert client.get("/api/overview").status_code == 401
     tok = client.post("/api/auth/login", json={"username": "desk_01", "password": "correct horse battery"}).json()["token"]
     assert client.get("/api/overview", headers={"Authorization": f"Bearer {tok}"}).status_code == 200
+
+
+def test_alert_prefs_gated_and_persist(accounts, monkeypatch):
+    from seiche.api import app
+    client = TestClient(app)
+    accounts.add_user("desk_01", "correct horse battery")
+    tok = client.post("/api/auth/login", json={"username": "desk_01", "password": "correct horse battery"}).json()["token"]
+    H = {"Authorization": f"Bearer {tok}"}
+
+    assert client.get("/api/alerts/prefs").status_code == 401  # gated
+    assert client.get("/api/alerts/prefs", headers=H).json() == {"email": "", "alerts_on": False}
+
+    # can't enable without an email
+    assert client.post("/api/alerts/prefs", json={"email": "", "alerts_on": True}, headers=H).status_code == 422
+    # set + read back
+    r = client.post("/api/alerts/prefs", json={"email": "d@x.com", "alerts_on": True}, headers=H)
+    assert r.status_code == 200 and r.json() == {"email": "d@x.com", "alerts_on": True}
+    assert accounts.alert_recipients() == ["d@x.com"]
+    # turning off removes from fan-out
+    client.post("/api/alerts/prefs", json={"email": "d@x.com", "alerts_on": False}, headers=H)
+    assert accounts.alert_recipients() == []
+
+
+def test_mailer_unconfigured_is_noop(monkeypatch):
+    from seiche import mailer
+    for k in ("SEICHE_SMTP_HOST", "SEICHE_SMTP_USER", "SEICHE_SMTP_PASS"):
+        monkeypatch.delenv(k, raising=False)
+    assert mailer.configured() is False
+    assert mailer.send("a@b.com", "s", "b") is False  # never raises, returns False

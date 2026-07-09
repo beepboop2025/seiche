@@ -10,6 +10,7 @@ endpoint that accepts {"text": ...} JSON.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -17,6 +18,8 @@ import subprocess
 import httpx
 
 from seiche.config import ALERT_RULES, ALERT_WEBHOOK_ENV, DB_PATH
+
+logger = logging.getLogger("seiche.alerts")
 from seiche.sources.base import utcnow_iso
 
 
@@ -263,4 +266,34 @@ def evaluate(snap: dict) -> list[dict]:
             fired.append({"rule": rule, "state": state_key, "message": message})
     finally:
         conn.close()
+    if fired:
+        _notify_subscribers(fired, snap)
     return fired
+
+
+def _notify_subscribers(fired: list[dict], snap: dict) -> None:
+    """Email every subscriber who has alerts on. Best-effort; a mail outage
+    never affects the alert record or the pull cycle."""
+    try:
+        from seiche import accounts, mailer
+        if not mailer.configured():
+            return
+        recipients = accounts.alert_recipients()
+        if not recipients:
+            return
+        comp = snap.get("engines", {}).get("composite", {})
+        subject = f"Seiche alert · {comp.get('regime', '?')} {comp.get('value', '')}".strip()
+        lines = [f"- {a['message']}" for a in fired]
+        body = (
+            "Seiche funding-stress alert.\n\n"
+            + "\n".join(lines)
+            + f"\n\nBoard: {comp.get('regime')} ({comp.get('value')}/100), "
+            + f"as of {(snap.get('generated_at') or '')[:16].replace('T', ' ')}Z.\n"
+            + "Full board: https://seiche.info (sign in)\n\n"
+            + "You are receiving this because alerts are on for your Seiche account. "
+            + "Turn them off in the terminal or reply to desk@seiche.info."
+        )
+        for to in recipients:
+            mailer.send(to, subject, body)
+    except Exception as exc:  # never break the caller
+        logger.warning("subscriber alert fan-out failed: %s", exc)

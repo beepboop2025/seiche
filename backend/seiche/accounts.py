@@ -40,6 +40,12 @@ def _conn() -> sqlite3.Connection:
                created_utc REAL NOT NULL
            )"""
     )
+    # idempotent migration: subscriber alert prefs
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    if "email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+    if "alerts_on" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN alerts_on INTEGER DEFAULT 0")
     return conn
 
 
@@ -66,7 +72,8 @@ def add_user(username: str, password: str, tier: str = "pro") -> None:
     salt = os.urandom(16)
     with _conn() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)",
+            "INSERT OR REPLACE INTO users (username, salt_hex, hash_hex, tier, created_utc) "
+            "VALUES (?,?,?,?,?)",
             (username, salt.hex(), _hash(password, salt), tier, time.time()),
         )
 
@@ -111,6 +118,37 @@ def verify_token(token: str, now: float | None = None) -> dict | None:
     if int(exp_s) < (now or time.time()):
         return None
     return {"username": username, "tier": tier}
+
+
+def get_alert_prefs(username: str) -> dict:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT email, alerts_on FROM users WHERE username=?", (username,)
+        ).fetchone()
+    if row is None:
+        return {"email": "", "alerts_on": False}
+    return {"email": row[0] or "", "alerts_on": bool(row[1])}
+
+
+def set_alert_prefs(username: str, email: str, alerts_on: bool) -> dict:
+    email = (email or "").strip()
+    if email and ("@" not in email or len(email) > 254):
+        raise ValueError("invalid email")
+    if alerts_on and not email:
+        raise ValueError("an email is required to turn alerts on")
+    with _conn() as conn:
+        conn.execute("UPDATE users SET email=?, alerts_on=? WHERE username=?",
+                     (email, 1 if alerts_on else 0, username))
+    return {"email": email, "alerts_on": alerts_on}
+
+
+def alert_recipients() -> list[str]:
+    """Emails of subscribers who have alerts on — the notify fan-out list."""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT email FROM users WHERE alerts_on=1 AND email != ''"
+        ).fetchall()
+    return [r[0] for r in rows]
 
 
 def asof_gate_enabled() -> bool:

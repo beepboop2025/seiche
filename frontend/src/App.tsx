@@ -4,6 +4,7 @@ import { authHeaders, getToken } from "./auth";
 import { Any, fmt } from "./lib";
 import Dispatches from "./tabs/Dispatches";
 import FreePage from "./tabs/FreePage";
+import Account from "./tabs/Account";
 import Board from "./tabs/Board";
 import Helm from "./tabs/Helm";
 import Market from "./tabs/Market";
@@ -19,7 +20,7 @@ import System from "./tabs/System";
 
 const TABS = [
   "DISPATCHES", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
-  "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM",
+  "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -124,6 +125,7 @@ export default function App() {
       {tab === "TIME MACHINE" && <TimeMachine live={live} />}
       {tab === "PROOF" && <Proof snap={snap} />}
       {tab === "SYSTEM" && <System snap={snap} live={live} />}
+      {tab === "ACCOUNT" && <Account />}
 
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
