@@ -83,7 +83,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--panel-edge)" }}>
             <div className="sub">
               Historical replay is a <b style={{ color: "var(--accent)" }}>subscriber</b> feature.
-              The live board stays free. Access: write to the desk — accounts are provisioned by hand for now.
+              The live board stays free. Access: write to <a href="mailto:desk@seiche.info" style={{ color: "var(--accent)" }}>desk@seiche.info</a> — accounts are provisioned by hand for now.
             </div>
             <div className="tmcontrols">
               <input type="text" placeholder="username" value={user} autoComplete="username"

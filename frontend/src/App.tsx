@@ -119,6 +119,10 @@ export default function App() {
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
         Not investment advice. All data from free public APIs with their native lags (COT is T+3 by construction; that lag is shown, never hidden). ·
         Composite weights are editorial and live in backend/seiche/config.py.
+        <br />
+        <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
+        <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
+        <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
       </div>
     </div>
   );
