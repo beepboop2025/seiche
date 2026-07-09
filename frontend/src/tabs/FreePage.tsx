@@ -120,14 +120,14 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
           no account? request access · desk@seiche.info
         </a>
         <a className="paywall-alt" href="/support.html" style={{ display: "inline-block", marginTop: 6 }}>
-          pay in crypto · BTC / ETH / SOL / TRON →
+          subscribe with crypto · BTC / ETH / SOL / TRON →
         </a>
       </div>
 
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. · Not investment advice. ·{" "}
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
-        <a href="/support.html" style={{ color: "var(--dim)" }}>pay &amp; support</a> ·{" "}
+        <a href="/support.html" style={{ color: "var(--dim)" }}>subscribe</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
       </div>
