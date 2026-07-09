@@ -4,7 +4,7 @@
 api.seiche.info {
     @public {
         method GET
-        path /api/overview /api/public /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs
+        path /api/overview /api/public /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary
     }
     @login {
         method POST
