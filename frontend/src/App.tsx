@@ -127,6 +127,7 @@ export default function App() {
         Composite weights are editorial and live in backend/seiche/config.py.
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
+        <a href="/support.html" style={{ color: "var(--dim)" }}>pay &amp; support</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
       </div>

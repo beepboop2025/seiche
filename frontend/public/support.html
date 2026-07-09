@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pay &amp; Support · Seiche</title>
+<meta name="description" content="Pay for a Seiche subscription or support the desk. Bitcoin, Ethereum, Solana, Tron and Monero accepted.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  body { background:#000; color:#e2e8f0; font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:14px; line-height:1.7; max-width:760px; margin:0 auto; padding:48px 24px 80px; }
+  h1 { font-size:22px; letter-spacing:.06em; }
+  a { color:#06d6e0; } .dim { color:#64748b; font-size:12px; }
+  .coin { border:1px solid #1e293b; border-radius:6px; padding:14px 16px; margin-top:14px; }
+  .coin .name { color:#06d6e0; font-size:12px; letter-spacing:.08em; }
+  .coin .net { color:#64748b; font-size:11px; margin-left:8px; }
+  .addr { display:block; word-break:break-all; background:#0b1120; border:1px solid #1e293b; border-radius:4px; padding:8px 10px; margin-top:8px; font-size:12.5px; color:#e2e8f0; }
+  .row { display:flex; align-items:center; gap:10px; margin-top:8px; }
+  button.copy { background:#0b1120; color:#06d6e0; border:1px solid #164e63; border-radius:4px; font-family:inherit; font-size:11px; padding:4px 12px; cursor:pointer; letter-spacing:.05em; }
+  button.copy:hover { background:#164e63; color:#e2e8f0; }
+  .warn { color:#64748b; font-size:11px; }
+  .note { border-left:2px solid #164e63; padding-left:12px; margin-top:24px; color:#94a3b8; font-size:12.5px; }
+</style>
+</head>
+<body>
+<h1>Pay &amp; Support</h1>
+<p class="dim">seiche.info · the funding-stress terminal</p>
+
+<p>Seiche runs on free public data and paid subscriptions. You can pay for a subscription, or simply support the desk, with any of the addresses below. After sending, email <a href="mailto:desk@seiche.info?subject=Seiche%20payment">desk@seiche.info</a> with the transaction id and the username you want, and your account will be set up.</p>
+
+<div class="coin">
+  <span class="name">BITCOIN · BTC</span><span class="net">Bitcoin network only</span>
+  <code class="addr" id="btc">bc1qjg836tkh4f60twad5l4fhh4tek2wje5x3avc3r</code>
+  <div class="row"><button class="copy" data-for="btc">copy</button><span class="warn">send BTC on the Bitcoin network, nothing else</span></div>
+</div>
+
+<div class="coin">
+  <span class="name">ETHEREUM · ETH / USDC / USDT</span><span class="net">Ethereum and EVM chains, ERC-20</span>
+  <code class="addr" id="eth">0x5B4A78b7EFe482d1579E287dA6F0043f89cf0EA1</code>
+  <div class="row"><button class="copy" data-for="eth">copy</button><span class="warn">ETH or ERC-20 stablecoins on Ethereum mainnet</span></div>
+</div>
+
+<div class="coin">
+  <span class="name">SOLANA · SOL / USDC</span><span class="net">Solana network</span>
+  <code class="addr" id="sol">GSESNjnptegNExWRERN6w6niWcPH7WPh6aqdo9kje4UJ</code>
+  <div class="row"><button class="copy" data-for="sol">copy</button><span class="warn">SOL or SPL tokens on Solana</span></div>
+</div>
+
+<div class="coin">
+  <span class="name">TRON · USDT / USDC</span><span class="net">Tron network, TRC-20</span>
+  <code class="addr" id="trx">TAAUBJ4qcQtBEp7atEiCcyiEY4qYF56Eaa</code>
+  <div class="row"><button class="copy" data-for="trx">copy</button><span class="warn">TRC-20 tokens on Tron only</span></div>
+</div>
+
+<div class="coin">
+  <span class="name">MONERO · XMR</span><span class="net">Monero network</span>
+  <code class="addr" id="xmr">44juwNHWxVhgPf6jp8BVqP8LSKwBbVm6rVoJ6d1Qhqd5AwRHhH5CNWSSQCbDNDvZuK6WcuJwT4wKt5csePngREkERtgPYs1</code>
+  <div class="row"><button class="copy" data-for="xmr">copy</button><span class="warn">XMR on the Monero network</span></div>
+</div>
+
+<div class="note">
+  Double check the first and last characters after pasting. Crypto transfers are final, and tokens sent on the wrong network cannot be recovered. If you would rather pay another way, write to <a href="mailto:desk@seiche.info">desk@seiche.info</a> and we will sort something out.
+</div>
+
+<p class="dim" style="margin-top:32px"><a href="/">← back to the terminal</a> · <a href="/terms.html">terms</a> · <a href="/privacy.html">privacy</a></p>
+
+<script>
+  document.querySelectorAll("button.copy").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var text = document.getElementById(b.dataset.for).textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        var old = b.textContent;
+        b.textContent = "copied";
+        setTimeout(function () { b.textContent = old; }, 1200);
+      });
+    });
+  });
+</script>
+</body>
+</html>
