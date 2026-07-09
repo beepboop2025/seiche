@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { API_BASE } from "./apiBase";
 import { Any, fmt } from "./lib";
 import Board from "./tabs/Board";
 import Helm from "./tabs/Helm";
@@ -33,7 +34,7 @@ export default function App() {
   // Live API first (dev / self-hosted); fall back to the static snapshot
   // published by CI (Cloudflare Pages deploy has no backend process).
   const load = () =>
-    fetch("/api/overview")
+    fetch(`${API_BASE}/api/overview`)
       .then((r) => {
         const ct = r.headers.get("content-type") ?? "";
         if (!r.ok || !ct.includes("json")) throw new Error("no live api");

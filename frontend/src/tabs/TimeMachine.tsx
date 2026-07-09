@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { API_BASE } from "../apiBase";
 import { Any, fmt, Decomp, Stat } from "../lib";
 
 const PRESETS = [
@@ -20,7 +21,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
     if (!d) return;
     setBusy(true);
     setErr(null);
-    fetch(`/api/asof/${d}`)
+    fetch(`${API_BASE}/api/asof/${d}`)
       .then(async (r) => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail ?? `HTTP ${r.status}`);
         return r.json();
