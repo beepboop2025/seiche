@@ -21,7 +21,7 @@ git fetch origin main && git checkout main && git pull --ff-only origin main
 # backend
 cd "$APP_DIR/backend"
 python3 -m venv .venv
-.venv/bin/pip install -q -e ".[dev]"
+.venv/bin/pip install -q -e ".[dev,notary]"
 .venv/bin/python -m pytest tests -q   # the same gate CI uses: no green, no serve
 
 # frontend (built once; uvicorn serves dist/)
