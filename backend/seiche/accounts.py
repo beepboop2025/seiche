@@ -91,6 +91,14 @@ def verify_user(username: str, password: str) -> dict | None:
     return None
 
 
+def user_exists(username: str) -> bool:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM users WHERE username=?", (username,)
+        ).fetchone()
+    return row is not None
+
+
 def list_users() -> list[dict]:
     with _conn() as conn:
         rows = conn.execute("SELECT username, tier, created_utc FROM users").fetchall()

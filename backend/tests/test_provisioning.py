@@ -55,6 +55,20 @@ def test_missing_ref_still_records_and_is_unique(prov):
     assert a["username"] != b["username"]          # distinct synthetic refs
 
 
+def test_provision_never_overwrites_existing_account(prov):
+    """A colliding username (e.g. a buyer-supplied one echoed via the webhook)
+    must NOT clobber an existing account's credentials — the payer gets a fresh
+    suffixed account instead, and the victim's login still works."""
+    from seiche import accounts
+    accounts.add_user("mrinal", "the founders own password", tier="founder")
+    r = prov.provision("pro", username="mrinal", payment_ref="attack")
+    assert r["username"] != "mrinal"               # granted a different name
+    assert r["username"].startswith("mrinal_")
+    # the original account is untouched
+    assert accounts.verify_user("mrinal", "the founders own password")["tier"] == "founder"
+    assert accounts.verify_user("mrinal", r["password"]) is None
+
+
 # ---- signature & gate -------------------------------------------------------
 
 def test_signature_roundtrip(prov, monkeypatch):

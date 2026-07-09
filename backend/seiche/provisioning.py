@@ -111,9 +111,19 @@ def provision(tier: str, *, email: str = "", username: str = "",
             prior["password"] = None
             return prior
 
-        username = (username or _username_from(email)).strip()
+        # A provision must only ever CREATE a subscriber, never overwrite an
+        # existing one: accounts.add_user is INSERT OR REPLACE (used elsewhere
+        # for deliberate password resets), so a colliding username — including a
+        # buyer-supplied one echoed through the payment webhook — would clobber
+        # that account's credentials (account takeover). If the requested name
+        # is taken, grant a suffixed one instead so the payer still gets access
+        # without ever touching someone else's account.
+        requested = (username or _username_from(email)).strip()
+        username = requested
+        while accounts.user_exists(username):
+            username = f"{requested}_{secrets.token_hex(3)}"
         password = secrets.token_urlsafe(14)
-        accounts.add_user(username, password, tier=tier)  # INSERT OR REPLACE
+        accounts.add_user(username, password, tier=tier)
 
         conn.execute(
             "INSERT INTO provisions (payment_ref, username, tier, email, amount, "
