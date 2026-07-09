@@ -5,13 +5,13 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import assemble, store
+from seiche import accounts, assemble, store
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
@@ -44,9 +44,44 @@ async def engine(name: str):
     return snap["engines"][name]
 
 
+from pydantic import BaseModel
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+async def login(body: LoginBody):
+    """Subscriber login — returns a 30-day bearer token. Accounts are
+    provisioned by the operator (`seiche user add`); no self-signup yet."""
+    user = accounts.verify_user(body.username, body.password)
+    if user is None:
+        raise HTTPException(401, "invalid username or password")
+    return accounts.issue_token(user["username"], user["tier"])
+
+
+def _bearer_identity(authorization: str | None) -> dict | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return accounts.verify_token(authorization.removeprefix("Bearer "))
+
+
+@app.get("/api/me")
+async def me(authorization: str | None = Header(default=None)):
+    ident = _bearer_identity(authorization)
+    if ident is None:
+        raise HTTPException(401, "not signed in")
+    return ident
+
+
 @app.get("/api/asof/{date}")
-async def asof(date: str):
-    """Time Machine: the whole light board replayed as of a historical date."""
+async def asof(date: str, authorization: str | None = Header(default=None)):
+    """Time Machine: the whole light board replayed as of a historical date.
+    Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
+    if accounts.asof_gate_enabled() and _bearer_identity(authorization) is None:
+        raise HTTPException(401, "Time Machine replay is a subscriber feature — sign in")
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
     payload = await assemble.snapshot_asof(date)

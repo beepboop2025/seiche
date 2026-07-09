@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { API_BASE } from "../apiBase";
+import { authHeaders, clearToken, getToken, login } from "../auth";
 import { Any, fmt, Decomp, Stat } from "../lib";
 
 const PRESETS = [
@@ -16,19 +17,34 @@ export default function TimeMachine({ live }: { live: boolean }) {
   const [replay, setReplay] = useState<Any | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [user, setUser] = useState("");
+  const [pw, setPw] = useState("");
+  const [authErr, setAuthErr] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState<boolean>(() => getToken() !== null);
 
   const load = (d: string) => {
     if (!d) return;
     setBusy(true);
     setErr(null);
-    fetch(`${API_BASE}/api/asof/${d}`)
+    fetch(`${API_BASE}/api/asof/${d}`, { headers: authHeaders() })
       .then(async (r) => {
+        if (r.status === 401) { setNeedsAuth(true); throw new Error("subscriber feature — sign in below"); }
+        setNeedsAuth(false);
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail ?? `HTTP ${r.status}`);
         return r.json();
       })
       .then(setReplay)
       .catch((e) => { setErr(String(e.message ?? e)); setReplay(null); })
       .finally(() => setBusy(false));
+  };
+
+  const doLogin = () => {
+    setAuthErr(null);
+    login(user.trim(), pw).then((res) => {
+      if (res.ok) { setSignedIn(true); setNeedsAuth(false); setPw(""); setErr(null); if (date) load(date); }
+      else setAuthErr(res.error);
+    });
   };
 
   if (!live) {
@@ -63,6 +79,29 @@ export default function TimeMachine({ live }: { live: boolean }) {
           ))}
         </div>
         {err && <div className="faults">{err}</div>}
+        {needsAuth && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--panel-edge)" }}>
+            <div className="sub">
+              Historical replay is a <b style={{ color: "var(--accent)" }}>subscriber</b> feature.
+              The live board stays free. Access: write to the desk — accounts are provisioned by hand for now.
+            </div>
+            <div className="tmcontrols">
+              <input type="text" placeholder="username" value={user} autoComplete="username"
+                     onChange={(e) => setUser(e.target.value)} />
+              <input type="password" placeholder="password" value={pw} autoComplete="current-password"
+                     onChange={(e) => setPw(e.target.value)}
+                     onKeyDown={(e) => e.key === "Enter" && doLogin()} />
+              <button onClick={doLogin} disabled={!user || !pw}>sign in</button>
+              {authErr && <span className="dimsmall" style={{ color: "var(--stress)" }}>{authErr}</span>}
+            </div>
+          </div>
+        )}
+        {signedIn && !needsAuth && (
+          <div className="dimsmall" style={{ marginTop: 8 }}>
+            signed in · <a href="#" style={{ color: "var(--faint)" }}
+              onClick={(e) => { e.preventDefault(); clearToken(); setSignedIn(false); }}>sign out</a>
+          </div>
+        )}
       </div>
 
       {replay && (

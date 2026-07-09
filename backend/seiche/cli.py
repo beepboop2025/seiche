@@ -423,6 +423,20 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_user(args) -> None:
+    from seiche import accounts
+
+    if args.action == "add":
+        import secrets as _secrets
+        password = args.password or _secrets.token_urlsafe(14)
+        accounts.add_user(args.username, password, tier=args.tier)
+        print(f"user '{args.username}' ({args.tier}) provisioned")
+        print(f"password (shown ONCE, share over a safe channel): {password}")
+    elif args.action == "list":
+        for u in accounts.list_users():
+            print(f"{u['username']:24s} {u['tier']}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="seiche", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -448,6 +462,13 @@ def main() -> None:
     p.set_defaults(fn=cmd_replay)
 
     sub.add_parser("backtest", help="PROOF summary").set_defaults(fn=cmd_backtest)
+
+    p = sub.add_parser("user", help="subscriber accounts (add/list)")
+    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("username", nargs="?", default="")
+    p.add_argument("--tier", default="pro")
+    p.add_argument("--password", default="", help="omit to auto-generate")
+    p.set_defaults(fn=cmd_user)
 
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
 
