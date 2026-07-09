@@ -41,13 +41,19 @@ def send(to: str, subject: str, body: str) -> bool:
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
+    ctx = ssl.create_default_context()
     try:
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
-            s.login(user, pw)
-            s.send_message(msg)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
+                s.login(user, pw)
+                s.send_message(msg)
+        else:  # 587 / STARTTLS
+            with smtplib.SMTP(host, port, timeout=20) as s:
+                s.starttls(context=ctx)
+                s.login(user, pw)
+                s.send_message(msg)
         logger.info("sent mail to %s: %s", to, subject)
         return True
     except Exception as exc:  # never break the caller
-        logger.warning("mail send to %s failed: %s", to, exc)
+        logger.warning("mail send to %s failed (host=%s port=%s): %s", to, host, port, exc)
         return False
