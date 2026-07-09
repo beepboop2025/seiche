@@ -281,3 +281,14 @@ table.mini tr:hover td { background: rgba(255,255,255,0.015); }
   border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--panel);
   font-size: 12px; line-height: 1.7; white-space: pre-wrap;
 }
+
+/* ---- subscriber affordance ---- */
+.prolink {
+  display: inline-block; margin-top: 4px; text-decoration: none;
+  font-family: var(--display); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--accent); border: 1px solid rgba(6,214,224,.35);
+  border-radius: 999px; padding: 2px 9px;
+  transition: box-shadow var(--dur) var(--ease);
+}
+.prolink:hover { box-shadow: 0 0 12px var(--accent-glow); }

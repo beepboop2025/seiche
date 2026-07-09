@@ -75,7 +75,10 @@ export default function App() {
         </div>
         <div className="right">
           {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
-          FRED · NY Fed · OFR · FiscalData · CFTC · ECB
+          FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
+          <a className="prolink" href="#timemachine">
+            {localStorage.getItem("seiche_token") ? "PRO · signed in" : "PRO · subscriber sign in"}
+          </a>
         </div>
       </div>
 
