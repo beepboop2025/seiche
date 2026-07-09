@@ -33,6 +33,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "$KEY" > ~/.ssh/hetzner_key
           chmod 600 ~/.ssh/hetzner_key
+          # TODO: pin host key — replace accept-new with a known_hosts entry for
+          # $HOST (StrictHostKeyChecking=yes) to close the first-connection MITM
+          # window. Needs the real server host key, so leaving accept-new for now.
           ssh -i ~/.ssh/hetzner_key -o StrictHostKeyChecking=accept-new "root@$HOST" '
             set -e
             if [ -x /opt/seiche/ops/deploy/update.sh ]; then

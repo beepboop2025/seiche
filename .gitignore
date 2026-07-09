@@ -4,7 +4,7 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-backend/data/*.sqlite*
+backend/data/
 node_modules/
 frontend/dist/
 frontend/public/data/

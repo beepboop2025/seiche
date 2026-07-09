@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+import time
+from collections import defaultdict, deque
+from threading import Lock
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -20,8 +24,17 @@ from seiche.config import (
     REGIMES,
 )
 
+# In production (SEICHE_ENV=production, set in the systemd unit) the interactive
+# API docs and the machine-readable schema are turned off — they enumerate every
+# gated route and its shape, which we don't hand to anonymous callers. Dev keeps
+# them on.
+_PROD = os.getenv("SEICHE_ENV", "").lower() == "production"
+
 app = FastAPI(title="Seiche", version=assemble.VERSION,
-              description="Funding-stress & leveraged-positioning early-warning terminal")
+              description="Funding-stress & leveraged-positioning early-warning terminal",
+              docs_url=None if _PROD else "/docs",
+              redoc_url=None if _PROD else "/redoc",
+              openapi_url=None if _PROD else "/openapi.json")
 
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
 # here produced duplicate Access-Control-Allow-Origin headers that browsers
@@ -31,29 +44,116 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _board_gate_enabled() -> bool:
-    import os
     return os.getenv("SEICHE_BOARD_AUTH", "0") == "1"
 
 
-@app.get("/api/overview")
-async def overview(force: bool = False,
-                   authorization: str | None = Header(default=None)):
-    """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
-    box). Free visitors get /api/public instead."""
-    if _board_gate_enabled() and _bearer_identity(authorization) is None:
+def _bearer_identity(authorization: str | None) -> dict | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    return accounts.verify_token(authorization.removeprefix("Bearer "))
+
+
+def require_board(authorization: str | None = Header(default=None)) -> dict | None:
+    """Shared gate for every non-public endpoint. When the board gate is on
+    (SEICHE_BOARD_AUTH=1, the public box) a valid subscriber token is required;
+    in dev/tests (gate off) it is a no-op that simply surfaces the caller's
+    identity (or None) so handlers can honour `force` only for authed callers."""
+    ident = _bearer_identity(authorization)
+    if _board_gate_enabled() and ident is None:
         raise HTTPException(401, "the board is a subscriber feature — sign in")
-    return await assemble.snapshot(force=force)
+    return ident
+
+
+# ---- rate limiting ----------------------------------------------------------
+# stdlib-only, in-process, per-IP. Matches the project ethos (no new deps); the
+# counters reset on restart, which is fine for a single-process deploy. Behind
+# Caddy the real client is in X-Forwarded-For.
+
+LOGIN_RATE_LIMIT_PER_MIN = 10   # max login attempts per IP per rolling minute
+LOGIN_LOCKOUT_AFTER = 5         # consecutive failures before a backoff lockout
+LOGIN_LOCKOUT_SECONDS = 300     # how long that lockout lasts (5 min)
+ASK_RATE_LIMIT_PER_MIN = 20     # max desk-assistant (LLM) calls per IP / minute
+
+
+class _RateLimiter:
+    """Tiny sliding-window per-key limiter."""
+
+    def __init__(self, limit_per_min: int) -> None:
+        self._limit = limit_per_min
+        self._hits: dict[str, deque] = defaultdict(deque)
+        self._lock = Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.time()
+        with self._lock:
+            dq = self._hits[key]
+            while dq and dq[0] <= now - 60:
+                dq.popleft()
+            if len(dq) >= self._limit:
+                return False
+            dq.append(now)
+            return True
+
+
+class _LoginGuard:
+    """Consecutive-failure backoff: after LOGIN_LOCKOUT_AFTER bad passwords from
+    one IP, that IP is locked out for LOGIN_LOCKOUT_SECONDS. A success clears it."""
+
+    def __init__(self) -> None:
+        self._fails: dict[str, int] = defaultdict(int)
+        self._locked_until: dict[str, float] = {}
+        self._lock = Lock()
+
+    def retry_after(self, key: str) -> int:
+        with self._lock:
+            remaining = self._locked_until.get(key, 0.0) - time.time()
+            return int(remaining) + 1 if remaining > 0 else 0
+
+    def record_failure(self, key: str) -> None:
+        with self._lock:
+            self._fails[key] += 1
+            if self._fails[key] >= LOGIN_LOCKOUT_AFTER:
+                self._locked_until[key] = time.time() + LOGIN_LOCKOUT_SECONDS
+                self._fails[key] = 0
+
+    def record_success(self, key: str) -> None:
+        with self._lock:
+            self._fails.pop(key, None)
+            self._locked_until.pop(key, None)
+
+
+_login_limiter = _RateLimiter(LOGIN_RATE_LIMIT_PER_MIN)
+_login_guard = _LoginGuard()
+_ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.get("/api/overview")
+async def overview(force: bool = False, ident: dict | None = Depends(require_board)):
+    """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
+    box). Free visitors get /api/public instead. `force` (cache-bypass
+    recompute) is honoured only for authenticated callers."""
+    return await assemble.snapshot(force=force and ident is not None)
 
 
 @app.get("/api/public")
-async def public(force: bool = False):
-    """Free surface: the conclusion + PROOF scoreboard only. Never the board."""
-    snap = await assemble.snapshot(force=force)
+async def public(force: bool = False,
+                 authorization: str | None = Header(default=None)):
+    """Free surface: the conclusion + PROOF scoreboard only. Never the board.
+    `force` is ignored for unauthenticated callers — no anonymous recompute."""
+    ident = _bearer_identity(authorization)
+    snap = await assemble.snapshot(force=force and ident is not None)
     return public_view.public_payload(snap)
 
 
 @app.get("/api/engines/{name}")
-async def engine(name: str):
+async def engine(name: str, _ident: dict | None = Depends(require_board)):
     snap = await assemble.snapshot()
     if name not in snap["engines"]:
         raise HTTPException(404, f"unknown engine '{name}'")
@@ -69,19 +169,24 @@ class LoginBody(BaseModel):
 
 
 @app.post("/api/auth/login")
-async def login(body: LoginBody):
+async def login(body: LoginBody, request: Request):
     """Subscriber login — returns a 30-day bearer token. Accounts are
-    provisioned by the operator (`seiche user add`); no self-signup yet."""
+    provisioned by the operator (`seiche user add`); no self-signup yet.
+    Per-IP rate-limited with consecutive-failure backoff."""
+    ip = _client_ip(request)
+    locked = _login_guard.retry_after(ip)
+    if locked:
+        raise HTTPException(429, f"too many failed attempts — try again in {locked}s",
+                            headers={"Retry-After": str(locked)})
+    if not _login_limiter.allow(ip):
+        raise HTTPException(429, "too many login attempts — slow down",
+                            headers={"Retry-After": "60"})
     user = accounts.verify_user(body.username, body.password)
     if user is None:
+        _login_guard.record_failure(ip)
         raise HTTPException(401, "invalid username or password")
+    _login_guard.record_success(ip)
     return accounts.issue_token(user["username"], user["tier"])
-
-
-def _bearer_identity(authorization: str | None) -> dict | None:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    return accounts.verify_token(authorization.removeprefix("Bearer "))
 
 
 DISPATCH_DIR = Path(__file__).parent / "dispatches"
@@ -139,10 +244,10 @@ async def set_alert_prefs(body: AlertPrefsBody,
 
 
 @app.get("/api/asof/{date}")
-async def asof(date: str, authorization: str | None = Header(default=None)):
+async def asof(date: str, ident: dict | None = Depends(require_board)):
     """Time Machine: the whole light board replayed as of a historical date.
     Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
-    if accounts.asof_gate_enabled() and _bearer_identity(authorization) is None:
+    if accounts.asof_gate_enabled() and ident is None:
         raise HTTPException(401, "Time Machine replay is a subscriber feature — sign in")
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
@@ -153,21 +258,22 @@ async def asof(date: str, authorization: str | None = Header(default=None)):
 
 
 @app.get("/api/deep")
-async def deep():
+async def deep(_ident: dict | None = Depends(require_board)):
     """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
     snap = await assemble.snapshot()
     return snap.get("deep", {})
 
 
 @app.get("/api/book")
-async def book():
+async def book(_ident: dict | None = Depends(require_board)):
     """The Book: today's positions, walk-forward P&L, live track record."""
     snap = await assemble.snapshot()
     return snap.get("deep", {}).get("book", {"ok": False, "reason": "unavailable"})
 
 
 @app.get("/api/series/{mnemonic}")
-async def series(mnemonic: str, n: int = 750):
+async def series(mnemonic: str, n: int = 750,
+                 _ident: dict | None = Depends(require_board)):
     if mnemonic not in ALL_SERIES:
         raise HTTPException(404, f"unknown series '{mnemonic}'")
     await assemble.snapshot()  # ensure fetched
@@ -178,7 +284,7 @@ async def series(mnemonic: str, n: int = 750):
 
 
 @app.get("/api/config")
-async def config_view():
+async def config_view(_ident: dict | None = Depends(require_board)):
     """The editorial voice, read-only: what the operator can tune and where."""
     return {
         "composite_weights": COMPOSITE_WEIGHTS,
@@ -190,7 +296,7 @@ async def config_view():
 
 
 @app.get("/api/alerts")
-async def alerts(n: int = 50):
+async def alerts(n: int = 50, _ident: dict | None = Depends(require_board)):
     """Recent alert log (written by `seiche alert` / `seiche watch`)."""
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -210,7 +316,7 @@ async def alerts(n: int = 50):
 
 
 @app.get("/api/brief", response_class=PlainTextResponse)
-async def brief_text():
+async def brief_text(_ident: dict | None = Depends(require_board)):
     """This morning's desk note, rendered as markdown."""
     from seiche import brief as brief_mod
 
@@ -219,10 +325,14 @@ async def brief_text():
 
 
 @app.get("/api/ask")
-async def ask(q: str):
-    """Desk assistant: answers grounded strictly in the live board."""
+async def ask(q: str, request: Request):
+    """Desk assistant: answers grounded strictly in the live board.
+    Per-IP rate-limited (it calls the LLM)."""
     from seiche import ai
 
+    if not _ask_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "too many questions — slow down",
+                            headers={"Retry-After": "60"})
     if not q or len(q) > 600:
         raise HTTPException(422, "q must be 1-600 characters")
     snap = await assemble.snapshot()
@@ -230,7 +340,7 @@ async def ask(q: str):
 
 
 @app.get("/api/pit")
-async def pit(n: int = 400):
+async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
     """The forward-accruing as-published index record (no reconstruction)."""
     conn = sqlite3.connect(DB_PATH)
     try:
