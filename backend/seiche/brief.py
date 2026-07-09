@@ -120,6 +120,31 @@ def render_markdown(snap: dict) -> str:
     if res.get("ok"):
         wm = res.get("worst_mode", {})
         lines.append(f"- Resonance {res['score']}: {wm.get('label')} amplifying {wm.get('amplification')}x")
+    bath = deep.get("bathymetry", {})
+    if bath.get("ok"):
+        spec = bath.get("spectrum") or {}
+        arrow = bath.get("arrow") or {}
+        mfpt = f", ~{bath['mfpt_bd']:.0f}bd to next event" if bath.get("mfpt_bd") is not None else ""
+        lines.append(
+            f"- Bathymetry: P(event 5bd) {bath.get('p_event_5bd', 0) or 0:.0%}{mfpt} · "
+            f"relaxation τ {spec.get('tau_bd')}bd ({spec.get('tau_pctl', '?')}th pctl) · "
+            f"entropy production {arrow.get('sigma_nats_bd')} nats/bd ({arrow.get('pctl', '?')}th)"
+        )
+    mer = eng.get("merian", {})
+    if mer.get("ok") and (mer.get("instability") or {}).get("g_now") is not None:
+        inst = mer["instability"]
+        if (inst.get("g_now") or 0.0) > 0 and (inst.get("pctl") or 0.0) >= 90:
+            lines.append(
+                f"- Merian: GROWING mode live (g {inst['g_now']:+.3f}/bd, {inst['pctl']:.0f}th pctl)"
+            )
+    rogue = eng.get("roguewave", {})
+    if rogue.get("ok"):
+        rl = next((r for r in rogue.get("return_levels", []) if r.get("years") == 10.0), None)
+        if rl:
+            lines.append(
+                f"- Rogue Wave: ξ {rogue['fit']['xi']} — 10y wave ~{rl['bp']:.0f}bp "
+                f"(sample max {rogue.get('sample_max_bp')}bp)"
+            )
     crowd = eng.get("crowding", {})
     if crowd.get("ok") and crowd.get("rows"):
         r = crowd["rows"][0]

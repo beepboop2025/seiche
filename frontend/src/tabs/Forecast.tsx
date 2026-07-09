@@ -207,6 +207,105 @@ function SwellCard({ s }: { s: Any }) {
   );
 }
 
+function PotentialSVG({ floor, popNow }: { floor: Any; popNow: number | null }) {
+  const curve: number[][] = (floor?.curve ?? []) as number[][];
+  if (!curve.length) return null;
+  const W = 600, H = 150, PAD = 8;
+  const xs = curve.map((r) => r[0]);
+  const vs = curve.map((r) => r[1]);
+  const xmin = Math.min(...xs), xmax = Math.max(...xs);
+  const vmax = Math.max(...vs, 1e-9);
+  const px = (x: number) => PAD + ((x - xmin) / (xmax - xmin)) * (W - 2 * PAD);
+  const py = (v: number) => H - PAD - (v / vmax) * (H - 2 * PAD);
+  const pts = curve.map((r) => `${px(r[0]).toFixed(1)},${py(r[1]).toFixed(1)}`).join(" ");
+  // interpolate V at today's state for the ball marker
+  let ball: { x: number; y: number } | null = null;
+  if (popNow != null) {
+    const cx = Math.min(Math.max(popNow, xmin), xmax);
+    let k = 0;
+    while (k < curve.length - 2 && curve[k + 1][0] < cx) k++;
+    const [x0, v0] = curve[k], [x1, v1] = curve[k + 1];
+    const v = x1 === x0 ? v0 : v0 + ((cx - x0) / (x1 - x0)) * (v1 - v0);
+    ball = { x: px(cx), y: py(v) };
+  }
+  const evX = px(10.0 > xmax ? xmax : 10.0);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "150px", display: "block" }}>
+      <line x1={evX} y1={PAD} x2={evX} y2={H - PAD} stroke="#e5484d" strokeDasharray="3 4" strokeWidth={1} />
+      <text x={evX - 4} y={PAD + 10} fill="#e5484d" fontSize={10} textAnchor="end" fontFamily="SF Mono, monospace">
+        event ≥10bp
+      </text>
+      <polyline points={pts} fill="none" stroke="#5aa9e6" strokeWidth={1.6} />
+      {ball && <circle cx={ball.x} cy={ball.y} r={4.5} fill="#e8b64c" stroke="#0b0f14" strokeWidth={1} />}
+      <text x={PAD + 2} y={H - PAD - 2} fill="#6b7686" fontSize={10} fontFamily="SF Mono, monospace">
+        V(x) — the basin floor · ● today
+      </text>
+    </svg>
+  );
+}
+
+function BathymetryCard({ b }: { b: Any }) {
+  if (!b?.ok) return <Fault name="Bathymetry" reason={b?.reason} span={12} />;
+  const fl = b.floor ?? {}, sp = b.spectrum ?? {}, ar = b.arrow ?? {}, v = b.validation ?? {};
+  const hz = b.p_by_horizon ?? {};
+  const beats = v.ok && v.brier < v.brier_climatology && (v.auroc ?? 0) > 0.55;
+  const rows: (string | number | null)[][] = (b.series ?? []).map((r: Any) => [r[0], r[1], r[2]]);
+  const mfpt = b.mfpt_bd;
+  return (
+    <div className="card span12">
+      <h2>Bathymetry ★</h2>
+      <div className="sub">
+        the basin floor mapped from the water's motion — empirical Langevin potential, the
+        Fokker–Planck↔Schrödinger energy spectrum, entropy production (the arrow of time), and the
+        Kramers escape problem solved as a forecast
+      </div>
+      <div className="tellhero">
+        <div className={`tellvalue ${(b.p_event_5bd ?? 0) >= 0.5 ? "hot" : ""}`}>
+          {b.p_event_5bd != null ? `${fmt(b.p_event_5bd * 100, 0)}%` : "—"}
+        </div>
+        <div>
+          <div className="tellreading">
+            first-passage P(funding event within 5bd) · 1bd {fmt((hz.h1 ?? 0) * 100, 0)}% ·
+            10bd {fmt((hz.h10 ?? 0) * 100, 0)}% ·
+            {" "}expected first passage {b.state_now?.in_event_bin
+              ? <b style={{ color: "#e5484d" }}>state already in the event bin</b>
+              : mfpt != null
+                ? <b>{fmt(mfpt, 0)}bd</b>
+                : <span className="dimsmall">beyond {b.mfpt_cap_bd}bd — the well holds</span>}
+          </div>
+          <div className="coverage">
+            state x = {fmt(b.state_now?.pop_bp, 1)}bp · well at {fmt(fl.well_bp, 1)}bp ·
+            stiffness {fmt(fl.stiffness, 2)}/bd · escape barrier{" "}
+            <b style={{ color: (fl.barrier_kt ?? 99) < 2 ? "#e5484d" : undefined }}>{fmt(fl.barrier_kt, 1)} k<sub>B</sub>T</b> ·
+            τ (slowest relaxation) {fmt(sp.tau_bd, 1)}bd
+            {sp.tau_pctl != null && <b style={{ color: sp.tau_pctl >= 80 ? "#e5484d" : undefined }}> ({fmt(sp.tau_pctl, 0)}th pctl)</b>} ·
+            entropy production {fmt(ar.sigma_nats_bd, 3)} nats/bd
+            {ar.pctl != null && <b style={{ color: ar.pctl >= 80 ? "#e5484d" : undefined }}> ({fmt(ar.pctl, 0)}th pctl)</b>}
+          </div>
+          <div className="coverage" style={{ color: beats ? "#37c88b" : "#e8b64c" }}>
+            {v.ok
+              ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)} — ${v.verdict}`
+              : v.reason ?? "validation not run"}
+          </div>
+        </div>
+      </div>
+      <PotentialSVG floor={fl} popNow={b.state_now?.pop_bp ?? null} />
+      <Chart
+        rows={rows}
+        series={[
+          { label: "τ relaxation (bd)", color: "#8a63d2" },
+          { label: "entropy production (nats/bd)", color: "#e88a3a", dash: [4, 3] },
+        ]}
+      />
+      <div className="coverage">
+        energy levels E₁..E₄ = −ln|λ| per bd: {(sp.energy_levels ?? []).map((e: number) => fmt(e, 2)).join(" · ")} ·
+        spectral gap {fmt(sp.gap, 3)} · {b.n_transitions} transitions learned
+      </div>
+      <Method>{(b.caveats ?? []).join(" · ")} · {b.method}</Method>
+    </div>
+  );
+}
+
 export function TideTablesCard({ t }: { t: Any }) {
   if (!t?.ok) return <Fault name="Tide Tables" reason={t?.reason} span={12} />;
   const odds = t.event_odds ?? {}, nov = t.novelty ?? {}, skill = t.skill ?? {};
@@ -289,6 +388,7 @@ export default function Forecast({ snap }: { snap: Any }) {
     <div className="grid">
       <RiptideCard r={deep.riptide} />
       <SwellCard s={deep.swell} />
+      <BathymetryCard b={deep.bathymetry} />
       <TideTablesCard t={deep.tidetables} />
       <BreakwaterCard b={snap.engines?.breakwater} />
     </div>

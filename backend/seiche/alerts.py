@@ -189,6 +189,16 @@ def evaluate(snap: dict) -> list[dict]:
                            f"peak day {peak.get('date')} ({peak.get('bucket')}, "
                            f"P(≥10bp) {peak.get('p10', 0):.0%})"))
 
+    ba = deep.get("bathymetry") or {}
+    thr = ALERT_RULES.get("bathymetry_event_prob")
+    if thr is not None and ba.get("ok") and (ba.get("p_event_5bd") or 0.0) >= thr:
+        mfpt = ba.get("mfpt_bd")
+        candidates.append(("bathymetry_event", ba.get("asof", "?"),
+                           f"Bathymetry: first-passage P(funding event, 5bd) = {ba['p_event_5bd']:.0%} "
+                           f"from the fitted dynamics"
+                           + (f"; expected {mfpt:.0f}bd to the event bin" if mfpt else "")
+                           + f" (barrier {((ba.get('floor') or {}).get('barrier_kt'))} kT)"))
+
     stk = deep.get("stacker") or {}
     thr = ALERT_RULES.get("stack_dispersion")
     if thr is not None and stk.get("ok") and (stk.get("dispersion_now") or 0.0) >= thr:
@@ -207,6 +217,15 @@ def evaluate(snap: dict) -> list[dict]:
                            f"CURRENT (P(sticky) {lv['p_sticky']:.0%}, P(escalates) "
                            f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
                            f"{'present' if lv.get('rrp_cosigned') else 'ABSENT — genuine scarcity'})"))
+
+    mer = eng.get("merian") or {}
+    thr = ALERT_RULES.get("merian_instability")
+    inst = (mer.get("instability") or {}) if mer.get("ok") else {}
+    if thr is not None and inst.get("pctl") is not None and inst["pctl"] >= thr \
+            and (inst.get("g_now") or 0.0) > 0.0:
+        candidates.append(("merian_instability", mer.get("asof", "?"),
+                           f"Merian Modes: a growing mode is live (growth {inst['g_now']:+.3f}/bd, "
+                           f"{inst['pctl']:.0f}th pctl vs own history) — instability before levels move"))
 
     bw = eng.get("breakwater") or {}
     thr = ALERT_RULES.get("breakwater_proximity")

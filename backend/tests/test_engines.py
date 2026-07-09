@@ -962,3 +962,103 @@ def test_venn_abers_band_is_ordered_and_bounded(rng):
     band2 = _venn_abers(p2, y2, 0.8)
     assert band2 is not None and band2["p1"] < 0.5, \
         "Venn-Abers must override a miscalibrated point forecast"
+
+
+# --------------------------------------------------------------------------
+# Bathymetry: the fitted dynamics must recover a known potential, slow down
+# spectrally near criticality, point the arrow at driven systems, escape
+# faster from a flat well — and never look ahead
+# --------------------------------------------------------------------------
+
+def _ou_series(rng, n, phi, sigma, start="2018-01-01"):
+    """Discrete OU / AR(1): a single quadratic well of stiffness (1 - phi)."""
+    x = np.zeros(n)
+    for t in range(1, n):
+        x[t] = phi * x[t - 1] + rng.normal(0, sigma)
+    return pd.Series(x, index=_bdays(n, start))
+
+
+def _series_with_pop(x: np.ndarray, start="2018-01-01") -> pd.Series:
+    """Construct a spread whose pop statistic (s minus its trailing 5bd
+    median, backtest.pop_bp) is EXACTLY the given process x: s_t =
+    median(s_{t-5..t-1}) + x_t. This lets the tests control the dynamics the
+    engine is supposed to recover."""
+    s = list(x[:3])
+    for t in range(3, len(x)):
+        s.append(float(np.median(s[-5:])) + float(x[t]))
+    return pd.Series(s, index=_bdays(len(x), start))
+
+
+def _pop_like(rng, n, phi, sigma):
+    return _series_with_pop(_ou_series(rng, n, phi, sigma).to_numpy())
+
+
+def test_bathymetry_recovers_single_well(rng):
+    from seiche.engines import bathymetry
+    r = bathymetry.analyze(_pop_like(rng, 2000, 0.6, 1.5))
+    assert r["ok"], r.get("reason")
+    fl = r["floor"]
+    assert fl["ok"]
+    assert abs(fl["well_bp"]) <= 2.0, "an OU well centered at 0 must be found near 0"
+    assert fl["stiffness"] > 0, "mean reversion must read as positive restoring stiffness"
+    # drift must point back to the well: negative on the right flank
+    right = [row for row in fl["curve"] if row[0] >= 3.0 and row[4] >= 5]
+    assert right and all(row[2] < 0 for row in right), \
+        "D1 must be negative above the well (restoring drift)"
+
+
+def test_bathymetry_spectral_gap_closes_near_criticality(rng):
+    from seiche.engines import bathymetry
+    calm = bathymetry.analyze(_pop_like(rng, 2000, 0.35, 1.2))
+    crit = bathymetry.analyze(_pop_like(rng, 2000, 0.93, 1.2))
+    assert calm["ok"] and crit["ok"]
+    assert crit["spectrum"]["tau_bd"] > calm["spectrum"]["tau_bd"] * 1.5, \
+        "phi -> 1 must read as a longer relaxation time (smaller spectral gap)"
+    assert crit["spectrum"]["gap"] < calm["spectrum"]["gap"]
+
+
+def test_bathymetry_arrow_points_at_driven_systems(rng):
+    from seiche.engines import bathymetry
+    n = 1800
+    # reversible world: OU noise around a well
+    ou = bathymetry.analyze(_pop_like(rng, n, 0.5, 1.5))
+    # driven world: a deterministic cycle 0 -> 3 -> 6 -> 0 plus small noise —
+    # probability current flows around a loop, never balancing pairwise
+    cyc = np.tile([0.0, 3.0, 6.0], n // 3 + 1)[:n] + rng.normal(0, 0.3, n)
+    drv = bathymetry.analyze(_series_with_pop(cyc))
+    assert ou["ok"] and drv["ok"]
+    assert ou["arrow"]["sigma_nats_bd"] >= 0 and drv["arrow"]["sigma_nats_bd"] >= 0, \
+        "entropy production is non-negative by construction"
+    assert drv["arrow"]["sigma_nats_bd"] > 3 * ou["arrow"]["sigma_nats_bd"], \
+        "a cyclically driven system must produce far more entropy than a reversible one"
+
+
+def test_bathymetry_flat_well_escapes_faster(rng):
+    from seiche.engines import bathymetry
+    deep = bathymetry.analyze(_pop_like(rng, 2000, 0.4, 1.0))
+    flat = bathymetry.analyze(_pop_like(rng, 2000, 0.9, 3.0))
+    assert deep["ok"] and flat["ok"]
+    assert (flat["p_event_5bd"] or 0.0) > (deep["p_event_5bd"] or 0.0), \
+        "a hot, weakly-damped basin must show higher first-passage probability"
+    if deep["mfpt_bd"] is not None and flat["mfpt_bd"] is not None:
+        assert flat["mfpt_bd"] < deep["mfpt_bd"]
+    # in the hot world events actually happen — the walk-forward must rank
+    v = flat["validation"]
+    assert v["ok"] and v["n_events"] > 10
+    assert v["auroc"] is not None and v["auroc"] > 0.5
+
+
+def test_bathymetry_no_look_ahead(rng):
+    from seiche.engines import bathymetry
+    s = _pop_like(rng, 1800, 0.8, 2.5)
+    full = bathymetry.analyze(s)
+    trunc = bathymetry.analyze(s.iloc[:-90])
+    t = trunc["_p5_series"].index[-1]
+    assert abs(float(full["_p5_series"].loc[t]) - float(trunc["_p5_series"].loc[t])) < 1e-9, \
+        "walk-forward first-passage p at T changed when future data was appended — look-ahead leak"
+
+
+def test_bathymetry_refuses_short_history(rng):
+    from seiche.engines import bathymetry
+    r = bathymetry.analyze(pd.Series(rng.normal(0, 1, 300), index=_bdays(300)))
+    assert not r["ok"]

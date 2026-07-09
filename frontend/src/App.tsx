@@ -4,6 +4,7 @@ import Board from "./tabs/Board";
 import Helm from "./tabs/Helm";
 import Market from "./tabs/Market";
 import Forecast from "./tabs/Forecast";
+import Physics from "./tabs/Physics";
 import Global from "./tabs/Global";
 import Calendar from "./tabs/Calendar";
 import Positioning from "./tabs/Positioning";
@@ -13,7 +14,7 @@ import Proof from "./tabs/Proof";
 import System from "./tabs/System";
 
 const TABS = [
-  "BOARD", "FORECAST", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
+  "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
   "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -99,6 +100,7 @@ export default function App() {
 
       {tab === "BOARD" && <Board snap={snap} live={live} />}
       {tab === "FORECAST" && <Forecast snap={snap} />}
+      {tab === "PHYSICS" && <Physics snap={snap} />}
       {tab === "HELM" && <Helm snap={snap} />}
       {tab === "MARKET" && <Market snap={snap} />}
       {tab === "GLOBAL" && <Global snap={snap} />}

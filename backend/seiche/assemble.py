@@ -46,15 +46,18 @@ from seiche.config import (
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
+from seiche.engines import bathymetry as eng_bathymetry
 from seiche.engines import book as eng_book
 from seiche.engines import breakwater as eng_breakwater
 from seiche.engines import communique as eng_communique
 from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
 from seiche.engines import farbasin as eng_farbasin
+from seiche.engines import gyre as eng_gyre
 from seiche.engines import history as eng_history
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
+from seiche.engines import merian as eng_merian
 from seiche.engines import market as eng_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
@@ -62,6 +65,7 @@ from seiche.engines import navigator as eng_navigator
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import riptide as eng_riptide
+from seiche.engines import roguewave as eng_roguewave
 from seiche.engines import rvxray as eng_rvxray
 from seiche.engines import sonar as eng_sonar
 from seiche.engines import stacker as eng_stacker
@@ -81,7 +85,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.3.0 forecast-layer"
+VERSION = "0.4.0 physics-layer"
 
 
 # ---------------------------------------------------------------------------
@@ -347,8 +351,8 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     # --- The Breakwater (the rescuer's revealed reaction function) ---
     run("breakwater", lambda: eng_breakwater.analyze(drv["spread_bp"], drv["srf"]))
 
-    # --- Hydrophone ---
-    def _hydro():
+    # --- The plumbing panel (shared by Hydrophone and Merian Modes) ---
+    def _panel() -> dict[str, pd.Series]:
         sofr = _pts(fred_s, "SOFR")
         effr = _pts(fred_s, "EFFR")
         panel = {
@@ -364,8 +368,20 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
             "DVP vol": drv["dvp_vol_b"],
             "TRI vol": drv["tri_vol_b"],
         }
-        return eng_hydrophone.analyze({k: v for k, v in panel.items() if not v.dropna().empty})
-    run("hydrophone", _hydro)
+        return {k: v for k, v in panel.items() if not v.dropna().empty}
+
+    # --- Hydrophone ---
+    run("hydrophone", lambda: eng_hydrophone.analyze(_panel()))
+
+    # --- Physics layer (v2.6): the basin's modes and tail law --------------
+    # (Bathymetry — the fourth physics engine — lives in the DEEP layer: its
+    # state variable is the PROOF pop statistic and its first-passage
+    # probability joins the Stack as a forecast member.)
+    # Merian Modes — the seiche eigenmodes via Hankel-DMD (Koopman spectrum)
+    run("merian", lambda: eng_merian.analyze(_panel()))
+
+    # Rogue Wave — the tail law (POT/GPD on the shared pop statistic)
+    run("roguewave", lambda: eng_roguewave.analyze(drv["spread_bp"]))
 
     # --- Warehouse ---
     run("warehouse", lambda: eng_warehouse.analyze(
@@ -622,12 +638,23 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         return res
     run("swell", _swell)
 
+    # Bathymetry — the basin floor mapped: empirical Langevin potential,
+    # the quantum-dual relaxation spectrum, entropy production, and the
+    # first-passage event forecast (joins the Stack as its own member).
+    run("bathymetry", lambda: eng_bathymetry.analyze(spread))
+
     # Riptide — the pop prognosis: chop or current? (speaks on live pops)
     run("riptide", lambda: eng_riptide.analyze(
         spread_bp=spread,
         rrp_b=drv["rrp"],
         damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
     ))
+
+    # The Gyre — Takens/EDM: is the basin deterministic enough to predict at
+    # all, how fast does predictability decay, and is it state-dependent?
+    # Deep-layer citizen: its full hindcast is the expensive part and its
+    # output is forecast-context, never composite evidence.
+    run("gyre", lambda: eng_gyre.analyze(spread))
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and
@@ -741,6 +768,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             tide_p=tide_blk.get("_hindcast") if tide_blk.get("ok") else None,
             swell_p=(out.get("swell") or {}).get("_p5_series")
             if (out.get("swell") or {}).get("ok") else None,
+            bathy_p=(out.get("bathymetry") or {}).get("_p5_series")
+            if (out.get("bathymetry") or {}).get("ok") else None,
             tell=full_tell if not full_tell.empty else None,
         )
         yv = eng_stacker.event_labels(spread, M.index)
@@ -766,7 +795,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     # Nested private keys are pandas objects — json blob cache would crash on
     # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
-    for key in ("ml", "tidetables", "stacker", "swell"):
+    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre"):
         blk = out.get(key)
         if isinstance(blk, dict):
             for k in [k for k in blk if str(k).startswith("_")]:
