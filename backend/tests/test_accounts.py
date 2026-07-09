@@ -85,3 +85,22 @@ def test_dispatch_paid_is_token_gated(accounts, tmp_path, monkeypatch):
 
     # bad slug rejected
     assert client.get("/api/dispatch/../etc/passwd", headers={"Authorization": f"Bearer {tok}"}).status_code in (404, 422)
+
+
+def test_board_gated_public_free(accounts, monkeypatch):
+    from seiche.api import app
+    client = TestClient(app)
+    accounts.add_user("desk_01", "correct horse battery")
+
+    # /api/public is always free and carries no gated board data
+    r = client.get("/api/public")
+    assert r.status_code == 200
+    body = r.json()
+    assert "conclusion" in body and "proof" in body
+    assert "engines" not in body and "navigator" not in body  # board not leaked
+
+    # with the gate on, the full board needs a token
+    monkeypatch.setenv("SEICHE_BOARD_AUTH", "1")
+    assert client.get("/api/overview").status_code == 401
+    tok = client.post("/api/auth/login", json={"username": "desk_01", "password": "correct horse battery"}).json()["token"]
+    assert client.get("/api/overview", headers={"Authorization": f"Bearer {tok}"}).status_code == 200

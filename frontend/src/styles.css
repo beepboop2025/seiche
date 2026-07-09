@@ -347,3 +347,25 @@ table.mini tr:hover td { background: rgba(255,255,255,0.015); }
 .paywall-cta:hover { box-shadow: 0 0 18px var(--accent-glow); }
 .paywall-alt { font-size: 11.5px; color: var(--faint); text-decoration: none; align-self: center; }
 .paywall-alt:hover { color: var(--dim); }
+
+/* ============================ FREE LANDING ================================ */
+.freewrap { max-width: 860px; margin: 0 auto; }
+.free-hero { padding: 26px 4px 24px; border-bottom: 1px solid var(--panel-edge); }
+.free-dial { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px; }
+.free-dial .value { font-size: 60px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: -0.02em; }
+.free-kicker { font-family: var(--display); font-size: 10px; font-weight: 800; letter-spacing: 0.14em; color: var(--accent); text-transform: uppercase; margin-bottom: 10px; }
+.free-conclusion h1 { font-family: var(--display); font-size: clamp(24px, 3.6vw, 34px); font-weight: 800; letter-spacing: -0.02em; color: #fff; line-height: 1.12; margin-bottom: 14px; }
+.free-line { font-size: 16px; color: var(--text); line-height: 1.7; }
+
+.free-proof { padding: 24px 4px; border-bottom: 1px solid var(--panel-edge); }
+.free-proof-stats { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 16px; }
+.free-proof-stats > div { display: flex; flex-direction: column; }
+.free-proof-stats b { font-size: 26px; font-weight: 700; color: #fff; }
+.free-proof-stats span { font-size: 10.5px; color: var(--faint); font-family: var(--display); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 2px; }
+
+.free-login { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 6px; }
+.free-login input { background: var(--panel-2); border: 1px solid var(--panel-edge-2); color: var(--text); font-family: var(--mono); font-size: 13px; padding: 9px 12px; border-radius: var(--r-sm); }
+.free-login input:focus { border-color: var(--accent-dim); }
+.free-login button { background: var(--accent); color: #000; border: none; font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; padding: 9px 20px; border-radius: 999px; cursor: pointer; }
+.free-login button:hover { box-shadow: 0 0 16px var(--accent-glow); }
+.free-login button:disabled { opacity: .5; cursor: default; box-shadow: none; }

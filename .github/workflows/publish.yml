@@ -34,7 +34,7 @@ jobs:
         run: python -m pytest backend/tests -q
 
       - name: Run engines, export snapshot
-        run: python backend/scripts/export_snapshot.py frontend/public/data/overview.json
+        run: python backend/scripts/export_public.py frontend/public/data/public.json
 
       # The Book's ledger: pull the previously published hash-chained history
       # from the live site, verify it, append today's as-published record.

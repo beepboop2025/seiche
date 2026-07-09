@@ -11,7 +11,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import accounts, assemble, store
+from seiche import accounts, assemble, public_view, store
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
@@ -31,9 +31,26 @@ app.add_middleware(
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _board_gate_enabled() -> bool:
+    import os
+    return os.getenv("SEICHE_BOARD_AUTH", "0") == "1"
+
+
 @app.get("/api/overview")
-async def overview(force: bool = False):
+async def overview(force: bool = False,
+                   authorization: str | None = Header(default=None)):
+    """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
+    box). Free visitors get /api/public instead."""
+    if _board_gate_enabled() and _bearer_identity(authorization) is None:
+        raise HTTPException(401, "the board is a subscriber feature — sign in")
     return await assemble.snapshot(force=force)
+
+
+@app.get("/api/public")
+async def public(force: bool = False):
+    """Free surface: the conclusion + PROOF scoreboard only. Never the board."""
+    snap = await assemble.snapshot(force=force)
+    return public_view.public_payload(snap)
 
 
 @app.get("/api/engines/{name}")

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "./apiBase";
+import { authHeaders, getToken } from "./auth";
 import { Any, fmt } from "./lib";
 import Dispatches from "./tabs/Dispatches";
+import FreePage from "./tabs/FreePage";
 import Board from "./tabs/Board";
 import Helm from "./tabs/Helm";
 import Market from "./tabs/Market";
@@ -32,11 +34,12 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [tab, setTab] = useState<Tab>(hashToTab());
+  const [signedIn, setSignedIn] = useState<boolean>(() => getToken() !== null);
 
   // Live API first (dev / self-hosted); fall back to the static snapshot
   // published by CI (Cloudflare Pages deploy has no backend process).
   const load = () =>
-    fetch(`${API_BASE}/api/overview`)
+    fetch(`${API_BASE}/api/overview`, { headers: authHeaders() })
       .then((r) => {
         const ct = r.headers.get("content-type") ?? "";
         if (!r.ok || !ct.includes("json")) throw new Error("no live api");
@@ -61,7 +64,11 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
   }, []);
 
-  if (err) return <div className="app"><div className="faults">API unreachable: {err}</div></div>;
+  // Not a subscriber: only the free surface (conclusion + PROOF record).
+  if (!signedIn) {
+    return <div className="app"><FreePage onSignedIn={() => { setSignedIn(true); load(); }} /></div>;
+  }
+  if (err) return <div className="app"><div className="faults">API unreachable: {err}</div><div style={{marginTop:12}}><a className="prolink" href="#" onClick={(e)=>{e.preventDefault();setSignedIn(false);}}>← free view</a></div></div>;
   if (!snap) return <div className="app"><div className="loading">SEICHE · sounding the basin…</div></div>;
 
   const c = snap.engines?.composite ?? {};
