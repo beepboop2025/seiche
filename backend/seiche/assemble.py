@@ -56,6 +56,9 @@ from seiche.engines import echo as eng_echo
 from seiche.engines import farbasin as eng_farbasin
 from seiche.engines import gyre as eng_gyre
 from seiche.engines import history as eng_history
+from seiche.engines import markov as eng_markov
+from seiche.engines import montecarlo as eng_montecarlo
+from seiche.engines import oujump as eng_oujump
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
 from seiche.engines import merian as eng_merian
@@ -86,7 +89,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.4.0 physics-layer"
+VERSION = "0.5.0 scenarios"
 
 
 # ---------------------------------------------------------------------------
@@ -643,6 +646,14 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # the quantum-dual relaxation spectrum, entropy production, and the
     # first-passage event forecast (joins the Stack as its own member).
     run("bathymetry", lambda: eng_bathymetry.analyze(spread))
+
+    # Stochastic scenarios on the reconstructed index (0-100): a Markov regime
+    # chain, an OU+jump analytic marginal, and a Monte Carlo path fan. Three
+    # different views of "where does the index go from here" — discrete-regime,
+    # analytic-endpoint, and simulated-path-max.
+    run("markov", lambda: eng_markov.analyze(idx, hist.get("regime_series")))
+    run("oujump", lambda: eng_oujump.analyze(idx))
+    run("montecarlo", lambda: eng_montecarlo.analyze(idx))
 
     # Riptide — the pop prognosis: chop or current? (speaks on live pops)
     run("riptide", lambda: eng_riptide.analyze(

@@ -418,6 +418,41 @@ def cmd_ask(args) -> int:
     return 1
 
 
+def cmd_scenarios(args) -> int:
+    """Three stochastic views of where the index goes: regime Markov chain,
+    OU+jump analytic marginal, and a Monte Carlo path fan."""
+    from seiche import assemble
+    snap = asyncio.run(assemble.snapshot())
+    deep = snap.get("deep", {})
+    mk, ou, mc = deep.get("markov", {}), deep.get("oujump", {}), deep.get("montecarlo", {})
+
+    if mk.get("ok"):
+        odds = " · ".join(f"{h[1:]}bd {p:.0%}" for h, p in mk["p_reach_stress"].items())
+        print(f"{BOLD}MARKOV{END} from {mk['current_regime']} · P(STRESS) {odds} · "
+              f"dwell ~{mk['expected_dwell_bd']}bd")
+    else:
+        print(f"{RED}Markov down:{END} {mk.get('reason')}", file=sys.stderr)
+
+    if ou.get("ok"):
+        f = ou["fit"]
+        odds = " · ".join(f"{h['h']}bd {h['p_above_stress']:.0%}"
+                          f"(jmp {h['jump_share_of_tail']:.0%})" for h in ou["horizons"])
+        print(f"{BOLD}OU+JUMP{END} half-life {f['half_life_bd']}bd · pull θ {f['theta']} · "
+              f"P(>STRESS) {odds}")
+    else:
+        print(f"{RED}OU+Jump down:{END} {ou.get('reason')}", file=sys.stderr)
+
+    if mc.get("ok"):
+        last = mc["fan"][-1]
+        touch = " · ".join(f"{h[1:]}bd {p:.1%}" for h, p in mc["p_touch_stress"].items())
+        print(f"{BOLD}MONTE CARLO{END} {mc['n_paths']} paths · fan@21bd "
+              f"p25 {last['p25']} / med {last['median']} / p75 {last['p75']}")
+        print(f"  P(touch STRESS): {touch}")
+    else:
+        print(f"{RED}Monte Carlo down:{END} {mc.get('reason')}", file=sys.stderr)
+    return 0
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     uvicorn.run("seiche.api:app", host=args.host, port=args.port, reload=False)
@@ -543,6 +578,8 @@ def main() -> None:
     sub.add_parser("navigator", help="the LLM's committed daily forecast + forward record").set_defaults(fn=cmd_navigator)
 
     sub.add_parser("physics", help="the physics board: landscape, modes, determinism, tail law").set_defaults(fn=cmd_physics)
+
+    sub.add_parser("scenarios", help="stochastic scenarios: Markov regime chain, OU+jump, Monte Carlo fan").set_defaults(fn=cmd_scenarios)
 
     p = sub.add_parser("ask", help="desk assistant, grounded in the live board")
     p.add_argument("question", nargs="+", help="your question")
