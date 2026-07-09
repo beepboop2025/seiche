@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import sqlite3
 import time
 from collections import defaultdict, deque
 from threading import Lock
+from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import accounts, assemble, public_view, store
+from seiche import accounts, assemble, mcp_server, provisioning, public_view, store, usage
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
     COMPOSITE_WEIGHTS,
     DB_PATH,
     EPISODES,
+    MCP_MAX_BATCH,
+    MCP_RATE_LIMIT_PER_MIN,
+    MCP_UPGRADE_URL,
     REGIMES,
 )
 
@@ -125,6 +130,7 @@ class _LoginGuard:
 _login_limiter = _RateLimiter(LOGIN_RATE_LIMIT_PER_MIN)
 _login_guard = _LoginGuard()
 _ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
+_mcp_limiter = _RateLimiter(MCP_RATE_LIMIT_PER_MIN)
 
 
 def _client_ip(request: Request) -> str:
@@ -372,6 +378,171 @@ async def health():
         "version": snap.get("version"),
         "faults": snap["faults"],
         "provenance": snap["provenance"],
+    }
+
+
+# ---- MCP over HTTP ----------------------------------------------------------
+# The hosted, metered Model Context Protocol endpoint: any AI agent adds this
+# URL and reads the board as tools. Anonymous callers get the free public
+# surface (capped per IP per day); a valid subscriber bearer token unlocks the
+# full surface at the tier's quota. Reuses the exact stdio dispatch, so there is
+# one tool implementation for both transports.
+#
+# This is a SYNC endpoint on purpose: the tool handlers bridge to the async
+# assembler with asyncio.run(), which cannot run inside FastAPI's event loop —
+# a sync route runs in the threadpool where that bridge is legal.
+
+MCP_SERVER_ERROR = -32000  # JSON-RPC server-defined error (rate limit, bad body)
+
+
+def _mcp_usage_headers(meter: dict | None) -> dict:
+    if not meter:
+        return {}
+    h = {"X-MCP-Usage-Used": str(meter["used"])}
+    if meter["limit"] is not None:
+        h["X-MCP-Usage-Limit"] = str(meter["limit"])
+        h["X-MCP-Usage-Remaining"] = str(meter["remaining"])
+    return h
+
+
+def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
+    text = (
+        f"ERROR: daily MCP quota reached ({meter['used']}/{meter['limit']} "
+        f"tool calls today). Upgrade for a higher limit: {MCP_UPGRADE_URL}"
+    )
+    return {"jsonrpc": "2.0", "id": msg_id,
+            "result": {"content": [{"type": "text", "text": text}], "isError": True}}
+
+
+@app.post("/mcp")
+def mcp_http(request: Request, body: Any = Body(default=None),
+             authorization: str | None = Header(default=None)):
+    """Streamable-HTTP MCP transport (single-response mode). Accepts one
+    JSON-RPC message or a batch; returns the JSON-RPC response(s), or 202 for a
+    notification-only body."""
+    ident = _bearer_identity(authorization)
+    public = ident is None
+    ip = _client_ip(request)
+
+    burst_key = ident["username"] if ident else ip
+    if not _mcp_limiter.allow(burst_key):
+        return JSONResponse(
+            mcp_server._error(None, MCP_SERVER_ERROR, "rate limited — slow down"),
+            status_code=429, headers={"Retry-After": "60"},
+        )
+
+    if body is None:
+        return JSONResponse(
+            mcp_server._error(None, mcp_server.PARSE_ERROR, "empty or non-JSON body"),
+            status_code=400,
+        )
+
+    msgs = body if isinstance(body, list) else [body]
+    if len(msgs) > MCP_MAX_BATCH:
+        # one HTTP request only costs one rate-limiter hit, so an unbounded
+        # batch would evade the per-minute ceiling and the meter.
+        return JSONResponse(
+            mcp_server._error(None, MCP_SERVER_ERROR,
+                              f"batch too large (max {MCP_MAX_BATCH} messages)"),
+            status_code=413,
+        )
+    ukey = usage.key_for(ident, ip)
+    limit = usage.quota_for(ident)
+    responses: list[dict] = []
+    meter: dict | None = None
+
+    for m in msgs:
+        billable = (
+            isinstance(m, dict)
+            and m.get("method") in mcp_server.BILLABLE_METHODS
+            and "id" in m
+        )
+        if billable:
+            meter = usage.charge(ukey, limit)
+            if not meter["allowed"]:
+                responses.append(_mcp_quota_result(m.get("id"), meter))
+                continue
+        try:
+            resp = mcp_server.dispatch(m, public=public)
+        except Exception:
+            # dispatch is defensive, but never let one bad message 500 the batch.
+            mid = m.get("id") if isinstance(m, dict) else None
+            resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
+        if resp is not None:
+            responses.append(resp)
+
+    headers = _mcp_usage_headers(meter)
+    if any(isinstance(m, dict) and m.get("method") == "initialize" for m in msgs):
+        headers["Mcp-Session-Id"] = secrets.token_hex(16)
+
+    if not responses:                       # notification-only body
+        return Response(status_code=202, headers=headers)
+    payload = responses if isinstance(body, list) else responses[0]
+    return JSONResponse(payload, headers=headers)
+
+
+@app.get("/mcp")
+def mcp_http_get():
+    """We don't offer a server-initiated SSE stream — the spec allows 405."""
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.post("/api/provision")
+async def provision_webhook(request: Request,
+                           x_seiche_signature: str | None = Header(default=None)):
+    """The payment -> account hook. A payment processor (BTCPay/NOWPayments/
+    Stripe) or an operator adapter POSTs a signed JSON body when a payment
+    confirms; Seiche provisions the subscriber and returns the credentials.
+    Fail-closed: disabled unless SEICHE_PROVISION_SECRET is set, and every call
+    must carry a valid HMAC-SHA256 signature of the raw body.
+
+    The signature must cover the exact bytes on the wire, so we read the raw
+    body ourselves rather than letting FastAPI parse it first."""
+    from starlette.concurrency import run_in_threadpool
+    import json as _json
+
+    if not provisioning.enabled():
+        raise HTTPException(503, "provisioning is not enabled on this server")
+    raw = await request.body()
+    if not provisioning.verify_signature(raw, x_seiche_signature):
+        raise HTTPException(401, "bad or missing signature")
+    try:
+        data = _json.loads(raw or b"{}")
+    except _json.JSONDecodeError:
+        raise HTTPException(400, "body must be JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "body must be a JSON object")
+    try:
+        # provision() does blocking SQLite + (optional) SMTP — keep it off the
+        # event loop so a slow mail server can't stall the API.
+        return await run_in_threadpool(
+            provisioning.provision,
+            data.get("tier", ""),
+            email=data.get("email", "") or "",
+            username=data.get("username", "") or "",
+            payment_ref=data.get("payment_ref", "") or "",
+            amount=data.get("amount"),
+            currency=data.get("currency", "") or "",
+        )
+    except provisioning.ProvisionError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.get("/mcp/usage")
+def mcp_usage_report(request: Request, authorization: str | None = Header(default=None)):
+    """The caller's meter for today — used by an agent (or a billing UI) to see
+    how much of the daily quota remains."""
+    ident = _bearer_identity(authorization)
+    ip = _client_ip(request)
+    ukey = usage.key_for(ident, ip)
+    limit = usage.quota_for(ident)
+    used = usage.peek(ukey)
+    return {
+        "tier": ident["tier"] if ident else "anon",
+        "used_today": used,
+        "daily_limit": limit,
+        "remaining": None if limit is None else max(0, limit - used),
+        "upgrade_url": MCP_UPGRADE_URL,
     }
 
 

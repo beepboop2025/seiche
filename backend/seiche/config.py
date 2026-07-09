@@ -754,3 +754,25 @@ ALERT_RULES = {
     "engine_dead": True,            # any composite input DEAD
 }
 ALERT_WEBHOOK_ENV = "SEICHE_WEBHOOK_URL"   # optional POST target (Slack/TG/...)
+
+# ---------------------------------------------------------------------------
+# MCP metering (the hosted /mcp endpoint for AI agents). Anonymous callers get
+# the free public tools and a tight daily cap so agent-builders can try Seiche
+# with zero friction; subscribers authenticate with the same bearer token as
+# the API and get per-tier daily quotas. None = unlimited. These are the
+# commercial dials — tune them here.
+# ---------------------------------------------------------------------------
+
+MCP_DAILY_QUOTAS = {          # tool-calls per UTC day, by subscriber tier
+    "pro": 5000,
+    "founder": None,          # unlimited
+    "enterprise": None,       # unlimited
+}
+MCP_ANON_DAILY = 200          # tool-calls per UTC day for an unauthenticated IP
+MCP_RATE_LIMIT_PER_MIN = 60   # per-caller burst ceiling (IP or username)
+MCP_MAX_BATCH = 25            # max JSON-RPC messages in one /mcp POST (anti-abuse)
+MCP_UPGRADE_URL = "https://seiche.info/support.html"  # shown when a quota is hit
+
+# Tiers a paid subscription can be provisioned into (see provisioning.py). A
+# tier here must have a quota entry above (or be unlimited by omission).
+SUBSCRIBER_TIERS = ("pro", "founder", "enterprise")

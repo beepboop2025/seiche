@@ -11,6 +11,7 @@
   seiche physics             the physics board: floor, modes, determinism, tail law
   seiche bathymetry          the basin floor in detail: potential, spectrum, first passage
   seiche serve [--port]      run the API + UI
+  seiche mcp                 serve the board to AI agents over MCP (stdio)
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
 """
@@ -423,6 +424,35 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    """Serve the board to AI agents over the Model Context Protocol (stdio)."""
+    from seiche import mcp_server
+    return mcp_server.serve_stdio()
+
+
+def cmd_provision(args) -> int:
+    """Turn a confirmed payment into a subscriber account + token (operator
+    path — the manual counterpart to the /api/provision webhook)."""
+    from seiche import provisioning
+    try:
+        res = provisioning.provision(args.tier, email=args.email,
+                                     username=args.username, payment_ref=args.ref)
+    except provisioning.ProvisionError as e:
+        print(f"{RED}{e}{END}", file=sys.stderr)
+        return 1
+    if res.get("already"):
+        print(f"{YEL}already provisioned{END} for that reference — "
+              f"user '{res['username']}' ({res['tier']})")
+        return 0
+    print(f"provisioned '{res['username']}' ({res['tier']})")
+    print(f"password (shown ONCE, share over a safe channel): {res['password']}")
+    print(f"token (30d bearer): {res['token']}")
+    if args.email:
+        print(f"{DIM}credentials emailed to {args.email} (if SMTP configured){END}",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_user(args) -> None:
     from seiche import accounts
 
@@ -492,6 +522,15 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8787)
     p.set_defaults(fn=cmd_serve)
+
+    sub.add_parser("mcp", help="serve the board to AI agents over MCP (stdio)").set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("provision", help="confirmed payment -> subscriber account + token")
+    p.add_argument("--tier", default="pro", help="pro | founder | enterprise")
+    p.add_argument("--email", default="", help="deliver credentials here (needs SMTP)")
+    p.add_argument("--username", default="", help="omit to auto-generate")
+    p.add_argument("--ref", default="", help="payment reference (txid/invoice) for idempotency")
+    p.set_defaults(fn=cmd_provision)
 
     args = ap.parse_args()
     sys.exit(args.fn(args))

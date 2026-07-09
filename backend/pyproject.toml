@@ -1,8 +1,13 @@
 [project]
 name = "seiche"
-version = "0.2.0"
+version = "0.4.0"
 description = "Funding-stress and leveraged-positioning early-warning terminal (money market + capital market), built on free keyless public APIs."
-requires-python = ">=3.11"
+readme = "README.md"
+# 3.12+ only: the MCP bridge calls the async assembler via asyncio.run() per
+# call, and on 3.10/3.11 the module-level asyncio.Lock in assemble.py raises
+# "bound to a different event loop" across loops. 3.12 relaxed that binding;
+# prod runs 3.12. Keep this floor so a PyPI install can't land on 3.11.
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
@@ -17,6 +22,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 seiche = "seiche.cli:main"
+seiche-mcp = "seiche.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=68"]

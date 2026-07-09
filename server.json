@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.beepboop2025/seiche",
+  "title": "Seiche — funding-stress terminal",
+  "description": "Funding-stress early warning for US money markets, as agent tools: current stress regime, forward event odds, nearest historical analogs, and an honest backtest — built entirely from free public data (Fed H.4.1, NY Fed, OFR repo, Treasury cash).",
+  "version": "0.4.0",
+  "repository": {
+    "url": "https://github.com/beepboop2025/seiche",
+    "source": "github"
+  },
+  "websiteUrl": "https://seiche.info",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "seiche",
+      "version": "0.4.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "SEICHE_MCP_PUBLIC",
+          "description": "Set to 1 to expose only the free public tools (the conclusion, PROOF scoreboard, analogs, data health).",
+          "isRequired": false
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.seiche.info/mcp"
+    }
+  ]
+}
