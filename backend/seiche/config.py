@@ -212,6 +212,22 @@ EPISODES = {
     "2025-09-15": "Sep 2025 tax-date squeeze (SOFR +18bp over EFFR)",
     "2025-12-31": "Dec 2025 year-end squeeze (SRF $74.6B record)",
 }
+
+# Competence boundary, stated honestly. ENDOGENOUS events build up inside the
+# funding plumbing (reserve scarcity, calendar settlement pressure) and leave a
+# trail Seiche can read weeks ahead. EXOGENOUS events arrive from outside it (a
+# pandemic, a single-bank run, a policy shock) and are NOT visible in the
+# plumbing beforehand — Seiche is structurally blind to them and says so. The
+# backtest reports recall split by class so the tool never claims to see what it
+# cannot.
+EPISODE_CLASS = {
+    "2019-09-17": "endogenous",   # reserve scarcity + quarter-end settlement
+    "2020-03-16": "exogenous",    # COVID shock, not a plumbing build-up
+    "2023-03-13": "exogenous",    # single-bank run (SVB), idiosyncratic
+    "2025-04-09": "exogenous",    # tariff policy shock, basis unwind
+    "2025-09-15": "endogenous",   # tax-date + reserve drain, calendar-driven
+    "2025-12-31": "endogenous",   # year-end squeeze, calendar-driven
+}
 ECHO_WINDOW = 30           # business days of trajectory to match
 ECHO_LEADS = range(0, 31)  # how many days before the episode the window ends
 

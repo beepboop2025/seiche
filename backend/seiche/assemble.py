@@ -89,7 +89,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.5.1 scenarios"
+VERSION = "0.5.2 scenarios"
 
 
 # ---------------------------------------------------------------------------

@@ -138,13 +138,27 @@ def cmd_backtest(args) -> int:
             f"run-precision {oc['precision_runs']:.0%} ({oc['runs_hit']}/{oc['n_alert_runs']} runs) — "
             "the claim survives without the target's own variables"
         )
+    cs = bt.get("class_split", {})
+    if cs:
+        endo, exo = cs.get("endogenous", {}), cs.get("exogenous", {})
+        print(f"{BOLD}by competence class{END} (what it can vs can't see)")
+        if endo.get("n"):
+            lead = f", median {endo['median_lead_d']}d early" if endo.get("median_lead_d") is not None else ""
+            print(f"  {GRN}endogenous{END} (reserve/calendar build-ups): "
+                  f"caught {endo['caught']}/{endo['n']}{lead} — the job it's built for")
+        if exo.get("n"):
+            print(f"  {RED}exogenous{END} (pandemic / bank-run / policy shock): "
+                  f"caught {exo['caught']}/{exo['n']} — outside the plumbing, expected blind spots")
+
     print(f"{BOLD}episodes{END}")
     for ep in bt["episodes"]:
+        tag = {"endogenous": "endo", "exogenous": "exo"}.get(ep.get("class"), "")
+        tagf = f"{DIM}[{tag}]{END} " if tag else ""
         if not ep.get("in_sample"):
             print(f"  {DIM}{ep['date']} {ep['episode']} — out of sample{END}")
             continue
         lead = f"alert {ep['first_alert_lead_d']}d early" if ep.get("first_alert_lead_d") else f"{RED}not alerted{END}"
-        print(f"  {ep['date']} {ep['episode'][:48]:<50} max pctl {ep['max_pctl_30d_before']} · {lead}")
+        print(f"  {tagf}{ep['date']} {ep['episode'][:44]:<46} max pctl {ep['max_pctl_30d_before']} · {lead}")
     for c in bt.get("caveats", []):
         print(f"{DIM}  caveat: {c}{END}")
     return 0

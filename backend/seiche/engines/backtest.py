@@ -32,6 +32,7 @@ from seiche.config import (
     BACKTEST_EVENT_FWD_D,
     BACKTEST_MIN_WARMUP_D,
     BACKTEST_SPIKE_BP,
+    EPISODE_CLASS,
     EPISODES,
     PLAYBOOK_OUTCOMES,
 )
@@ -148,9 +149,10 @@ def _capture_stats(pct: pd.Series, events: pd.DatetimeIndex) -> dict:
 def _episode_rows(pct: pd.Series) -> list[dict]:
     rows = []
     for ep_date, label in EPISODES.items():
+        klass = EPISODE_CLASS.get(ep_date, "unclassified")
         ts = pd.Timestamp(ep_date)
         if ts < pct.index[0] or ts > pct.index[-1]:
-            rows.append({"episode": label, "date": ep_date, "in_sample": False})
+            rows.append({"episode": label, "date": ep_date, "class": klass, "in_sample": False})
             continue
         loc = pct.index.searchsorted(ts)
         runup = pct.iloc[max(loc - 30, 0) : loc]
@@ -159,12 +161,38 @@ def _episode_rows(pct: pd.Series) -> list[dict]:
             {
                 "episode": label,
                 "date": ep_date,
+                "class": klass,
                 "in_sample": True,
                 "max_pctl_30d_before": round(float(runup.max()), 0) if not runup.empty else None,
                 "first_alert_lead_d": int((ts - crossed.index[0]).days) if not crossed.empty else None,
             }
         )
     return rows
+
+
+def _class_split(rows: list[dict]) -> dict:
+    """Recall split by competence class. ENDOGENOUS events build up in the
+    plumbing and should be caught; EXOGENOUS ones arrive from outside it and are
+    expected misses. Stating both keeps the tool from claiming skill it lacks."""
+    out: dict[str, dict] = {}
+    for klass in ("endogenous", "exogenous"):
+        ins = [r for r in rows if r.get("class") == klass and r.get("in_sample")]
+        caught = [r for r in ins if r.get("first_alert_lead_d") is not None]
+        leads = [r["first_alert_lead_d"] for r in caught]
+        out[klass] = {
+            "n": len(ins),
+            "caught": len(caught),
+            "recall": round(len(caught) / len(ins), 3) if ins else None,
+            "median_lead_d": int(pd.Series(leads).median()) if leads else None,
+            "episodes": [r["date"] for r in ins],
+        }
+    out["reading"] = (
+        "endogenous events (reserve/calendar build-ups) are the ones Seiche is "
+        "built to see; exogenous shocks (pandemic, single-bank run, policy) are "
+        "not in the plumbing beforehand and are expected misses. Judge the tool "
+        "on the endogenous row."
+    )
+    return out
 
 
 def capture(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
@@ -175,10 +203,12 @@ def capture(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
     pct = pct.iloc[BACKTEST_MIN_WARMUP_D:]
     events = _funding_events(spread_bp)
     events = events[(events >= pct.index[0]) & (events <= pct.index[-1])]
+    rows = _episode_rows(pct)
     return {
         "ok": True,
         "event_capture": _capture_stats(pct, events),
-        "episodes": _episode_rows(pct),
+        "episodes": rows,
+        "class_split": _class_split(rows),
     }
 
 
@@ -197,6 +227,7 @@ def run(
 
     capture_stats = _capture_stats(pct, events)
     episode_rows = _episode_rows(pct)
+    class_split = _class_split(episode_rows)
 
     # --- 3. Market outcomes by signal bucket -------------------------------
     outcome_tables = []
@@ -239,6 +270,7 @@ def run(
         },
         "event_capture": capture_stats,
         "episodes": episode_rows,
+        "class_split": class_split,
         "outcome_tables": outcome_tables,
         "signal_series": [
             [d.date().isoformat(), round(float(v), 1)] for d, v in pct.iloc[::3].items()
