@@ -8,13 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from seiche import api, mcp_server, usage
-from tests.test_mcp_server import FAKE_SNAP
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
-    # no network: every tool reads the canned board
-    monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: FAKE_SNAP)
+def client(tmp_path, monkeypatch, fake_snap):
+    # no network: every tool reads the canned board (fake_snap from conftest)
+    monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: fake_snap)
     # isolated meter
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     # deterministic auth
