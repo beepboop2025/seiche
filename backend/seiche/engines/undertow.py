@@ -22,6 +22,13 @@ residuals:
              90th percentile (the unconditional version of Resonance's
              calendar-event half-life), recent year vs prior history
 
+Fluctuation-dissipation split: for an AR(1)/OU basin the stationary variance
+is D/(1−phi²) — the SAME variance can mean louder shocks (D up: tax week, an
+auction pile-up; transient) or weaker shock absorbers (phi up: intermediation
+capacity thinning; structural). D = Var·(1−phi²) isolates the kick power, so
+publishing its percentile next to AC1's names the mechanism. Diagnostic only —
+never weighted into the score.
+
 Honesty notes, learned the hard way in the early-warning literature:
   - the indicator series are heavily serially correlated, so trend
     "significance" tests (Kendall tau p-values) are anti-conservative junk —
@@ -48,6 +55,22 @@ from seiche.config import (
 )
 
 SERIES_WEIGHTS = {"spread": 0.6, "tail": 0.4}
+MECHANISM_HOT_PCTL = 80.0  # top quintile vs own history reads as "hot"
+
+
+def _mechanism(ac1_pctl: float | None, noise_pctl: float | None) -> str | None:
+    """Name which side of the fluctuation-dissipation split is elevated."""
+    if ac1_pctl is None or noise_pctl is None:
+        return None
+    hot_damping = ac1_pctl >= MECHANISM_HOT_PCTL
+    hot_forcing = noise_pctl >= MECHANISM_HOT_PCTL
+    if hot_damping and hot_forcing:
+        return "both: louder shocks into a weakening basin"
+    if hot_damping:
+        return "absorbers weakening (damping loss — structural)"
+    if hot_forcing:
+        return "louder shocks (forcing up — transient unless it persists)"
+    return "quiet"
 
 
 def _roll_ac1(resid: pd.Series, window: int) -> pd.Series:
@@ -75,6 +98,10 @@ def _indicators(series: pd.Series) -> dict | None:
     var = resid.rolling(UNDERTOW_WINDOW_D, min_periods=UNDERTOW_WINDOW_D // 2).var()
     ac1_pctl = _expanding_pctl(ac1.dropna())
     var_pctl = _expanding_pctl(var.dropna())
+    # Fluctuation-dissipation: D = Var·(1−phi²) is the noise power alone —
+    # variance with the damping term divided out (see module docstring).
+    noise = (var * (1.0 - ac1.clip(-0.999, 0.999) ** 2)).dropna()
+    noise_pctl = _expanding_pctl(noise)
 
     phi = float(ac1.dropna().iloc[-1]) if not ac1.dropna().empty else None
     tau = None
@@ -129,11 +156,14 @@ def _indicators(series: pd.Series) -> dict | None:
 
     ac1_now = float(ac1_pctl.iloc[-1]) if not ac1_pctl.empty else None
     var_now = float(var_pctl.iloc[-1]) if not var_pctl.empty else None
+    noise_now = float(noise_pctl.iloc[-1]) if not noise_pctl.empty else None
     return {
         "ac1": round(phi, 3) if phi is not None else None,
         "ac1_pctl": round(ac1_now, 0) if ac1_now is not None else None,
         "tau_bd": round(tau, 1) if tau is not None else None,
         "var_pctl": round(var_now, 0) if var_now is not None else None,
+        "noise_pctl": round(noise_now, 0) if noise_now is not None else None,
+        "mechanism": _mechanism(ac1_now, noise_now),
         "recovery": recovery,
         "_ac1_series": ac1.dropna(),
         "_ac1_pctl_series": ac1_pctl,
@@ -215,11 +245,15 @@ def analyze(spread_bp: pd.Series, tail_bp: pd.Series) -> dict:
             "indicator series are serially correlated — trends are read as percentiles vs own history, never as p-values",
             "spread/tail belong to the PROOF event's variable family: Undertow is live structural evidence, not an orthogonal predictor",
             "detrended with a rolling median: slow level regimes don't count as damping loss, only the noise dynamics do",
+            "mechanism (fluctuation-dissipation split) is a diagnostic label, never weighted into the score",
         ],
         "method": (
             f"per series: residual = x − rolling {UNDERTOW_DETREND_D}bd median; AC1 = rolling "
             f"{UNDERTOW_WINDOW_D}bd lag-1 autocorr; tau = −1/ln(AC1) bd; variance over the same "
-            f"window; both scored as EXPANDING percentiles vs own past. Recovery = median "
+            f"window; both scored as EXPANDING percentiles vs own past. Noise power D = "
+            f"Var·(1−AC1²) (fluctuation-dissipation split), expanding percentile, diagnostic "
+            f"only — AC1 pctl ≥{MECHANISM_HOT_PCTL:.0f} names damping loss, D pctl "
+            f"≥{MECHANISM_HOT_PCTL:.0f} names louder forcing. Recovery = median "
             f"half-life after pops above the expanding 90th pctl (declustered "
             f"{UNDERTOW_POP_DECLUSTER_BD}bd — an episode is one experiment; censored "
             f"{UNDERTOW_RECOVERY_CENSOR_D}bd; unresolved end-of-sample pops excluded, not censored), "

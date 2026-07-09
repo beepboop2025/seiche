@@ -91,6 +91,12 @@ function UndertowCard({ e }: { e: Any }) {
             {rec.stretch != null && ` (${fmt(rec.stretch, 2)}×)`}
             {rec.low_n && <span className="dimsmall" title="too few pops in one of the eras"> †low-n</span>}
           </div></div>
+        <div className="item"><div className="k">mechanism</div>
+          <div className={`v ${sp.mechanism?.startsWith("both") || sp.mechanism?.startsWith("absorbers") ? "bad" : sp.mechanism?.startsWith("louder") ? "warn" : ""}`}
+               title="fluctuation-dissipation split: noise power D = Var·(1−AC1²) vs damping — louder shocks or weaker absorbers (diagnostic, not scored)">
+            {sp.mechanism ?? "—"}
+            {sp.noise_pctl != null && <span className="dimsmall"> (D {fmt(sp.noise_pctl, 0)}th)</span>}
+          </div></div>
       </div>
       <Chart
         rows={e.ac1_rows ?? []}

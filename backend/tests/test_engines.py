@@ -576,6 +576,32 @@ def test_undertow_detects_losing_damping(rng):
     assert hot["score"] > calm["score"] + 15
 
 
+def test_undertow_mechanism_split_names_the_right_cause(rng):
+    """Fluctuation-dissipation: rising phi (constant kicks) must read as
+    damping loss, rising kick size (constant phi) as louder forcing."""
+    from seiche.engines import undertow
+    n = 1500
+    tail = pd.Series(np.abs(rng.normal(4, 2, n)), index=_bdays(n))
+
+    phi_crit = np.full(n, 0.5)
+    phi_crit[-300:] = np.linspace(0.5, 0.95, 300)
+    weak_basin = undertow.analyze(_ar1_series(rng, n, phi_crit), tail)
+    assert weak_basin["per_series"]["spread"]["mechanism"].startswith(
+        ("absorbers weakening", "both")
+    )
+
+    phi_flat = np.full(n, 0.5)
+    sigma = np.ones(n)
+    sigma[-300:] = np.linspace(1.0, 3.0, 300)
+    x = np.zeros(n)
+    for t in range(1, n):
+        x[t] = phi_flat[t] * x[t - 1] + rng.normal(0, sigma[t])
+    loud_shocks = undertow.analyze(pd.Series(x, index=_bdays(n)), tail)
+    ind = loud_shocks["per_series"]["spread"]
+    assert ind["noise_pctl"] >= 80, "3x kick size must read as top-quintile noise power"
+    assert ind["mechanism"].startswith(("louder shocks", "both"))
+
+
 def test_undertow_no_look_ahead(rng):
     from seiche.engines import undertow
     n = 1500
