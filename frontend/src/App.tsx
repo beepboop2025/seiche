@@ -42,20 +42,14 @@ export default function App() {
   const load = () =>
     fetch(`${API_BASE}/api/overview`, { headers: authHeaders() })
       .then((r) => {
+        if (r.status === 401) throw new Error("session expired — sign in again");
         const ct = r.headers.get("content-type") ?? "";
-        if (!r.ok || !ct.includes("json")) throw new Error("no live api");
+        if (!r.ok || !ct.includes("json")) throw new Error("the board is temporarily unreachable — retry in a moment");
         setLive(true);
         return r.json();
       })
-      .catch(() =>
-        fetch("data/overview.json").then((r) => {
-          if (!r.ok) throw new Error("no live API and no static snapshot");
-          setLive(false);
-          return r.json();
-        })
-      )
       .then(setSnap)
-      .catch((e) => setErr(String(e)));
+      .catch((e) => setErr(String(e.message ?? e)));
 
   useEffect(() => {
     load();

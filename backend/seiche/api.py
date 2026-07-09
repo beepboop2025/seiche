@@ -6,7 +6,6 @@ import re
 import sqlite3
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -24,9 +23,9 @@ from seiche.config import (
 app = FastAPI(title="Seiche", version=assemble.VERSION,
               description="Funding-stress & leveraged-positioning early-warning terminal")
 
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-)
+# CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
+# here produced duplicate Access-Control-Allow-Origin headers that browsers
+# reject. Local dev uses the vite same-origin proxy, so no CORS is needed.
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
