@@ -108,10 +108,13 @@ def test_stress_now(stubbed):
     assert p["headline"].startswith("SEICHE 41.0 EROSION")
 
 
-def test_forecast_merges_three_models(stubbed):
+def test_forecast_merges_all_sources(stubbed):
     p = _payload(_call("funding_stress_forecast"))
-    assert set(p["sources"]) == {"swell", "bathymetry", "ml"}
+    assert set(p["sources"]) == {"swell", "bathymetry", "ml",
+                                 "markov", "oujump", "montecarlo"}
     assert p["sources"]["ml"]["p_event_5bd"] == 0.17
+    assert p["sources"]["markov"]["current_regime"] == "EROSION"
+    assert p["sources"]["montecarlo"]["level_now"] == 44.7
 
 
 def test_analogs(stubbed):

@@ -179,17 +179,44 @@ def tool_forecast(_args: dict, public: bool) -> Any:
             "verdict": ml.get("verdict"),
             "validation": ml.get("validation", {}),
         }
+    mk = deep.get("markov", {})
+    if mk.get("ok"):
+        out["sources"]["markov"] = {
+            "current_regime": mk.get("current_regime"),
+            "p_reach_stress_by_horizon": mk.get("p_reach_stress", {}),
+            "expected_dwell_bd": mk.get("expected_dwell_bd"),
+        }
+    oj = deep.get("oujump", {})
+    if oj.get("ok"):
+        out["sources"]["oujump"] = {
+            "level_now": oj.get("level_now"),
+            "half_life_bd": (oj.get("fit") or {}).get("half_life_bd"),
+            "p_above_stress_by_horizon": {
+                str(h["h"]): h["p_above_stress"] for h in oj.get("horizons", [])
+            },
+        }
+    mc = deep.get("montecarlo", {})
+    if mc.get("ok"):
+        out["sources"]["montecarlo"] = {
+            "level_now": mc.get("level_now"),
+            "fan": mc.get("fan", []),
+            "p_touch_stress_by_horizon": mc.get("p_touch_stress", {}),
+            "p_back_to_calm_by_horizon": mc.get("p_back_to_calm", {}),
+        }
     if not out["sources"]:
         raise ToolError(
             "no forecast engine is available yet — the board needs enough "
             "history to fit them (run a full pull first)"
         )
     out["reading"] = (
-        "each source independently estimates P(a funding-stress event) over the "
-        "next N business days. Swell is a term-structure model, Bathymetry a "
-        "first-passage physics model, ML a gradient-boosted classifier. "
-        "Agreement across all three is the strong signal; divergence is a "
-        "reason to widen your uncertainty."
+        "independent forward views of the same board. P(event) sources: Swell "
+        "(term-structure), Bathymetry (first-passage physics), ML (gradient "
+        "boosting). Scenario sources on the index: Markov (regime-transition "
+        "odds of reaching STRESS), oujump (analytic OU+jump endpoint marginal), "
+        "montecarlo (simulated path fan and path-max odds of touching STRESS). "
+        "Agreement across sources is the strong signal; divergence is a reason "
+        "to widen your uncertainty. Levels are for ranking, not literal odds — "
+        "check proof_backtest for the honest track record and its blind spots."
     )
     return out
 
@@ -358,10 +385,12 @@ TOOLS: dict[str, tuple] = {
     ),
     "funding_stress_forecast": (
         "Forward odds of a funding-stress event",
-        "Probability of a funding-stress event over the next 5/10/21 business "
-        "days, from three independent models (term-structure, first-passage "
-        "physics, and ML), each with its own out-of-sample validation. Use for "
-        "forward-looking questions about liquidity risk. Subscriber tool.",
+        "Forward odds of a funding-stress event over the next 5/10/21 business "
+        "days from six independent views: three P(event) models (term-structure, "
+        "first-passage physics, ML) and three stochastic scenarios on the index "
+        "(regime-transition Markov, OU+jump analytic marginal, Monte Carlo path "
+        "fan). Agreement is the signal. Use for forward-looking liquidity-risk "
+        "questions. Subscriber tool.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_forecast,
         False,
