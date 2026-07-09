@@ -3,7 +3,7 @@
   "name": "io.github.beepboop2025/seiche",
   "title": "Seiche — funding-stress terminal",
   "description": "Funding-stress early warning for US money markets, as agent tools: current stress regime, forward event odds, nearest historical analogs, and an honest backtest — built entirely from free public data (Fed H.4.1, NY Fed, OFR repo, Treasury cash).",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "repository": {
     "url": "https://github.com/beepboop2025/seiche",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "seiche",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "transport": { "type": "stdio" },
       "environmentVariables": [
         {

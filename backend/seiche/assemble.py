@@ -89,7 +89,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.5.0 scenarios"
+VERSION = "0.5.1 scenarios"
 
 
 # ---------------------------------------------------------------------------
@@ -651,9 +651,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # chain, an OU+jump analytic marginal, and a Monte Carlo path fan. Three
     # different views of "where does the index go from here" — discrete-regime,
     # analytic-endpoint, and simulated-path-max.
-    run("markov", lambda: eng_markov.analyze(idx, hist.get("regime_series")))
-    run("oujump", lambda: eng_oujump.analyze(idx))
-    run("montecarlo", lambda: eng_montecarlo.analyze(idx))
+    _comp = engines.get("composite", {})
+    _cval, _creg = _comp.get("value"), _comp.get("regime")
+    run("markov", lambda: eng_markov.analyze(idx, hist.get("regime_series"), current_regime=_creg))
+    run("oujump", lambda: eng_oujump.analyze(idx, current_value=_cval))
+    run("montecarlo", lambda: eng_montecarlo.analyze(idx, current_value=_cval))
 
     # Riptide — the pop prognosis: chop or current? (speaks on live pops)
     run("riptide", lambda: eng_riptide.analyze(

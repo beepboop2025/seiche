@@ -400,7 +400,23 @@ async def notary_ledger(n: int = 200):
             "past call was altered or reordered. Each digest's .ots proof settles "
             "in Bitcoin (verify with the `ots` tool) so the date cannot be backdated."
         ),
+        "proof_url": "/api/notary/proof/{record_sha256}",
     }
+
+
+@app.get("/api/notary/proof/{sha256}")
+async def notary_proof(sha256: str):
+    """Public: the raw OpenTimestamps (.ots) proof for a digest, so anyone can
+    run `ots verify` and confirm the Bitcoin timestamp for themselves."""
+    from seiche import notary
+
+    if not re.match(r"^[0-9a-f]{64}$", sha256):
+        raise HTTPException(422, "digest must be 64 lowercase hex chars")
+    proof = notary.proof_for(sha256)
+    if proof is None:
+        raise HTTPException(404, "no proof yet (unanchored — awaiting the next stamp)")
+    return Response(content=proof, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{sha256[:16]}.ots"'})
 
 
 # ---- MCP over HTTP ----------------------------------------------------------

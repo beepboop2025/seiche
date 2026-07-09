@@ -64,13 +64,16 @@ def _exceed(level: float, mean: float, var: float) -> float:
     return 0.5 * math.erfc((level - mean) / math.sqrt(2 * var))
 
 
-def analyze(index: pd.Series, horizons: tuple[int, ...] = (5, 10, 21)) -> dict:
+def analyze(index: pd.Series, horizons: tuple[int, ...] = (5, 10, 21),
+            current_value: float | None = None) -> dict:
     x = index.dropna().to_numpy(dtype=float)
     if len(x) < 120:
         return {"ok": False, "reason": f"insufficient history ({len(x)}d)"}
 
     p = fit_params(x)
-    x0 = float(x[-1])
+    # start from the LIVE board level when given, so the reading agrees with the
+    # published board; the dynamics are still fit on the reconstructed history.
+    x0 = float(current_value) if current_value is not None and np.isfinite(current_value) else float(x[-1])
     out_h = []
     for h in horizons:
         mean_d, var_d = _ou_moments(x0, p, h)

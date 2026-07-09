@@ -88,3 +88,20 @@ def test_montecarlo_is_deterministic(index):
 
 def test_montecarlo_needs_history():
     assert montecarlo.analyze(pd.Series([40.0] * 50))["ok"] is False
+
+
+# ---- reconciliation: start from the live board level -------------------------
+
+def test_current_value_overrides_starting_point(index):
+    base = montecarlo.analyze(index)
+    hot = montecarlo.analyze(index, current_value=75.0)     # near STRESS
+    assert hot["level_now"] == 75.0                          # headline matches the board
+    assert hot["p_touch_stress"]["h21"] > base["p_touch_stress"]["h21"]
+
+
+def test_oujump_current_value_overrides(index):
+    assert oujump.analyze(index, current_value=68.0)["level_now"] == 68.0
+
+
+def test_markov_current_regime_overrides(index):
+    assert markov.analyze(index, current_regime="STRAIN")["current_regime"] == "STRAIN"

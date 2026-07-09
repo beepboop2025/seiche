@@ -39,7 +39,8 @@ def _stationary(P: np.ndarray, iters: int = 500) -> np.ndarray:
 
 
 def analyze(index: pd.Series, regime_series: pd.Series | None = None,
-            horizons: tuple[int, ...] = (5, 10, 21)) -> dict:
+            horizons: tuple[int, ...] = (5, 10, 21),
+            current_regime: str | None = None) -> dict:
     idx = index.dropna()
     if len(idx) < 120:
         return {"ok": False, "reason": f"insufficient history ({len(idx)}d)"}
@@ -61,7 +62,10 @@ def analyze(index: pd.Series, regime_series: pd.Series | None = None,
         if rowsum[i] == 0:
             P[i, i] = 1.0
 
-    cur = labels[-1] if labels[-1] in pos else _ORDER[0]
+    # Start from the LIVE board regime when given, so the reading agrees with the
+    # published board rather than the reconstructed index's last label.
+    cur = current_regime if current_regime in pos else (
+        labels[-1] if labels[-1] in pos else _ORDER[0])
     ci, si = pos[cur], pos[_STRESS]
 
     # P(reach STRESS within h): make STRESS absorbing, propagate today's regime.

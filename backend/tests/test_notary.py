@@ -111,3 +111,18 @@ def test_stamp_pending_is_safe_without_the_library(led, monkeypatch):
     # the chain is unaffected — the reading is still committed, just unanchored
     assert led.entries()[0]["anchored"] is False
     assert led.verify_chain()["ok"] is True
+
+
+# ---- public endpoints --------------------------------------------------------
+
+def test_notary_endpoints(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from seiche import api
+    monkeypatch.setattr(notary, "DB_PATH", tmp_path / "n.sqlite")
+    c = TestClient(api.app)
+    notary.commit("2026-07-09", R2)
+    r = c.get("/api/notary")
+    assert r.status_code == 200 and r.json()["chain"]["ok"] is True
+    assert r.json()["entries"]                                   # the committed reading shows
+    assert c.get("/api/notary/proof/not-hex").status_code == 422
+    assert c.get("/api/notary/proof/" + "a" * 64).status_code == 404   # valid form, no proof yet

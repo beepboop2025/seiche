@@ -26,13 +26,15 @@ _SEED = 20260710                    # fixed: reproducible paths, notarisable out
 
 
 def analyze(index: pd.Series, horizons: tuple[int, ...] = (5, 10, 21),
-            n_paths: int = 5000) -> dict:
+            n_paths: int = 5000, current_value: float | None = None) -> dict:
     x = index.dropna().to_numpy(dtype=float)
     if len(x) < 120:
         return {"ok": False, "reason": f"insufficient history ({len(x)}d)"}
 
     p = fit_params(x)
-    x0 = float(x[-1])
+    # start the paths from the LIVE board level when given, so the fan agrees
+    # with the published board; the fitted dynamics come from the history.
+    x0 = float(current_value) if current_value is not None and np.isfinite(current_value) else float(x[-1])
     hmax = max(horizons)
     rng = np.random.default_rng(_SEED)
 
