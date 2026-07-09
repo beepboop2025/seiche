@@ -128,9 +128,18 @@ _ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
 
 
 def _client_ip(request: Request) -> str:
+    # Seiche binds loopback (127.0.0.1) with Caddy as the single proxy in front.
+    # Caddy APPENDS the real peer to the END of X-Forwarded-For, so a client can
+    # spoof leftmost entries but NOT the rightmost one. Trust only the rightmost
+    # entry — reading the leftmost (or a bare X-Real-IP that Caddy doesn't
+    # overwrite) lets an attacker rotate their apparent IP per request and bypass
+    # rate limiting and login lockout. If Caddy is ever configured with
+    # `header_up X-Real-IP {remote_host}` (overwriting client input), prefer that.
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        return xff.split(",")[0].strip()
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     return request.client.host if request.client else "unknown"
 
 
