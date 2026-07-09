@@ -120,7 +120,7 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
           no account? request access · desk@seiche.info
         </a>
         <a className="paywall-alt" href="/support.html" style={{ display: "inline-block", marginTop: 6 }}>
-          pay in crypto · BTC / ETH / SOL / TRON / XMR →
+          pay in crypto · BTC / ETH / SOL / TRON →
         </a>
       </div>
 
