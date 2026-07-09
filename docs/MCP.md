@@ -75,8 +75,9 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
 }
 ```
 
-- **Anonymous** (no token) → the free public surface (conclusion, forward odds,
-  analogs, PROOF, health, brief), capped per IP per day. Try it with zero setup.
+- **Anonymous** (no token) → the free public surface (the conclusion, historical
+  analogs, the PROOF scoreboard, data health), capped per IP per day. Try it with
+  zero setup.
 - **Subscriber** (bearer token) → the full surface at your tier's quota.
 
 The endpoint lives on the existing FastAPI app behind the same Caddy reverse
@@ -151,14 +152,19 @@ recorded in the `provisions` table for audit.
 | Tool | What it answers | Surface |
 |------|-----------------|---------|
 | `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | public |
-| `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | public |
 | `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
-| `replay_asof` | The whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | public |
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
-| `desk_brief` | Today's full desk note as markdown | public |
+| `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
+| `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | subscriber |
+| `desk_brief` | Today's full desk note as markdown | subscriber |
 | `positioning_book` | Implied stance + positions, walk-forward Sharpe, live record | subscriber |
 | `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | subscriber |
+
+The free tier gives the **conclusion and the credibility** (regime, analogs, the
+PROOF scoreboard, data health) — enough to be genuinely useful and to spread.
+The **edge** (forward odds, the Time Machine, positioning, the assistant) is the
+subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
 
 Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
 `reading` field that tells the agent how to interpret the numbers.
@@ -166,9 +172,9 @@ Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools — the conclusion, the
-forward odds, the analogs, the PROOF scoreboard, and data health. This mirrors
-the anonymous `/api/public` surface and is the mode a **hosted, no-auth
-endpoint** runs so agent-builders can try Seiche with zero friction:
+historical analogs, the PROOF scoreboard, and data health. This mirrors the
+anonymous `/api/public` surface and is the mode a **hosted, no-auth endpoint**
+runs so agent-builders can try Seiche with zero friction:
 
 ```bash
 SEICHE_MCP_PUBLIC=1 seiche-mcp

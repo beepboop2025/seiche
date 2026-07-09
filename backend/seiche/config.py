@@ -770,6 +770,7 @@ MCP_DAILY_QUOTAS = {          # tool-calls per UTC day, by subscriber tier
 }
 MCP_ANON_DAILY = 200          # tool-calls per UTC day for an unauthenticated IP
 MCP_RATE_LIMIT_PER_MIN = 60   # per-caller burst ceiling (IP or username)
+MCP_MAX_BATCH = 25            # max JSON-RPC messages in one /mcp POST (anti-abuse)
 MCP_UPGRADE_URL = "https://seiche.info/support.html"  # shown when a quota is hit
 
 # Tiers a paid subscription can be provisioned into (see provisioning.py). A

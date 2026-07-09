@@ -23,6 +23,7 @@ from seiche.config import (
     COMPOSITE_WEIGHTS,
     DB_PATH,
     EPISODES,
+    MCP_MAX_BATCH,
     MCP_RATE_LIMIT_PER_MIN,
     MCP_UPGRADE_URL,
     REGIMES,
@@ -437,6 +438,14 @@ def mcp_http(request: Request, body: Any = Body(default=None),
         )
 
     msgs = body if isinstance(body, list) else [body]
+    if len(msgs) > MCP_MAX_BATCH:
+        # one HTTP request only costs one rate-limiter hit, so an unbounded
+        # batch would evade the per-minute ceiling and the meter.
+        return JSONResponse(
+            mcp_server._error(None, MCP_SERVER_ERROR,
+                              f"batch too large (max {MCP_MAX_BATCH} messages)"),
+            status_code=413,
+        )
     ukey = usage.key_for(ident, ip)
     limit = usage.quota_for(ident)
     responses: list[dict] = []
@@ -453,7 +462,12 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             if not meter["allowed"]:
                 responses.append(_mcp_quota_result(m.get("id"), meter))
                 continue
-        resp = mcp_server.dispatch(m, public=public)
+        try:
+            resp = mcp_server.dispatch(m, public=public)
+        except Exception:
+            # dispatch is defensive, but never let one bad message 500 the batch.
+            mid = m.get("id") if isinstance(m, dict) else None
+            resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
         if resp is not None:
             responses.append(resp)
 

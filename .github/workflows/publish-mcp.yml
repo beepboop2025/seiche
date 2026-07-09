@@ -1,0 +1,59 @@
+name: publish-mcp
+
+# Publish the PyPI package and the MCP registry listing when a GitHub release is
+# cut (or run manually). Skips cleanly until its secret exists, like the other
+# workflows here.
+#
+# Needs one repo secret for the PyPI step (Settings -> Secrets -> Actions):
+#   PYPI_API_TOKEN   a PyPI token scoped to the `seiche` project
+# The MCP registry step authenticates with the workflow's own OIDC token
+# (id-token: write) against the io.github.beepboop2025/* namespace — no secret.
+#
+# See docs/PUBLISHING.md for the manual equivalent and the aggregator submissions.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write            # lets mcp-publisher prove the namespace via OIDC
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and upload to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::notice::PYPI_API_TOKEN not set — skipping PyPI upload."
+            exit 0
+          fi
+          python -m pip install --quiet build twine
+          python -m build backend
+          python -m twine upload backend/dist/*
+
+  registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher && sudo mv mcp-publisher /usr/local/bin/
+      - name: Validate and publish server.json
+        run: |
+          mcp-publisher publish --dry-run
+          mcp-publisher login github-oidc
+          mcp-publisher publish

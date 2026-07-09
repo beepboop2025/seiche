@@ -22,7 +22,8 @@ def _today() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute("PRAGMA busy_timeout=5000")   # ride out the shared writer lock
     conn.execute(
         """CREATE TABLE IF NOT EXISTS mcp_usage (
                ukey TEXT NOT NULL,
@@ -65,23 +66,38 @@ def peek(ukey: str) -> int:
 def charge(ukey: str, limit: int | None) -> dict:
     """Record one billable call and report the meter. If `limit` is exceeded the
     call is NOT recorded and ``allowed`` is False (the caller should be refused
-    before doing work). None limit = unlimited."""
+    before doing work). None limit = unlimited.
+
+    The check-and-increment is a single conditional UPDATE so two concurrent
+    calls sharing a key can't both slip past the limit (each writer serialises
+    on SQLite's writer lock and sees the other's increment)."""
     day = _today()
     conn = _conn()
     try:
-        used = conn.execute(
-            "SELECT calls FROM mcp_usage WHERE ukey=? AND day=?", (ukey, day)
-        ).fetchone()
-        used = used[0] if used else 0
-        if limit is not None and used >= limit:
-            return {"allowed": False, "used": used, "limit": limit, "remaining": 0}
         conn.execute(
-            "INSERT INTO mcp_usage (ukey, day, calls) VALUES (?,?,1) "
-            "ON CONFLICT(ukey, day) DO UPDATE SET calls = calls + 1",
+            "INSERT INTO mcp_usage (ukey, day, calls) VALUES (?,?,0) "
+            "ON CONFLICT(ukey, day) DO NOTHING",
             (ukey, day),
         )
+        if limit is None:
+            row = conn.execute(
+                "UPDATE mcp_usage SET calls = calls + 1 WHERE ukey=? AND day=? "
+                "RETURNING calls", (ukey, day),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "UPDATE mcp_usage SET calls = calls + 1 "
+                "WHERE ukey=? AND day=? AND calls < ? RETURNING calls",
+                (ukey, day, limit),
+            ).fetchone()
         conn.commit()
-        used += 1
+        if row is None:                       # conditional UPDATE matched nothing => at/over limit
+            cur = conn.execute(
+                "SELECT calls FROM mcp_usage WHERE ukey=? AND day=?", (ukey, day)
+            ).fetchone()
+            used = cur[0] if cur else (limit or 0)
+            return {"allowed": False, "used": used, "limit": limit, "remaining": 0}
+        used = row[0]
     finally:
         conn.close()
     remaining = None if limit is None else max(0, limit - used)

@@ -4,13 +4,15 @@ subscriber account + bearer token.
 A payment processor's signed webhook (BTCPay, NOWPayments, Stripe, ...) or the
 operator CLI calls ``provision()`` with a tier and a payment reference. It:
 
-  * creates (or upgrades) the account with a strong auto-generated password,
+  * creates the account with a strong auto-generated password,
   * issues a 30-day bearer token,
   * records the payment for idempotency + audit,
   * best-effort emails the credentials if an address and SMTP are configured.
 
 Idempotent on ``payment_ref`` — a retried webhook never double-grants and never
-re-issues a password. stdlib-only, matching the project ethos.
+re-issues a password, even under a concurrent retry (the ref is claimed
+atomically via a PRIMARY KEY before any account is created). stdlib-only,
+matching the project ethos.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ PROVISION_SECRET_ENV = "SEICHE_PROVISION_SECRET"
 
 
 class ProvisionError(ValueError):
-    """A provisioning request that cannot be honoured (bad tier, etc.)."""
+    """A provisioning request that cannot be honoured (bad tier / username)."""
 
 
 def enabled() -> bool:
@@ -51,7 +53,8 @@ def verify_signature(raw: bytes, signature: str | None) -> bool:
 
 
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute("PRAGMA busy_timeout=5000")   # ride out the shared writer lock
     conn.execute(
         """CREATE TABLE IF NOT EXISTS provisions (
                payment_ref TEXT PRIMARY KEY,
@@ -74,6 +77,15 @@ def _existing(conn: sqlite3.Connection, payment_ref: str) -> dict | None:
     if row is None:
         return None
     return {"username": row[0], "tier": row[1], "email": row[2], "created_utc": row[3]}
+
+
+def _replay(record: dict | None) -> dict:
+    """Shape a repeat of an already-honoured payment_ref: no new password/token."""
+    return {**(record or {}), "already": True, "token": None, "password": None}
+
+
+def _valid_username(u: str) -> bool:
+    return bool(u) and u.replace("_", "").replace("-", "").isalnum()
 
 
 def _username_from(email: str) -> str:
@@ -102,42 +114,47 @@ def provision(tier: str, *, email: str = "", username: str = "",
     # idempotency holds for the retry of a *given* request.
     payment_ref = (payment_ref or f"manual:{secrets.token_hex(8)}").strip()
 
+    requested = (username or _username_from(email)).strip()
+    if not _valid_username(requested):
+        raise ProvisionError("username must be alphanumeric (plus - and _)")
+
     conn = _conn()
     try:
         prior = _existing(conn, payment_ref)
         if prior is not None:
-            prior["already"] = True
-            prior["token"] = None
-            prior["password"] = None
-            return prior
+            return _replay(prior)
 
-        # A provision must only ever CREATE a subscriber, never overwrite an
-        # existing one: accounts.add_user is INSERT OR REPLACE (used elsewhere
-        # for deliberate password resets), so a colliding username — including a
-        # buyer-supplied one echoed through the payment webhook — would clobber
-        # that account's credentials (account takeover). If the requested name
-        # is taken, grant a suffixed one instead so the payer still gets access
-        # without ever touching someone else's account.
-        requested = (username or _username_from(email)).strip()
-        username = requested
-        while accounts.user_exists(username):
-            username = f"{requested}_{secrets.token_hex(3)}"
+        # Never overwrite an existing account: accounts.add_user is INSERT OR
+        # REPLACE (used elsewhere for deliberate password resets), so a colliding
+        # username — including a buyer-supplied one echoed through the webhook —
+        # would clobber that account (account takeover). Grant a suffixed name
+        # instead; the payer still gets access, the victim is untouched.
+        uname = requested
+        while accounts.user_exists(uname):
+            uname = f"{requested}_{secrets.token_hex(3)}"
         password = secrets.token_urlsafe(14)
-        accounts.add_user(username, password, tier=tier)
 
-        conn.execute(
-            "INSERT INTO provisions (payment_ref, username, tier, email, amount, "
-            "currency, created_utc) VALUES (?,?,?,?,?,?,?)",
-            (payment_ref, username, tier, email or "", amount, currency or "", time.time()),
-        )
-        conn.commit()
+        # Claim the payment_ref ATOMICALLY before creating the account. A
+        # concurrent retry of the same ref loses this PRIMARY KEY insert and is
+        # handled as a replay, so one payment can never mint two accounts.
+        try:
+            conn.execute(
+                "INSERT INTO provisions (payment_ref, username, tier, email, "
+                "amount, currency, created_utc) VALUES (?,?,?,?,?,?,?)",
+                (payment_ref, uname, tier, email or "", amount, currency or "", time.time()),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            return _replay(_existing(conn, payment_ref))
+
+        accounts.add_user(uname, password, tier=tier)
     finally:
         conn.close()
 
-    token = accounts.issue_token(username, tier)
+    token = accounts.issue_token(uname, tier)
     result = {
         "already": False,
-        "username": username,
+        "username": uname,
         "password": password,          # shown ONCE
         "tier": tier,
         "token": token["token"],

@@ -162,13 +162,17 @@ def test_tools_list_has_valid_schemas():
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
 
-def test_public_mode_hides_subscriber_tools(monkeypatch):
+PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest", "data_health"}
+PAID_TOOLS = {"funding_stress_forecast", "replay_asof", "desk_brief",
+              "positioning_book", "ask_desk"}
+
+
+def test_public_mode_exposes_exactly_the_free_tools(monkeypatch):
     monkeypatch.setattr(mcp, "PUBLIC_ONLY", True)
     tools = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
     names = {t["name"] for t in tools}
-    assert "funding_stress_now" in names          # public
-    assert "positioning_book" not in names        # subscriber
-    assert "ask_desk" not in names
+    assert names == PUBLIC_TOOLS               # the Time Machine / forecast / book stay paid
+    assert not (names & PAID_TOOLS)
 
 
 # ---- tools/call -------------------------------------------------------------

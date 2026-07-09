@@ -50,9 +50,34 @@ def test_initialize_returns_session_header(client):
 def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    assert "funding_stress_now" in names
-    assert "positioning_book" not in names   # subscriber-only
-    assert "ask_desk" not in names
+    assert names == {"funding_stress_now", "historical_analogs",
+                     "proof_backtest", "data_health"}
+    # the Time Machine, forward forecast, brief, book, assistant stay paid
+    for paid in ("replay_asof", "funding_stress_forecast", "desk_brief",
+                 "positioning_book", "ask_desk"):
+        assert paid not in names
+
+
+def test_anonymous_cannot_call_a_paid_tool(client):
+    # replay_asof is the gated flagship; an anonymous caller must be refused,
+    # not served the Time Machine for free.
+    r = client.post("/mcp", json=_rpc("tools/call",
+                    {"name": "replay_asof", "arguments": {"date": "2019-09-17"}}))
+    assert r.json()["error"]["code"] == mcp_server.INVALID_PARAMS   # not in visible set
+
+
+def test_malformed_params_does_not_500(client):
+    # params as an array (valid JSON, wrong shape) must not crash the endpoint
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1,
+                                  "method": "tools/call", "params": [1, 2, 3]})
+    assert r.status_code == 200
+    assert r.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+
+
+def test_oversized_batch_is_rejected(client):
+    batch = [_rpc("ping", msg_id=i) for i in range(200)]
+    r = client.post("/mcp", json=batch)
+    assert r.status_code == 413
 
 
 def test_authenticated_sees_full_surface(client):

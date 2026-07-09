@@ -150,7 +150,9 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
     }
 
 
-def tool_forecast(_args: dict, _public: bool) -> Any:
+def tool_forecast(_args: dict, public: bool) -> Any:
+    if public:
+        raise ToolError("the forward forecast is a subscriber tool — sign in with a token")
     snap = _get_snapshot()
     deep = snap.get("deep", {})
     out: dict[str, Any] = {"as_of": snap.get("generated_at"), "sources": {}}
@@ -212,7 +214,9 @@ def tool_analogs(_args: dict, _public: bool) -> Any:
     }
 
 
-def tool_replay(args: dict, _public: bool) -> Any:
+def tool_replay(args: dict, public: bool) -> Any:
+    if public:
+        raise ToolError("the Time Machine replay is a subscriber tool — sign in with a token")
     date = (args or {}).get("date", "")
     if not isinstance(date, str) or not _is_iso_date(date):
         raise ToolError("`date` must be a calendar date as YYYY-MM-DD")
@@ -287,7 +291,9 @@ def tool_book(_args: dict, public: bool) -> Any:
     return out
 
 
-def tool_brief(_args: dict, _public: bool) -> Any:
+def tool_brief(_args: dict, public: bool) -> Any:
+    if public:
+        raise ToolError("the desk brief is a subscriber tool — sign in with a token")
     from seiche import brief
 
     snap = _get_snapshot()
@@ -355,10 +361,10 @@ TOOLS: dict[str, tuple] = {
         "Probability of a funding-stress event over the next 5/10/21 business "
         "days, from three independent models (term-structure, first-passage "
         "physics, and ML), each with its own out-of-sample validation. Use for "
-        "forward-looking questions about liquidity risk.",
+        "forward-looking questions about liquidity risk. Subscriber tool.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_forecast,
-        True,
+        False,
     ),
     "historical_analogs": (
         "Nearest historical analogs",
@@ -375,7 +381,7 @@ TOOLS: dict[str, tuple] = {
         "Reconstruct the entire funding-stress board as it read on a historical "
         "date, point-in-time with no lookahead. Use to test whether Seiche "
         "would have flagged a past liquidity episode, or to align a backtest "
-        "with what was knowable then.",
+        "with what was knowable then. Subscriber tool (the Time Machine).",
         {
             "type": "object",
             "properties": {
@@ -389,7 +395,7 @@ TOOLS: dict[str, tuple] = {
             "additionalProperties": False,
         },
         tool_replay,
-        True,
+        False,
     ),
     "proof_backtest": (
         "PROOF: the honest track record",
@@ -423,10 +429,10 @@ TOOLS: dict[str, tuple] = {
         "This morning's desk note (markdown)",
         "The full human-readable desk brief for today as markdown — the "
         "narrative summary of the whole board. Good when you want prose to "
-        "quote or summarise rather than structured fields.",
+        "quote or summarise rather than structured fields. Subscriber tool.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_brief,
-        True,
+        False,
     ),
     "ask_desk": (
         "Ask the desk assistant (grounded)",
@@ -571,7 +577,11 @@ def dispatch(msg: dict, public: bool | None = None) -> dict | None:
     if is_notification:
         return None
 
-    params = msg.get("params") or {}
+    # params may legally be omitted; a non-object (array/string/number) is
+    # malformed — treat as empty so handlers never hit an AttributeError.
+    params = msg.get("params")
+    if not isinstance(params, dict):
+        params = {}
     if method == "initialize":
         return _handle_initialize(msg_id, params)
     if method == "ping":
