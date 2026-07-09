@@ -19,6 +19,7 @@ backtest reconstruction can be accused of polishing.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import traceback
 
@@ -959,9 +960,7 @@ def _record_pit(engines: dict, deep: dict, navigator: dict | None = None) -> Non
     views = dict(stk.get("members_now") or {}) if stk.get("ok") else {}
     if navigator and navigator.get("ok"):
         views["navigator"] = navigator.get("p_event_5bd")
-    store.save_blob(
-        f"pit:{day}",
-        {
+    record = {
             "date": day,
             "value": comp.get("value"),
             "regime": comp.get("regime"),
@@ -985,8 +984,21 @@ def _record_pit(engines: dict, deep: dict, navigator: dict | None = None) -> Non
                     for p in book_today.get("positions", [])
                 ],
             } if book_today else None,
-        },
-    )
+    }
+    store.save_blob(f"pit:{day}", record)
+    _notarize(day, record)
+
+
+def _notarize(day: str, record: dict) -> None:
+    """Commit the as-published reading to the tamper-evident notary chain.
+    Best-effort and fail-loud-in-logs: a notary error must never stop the board
+    from updating."""
+    try:
+        from seiche import notary
+        notary.commit(day, record)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.getLogger("seiche.assemble").warning(
+            "notary commit failed for %s: %s", day, exc)
 
 
 # ---------------------------------------------------------------------------

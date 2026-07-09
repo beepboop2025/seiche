@@ -453,6 +453,36 @@ def cmd_provision(args) -> int:
     return 0
 
 
+def cmd_notary(args) -> int:
+    """The tamper-evident record ledger: prove no past call was altered."""
+    from seiche import notary
+
+    if args.action == "verify":
+        v = notary.verify_chain()
+        if v["ok"]:
+            print(f"{GRN}CHAIN OK{END} {v['n']} readings · head {v['head'][:16]}…")
+            return 0
+        print(f"{RED}CHAIN BROKEN{END} at seq {v['break_at']}: {v['reason']}", file=sys.stderr)
+        return 1
+    if args.action == "stamp":
+        r = notary.stamp_pending()
+        if not r.get("ok"):
+            print(f"{YEL}{r.get('reason')}{END}", file=sys.stderr)
+            return 1
+        print(f"anchored {r['anchored']} commitment(s) to OpenTimestamps (Bitcoin)")
+        return 0
+    # status
+    v = notary.verify_chain()
+    state = f"{GRN}OK{END}" if v["ok"] else f"{RED}BROKEN{END}"
+    print(f"{BOLD}NOTARY{END} {v['n']} readings · chain {state} · head {notary.head()[:16]}…")
+    ots = "available" if notary.ots_available() else "not installed (pip install 'seiche[notary]')"
+    print(f"  bitcoin anchor: {ots}")
+    for e in notary.entries(10):
+        mark = "⚓" if e["anchored"] else " ·"
+        print(f"  {mark} {e['pit_date']}  {e['record_sha256'][:16]}…  {DIM}{e['utc']}{END}")
+    return 0
+
+
 def cmd_user(args) -> None:
     from seiche import accounts
 
@@ -524,6 +554,10 @@ def main() -> None:
     p.set_defaults(fn=cmd_serve)
 
     sub.add_parser("mcp", help="serve the board to AI agents over MCP (stdio)").set_defaults(fn=cmd_mcp)
+
+    p = sub.add_parser("notary", help="tamper-evident record ledger (status/verify/stamp)")
+    p.add_argument("action", nargs="?", choices=["status", "verify", "stamp"], default="status")
+    p.set_defaults(fn=cmd_notary)
 
     p = sub.add_parser("provision", help="confirmed payment -> subscriber account + token")
     p.add_argument("--tier", default="pro", help="pro | founder | enterprise")

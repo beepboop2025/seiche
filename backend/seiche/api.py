@@ -381,6 +381,28 @@ async def health():
     }
 
 
+@app.get("/api/notary")
+async def notary_ledger(n: int = 200):
+    """Public: the tamper-evident ledger of every as-published reading, and how
+    to verify it yourself. This is the trust asset made checkable — no auth, on
+    purpose."""
+    from seiche import notary
+
+    return {
+        "chain": notary.verify_chain(),
+        "head": notary.head(),
+        "genesis": notary.GENESIS,
+        "anchor": "opentimestamps (bitcoin)",
+        "entries": notary.entries(n),
+        "how_to_verify": (
+            "each reading is canonical-JSON SHA-256'd; links chain as "
+            "sha256(prev|digest|utc|date). Recompute from GENESIS to confirm no "
+            "past call was altered or reordered. Each digest's .ots proof settles "
+            "in Bitcoin (verify with the `ots` tool) so the date cannot be backdated."
+        ),
+    }
+
+
 # ---- MCP over HTTP ----------------------------------------------------------
 # The hosted, metered Model Context Protocol endpoint: any AI agent adds this
 # URL and reads the board as tools. Anonymous callers get the free public
