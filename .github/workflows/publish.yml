@@ -41,7 +41,8 @@ jobs:
       # The site repo's git history is the append-only backbone.
       - name: Append Book record (hash-chained ledger)
         run: |
-          curl -sf https://beepboop2025.github.io/seiche-site/data/book_history.json \
+          # -L: github.io 301s to the seiche.info custom domain since 2026-07-09
+          curl -sfL https://seiche.info/data/book_history.json \
             -o /tmp/book_history.json || echo "[]" > /tmp/book_history.json
           python backend/scripts/append_book_record.py /tmp/book_history.json frontend/public/data/book_history.json
 
