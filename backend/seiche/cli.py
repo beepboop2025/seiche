@@ -138,6 +138,21 @@ def cmd_backtest(args) -> int:
             f"run-precision {oc['precision_runs']:.0%} ({oc['runs_hit']}/{oc['n_alert_runs']} runs) — "
             "the claim survives without the target's own variables"
         )
+    rig = bt.get("rigor", {})
+    sig = rig.get("significance", {})
+    if rig.get("event_auroc") is not None or sig.get("ok"):
+        print(f"{BOLD}rigor{END} (the skeptic's two questions)")
+        au = rig.get("event_auroc")
+        if au is not None:
+            col = GRN if au >= 0.7 else YEL if au >= 0.6 else RED
+            print(f"  threshold-free AUROC (event within horizon): {col}{au}{END} "
+                  f"{DIM}— skill across ALL thresholds, 0.5 = none{END}")
+        if sig.get("ok"):
+            col = GRN if sig["p_value"] < 0.05 else RED
+            print(f"  permutation null: recall {sig['actual_recall']:.0%} vs chance "
+                  f"{sig['null_mean_recall']:.0%} (95th {sig['null_p95_recall']:.0%}) · "
+                  f"p={col}{sig['p_value']}{END} — {sig['verdict']}")
+
     cs = bt.get("class_split", {})
     if cs:
         endo, exo = cs.get("endogenous", {}), cs.get("exogenous", {})

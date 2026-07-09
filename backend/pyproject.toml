@@ -1,6 +1,6 @@
 [project]
 name = "seiche"
-version = "0.5.2"
+version = "0.5.3"
 description = "Funding-stress and leveraged-positioning early-warning terminal (money market + capital market), built on free keyless public APIs."
 readme = "README.md"
 # 3.12+ only: the MCP bridge calls the async assembler via asyncio.run() per

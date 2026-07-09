@@ -195,6 +195,71 @@ def _class_split(rows: list[dict]) -> dict:
     return out
 
 
+def _event_auroc(pct: pd.Series, events: pd.DatetimeIndex) -> float | None:
+    """Threshold-FREE skill: AUROC of the percentile as a score for 'a funding
+    event lands within the next horizon'. 0.5 = no skill, 1.0 = perfect. Removes
+    the 'you cherry-picked the alert threshold' objection — it scores every day
+    at every operating point at once."""
+    labels = np.zeros(len(pct), dtype=bool)
+    for ev in events:
+        loc = pct.index.searchsorted(ev)
+        labels[max(loc - BACKTEST_EVENT_FWD_D, 0):loc] = True
+    n_pos, n_neg = int(labels.sum()), int((~labels).sum())
+    if n_pos == 0 or n_neg == 0:
+        return None
+    ranks = pct.rank(method="average").to_numpy()          # ties -> average rank
+    return round(float((ranks[labels].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)), 3)
+
+
+def _significance(pct: pd.Series, events: pd.DatetimeIndex, n_perm: int = 2000) -> dict:
+    """Block-permutation null: relocate the SAME alert runs (same count, same
+    durations, same total alert budget) to random start times and measure how
+    often chance placement matches this recall. p = P(random recall >= actual).
+    Directly answers 'could this happen by luck?' — a low p means the TIMING of
+    the alerts carries information, not just their quantity."""
+    n = len(pct)
+    alert = (pct >= BACKTEST_ALERT_PCTL).to_numpy()
+    ev_locs = [pct.index.searchsorted(ev) for ev in events]
+    fwd = BACKTEST_EVENT_FWD_D
+    if not ev_locs or not alert.any():
+        return {"ok": False, "reason": "no events or no alerts in sample"}
+
+    def _recall(a: np.ndarray) -> float:
+        return sum(1 for loc in ev_locs if a[max(loc - fwd, 0):loc].any()) / len(ev_locs)
+
+    actual = _recall(alert)
+    runs, i = [], 0
+    while i < n:
+        if alert[i]:
+            j = i
+            while j < n and alert[j]:
+                j += 1
+            runs.append(j - i)
+            i = j
+        else:
+            i += 1
+    rng = np.random.default_rng(20260710)                  # fixed: reproducible, notarisable
+    null = np.empty(n_perm)
+    for k in range(n_perm):
+        a = np.zeros(n, dtype=bool)
+        for length in runs:
+            start = int(rng.integers(0, max(n - length, 1)))
+            a[start:start + length] = True
+        null[k] = _recall(a)
+    pval = float((np.sum(null >= actual) + 1) / (n_perm + 1))
+    return {
+        "ok": True,
+        "actual_recall": round(actual, 3),
+        "null_mean_recall": round(float(null.mean()), 3),
+        "null_p95_recall": round(float(np.percentile(null, 95)), 3),
+        "p_value": round(pval, 4),
+        "n_alert_runs": len(runs),
+        "n_permutations": n_perm,
+        "verdict": ("beats chance placement (p<0.05)" if pval < 0.05
+                    else "NOT distinguishable from chance placement of the same alerts"),
+    }
+
+
 def capture(lite_pctl: pd.Series, spread_bp: pd.Series) -> dict:
     """Event capture + episode leads only — the orthogonal-test entry point."""
     pct = lite_pctl.dropna()
@@ -228,6 +293,10 @@ def run(
     capture_stats = _capture_stats(pct, events)
     episode_rows = _episode_rows(pct)
     class_split = _class_split(episode_rows)
+    rigor = {
+        "event_auroc": _event_auroc(pct, events),
+        "significance": _significance(pct, events),
+    }
 
     # --- 3. Market outcomes by signal bucket -------------------------------
     outcome_tables = []
@@ -271,6 +340,7 @@ def run(
         "event_capture": capture_stats,
         "episodes": episode_rows,
         "class_split": class_split,
+        "rigor": rigor,
         "outcome_tables": outcome_tables,
         "signal_series": [
             [d.date().isoformat(), round(float(v), 1)] for d, v in pct.iloc[::3].items()
