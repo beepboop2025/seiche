@@ -160,6 +160,42 @@ function LeakAuditCard({ a }: { a: Any }) {
   );
 }
 
+function RegattaCard({ r }: { r: Any }) {
+  if (!r?.ok) return <Fault name="Regatta" reason={r?.reason} span={12} />;
+  return (
+    <div className="card span12">
+      <h2>Regatta — the fleet raced honestly</h2>
+      <div className="sub">
+        with this many boats, one HAD to look good — the Model Confidence Set (Hansen–Lunde–Nason)
+        eliminates entrants statistically worse than the best over {r.n_days} common scored days;
+        what survives is indistinguishable from the leader at {fmt((1 - (r.size ?? 0.1)) * 100, 0)}%
+        confidence, snoop-corrected
+      </div>
+      <table className="mini">
+        <thead><tr><th>entrant</th><th>Brier</th><th>MCS p</th><th>in the set</th></tr></thead>
+        <tbody>
+          {(r.rows ?? []).map((row: Any) => (
+            <tr key={row.model} style={row.in_set ? { fontWeight: 600 } : undefined}>
+              <td>{row.label}</td>
+              <td className="num">{fmt(row.brier, 4)}</td>
+              <td className="num">{fmt(row.mcs_pvalue, 3)}</td>
+              <td style={{ color: row.in_set ? "#37c88b" : "#e5484d" }}>{row.in_set ? "YES" : "out"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="dimsmall">{r.verdict}</div>
+      {r.duplicates_merged && (
+        <div className="dimsmall">
+          merged as numerically identical: {Object.entries(r.duplicates_merged).map(([a, b]) => `${a} ≡ ${b}`).join(", ")}
+        </div>
+      )}
+      {(r.caveats ?? []).map((c: string, i: number) => <div className="caveat" key={i}>▸ {c}</div>)}
+      <Method>{r.method}</Method>
+    </div>
+  );
+}
+
 export default function Proof({ snap }: { snap: Any }) {
   const bt = snap.deep?.backtest ?? {};
   const hist = snap.deep?.history ?? {};
@@ -251,6 +287,8 @@ export default function Proof({ snap }: { snap: Any }) {
       <OrthogonalCard o={bt.orthogonal} />
 
       <LeakAuditCard a={snap.deep?.leakaudit} />
+
+      <RegattaCard r={snap.deep?.regatta} />
 
       <MLCard ml={snap.deep?.ml} />
 

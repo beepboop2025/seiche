@@ -183,10 +183,29 @@ CRYPTO_SERIES = [
     SeriesSpec("STABLE_TOTAL", "crypto", "defillama:total", "Total stablecoin circulation", "$B", "D", CRYPTO_TTL_MIN),
 ]
 
+# The far ocean: BIS Data Portal (keyless SDMX-CSV, verified live 2026-07-10;
+# stats.bis.org/api/v2). The DBnomics mirror of the same data ran ~4 quarters
+# behind BIS direct on probe day — BIS is primary, no mirror fallback (fail
+# loud instead of serving stale). remote_id = {dataflow}/{version}/{key}.
+BIS_SERIES = [
+    SeriesSpec("GLI_OFFSHORE_USD", "bis", "WS_GLI/1.0/Q.USD.3P.N.A.I.B.USD",
+               "USD credit to non-banks outside the US (BIS GLI)", "$M", "QL", 10080, start="2000-01-01"),
+    SeriesSpec("GLI_OFFSHORE_LOANS", "bis", "WS_GLI/1.0/Q.USD.3P.N.B.I.G.USD",
+               "USD bank loans to non-banks outside the US", "$M", "QL", 10080, start="2000-01-01"),
+    SeriesSpec("GLI_OFFSHORE_DEBT", "bis", "WS_GLI/1.0/Q.USD.3P.N.A.I.D.USD",
+               "USD debt securities of non-banks outside the US", "$M", "QL", 10080, start="2000-01-01"),
+    SeriesSpec("GLI_EME_USD", "bis", "WS_GLI/1.0/Q.USD.4T.N.A.I.B.USD",
+               "USD credit to non-banks in EMEs (BIS GLI)", "$M", "QL", 10080, start="2000-01-01"),
+    SeriesSpec("CREDIT_GAP_US", "bis", "WS_CREDIT_GAP/1.0/Q.US.P.A.C",
+               "US credit-to-GDP gap (actual − HP trend)", "pp", "QL", 10080, start="2000-01-01"),
+    SeriesSpec("CREDIT_GAP_CN", "bis", "WS_CREDIT_GAP/1.0/Q.CN.P.A.C",
+               "China credit-to-GDP gap (actual − HP trend)", "pp", "QL", 10080, start="2000-01-01"),
+]
+
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES
+    + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
 # (they are declared later in the file to keep the Far Basin block coherent).
@@ -196,7 +215,10 @@ ALL_SERIES: dict[str, SeriesSpec] = {
 # Age is measured against the series' expected cadence.
 # ---------------------------------------------------------------------------
 
-STALENESS_GRACE_DAYS = {"D": 4, "W": 10, "M": 45, "Q": 120}
+STALENESS_GRACE_DAYS = {"D": 4, "W": 10, "M": 45, "Q": 120, "QL": 300}
+# QL = lagged-quarterly: BIS publishes GLI/credit-gap statistics roughly two
+# quarters after the reference period BY DESIGN — a 9-month-old observation is
+# the current print, not a collector failure.
 
 # ---------------------------------------------------------------------------
 # Episode library for the Echo Engine: date the stress *peaked/broke*.
@@ -571,6 +593,46 @@ MICRO_REFIT_EVERY_BD = 63        # branching-history / walk-forward refit cadenc
 MICRO_HAZARD_FWD_BD = 5          # hazard horizon — same as BACKTEST_EVENT_FWD_D
 MICRO_NEAR_CRITICAL = 0.7        # branching at/above this reads near-critical
 
+# Thermohaline — the deep circulation. BIS global-liquidity aggregates read
+# as the slow, planet-scale layer under the daily plumbing: the offshore
+# dollar-credit stock, its growth percentile vs its own quarter-century
+# history, and the credit-to-GDP gaps. Quarterly + lagged by design — context
+# ONLY, never composite (a two-quarter-old number cannot evidence stress today).
+THERMO_MIN_OBS = 24              # >= 6y of quarterly history before percentiles speak
+THERMO_HOT_PCTL = 80.0           # yoy-growth expanding pctl at/above = "accelerating"
+
+# Regatta — the fleet raced honestly. Model Confidence Set (Hansen-Lunde-Nason)
+# over the daily Brier losses of every forecast member + the published stack +
+# calendar climatology: which boats are statistically indistinguishable from
+# the leader, snoop-corrected. The MCS answers the objection PROOF's
+# per-engine nulls cannot: "with this many engines, one HAD to look good."
+REGATTA_MCS_SIZE = 0.10          # models kept while MCS p-value >= this
+REGATTA_REPS = 1000              # bootstrap replications
+REGATTA_BLOCK_BD = 21            # block size (losses are serially correlated)
+REGATTA_SEED = 7
+REGATTA_MIN_ROWS = 300           # common scored days before the race prints
+
+# Sea Room — adaptive conformal coverage (Gibbs-Candès ACI) on the published
+# fleet probability. Venn-Abers calibrates the number; Sea Room guarantees
+# the COVERAGE: a daily prediction set over {event, no-event} whose long-run
+# miscoverage tracks SEAROOM_ALPHA even under regime drift. Feedback is
+# honestly delayed: a day's label joins the score pool only after its 5bd
+# window closes.
+SEAROOM_ALPHA = 0.10             # target miscoverage (90% coverage sets)
+SEAROOM_GAMMA = 0.01             # ACI step size
+SEAROOM_WARMUP = 250             # resolved scores before sets are emitted
+
+# Sea State — the marine regime scale, estimated not asserted. A 2-state
+# Gaussian hidden Markov model (hand-rolled Hamilton filter + EM, no new
+# deps) on the detrended spread residual publishes FILTERED P(rough water)
+# — strictly causal, refit at deterministic positions, and walk-forward
+# scored against climatology like every other forecast layer.
+SEASTATE_DETREND_D = 30          # same residual as Undertow (comparability)
+SEASTATE_MIN_HISTORY_D = 600
+SEASTATE_REFIT_EVERY_BD = 126    # prefix refits (EM is heavier than a z-score)
+SEASTATE_EM_ITERS = 80           # EM iteration cap (tol-gated below that)
+SEASTATE_WARMUP_D = 600          # scored history before the hindcast speaks
+
 # Leak Audit — the one-switch leakage protocol (arXiv:2605.23959) applied to
 # Seiche's own pipeline: rebuild the lite index with exactly ONE discipline
 # deliberately broken (global-sample z, centered smoothing, self-fitted alert
@@ -792,6 +854,7 @@ ALERT_RULES = {
     "breakwater_proximity": 90.0,   # board near historical rescue conditions
     "merian_instability": 95.0,     # growing-mode index percentile >= this
     "microseism_branching": MICRO_NEAR_CRITICAL,  # aftershock chain near-critical (LR-identified)
+    "pit_gap_bd": 3,                # dead-man: >= this many consecutive bd missing from the PIT record
     "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }
