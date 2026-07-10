@@ -23,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from seiche.config import COMPOSITE_WEIGHTS, REGIMES
+from seiche.config import COMPOSITE_WEIGHTS, LEAKAUDIT_TEMP_CENTER_W, REGIMES
 
 LITE_COMPONENTS = ["tails", "kink", "confession", "rvxray", "auctions", "buffers"]
 MIN_Z_PERIODS = 120
@@ -83,7 +83,7 @@ def build(
     # tails — mirror tails_score: 0.6 tail z + 0.4 spread z through the sigmoid
     combo = 0.6 * _z(tail_d).fillna(0.0) + 0.4 * _z(spread_d).fillna(0.0)
     smoothed = (
-        combo.rolling(5, center=True, min_periods=1).mean()
+        combo.rolling(LEAKAUDIT_TEMP_CENTER_W, center=True, min_periods=1).mean()
         if leak == "temp_center" else combo.ewm(span=5).mean()
     )
     comps["tails"] = _sigmoid100(smoothed, 1.4, 1.1)
