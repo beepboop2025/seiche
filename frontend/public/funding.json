@@ -1,0 +1,88 @@
+{
+    "version": "v1",
+    "entity": {
+        "type": "individual",
+        "role": "owner",
+        "name": "Mrinal Singh Meena",
+        "email": "mrinal091997@gmail.com",
+        "phone": "",
+        "description": "Lawyer turned builder from Jaipur, India. I build public instruments that hold themselves to a courtroom standard of evidence. Seiche is the main one: free early warning for dollar funding stress, with every forecast sealed into a hash chained ledger the day it is made, misses published next to the hits.",
+        "webpageUrl": {
+            "url": "https://seiche.info"
+        }
+    },
+    "projects": [
+        {
+            "guid": "seiche",
+            "name": "Seiche",
+            "description": "A free public terminal that monitors stress building in the dollar funding system, the repo and money markets that seized in September 2019 and March 2020. Twenty two engines fuse free public data (FRED, NY Fed, OFR, Treasury FiscalData, CFTC, ECB) into a forward looking read published twice a day. Every daily forecast is written into a tamper evident, as published ledger; every engine validates walk forward against naive benchmarks and prints the verdict even when it loses. Replayed point in time to September 12 2019, the board flags September 16, the day the repo market broke, as a crunch window. Around 200 automated tests guard the codebase, including one that mechanically forbids look ahead. The terminal, the twice daily letter and the sealed record are free and stay free.",
+            "webpageUrl": {
+                "url": "https://seiche.info"
+            },
+            "repositoryUrl": {
+                "url": "https://github.com/seiche-terminal/seiche",
+                "wellKnown": "https://github.com/seiche-terminal/seiche/blob/main/.well-known/funding-manifest-urls"
+            },
+            "licenses": [
+                "spdx:AGPL-3.0-or-later"
+            ],
+            "tags": [
+                "finance",
+                "early-warning",
+                "open-data",
+                "monitoring",
+                "analytics",
+                "market-data"
+            ]
+        }
+    ],
+    "funding": {
+        "channels": [
+            {
+                "guid": "bank",
+                "type": "bank",
+                "address": "",
+                "description": "Bank transfer. Details shared privately on request via email."
+            },
+            {
+                "guid": "crypto",
+                "type": "other",
+                "address": "https://seiche.info/support.html",
+                "description": "BTC, ETH, SOL and TRON addresses listed on the support page."
+            }
+        ],
+        "plans": [
+            {
+                "guid": "infrastructure",
+                "status": "active",
+                "name": "Infrastructure",
+                "description": "Server, domains and backups for the free public terminal. The whole stack runs on a small VPS.",
+                "amount": 800,
+                "currency": "USD",
+                "frequency": "yearly",
+                "channels": ["bank", "crypto"]
+            },
+            {
+                "guid": "methods-review",
+                "status": "active",
+                "name": "Independent methods review",
+                "description": "Two quantitative researchers audit the engines and the backtest protocol. Findings published unedited, whatever they say.",
+                "amount": 3000,
+                "currency": "USD",
+                "frequency": "one-time",
+                "channels": ["bank"]
+            },
+            {
+                "guid": "full-time-year",
+                "status": "active",
+                "name": "Full time development for one year",
+                "description": "Converts the solo founder to full time: a year of sealed daily forecasts anyone can audit, an open API, programmatic alerts, and a replication package.",
+                "amount": 30000,
+                "currency": "USD",
+                "frequency": "yearly",
+                "channels": ["bank"]
+            }
+        ],
+        "history": []
+    }
+}
