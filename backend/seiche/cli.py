@@ -44,9 +44,21 @@ def _index_line(snap: dict) -> str:
 
 
 def cmd_pull(args) -> int:
-    from seiche import assemble
+    from seiche import assemble, notary
     snap = asyncio.run(assemble.snapshot(force=True))
     print(_index_line(snap))
+    # Anchor any un-stamped commitments to Bitcoin while we're here (best
+    # effort: the chain is already committed; OTS just makes its age provable
+    # to a fresh observer). Missing lib / offline calendars must never fail
+    # the pull — the stamp retries on the next cycle.
+    try:
+        if notary.ots_available():
+            r = notary.stamp_pending()
+            if r.get("anchored"):
+                print(f"{DIM}notary: anchored {r['anchored']} commitment(s) to OpenTimestamps{END}",
+                      file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 — anchoring is provability, not availability
+        print(f"{DIM}notary: stamping deferred ({type(exc).__name__}: {exc}){END}", file=sys.stderr)
     return 0
 
 

@@ -260,6 +260,46 @@ def evaluate(snap: dict) -> list[dict]:
                            f"P(event,5bd)={book_today.get('p_ensemble')}, "
                            f"dispersion {book_today.get('dispersion')}"))
 
+    # Dead-man switch on the as-published record: the whole business is an
+    # unbroken PIT ledger, so a hole in it is a first-class incident. Scan the
+    # trailing 45 days of pit:* keys for runs of missing business days; each
+    # distinct hole alerts once (state_key = the hole's span). Note the honest
+    # limit: this fires when the system RESUMES — a stopped process cannot
+    # alert about itself, so the external observer is the box's systemd timer.
+    thr = ALERT_RULES.get("pit_gap_bd")
+    if thr is not None:
+        try:
+            import pandas as pd
+            with sqlite3.connect(DB_PATH) as bconn:
+                keys = [r[0] for r in bconn.execute(
+                    "SELECT key FROM blobs WHERE key LIKE 'pit:%' ORDER BY key")]
+            days = pd.DatetimeIndex([k.split("pit:")[1] for k in keys])
+            recent = days[days >= days.max() - pd.Timedelta(days=45)] if len(days) else days
+            if len(recent) >= 2:
+                expected = pd.bdate_range(recent.min(), recent.max())
+                missing = expected.difference(recent)
+                run: list = []
+                holes: list[tuple] = []
+                for d in missing:
+                    if run and (d - run[-1]).days > 3:
+                        holes.append((run[0], run[-1], len(run)))
+                        run = []
+                    run.append(d)
+                if run:
+                    holes.append((run[0], run[-1], len(run)))
+                for h0, h1, n_miss in holes:
+                    if n_miss >= int(thr):
+                        candidates.append((
+                            "pit_gap",
+                            f"{h0.date().isoformat()}:{h1.date().isoformat()}",
+                            f"the PIT record has a HOLE: {n_miss} business days missing "
+                            f"({h0.date().isoformat()} → {h1.date().isoformat()}) — the "
+                            f"as-published chain is broken for that span and must be "
+                            f"disclosed, not papered over",
+                        ))
+        except Exception as exc:  # noqa: BLE001 — the dead-man must not kill the live path
+            logger.warning("pit_gap check failed: %s", exc)
+
     if ALERT_RULES.get("engine_dead"):
         for d in comp.get("decomposition", []):
             if d.get("status") == "DEAD":
