@@ -61,7 +61,9 @@ from seiche.engines import montecarlo as eng_montecarlo
 from seiche.engines import oujump as eng_oujump
 from seiche.engines import hydrophone as eng_hydrophone
 from seiche.engines import kink as eng_kink
+from seiche.engines import leakaudit as eng_leakaudit
 from seiche.engines import merian as eng_merian
+from seiche.engines import microseism as eng_microseism
 from seiche.engines import market as eng_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
@@ -89,7 +91,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.5.3 rigor"
+VERSION = "0.6.0 microseism"
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +527,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     try:
         pair_full = engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float))
         dig_full = engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float))
-        hist = eng_history.build(
+        hist_kwargs = dict(
             spread_bp=spread,
             tail_bp=drv["tail_bp"],
             srf_accepted=drv["srf"],
@@ -535,6 +537,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             pair_b=pair_full,
             digestion=dig_full,
         )
+        hist = eng_history.build(**hist_kwargs)
         idx, pctl = hist["index"], hist["pctl"]
         out["history"] = {
             "ok": True,
@@ -602,6 +605,17 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
     run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
+
+    # Microseism — calendar-gated Hawkes on the shared pop statistic. Lives in
+    # the deep layer for the same reason Bathymetry does: its state variable
+    # is the PROOF event's own pop, and the expanding refits are heavy enough
+    # to want the per-data-day cache. Context, never composite.
+    run("microseism", lambda: eng_microseism.analyze(spread))
+
+    # Leak Audit — the one-switch leakage protocol run against our own lite
+    # index (deliberately leaky variants scored on PROOF's events; the gains
+    # we refuse to claim, published). Uses the exact history.build kwargs.
+    run("leakaudit", lambda: eng_leakaudit.run(hist_kwargs, spread))
 
     # Tide Tables — analog forecast over the same plumbing state Echo matches
     # on, but expanding-z (no look-ahead) and against ALL history.
@@ -809,7 +823,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     # Nested private keys are pandas objects — json blob cache would crash on
     # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
-    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre"):
+    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre", "microseism"):
         blk = out.get(key)
         if isinstance(blk, dict):
             for k in [k for k in blk if str(k).startswith("_")]:
