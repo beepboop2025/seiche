@@ -382,6 +382,79 @@ export function TideTablesCard({ t }: { t: Any }) {
   );
 }
 
+function SeaStateCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Sea State" reason={e?.reason} span={6} />;
+  const rough = (e.p_rough_now ?? 0) >= 0.5;
+  const v = e.validation ?? {};
+  return (
+    <div className="card span6">
+      <h2>Sea State</h2>
+      <div className="sub">
+        the regime estimated, not asserted — a 2-state hidden Markov model (Hamilton filter, strictly
+        causal) on the spread residual publishes FILTERED P(rough water); the composite's regime words
+        are editorial, this is their statistical counterpart
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">P(rough) now</div>
+          <div className={`v ${rough ? "bad" : ""}`}>{fmt(e.p_rough_now, 2)}</div></div>
+        <div className="item"><div className="k">calm water</div>
+          <div className="v">σ {fmt(e.states?.calm?.sigma_bp, 1)}bp
+            <span className="dimsmall"> · ~{fmt(e.states?.calm?.expected_duration_bd, 0)}bd spells</span></div></div>
+        <div className="item"><div className="k">rough water</div>
+          <div className="v">σ {fmt(e.states?.rough?.sigma_bp, 1)}bp
+            <span className="dimsmall"> · ~{fmt(e.states?.rough?.expected_duration_bd, 0)}bd spells</span></div></div>
+      </div>
+      <Chart
+        rows={e.rows ?? []}
+        series={[{ label: "filtered P(rough water)", color: "#e88a3a" }]}
+        yLabel="P"
+      />
+      <div className="dimsmall">{e.reading}</div>
+      {v.ok && (
+        <div className="dimsmall">
+          walk-forward: AUROC {fmt(v.auroc_p_rough, 2)} vs climatology {fmt(v.auroc_climatology, 2)}
+          {" "}({v.n_scored} scored) — {v.verdict}
+        </div>
+      )}
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
+function SeaRoomCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Sea Room" reason={e?.reason} span={6} />;
+  const t = e.today ?? {};
+  const cov = e.coverage ?? {};
+  const alarm = t.set === "event" || t.set === "empty";
+  return (
+    <div className="card span6">
+      <h2>Sea Room</h2>
+      <div className="sub">
+        guaranteed coverage for the fleet's probability — adaptive conformal sets over
+        {" {event, no-event}"} whose long-run coverage tracks {fmt((cov.target ?? 0.9) * 100, 0)}% even
+        under regime drift (Gibbs–Candès ACI; label feedback honestly delayed 5bd)
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">today's set</div>
+          <div className={`v ${alarm ? "bad" : ""}`}>
+            {t.set === "no_event" ? "{no event}" : t.set === "event" ? "{event}" :
+             t.set === "both" ? "{event, no event}" : t.set === "empty" ? "∅ (nonconforming)" : "—"}</div></div>
+        <div className="item"><div className="k">realized coverage</div>
+          <div className="v">{fmt((cov.realized ?? 0) * 100, 1)}%
+            <span className="dimsmall"> vs {fmt((cov.target ?? 0) * 100, 0)}% target · {cov.n_resolved_sets} resolved</span></div></div>
+        <div className="item"><div className="k">informative days</div>
+          <div className="v">{fmt((e.informative_rate ?? 0) * 100, 0)}%
+            <span className="dimsmall"> ({fmt((e.informative_rate_250d ?? 0) * 100, 0)}% last 250d)</span></div></div>
+        <div className="item"><div className="k">working α</div>
+          <div className="v">{fmt(t.alpha_working, 3)}</div></div>
+      </div>
+      <div className="dimsmall">{t.reading}</div>
+      <div className="dimsmall">{e.verdict}</div>
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
 export default function Forecast({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   return (
@@ -389,6 +462,8 @@ export default function Forecast({ snap }: { snap: Any }) {
       <RiptideCard r={deep.riptide} />
       <SwellCard s={deep.swell} />
       <BathymetryCard b={deep.bathymetry} />
+      <SeaStateCard e={deep.seastate} />
+      <SeaRoomCard e={deep.searoom} />
       <TideTablesCard t={deep.tidetables} />
       <BreakwaterCard b={snap.engines?.breakwater} />
     </div>

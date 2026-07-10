@@ -263,6 +263,12 @@ def walk_forward_stack(
     both = pd.concat({"p": p_pub, "d": dispersion}, axis=1).dropna(subset=["p"])
     return {
         "ok": True,
+        # private (stripped before blob/API): downstream honesty engines race
+        # the fleet (Regatta/MCS) and wrap the published probability in
+        # conformal sets (Sea Room) — same OOS streams, no recompute.
+        "_cal": cal,
+        "_p_pub": p_pub,
+        "_y": y,
         "asof": M.index[-1].date().isoformat(),
         "p_now": round(p_now, 3) if p_now is not None else None,
         "calibrated_band": band,

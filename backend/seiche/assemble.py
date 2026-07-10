@@ -30,6 +30,7 @@ import pandas as pd
 from seiche import store
 from seiche.config import (
     ALL_SERIES,
+    BIS_SERIES,
     COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
@@ -64,6 +65,10 @@ from seiche.engines import kink as eng_kink
 from seiche.engines import leakaudit as eng_leakaudit
 from seiche.engines import merian as eng_merian
 from seiche.engines import microseism as eng_microseism
+from seiche.engines import regatta as eng_regatta
+from seiche.engines import searoom as eng_searoom
+from seiche.engines import seastate as eng_seastate
+from seiche.engines import thermohaline as eng_thermohaline
 from seiche.engines import market as eng_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
@@ -83,7 +88,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import cftc, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
+from seiche.sources import bis, cftc, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -91,7 +96,7 @@ DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 
-VERSION = "0.6.0 microseism"
+VERSION = "0.7.0 tier1"
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +125,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
+            guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
             guard("nyfed_rates", nyfed.fetch_secured_rates(client)),
             guard("nyfed_srf", nyfed.fetch_srf_ops(client)),
@@ -139,7 +145,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
     out: dict = {}
-    for group in ("fred", "ofr", "ecb"):
+    for group in ("fred", "ofr", "ecb", "bis"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             pts = s.points[s.points.index <= asof]
@@ -407,6 +413,9 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         inr=_pts(fred_s, "INR"),
         usdt_peg_bp=drv["usdt_peg_bp"],
     ))
+
+    # --- Thermohaline (BIS global liquidity — the deep circulation) ---
+    run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
 
     # --- Station-Keeping (maneuver detection) ---
     run("stationkeeping", lambda: eng_stationkeeping.analyze(
@@ -804,6 +813,26 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         return eng_stacker.walk_forward_stack(M, yv, regime=hist["regime_series"])
     run("stacker", _stacker)
 
+    # Regatta + Sea Room consume the Stack's own OOS streams (private keys,
+    # read here BEFORE the strip below): the fleet raced snoop-corrected, and
+    # the published probability wrapped in coverage-guaranteed sets.
+    def _regatta():
+        stk = out.get("stacker", {})
+        if not stk.get("ok"):
+            return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
+        return eng_regatta.analyze(stk["_cal"], stk["_p_pub"], stk["_y"])
+    run("regatta", _regatta)
+
+    def _searoom():
+        stk = out.get("stacker", {})
+        if not stk.get("ok"):
+            return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
+        return eng_searoom.analyze(stk["_p_pub"], stk["_y"])
+    run("searoom", _searoom)
+
+    # Sea State — the statistical regime gauge (filtered 2-state HMM).
+    run("seastate", lambda: eng_seastate.analyze(spread))
+
     def _book():
         stk = out.get("stacker", {})
         if not stk.get("ok"):
@@ -823,7 +852,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 
     # Nested private keys are pandas objects — json blob cache would crash on
     # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
-    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre", "microseism"):
+    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre", "microseism", "seastate"):
         blk = out.get(key)
         if isinstance(blk, dict):
             for k in [k for k in blk if str(k).startswith("_")]:

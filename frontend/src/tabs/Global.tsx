@@ -107,9 +107,76 @@ function FarBasinCard({ f }: { f: Any }) {
   );
 }
 
+function ThermohalineCard({ t }: { t: Any }) {
+  if (!t?.ok) return <Fault name="Thermohaline" reason={t?.reason} span={12} />;
+  const st = t.stock ?? {};
+  const hot = (st.yoy_pctl ?? 50) >= 80;
+  return (
+    <div className="card span12">
+      <h2>Thermohaline</h2>
+      <div className="sub">
+        the deep circulation under the daily plumbing — the offshore dollar stock (USD credit owed by
+        non-banks OUTSIDE the US, BIS global liquidity) and the credit-to-GDP gaps: every squeeze on
+        this board is ultimately a rationing of this ${fmt(st.usd_trillions, 1)}T stock · quarterly,
+        published ~2 quarters late by design ({t.publication_lag_days}d old print)
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">offshore USD credit</div>
+          <div className="v">${fmt(st.usd_trillions, 2)}T</div></div>
+        <div className="item"><div className="k">growth (yoy)</div>
+          <div className={`v ${hot ? "warn" : ""}`}>{st.yoy_pct != null ? `${st.yoy_pct > 0 ? "+" : ""}${fmt(st.yoy_pct, 1)}%` : "—"}
+            <span className="dimsmall"> ({fmt(st.yoy_pctl, 0)}th pctl since 2000)</span></div></div>
+        {t.composition?.loans && (
+          <div className="item"><div className="k">bank loans leg</div>
+            <div className="v">{t.composition.loans.yoy_pct > 0 ? "+" : ""}{fmt(t.composition.loans.yoy_pct, 1)}%
+              <span className="dimsmall"> yoy ({fmt(t.composition.loans.pctl, 0)}th)</span></div></div>
+        )}
+        {t.composition?.debt_securities && (
+          <div className="item"><div className="k">bond-market leg</div>
+            <div className="v">{t.composition.debt_securities.yoy_pct > 0 ? "+" : ""}{fmt(t.composition.debt_securities.yoy_pct, 1)}%
+              <span className="dimsmall"> yoy ({fmt(t.composition.debt_securities.pctl, 0)}th)</span></div></div>
+        )}
+        {t.eme && (
+          <div className="item"><div className="k">EME slice</div>
+            <div className="v">{t.eme.yoy_pct > 0 ? "+" : ""}{fmt(t.eme.yoy_pct, 1)}%
+              <span className="dimsmall"> yoy ({fmt(t.eme.pctl, 0)}th)</span></div></div>
+        )}
+      </div>
+      <Chart
+        rows={t.yoy_rows ?? []}
+        series={[{ label: "offshore USD credit growth, yoy %", color: "#5aa9e6" }]}
+        yLabel="% yoy"
+      />
+      <table className="mini">
+        <thead><tr><th>economy</th><th>credit-to-GDP gap</th><th>pctl</th><th>reading</th></tr></thead>
+        <tbody>
+          {(t.credit_gaps ?? []).map((g: Any) => (
+            <tr key={g.economy}>
+              <td>{g.economy}</td>
+              <td className="num" style={{ color: g.gap_pp > 0 ? "#e88a3a" : undefined }}>
+                {g.gap_pp > 0 ? "+" : ""}{fmt(g.gap_pp, 1)}pp</td>
+              <td className="num">{fmt(g.pctl, 0)}th</td>
+              <td className="dimsmall">{g.reading}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="dimsmall">{t.reading}</div>
+      <Method>{(t.caveats ?? []).join(" · ")} · {t.method}</Method>
+    </div>
+  );
+}
+
 export default function Global({ snap }: { snap: Any }) {
   const e = snap.engines?.basins ?? {};
-  if (!e.ok) return <div className="grid"><Fault name="Global Basins" reason={e.reason} span={12} /></div>;
+  if (!e.ok) {
+    return (
+      <div className="grid">
+        <Fault name="Global Basins" reason={e.reason} span={12} />
+        <ThermohalineCard t={snap.engines?.thermohaline} />
+      </div>
+    );
+  }
   const sw = e.swap_lines ?? {};
   const ch = e.channels ?? {};
   const tide = e.tide ?? {};
@@ -218,6 +285,7 @@ export default function Global({ snap }: { snap: Any }) {
       </div>
 
       <MooringsCard m={snap.engines?.moorings} />
+      <ThermohalineCard t={snap.engines?.thermohaline} />
       <FarBasinCard f={snap.engines?.farbasin} />
     </div>
   );
