@@ -120,6 +120,46 @@ function MLCard({ ml }: { ml: Any }) {
   );
 }
 
+function LeakAuditCard({ a }: { a: Any }) {
+  if (!a?.ok) return <Fault name="Leak Audit" reason={a?.reason} span={12} />;
+  return (
+    <div className="card span12">
+      <h2>Leak Audit — the one-switch protocol, run against ourselves</h2>
+      <div className="sub">
+        the same lite index rebuilt with exactly ONE discipline deliberately broken, scored on the
+        identical events — the gains above the clean row are look-ahead this pipeline refuses to
+        claim (protocol: arXiv:2605.23959; determinism bar: arXiv:2603.20319)
+      </div>
+      <div className="kv" style={{ marginBottom: 8 }}>
+        <div className="item"><div className="k">bit-reproducible</div>
+          <div className={`v ${a.bit_reproducible ? "" : "bad"}`}>
+            {a.bit_reproducible ? "yes — two builds hash identically" : "NO — investigate"}</div></div>
+        <div className="item"><div className="k">clean index sha256</div>
+          <div className="v" style={{ fontFamily: "SF Mono, monospace" }}>{a.clean_index_sha256}…</div></div>
+      </div>
+      <table className="mini">
+        <thead><tr><th>toggle</th><th>what breaks</th><th>AUROC</th><th>ΔAUROC</th><th>recall</th><th>run-precision</th></tr></thead>
+        <tbody>
+          {(a.rows ?? []).map((r: Any) => (
+            <tr key={r.toggle} style={r.toggle === "clean" ? { fontWeight: 600 } : undefined}>
+              <td>{r.toggle}</td>
+              <td className="dimsmall">{r.what_breaks}</td>
+              <td className="num">{r.auroc != null ? fmt(r.auroc, 3) : "—"}</td>
+              <td className="num" style={{ color: (r.lg_auroc ?? 0) > 0 ? "#e5484d" : undefined }}>
+                {r.lg_auroc != null ? `${r.lg_auroc > 0 ? "+" : ""}${fmt(r.lg_auroc, 3)}` : "—"}</td>
+              <td className="num">{r.recall != null ? `${fmt(r.recall * 100, 0)}%` : "—"}</td>
+              <td className="num">{r.precision_runs != null ? `${fmt(r.precision_runs * 100, 0)}%` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="dimsmall">{a.reading}</div>
+      {(a.caveats ?? []).map((c: string, i: number) => <div className="caveat" key={i}>▸ {c}</div>)}
+      <Method>{a.method}</Method>
+    </div>
+  );
+}
+
 export default function Proof({ snap }: { snap: Any }) {
   const bt = snap.deep?.backtest ?? {};
   const hist = snap.deep?.history ?? {};
@@ -209,6 +249,8 @@ export default function Proof({ snap }: { snap: Any }) {
       </div>
 
       <OrthogonalCard o={bt.orthogonal} />
+
+      <LeakAuditCard a={snap.deep?.leakaudit} />
 
       <MLCard ml={snap.deep?.ml} />
 
