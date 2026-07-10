@@ -56,9 +56,24 @@ def build(
     pair_b: pd.Series,           # RV pair proxy, $B, weekly (CFTC)
     digestion: pd.Series,        # auction digestion index, per-auction dates
     exclude: tuple[str, ...] = (),   # components to leave out (orthogonal tests)
+    leak: str = "none",          # LEAK AUDIT ONLY — deliberately broken variants
 ) -> dict:
+    """`leak` exists solely for the Leak Audit engine (one-switch protocol,
+    arXiv:2605.23959): "norm_global" swaps every expanding z/percentile for
+    its full-sample (look-ahead) twin; "temp_center" swaps the trailing tails
+    smoother for a centered window that peeks forward. Neither variant is
+    ever published as a signal — they exist to MEASURE what cheating would
+    buy. Publishing code must always call with leak="none"."""
+    if leak not in ("none", "norm_global", "temp_center"):
+        raise ValueError(f"unknown leak mode: {leak!r}")
     idx = pd.bdate_range(spread_bp.dropna().index.min(), spread_bp.dropna().index.max())
     f = lambda s: s.reindex(idx).ffill(limit=10) if not s.dropna().empty else pd.Series(index=idx, dtype=float)
+
+    if leak == "norm_global":
+        _z = lambda s, mp=MIN_Z_PERIODS: (s - s.mean()) / s.std()
+        _p = lambda s, mp=MIN_PCTL_PERIODS: s.rank(pct=True)
+    else:
+        _z, _p = _ez, _epctl
 
     spread_d = spread_bp.reindex(idx)
     tail_d = tail_bp.reindex(idx) if not tail_bp.dropna().empty else pd.Series(index=idx, dtype=float)
@@ -66,12 +81,16 @@ def build(
     comps = pd.DataFrame(index=idx)
 
     # tails — mirror tails_score: 0.6 tail z + 0.4 spread z through the sigmoid
-    combo = 0.6 * _ez(tail_d).fillna(0.0) + 0.4 * _ez(spread_d).fillna(0.0)
-    comps["tails"] = _sigmoid100(combo.ewm(span=5).mean(), 1.4, 1.1)
+    combo = 0.6 * _z(tail_d).fillna(0.0) + 0.4 * _z(spread_d).fillna(0.0)
+    smoothed = (
+        combo.rolling(5, center=True, min_periods=1).mean()
+        if leak == "temp_center" else combo.ewm(span=5).mean()
+    )
+    comps["tails"] = _sigmoid100(smoothed, 1.4, 1.1)
 
     # kink proxy — low reserves/GDP percentile = closer to scarcity. Capped at
     # 70: a percentile is a cruder instrument than the fitted kink engine.
-    p = _epctl(f(res_gdp))
+    p = _p(f(res_gdp))
     comps["kink"] = ((1.0 - p) * 70.0).clip(0, 70)
 
     # confession — SRF trailing-20d max through the live srf_score curve,
@@ -83,7 +102,7 @@ def build(
     comps["confession"] = pd.concat([srf_sc, dw_sc], axis=1).max(axis=1)
 
     # rvxray — expanding z of the pair proxy through the live sigmoid
-    comps["rvxray"] = _sigmoid100(_ez(f(pair_b), 60), 0.8, 1.3)
+    comps["rvxray"] = _sigmoid100(_z(f(pair_b), 60), 0.8, 1.3)
 
     # auctions — digestion index is trailing-window by construction
     dig = digestion.sort_index()
@@ -106,7 +125,7 @@ def build(
     index = (used.fillna(0.0) * eff_w).sum(axis=1) / eff_w.sum(axis=1).replace(0, np.nan)
     index = index.dropna()
 
-    pctl = _epctl(index) * 100.0
+    pctl = _p(index) * 100.0
 
     def regime_of(v: float) -> str:
         return next(name for cutoff, name in REGIMES if v < cutoff)

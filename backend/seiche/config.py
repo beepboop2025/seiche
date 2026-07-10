@@ -555,6 +555,31 @@ ROGUE_BOOT_N = 400             # bootstrap reps for the CIs (fixed seed)
 ROGUE_SEED = 7
 ROGUE_SENS_PCTLS = (70.0, 80.0, 85.0, 90.0)  # threshold-sensitivity table
 
+# Microseism — the shock catalog (IDEAS.md #13). Calendar-gated Hawkes on
+# the SHARED pop statistic: micro-shocks >= MICRO_POP_BP (not declustered —
+# clustering IS the signal), baseline = expanding calendar-bucket rates
+# (Swell's classify_days, shrunk by MICRO_SHRINK_K pseudo-days), branching
+# ratio n = expected aftershocks per shock, watched toward the n=1
+# criticality boundary. Must beat the calendar-Poisson null (LR test) and
+# calendar climatology walk-forward, or it self-demotes to diagnostic.
+MICRO_POP_BP = 2.0               # micro-shock threshold on the pop statistic
+MICRO_SENS_BP = (1.5, 3.0)       # sensitivity thresholds published alongside
+MICRO_SHRINK_K = 10.0            # pseudo-days shrinking thin buckets to pooled
+MICRO_MIN_EVENTS = 60            # shocks before any fit prints
+MICRO_MIN_HISTORY_D = 500        # refuse to speak below this
+MICRO_REFIT_EVERY_BD = 63        # branching-history / walk-forward refit cadence
+MICRO_HAZARD_FWD_BD = 5          # hazard horizon — same as BACKTEST_EVENT_FWD_D
+MICRO_NEAR_CRITICAL = 0.7        # branching at/above this reads near-critical
+
+# Leak Audit — the one-switch leakage protocol (arXiv:2605.23959) applied to
+# Seiche's own pipeline: rebuild the lite index with exactly ONE discipline
+# deliberately broken (global-sample z, centered smoothing, self-fitted alert
+# threshold) and publish the Leakage Gain each break would buy. A clean
+# pipeline shows the gains it REFUSES to claim; the audit is the evidence
+# that the expanding-window discipline is load-bearing, not decoration.
+LEAKAUDIT_TEMP_CENTER_W = 5      # centered-window width for the TEMP_CENTER toggle
+LEAKAUDIT_THRESH_GRID = tuple(float(x) for x in range(50, 99, 2))  # THRESH_FIT scan
+
 # ---------------------------------------------------------------------------
 # ML Lab. Same event definition as the backtest; the model must beat BOTH
 # climatology and the rule-based index out-of-sample or it says so. Trailing-
@@ -766,6 +791,7 @@ ALERT_RULES = {
     "riptide_sticky": 0.6,          # live pop classified as a current
     "breakwater_proximity": 90.0,   # board near historical rescue conditions
     "merian_instability": 95.0,     # growing-mode index percentile >= this
+    "microseism_branching": MICRO_NEAR_CRITICAL,  # aftershock chain near-critical (LR-identified)
     "book_flip": True,              # the Book changed stance/positions
     "engine_dead": True,            # any composite input DEAD
 }

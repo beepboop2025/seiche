@@ -285,6 +285,63 @@ function RogueWaveCard({ e }: { e: Any }) {
   );
 }
 
+function MicroseismCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="Microseism" reason={e?.reason} span={5} />;
+  const fit = e.fit ?? {};
+  const lr = e.lr_test ?? {};
+  const wf = e.walkforward ?? {};
+  const nearCritical = lr.identified && (fit.branching ?? 0) >= 0.7;
+  return (
+    <div className="card span5">
+      <h2>Microseism</h2>
+      <div className="sub">
+        the shock catalog nobody kept — a calendar-gated Hawkes process on every ≥{fmt(e.threshold_bp, 1)}bp
+        tremor asks whether shocks BREED shocks beyond the calendar's forcing; the branching ratio n is the
+        basin's distance to criticality (at n=1 the chain reaction is self-sustaining)
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">branching n</div>
+          <div className={`v ${nearCritical ? "bad" : lr.identified && (fit.branching ?? 0) >= 0.4 ? "warn" : ""}`}>
+            {fmt(fit.branching, 2)}<span className="dimsmall"> aftershocks/shock</span></div></div>
+        <div className="item"><div className="k">aftershock half-life</div>
+          <div className="v">{fmt(fit.half_life_bd, 1)}bd</div></div>
+        <div className="item"><div className="k">intensity that is echo</div>
+          <div className={`v ${(fit.excitation_share_now ?? 0) >= 0.6 ? "warn" : ""}`}>
+            {fmt((fit.excitation_share_now ?? 0) * 100, 0)}%</div></div>
+        <div className="item"><div className="k">vs calendar null</div>
+          <div className="v">{lr.identified ? "identified" : "NOT identified"}
+            <span className="dimsmall"> (LR p={fmt(lr.p, 4)})</span></div></div>
+      </div>
+      <Chart
+        rows={e.branching_rows ?? []}
+        series={[{ label: "branching ratio n (criticality at 1.0)", color: "#e5484d" }]}
+        yLabel="n"
+      />
+      <div className="dimsmall">{e.reading}</div>
+      {wf.ok && (
+        <div className="dimsmall">
+          walk-forward: Brier {fmt(wf.brier_hawkes, 4)} vs calendar {fmt(wf.brier_calendar, 4)} ·
+          AUROC {fmt(wf.auroc_hawkes, 2)} vs {fmt(wf.auroc_calendar, 2)} ({wf.n_scored} scored) — {wf.verdict}
+        </div>
+      )}
+      <table className="mini">
+        <thead><tr><th>catalog thr</th><th>shocks</th><th>n</th><th>half-life</th></tr></thead>
+        <tbody>
+          {(e.sensitivity ?? []).map((r: Any, i: number) => (
+            <tr key={i}>
+              <td className="num">{fmt(r.thr_bp, 1)}bp</td>
+              <td className="num">{r.n_shocks}</td>
+              <td className="num">{r.branching != null ? fmt(r.branching, 2) : "—"}</td>
+              <td className="num">{r.half_life_bd != null ? `${fmt(r.half_life_bd, 1)}bd` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
 export default function Physics({ snap }: { snap: Any }) {
   const eng = snap.engines ?? {};
   const deep = snap.deep ?? {};
@@ -296,18 +353,20 @@ export default function Physics({ snap }: { snap: Any }) {
           the basin treated as the dynamical system it is named after — its <b>floor</b> (Bathymetry:
           empirical Langevin potential, the Fokker–Planck↔Schrödinger spectrum, the entropy arrow,
           exact first-passage forecast), its <b>modes</b> (Merian: Koopman/DMD eigenmodes), its{" "}
-          <b>determinism</b> (Gyre: Takens embedding — is prediction possible at all?), and its{" "}
-          <b>tail law</b> (Rogue Wave: extreme value theory). Together with Resonance (forced response)
-          and Undertow (free decay) on the RESONANCE tab, this is the full physical examination.
-          Every claim ships with walk-forward evidence or expanding percentiles vs its own past —
-          the formalism is quantum-mechanical where that is honest (Koopman operators, the
-          Fokker–Planck↔Schrödinger duality) and nowhere else.
+          <b>determinism</b> (Gyre: Takens embedding — is prediction possible at all?), its{" "}
+          <b>tail law</b> (Rogue Wave: extreme value theory), and its <b>clustering law</b>{" "}
+          (Microseism: a calendar-gated Hawkes process — do shocks breed shocks?). Together with
+          Resonance (forced response) and Undertow (free decay) on the RESONANCE tab, this is the full
+          physical examination. Every claim ships with walk-forward evidence or expanding percentiles
+          vs its own past — the formalism is quantum-mechanical where that is honest (Koopman
+          operators, the Fokker–Planck↔Schrödinger duality) and nowhere else.
         </div>
       </div>
       <BathymetryCard e={deep.bathymetry} />
       <MerianCard e={eng.merian} />
       <GyreCard e={deep.gyre} />
       <RogueWaveCard e={eng.roguewave} />
+      <MicroseismCard e={deep.microseism} />
     </div>
   );
 }

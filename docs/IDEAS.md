@@ -156,7 +156,7 @@ strictly as-of pop-day close (RRP co-spike present/absent, bucket, damping,
 reserves headroom). Fires only when a pop happens — speaks exactly when the
 operator is staring at the screen.
 
-## 13. Microseism — the shock catalog nobody kept
+## 13. Microseism — the shock catalog nobody kept ✅ *shipped*
 
 **Pattern:** funding tremors cluster, but only in scarce-reserve regimes
 (2021–22 calendar pops were one-day and dead; Sep–Dec 2025 recurred at every

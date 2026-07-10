@@ -221,6 +221,18 @@ def evaluate(snap: dict) -> list[dict]:
                            f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
                            f"{'present' if lv.get('rrp_cosigned') else 'ABSENT — genuine scarcity'})"))
 
+    ms = deep.get("microseism") or {}
+    thr = ALERT_RULES.get("microseism_branching")
+    ms_fit = (ms.get("fit") or {}) if ms.get("ok") else {}
+    ms_identified = bool((ms.get("lr_test") or {}).get("identified"))
+    if thr is not None and ms_identified and (ms_fit.get("branching") or 0.0) >= thr:
+        candidates.append(("microseism_branching", ms.get("asof", "?"),
+                           f"Microseism: aftershock chain near-critical — each shock breeds "
+                           f"~{ms_fit['branching']:.2f} aftershocks (half-life "
+                           f"{ms_fit.get('half_life_bd') or 0:.0f}bd, LR p="
+                           f"{(ms.get('lr_test') or {}).get('p', 1):.4f} vs the calendar null); "
+                           f"at n=1 the chain reaction is self-sustaining"))
+
     mer = eng.get("merian") or {}
     thr = ALERT_RULES.get("merian_instability")
     inst = (mer.get("instability") or {}) if mer.get("ok") else {}
