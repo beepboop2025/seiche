@@ -20,8 +20,8 @@
                 "url": "https://seiche.info"
             },
             "repositoryUrl": {
-                "url": "https://github.com/seiche-terminal/seiche",
-                "wellKnown": "https://github.com/seiche-terminal/seiche/blob/main/.well-known/funding-manifest-urls"
+                "url": "https://github.com/liquilens-labs/seiche",
+                "wellKnown": "https://github.com/liquilens-labs/seiche/blob/main/.well-known/funding-manifest-urls"
             },
             "licenses": [
                 "spdx:AGPL-3.0-or-later"
