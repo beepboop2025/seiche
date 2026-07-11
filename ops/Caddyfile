@@ -4,7 +4,7 @@
 api.seiche.info {
     @public {
         method GET
-        path /api/overview /api/public /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/*
+        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/*
     }
     @login {
         method POST
@@ -25,7 +25,7 @@ api.seiche.info {
     handle @preflight {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
         respond 204
     }
     @mcp {
@@ -33,8 +33,8 @@ api.seiche.info {
     }
     handle @mcp {
         header Access-Control-Allow-Origin "*"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature"
-        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
+        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE"
         header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
