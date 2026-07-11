@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How to read Seiche · the plain-English guide</title>
+<meta name="description" content="A no-jargon guide to Seiche, the free funding-stress terminal. What the regime word means, how to use the board in three steps, and every engine name translated into plain English.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;700;800;900&display=swap');
+  :root {
+    --bg:#000; --panel:#0e0e0e; --panel-2:#151515; --edge:#1a1a1a; --edge-2:#272727;
+    --text:#e2e8f0; --dim:#94a3b8; --faint:#64748b;
+    --accent:#06d6e0; --accent-glow:rgba(6,214,224,.35);
+    --calm:#19c393; --erosion:#ffb020; --strain:#ff7a45; --stress:#ff5b52;
+    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+    --display:"Outfit",system-ui,-apple-system,sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--text); font-family:var(--mono);
+    font-size:14px; line-height:1.72; -webkit-font-smoothing:antialiased;
+    max-width:820px; margin:0 auto; padding:40px 24px 90px;
+  }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  ::selection { background:#0891a2; color:#000; }
+
+  .top { display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap;
+         padding-bottom:16px; border-bottom:1px solid var(--edge); }
+  .wordmark { font-family:var(--display); font-weight:800; letter-spacing:.32em; font-size:20px; color:#fff; }
+  .wordmark span { color:var(--accent); text-shadow:0 0 18px var(--accent-glow); }
+  .back { font-size:12px; color:var(--faint); }
+
+  h1 { font-family:var(--display); font-weight:800; font-size:clamp(28px,5vw,40px); letter-spacing:-.02em;
+       color:#fff; line-height:1.08; margin:30px 0 10px; }
+  .lede { color:var(--dim); font-size:15px; line-height:1.7; max-width:64ch; margin-bottom:8px; }
+  h2 { font-family:var(--display); font-weight:800; font-size:13px; letter-spacing:.16em; text-transform:uppercase;
+       color:var(--accent); margin:44px 0 14px; padding-top:20px; border-top:1px solid var(--edge); }
+  p { margin:12px 0; color:var(--text); }
+  p.sub { color:var(--dim); }
+  strong { color:#fff; font-weight:600; }
+  em { color:var(--dim); font-style:italic; }
+
+  .regimes { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin:6px 0 4px; }
+  .rg { border:1px solid var(--edge); border-radius:11px; padding:14px 15px; background:linear-gradient(180deg,var(--panel-2),var(--panel)); }
+  .rg .tag { font-family:var(--display); font-weight:800; font-size:12px; letter-spacing:.14em; padding:3px 10px; border-radius:6px; color:#000; display:inline-block; }
+  .rg.calm .tag { background:var(--calm); } .rg.erosion .tag { background:var(--erosion); }
+  .rg.strain .tag { background:var(--strain); } .rg.stress .tag { background:var(--stress); }
+  .rg p { font-size:12.5px; color:var(--dim); margin:10px 0 0; }
+
+  ol.steps { list-style:none; counter-reset:s; display:grid; gap:12px; margin:8px 0; }
+  ol.steps li { counter-increment:s; display:grid; grid-template-columns:auto 1fr; gap:14px; align-items:baseline;
+                background:var(--panel); border:1px solid var(--edge); border-radius:10px; padding:13px 15px; }
+  ol.steps li::before { content:counter(s); font-family:var(--display); font-weight:800; font-size:16px; color:var(--accent);
+                        border:1px solid var(--edge-2); border-radius:8px; width:30px; height:30px; display:grid; place-items:center; }
+  ol.steps b { color:#fff; }
+
+  dl.tabs { display:grid; gap:1px; background:var(--edge); border:1px solid var(--edge); border-radius:10px; overflow:hidden; }
+  dl.tabs > div { background:var(--panel); padding:11px 15px; display:grid; grid-template-columns:130px 1fr; gap:14px; align-items:baseline; }
+  dl.tabs dt { font-family:var(--display); font-weight:700; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); }
+  dl.tabs dd { color:var(--dim); font-size:13px; }
+  @media (max-width:560px){ dl.tabs > div { grid-template-columns:1fr; gap:4px; } }
+
+  table { width:100%; border-collapse:collapse; margin:6px 0; font-size:13px; }
+  th { text-align:left; font-family:var(--display); font-weight:700; font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+       color:var(--faint); padding:6px 10px 8px 0; border-bottom:1px solid var(--edge-2); }
+  td { padding:9px 10px 9px 0; border-bottom:1px solid var(--edge); vertical-align:top; }
+  td.n { font-family:var(--display); font-weight:700; color:var(--accent); white-space:nowrap; }
+  .wrap { overflow-x:auto; }
+
+  ul.plain { list-style:none; display:grid; gap:9px; margin:8px 0; }
+  ul.plain li { display:grid; grid-template-columns:auto 1fr; gap:11px; align-items:baseline; color:var(--text); font-size:13.5px; }
+  ul.plain li::before { content:"→"; color:var(--accent); }
+  ul.plain b { color:#fff; }
+
+  .foot { margin-top:44px; padding-top:18px; border-top:1px solid var(--edge); color:var(--faint); font-size:12px; }
+  .foot a { color:var(--dim); }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="wordmark">SEI<span>CHE</span></div>
+  <a class="back" href="/">← back to the terminal</a>
+</div>
+
+<h1>How to read Seiche</h1>
+<p class="lede">Seiche watches the plumbing of the dollar. When banks and funds start to run short of cash, that stress shows up in a few boring public numbers days or weeks before it reaches the news. Seiche reads those numbers every day and turns them into one plain reading: how much stress is building, and how close it is.</p>
+<p class="sub">This is the no-jargon guide. If a word on the board looks like a shipping term, it probably is, on purpose, and this page tells you what each one actually means.</p>
+
+<h2>The one thing to look at first</h2>
+<p>Top of every page is a single number and a one word regime. That is the whole board boiled down. If you read nothing else, read the regime word.</p>
+<div class="regimes">
+  <div class="rg calm"><span class="tag">CALM</span><p>The water is flat. Nothing is building.</p></div>
+  <div class="rg erosion"><span class="tag">EROSION</span><p>Small cracks. Worth watching, not acting.</p></div>
+  <div class="rg strain"><span class="tag">STRAIN</span><p>Real pressure is building in the funding system.</p></div>
+  <div class="rg stress"><span class="tag">STRESS</span><p>The kind of conditions that came before past squeezes.</p></div>
+</div>
+<p class="sub">Everything else on the site is there to show you <em>why</em> it says what it says, so you never have to take it on faith.</p>
+
+<h2>How to use it, in three steps</h2>
+<ol class="steps">
+  <li><span><b>Read the regime</b> at the top. That is the headline.</span></li>
+  <li><span>Open <b>BOARD</b> to see which parts of the plumbing are driving it. Each row is one signal, with a bar showing how loud it is right now.</span></li>
+  <li><span>Open <b>FORECAST</b> to see the odds of a stress spike on each of the next few weeks, lined up against the calendar days that usually cause trouble.</span></li>
+</ol>
+<p class="sub">That is enough to use Seiche well. The rest is depth for when you want it.</p>
+
+<h2>What each tab shows you</h2>
+<dl class="tabs">
+  <div><dt>Dispatches</dt><dd>The plain-English write ups. Start here if you would rather read a short letter than a dashboard.</dd></div>
+  <div><dt>Board</dt><dd>The main screen. The overall reading, broken into the signals behind it.</dd></div>
+  <div><dt>Forecast</dt><dd>The odds of a funding stress spike over the next six weeks, day by day.</dd></div>
+  <div><dt>Physics</dt><dd>The deep version. It treats the funding system like a body of water and measures how much self-calming ability it has left.</dd></div>
+  <div><dt>Helm</dt><dd>Plain-language positions this reading would imply, with an honest running score, including the times it was wrong.</dd></div>
+  <div><dt>Market</dt><dd>The raw rates and spreads, if you want the source numbers.</dd></div>
+  <div><dt>Global</dt><dd>Whether the US, Europe, the UK, India and the crypto dollar are all moving together.</dd></div>
+  <div><dt>Calendar</dt><dd>The upcoming dates that historically strain funding: tax days, quarter ends, big auction settlements.</dd></div>
+  <div><dt>Positioning</dt><dd>Where large leveraged traders are crowded, from public futures data.</dd></div>
+  <div><dt>Resonance</dt><dd>Whether the same routine calendar pressure is producing a bigger wave than it used to. A bigger wave from the same push means rising fragility.</dd></div>
+  <div><dt>Time Machine</dt><dd>Replay the board as it stood on any past date, so you can check what it was saying before a known event.</dd></div>
+  <div><dt>Proof</dt><dd>The honest scorecard: how often the signal fired before real events, measured fairly, with the misses shown next to the hits.</dd></div>
+  <div><dt>System</dt><dd>Data health. Which feeds are fresh, stale or down right now.</dd></div>
+</dl>
+
+<h2>The engine names, translated</h2>
+<div class="wrap">
+<table>
+  <thead><tr><th>Name on the board</th><th>What it is really telling you</th></tr></thead>
+  <tbody>
+    <tr><td class="n">Composite / regime</td><td>The overall stress reading, one number, one word.</td></tr>
+    <tr><td class="n">Kink</td><td>How close we are to the point where bank cash gets scarce, and how many days away at the current drain rate.</td></tr>
+    <tr><td class="n">Liquidity Weather</td><td>A six week forecast of how much cash is in the banking system, and which days land on thin ice.</td></tr>
+    <tr><td class="n">Tail Seismograph</td><td>An early tremor detector: are the worst overnight lending rates starting to detach from the normal ones.</td></tr>
+    <tr><td class="n">Echo</td><td>Does today's path rhyme with the run up to a past stress episode.</td></tr>
+    <tr><td class="n">Tide Tables</td><td>What happened next, every previous time the board looked like it does today.</td></tr>
+    <tr><td class="n">Resonance</td><td>Is the same calendar pressure making a bigger wave than before. Bigger wave, same push, means rising fragility.</td></tr>
+    <tr><td class="n">Undertow</td><td>Is the system slowly losing its ability to calm itself down after everyday bumps.</td></tr>
+    <tr><td class="n">Swell Forecast</td><td>The odds of a funding stress spike on each of the next 42 business days.</td></tr>
+    <tr><td class="n">Hydrophone Array</td><td>How tightly connected the plumbing is right now, and which pipe moves first.</td></tr>
+    <tr><td class="n">Global Basin</td><td>Are the world's funding systems moving as one tide.</td></tr>
+    <tr><td class="n">Stablecoin Moorings</td><td>The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed.</td></tr>
+    <tr><td class="n">ML Lab</td><td>A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses.</td></tr>
+    <tr><td class="n">Station-Keeping</td><td>Watches for moves in the system's cash that the normal seasonal model cannot explain, and flags them early.</td></tr>
+    <tr><td class="n">Riptide</td><td>When a spike happens, is it just harmless calendar noise or the start of a real squeeze.</td></tr>
+    <tr><td class="n">Breakwater</td><td>How close the Fed is to stepping in, read from its own track record of when it acted before.</td></tr>
+    <tr><td class="n">Bathymetry</td><td>Maps the shape of the basin floor from the water's motion. The full physics read, for the deep dive.</td></tr>
+    <tr><td class="n">Microseism</td><td>Faint pre quake tremors clustering ahead of stress.</td></tr>
+    <tr><td class="n">Thermohaline</td><td>The deep, slow current of dollars held offshore, over 14 trillion of it.</td></tr>
+    <tr><td class="n">Far Basin</td><td>A policy fear signal from public censorship data, kept quarantined and out of the main reading until it earns a place.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Why you can trust it</h2>
+<ul class="plain">
+  <li><span><b>It shows its work.</b> Every signal comes with the method and the source, and you can replay the whole board for any past date in Time Machine.</span></li>
+  <li><span><b>It cannot quietly rewrite history.</b> Every daily reading is sealed the day it is made into a tamper proof record. A bad call stays on the record.</span></li>
+  <li><span><b>It forbids cheating.</b> A test in the code mechanically blocks the common trick of letting future data leak into a backtest, which is what makes most impressive looking track records fake.</span></li>
+  <li><span><b>It fails loud.</b> If a data feed goes stale or dies, the board says so and lowers its own confidence, rather than pretending everything is fine.</span></li>
+</ul>
+
+<h2>A few finance words, in plain English</h2>
+<div class="wrap">
+<table>
+  <tbody>
+    <tr><td class="n">Funding / the plumbing</td><td>The day to day market where banks and funds borrow cash overnight against safe collateral. When it seizes, everything else does.</td></tr>
+    <tr><td class="n">Repo</td><td>A loan of cash overnight secured by a Treasury bond. The core pipe.</td></tr>
+    <tr><td class="n">SOFR</td><td>The main interest rate on those overnight loans. When it spikes above where the Fed wants it, cash is getting scarce.</td></tr>
+    <tr><td class="n">Reserves</td><td>The cash banks keep at the Fed. The buffer for the whole system.</td></tr>
+    <tr><td class="n">TGA</td><td>The government's checking account at the Fed. When it fills up, it pulls cash out of the banking system.</td></tr>
+    <tr><td class="n">Basis trade</td><td>A heavily leveraged bet linking the cash and futures Treasury markets. Large and fragile, so Seiche watches it.</td></tr>
+    <tr><td class="n">Basis point (bp)</td><td>One hundredth of one percent. Small moves here matter.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="foot">
+  Questions or something unclear? Write to <a href="mailto:desk@seiche.info">desk@seiche.info</a>.
+  The live board is at <a href="/">seiche.info</a>, and the code is open at
+  <a href="https://github.com/LiquiLensLabs/seiche">github.com/LiquiLensLabs/seiche</a>.
+  <br>Not investment advice.
+</div>
+
+</body>
+</html>

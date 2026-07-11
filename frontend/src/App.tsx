@@ -96,6 +96,7 @@ export default function App() {
       <div className="masthead">
         <div className="wordmark">SEI<span>CHE</span></div>
         <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
+        <a className="prolink" href="/guide.html">new? how to read this</a>
         <div className="mastindex">
           <span className="mastvalue">{fmt(c.value, 0)}</span>
           <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
@@ -154,6 +155,7 @@ export default function App() {
         Composite weights are editorial and live in backend/seiche/config.py.
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
+        <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>subscribe</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>

@@ -122,11 +122,15 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
         <a className="paywall-alt" href="/support.html" style={{ display: "inline-block", marginTop: 6 }}>
           subscribe with crypto · BTC / ETH / SOL / TRON →
         </a>
+        <a className="paywall-alt" href="/guide.html" style={{ display: "inline-block", marginTop: 6 }}>
+          new here? read the plain-English guide →
+        </a>
       </div>
 
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. · Not investment advice. ·{" "}
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
+        <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>subscribe</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
