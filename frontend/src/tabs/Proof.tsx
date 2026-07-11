@@ -1,4 +1,5 @@
 import Chart from "../Chart";
+import Wrecks from "../Wrecks";
 import { Any, fmt, Fault, Method } from "../lib";
 
 function OrthogonalCard({ o }: { o: Any }) {
@@ -283,6 +284,8 @@ export default function Proof({ snap }: { snap: Any }) {
           <div className="caveat" key={i}>▸ {c}</div>
         ))}
       </div>
+
+      <Wrecks variant="card" />
 
       <OrthogonalCard o={bt.orthogonal} />
 

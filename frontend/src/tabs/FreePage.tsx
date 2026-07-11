@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { API_BASE } from "../apiBase";
 import { renderMarkdown } from "../md";
 import { login } from "../auth";
+import Wrecks from "../Wrecks";
 
 type Any = Record<string, any>;
 
@@ -102,6 +103,9 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
           <div className="caveat">The board publishes what it missed next to what it caught. Recall, precision and lead times carry Wilson confidence bands. Method is printed under every engine.</div>
         </div>
       )}
+
+      {/* the crypto record stays free too — same reason as PROOF */}
+      <Wrecks variant="free" />
 
       {/* the wall */}
       <div className="paywall" style={{ marginTop: 26 }}>
