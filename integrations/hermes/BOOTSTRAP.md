@@ -21,8 +21,8 @@ and report each step:
    what failed; do not continue.
 
 2. Read the seiche-* skills you have installed (desk-brief, regime-watch,
-   time-machine, proof-audit, ops-watchdog) and confirm you can see all
-   five.
+   time-machine, proof-audit, ops-watchdog, crypto-scout) and confirm you
+   can see all six.
 
 3. Seed your memory with:
    - The board pull times (12:15 and 20:45 UTC) and that readings are
@@ -40,9 +40,11 @@ and report each step:
      skill's periodic credibility report.
    - "seiche-ops-check": daily at 13:05 UTC. Run the seiche-ops-watchdog
      health pass; message me only on amber or red.
+   - "seiche-crypto-scout": Fridays at 14:00 UTC. Run the
+     seiche-crypto-scout skill's weekly pass and send the report.
 
 5. Run the morning brief once right now so I can see the output format, then
-   list the four jobs with their next run times.
+   list the five scheduled jobs with their next run times.
 
 ---
 

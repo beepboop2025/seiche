@@ -19,6 +19,7 @@ Full operator guide: [docs/HERMES.md](../../docs/HERMES.md).
 | `skills/seiche-time-machine/` | Point-in-time episode replay with no-lookahead discipline |
 | `skills/seiche-proof-audit/` | The trust question, answered from the PROOF scoreboard |
 | `skills/seiche-ops-watchdog/` | Data-health passes, amber/red classification, escalation format |
+| `skills/seiche-crypto-scout/` | Weekly crypto x money-market recon: transmission, gaps, revenue opportunities |
 | `AGENTS.md` | The desk-agent persona and hard rules (grounding, advice disclaimer, PIT) |
 | `config.example.yaml` | Hermes config fragments: MCP wiring (3 options), provider, gateway |
 | `env.example` | The secrets the deployment needs |

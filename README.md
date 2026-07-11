@@ -189,6 +189,9 @@ agent on Telegram/Discord/Slack: a scheduled morning brief, regime alerts with
 anti-noise rules, point-in-time episode replays, and a PROOF-grounded answer to
 "can I trust this". Walkthrough: **[docs/HERMES.md](docs/HERMES.md)**.
 
+Where this is heading on the crypto side (stablecoin reserves, tokenized
+Treasuries, DeFi rates all sit on the market Seiche reads): **[docs/CRYPTO.md](docs/CRYPTO.md)**.
+
 Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.
