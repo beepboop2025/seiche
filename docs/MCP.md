@@ -175,28 +175,24 @@ subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
 Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
 `reading` field that tells the agent how to interpret the numbers.
 
-## Paying per call with a wallet (x402)
+## Machine-native support (x402) — dormant by design
 
-Agents without a subscription can pay per tool call in USDC over
-[x402](https://docs.cdp.coinbase.com/x402/welcome) — no account, no API key.
-The feature is **off by default** and fail-closed: it exists only when the
-operator sets a receiving address, and a tool result is never served on an
-unverified or unsettled payment.
+Seiche is a free public good funded by grants and voluntary support
+(seiche.info/support.html), not a subscription product. The codebase also
+carries a dormant [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
+if it is ever enabled, an AI agent with a wallet can voluntarily chip in a
+few cents of USDC per call for the operator-cost tools — support in the
+currency agents hold, not a paywall, and never a condition for the public
+surface, which stays free forever.
 
-Operator dials (env):
-
-```bash
-SEICHE_X402_PAY_TO=0x…          # receiving address; empty = feature off
-SEICHE_X402_NETWORK=base        # default
-SEICHE_X402_FACILITATOR=…       # default https://x402.org/facilitator
-```
-
-Prices per tool live in `backend/seiche/config.py` (`X402_PRICES_USD`, a few
-cents per call; public tools stay free). With x402 on, the anonymous
-`tools/list` advertises the paid tools with their prices; a `tools/call` on
-one returns HTTP 402 with x402 `accepts` requirements, and a retry carrying a
-valid `X-PAYMENT` header runs the call on the full surface (no quota charged,
-settlement receipt in `X-PAYMENT-RESPONSE`).
+The rail is **off by default** and fail-closed (it only exists when the
+operator sets `SEICHE_X402_PAY_TO`; decode/verify/settle failures serve
+nothing). Amounts live in `backend/seiche/config.py` (`X402_PRICES_USD`);
+network and facilitator are env dials (`SEICHE_X402_NETWORK`,
+`SEICHE_X402_FACILITATOR`). When on, the anonymous `tools/list` says which
+tools accept support and how much; a `tools/call` carrying a valid
+`X-PAYMENT` header runs on the full surface, with the settlement receipt
+returned in `X-PAYMENT-RESPONSE`.
 
 ## Public vs. full surface
 

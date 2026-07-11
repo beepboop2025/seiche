@@ -27,9 +27,10 @@ script cannot:
   sentence; the agent updates its own watch policy and remembers it.
 - **A learning loop.** Hermes persists procedures as skills and facts as
   memory. The kit seeds six skills; the agent refines them from real use.
-- **Distribution.** Anyone can point a Hermes at the hosted endpoint's free
-  tier and get a working desk agent in minutes; the subscriber token
-  upgrades it in place. The kit is a funnel, not just tooling.
+- **Distribution.** Anyone can point a Hermes at the hosted endpoint and
+  get a working desk agent in minutes — Seiche is a free public good, and
+  the kit is how it reaches the people (and agents) it exists to serve.
+  Those who find it useful can support it at seiche.info/support.html.
 
 ## Setup
 

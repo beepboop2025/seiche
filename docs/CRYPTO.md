@@ -89,11 +89,11 @@ reading a risk-curator pipeline or circuit breaker needs, never the full
 board. Richer per-issuer context arrives with Phase 2.
 
 **Phase 4 — distribution. SHIPPED (rails):** the desk-agent kit
-(docs/HERMES.md) gives any AI agent the board, and the hosted MCP endpoint
-now takes **x402 pay-per-call** (USDC, no account — see docs/MCP.md,
-off-by-default until the operator sets a receiving address). Crypto-native
-recurring subscriptions ride the existing provisioning webhook. See
-docs/MONETIZATION.md.
+(docs/HERMES.md) gives any AI agent the board. Seiche stays a free public
+good: the money model is grants and voluntary support (crypto donations at
+seiche.info/support.html), never a paywall. A dormant x402 rail exists for
+machine-native voluntary support (see docs/MCP.md) — off by default, and
+the public surface is free regardless.
 
 ## What Seiche will not do
 
