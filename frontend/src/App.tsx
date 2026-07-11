@@ -65,7 +65,7 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
   }, []);
 
-  // Not a subscriber: only the free surface (conclusion + PROOF record).
+  // Not signed in: only the free surface (conclusion + PROOF record).
   if (!signedIn) {
     return <div className="app"><FreePage onSignedIn={() => { setSignedIn(true); load(); }} /></div>;
   }
@@ -105,7 +105,7 @@ export default function App() {
           {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
           FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
           <a className="prolink" href="#timemachine">
-            {localStorage.getItem("seiche_token") ? "PRO · signed in" : "PRO · subscriber sign in"}
+            {localStorage.getItem("seiche_token") ? "signed in" : "sign in"}
           </a>
         </div>
       </div>
@@ -156,7 +156,7 @@ export default function App() {
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
         <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
-        <a href="/support.html" style={{ color: "var(--dim)" }}>subscribe</a> ·{" "}
+        <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
       </div>

@@ -52,7 +52,7 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          Your bearer token is your API key. It carries your subscription — the full board, the Time
+          Your bearer token is your API key. It carries your access — the full board, the Time
           Machine replay and the dispatch reads are all reachable programmatically. Keep it secret; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>

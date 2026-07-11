@@ -1,4 +1,4 @@
-// Subscriber session: a bearer token from POST /api/auth/login, kept in
+// Supporter session: a bearer token from POST /api/auth/login, kept in
 // localStorage. No self-signup — accounts are provisioned by the desk
 // (`seiche user add`), payments come later. Fail loud: helpers return
 // explicit nulls, never fake a session.

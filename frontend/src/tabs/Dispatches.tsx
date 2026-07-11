@@ -65,11 +65,11 @@ export default function Dispatches() {
           <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(paid) }} />
         ) : (
           <div className="paywall">
-            <div className="paywall-lock">◆ THE DESK'S READ · SUBSCRIBERS</div>
-            <p>The rest of this dispatch — the forward read and the dates the desk is watching — is for subscribers. The board and the honest record stay free forever; the interpretation is the paid layer.</p>
+            <div className="paywall-lock">◆ THE DESK'S READ · SUPPORTED</div>
+            <p>The rest of this dispatch — the forward read and the dates the desk is watching — is open to supporters who keep Seiche running. The board and the honest record stay free forever; the deeper read is the layer their support sustains.</p>
             <div className="paywall-actions">
               <a className="paywall-cta" href="#timemachine">sign in</a>
-              <a className="paywall-alt" href="mailto:desk@seiche.info?subject=Seiche%20subscription">request access · desk@seiche.info</a>
+              <a className="paywall-alt" href="mailto:desk@seiche.info?subject=Supporting%20Seiche">request access · desk@seiche.info</a>
             </div>
           </div>
         ))}
@@ -82,7 +82,7 @@ export default function Dispatches() {
     <div className="dispatch-list" style={{ marginTop: 18 }}>
       <div className="dispatch-intro">
         <h1>Dispatches</h1>
-        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. The summaries are free; the desk's forward read is for subscribers.</p>
+        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. The summaries are free; the desk's forward read is for the supporters who keep it running.</p>
       </div>
       {!index ? (
         <div className="loading" style={{ padding: 40 }}>loading…</div>

@@ -282,7 +282,7 @@ table.mini tr:hover td { background: rgba(255,255,255,0.015); }
   font-size: 12px; line-height: 1.7; white-space: pre-wrap;
 }
 
-/* ---- subscriber affordance ---- */
+/* ---- supporter affordance ---- */
 .prolink {
   display: inline-block; margin-top: 4px; text-decoration: none;
   font-family: var(--display); font-size: 9px; font-weight: 700;

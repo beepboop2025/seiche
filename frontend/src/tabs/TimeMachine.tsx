@@ -29,7 +29,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
     setErr(null);
     fetch(`${API_BASE}/api/asof/${d}`, { headers: authHeaders() })
       .then(async (r) => {
-        if (r.status === 401) { setNeedsAuth(true); throw new Error("subscriber feature — sign in below"); }
+        if (r.status === 401) { setNeedsAuth(true); throw new Error("supporter feature — sign in below"); }
         setNeedsAuth(false);
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail ?? `HTTP ${r.status}`);
         return r.json();
@@ -82,7 +82,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
         {needsAuth && (
           <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--panel-edge)" }}>
             <div className="sub">
-              Historical replay is a <b style={{ color: "var(--accent)" }}>subscriber</b> feature.
+              Historical replay is a <b style={{ color: "var(--accent)" }}>supporter</b> feature.
               The live board stays free. Access: write to <a href="mailto:desk@seiche.info" style={{ color: "var(--accent)" }}>desk@seiche.info</a> — accounts are provisioned by hand for now.
             </div>
             <div className="tmcontrols">

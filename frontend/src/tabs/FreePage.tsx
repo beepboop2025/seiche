@@ -99,14 +99,14 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
               ))}
             </tbody>
           </table>
-          <div className="caveat">The board publishes what it missed next to what it caught. Recall, precision and lead times carry Wilson confidence bands. Method is printed under every engine — for subscribers.</div>
+          <div className="caveat">The board publishes what it missed next to what it caught. Recall, precision and lead times carry Wilson confidence bands. Method is printed under every engine.</div>
         </div>
       )}
 
       {/* the wall */}
       <div className="paywall" style={{ marginTop: 26 }}>
-        <div className="paywall-lock">◆ THE TERMINAL · SUBSCRIBERS</div>
-        <p>The live board, the physics layer, positioning, the Time Machine replay and the desk's forward read are for subscribers. The conclusion and the record above stay free.</p>
+        <div className="paywall-lock">◆ THE FULL TERMINAL · SUPPORTED</div>
+        <p>Seiche is free and runs on the support of the people who use it. The live board, the physics layer, positioning, the Time Machine replay and the desk's forward read are open to supporters who help keep the infrastructure running. The conclusion and the record above are free for everyone.</p>
         <div className="free-login">
           <input type="text" placeholder="username" value={user} autoComplete="username"
                  onChange={(e) => setUser(e.target.value)} />
@@ -116,11 +116,11 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
           <button onClick={doLogin} disabled={!user || !pw}>sign in</button>
         </div>
         {err && <div className="dimsmall" style={{ color: "var(--stress)", marginTop: 8 }}>{err}</div>}
-        <a className="paywall-alt" href="mailto:desk@seiche.info?subject=Seiche%20subscription" style={{ display: "inline-block", marginTop: 10 }}>
-          no account? request access · desk@seiche.info
+        <a className="paywall-alt" href="mailto:desk@seiche.info?subject=Supporting%20Seiche" style={{ display: "inline-block", marginTop: 10 }}>
+          no account? ask for access · desk@seiche.info
         </a>
         <a className="paywall-alt" href="/support.html" style={{ display: "inline-block", marginTop: 6 }}>
-          subscribe with crypto · BTC / ETH / SOL / TRON →
+          support Seiche · BTC / ETH / SOL / TRON →
         </a>
         <a className="paywall-alt" href="/guide.html" style={{ display: "inline-block", marginTop: 6 }}>
           new here? read the plain-English guide →
@@ -131,7 +131,7 @@ export default function FreePage({ onSignedIn }: { onSignedIn: () => void }) {
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. · Not investment advice. ·{" "}
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
         <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
-        <a href="/support.html" style={{ color: "var(--dim)" }}>subscribe</a> ·{" "}
+        <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
       </div>
