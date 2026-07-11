@@ -50,7 +50,7 @@ def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
     assert names == {"funding_stress_now", "historical_analogs",
-                     "proof_backtest", "data_health"}
+                     "proof_backtest", "data_health", "crypto_stress_record"}
     # the Time Machine, forward forecast, brief, book, assistant stay paid
     for paid in ("replay_asof", "funding_stress_forecast", "desk_brief",
                  "positioning_book", "ask_desk"):

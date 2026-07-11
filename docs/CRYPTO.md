@@ -63,11 +63,16 @@ anywhere. Seiche can be it.
 
 ## The build order
 
-**Phase 1 — validate (no new surface).** Run the existing PROOF machinery
-against labelled crypto stress episodes (Mar 2020, May 2022, Nov 2022,
-Mar 2023 SVB/USDC, Oct 2025 liquidation cascade, the Ethena unwind):
-what did the board read before each, point-in-time? Publish hits and
-misses. This is the credibility anchor every later phase cites.
+**Phase 1 — validate. SHIPPED: the Wrecks table** (`seiche wrecks`, public
+at `/api/wrecks` and as the `crypto_stress_record` MCP tool). Six labelled
+episodes replayed point-in-time at T-21/10/5/1/0 business days. The result,
+published as computed: all three external wrecks (Black Thursday, the SVB
+weekend, the Oct-2025 cascade) broke with the funding board already off
+CALM (peaks EROSION, EROSION, STRAIN) — dollar-side strain coincident with
+the crypto wreck. The three crypto-native wrecks (Terra, FTX, Ethena) were
+NOT met by a quiet board either — the readings say plainly that coincident
+dollar conditions earn the board no credit there. Six episodes is a case
+table, not a statistic; it claims context, not leads.
 
 **Phase 2 — the Offshore board.** Grow the Moorings engine into a
 first-class crypto surface: per-issuer reserve-stress lens (the
@@ -77,15 +82,18 @@ borrow), and a transmission tracker that logs each crypto stress event
 against the board's contemporaneous read. New collectors stay keyless and
 free where possible (DeFiLlama yields, public fund disclosures).
 
-**Phase 3 — the regime-gauge feed.** A thin, versioned endpoint (regime,
-index, turn/quarter-end flag, reserve-scarcity and SRF context) shaped for
-machine consumption by risk-curator pipelines and agent frameworks, on the
-existing metered MCP/API plumbing. Design partners before general release.
+**Phase 3 — the regime-gauge feed. SHIPPED (v1):** `GET /api/gauge`, free
+and versioned (`seiche.gauge.v1`) — regime, index, the Tell, the next
+calendar turn and crunch windows, fault count. Thin by design: the one
+reading a risk-curator pipeline or circuit breaker needs, never the full
+board. Richer per-issuer context arrives with Phase 2.
 
-**Phase 4 — distribution.** The desk-agent kit (docs/HERMES.md) already
-gives any AI agent the board; agent-payment rails (x402-style per-call
-stablecoin payments) and crypto-native subscriptions let the same surface
-earn in the currency its users hold. See docs/MONETIZATION.md.
+**Phase 4 — distribution. SHIPPED (rails):** the desk-agent kit
+(docs/HERMES.md) gives any AI agent the board, and the hosted MCP endpoint
+now takes **x402 pay-per-call** (USDC, no account — see docs/MCP.md,
+off-by-default until the operator sets a receiving address). Crypto-native
+recurring subscriptions ride the existing provisioning webhook. See
+docs/MONETIZATION.md.
 
 ## What Seiche will not do
 

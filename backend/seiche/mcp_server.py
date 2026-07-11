@@ -342,6 +342,25 @@ def tool_health(_args: dict, _public: bool) -> Any:
     }
 
 
+def tool_wrecks(_args: dict, _public: bool) -> Any:
+    from seiche import store
+    from seiche.config import WRECKS_BLOB_KEY
+
+    payload = store.load_blob(WRECKS_BLOB_KEY)
+    if payload is None:
+        raise ToolError("the wrecks record has not been computed on this "
+                        "deployment yet (operator runs `seiche wrecks --refresh`)")
+    payload = dict(payload)
+    payload["reading"] = (
+        "labelled crypto stress episodes replayed point-in-time against the "
+        "funding board. EXTERNAL wrecks test transmission (was the dollar "
+        "system under strain as crypto broke); CRYPTO-NATIVE wrecks test "
+        "specificity (the board should stay quiet, and quiet is a win, not "
+        "a miss). Six episodes is a case table, not a statistic."
+    )
+    return payload
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError("the desk assistant is a subscriber tool — sign in with a token")
@@ -443,6 +462,18 @@ TOOLS: dict[str, tuple] = {
         "current before relying on a reading.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_health,
+        True,
+    ),
+    "crypto_stress_record": (
+        "Wrecks: crypto episodes vs the funding board",
+        "Labelled crypto stress episodes (Black Thursday 2020, Terra, FTX, "
+        "the SVB/USDC weekend, the Oct-2025 liquidation cascade, the Ethena "
+        "unwind) replayed point-in-time against the dollar-funding board. "
+        "External wrecks show transmission; crypto-native wrecks show the "
+        "board correctly staying quiet. Use for any 'does TradFi funding "
+        "stress reach crypto' question, grounded in the record.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_wrecks,
         True,
     ),
     "positioning_book": (

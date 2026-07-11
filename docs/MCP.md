@@ -160,6 +160,7 @@ recorded in the `provisions` table for audit.
 | `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
+| `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | public |
 | `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
 | `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | subscriber |
 | `desk_brief` | Today's full desk note as markdown | subscriber |
@@ -173,6 +174,29 @@ subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
 
 Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
 `reading` field that tells the agent how to interpret the numbers.
+
+## Paying per call with a wallet (x402)
+
+Agents without a subscription can pay per tool call in USDC over
+[x402](https://docs.cdp.coinbase.com/x402/welcome) — no account, no API key.
+The feature is **off by default** and fail-closed: it exists only when the
+operator sets a receiving address, and a tool result is never served on an
+unverified or unsettled payment.
+
+Operator dials (env):
+
+```bash
+SEICHE_X402_PAY_TO=0x…          # receiving address; empty = feature off
+SEICHE_X402_NETWORK=base        # default
+SEICHE_X402_FACILITATOR=…       # default https://x402.org/facilitator
+```
+
+Prices per tool live in `backend/seiche/config.py` (`X402_PRICES_USD`, a few
+cents per call; public tools stay free). With x402 on, the anonymous
+`tools/list` advertises the paid tools with their prices; a `tools/call` on
+one returns HTTP 402 with x402 `accepts` requirements, and a retry carrying a
+valid `X-PAYMENT` header runs the call on the full surface (no quota charged,
+settlement receipt in `X-PAYMENT-RESPONSE`).
 
 ## Public vs. full surface
 

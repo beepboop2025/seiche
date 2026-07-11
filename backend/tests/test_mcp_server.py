@@ -87,7 +87,8 @@ def test_tools_list_has_valid_schemas():
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
 
-PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest", "data_health"}
+PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest",
+                "data_health", "crypto_stress_record"}
 PAID_TOOLS = {"funding_stress_forecast", "replay_asof", "desk_brief",
               "positioning_book", "ask_desk"}
 

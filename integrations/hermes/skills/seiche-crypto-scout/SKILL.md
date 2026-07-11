@@ -23,7 +23,9 @@ product gaps, and revenue opportunities.
 1. **Board first.** Call `funding_stress_now` and note the regime and the
    stablecoin/Moorings context (peg deviations, circulation growth or
    drain, the weekend canary). The crypto read is framed by the funding
-   read, never the other way around.
+   read, never the other way around. For any "does TradFi stress reach
+   crypto" claim, ground it in `crypto_stress_record` (the Wrecks table)
+   rather than narrative.
 2. **Transmission scan** (web): any stablecoin depeg or redemption wave,
    large tokenized-MMF flows, DeFi borrow-rate spikes, or basis-trade
    stress since the last pass. For each event, answer: did the board's

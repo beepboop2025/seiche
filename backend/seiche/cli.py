@@ -122,6 +122,31 @@ def cmd_replay(args) -> int:
     return 0
 
 
+def cmd_wrecks(args) -> int:
+    from seiche.engines import wrecks
+
+    payload = asyncio.run(wrecks.collect(force=args.refresh))
+    print(f"{BOLD}WRECKS{END} crypto episodes vs the funding board "
+          f"(offsets T-{'/'.join(str(k) for k in payload['offsets_bd'])}bd)")
+    for ep in payload["episodes"]:
+        approx = " (date approx.)" if ep.get("date_approximate") else ""
+        print(f"\n{BOLD}{ep['date']}{END}{approx} [{ep['class']}] {ep['episode']}")
+        for row in ep["board"]:
+            reg = row.get("regime")
+            col = REGIME_COLOR.get(reg, "")
+            val = f"{row['value']:.0f}" if row.get("value") is not None else "  —"
+            print(f"  T-{row['offset_bd']:>2}bd {row.get('date') or '—':<12} "
+                  f"{val:>4} {col}{reg or 'no coverage'}{END}")
+        print(f"  {DIM}{ep['reading']}{END}")
+    s = payload["summary"]
+    print(f"\n{BOLD}SUMMARY{END} external wrecks with board elevated: "
+          f"{s['external_with_board_elevated']} · crypto-native with board quiet: "
+          f"{s['crypto_native_board_quiet']}")
+    for c in payload.get("caveats", []):
+        print(f"  {DIM}caveat: {c}{END}")
+    return 0
+
+
 def cmd_backtest(args) -> int:
     from seiche import assemble
     snap = asyncio.run(assemble.snapshot())
@@ -598,6 +623,10 @@ def main() -> None:
     p.set_defaults(fn=cmd_replay)
 
     sub.add_parser("backtest", help="PROOF summary").set_defaults(fn=cmd_backtest)
+
+    p = sub.add_parser("wrecks", help="crypto episodes vs the funding board")
+    p.add_argument("--refresh", action="store_true", help="recompute (replays each episode ladder)")
+    p.set_defaults(fn=cmd_wrecks)
 
     p = sub.add_parser("user", help="subscriber accounts (add/list)")
     p.add_argument("action", choices=["add", "list"])

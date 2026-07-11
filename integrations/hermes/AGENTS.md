@@ -35,7 +35,8 @@ staring at dashboards.
 ## Tool map (Seiche MCP server)
 
 Public: `funding_stress_now`, `historical_analogs`, `proof_backtest`,
-`data_health`.
+`data_health`, `crypto_stress_record` (the Wrecks table: crypto episodes
+vs the board, transmission vs specificity stated honestly).
 Subscriber: `funding_stress_forecast`, `replay_asof`, `desk_brief`,
 `positioning_book`, `ask_desk`.
 

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import accounts, assemble, mcp_server, provisioning, public_view, store, usage
+from seiche import accounts, assemble, mcp_server, provisioning, public_view, store, usage, x402
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
@@ -27,6 +27,7 @@ from seiche.config import (
     MCP_RATE_LIMIT_PER_MIN,
     MCP_UPGRADE_URL,
     REGIMES,
+    WRECKS_BLOB_KEY,
 )
 
 # In production (SEICHE_ENV=production, set in the systemd unit) the interactive
@@ -165,6 +166,42 @@ async def public(force: bool = False,
     ident = _bearer_identity(authorization)
     snap = await assemble.snapshot(force=force and ident is not None)
     return public_view.public_payload(snap)
+
+
+@app.get("/api/gauge")
+async def gauge():
+    """The regime gauge, free and machine-shaped: the one reading a risk
+    pipeline (an RWA curator, an agent framework, a circuit breaker) needs,
+    versioned so consumers can pin the contract. Never the full board."""
+    snap = await assemble.snapshot()
+    engines = snap.get("engines", {})
+    deep = snap.get("deep", {}) or {}
+    comp = engines.get("composite", {})
+    tell = deep.get("tell", {}) or {}
+    cal = snap.get("calendar", {}) or {}
+    return {
+        "schema": "seiche.gauge.v1",
+        "generated_at": snap.get("generated_at"),
+        "index": comp.get("value"),
+        "regime": comp.get("regime"),
+        "coverage_pct": comp.get("coverage_pct"),
+        "tell": tell.get("tell"),
+        "next_turn": cal.get("next_turn"),
+        "crunch_windows": (cal.get("crunch_windows") or [])[:3],
+        "faults": len(snap.get("faults") or []),
+        "notes": "point-in-time as-published; PROOF scoreboard at /api/public; not investment advice",
+    }
+
+
+@app.get("/api/wrecks")
+async def wrecks_record():
+    """Wrecks: labelled crypto stress episodes replayed against the funding
+    board, transmission vs specificity stated honestly. Free, like PROOF —
+    credibility is the public surface."""
+    payload = store.load_blob(WRECKS_BLOB_KEY)
+    if payload is None:
+        raise HTTPException(404, "wrecks record not computed yet — operator runs `seiche wrecks --refresh`")
+    return payload
 
 
 @app.get("/api/engines/{name}")
@@ -484,6 +521,57 @@ def mcp_http(request: Request, body: Any = Body(default=None),
                               f"batch too large (max {MCP_MAX_BATCH} messages)"),
             status_code=413,
         )
+    # x402 pay-per-call: anonymous caller + a priced (subscriber) tool. The
+    # whole branch only exists when the operator set SEICHE_X402_PAY_TO, and
+    # it is fail-closed — no verified-and-settled payment, no tool result.
+    if x402.enabled() and public:
+        pay_header = request.headers.get("X-PAYMENT")
+        single = msgs[0] if len(msgs) == 1 and isinstance(msgs[0], dict) else None
+        tool = ((single or {}).get("params") or {}).get("name") \
+            if (single or {}).get("method") == "tools/call" else None
+        priced = x402.price_usd(tool)
+        if pay_header is not None and priced is None:
+            return JSONResponse(
+                mcp_server._error(None, MCP_SERVER_ERROR,
+                                  "X-PAYMENT covers exactly one tools/call for a priced tool"),
+                status_code=400,
+            )
+        if priced is not None:
+            resource = "https://api.seiche.info/mcp"
+            reqs = x402.requirements(tool, resource)
+            if pay_header is None:
+                return JSONResponse(
+                    x402.payment_required(tool, resource,
+                                          f"{tool} is a paid tool on the anonymous surface"),
+                    status_code=402,
+                )
+            payment = x402.decode_payment(pay_header)
+            if payment is None:
+                return JSONResponse(
+                    x402.payment_required(tool, resource, "X-PAYMENT header malformed"),
+                    status_code=402,
+                )
+            ok, why = x402.verify(payment, reqs)
+            if not ok:
+                return JSONResponse(
+                    x402.payment_required(tool, resource, why), status_code=402)
+            settled, receipt = x402.settle(payment, reqs)
+            if not settled:
+                return JSONResponse(
+                    x402.payment_required(
+                        tool, resource,
+                        str(receipt.get("errorReason") or "settlement failed")),
+                    status_code=402,
+                )
+            # paid: this one call runs on the full surface, no quota charged
+            try:
+                resp = mcp_server.dispatch(single, public=False)
+            except Exception:
+                resp = mcp_server._error(single.get("id"),
+                                         mcp_server.INTERNAL_ERROR, "internal error")
+            return JSONResponse(resp, headers={
+                "X-PAYMENT-RESPONSE": x402.settle_header(receipt)})
+
     ukey = usage.key_for(ident, ip)
     limit = usage.quota_for(ident)
     responses: list[dict] = []
@@ -506,6 +594,10 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             # dispatch is defensive, but never let one bad message 500 the batch.
             mid = m.get("id") if isinstance(m, dict) else None
             resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
+        if (resp is not None and x402.enabled() and public
+                and isinstance(m, dict) and m.get("method") == "tools/list"):
+            # advertise the payable tools to wallet-holding agents
+            resp = x402.annotate_tools_list(resp)
         if resp is not None:
             responses.append(resp)
 

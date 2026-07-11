@@ -254,6 +254,50 @@ ECHO_WINDOW = 30           # business days of trajectory to match
 ECHO_LEADS = range(0, 31)  # how many days before the episode the window ends
 
 # ---------------------------------------------------------------------------
+# Wrecks: labelled CRYPTO stress episodes, read against the funding board.
+# Two classes, because the honest claims differ. EXTERNAL wrecks originated
+# outside crypto (a pandemic, a bank run, a policy shock) — the question is
+# whether the dollar-funding board was also under strain (transmission).
+# CRYPTO_NATIVE wrecks originated inside crypto (a protocol design, a fraud,
+# a carry unwind) — the board SHOULD stay quiet there, and quiet is
+# specificity, not a miss. Episode list and classes are fixed here, not
+# fitted.
+# ---------------------------------------------------------------------------
+
+CRYPTO_EPISODES = {
+    "2020-03-12": "Black Thursday: COVID dash-for-cash hits crypto (ETH -43%, DAI to $1.06)",
+    "2022-05-09": "Terra/UST collapse (USDT wobble to ~$0.95)",
+    "2022-11-08": "FTX failure ($8B shortfall, $5B withdrawals in 72h)",
+    "2023-03-10": "SVB weekend: USDC to $0.87, contagion to DAI",
+    "2025-10-10": "Tariff-shock liquidation cascade (~$19B liquidated, largest on record)",
+    "2025-12-15": "Ethena carry unwind (sUSDe yield below Aave borrow; ~50% TVL decline)",
+}
+CRYPTO_EPISODE_CLASS = {
+    "2020-03-12": "external",       # macro shock reached crypto through leverage
+    "2022-05-09": "crypto_native",  # algorithmic-stablecoin design failure
+    "2022-11-08": "crypto_native",  # exchange fraud
+    "2023-03-10": "external",       # bank-funding run reached USDC reserves
+    "2025-10-10": "external",       # tariff policy shock, cross-asset risk-off
+    "2025-12-15": "crypto_native",  # on-chain carry inversion, gradual
+}
+CRYPTO_EPISODE_APPROX = {"2025-12-15"}  # gradual unwind; anchor date approximate
+
+WRECKS_OFFSETS_BD = [21, 10, 5, 1, 0]   # business days before the anchor
+WRECKS_BLOB_KEY = "wrecks:v1"
+
+# x402 pay-per-call prices (USD per tools/call) for the machine-payable MCP
+# surface. Applies only to subscriber tools, only for anonymous callers, and
+# only when the operator enables x402 (SEICHE_X402_PAY_TO set — see x402.py).
+# Public tools stay free.
+X402_PRICES_USD = {
+    "funding_stress_forecast": 0.02,
+    "replay_asof": 0.02,
+    "desk_brief": 0.02,
+    "positioning_book": 0.02,
+    "ask_desk": 0.05,
+}
+
+# ---------------------------------------------------------------------------
 # CFTC TFF: Treasury futures contract constants for the RV X-Ray.
 # face: contract face value ($). dv01: rough per-contract dollar value of 1bp
 # (approximate CTD DV01s; transparent, tunable — these drive the margin-shock
