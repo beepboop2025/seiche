@@ -182,6 +182,13 @@ a subscriber bearer token unlocks the full surface, metered per tier.
 
 Full setup, the tool catalogue, client config, and metering: **[docs/MCP.md](docs/MCP.md)**.
 
+Want the board in your pocket instead of a client config? The
+**[Hermes desk-agent kit](integrations/hermes/)** turns
+[hermes-agent](https://github.com/NousResearch/hermes-agent) into a Seiche desk
+agent on Telegram/Discord/Slack: a scheduled morning brief, regime alerts with
+anti-noise rules, point-in-time episode replays, and a PROOF-grounded answer to
+"can I trust this". Walkthrough: **[docs/HERMES.md](docs/HERMES.md)**.
+
 Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.

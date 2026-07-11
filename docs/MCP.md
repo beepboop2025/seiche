@@ -22,6 +22,11 @@ seiche mcp        # or: seiche-mcp   — serves on stdio, logs to stderr
 
 That's the whole server. Point a client at it.
 
+Want a ready-made agent on top rather than a bare client? The
+[Hermes desk-agent kit](../integrations/hermes/) ([guide](HERMES.md)) deploys
+[hermes-agent](https://github.com/NousResearch/hermes-agent) against this
+server with skills, scheduled briefs, and messaging-platform delivery.
+
 ### Claude Code
 
 ```bash

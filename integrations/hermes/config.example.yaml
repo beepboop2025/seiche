@@ -1,0 +1,51 @@
+# Hermes config fragments for a Seiche desk agent.
+# Merge these keys into ~/.hermes/config.yaml (do not replace the whole file).
+# Reference: hermes-agent's cli-config.yaml.example documents every key.
+
+# ── The Seiche MCP server ────────────────────────────────────────────────
+# Pick ONE of the three wirings.
+
+mcp_servers:
+  # (a) Local checkout, stdio. Full surface; set SEICHE_MCP_PUBLIC=1 in env
+  #     for the free-tools-only surface.
+  seiche:
+    command: "seiche-mcp"          # or /path/to/backend/.venv/bin/seiche-mcp
+    # env:
+    #   SEICHE_MCP_PUBLIC: "1"
+
+  # (b) Same box as the API (e.g. Hermes running next to the service):
+  # seiche:
+  #   url: "http://127.0.0.1:8787/mcp"
+  #   headers:
+  #     Authorization: "Bearer YOUR_TOKEN"   # omit for the anonymous surface
+
+  # (c) Hosted, zero install. Anonymous = public tools with a small daily
+  #     cap; a subscriber token unlocks the full surface at your tier.
+  # seiche:
+  #   url: "https://api.seiche.info/mcp"
+  #   headers:
+  #     Authorization: "Bearer YOUR_TOKEN"
+
+# ── Model / provider ─────────────────────────────────────────────────────
+# Any provider works; the agent's judgment quality tracks the model's.
+model:
+  provider: "openrouter"           # or nous | anthropic | custom (ollama/vllm)
+  # default: "anthropic/claude-opus-4.6"
+  # base_url: "https://openrouter.ai/api/v1"
+  # api_key via OPENROUTER_API_KEY in .env
+
+# ── Messaging (Telegram example) ─────────────────────────────────────────
+platforms:
+  telegram:
+    enabled: true
+    # allowed users / bot token come from .env — see env.example
+
+# Make the Seiche tools available on the platform. MCP servers register as
+# their own toolset; check the exact name with `hermes tools` after the
+# server connects (typically mcp-seiche).
+platform_toolsets:
+  telegram: [hermes-telegram, mcp-seiche]
+
+# ── Optional hardening ───────────────────────────────────────────────────
+# skills:
+#   guard_agent_created: true      # safety-scan skills the agent writes itself
