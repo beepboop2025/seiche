@@ -432,6 +432,16 @@ async def health():
     }
 
 
+@app.get("/api/badge/record")
+async def badge_record():
+    """Public: the sealed-record badge (shields.io endpoint schema). Point
+    img.shields.io/endpoint at this URL and a README badge stays honest on its
+    own — green only while the as-published chain has no business-day holes."""
+    from seiche import badge
+
+    return badge.record_badge()
+
+
 @app.get("/api/notary")
 async def notary_ledger(n: int = 200):
     """Public: the tamper-evident ledger of every as-published reading, and how

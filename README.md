@@ -1,5 +1,7 @@
 # SEICHE
 
+[![sealed record](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.seiche.info%2Fapi%2Fbadge%2Frecord)](https://api.seiche.info/api/notary)
+
 > A **seiche** is a standing wave in an enclosed body of water — invisible from the
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
