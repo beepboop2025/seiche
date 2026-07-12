@@ -59,3 +59,22 @@ jobs:
         run: |
           gh workflow run publish.yml --ref main
           gh workflow run deploy-hetzner.yml --ref main
+
+      # Wait for the site to actually carry the letter before telling
+      # Telegram about it — an announcement with a dead link is worse
+      # than a late one.
+      - name: Wait for the site publish
+        if: env.PUSHED == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 20
+          RUN=$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')
+          gh run watch "$RUN" --exit-status --interval 30
+
+      - name: Announce on Telegram
+        if: env.PUSHED == '1'
+        env:
+          SEICHE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SEICHE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: PYTHONPATH=backend python -m seiche.dispatch_daily --announce-only

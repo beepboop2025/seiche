@@ -391,6 +391,55 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Telegram announcement — a digest with the numbers, then the link
+# ---------------------------------------------------------------------------
+def build_telegram_digest(d: dict, snap: dict | None = None) -> str:
+    """A Telegram-sized digest of the letter: the reading, the hook numbers,
+    the next date, the link. Plain text, no markup surprises, no dashes."""
+    lines = [
+        f"SEICHE · the daily letter · {d['date']}",
+        "",
+        d["title"],
+        "",
+        d["summary"],
+    ]
+    if snap:
+        cal = snap.get("calendar", {}) or {}
+        weather = snap.get("engines", {}).get("weather", {}) or {}
+        crunches = cal.get("crunch_windows") or weather.get("crunch_windows") or []
+        if crunches:
+            c = crunches[0]
+            lines += ["", f"Next date that matters: {c.get('date')} ({c.get('reason', 'flagged window')})."]
+    lines += ["", f"Full letter: https://seiche.info/#dispatches/{d['slug']}"]
+    return "\n".join(lines)
+
+
+def announce_telegram(d: dict, snap: dict | None = None) -> None:
+    """Send the digest. Fail loud: an explicit announce with missing or
+    refused credentials is an error, not a silent skip."""
+    import os
+
+    token = os.environ.get("SEICHE_TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("SEICHE_TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        raise SystemExit("announce needs SEICHE_TELEGRAM_BOT_TOKEN and SEICHE_TELEGRAM_CHAT_ID")
+    body = json.dumps({
+        "chat_id": chat_id,
+        "text": build_telegram_digest(d, snap),
+        "disable_web_page_preview": False,
+    }).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=body, headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        resp = json.loads(r.read().decode())
+    if not resp.get("ok"):
+        raise SystemExit(f"telegram refused the message: {resp}")
+    print(f"announced on telegram (message_id {resp['result']['message_id']})")
+
+
+# ---------------------------------------------------------------------------
 # CLI — stdlib fetch so CI needs no install
 # ---------------------------------------------------------------------------
 def _get_json(url: str, timeout: int = 60):
@@ -416,21 +465,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--history-url", default=HISTORY_URL)
     ap.add_argument("--date", default=None, help="override the dispatch date (YYYY-MM-DD)")
     ap.add_argument("--force", action="store_true", help="rewrite even if today's dispatch exists")
+    ap.add_argument("--announce", action="store_true",
+                    help="after writing, send the Telegram digest "
+                         "(needs SEICHE_TELEGRAM_BOT_TOKEN and SEICHE_TELEGRAM_CHAT_ID)")
+    ap.add_argument("--announce-only", action="store_true",
+                    help="skip writing files; just build today's letter and send the digest")
     args = ap.parse_args(argv)
 
     date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     slug = f"{date}-daily"
+
+    snap = _get_json(f"{args.api}/api/overview")
+    prev = _prev_published_value(args.history_url)
+    d = build_dispatch(snap, prev_value=prev, date=date)
+
+    if args.announce_only:
+        announce_telegram(d, snap)
+        return 0
+
     if INDEX.exists() and not args.force:
         if any(e.get("slug") == slug for e in json.loads(INDEX.read_text())):
             print(f"dispatch {slug} already published — nothing to do")
             return 0
 
-    snap = _get_json(f"{args.api}/api/overview")
-    prev = _prev_published_value(args.history_url)
-    d = build_dispatch(snap, prev_value=prev, date=date)
     for p in write_dispatch(d):
         print(f"wrote {p}")
     print(f"dispatch ready: {d['slug']} — {d['title']}")
+    if args.announce:
+        announce_telegram(d, snap)
     return 0
 
 

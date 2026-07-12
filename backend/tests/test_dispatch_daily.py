@@ -76,3 +76,25 @@ def test_no_dashes_in_the_letter(fake_snap):
     d = build_dispatch(fake_snap, prev_value=38.0)
     for field in ("title", "summary", "free_md"):
         assert "—" not in d[field] and "–" not in d[field], field
+
+
+def test_telegram_digest_carries_numbers_and_link(fake_snap):
+    from seiche.dispatch_daily import build_telegram_digest
+
+    d = build_dispatch(fake_snap, prev_value=38.0)
+    msg = build_telegram_digest(d, fake_snap)
+    assert "41" in msg and "EROSION" in msg
+    assert f"https://seiche.info/#dispatches/{d['slug']}" in msg
+    assert "2026-07-31" in msg  # the crunch window reaches the digest
+    assert len(msg) < 4096  # telegram message cap
+    assert "—" not in msg and "–" not in msg
+
+
+def test_announce_fails_loud_without_credentials(fake_snap, monkeypatch):
+    from seiche.dispatch_daily import announce_telegram
+
+    monkeypatch.delenv("SEICHE_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("SEICHE_TELEGRAM_CHAT_ID", raising=False)
+    d = build_dispatch(fake_snap)
+    with pytest.raises(SystemExit):
+        announce_telegram(d, fake_snap)
