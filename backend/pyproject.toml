@@ -21,7 +21,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-memray>=1.7; sys_platform != 'win32'",
+    "pytest-pystack>=1.0; sys_platform == 'linux'",
+]
 notary = ["opentimestamps>=0.4"]   # Bitcoin anchoring for the record ledger
 
 [project.scripts]

@@ -25,7 +25,7 @@ chown -R seiche:seiche "$APP_DIR"
 
 cd "$APP_DIR/backend"
 runuser -u seiche -- .venv/bin/pip install -q -e ".[dev]"
-runuser -u seiche -- .venv/bin/python -m pytest tests -q   # same gate as CI: a red suite never deploys
+runuser -u seiche -- .venv/bin/python -m pytest tests -q --memray --pystack-threshold=300   # same gate as CI: a red suite never deploys
 
 cd "$APP_DIR/frontend"
 runuser -u seiche -- npm ci --silent

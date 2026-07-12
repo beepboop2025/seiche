@@ -31,7 +31,7 @@ jobs:
         run: pip install -e "./backend[dev]"
 
       - name: Engine tests (publish gates on green)
-        run: python -m pytest backend/tests -q
+        run: python -m pytest backend/tests -q --memray --pystack-threshold=300
 
       - name: Run engines, export snapshot
         run: python backend/scripts/export_public.py frontend/public/data/public.json frontend/public/data/overview.json

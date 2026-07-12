@@ -11,6 +11,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# Leak canary (Bloomberg pytest-memray): the fattest engine test peaks ~65MiB,
+# so 256MB per test is pure headroom — only an order-of-magnitude regression
+# trips it. Inert unless pytest runs with --memray (CI does; local dev may not).
+pytestmark = pytest.mark.limit_memory("256 MB")
+
 from seiche.engines import (
     backtest,
     basins,
