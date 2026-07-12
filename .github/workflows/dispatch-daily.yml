@@ -1,0 +1,61 @@
+name: dispatch-daily
+
+# The desk's daily letter: written by the terminal from the live board, every
+# claim carrying its number (backend/seiche/dispatch_daily.py — deterministic,
+# no LLM). Commits the dispatch to main, then explicitly dispatches publish
+# (site rebuild) and deploy-hetzner (box picks up the continuation), because
+# pushes made with GITHUB_TOKEN do not trigger workflows on their own.
+#
+# Fail-loud: if the live board is unreachable there is no letter that day —
+# the generator refuses to write from nothing.
+
+on:
+  schedule:
+    - cron: "45 10 * * *" # 10:45 UTC — before the US open, after overnight data
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: dispatch-daily
+  cancel-in-progress: false
+
+jobs:
+  write-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # stdlib-only generator: no install, PYTHONPATH is enough
+      - name: Write today's dispatch from the live board
+        run: PYTHONPATH=backend python -m seiche.dispatch_daily
+
+      - name: Commit and push
+        run: |
+          git config user.name "seiche-desk"
+          git config user.email "desk@seiche.info"
+          git add frontend/public/dispatches backend/seiche/dispatches
+          if git diff --cached --quiet; then
+            echo "nothing new to publish today"
+            exit 0
+          fi
+          TITLE=$(python -c "import json; print(json.load(open('frontend/public/dispatches/index.json'))[0]['title'])")
+          git commit -m "dispatch: $TITLE"
+          git pull --rebase origin main
+          git push origin main
+          echo "PUSHED=1" >> "$GITHUB_ENV"
+
+      - name: Trigger site publish + box deploy
+        if: env.PUSHED == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run publish.yml --ref main
+          gh workflow run deploy-hetzner.yml --ref main

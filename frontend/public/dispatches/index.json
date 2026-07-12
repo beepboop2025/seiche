@@ -1,9 +1,16 @@
 [
   {
+    "slug": "2026-07-12-daily",
+    "title": "Erosion with a loud tell: plumbing leads price at +37",
+    "date": "2026-07-12",
+    "tag": "EROSION",
+    "summary": "The composite reads 45, regime EROSION. The Tell reads +37. Every number below is checkable on the board."
+  },
+  {
     "slug": "2026-07-09-fat-tail",
     "title": "The plumbing has a fat tail",
     "date": "2026-07-09",
     "tag": "STRAIN",
-    "summary": "The board reads STRAIN. VIX at 16, credit spreads near their tightest on record. The pipes and the price screens disagree — and extreme value theory says the disagreement has no ceiling."
+    "summary": "The board reads STRAIN. VIX at 16, credit spreads near their tightest on record. The pipes and the price screens disagree \u2014 and extreme value theory says the disagreement has no ceiling."
   }
 ]
