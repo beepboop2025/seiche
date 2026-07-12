@@ -55,5 +55,6 @@ jobs:
       - name: Validate and publish server.json
         run: |
           mcp-publisher login github-oidc
-          mcp-publisher publish --dry-run
+          # NOTE: current mcp-publisher treats --dry-run as a real publish;
+          # a single publish is the whole job.
           mcp-publisher publish
