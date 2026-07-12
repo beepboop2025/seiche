@@ -46,6 +46,11 @@ jobs:
             -o /tmp/book_history.json || echo "[]" > /tmp/book_history.json
           python backend/scripts/append_book_record.py /tmp/book_history.json frontend/public/data/book_history.json
 
+      # Static SEO surface: one indexable HTML page per dispatch + archive +
+      # regenerated sitemap, baked into public/ so the frontend build ships them.
+      - name: Render dispatch pages
+        run: python -m seiche.dispatch_pages
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

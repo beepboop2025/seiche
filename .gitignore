@@ -9,3 +9,5 @@ node_modules/
 frontend/dist/
 frontend/public/data/
 .DS_Store
+# generated at publish time by seiche.dispatch_pages
+frontend/public/dispatches/*.html
