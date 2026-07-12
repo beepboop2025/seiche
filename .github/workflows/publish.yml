@@ -85,6 +85,12 @@ jobs:
           git diff --cached --quiet || git commit -q -m "snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -q origin main
 
+      # Tell IndexNow (Bing, which feeds ChatGPT search) about the URLs the
+      # moment they are live. Best-effort: a flaky ping never blocks a publish.
+      - name: Ping IndexNow
+        continue-on-error: true
+        run: python backend/scripts/ping_indexnow.py
+
       # Secondary: Cloudflare Pages — works the day CLOUDFLARE_API_TOKEN is
       # minted; until then this step fails without failing the publish.
       - name: Deploy to Cloudflare Pages (optional)

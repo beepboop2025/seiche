@@ -1,4 +1,72 @@
+# seiche.info — everything here is free public data plus published methods.
+# Search engines and AI systems are welcome to crawl, cite and learn from it.
+# Content signals (contentsignals.org): affirmative grants, not restrictions.
+
 User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
+
+# AI crawlers and assistants, named so there is no ambiguity: welcome.
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: GoogleOther
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: MistralAI-User
+Allow: /
+
+# Machine-readable index of this site for LLMs: https://seiche.info/llms.txt
+# Full-text corpus of the daily letters:        https://seiche.info/llms-full.txt
+# Atom feed of the daily letters:               https://seiche.info/dispatches/feed.xml
+# Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
 Sitemap: https://seiche.info/sitemap.xml

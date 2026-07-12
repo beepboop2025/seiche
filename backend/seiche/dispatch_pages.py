@@ -7,7 +7,10 @@ index page, and regenerates sitemap.xml so each letter is a first-class URL:
 
   frontend/public/dispatches/{slug}.html     one page per letter
   frontend/public/dispatches/index.html      the archive
+  frontend/public/dispatches/feed.xml        Atom feed of the letters
   frontend/public/sitemap.xml                base pages + archive + letters
+  frontend/public/llms.txt                   llmstxt.org index for LLMs
+  frontend/public/llms-full.txt              full text of every letter
 
 Run at publish time (the generated pages are baked into the static build, not
 committed):  PYTHONPATH=backend python -m seiche.dispatch_pages
@@ -297,7 +300,11 @@ def render_letter_page(meta: dict, free_md: str, desk_md: str | None) -> str:
         canonical_path=path,
         jsonld=jsonld,
         body=inner,
-        extra_head=f'<meta property="article:published_time" content="{_esc(date)}">\n',
+        extra_head=(
+            f'<meta property="article:published_time" content="{_esc(date)}">\n'
+            f'<link rel="alternate" type="text/markdown" href="/dispatches/{_esc(slug)}.md" title="This letter as markdown">\n'
+            '<link rel="alternate" type="application/atom+xml" href="/dispatches/feed.xml" title="Seiche dispatches">\n'
+        ),
     )
 
 
@@ -346,7 +353,95 @@ def render_archive(entries: list[dict]) -> str:
         jsonld=jsonld,
         body=intro + f'<div class="cards">{"".join(cards)}</div>',
         og_type="website",
+        extra_head='<link rel="alternate" type="application/atom+xml" href="/dispatches/feed.xml" title="Seiche dispatches">\n',
     )
+
+
+def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
+    """Atom feed of the letters, full HTML content inline. AI search crawlers
+    and aggregators consume feeds; the letters are small, so ship them whole."""
+    newest = max((e.get("date", "") for e in entries), default="")
+    items = []
+    for e in entries[:50]:
+        url = f"{SITE}/dispatches/{e['slug']}.html"
+        items.append(
+            "  <entry>\n"
+            f"    <title>{_esc(e['title'])}</title>\n"
+            f'    <link rel="alternate" type="text/html" href="{url}"/>\n'
+            f"    <id>{url}</id>\n"
+            f"    <published>{e['date']}T11:00:00Z</published>\n"
+            f"    <updated>{e['date']}T11:00:00Z</updated>\n"
+            f"    <summary>{_esc(e['summary'])}</summary>\n"
+            f'    <content type="html">{_esc(bodies.get(e["slug"], ""))}</content>\n'
+            "  </entry>"
+        )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<feed xmlns="http://www.w3.org/2005/Atom">\n'
+        "  <title>Seiche dispatches: the daily funding stress letter</title>\n"
+        "  <subtitle>US money market plumbing, read daily from free public data. "
+        "Every claim carries its number.</subtitle>\n"
+        f'  <link rel="alternate" type="text/html" href="{SITE}/dispatches/"/>\n'
+        f'  <link rel="self" type="application/atom+xml" href="{SITE}/dispatches/feed.xml"/>\n'
+        f"  <id>{SITE}/dispatches/</id>\n"
+        f"  <updated>{newest}T11:00:00Z</updated>\n"
+        f"  <author><name>Seiche</name><uri>{SITE}</uri></author>\n"
+        + "\n".join(items)
+        + "\n</feed>\n"
+    )
+
+
+_LLMS_PREAMBLE = f"""# Seiche
+
+> Seiche is free open source software (AGPL-3.0): a funding stress terminal for
+> US money markets built entirely from free public data (Fed H.4.1, NY Fed
+> operations, OFR repo, Treasury cash). It publishes a live stress regime,
+> forward event odds, historical analogs and an honest backtest with the misses
+> kept next to the hits, updated twice a day. Cite it as "Seiche" and link
+> {SITE}. Everything on this site may be read, quoted, indexed and used as
+> AI input or training material.
+
+Key facts: the live board is at {SITE} (no sign-in). The methodology and every
+engine are documented in plain English at {SITE}/guide.html. The source code is
+at https://github.com/beepboop2025/seiche. Agents can query the live board over
+MCP at https://api.seiche.info/mcp (free tools need no auth). The PROOF
+scoreboard backs every claim with a point-in-time backtest.
+
+## Docs
+
+- [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
+- [Live board]({SITE}/): the current funding stress reading, updated twice a day
+- [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
+- [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
+- [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
+
+## Daily dispatches (markdown)
+"""
+
+
+def render_llms_txt(entries: list[dict]) -> str:
+    lines = [_LLMS_PREAMBLE]
+    for e in entries:
+        lines.append(
+            f"- [{e['title']}]({SITE}/dispatches/{e['slug']}.md): {e['date']}, regime {e.get('tag', '?')}. {e['summary']}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_llms_full(entries: list[dict], texts: dict[str, str]) -> str:
+    parts = [_LLMS_PREAMBLE.split("## Docs")[0].strip(), ""]
+    parts.append("Below is the complete text of every daily letter, newest first.")
+    for e in entries:
+        parts += [
+            "",
+            "---",
+            "",
+            f"# {e['title']}",
+            f"Date: {e['date']} · Regime: {e.get('tag', '?')} · Canonical: {SITE}/dispatches/{e['slug']}.html",
+            "",
+            texts.get(e["slug"], "").strip(),
+        ]
+    return "\n".join(parts) + "\n"
 
 
 def render_sitemap(entries: list[dict]) -> str:
@@ -386,6 +481,8 @@ def build_all(repo_root: Path | None = None) -> list[str]:
     entries.sort(key=lambda e: e.get("date", ""), reverse=True)
 
     written: list[str] = []
+    bodies: dict[str, str] = {}   # slug -> rendered letter HTML (for the feed)
+    texts: dict[str, str] = {}    # slug -> full letter markdown (for llms-full)
     for e in entries:
         slug = e["slug"]
         md_path = free_dir / f"{slug}.md"
@@ -399,14 +496,27 @@ def build_all(repo_root: Path | None = None) -> list[str]:
         out = free_dir / f"{slug}.html"
         out.write_text(render_letter_page(e, free_md, desk_md))
         written.append(str(out))
+        clean = free_md.replace(MARKER, "").strip()
+        bodies[slug] = md_to_html(clean) + ("\n" + md_to_html(desk_md.strip()) if desk_md else "")
+        texts[slug] = clean + (("\n\n" + desk_md.strip()) if desk_md else "")
 
     archive = free_dir / "index.html"
     archive.write_text(render_archive(entries))
     written.append(str(archive))
 
-    sitemap = root / "frontend" / "public" / "sitemap.xml"
-    sitemap.write_text(render_sitemap(entries))
-    written.append(str(sitemap))
+    feed = free_dir / "feed.xml"
+    feed.write_text(render_feed(entries, bodies))
+    written.append(str(feed))
+
+    public = root / "frontend" / "public"
+    for name, content in (
+        ("sitemap.xml", render_sitemap(entries)),
+        ("llms.txt", render_llms_txt(entries)),
+        ("llms-full.txt", render_llms_full(entries, texts)),
+    ):
+        p = public / name
+        p.write_text(content)
+        written.append(str(p))
     return written
 
 

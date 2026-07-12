@@ -11,3 +11,6 @@ frontend/public/data/
 .DS_Store
 # generated at publish time by seiche.dispatch_pages
 frontend/public/dispatches/*.html
+frontend/public/dispatches/feed.xml
+frontend/public/llms.txt
+frontend/public/llms-full.txt

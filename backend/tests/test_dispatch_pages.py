@@ -80,6 +80,47 @@ def test_no_index_fails_loud(tmp_path):
         build_all(repo_root=tmp_path)
 
 
+def test_llms_txt_lists_letters_with_markdown_links(repo):
+    root, d = repo
+    build_all(repo_root=root)
+    llms = (root / "frontend" / "public" / "llms.txt").read_text()
+    assert llms.startswith("# Seiche")
+    assert f"https://seiche.info/dispatches/{d['slug']}.md" in llms
+    assert "AI input or training material" in llms  # the affirmative grant
+
+
+def test_llms_full_carries_complete_letters(repo):
+    root, d = repo
+    build_all(repo_root=root)
+    full = (root / "frontend" / "public" / "llms-full.txt").read_text()
+    assert d["title"] in full
+    assert "EROSION" in full
+    assert "forward read" in full          # the desk continuation is in the corpus
+    assert "HAS-PAID" not in full          # the marker never leaks
+
+
+def test_feed_is_valid_atom_with_full_content(repo):
+    import xml.etree.ElementTree as ET
+
+    root, d = repo
+    build_all(repo_root=root)
+    feed_path = root / "frontend" / "public" / "dispatches" / "feed.xml"
+    tree = ET.fromstring(feed_path.read_text())  # parses = well-formed
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    entries = tree.findall("a:entry", ns)
+    assert len(entries) == 1
+    assert entries[0].find("a:id", ns).text == f"https://seiche.info/dispatches/{d['slug']}.html"
+    assert "EROSION" in entries[0].find("a:content", ns).text
+
+
+def test_letter_page_links_its_markdown_twin(repo):
+    root, d = repo
+    build_all(repo_root=root)
+    page = (root / "frontend" / "public" / "dispatches" / f"{d['slug']}.html").read_text()
+    assert f'type="text/markdown" href="/dispatches/{d["slug"]}.md"' in page
+    assert 'type="application/atom+xml" href="/dispatches/feed.xml"' in page
+
+
 def test_page_chrome_has_no_dashes(repo):
     """House copy rule applies to the page furniture we author (the letter
     body is governed by its own generator test)."""
