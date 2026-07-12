@@ -48,7 +48,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
         ctx.lineTo(u.bbox.left + u.bbox.width, y);
         ctx.stroke();
         ctx.fillStyle = refLine.color;
-        ctx.font = "10px SF Mono, monospace";
+        ctx.font = "10px Inter, sans-serif";
         ctx.fillText(refLine.label, u.bbox.left + 6, y - 5);
         ctx.restore();
       });
@@ -79,18 +79,18 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       legend: { show: series.length > 1 },
       axes: [
         {
-          stroke: "#6b7686",
-          grid: { stroke: "rgba(28,36,48,0.6)" },
-          ticks: { stroke: "rgba(28,36,48,0.6)" },
-          font: "10px SF Mono, monospace",
+          stroke: "#75798c",
+          grid: { stroke: "rgba(233,233,237,0.07)" },
+          ticks: { stroke: "rgba(233,233,237,0.07)" },
+          font: "10px Inter, sans-serif",
         },
         {
-          stroke: "#6b7686",
-          grid: { stroke: "rgba(28,36,48,0.6)" },
-          ticks: { stroke: "rgba(28,36,48,0.6)" },
-          font: "10px SF Mono, monospace",
+          stroke: "#75798c",
+          grid: { stroke: "rgba(233,233,237,0.07)" },
+          ticks: { stroke: "rgba(233,233,237,0.07)" },
+          font: "10px Inter, sans-serif",
           label: yLabel,
-          labelFont: "10px SF Mono, monospace",
+          labelFont: "10px Inter, sans-serif",
         },
       ],
       series: [

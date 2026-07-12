@@ -25,7 +25,7 @@ function TellCard({ t }: { t: Any }) {
           ))}
         </div>
       </div>
-      <Chart rows={t.series} series={[{ label: "tell", color: "#8a63d2" }]} refLine={{ value: 0, color: "#3d4654", label: "" }} />
+      <Chart rows={t.series} series={[{ label: "tell", color: "#b5abfc" }]} refLine={{ value: 0, color: "#595d6c", label: "" }} />
       <Method>{t.method}</Method>
     </div>
   );
@@ -71,7 +71,7 @@ function PlaybookCard({ p }: { p: Any }) {
                 const dim = c.low_confidence ? { opacity: 0.45 } : undefined;
                 return (
                   <>
-                    <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? "#37c88b" : c.median < 0 ? "#e5484d" : undefined }}
+                    <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? "#79c2ad" : c.median < 0 ? "#dd7a72" : undefined }}
                         title={c.low_confidence ? "fewer than 8 non-overlapping windows — an anecdote, not a distribution" : undefined}>
                       {c.median > 0 ? "+" : ""}{fmt(c.median, 2)}
                     </td>

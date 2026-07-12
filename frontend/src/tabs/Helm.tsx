@@ -2,13 +2,13 @@ import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
 const STANCE_COLOR: Record<string, string> = {
-  risk_off: "#e5484d",
-  risk_on: "#37c88b",
-  neutral: "#6b7686",
+  risk_off: "#dd7a72",
+  risk_on: "#79c2ad",
+  neutral: "#75798c",
 };
 
 function TodayCard({ t, stk }: { t: Any; stk: Any }) {
-  const col = STANCE_COLOR[t.stance] ?? "#6b7686";
+  const col = STANCE_COLOR[t.stance] ?? "#75798c";
   return (
     <div className="card span12">
       <h2>Today's Book</h2>
@@ -34,7 +34,7 @@ function TodayCard({ t, stk }: { t: Any; stk: Any }) {
           {(t.positions ?? []).map((p: Any) => (
             <tr key={p.sleeve}>
               <td>{p.label}</td>
-              <td style={{ color: p.weight > 0 ? "#37c88b" : p.weight < 0 ? "#e5484d" : "#6b7686" }}>
+              <td style={{ color: p.weight > 0 ? "#79c2ad" : p.weight < 0 ? "#dd7a72" : "#75798c" }}>
                 {p.direction}
               </td>
               <td className="num">{p.weight > 0 ? "+" : ""}{fmt(p.weight, 3)}</td>
@@ -80,8 +80,8 @@ function EnsembleCard({ s }: { s: Any }) {
       <div className="sub" style={{ marginTop: 6 }}>{s.verdict}</div>
       {s.series?.length > 0 && (
         <Chart rows={s.series} series={[
-          { label: "P(event)", color: "#e8b64c" },
-          { label: "dispersion", color: "#3d4654", dash: [3, 3] },
+          { label: "P(event)", color: "#d3ab6e" },
+          { label: "dispersion", color: "#595d6c", dash: [3, 3] },
         ]} height={120} />
       )}
       <Method>{(s.caveats ?? []).join(" · ")} · {s.method}</Method>
@@ -111,9 +111,9 @@ function BacktestCard({ b }: { b: Any }) {
       </div>
       {b.equity?.length > 0 && (
         <Chart rows={b.equity} series={[
-          { label: "the Book", color: "#e8b64c" },
-          { label: "static mix", color: "#8a63d2", dash: [4, 3] },
-          { label: "cash", color: "#3d4654", dash: [2, 3] },
+          { label: "the Book", color: "#d3ab6e" },
+          { label: "static mix", color: "#b5abfc", dash: [4, 3] },
+          { label: "cash", color: "#595d6c", dash: [2, 3] },
         ]} yLabel="growth of 1" />
       )}
       <table className="mini">
@@ -147,7 +147,7 @@ function EpisodesCard({ rows }: { rows: Any[] }) {
               <td>{e.episode}</td>
               {e.in_sample ? (
                 <>
-                  <td className="num" style={{ color: e.book_pct > e.static_pct ? "#37c88b" : "#e5484d" }}>
+                  <td className="num" style={{ color: e.book_pct > e.static_pct ? "#79c2ad" : "#dd7a72" }}>
                     {e.book_pct > 0 ? "+" : ""}{fmt(e.book_pct, 1)}%
                   </td>
                   <td className="num dimsmall">{e.static_pct > 0 ? "+" : ""}{fmt(e.static_pct, 1)}%</td>
@@ -173,7 +173,7 @@ function LiveCard({ lv }: { lv: Any }) {
         {lv.since && <div className="item"><div className="k">since</div><div className="v">{lv.since}</div></div>}
         {lv.cum_return_pct != null && (
           <div className="item"><div className="k">cumulative</div>
-            <div className="v" style={{ color: lv.cum_return_pct >= 0 ? "#37c88b" : "#e5484d" }}>
+            <div className="v" style={{ color: lv.cum_return_pct >= 0 ? "#79c2ad" : "#dd7a72" }}>
               {lv.cum_return_pct > 0 ? "+" : ""}{fmt(lv.cum_return_pct, 2)}%
             </div></div>
         )}
@@ -201,7 +201,7 @@ function NavigatorCard({ n }: { n: Any }) {
         <div className={`tellvalue ${n.p_event_5bd >= 0.5 ? "hot" : ""}`}>{fmt(n.p_event_5bd * 100, 0)}%</div>
         <div>
           <div className="tellreading">{n.rationale}</div>
-          <div className="coverage" style={{ color: judged ? (beats ? "#37c88b" : "#e5484d") : undefined }}>
+          <div className="coverage" style={{ color: judged ? (beats ? "#79c2ad" : "#dd7a72") : undefined }}>
             forward record: {rec.ok
               ? judged
                 ? `Brier ${fmt(rec.brier, 4)} vs climatology ${fmt(rec.brier_climatology, 4)} over ${rec.n_resolved} resolved — ${rec.verdict}`

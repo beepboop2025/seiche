@@ -40,7 +40,7 @@ export function Decomp({ composite }: { composite: Any }) {
             <div
               style={{
                 width: `${d.score ?? 0}%`,
-                background: d.status === "DEAD" ? "#e5484d" : undefined,
+                background: d.status === "DEAD" ? "#dd7a72" : undefined,
               }}
             />
           </div>

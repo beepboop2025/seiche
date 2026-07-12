@@ -2,12 +2,12 @@ import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
 const BUCKET_COLORS: Record<string, string> = {
-  year_turn: "#e5484d",
-  quarter_turn: "#e88a3a",
-  month_end: "#4cc3ff",
-  tax_date: "#d9b23a",
-  mid_month: "#8a63d2",
-  plain: "#3d4654",
+  year_turn: "#dd7a72",
+  quarter_turn: "#d99274",
+  month_end: "#9184d9",
+  tax_date: "#c99c50",
+  mid_month: "#b5abfc",
+  plain: "#595d6c",
 };
 
 function RiptideCard({ r }: { r: Any }) {
@@ -31,7 +31,7 @@ function RiptideCard({ r }: { r: Any }) {
             <div className="coverage">
               {lv.pop_bp}bp pop on {lv.date} ({lv.bucket?.replace("_", "-")}, {lv.age_bd}bd ago) ·
               P(escalates to ≥10bp) {lv.p_escalates != null ? `${fmt(lv.p_escalates * 100, 0)}%` : "—"} ·
-              RRP co-sign <b style={{ color: lv.rrp_cosigned ? undefined : "#e5484d" }}>
+              RRP co-sign <b style={{ color: lv.rrp_cosigned ? undefined : "#dd7a72" }}>
                 {lv.rrp_cosigned ? "present (choreography)" : "ABSENT (scarcity)"}</b>
             </div>
           </div>
@@ -48,8 +48,8 @@ function RiptideCard({ r }: { r: Any }) {
               <td className="num">{fmt(p.pop_bp, 1)}bp</td>
               <td>{p.bucket?.replace("_", "-")}</td>
               <td className="num">{fmt(p.rrp_co_z, 1)}</td>
-              <td style={{ color: p.stuck ? "#e5484d" : undefined }}>{p.stuck ? "yes" : "no"}</td>
-              <td style={{ color: p.escalated ? "#e5484d" : undefined }}>{p.escalated == null ? "—" : p.escalated ? "yes" : "no"}</td>
+              <td style={{ color: p.stuck ? "#dd7a72" : undefined }}>{p.stuck ? "yes" : "no"}</td>
+              <td style={{ color: p.escalated ? "#dd7a72" : undefined }}>{p.escalated == null ? "—" : p.escalated ? "yes" : "no"}</td>
             </tr>
           ))}
         </tbody>
@@ -134,16 +134,16 @@ function SwellCard({ s }: { s: Any }) {
             <span className="dimsmall"> (h≥10 assume day-independence — upper bounds; only 5bd is validated)</span>
           </div>
           <div className="coverage">
-            peak day <b style={{ color: "#e88a3a" }}>{s.peak?.date}</b> ({s.peak?.bucket?.replace("_", "-")},
+            peak day <b style={{ color: "#d99274" }}>{s.peak?.date}</b> ({s.peak?.bucket?.replace("_", "-")},
             P(≥10bp) {fmt((s.peak?.p10 ?? 0) * 100, 0)}%)
             {state.available && (
               <> · damping state {state.hot
-                ? <b style={{ color: "#e5484d" }}>HOT · lift {fmt(state.lift_10bp, 1)}×</b>
+                ? <b style={{ color: "#dd7a72" }}>HOT · lift {fmt(state.lift_10bp, 1)}×</b>
                 : <span className="dimsmall">calm</span>}</>
             )}
             {" "}· asof {s.asof}
           </div>
-          <div className="coverage" style={{ color: beats ? "#37c88b" : "#e8b64c" }}>
+          <div className="coverage" style={{ color: beats ? "#79c2ad" : "#d3ab6e" }}>
             {v.ok
               ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)} — ${v.verdict}`
               : v.reason ?? "validation not run"}
@@ -153,12 +153,12 @@ function SwellCard({ s }: { s: Any }) {
       <Chart
         rows={rows}
         series={[
-          { label: "P(≥10bp) per day", color: "#e88a3a" },
-          { label: "P(event by date)", color: "#37c88b" },
-          { label: "P(≥2bp) per day", color: "#3d4654", dash: [2, 3] },
+          { label: "P(≥10bp) per day", color: "#d99274" },
+          { label: "P(event by date)", color: "#79c2ad" },
+          { label: "P(≥2bp) per day", color: "#595d6c", dash: [2, 3] },
         ]}
         yLabel="%"
-        vlines={settleDates.length ? { dates: settleDates, color: "#8a63d2" } : null}
+        vlines={settleDates.length ? { dates: settleDates, color: "#b5abfc" } : null}
       />
       <table className="mini">
         <thead>
@@ -177,7 +177,7 @@ function SwellCard({ s }: { s: Any }) {
               <td className="num">{b.n}</td>
               <td className="num">{fmt(b.p2 * 100, 1)}%</td>
               <td className="num">{fmt(b.p5 * 100, 1)}%</td>
-              <td className="num" style={{ color: b.p10 >= 0.1 ? "#e5484d" : undefined }}>{fmt(b.p10 * 100, 1)}%</td>
+              <td className="num" style={{ color: b.p10 >= 0.1 ? "#dd7a72" : undefined }}>{fmt(b.p10 * 100, 1)}%</td>
               <td className="num dimsmall">{b.ci95_10bp ? `${fmt(b.ci95_10bp[0] * 100, 0)}–${fmt(b.ci95_10bp[1] * 100, 0)}%` : "—"}</td>
               <td className="num">{fmt(b.p20 * 100, 1)}%</td>
             </tr>
@@ -231,13 +231,13 @@ function PotentialSVG({ floor, popNow }: { floor: Any; popNow: number | null }) 
   const evX = px(10.0 > xmax ? xmax : 10.0);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "150px", display: "block" }}>
-      <line x1={evX} y1={PAD} x2={evX} y2={H - PAD} stroke="#e5484d" strokeDasharray="3 4" strokeWidth={1} />
-      <text x={evX - 4} y={PAD + 10} fill="#e5484d" fontSize={10} textAnchor="end" fontFamily="SF Mono, monospace">
+      <line x1={evX} y1={PAD} x2={evX} y2={H - PAD} stroke="#dd7a72" strokeDasharray="3 4" strokeWidth={1} />
+      <text x={evX - 4} y={PAD + 10} fill="#dd7a72" fontSize={10} textAnchor="end" fontFamily="Inter, sans-serif">
         event ≥10bp
       </text>
-      <polyline points={pts} fill="none" stroke="#5aa9e6" strokeWidth={1.6} />
-      {ball && <circle cx={ball.x} cy={ball.y} r={4.5} fill="#e8b64c" stroke="#0b0f14" strokeWidth={1} />}
-      <text x={PAD + 2} y={H - PAD - 2} fill="#6b7686" fontSize={10} fontFamily="SF Mono, monospace">
+      <polyline points={pts} fill="none" stroke="#7f95cc" strokeWidth={1.6} />
+      {ball && <circle cx={ball.x} cy={ball.y} r={4.5} fill="#d3ab6e" stroke="#161826" strokeWidth={1} />}
+      <text x={PAD + 2} y={H - PAD - 2} fill="#75798c" fontSize={10} fontFamily="Inter, sans-serif">
         V(x) — the basin floor · ● today
       </text>
     </svg>
@@ -268,7 +268,7 @@ function BathymetryCard({ b }: { b: Any }) {
             first-passage P(funding event within 5bd) · 1bd {fmt((hz.h1 ?? 0) * 100, 0)}% ·
             10bd {fmt((hz.h10 ?? 0) * 100, 0)}% ·
             {" "}expected first passage {b.state_now?.in_event_bin
-              ? <b style={{ color: "#e5484d" }}>state already in the event bin</b>
+              ? <b style={{ color: "#dd7a72" }}>state already in the event bin</b>
               : mfpt != null
                 ? <b>{fmt(mfpt, 0)}bd</b>
                 : <span className="dimsmall">beyond {b.mfpt_cap_bd}bd — the well holds</span>}
@@ -276,13 +276,13 @@ function BathymetryCard({ b }: { b: Any }) {
           <div className="coverage">
             state x = {fmt(b.state_now?.pop_bp, 1)}bp · well at {fmt(fl.well_bp, 1)}bp ·
             stiffness {fmt(fl.stiffness, 2)}/bd · escape barrier{" "}
-            <b style={{ color: (fl.barrier_kt ?? 99) < 2 ? "#e5484d" : undefined }}>{fmt(fl.barrier_kt, 1)} k<sub>B</sub>T</b> ·
+            <b style={{ color: (fl.barrier_kt ?? 99) < 2 ? "#dd7a72" : undefined }}>{fmt(fl.barrier_kt, 1)} k<sub>B</sub>T</b> ·
             τ (slowest relaxation) {fmt(sp.tau_bd, 1)}bd
-            {sp.tau_pctl != null && <b style={{ color: sp.tau_pctl >= 80 ? "#e5484d" : undefined }}> ({fmt(sp.tau_pctl, 0)}th pctl)</b>} ·
+            {sp.tau_pctl != null && <b style={{ color: sp.tau_pctl >= 80 ? "#dd7a72" : undefined }}> ({fmt(sp.tau_pctl, 0)}th pctl)</b>} ·
             entropy production {fmt(ar.sigma_nats_bd, 3)} nats/bd
-            {ar.pctl != null && <b style={{ color: ar.pctl >= 80 ? "#e5484d" : undefined }}> ({fmt(ar.pctl, 0)}th pctl)</b>}
+            {ar.pctl != null && <b style={{ color: ar.pctl >= 80 ? "#dd7a72" : undefined }}> ({fmt(ar.pctl, 0)}th pctl)</b>}
           </div>
-          <div className="coverage" style={{ color: beats ? "#37c88b" : "#e8b64c" }}>
+          <div className="coverage" style={{ color: beats ? "#79c2ad" : "#d3ab6e" }}>
             {v.ok
               ? `walk-forward: AUROC ${fmt(v.auroc, 2)} · Brier ${fmt(v.brier, 4)} vs climatology ${fmt(v.brier_climatology, 4)} — ${v.verdict}`
               : v.reason ?? "validation not run"}
@@ -293,8 +293,8 @@ function BathymetryCard({ b }: { b: Any }) {
       <Chart
         rows={rows}
         series={[
-          { label: "τ relaxation (bd)", color: "#8a63d2" },
-          { label: "entropy production (nats/bd)", color: "#e88a3a", dash: [4, 3] },
+          { label: "τ relaxation (bd)", color: "#b5abfc" },
+          { label: "entropy production (nats/bd)", color: "#d99274", dash: [4, 3] },
         ]}
       />
       <div className="coverage">
@@ -336,10 +336,10 @@ export function TideTablesCard({ t }: { t: Any }) {
           </div>
           <div className="coverage">
             base rate {fmt(odds.base_rate * 100, 0)}% · lift {fmt(odds.lift, 1)}× ·
-            water <b style={{ color: uncharted ? "#e5484d" : undefined }}>{nov.verdict}</b>
+            water <b style={{ color: uncharted ? "#dd7a72" : undefined }}>{nov.verdict}</b>
             {nov.pctl != null ? ` (NN-distance ${fmt(nov.pctl, 0)}th pctl)` : ""} · asof {t.asof}
           </div>
-          <div className="coverage" style={{ color: beats ? "#37c88b" : "#e5484d" }}>
+          <div className="coverage" style={{ color: beats ? "#79c2ad" : "#dd7a72" }}>
             hindcast: {skill.ok
               ? `Brier ${fmt(skill.brier, 3)} vs climatology ${fmt(skill.brier_climatology, 3)} · AUROC ${fmt(skill.auroc, 2)} — ${skill.verdict}`
               : skill.reason ?? "not run"}
@@ -349,15 +349,15 @@ export function TideTablesCard({ t }: { t: Any }) {
       <Chart
         rows={rows}
         series={[
-          { label: "SOFR−IORB", color: "#5aa9e6" },
-          { label: "p10", color: "#3d4654", dash: [2, 3] },
-          { label: "p25", color: "#8a63d2", dash: [4, 3] },
-          { label: "analog median", color: "#e8b64c" },
-          { label: "p75", color: "#8a63d2", dash: [4, 3] },
-          { label: "p90", color: "#3d4654", dash: [2, 3] },
+          { label: "SOFR−IORB", color: "#7f95cc" },
+          { label: "p10", color: "#595d6c", dash: [2, 3] },
+          { label: "p25", color: "#b5abfc", dash: [4, 3] },
+          { label: "analog median", color: "#d3ab6e" },
+          { label: "p75", color: "#b5abfc", dash: [4, 3] },
+          { label: "p90", color: "#595d6c", dash: [2, 3] },
         ]}
         yLabel="bp"
-        refLine={{ value: 0, color: "#3d4654", label: "" }}
+        refLine={{ value: 0, color: "#595d6c", label: "" }}
       />
       <table className="mini">
         <thead>
@@ -368,10 +368,10 @@ export function TideTablesCard({ t }: { t: Any }) {
             <tr key={a.end_date}>
               <td>{a.end_date}</td>
               <td className="num dimsmall">{fmt(a.distance, 2)}</td>
-              <td className="num" style={{ color: a.max_move_5bd_bp > 5 ? "#e5484d" : undefined }}>
+              <td className="num" style={{ color: a.max_move_5bd_bp > 5 ? "#dd7a72" : undefined }}>
                 {a.max_move_5bd_bp > 0 ? "+" : ""}{fmt(a.max_move_5bd_bp, 1)}bp
               </td>
-              <td>{a.event_within_5bd ? <b style={{ color: "#e5484d" }}>yes</b> : <span className="dimsmall">no</span>}</td>
+              <td>{a.event_within_5bd ? <b style={{ color: "#dd7a72" }}>yes</b> : <span className="dimsmall">no</span>}</td>
               <td className="dimsmall">{a.episode ?? "—"}</td>
             </tr>
           ))}
@@ -406,7 +406,7 @@ function SeaStateCard({ e }: { e: Any }) {
       </div>
       <Chart
         rows={e.rows ?? []}
-        series={[{ label: "filtered P(rough water)", color: "#e88a3a" }]}
+        series={[{ label: "filtered P(rough water)", color: "#d99274" }]}
         yLabel="P"
       />
       <div className="dimsmall">{e.reading}</div>

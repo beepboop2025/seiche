@@ -39,7 +39,7 @@ function OrthogonalCard({ o }: { o: Any }) {
             <tr key={ep.date}>
               <td>{ep.episode}</td>
               <td className="num">{fmt(ep.max_pctl_30d_before, 0)}</td>
-              <td className="num" style={{ color: ep.first_alert_lead_d ? "#37c88b" : "#e5484d" }}>
+              <td className="num" style={{ color: ep.first_alert_lead_d ? "#79c2ad" : "#dd7a72" }}>
                 {ep.first_alert_lead_d ? `${ep.first_alert_lead_d}d early` : "not alerted"}
               </td>
             </tr>
@@ -84,7 +84,7 @@ function MLCard({ ml }: { ml: Any }) {
         <div className="sub" style={{ marginTop: 4 }}>
           decision utility (net caught-events/yr, false alarm −{ml.utility.cost_per_false_alarm}):
           {" "}ML@25% <b>{fmt(ml.utility.ml_at_25pct, 2)}</b> · ML@50% <b>{fmt(ml.utility.ml_at_50pct, 2)}</b> ·
-          rule@80th <b style={{ color: (ml.utility.rule_at_80pctl ?? 0) < 0 ? "#e5484d" : undefined }}>{fmt(ml.utility.rule_at_80pctl, 2)}</b> —
+          rule@80th <b style={{ color: (ml.utility.rule_at_80pctl ?? 0) < 0 ? "#dd7a72" : undefined }}>{fmt(ml.utility.rule_at_80pctl, 2)}</b> —
           the rule index is a regime gauge; the model is the better action filter
         </div>
       )}
@@ -94,7 +94,7 @@ function MLCard({ ml }: { ml: Any }) {
           utility@25% <b>{fmt(ml.orthogonal.utility?.ml_at_25pct, 2)}</b> — ranking survives without the target's own variables
         </div>
       )}
-      <Chart rows={ml.p_series} series={[{ label: "P(event, 5bd) — walk-forward OOS", color: "#e88a3a" }]} height={150} />
+      <Chart rows={ml.p_series} series={[{ label: "P(event, 5bd) — walk-forward OOS", color: "#d99274" }]} height={150} />
       <div className="warehouse-row" style={{ marginTop: 8 }}>
         <table className="mini" style={{ maxWidth: 380 }}>
           <thead><tr><th colSpan={4}>reliability (trust a level only if these match)</th></tr>
@@ -136,7 +136,7 @@ function LeakAuditCard({ a }: { a: Any }) {
           <div className={`v ${a.bit_reproducible ? "" : "bad"}`}>
             {a.bit_reproducible ? "yes — two builds hash identically" : "NO — investigate"}</div></div>
         <div className="item"><div className="k">clean index sha256</div>
-          <div className="v" style={{ fontFamily: "SF Mono, monospace" }}>{a.clean_index_sha256}…</div></div>
+          <div className="v" style={{ fontFamily: "Inter, sans-serif" }}>{a.clean_index_sha256}…</div></div>
       </div>
       <table className="mini">
         <thead><tr><th>toggle</th><th>what breaks</th><th>AUROC</th><th>ΔAUROC</th><th>recall</th><th>run-precision</th></tr></thead>
@@ -146,7 +146,7 @@ function LeakAuditCard({ a }: { a: Any }) {
               <td>{r.toggle}</td>
               <td className="dimsmall">{r.what_breaks}</td>
               <td className="num">{r.auroc != null ? fmt(r.auroc, 3) : "—"}</td>
-              <td className="num" style={{ color: (r.lg_auroc ?? 0) > 0 ? "#e5484d" : undefined }}>
+              <td className="num" style={{ color: (r.lg_auroc ?? 0) > 0 ? "#dd7a72" : undefined }}>
                 {r.lg_auroc != null ? `${r.lg_auroc > 0 ? "+" : ""}${fmt(r.lg_auroc, 3)}` : "—"}</td>
               <td className="num">{r.recall != null ? `${fmt(r.recall * 100, 0)}%` : "—"}</td>
               <td className="num">{r.precision_runs != null ? `${fmt(r.precision_runs * 100, 0)}%` : "—"}</td>
@@ -180,7 +180,7 @@ function RegattaCard({ r }: { r: Any }) {
               <td>{row.label}</td>
               <td className="num">{fmt(row.brier, 4)}</td>
               <td className="num">{fmt(row.mcs_pvalue, 3)}</td>
-              <td style={{ color: row.in_set ? "#37c88b" : "#e5484d" }}>{row.in_set ? "YES" : "out"}</td>
+              <td style={{ color: row.in_set ? "#79c2ad" : "#dd7a72" }}>{row.in_set ? "YES" : "out"}</td>
             </tr>
           ))}
         </tbody>
@@ -230,9 +230,9 @@ export default function Proof({ snap }: { snap: Any }) {
         </div>
         <Chart
           rows={bt.signal_series}
-          series={[{ label: "Seiche-lite expanding pctl", color: "#4cc3ff" }]}
-          refLine={{ value: cap.alert_pctl ?? 80, color: "#e5484d", label: "alert line" }}
-          vlines={{ dates: s.event_dates ?? [], color: "rgba(229,72,77,.5)" }}
+          series={[{ label: "Seiche-lite expanding pctl", color: "#9184d9" }]}
+          refLine={{ value: cap.alert_pctl ?? 80, color: "#dd7a72", label: "alert line" }}
+          vlines={{ dates: s.event_dates ?? [], color: "rgba(221,122,114,.5)" }}
           height={200}
         />
         <Method>red verticals = funding events · {bt.method}</Method>
@@ -249,7 +249,7 @@ export default function Proof({ snap }: { snap: Any }) {
                 <td>{ep.episode}</td>
                 <td className="num">{ep.date}</td>
                 <td className="num">{ep.in_sample ? fmt(ep.max_pctl_30d_before, 0) : "out of sample"}</td>
-                <td className="num" style={{ color: ep.in_sample && !ep.first_alert_lead_d ? "#e5484d" : "#37c88b" }}>
+                <td className="num" style={{ color: ep.in_sample && !ep.first_alert_lead_d ? "#dd7a72" : "#79c2ad" }}>
                   {!ep.in_sample ? "—" : ep.first_alert_lead_d ? `${ep.first_alert_lead_d}d early` : "not alerted"}
                 </td>
               </tr>
@@ -310,7 +310,7 @@ export default function Proof({ snap }: { snap: Any }) {
                   {t.buckets.map((b: Any) => (
                     <tr key={b.bucket}>
                       <td>{b.bucket}</td>
-                      <td className="num" style={{ color: (b.median ?? 0) > 0 ? "#37c88b" : (b.median ?? 0) < 0 ? "#e5484d" : undefined }}>
+                      <td className="num" style={{ color: (b.median ?? 0) > 0 ? "#79c2ad" : (b.median ?? 0) < 0 ? "#dd7a72" : undefined }}>
                         {b.median == null ? "—" : `${b.median > 0 ? "+" : ""}${fmt(b.median, 2)}`}
                       </td>
                       <td className="num">{fmt(b.pct_positive, 0)}%</td>

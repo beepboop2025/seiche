@@ -2,11 +2,11 @@ import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
 const MODE_COLORS: Record<string, string> = {
-  quarter_end: "#e88a3a",
-  year_end: "#e5484d",
-  month_end: "#4cc3ff",
-  mid_month: "#3d4654",
-  tax_date: "#d9b23a",
+  quarter_end: "#d99274",
+  year_end: "#dd7a72",
+  month_end: "#9184d9",
+  mid_month: "#595d6c",
+  tax_date: "#c99c50",
 };
 
 function ResonanceCard({ e }: { e: Any }) {
@@ -46,7 +46,7 @@ function ResonanceCard({ e }: { e: Any }) {
               <td className="num">{fmt(d.last?.slosh_bp, 1)}bp ({d.last?.date})</td>
               <td className="num">{fmt(d.recent_median_bp, 1)}bp</td>
               <td className="num">{fmt(d.prior_median_bp, 1)}bp</td>
-              <td className="num" style={{ color: d.amplification >= 2 ? "#e5484d" : d.amplification >= 1.3 ? "#d9b23a" : undefined }}>
+              <td className="num" style={{ color: d.amplification >= 2 ? "#dd7a72" : d.amplification >= 1.3 ? "#c99c50" : undefined }}>
                 {fmt(d.amplification, 2)}×
               </td>
               <td className="num dimsmall" title="amplification with the largest recent slosh removed — one-event sensitivity">
@@ -101,8 +101,8 @@ function UndertowCard({ e }: { e: Any }) {
       <Chart
         rows={e.ac1_rows ?? []}
         series={[
-          { label: "AC1 · SOFR−IORB", color: "#5aa9e6" },
-          { label: "AC1 · tail", color: "#8a63d2", dash: [4, 3] },
+          { label: "AC1 · SOFR−IORB", color: "#7f95cc" },
+          { label: "AC1 · tail", color: "#b5abfc", dash: [4, 3] },
         ]}
         yLabel="lag-1 autocorr"
       />
@@ -124,7 +124,7 @@ function HydrophoneCard({ e }: { e: Any }) {
         <div className="item"><div className="k">Δ 60d</div><div className={`v ${e.trend_60d > 0.05 ? "warn" : ""}`}>{e.trend_60d > 0 ? "+" : ""}{fmt(e.trend_60d, 3)}</div></div>
         <div className="item"><div className="k">series in panel</div><div className="v">{e.n_series}</div></div>
       </div>
-      <Chart rows={e.series} series={[{ label: "absorption (top-2 PC share)", color: "#37c88b" }]} />
+      <Chart rows={e.series} series={[{ label: "absorption (top-2 PC share)", color: "#79c2ad" }]} />
       <Method>{e.method}</Method>
     </div>
   );
@@ -143,7 +143,7 @@ function EdgesCard({ e }: { e: Any }) {
             <tr key={i}>
               <td>{ed.lead}</td><td>→</td><td>{ed.follows}</td>
               <td className="num">{ed.lag_d}d</td>
-              <td className="num" style={{ color: Math.abs(ed.corr) >= 0.45 ? "#e88a3a" : undefined }}>{fmt(ed.corr, 2)}</td>
+              <td className="num" style={{ color: Math.abs(ed.corr) >= 0.45 ? "#d99274" : undefined }}>{fmt(ed.corr, 2)}</td>
             </tr>
           ))}
         </tbody>
@@ -167,8 +167,8 @@ function SonarCard({ e }: { e: Any }) {
               <td>{m.label}</td>
               <td className="num">{fmt(m.last, 2)} {m.unit}</td>
               <td className="num">{m.chg_1d == null ? "—" : `${m.chg_1d > 0 ? "+" : ""}${fmt(m.chg_1d, 2)}`}</td>
-              <td className="num" style={{ color: Math.abs(m.level_z ?? 0) >= 2.5 ? "#e5484d" : undefined }}>{fmt(m.level_z, 2)}</td>
-              <td className="num" style={{ color: Math.abs(m.change_z ?? 0) >= 2.5 ? "#e5484d" : undefined }}>{fmt(m.change_z, 2)}</td>
+              <td className="num" style={{ color: Math.abs(m.level_z ?? 0) >= 2.5 ? "#dd7a72" : undefined }}>{fmt(m.level_z, 2)}</td>
+              <td className="num" style={{ color: Math.abs(m.change_z ?? 0) >= 2.5 ? "#dd7a72" : undefined }}>{fmt(m.change_z, 2)}</td>
               <td className="num">{m.asof}</td>
             </tr>
           ))}
@@ -187,7 +187,7 @@ function StationKeepingCard({ e }: { e: Any }) {
       <div className="sub">
         orbit-determination transfer: propagate the reserve system's expected state, watch the
         residuals — a persistent innovation is a burn the model didn't know about
-        {e.any_active && <span style={{ color: "#e88a3a" }}> · BURN IN PROGRESS</span>}
+        {e.any_active && <span style={{ color: "#d99274" }}> · BURN IN PROGRESS</span>}
       </div>
       <div className="kv">
         {Object.entries<Any>(e.channels ?? {}).map(([ch, c]) => (
@@ -205,7 +205,7 @@ function StationKeepingCard({ e }: { e: Any }) {
               <td className="num">{m.date}</td>
               <td>{m.channel}</td>
               <td className="num">{m.start}</td>
-              <td style={{ color: m.direction === "drain" ? "#e5484d" : "#37c88b" }}>{m.direction}</td>
+              <td style={{ color: m.direction === "drain" ? "#dd7a72" : "#79c2ad" }}>{m.direction}</td>
               <td className="num">${fmt(Math.abs(m.cum_b), 0)}B</td>
             </tr>
           ))}
