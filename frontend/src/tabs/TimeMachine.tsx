@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
 import { Any, fmt, Decomp, Stat } from "../lib";
+
+// `#time machine/2019-09-12` (the command line's ASOF grammar) deep-links a replay.
+const hashDate = (): string => {
+  const seg = decodeURIComponent(window.location.hash).split("/")[1] ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(seg) ? seg : "";
+};
 
 const PRESETS = [
   { date: "2019-09-12", label: "Sep 2019 repo spike, T−5" },
@@ -13,10 +19,18 @@ const PRESETS = [
 ];
 
 export default function TimeMachine({ live }: { live: boolean }) {
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(hashDate());
   const [replay, setReplay] = useState<Any | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const auto = () => { const d = hashDate(); if (d && live) { setDate(d); load(d); } };
+    auto();
+    window.addEventListener("hashchange", auto);
+    return () => window.removeEventListener("hashchange", auto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live]);
 
   const load = (d: string) => {
     if (!d) return;

@@ -3,6 +3,9 @@ import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
 import { Any, fmt } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
+import { Command } from "./commands";
+
+const CommandPalette = lazy(() => import("./CommandPalette"));
 
 // Tabs are code-split: only the one you open ships its JS. This keeps the
 // first paint small and fast; each chunk streams in behind a skeleton.
@@ -38,9 +41,22 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [tab, setTab] = useState<Tab>(hashToTab());
+  const [palette, setPalette] = useState(false);
 
-  // Live API first (dev / self-hosted); fall back to the static snapshot
-  // published by CI (Cloudflare Pages deploy has no backend process).
+  const goTab = (t: Tab, sub?: string) => {
+    window.location.hash = sub ? `${t.toLowerCase()}/${sub}` : t.toLowerCase();
+    setTab(t);
+  };
+
+  const onCommand = (cmd: Command) => {
+    if (cmd.type === "tab") goTab(cmd.tab as Tab);
+    else if (cmd.type === "asof") goTab("TIME MACHINE", cmd.date);
+    else if (cmd.type === "href") window.location.href = cmd.url;
+  };
+
+  // Live API first (dev / self-hosted); fall back to the full snapshot CI
+  // bakes into the static build — the board should render even when the box
+  // is unreachable, just marked "static snapshot" instead of "live".
   const load = () =>
     fetch(`${API_BASE}/api/overview`, { headers: authHeaders() })
       .then((r) => {
@@ -51,7 +67,15 @@ export default function App() {
         return r.json();
       })
       .then((data) => { setSnap(data); setErr(null); })
-      .catch((e) => setErr(String(e.message ?? e)));
+      .catch((apiErr) =>
+        fetch("/data/overview.json")
+          .then((r) => {
+            const ct = r.headers.get("content-type") ?? "";
+            if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw apiErr;
+            return r.json();
+          })
+          .then((data) => { setSnap(data); setLive(false); setErr(null); })
+          .catch(() => setErr(String(apiErr.message ?? apiErr))));
 
   const retry = () => { setErr(null); setSnap(null); load(); };
 
@@ -61,6 +85,26 @@ export default function App() {
     const onHash = () => setTab(hashToTab());
     window.addEventListener("hashchange", onHash);
     return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
+  }, []);
+
+  // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      const typing = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((p) => !p);
+      } else if (e.key === "/" && !typing) {
+        e.preventDefault();
+        setPalette(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
+        const t = TABS[parseInt(e.key, 10) - 1];
+        if (t) { e.preventDefault(); window.location.hash = t.toLowerCase(); setTab(t); }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Fully open: the whole terminal renders for everyone, no sign in.
@@ -114,7 +158,14 @@ export default function App() {
             {t}
           </a>
         ))}
+        <button className="cmdk" onClick={() => setPalette(true)} title="command line — function codes or search">⌘K</button>
       </nav>
+
+      {palette && (
+        <Suspense fallback={null}>
+          <CommandPalette onClose={() => setPalette(false)} onCommand={onCommand} />
+        </Suspense>
+      )}
 
       {snap.faults?.length > 0 && tab !== "SYSTEM" && (
         <div className="faults">

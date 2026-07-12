@@ -9,6 +9,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#161826" />
 
+    <!-- Fonts as head links (not CSS @import, which serializes behind the
+         stylesheet) + early connections to the font CDN and the live API. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.seiche.info" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
+
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Seiche" />
     <meta property="og:url" content="https://seiche.info/" />
