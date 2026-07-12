@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import secrets
@@ -51,6 +52,18 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def _board_gate_enabled() -> bool:
     return os.getenv("SEICHE_BOARD_AUTH", "0") == "1"
+
+
+def _json_safe(o: Any) -> Any:
+    """Replace non-finite floats (NaN/Inf) with None so strict JSON can carry
+    the payload. Recurses dicts/lists; everything else passes through."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_json_safe(v) for v in o]
+    return o
 
 
 def _bearer_identity(authorization: str | None) -> dict | None:
@@ -304,7 +317,10 @@ async def asof(date: str, ident: dict | None = Depends(require_board)):
     payload = await assemble.snapshot_asof(date)
     if payload.get("ok") is False:
         raise HTTPException(404, payload.get("reason", "replay unavailable"))
-    return payload
+    # Historical replays can carry NaN/Inf from sparse early vintages; strict
+    # JSON rejects those and the whole replay 500s. Null them out instead —
+    # a missing number is honest, a dead endpoint is not.
+    return _json_safe(payload)
 
 
 @app.get("/api/deep")

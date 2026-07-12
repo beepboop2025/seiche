@@ -128,3 +128,14 @@ def test_mailer_unconfigured_is_noop(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     assert mailer.configured() is False
     assert mailer.send("a@b.com", "s", "b") is False  # never raises, returns False
+
+
+def test_json_safe_nulls_non_finite_floats():
+    """Historical replays can carry NaN/Inf; strict JSON must still serialize."""
+    from seiche.api import _json_safe
+
+    dirty = {"a": float("nan"), "b": [1.0, float("inf"), {"c": float("-inf"), "d": "text"}], "e": 2}
+    clean = _json_safe(dirty)
+    assert clean == {"a": None, "b": [1.0, None, {"c": None, "d": "text"}], "e": 2}
+    import json
+    json.dumps(clean)  # must not raise
