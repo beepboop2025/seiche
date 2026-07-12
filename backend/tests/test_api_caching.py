@@ -67,6 +67,15 @@ def test_overview_wire_serialized_once_per_payload(client, fake_snap):
     assert json.loads(gzip.decompress(api._OVERVIEW_WIRE["gz"])) == json.loads(body_first)
 
 
+def test_overview_answers_head_for_monitors(client):
+    warm = client.get("/api/overview")
+    r = client.head("/api/overview")
+    assert r.status_code == 200
+    assert r.content == b""
+    assert r.headers["etag"] == warm.headers["etag"]
+    assert "max-age=60" in r.headers["cache-control"]
+
+
 def test_public_and_gauge_carry_cache_control(client):
     assert "max-age=60" in client.get("/api/public").headers["cache-control"]
     assert "max-age=60" in client.get("/api/gauge").headers["cache-control"]

@@ -190,6 +190,18 @@ def _overview_wire(payload: dict) -> dict[str, Any]:
     return _OVERVIEW_WIRE
 
 
+@app.head("/api/overview")
+async def overview_head(ident: dict | None = Depends(require_board)):
+    """Uptime monitors and cache validators probe with HEAD: answer from the
+    wire cache's headers without shipping (or rebuilding) the body."""
+    await assemble.snapshot()
+    wire = _OVERVIEW_WIRE
+    headers = {"Cache-Control": _OVERVIEW_CACHE_CONTROL, "Vary": "Accept-Encoding"}
+    if wire["etag"]:
+        headers["ETag"] = wire["etag"]
+    return Response(status_code=200, media_type="application/json", headers=headers)
+
+
 @app.get("/api/overview")
 async def overview(request: Request, force: bool = False,
                    ident: dict | None = Depends(require_board)):
