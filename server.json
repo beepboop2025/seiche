@@ -3,7 +3,7 @@
   "name": "io.github.beepboop2025/seiche",
   "title": "Seiche — funding-stress terminal",
   "description": "Funding stress early warning for US money markets from free public data, with an honest backtest.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "repository": {
     "url": "https://github.com/beepboop2025/seiche",
     "source": "github"
