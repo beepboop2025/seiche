@@ -95,6 +95,7 @@ CACHE_MIN = 15
 DEEP_TTL_MIN = 12 * 60
 _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
+_refreshing = False  # one background rebuild at a time; readers never wait on it
 
 VERSION = "0.7.0 tier1"
 
@@ -1062,43 +1063,77 @@ def _notarize(day: str, record: dict) -> None:
 # ---------------------------------------------------------------------------
 
 async def snapshot(force: bool = False) -> dict:
+    """The live board, cache-first and never slow for a reader.
+
+    Fresh cache → returned without touching the build lock. Stale cache →
+    returned instantly while ONE background rebuild refreshes it (a reader
+    must never pay the assembly bill — sources, 22 engines, the Navigator).
+    Cold start / force → build inline; boot warming makes cold rare.
+    """
+    global _refreshing
+    cached = _cache["payload"]
+    if not force and cached is not None:
+        if time.time() - _cache["at"] < CACHE_MIN * 60:
+            return cached
+        if not _refreshing:
+            _refreshing = True
+            asyncio.get_running_loop().create_task(_refresh_stale())
+        return cached
     async with _lock:
-        if not force and _cache["payload"] and time.time() - _cache["at"] < CACHE_MIN * 60:
+        if not force and _cache["payload"] is not None \
+                and time.time() - _cache["at"] < CACHE_MIN * 60:
             return _cache["payload"]
-        src, faults = await _gather_sources()
-        drv = _derived(src)
-        engines = _run_engines(src, drv, faults)
-        deep = _deep_layer(src, drv, engines, faults)
-        payload = {
-            "generated_at": utcnow_iso(),
-            "version": VERSION,
-            "headline": _headline(src, drv),
-            "engines": _strip_private(engines),
-            "deep": _strip_private(deep),
-            "calendar": _calendar(src, engines, deep, drv),
-            "faults": faults,
-            "provenance": _provenance(src),
-        }
-        # The Navigator commits AFTER the board is assembled (its whole world
-        # is the context pack of this payload), once per data-day, cached —
-        # a re-run must never let the model revise the morning's number.
-        nav: dict = {"ok": False, "reason": "no spread data-day to commit against"}
-        if not drv["spread_bp"].empty:
-            try:
-                from seiche import ai as _ai
-                nav = await eng_navigator.commit(
-                    _ai.context_pack(payload),
-                    drv["spread_bp"].index[-1].date().isoformat(),
-                )
-            except Exception as e:  # noqa: BLE001 — fail loud, never block the board
-                nav = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
-            if nav.get("ok"):
-                nav = {**nav, "record": eng_navigator.score_record(
-                    store.load_pit_records(), drv["spread_bp"])}
-        payload["navigator"] = nav
-        _record_pit(engines, deep, nav)
-        _cache.update(at=time.time(), payload=payload)
-        return payload
+        return await _build_snapshot()
+
+
+async def _refresh_stale() -> None:
+    global _refreshing
+    try:
+        async with _lock:
+            if time.time() - _cache["at"] >= CACHE_MIN * 60:
+                await _build_snapshot()
+    except Exception:  # noqa: BLE001 — a failed refresh keeps serving stale
+        logging.getLogger("seiche.assemble").exception("background snapshot refresh failed")
+    finally:
+        _refreshing = False
+
+
+async def _build_snapshot() -> dict:
+    """Assemble the full payload. Caller holds `_lock`."""
+    src, faults = await _gather_sources()
+    drv = _derived(src)
+    engines = _run_engines(src, drv, faults)
+    deep = _deep_layer(src, drv, engines, faults)
+    payload = {
+        "generated_at": utcnow_iso(),
+        "version": VERSION,
+        "headline": _headline(src, drv),
+        "engines": _strip_private(engines),
+        "deep": _strip_private(deep),
+        "calendar": _calendar(src, engines, deep, drv),
+        "faults": faults,
+        "provenance": _provenance(src),
+    }
+    # The Navigator commits AFTER the board is assembled (its whole world
+    # is the context pack of this payload), once per data-day, cached —
+    # a re-run must never let the model revise the morning's number.
+    nav: dict = {"ok": False, "reason": "no spread data-day to commit against"}
+    if not drv["spread_bp"].empty:
+        try:
+            from seiche import ai as _ai
+            nav = await eng_navigator.commit(
+                _ai.context_pack(payload),
+                drv["spread_bp"].index[-1].date().isoformat(),
+            )
+        except Exception as e:  # noqa: BLE001 — fail loud, never block the board
+            nav = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        if nav.get("ok"):
+            nav = {**nav, "record": eng_navigator.score_record(
+                store.load_pit_records(), drv["spread_bp"])}
+    payload["navigator"] = nav
+    _record_pit(engines, deep, nav)
+    _cache.update(at=time.time(), payload=payload)
+    return payload
 
 
 async def snapshot_asof(date: str) -> dict:

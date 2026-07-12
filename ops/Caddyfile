@@ -2,8 +2,12 @@
 # Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
 # Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
 api.seiche.info {
+    # Compress every JSON/text response the app didn't already compress
+    # (the app pre-gzips /api/overview itself; encode skips those).
+    encode zstd gzip
+
     @public {
-        method GET
+        method GET HEAD
         path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/badge/*
     }
     @login {

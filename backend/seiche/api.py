@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import gzip
+import hashlib
+import json
+import logging
 import math
 import os
 import re
@@ -163,30 +168,67 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# ---- overview wire cache -----------------------------------------------------
+# The board payload is ~360KB of JSON polled by every open tab. Serializing it
+# per request (and shipping it uncompressed) was the single biggest tax on the
+# UI. The snapshot dict is immutable between rebuilds, so serialize + gzip it
+# ONCE per rebuild and answer conditional requests with 304s.
+
+_OVERVIEW_WIRE: dict[str, Any] = {"src": None, "body": b"", "gz": b"", "etag": ""}
+_OVERVIEW_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
+
+
+def _overview_wire(payload: dict) -> dict[str, Any]:
+    if _OVERVIEW_WIRE["src"] is not payload:
+        body = json.dumps(_json_safe(payload), separators=(",", ":"), allow_nan=False).encode()
+        _OVERVIEW_WIRE.update(
+            src=payload,
+            body=body,
+            gz=gzip.compress(body, 6),
+            etag='"' + hashlib.sha256(body).hexdigest()[:20] + '"',
+        )
+    return _OVERVIEW_WIRE
+
+
 @app.get("/api/overview")
-async def overview(force: bool = False, ident: dict | None = Depends(require_board)):
+async def overview(request: Request, force: bool = False,
+                   ident: dict | None = Depends(require_board)):
     """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
     box). Free visitors get /api/public instead. `force` (cache-bypass
     recompute) is honoured only for authenticated callers."""
-    return await assemble.snapshot(force=force and ident is not None)
+    payload = await assemble.snapshot(force=force and ident is not None)
+    wire = _overview_wire(payload)
+    headers = {
+        "ETag": wire["etag"],
+        "Cache-Control": _OVERVIEW_CACHE_CONTROL,
+        "Vary": "Accept-Encoding",
+    }
+    if wire["etag"] and wire["etag"] in (request.headers.get("if-none-match") or ""):
+        return Response(status_code=304, headers=headers)
+    if "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        headers["Content-Encoding"] = "gzip"
+        return Response(content=wire["gz"], media_type="application/json", headers=headers)
+    return Response(content=wire["body"], media_type="application/json", headers=headers)
 
 
 @app.get("/api/public")
-async def public(force: bool = False,
+async def public(response: Response, force: bool = False,
                  authorization: str | None = Header(default=None)):
     """Free surface: the conclusion + PROOF scoreboard only. Never the board.
     `force` is ignored for unauthenticated callers — no anonymous recompute."""
     ident = _bearer_identity(authorization)
     snap = await assemble.snapshot(force=force and ident is not None)
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return public_view.public_payload(snap)
 
 
 @app.get("/api/gauge")
-async def gauge():
+async def gauge(response: Response):
     """The regime gauge, free and machine-shaped: the one reading a risk
     pipeline (an RWA curator, an agent framework, a circuit breaker) needs,
     versioned so consumers can pin the contract. Never the full board."""
     snap = await assemble.snapshot()
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     engines = snap.get("engines", {})
     deep = snap.get("deep", {}) or {}
     comp = engines.get("composite", {})
@@ -307,7 +349,8 @@ async def set_alert_prefs(body: AlertPrefsBody,
 
 
 @app.get("/api/asof/{date}")
-async def asof(date: str, ident: dict | None = Depends(require_board)):
+async def asof(date: str, response: Response,
+               ident: dict | None = Depends(require_board)):
     """Time Machine: the whole light board replayed as of a historical date.
     Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
     if accounts.asof_gate_enabled() and ident is None:
@@ -317,6 +360,9 @@ async def asof(date: str, ident: dict | None = Depends(require_board)):
     payload = await assemble.snapshot_asof(date)
     if payload.get("ok") is False:
         raise HTTPException(404, payload.get("reason", "replay unavailable"))
+    # A finished data-day replayed from final-vintage inputs is deterministic:
+    # let browsers and the edge keep it for a day instead of re-replaying.
+    response.headers["Cache-Control"] = "public, max-age=86400"
     # Historical replays can carry NaN/Inf from sparse early vintages; strict
     # JSON rejects those and the whole replay 500s. Null them out instead —
     # a missing number is honest, a dead endpoint is not.
@@ -701,6 +747,33 @@ def mcp_usage_report(request: Request, authorization: str | None = Header(defaul
         "remaining": None if limit is None else max(0, limit - used),
         "upgrade_url": MCP_UPGRADE_URL,
     }
+
+
+# ---- keep the board warm 24/7 ------------------------------------------------
+# In production the snapshot is rebuilt by a background loop, not by whichever
+# visitor happens to arrive after the cache expires: no reader ever pays the
+# assembly bill (sources → 22 engines → deep layer → the Navigator's LLM
+# commit), and the Navigator files its reading every day even on a day with
+# zero visitors. Off in dev/tests (SEICHE_ENV!=production) unless forced with
+# SEICHE_BG_REFRESH=1.
+
+_REFRESH_EVERY_S = max(60, int(assemble.CACHE_MIN * 60 * 0.9))
+
+
+async def _keep_warm() -> None:
+    log = logging.getLogger("seiche.api")
+    while True:
+        try:
+            await assemble.snapshot()
+        except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
+            log.exception("background board refresh failed; retrying next cycle")
+        await asyncio.sleep(_REFRESH_EVERY_S)
+
+
+@app.on_event("startup")
+async def _start_keep_warm() -> None:
+    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+        asyncio.get_running_loop().create_task(_keep_warm())
 
 
 # Serve the built frontend when present (single-process deploy).
