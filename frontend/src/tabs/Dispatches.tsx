@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { renderMarkdown } from "../md";
 import { API_BASE } from "../apiBase";
-import { authHeaders, getToken } from "../auth";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
 
@@ -17,8 +16,7 @@ export default function Dispatches() {
   const [index, setIndex] = useState<Index | null>(null);
   const [slug, setSlug] = useState<string | null>(slugFromHash());
   const [body, setBody] = useState<string | null>(null);
-  const [paid, setPaid] = useState<string | null>(null);
-  const signedIn = getToken() !== null;
+  const [deskRead, setDeskRead] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("dispatches/index.json").then((r) => r.json()).then(setIndex).catch(() => setIndex([]));
@@ -28,16 +26,16 @@ export default function Dispatches() {
   }, []);
 
   useEffect(() => {
-    if (!slug) { setBody(null); setPaid(null); return; }
-    setBody(null); setPaid(null);
+    if (!slug) { setBody(null); setDeskRead(null); return; }
+    setBody(null); setDeskRead(null);
     fetch(`dispatches/${slug}.md`).then((r) => (r.ok ? r.text() : Promise.reject())).then(setBody).catch(() => setBody(""));
-    if (signedIn) {
-      fetch(`${API_BASE}/api/dispatch/${slug}`, { headers: authHeaders() })
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .then((j) => setPaid(j.paid ?? null))
-        .catch(() => setPaid(null));
-    }
-  }, [slug, signedIn]);
+    // The desk's-read continuation is free like everything else (the API's
+    // "paid" key is a historical name kept for compatibility).
+    fetch(`${API_BASE}/api/dispatch/${slug}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((j) => setDeskRead(j.paid ?? null))
+      .catch(() => setDeskRead(null));
+  }, [slug]);
 
   // ---- single dispatch ----
   if (slug) {
@@ -61,18 +59,12 @@ export default function Dispatches() {
           </div>
         )}
         <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
-        {hasPaid && (signedIn && paid ? (
-          <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(paid) }} />
-        ) : (
-          <div className="paywall">
-            <div className="paywall-lock">◆ THE DESK'S READ · SUPPORTED</div>
-            <p>The rest of this dispatch — the forward read and the dates the desk is watching — is open to supporters who keep Seiche running. The board and the honest record stay free forever; the deeper read is the layer their support sustains.</p>
-            <div className="paywall-actions">
-              <a className="paywall-cta" href="#timemachine">sign in</a>
-              <a className="paywall-alt" href="mailto:desk@seiche.info?subject=Supporting%20Seiche">request access · desk@seiche.info</a>
-            </div>
-          </div>
-        ))}
+        {hasPaid && deskRead && (
+          <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(deskRead) }} />
+        )}
+        {hasPaid && !deskRead && (
+          <div className="dimsmall" style={{ marginTop: 12 }}>loading the desk's forward read…</div>
+        )}
       </div>
     );
   }
@@ -82,7 +74,7 @@ export default function Dispatches() {
     <div className="dispatch-list" style={{ marginTop: 18 }}>
       <div className="dispatch-intro">
         <h1>Dispatches</h1>
-        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. The summaries are free; the desk's forward read is for the supporters who keep it running.</p>
+        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. All of it is free, including the desk's forward read; if it earns its keep, <a href="/support.html">support keeps it running</a>.</p>
       </div>
       {!index ? (
         <div className="loading" style={{ padding: 40 }}>loading…</div>

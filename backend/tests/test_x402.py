@@ -21,7 +21,9 @@ def client(tmp_path, monkeypatch, fake_snap):
     monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: fake_snap)
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     monkeypatch.setenv("SEICHE_AUTH_SECRET", "test-secret-not-for-prod")
-    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+    # The fully-open default serves everyone the full surface; these tests
+    # pin the RE-GATED configuration where anonymous shaping still applies.
+    monkeypatch.setenv("SEICHE_BOARD_AUTH", "1")
     monkeypatch.delenv("SEICHE_X402_PAY_TO", raising=False)
     return TestClient(api.app)
 

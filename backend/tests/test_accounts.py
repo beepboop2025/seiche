@@ -64,27 +64,22 @@ def test_login_endpoint_and_gate(accounts, monkeypatch):
     assert r.status_code == 422   # authed but bad date — gate passed, validation ran
 
 
-def test_dispatch_paid_is_token_gated(accounts, tmp_path, monkeypatch):
+def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
+    """Seiche is a free public good: the desk's read needs no token."""
     from seiche import api as api_mod
     from seiche.api import app
     # point the dispatch dir at a temp file
     monkeypatch.setattr(api_mod, "DISPATCH_DIR", tmp_path)
-    (tmp_path / "test-slug.paid.md").write_text("## the paid read\nsecret desk take")
+    (tmp_path / "test-slug.paid.md").write_text("## the desk read\nfull forward take")
     client = TestClient(app)
-    accounts.add_user("desk_01", "correct horse battery")
 
-    # no token -> 401, no leak
+    # no token -> full body, open to everyone
     r = client.get("/api/dispatch/test-slug")
-    assert r.status_code == 401
-    assert "secret desk take" not in r.text
+    assert r.status_code == 200 and "full forward take" in r.json()["paid"]
 
-    # valid token -> the paid body
-    tok = client.post("/api/auth/login", json={"username": "desk_01", "password": "correct horse battery"}).json()["token"]
-    r = client.get("/api/dispatch/test-slug", headers={"Authorization": f"Bearer {tok}"})
-    assert r.status_code == 200 and "secret desk take" in r.json()["paid"]
-
-    # bad slug rejected
-    assert client.get("/api/dispatch/../etc/passwd", headers={"Authorization": f"Bearer {tok}"}).status_code in (404, 422)
+    # bad slugs still rejected, missing continuations still 404
+    assert client.get("/api/dispatch/NOT%20a%20slug").status_code in (404, 422)
+    assert client.get("/api/dispatch/absent-slug").status_code == 404
 
 
 def test_board_gated_public_free(accounts, monkeypatch):

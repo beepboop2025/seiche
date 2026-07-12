@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "../apiBase";
-import { authHeaders, clearToken, getToken } from "../auth";
+import { authHeaders, clearToken, getToken, login } from "../auth";
 
 export default function Account() {
   const [email, setEmail] = useState("");
   const [on, setOn] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [me, setMe] = useState<{ username?: string; tier?: string }>({});
+  const [user, setUser] = useState("");
+  const [pw, setPw] = useState("");
+  const [loginErr, setLoginErr] = useState<string | null>(null);
   const token = getToken() ?? "";
 
   useEffect(() => {
@@ -16,6 +19,49 @@ export default function Account() {
       .then((p) => { setEmail(p.email ?? ""); setOn(!!p.alerts_on); })
       .catch(() => {});
   }, []);
+
+  // The terminal is fully open — an account is optional and exists only for
+  // email alerts (delivery needs an address to send to). No account, no loss.
+  // Placed after the hooks so the hook order stays unconditional.
+  if (!token) {
+    const doLogin = () => {
+      setLoginErr(null);
+      login(user.trim(), pw).then((res) => {
+        if (res.ok) location.reload();
+        else setLoginErr(res.error);
+      });
+    };
+    return (
+      <div className="grid" style={{ marginTop: 18 }}>
+        <div className="card span6">
+          <h2>No account needed</h2>
+          <div className="sub">
+            Everything on this terminal is free and open: the board, the physics, the Time Machine,
+            the dispatches, the record. An account exists for exactly one thing, <b>email alerts</b>,
+            because delivering an alert needs an address to send it to. If you want alerts,
+            email <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> and
+            one is set up by hand, free, usually within a day.
+          </div>
+          <div className="method">
+            Prefer to keep the lights on? <a href="/support.html">Support Seiche</a> — voluntary, never required.
+          </div>
+        </div>
+        <div className="card span6">
+          <h2>Sign in</h2>
+          <div className="sub">Already have an alerts account? Sign in to manage delivery.</div>
+          <div className="tmcontrols" style={{ flexDirection: "column", alignItems: "stretch", gap: 10, maxWidth: 380 }}>
+            <input type="text" placeholder="username" value={user} autoComplete="username"
+                   onChange={(e) => setUser(e.target.value)} />
+            <input type="password" placeholder="password" value={pw} autoComplete="current-password"
+                   onChange={(e) => setPw(e.target.value)}
+                   onKeyDown={(e) => e.key === "Enter" && doLogin()} />
+            <button onClick={doLogin} disabled={!user || !pw}>sign in</button>
+            {loginErr && <span className="dimsmall" style={{ color: "var(--stress)" }}>{loginErr}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const save = () => {
     setSaved(null);
@@ -52,8 +98,9 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          Your bearer token is your API key. It carries your access — the full board, the Time
-          Machine replay and the dispatch reads are all reachable programmatically. Keep it secret; it lasts 30 days.
+          The API is free and open — /api/overview, /api/asof and /api/dispatch need no key at all.
+          Your bearer token only identifies you (alert prefs, authenticated force refresh). Keep it
+          private; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>
           <div className="item"><div className="k">account</div><div className="v">{me.username ?? "—"} · {me.tier ?? ""}</div></div>

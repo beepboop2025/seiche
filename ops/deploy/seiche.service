@@ -15,10 +15,11 @@ Restart=on-failure
 RestartSec=5
 # the SQLite cache + PIT record live here — back this directory up
 ReadWritePaths=/opt/seiche/backend/data
-# ship gated by default on the public box: the board + Time Machine require a
-# subscriber token, and prod turns off the interactive API docs / schema.
-Environment=SEICHE_BOARD_AUTH=1
-Environment=SEICHE_ASOF_AUTH=1
+# Fully open: Seiche is a free public good. The board, Time Machine and
+# dispatches are open to everyone with no sign in; accounts exist only for
+# optional email alerts. Support is voluntary (see /support.html).
+Environment=SEICHE_BOARD_AUTH=0
+Environment=SEICHE_ASOF_AUTH=0
 Environment=SEICHE_ENV=production
 # optional: LLM endpoint for the desk assistant + the Navigator
 # Environment=SEICHE_LLM_BASE_URL=...

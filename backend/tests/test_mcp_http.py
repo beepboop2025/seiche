@@ -18,7 +18,9 @@ def client(tmp_path, monkeypatch, fake_snap):
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     # deterministic auth
     monkeypatch.setenv("SEICHE_AUTH_SECRET", "test-secret-not-for-prod")
-    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+    # The fully-open default serves everyone the full surface; these tests
+    # pin the RE-GATED configuration where anonymous shaping still applies.
+    monkeypatch.setenv("SEICHE_BOARD_AUTH", "1")
     return TestClient(api.app)
 
 
@@ -44,6 +46,17 @@ def test_initialize_returns_session_header(client):
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "seiche"
     assert r.headers.get("Mcp-Session-Id")
+
+
+def test_open_default_serves_full_surface_anonymously(client, monkeypatch):
+    """Seiche is a free public good: with the board gate OFF (the shipped
+    default), an anonymous caller sees and can call the full tool surface."""
+    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+    r = client.post("/mcp", json=_rpc("tools/list"))
+    names = {t["name"] for t in r.json()["result"]["tools"]}
+    for full in ("replay_asof", "funding_stress_forecast", "desk_brief",
+                 "positioning_book"):
+        assert full in names, f"{full} missing from the open anonymous surface"
 
 
 def test_anonymous_sees_only_public_tools(client):

@@ -1,8 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from "react";
 import { API_BASE } from "./apiBase";
-import { authHeaders, getToken } from "./auth";
+import { authHeaders } from "./auth";
 import { Any, fmt } from "./lib";
-import FreePage from "./tabs/FreePage";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 
 // Tabs are code-split: only the one you open ships its JS. This keeps the
@@ -39,7 +38,6 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [tab, setTab] = useState<Tab>(hashToTab());
-  const [signedIn, setSignedIn] = useState<boolean>(() => getToken() !== null);
 
   // Live API first (dev / self-hosted); fall back to the static snapshot
   // published by CI (Cloudflare Pages deploy has no backend process).
@@ -65,10 +63,8 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
   }, []);
 
-  // Not signed in: only the free surface (conclusion + PROOF record).
-  if (!signedIn) {
-    return <div className="app"><FreePage onSignedIn={() => { setSignedIn(true); load(); }} /></div>;
-  }
+  // Fully open: the whole terminal renders for everyone, no sign in.
+  // Accounts exist only for optional email alerts (ACCOUNT tab).
   if (err) {
     return (
       <div className="app">
@@ -81,7 +77,6 @@ export default function App() {
           <div className="errmsg">{err}</div>
           <div className="erractions">
             <button className="btn-accent" onClick={retry}>Retry</button>
-            <a className="prolink" href="#" onClick={(e) => { e.preventDefault(); setSignedIn(false); }}>← free view</a>
           </div>
         </div>
       </div>
@@ -104,9 +99,7 @@ export default function App() {
         <div className="right">
           {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
           FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
-          <a className="prolink" href="#timemachine">
-            {localStorage.getItem("seiche_token") ? "signed in" : "sign in"}
-          </a>
+          <a className="prolink" href="/support.html">free · support Seiche</a>
         </div>
       </div>
 

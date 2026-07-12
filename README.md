@@ -3,7 +3,8 @@
 > A **seiche** is a standing wave in an enclosed body of water — invisible from the
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
-**Seiche is a funding-stress, positioning and divergence terminal** for the dollar
+**Seiche is a free, open source (AGPL-3.0) funding-stress, positioning and
+divergence terminal** for the dollar
 funding system — US money markets, the Treasury capital-market complex, the global
 basins connected to them through the swap lines, and the offshore-dollar crypto
 basin moored to the T-bill market through stablecoins. Zero data cost: built
@@ -177,8 +178,8 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`) — anonymous callers get the free public surface;
-a subscriber bearer token unlocks the full surface, metered per tier.
+(`https://api.seiche.info/mcp`) — the full tool surface, free for everyone,
+no token needed (rate-limited per caller so one client can't crowd out the rest).
 
 Full setup, the tool catalogue, client config, and metering: **[docs/MCP.md](docs/MCP.md)**.
 

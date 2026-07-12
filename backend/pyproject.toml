@@ -3,6 +3,7 @@ name = "seiche"
 version = "0.7.0"
 description = "Funding-stress and leveraged-positioning early-warning terminal (money market + capital market), built on free keyless public APIs."
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 # 3.12+ only: the MCP bridge calls the async assembler via asyncio.run() per
 # call, and on 3.10/3.11 the module-level asyncio.Lock in assemble.py raises
 # "bound to a different event loop" across loops. 3.12 relaxed that binding;

@@ -245,17 +245,15 @@ DISPATCH_DIR = Path(__file__).parent / "dispatches"
 
 
 @app.get("/api/dispatch/{slug}")
-async def dispatch_paid(slug: str, authorization: str | None = Header(default=None)):
-    """The paid continuation of a dispatch. The free section is a public static
-    asset; this returns the subscriber-only part and ONLY to a valid token —
-    the paid markdown never ships to the public site."""
+async def dispatch_full(slug: str):
+    """The desk's-read continuation of a dispatch. Free, like the rest of the
+    terminal — Seiche is a public good. The `.paid.md` filename and the `paid`
+    response key are historical (pre open-access) and kept for compatibility."""
     if not re.match(r"^[a-z0-9][a-z0-9-]{0,80}$", slug):
         raise HTTPException(422, "bad slug")
-    if _bearer_identity(authorization) is None:
-        raise HTTPException(401, "the desk's read is a subscriber feature — sign in")
     path = DISPATCH_DIR / f"{slug}.paid.md"
     if not path.exists():
-        raise HTTPException(404, "no paid section for this dispatch")
+        raise HTTPException(404, "no continuation for this dispatch")
     return {"slug": slug, "paid": path.read_text()}
 
 
@@ -496,7 +494,10 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     JSON-RPC message or a batch; returns the JSON-RPC response(s), or 202 for a
     notification-only body."""
     ident = _bearer_identity(authorization)
-    public = ident is None
+    # Anonymous callers get the FULL tool surface whenever the board gate is
+    # off (Seiche is a free public good); the restricted "public" shaping only
+    # applies if an operator explicitly re-gates the board.
+    public = ident is None and _board_gate_enabled()
     ip = _client_ip(request)
 
     burst_key = ident["username"] if ident else ip
