@@ -54,6 +54,6 @@ jobs:
             | tar xz mcp-publisher && sudo mv mcp-publisher /usr/local/bin/
       - name: Validate and publish server.json
         run: |
-          mcp-publisher publish --dry-run
           mcp-publisher login github-oidc
+          mcp-publisher publish --dry-run
           mcp-publisher publish
