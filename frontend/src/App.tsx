@@ -152,6 +152,8 @@ export default function App() {
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
+        <br />
+        Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, early warning for lender portfolios.
       </div>
     </div>
   );
