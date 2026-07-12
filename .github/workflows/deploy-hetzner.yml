@@ -1,11 +1,20 @@
 name: deploy-hetzner
 
 # Auto-deploy to the Hetzner box on every merge to main.
-# Needs two repo secrets (Settings → Secrets → Actions):
-#   HETZNER_HOST     e.g. 167.233.225.54
-#   HETZNER_SSH_KEY  private key whose public half is in root's authorized_keys
-# Until they exist this workflow skips cleanly (says so in the log).
-# First-time server setup: ops/deploy/install.sh (see README "Deploying on a VPS").
+#
+# Two repo secrets (Settings → Secrets → Actions):
+#   HETZNER_HOST     the box's IP
+#   HETZNER_SSH_KEY  private half of a DEDICATED deploy key
+#
+# Defense in depth for a public repo:
+# - the key's public half sits in root's authorized_keys behind a FORCED
+#   COMMAND (/root/seiche-deploy-wrapper.sh) with no-pty/no-forwarding, so
+#   even a leaked key can only trigger the deploy script, nothing else;
+# - the wrapper runs the box's test-gated update.sh as the unprivileged
+#   seiche user (pull → pip install → pytest, rollback on red) and only a
+#   green tree gets a service restart + health check;
+# - the host key is PINNED below, closing the first-connection MITM window;
+# - secrets are never exposed to fork PRs (push-to-main + dispatch only).
 
 on:
   push:
@@ -21,29 +30,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Deploy over SSH (test-gated update.sh on the box)
+      - name: Deploy over SSH (forced-command wrapper on the box)
         env:
           HOST: ${{ secrets.HETZNER_HOST }}
           KEY: ${{ secrets.HETZNER_SSH_KEY }}
         run: |
           if [ -z "$HOST" ] || [ -z "$KEY" ]; then
-            echo "::notice::HETZNER_HOST / HETZNER_SSH_KEY secrets not set — skipping server deploy."
-            exit 0
+            echo "::error::HETZNER_HOST / HETZNER_SSH_KEY secrets not set — auto-deploy cannot run."
+            exit 1
           fi
           mkdir -p ~/.ssh
-          echo "$KEY" > ~/.ssh/hetzner_key
+          printf '%s\n' "$KEY" > ~/.ssh/hetzner_key
           chmod 600 ~/.ssh/hetzner_key
-          # TODO: pin host key — replace accept-new with a known_hosts entry for
-          # $HOST (StrictHostKeyChecking=yes) to close the first-connection MITM
-          # window. Needs the real server host key, so leaving accept-new for now.
-          ssh -i ~/.ssh/hetzner_key -o StrictHostKeyChecking=accept-new "root@$HOST" '
-            set -e
-            if [ -x /opt/seiche/ops/deploy/update.sh ]; then
-              bash /opt/seiche/ops/deploy/update.sh
-            else
-              echo "Seiche not installed yet — bootstrapping via install.sh"
-              git clone https://github.com/beepboop2025/seiche.git /tmp/seiche-bootstrap 2>/dev/null || true
-              bash /tmp/seiche-bootstrap/ops/deploy/install.sh || {
-                echo "bootstrap failed — run ops/deploy/install.sh on the box once (private repo needs a deploy key)"; exit 1; }
-            fi
-          '
+          # Pinned host key (public information; ed25519 key of the box).
+          printf '%s\n' "$HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" > ~/.ssh/known_hosts
+          # The forced command runs regardless of what is requested here; the
+          # word "deploy" is just a log-friendly placeholder.
+          ssh -i ~/.ssh/hetzner_key \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "root@$HOST" deploy
