@@ -32,6 +32,7 @@ from seiche import store
 from seiche.config import (
     ALL_SERIES,
     BIS_SERIES,
+    BOJ_SERIES,
     CHINAMONEY_SERIES,
     COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
@@ -92,7 +93,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -131,6 +132,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
             guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
+            guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
             guard("nyfed_rates", nyfed.fetch_secured_rates(client)),
@@ -151,7 +153,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
     out: dict = {}
-    for group in ("fred", "ofr", "ecb", "bis", "chinamoney"):
+    for group in ("fred", "ofr", "ecb", "bis", "chinamoney", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             pts = s.points[s.points.index <= asof]
@@ -442,8 +444,8 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
                 "fx": _pts(fred_s, "INR"), "fx_label": "INR per USD",
             },
             "JAPAN": {
-                "rate": _pts(fred_s, "CALL_JP"), "rate_label": "uncollat. call (OECD MEI)",
-                "cadence": "monthly ~2mo lag",
+                "rate": _pts(src.get("boj", {}), "TONA"), "rate_label": "TONA (BOJ)",
+                "cadence": "daily",
                 "fx": _pts(fred_s, "JPY"), "fx_label": "JPY per USD",
             },
             "KOREA": {

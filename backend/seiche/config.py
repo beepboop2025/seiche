@@ -132,6 +132,16 @@ CHINAMONEY_SERIES = [
 ]
 CHINAMONEY_WINDOW_D = 45       # single-request fetch window (range-limited API)
 
+# BOJ stat-search flat files: keyless CSV, refreshed ~09:00 JST daily
+# (verified live 2026-07-13 — surfaced by the OpenManus mm-japan sweep).
+# TONA daily supersedes the OECD monthly mirror CALL_JP for the Japan harbor;
+# CALL_JP stays fetched as the lag-honesty cross-check.
+BOJ_SERIES = [
+    SeriesSpec("TONA", "boj", "fm01_d_1_en.csv:FM01'STRDCLUCON",
+               "TONA — uncollateralized overnight call rate (BOJ, daily)", "%", "D", 360,
+               start="1998-01-05"),
+]
+
 # Harbor stress weights (judgment, not math): FX realized vol says "it is
 # moving", depreciation says "which way", local rate tightening says "policy
 # is being forced". All percentiles of the harbor's OWN history — no
@@ -243,7 +253,7 @@ BIS_SERIES = [
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-    + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES
+    + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below

@@ -8,7 +8,7 @@ policy is being forced. Five harbors clear the keyless-and-honest bar today:
   EURO AREA — €STR daily (ECB Data Portal)
   CHINA     — SHIBOR O/N daily (CFETS; local history accrues, see collector)
   INDIA     — call money monthly (OECD MEI via FRED, ~2 months late BY DESIGN)
-  JAPAN     — uncollateralized call rate monthly (OECD MEI via FRED)
+  JAPAN     — TONA daily (BOJ stat-search flat file, history to 1998)
   KOREA     — overnight call rate monthly (OECD MEI via FRED)
 
 plus the US as the reference tide gauge (EFFR). FX legs are the Fed's own
