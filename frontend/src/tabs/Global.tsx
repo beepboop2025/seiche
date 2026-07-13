@@ -44,6 +44,11 @@ function HarborsCard({ h }: { h: Any }) {
               {b.stress != null ? `stress ${fmt(b.stress, 0)}` : "accruing"}
               {b.regime ? ` · ${b.regime}` : ""} · {b.rate?.label ?? "rate pending"}
             </div>
+            {b.rate2 && (
+              <div className="z" style={{ color: "#75798c" }}>
+                {fmt(b.rate2.last_pct, 2)}% {b.rate2.label}
+              </div>
+            )}
             {b.fx && (
               <div className="z" style={{ color: "#595d6c" }}>
                 {b.fx.label} {fmt(b.fx.last, 2)}

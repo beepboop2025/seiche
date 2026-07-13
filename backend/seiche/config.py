@@ -827,6 +827,15 @@ PALIMPSEST_SERIES = [
                "Newly censor-targeted terms", "terms", "D", PALIMPSEST_TTL_MIN),
     SeriesSpec("PALIMPSEST_GFI", "palimpsest", "history.jsonl:gfi",
                "Generative Firewall Index (LLM refusal tomography)", "0-100", "D", PALIMPSEST_TTL_MIN),
+    # China econ telemetry: official CFETS benchmarks republished by the
+    # palimpsest GH-Actions vantage with git-accrued history (signal added
+    # 2026-07-13). FDR007 = 7d depository-institutions repo fixing, the
+    # closest public daily proxy to the PBOC's DR007 policy anchor — the
+    # secured leg beside SHIBOR's unsecured one.
+    SeriesSpec("CN_FDR007", "palimpsest", "china-econ-history.jsonl:fdr007",
+               "China FDR007 — 7d repo fixing, depository institutions (CFETS)", "%", "D", PALIMPSEST_TTL_MIN),
+    SeriesSpec("CN_PARITY", "palimpsest", "china-econ-history.jsonl:usdcny_parity",
+               "USD/CNY central parity fix (CFETS)", "CNY", "D", PALIMPSEST_TTL_MIN),
 ]
 ALL_SERIES.update({s.mnemonic: s for s in PALIMPSEST_SERIES})
 

@@ -324,6 +324,35 @@ def test_basins_excludes_small_value_ops(rng):
     assert r["swap_lines"]["small_value_ops_excluded"] == 1
 
 
+def test_basins_daily_asia_anchors_join_and_quarantine(rng):
+    idx = _bdays(700)
+    widx = pd.date_range(idx[0], idx[-1], freq="W-WED")
+    tona = pd.Series(rng.normal(0.9, 0.01, len(idx)), index=idx)     # deep history
+    shibor = pd.Series(rng.normal(1.36, 0.01, 20), index=idx[-20:])  # accruing
+    r = basins.analyze(
+        spread_us_bp=pd.Series(rng.normal(0, 2, len(idx)), index=idx),
+        estr=pd.Series(2.0, index=idx),
+        ecb_dfr=pd.Series(2.25, index=idx),
+        sonia=pd.Series(3.7, index=idx),
+        dxy=pd.Series(rng.normal(120, 1, len(idx)), index=idx),
+        swap_lines_m=pd.Series(250.0, index=widx),
+        foreign_rrp_m=pd.Series(300000.0, index=widx),
+        fx_ops=[],
+        tona=tona,
+        shibor_on=shibor,
+        jpy=pd.Series(rng.normal(160, 2, len(idx)), index=idx),
+        cny=pd.Series(rng.normal(6.8, 0.05, len(idx)), index=idx),
+        krw=pd.Series(rng.normal(1500, 20, len(idx)), index=idx),
+    )
+    assert r["ok"]
+    by = {b["basin"]: b for b in r["basins"]}
+    assert "JAPAN" in by and by["JAPAN"]["z"] is not None      # 700 obs: z live
+    assert "CHINA" in by and by["CHINA"]["z"] is None          # 20 obs: quarantined
+    assert "accruing" in by["CHINA"]["anchor"]
+    # the tide panel counts the new FX legs (SHIBOR column too short to matter)
+    assert r["tide"]["n_series"] >= 9
+
+
 # --------------------------------------------------------------------------
 # Weather settlement calendar + crowding guard
 # --------------------------------------------------------------------------

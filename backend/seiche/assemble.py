@@ -409,6 +409,8 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
 
     # --- Global basins ---
     ecb_s = src.get("ecb", {})
+    boj_s = src.get("boj", {})
+    cm_s = src.get("chinamoney", {})
     run("basins", lambda: eng_basins.analyze(
         spread_us_bp=drv["spread_bp"],
         estr=_pts(ecb_s, "ESTR"),
@@ -420,13 +422,18 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         fx_ops=(src.get("nyfed_fxs") or {}).get("ops", []),
         inr=_pts(fred_s, "INR"),
         usdt_peg_bp=drv["usdt_peg_bp"],
+        tona=_pts(boj_s, "TONA"),
+        shibor_on=_pts(cm_s, "SHIBOR_ON"),
+        cny=_pts(fred_s, "CNY"),
+        jpy=_pts(fred_s, "JPY"),
+        krw=_pts(fred_s, "KRW"),
     ))
 
     # --- Thermohaline (BIS global liquidity — the deep circulation) ---
     run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
 
     # --- Harbors (national money markets — the holistic world view) ---
-    cm_s = src.get("chinamoney", {})
+    pal_series = (src.get("palimpsest") or {}).get("series", {})
     eurusd = _pts(fred_s, "EURUSD")
     run("harbors", lambda: eng_harbors.analyze(
         {
@@ -436,6 +443,8 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
             },
             "CHINA": {
                 "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N (CFETS)", "cadence": "daily",
+                "rate2": _pts(pal_series, "CN_FDR007"),
+                "rate2_label": "FDR007 secured 7d (≈DR007 proxy)",
                 "fx": _pts(fred_s, "CNY"), "fx_label": "CNY per USD",
             },
             "INDIA": {

@@ -123,6 +123,20 @@ def analyze(harbors: dict[str, dict], effr: pd.Series) -> dict:
             entry["rate"] = None
         entry["regime"] = regime
 
+        # optional second anchor (e.g. China's secured leg beside SHIBOR's
+        # unsecured one) — display-only, never blended into the stress score,
+        # and no cross-tenor spread is computed (o/n vs 7d are not comparable)
+        r2 = spec.get("rate2", pd.Series(dtype=float))
+        r2 = r2.dropna() if r2 is not None else pd.Series(dtype=float)
+        if not r2.empty:
+            entry["rate2"] = {
+                "label": spec.get("rate2_label", ""),
+                "last_pct": round(float(r2.iloc[-1]), 3),
+                "asof": r2.index[-1].date().isoformat(),
+            }
+        else:
+            entry["rate2"] = None
+
         vol_pctl = None
         dep_pctl = None
         if not f.empty:

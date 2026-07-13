@@ -90,6 +90,21 @@ def test_monthly_rates_charted_without_interpolation():
     assert len(non_null) == expected  # every point is a real print, none invented
 
 
+def test_rate2_displayed_but_never_scored():
+    rate = _daily(500, 1.36, jitter=0.01, seed=4)
+    fx = _daily(500, 6.8, jitter=0.02, seed=5)
+    spec = _harbor(rate, fx)
+    base = harbors.analyze({"CN": dict(spec)}, EMPTY)["harbors"][0]
+    spec2 = dict(spec)
+    spec2["rate2"] = _daily(20, 1.38)
+    spec2["rate2_label"] = "FDR007 secured 7d"
+    with_r2 = harbors.analyze({"CN": spec2}, EMPTY)["harbors"][0]
+    assert with_r2["rate2"]["last_pct"] == pytest.approx(1.38)
+    assert with_r2["rate2"]["label"] == "FDR007 secured 7d"
+    assert with_r2["stress"] == base["stress"]  # display-only, never scored
+    assert base["rate2"] is None
+
+
 def test_fx_indexed_to_100():
     fx = _daily(600, 80.0)  # constant series indexes to exactly 100 everywhere
     out = harbors.analyze({"X": _harbor(_daily(600, 2.0), fx)}, EMPTY)

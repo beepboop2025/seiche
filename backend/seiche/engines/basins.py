@@ -1,9 +1,12 @@
 """Global Basin Coupling — the dollar system as connected bodies of water.
 
-Funding basins (US, euro area, UK) are connected through the FX-swap channel,
-cross-border bank funding and the dollar itself. In calm regimes each basin
-sloshes to its own local calendar; under global dollar pressure they
-synchronize — one tide moves all of them, and the swap lines light up.
+Funding basins (US, euro area, UK, Japan, China) are connected through the
+FX-swap channel, cross-border bank funding and the dollar itself. In calm
+regimes each basin sloshes to its own local calendar; under global dollar
+pressure they synchronize — one tide moves all of them, and the swap lines
+light up. The tide panel also carries the INR/CNY/JPY/KRW FX legs (Fed H.10,
+deep daily history), so the common component is measured across both rates
+and currencies.
 
 Three measurements, same physics as the domestic engines:
 
@@ -18,11 +21,13 @@ Three measurements, same physics as the domestic engines:
    (flagged upstream), because a test is not a confession.
 
 Honest scope: this engine measures COUPLING and keeps its panel to feeds
-with daily overlap. National money-market levels for China (SHIBOR O/N,
-daily), India/Japan/Korea (OECD MEI monthly mirrors) live in the harbors
-engine, each labeled with its cadence. Russia and African markets still
-have no keyless feed that meets the provenance bar — out of scope, not
-faked. New basins plug into config when a qualifying feed exists.
+with daily overlap — Japan joined via TONA (BOJ flat files, to 1998) and
+China via SHIBOR O/N (CFETS; z quarantined until local history accrues).
+Per-country depth (India/Korea monthly mirrors included) lives in the
+harbors engine, each series labeled with its cadence and never interpolated
+across it. Russia and African markets still have no keyless feed that meets
+the provenance bar — out of scope, not faked. New basins plug into config
+when a qualifying feed exists.
 """
 
 from __future__ import annotations
@@ -45,6 +50,9 @@ def _rolling_z(s: pd.Series, window: int = 250) -> float | None:
     return float((float(x.iloc[-1]) - float(tail.mean())) / sd)
 
 
+MIN_Z_OBS = 60   # a z against fewer own-history points is noise — quarantine
+
+
 def analyze(
     spread_us_bp: pd.Series,     # SOFR - IORB, bp
     estr: pd.Series,             # €STR, %
@@ -56,11 +64,21 @@ def analyze(
     fx_ops: list[dict],          # NY Fed USD swap operations
     inr: pd.Series | None = None,       # INR per USD (FRED DEXINUS)
     usdt_peg_bp: pd.Series | None = None,  # USDT peg deviation, bp (crypto basin)
+    tona: pd.Series | None = None,      # TONA, % (BOJ daily, history to 1998)
+    shibor_on: pd.Series | None = None,  # SHIBOR O/N, % (CFETS, accrues locally)
+    cny: pd.Series | None = None,       # CNY per USD (FRED H.10)
+    jpy: pd.Series | None = None,       # JPY per USD (FRED H.10)
+    krw: pd.Series | None = None,       # KRW per USD (FRED H.10)
 ) -> dict:
     if spread_us_bp.dropna().empty:
         return {"ok": False, "reason": "no US spread history"}
     inr = inr if inr is not None else pd.Series(dtype=float)
     usdt_peg_bp = usdt_peg_bp if usdt_peg_bp is not None else pd.Series(dtype=float)
+    tona = tona if tona is not None else pd.Series(dtype=float)
+    shibor_on = shibor_on if shibor_on is not None else pd.Series(dtype=float)
+    cny = cny if cny is not None else pd.Series(dtype=float)
+    jpy = jpy if jpy is not None else pd.Series(dtype=float)
+    krw = krw if krw is not None else pd.Series(dtype=float)
 
     # --- basin states -----------------------------------------------------
     eur_spread_bp = pd.Series(dtype=float)
@@ -91,6 +109,29 @@ def analyze(
             "z": round(_rolling_z(uk.diff().dropna()) or 0.0, 2),
             "asof": uk.index[-1].date().isoformat(),
         })
+    jp = tona.dropna()
+    if not jp.empty:
+        basins.append({
+            "basin": "JAPAN", "anchor": "TONA level (BOJ daily; no keyless daily policy anchor)",
+            "value_bp": round(float(jp.iloc[-1]) * 100.0, 1),
+            "z": round(_rolling_z(jp.diff().dropna()) or 0.0, 2),
+            "asof": jp.index[-1].date().isoformat(),
+        })
+    cn = shibor_on.dropna()
+    if not cn.empty:
+        # local history accrues from the range-limited CFETS feed — the z is
+        # quarantined (None, not a fake 0.0) until enough own history exists
+        cn_z = _rolling_z(cn.diff().dropna()) if len(cn) >= MIN_Z_OBS else None
+        basins.append({
+            "basin": "CHINA",
+            "anchor": (
+                "SHIBOR O/N level (CFETS)" if cn_z is not None
+                else f"SHIBOR O/N (accruing — {len(cn)} obs, z unlocks at {MIN_Z_OBS})"
+            ),
+            "value_bp": round(float(cn.iloc[-1]) * 100.0, 1),
+            "z": round(cn_z, 2) if cn_z is not None else None,
+            "asof": cn.index[-1].date().isoformat(),
+        })
     inr_d = inr.dropna()
     if not inr_d.empty:
         # FX channel only: CCIL is HTML-only and RBI DBIE presents a broken
@@ -118,10 +159,15 @@ def analyze(
         "US spread": us,
         "EUR spread": eur_spread_bp,
         "SONIA": uk,
+        "TONA": jp,
+        "SHIBOR O/N": cn,
         "Dollar idx": dxy.dropna(),
         "Foreign RRP": (foreign_rrp_m.dropna() / 1000.0),
         "Swap lines": (swap_lines_m.dropna() / 1000.0),
         "INR": inr_d,
+        "CNY": cny.dropna(),
+        "JPY": jpy.dropna(),
+        "KRW": krw.dropna(),
         "USDT peg": peg,
     }
     panel = {k: v for k, v in panel.items() if not v.empty}
@@ -219,11 +265,13 @@ def analyze(
             "dollar_idx_z": round(_rolling_z(dxy.dropna()) or 0.0, 2),
         },
         "out_of_scope": (
-            "this panel keeps to daily-overlap coupling; national money-market levels "
-            "for China (SHIBOR O/N daily), India/Japan/Korea (OECD monthly mirrors) live "
-            "in the Harbors panel with their cadence stated. India's DAILY rates anchor "
-            "stays pending (CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); "
-            "Russia and African markets still meet no keyless bar — excluded, not faked"
+            "daily-overlap coupling now spans US, euro area, UK, Japan (TONA), China "
+            "(SHIBOR O/N, z quarantined while local history accrues) plus the INR/CNY/"
+            "JPY/KRW FX legs; per-country depth lives in the Harbors panel with cadence "
+            "stated. India and Korea rate anchors stay monthly-lagged context — never "
+            "interpolated into daily coupling math. India's DAILY rates anchor pending "
+            "(CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); Russia and African "
+            "markets still meet no keyless bar — excluded, not faked"
         ),
         "method": (
             f"tide = top-2 PC variance share of {BASIN_WINDOW_D}bd standardized daily "

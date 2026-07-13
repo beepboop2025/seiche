@@ -91,10 +91,10 @@ def _merge_and_store(mnemonic: str, fresh: pd.Series) -> Series:
 
 async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     """DDTI + GFI series (accrued) plus the latest board for the card."""
-    if all(store.is_fresh(m, PALIMPSEST_TTL_MIN) for m in
-           ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI")):
-        cached = {m: store.load_series(m) for m in
-                  ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI")}
+    mnems = ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI",
+             "CN_FDR007", "CN_PARITY")
+    if all(store.is_fresh(m, PALIMPSEST_TTL_MIN) for m in mnems):
+        cached = {m: store.load_series(m) for m in mnems}
         latest = store.load_blob("palimpsest:latest") or {}
         if all(cached.values()):
             return {"fetched_at": utcnow_iso(), "series": cached, "latest": latest}
@@ -114,6 +114,15 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
         gfi_hist = _jsonl(await _get_text(client, "history.jsonl"))
         out["series"]["PALIMPSEST_GFI"] = _merge_and_store(
             "PALIMPSEST_GFI", _daily(gfi_hist, "date", "gfi", "last"))
+    except SourceFault as e:
+        faults.append({"source": e.source, "detail": e.detail})
+
+    try:
+        cn_hist = _jsonl(await _get_text(client, "china-econ-history.jsonl"))
+        out["series"]["CN_FDR007"] = _merge_and_store(
+            "CN_FDR007", _daily(cn_hist, "date", "fdr007", "last"))
+        out["series"]["CN_PARITY"] = _merge_and_store(
+            "CN_PARITY", _daily(cn_hist, "date", "usdcny_parity", "last"))
     except SourceFault as e:
         faults.append({"source": e.source, "detail": e.detail})
 
