@@ -32,6 +32,7 @@ from seiche import store
 from seiche.config import (
     ALL_SERIES,
     BIS_SERIES,
+    CHINAMONEY_SERIES,
     COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
@@ -39,6 +40,7 @@ from seiche.config import (
     FOMC_DECISION_DATES,
     FRED_SERIES,
     GLOBAL_FRED_SERIES,
+    GLOBAL_MM_FRED_SERIES,
     INDIA_FRED_SERIES,
     MARKET_SERIES,
     OFR_SERIES,
@@ -57,6 +59,7 @@ from seiche.engines import composite as eng_composite
 from seiche.engines import echo as eng_echo
 from seiche.engines import farbasin as eng_farbasin
 from seiche.engines import gyre as eng_gyre
+from seiche.engines import harbors as eng_harbors
 from seiche.engines import history as eng_history
 from seiche.engines import markov as eng_markov
 from seiche.engines import montecarlo as eng_montecarlo
@@ -89,7 +92,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, cftc, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
+from seiche.sources import bis, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -121,12 +124,13 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
         fred_mnems = [
             s.mnemonic
             for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-            + PRETRAIN_FRED_SERIES
+            + GLOBAL_MM_FRED_SERIES + PRETRAIN_FRED_SERIES
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
+            guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
             guard("nyfed_rates", nyfed.fetch_secured_rates(client)),
@@ -147,7 +151,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
     out: dict = {}
-    for group in ("fred", "ofr", "ecb", "bis"):
+    for group in ("fred", "ofr", "ecb", "bis", "chinamoney"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             pts = s.points[s.points.index <= asof]
@@ -418,6 +422,38 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
 
     # --- Thermohaline (BIS global liquidity — the deep circulation) ---
     run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
+
+    # --- Harbors (national money markets — the holistic world view) ---
+    cm_s = src.get("chinamoney", {})
+    eurusd = _pts(fred_s, "EURUSD")
+    run("harbors", lambda: eng_harbors.analyze(
+        {
+            "EURO AREA": {
+                "rate": _pts(ecb_s, "ESTR"), "rate_label": "€STR", "cadence": "daily",
+                "fx": (1.0 / eurusd.replace(0, np.nan)).dropna(), "fx_label": "EUR per USD",
+            },
+            "CHINA": {
+                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N (CFETS)", "cadence": "daily",
+                "fx": _pts(fred_s, "CNY"), "fx_label": "CNY per USD",
+            },
+            "INDIA": {
+                "rate": _pts(fred_s, "CALL_IN"), "rate_label": "call money (OECD MEI)",
+                "cadence": "monthly ~2mo lag",
+                "fx": _pts(fred_s, "INR"), "fx_label": "INR per USD",
+            },
+            "JAPAN": {
+                "rate": _pts(fred_s, "CALL_JP"), "rate_label": "uncollat. call (OECD MEI)",
+                "cadence": "monthly ~2mo lag",
+                "fx": _pts(fred_s, "JPY"), "fx_label": "JPY per USD",
+            },
+            "KOREA": {
+                "rate": _pts(fred_s, "CALL_KR"), "rate_label": "o/n call (OECD MEI)",
+                "cadence": "monthly ~2mo lag",
+                "fx": _pts(fred_s, "KRW"), "fx_label": "KRW per USD",
+            },
+        },
+        effr=_pts(fred_s, "EFFR"),
+    ))
 
     # --- Station-Keeping (maneuver detection) ---
     run("stationkeeping", lambda: eng_stationkeeping.analyze(

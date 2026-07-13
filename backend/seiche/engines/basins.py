@@ -17,10 +17,12 @@ Three measurements, same physics as the domestic engines:
    (NY Fed ops + H.4.1 outstanding). Small-value TEST operations are excluded
    (flagged upstream), because a test is not a confession.
 
-Honest scope: Japan, China, Russia and African markets have no keyless,
-reliable, daily public feed we can hold to the same provenance bar — they are
-OUT of scope and say so here, rather than being faked in. New basins plug
-into config when a qualifying feed exists.
+Honest scope: this engine measures COUPLING and keeps its panel to feeds
+with daily overlap. National money-market levels for China (SHIBOR O/N,
+daily), India/Japan/Korea (OECD MEI monthly mirrors) live in the harbors
+engine, each labeled with its cadence. Russia and African markets still
+have no keyless feed that meets the provenance bar — out of scope, not
+faked. New basins plug into config when a qualifying feed exists.
 """
 
 from __future__ import annotations
@@ -217,10 +219,11 @@ def analyze(
             "dollar_idx_z": round(_rolling_z(dxy.dropna()) or 0.0, 2),
         },
         "out_of_scope": (
-            "Japan (TONA), China, Russia, African markets: no keyless daily feed that "
-            "meets the provenance bar — excluded rather than faked. India rides the FX "
-            "channel only (CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); a "
-            "rates anchor joins when a qualifying feed exists"
+            "this panel keeps to daily-overlap coupling; national money-market levels "
+            "for China (SHIBOR O/N daily), India/Japan/Korea (OECD monthly mirrors) live "
+            "in the Harbors panel with their cadence stated. India's DAILY rates anchor "
+            "stays pending (CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); "
+            "Russia and African markets still meet no keyless bar — excluded, not faked"
         ),
         "method": (
             f"tide = top-2 PC variance share of {BASIN_WINDOW_D}bd standardized daily "

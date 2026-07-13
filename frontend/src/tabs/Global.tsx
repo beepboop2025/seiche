@@ -1,6 +1,86 @@
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
+const HARBOR_COLORS: Record<string, string> = {
+  "EURO AREA": "#b5abfc",
+  CHINA: "#dd7a72",
+  INDIA: "#79c2ad",
+  JAPAN: "#7f95cc",
+  KOREA: "#d9b274",
+  "US (EFFR)": "#75798c",
+};
+
+function HarborsCard({ h }: { h: Any }) {
+  if (!h?.ok) return <Fault name="Harbors — World Money Markets" reason={h?.reason} span={12} />;
+  const cyc = h.cycle ?? {};
+  const monthly = new Set(
+    (h.harbors ?? []).filter((x: Any) => String(x.cadence ?? "").startsWith("monthly")).map((x: Any) => x.harbor)
+  );
+  const rateSeries = (h.rate_labels ?? []).map((l: string) => ({
+    label: l,
+    color: HARBOR_COLORS[l] ?? "#75798c",
+    dash: l === "US (EFFR)" ? [4, 4] : undefined,
+    pointsOnly: monthly.has(l),
+  }));
+  const fxSeries = (h.fx_labels ?? []).map((l: string) => ({
+    label: l,
+    color: HARBOR_COLORS[l] ?? "#75798c",
+  }));
+  return (
+    <div className="card span12">
+      <h2>Harbors — World Money Markets</h2>
+      <div className="sub">
+        each national money market read at its own water line — overnight anchor, currency, and whether
+        local policy is being forced · cycle: {cyc.easing ?? 0} easing · {cyc.holding ?? 0} holding ·{" "}
+        {cyc.tightening ?? 0} tightening
+        {cyc.us_ref ? ` · US ref EFFR ${fmt(cyc.us_ref.last_pct, 2)}%` : ""}
+      </div>
+      <div className="basingrid">
+        {(h.harbors ?? []).map((b: Any) => (
+          <div className={`basin ${(b.stress ?? 0) >= 80 ? "hot" : ""}`} key={b.harbor}>
+            <div className="name">{b.harbor}</div>
+            <div className="rate">{b.rate ? `${fmt(b.rate.last_pct, 2)}%` : "—"}</div>
+            <div className="z" style={{ color: (b.stress ?? 0) >= 80 ? "#d99274" : "#75798c" }}>
+              {b.stress != null ? `stress ${fmt(b.stress, 0)}` : "accruing"}
+              {b.regime ? ` · ${b.regime}` : ""} · {b.rate?.label ?? "rate pending"}
+            </div>
+            {b.fx && (
+              <div className="z" style={{ color: "#595d6c" }}>
+                {b.fx.label} {fmt(b.fx.last, 2)}
+                {b.fx.chg_60d_pct != null
+                  ? ` · 60d ${b.fx.chg_60d_pct > 0 ? "+" : ""}${fmt(b.fx.chg_60d_pct, 1)}%`
+                  : ""}
+              </div>
+            )}
+            <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+              {b.rate?.asof ?? b.fx?.asof} · {b.cadence}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="warehouse-row">
+        <div className="warehouse-chart">
+          {h.rate_rows?.length > 0 && (
+            <Chart rows={h.rate_rows} series={rateSeries} yLabel="overnight anchor, %" height={180} />
+          )}
+        </div>
+        <div className="warehouse-chart">
+          {h.fx_rows?.length > 0 && (
+            <Chart
+              rows={h.fx_rows}
+              series={fxSeries}
+              refLine={{ value: 100, color: "#595d6c", label: "1y ago" }}
+              yLabel="local per USD, 1y ago = 100 (up = weaker)"
+              height={180}
+            />
+          )}
+        </div>
+      </div>
+      <Method>{(h.caveats ?? []).join(" · ")} · {h.method}</Method>
+    </div>
+  );
+}
+
 function MooringsCard({ m }: { m: Any }) {
   if (!m?.ok) return <Fault name="Stablecoin Moorings" reason={m?.reason} span={12} />;
   const u = m.usdt ?? {};
@@ -173,6 +253,7 @@ export default function Global({ snap }: { snap: Any }) {
     return (
       <div className="grid">
         <Fault name="Global Basins" reason={e.reason} span={12} />
+        <HarborsCard h={snap.engines?.harbors} />
         <ThermohalineCard t={snap.engines?.thermohaline} />
       </div>
     );
@@ -284,6 +365,7 @@ export default function Global({ snap }: { snap: Any }) {
         <Method>NY Fed FX swap operations + H.4.1 weekly outstanding · the 2020 peak was ~$450B</Method>
       </div>
 
+      <HarborsCard h={snap.engines?.harbors} />
       <MooringsCard m={snap.engines?.moorings} />
       <ThermohalineCard t={snap.engines?.thermohaline} />
       <FarBasinCard f={snap.engines?.farbasin} />

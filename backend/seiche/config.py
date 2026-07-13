@@ -97,11 +97,49 @@ SWAP_LINE_OPS_N = 90           # NY Fed FX-swap operations to pull
 
 # India: CCIL serves HTML only and RBI DBIE presents a broken SSL chain
 # (probed 2026-07-07) — neither meets the keyless-reliable bar, so India
-# joins through the FX channel (FRED's official daily INR) with the rates
-# feed declared pending, not faked.
+# joins through the FX channel (FRED's official daily INR). A DAILY rates
+# feed stays pending, not faked; the monthly OECD call-money mirror joins
+# the Harbors panel below with its lag stated.
 INDIA_FRED_SERIES = [
     SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
 ]
+
+# Harbors: national money markets as harbors off the dollar ocean. Overnight
+# anchors, keyless: daily where a qualifying feed exists (€STR above, SHIBOR
+# O/N via CFETS below), monthly OECD MEI mirrors on FRED where one does not
+# (India/Japan/Korea call rates — published ~2 months late BY DESIGN, hence
+# freq "ML"). China's OECD mirror went stale upstream in mid-2025 (probed
+# 2026-07-13) — SHIBOR is the daily replacement, not a supplement. FX legs
+# are the Fed's own H.10 daily fixes, quoted local-per-USD.
+GLOBAL_MM_FRED_SERIES = [
+    SeriesSpec("CALL_IN", "fred", "IRSTCI01INM156N", "India call money rate (OECD MEI, monthly)", "%", "ML", 1440, start="2000-01-01"),
+    SeriesSpec("CALL_JP", "fred", "IRSTCI01JPM156N", "Japan uncollateralized call rate (OECD MEI, monthly)", "%", "ML", 1440, start="2000-01-01"),
+    SeriesSpec("CALL_KR", "fred", "IRSTCI01KRM156N", "Korea overnight call rate (OECD MEI, monthly)", "%", "ML", 1440, start="2000-01-01"),
+    SeriesSpec("CNY", "fred", "DEXCHUS", "Chinese yuan per USD (H.10)", "CNY", "D", 360),
+    SeriesSpec("JPY", "fred", "DEXJPUS", "Japanese yen per USD (H.10)", "JPY", "D", 360),
+    SeriesSpec("KRW", "fred", "DEXKOUS", "Korean won per USD (H.10)", "KRW", "D", 360),
+    SeriesSpec("EURUSD", "fred", "DEXUSEU", "US dollars per euro (H.10)", "$", "D", 360),
+]
+
+# CFETS chinamoney: keyless JSON, honest UA accepted (verified live
+# 2026-07-13) — but range-limited (~1 month per request) and burst-throttled
+# (rapid consecutive hits return empty bodies, observed same day). The
+# collector therefore makes ONE request per refresh and accrues history in
+# the store, Palimpsest-style; z-scores stay quarantined until enough local
+# history exists.
+CHINAMONEY_SERIES = [
+    SeriesSpec("SHIBOR_ON", "chinamoney", "shibor:ON", "SHIBOR overnight (CFETS)", "%", "D", 360),
+]
+CHINAMONEY_WINDOW_D = 45       # single-request fetch window (range-limited API)
+
+# Harbor stress weights (judgment, not math): FX realized vol says "it is
+# moving", depreciation says "which way", local rate tightening says "policy
+# is being forced". All percentiles of the harbor's OWN history — no
+# cross-economy calibration is implied.
+HARBOR_W_FX_VOL = 0.40
+HARBOR_W_FX_DEPRECIATION = 0.35
+HARBOR_W_RATE_TIGHTENING = 0.25
+HARBOR_REGIME_BP = 15.0        # |6m Δ anchor rate| below this reads as HOLDING
 
 # ---------------------------------------------------------------------------
 # Transfer learning: funding stress predates SOFR. The TED spread (3M LIBOR −
@@ -205,6 +243,7 @@ BIS_SERIES = [
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
+    + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
@@ -215,10 +254,12 @@ ALL_SERIES: dict[str, SeriesSpec] = {
 # Age is measured against the series' expected cadence.
 # ---------------------------------------------------------------------------
 
-STALENESS_GRACE_DAYS = {"D": 4, "W": 10, "M": 45, "Q": 120, "QL": 300}
+STALENESS_GRACE_DAYS = {"D": 4, "W": 10, "M": 45, "ML": 100, "Q": 120, "QL": 300}
 # QL = lagged-quarterly: BIS publishes GLI/credit-gap statistics roughly two
 # quarters after the reference period BY DESIGN — a 9-month-old observation is
 # the current print, not a collector failure.
+# ML = lagged-monthly: OECD MEI call rates arrive ~2 months after the
+# reference month BY DESIGN — same doctrine, monthly cadence.
 
 # ---------------------------------------------------------------------------
 # Episode library for the Echo Engine: date the stress *peaked/broke*.
