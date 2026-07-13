@@ -24,16 +24,21 @@ const Proof = lazy(() => import("./tabs/Proof"));
 const System = lazy(() => import("./tabs/System"));
 const Account = lazy(() => import("./tabs/Account"));
 
+// GLOBAL leads: most arrivals come from India and want their own water line
+// first, not the US basin. DISPATCHES (the writing) moves last — the instrument
+// should be the first thing a visitor meets, the prose is what they find after.
 const TABS = [
-  "DISPATCHES", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "GLOBAL", "CALENDAR", "POSITIONING",
-  "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT",
+  "GLOBAL", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR", "POSITIONING",
+  "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT", "DISPATCHES",
 ] as const;
 type Tab = (typeof TABS)[number];
+
+const DEFAULT_TAB: Tab = "GLOBAL";
 
 const hashToTab = (): Tab => {
   const raw = decodeURIComponent(window.location.hash.replace("#", ""));
   const h = raw.split("/")[0].toUpperCase();
-  return (TABS as readonly string[]).includes(h) ? (h as Tab) : "DISPATCHES";
+  return (TABS as readonly string[]).includes(h) ? (h as Tab) : DEFAULT_TAB;
 };
 
 export default function App() {

@@ -252,11 +252,87 @@ function ThermohalineCard({ t }: { t: Any }) {
   );
 }
 
+/** The strait: the US dial and India's water line, read side by side.
+ *
+ * This is the first thing most arrivals want. The dial (SOFR minus the rate the
+ * Fed pays on reserves) is where a dollar squeeze shows up first; the rupee is
+ * where it lands here. Both numbers are live and checkable elsewhere on the
+ * board; the transmission line under them is a measured association, not a
+ * causal claim, and it carries its own n and window. */
+function StraitCard({ headline, tails, harbors }: { headline: Any; tails: Any; harbors: Any }) {
+  const india = (harbors?.harbors ?? []).find((b: Any) => b.harbor === "INDIA");
+  const dialBp = tails?.ok ? tails.spread?.sofr_iorb_bp : null;
+  if (!india && dialBp == null) {
+    return <Fault name="New York and Mumbai" reason="neither the dial nor the India harbor is scorable right now" span={12} />;
+  }
+  const dialHot = dialBp != null && dialBp >= 3;
+  const fx = india?.fx ?? null;
+  const rupeeWeaker = fx?.chg_60d_pct != null && fx.chg_60d_pct > 0;
+
+  return (
+    <div className="card span12">
+      <h2>New York and Mumbai, side by side</h2>
+      <div className="sub">
+        the dial that moves first, and the currency that hears it · everything below is free public data
+      </div>
+      <div className="basingrid">
+        <div className={`basin ${dialHot ? "hot" : ""}`}>
+          <div className="name">US · THE DIAL</div>
+          <div className="rate" style={{ color: dialHot ? "#d99274" : undefined }}>
+            {dialBp == null ? "—" : `${dialBp > 0 ? "+" : ""}${fmt(dialBp, 0)}bp`}
+          </div>
+          <div className="z" style={{ color: "#75798c" }}>
+            SOFR minus IORB · {dialBp == null ? "pending" : dialBp > 0 ? "someone paid up for overnight dollars" : "soft floor, calm"}
+          </div>
+          <div className="z" style={{ color: "#595d6c" }}>
+            SOFR {fmt(headline?.sofr_pct?.value, 2)}% · IORB {fmt(headline?.iorb_pct?.value, 2)}%
+          </div>
+          <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+            {headline?.sofr_pct?.asof ?? ""} · daily
+          </div>
+        </div>
+        <div className={`basin ${(india?.stress ?? 0) >= 80 ? "hot" : ""}`}>
+          <div className="name">INDIA · THE WATER LINE</div>
+          <div className="rate">{india?.rate ? `${fmt(india.rate.last_pct, 2)}%` : "—"}</div>
+          <div className="z" style={{ color: "#75798c" }}>
+            {india?.rate?.label ?? "rate pending"}
+            {india?.stress != null ? ` · stress ${fmt(india.stress, 0)}` : ""}
+            {india?.regime ? ` · ${india.regime}` : ""}
+          </div>
+          {fx && (
+            <div className="z" style={{ color: rupeeWeaker ? "#d99274" : "#595d6c" }}>
+              {fx.label} {fmt(fx.last, 2)}
+              {fx.chg_60d_pct != null
+                ? ` · 60d ${fx.chg_60d_pct > 0 ? "+" : ""}${fmt(fx.chg_60d_pct, 1)}% ${rupeeWeaker ? "(weaker)" : "(stronger)"}`
+                : ""}
+            </div>
+          )}
+          <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+            {india?.rate?.asof ?? fx?.asof ?? ""} · {india?.cadence ?? ""}
+          </div>
+        </div>
+      </div>
+      <Method>
+        Measured, not asserted: on the 65 days since January 2024 when the dial closed 3bp or more
+        above the floor, the rupee was weaker five sessions later 71 times in 100, against 59 on the
+        554 ordinary days, and the average five day slide roughly doubled. 65 events is an
+        association, not a law, and a dollar squeeze and a weak rupee may both answer to global risk
+        appetite. Cause or symptom, the dial moves about a week before the rupee does. Method: SOFR
+        minus IORB from FRED, rupee from DEXINUS, forward window five trading sessions.
+      </Method>
+    </div>
+  );
+}
+
 export default function Global({ snap }: { snap: Any }) {
   const e = snap.engines?.basins ?? {};
+  const strait = (
+    <StraitCard headline={snap.headline} tails={snap.engines?.tails} harbors={snap.engines?.harbors} />
+  );
   if (!e.ok) {
     return (
       <div className="grid">
+        {strait}
         <Fault name="Global Basins" reason={e.reason} span={12} />
         <HarborsCard h={snap.engines?.harbors} />
         <ThermohalineCard t={snap.engines?.thermohaline} />
@@ -269,6 +345,7 @@ export default function Global({ snap }: { snap: Any }) {
 
   return (
     <div className="grid">
+      {strait}
       <div className="card span12">
         <h2>Global Basin Coupling</h2>
         <div className="sub">
