@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import traceback
 
@@ -1044,6 +1045,7 @@ def _record_pit(engines: dict, deep: dict, navigator: dict | None = None) -> Non
     }
     store.save_blob(f"pit:{day}", record)
     _notarize(day, record)
+    _attest(day, record)
 
 
 def _notarize(day: str, record: dict) -> None:
@@ -1056,6 +1058,22 @@ def _notarize(day: str, record: dict) -> None:
     except Exception as exc:  # pragma: no cover - defensive
         logging.getLogger("seiche.assemble").warning(
             "notary commit failed for %s: %s", day, exc)
+
+
+def _attest(day: str, record: dict) -> None:
+    """Signed layer over the record (seiche/attest.py): commit the day's
+    aggregate reading to the 'stress_readings' PIT stream and Ed25519-sign it.
+    Off by default (SEICHE_ATTEST=1 enables); best-effort and
+    fail-loud-in-logs, same contract as the notary — attestation must never
+    stop the board from updating."""
+    if os.getenv("SEICHE_ATTEST", "0") != "1":
+        return
+    try:
+        from seiche import attest
+        attest.attest_stress_reading(day, record)
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.getLogger("seiche.assemble").warning(
+            "attest failed for %s: %s", day, exc)
 
 
 # ---------------------------------------------------------------------------

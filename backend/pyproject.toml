@@ -18,6 +18,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "scipy>=1.11",        # microseism MLE (was transitive via sklearn; now direct)
     "arch>=7",            # regatta: Model Confidence Set bootstrap
+    "cryptography>=42",   # attest: Ed25519 signing of the as-published record
 ]
 
 [project.optional-dependencies]

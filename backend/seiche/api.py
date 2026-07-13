@@ -538,6 +538,87 @@ async def notary_proof(sha256: str):
                     headers={"Content-Disposition": f'attachment; filename="{sha256[:16]}.ots"'})
 
 
+# ---- Signed as-published record (attest layer) --------------------------------
+# The notary chains readings; the attest layer signs them (Ed25519) and anchors
+# each day's record hash to Bitcoin via OpenTimestamps. These endpoints are
+# public and read-only, and serve commitments only — day, record hash,
+# signature, anchor status — never payloads, so the verification surface stays
+# identical whatever the stream carries.
+
+@app.get("/api/attest/pubkey")
+async def attest_pubkey():
+    """Public: the operator's Ed25519 public key and the signing domain, so a
+    reader can verify every signature with no trust in this server."""
+    from seiche import attest
+
+    return {
+        "public_key": attest.public_key_hex(),
+        "algo": attest.ALGO,
+        "domain": attest.DOMAIN,
+        "message_format": "{domain}:{stream}:{day}:{record_hash}",
+        "how_to_verify": (
+            "recompute each record hash from the ledger line, build the message "
+            "above, and check the Ed25519 signature against this key; OTS proofs "
+            "settle in Bitcoin (verify with the `ots` tool)."
+        ),
+    }
+
+
+@app.get("/api/attest/stream/{stream}")
+async def attest_stream(stream: str, n: int = 400):
+    """Public: per-day commitments of a ledger stream — record hash, signature,
+    anchor status. Never payloads."""
+    from seiche import attest
+
+    if not attest._STREAM_RE.match(stream):
+        raise HTTPException(422, "invalid stream name")
+    records = attest.read_records(stream)
+    if not records:
+        raise HTTPException(404, f"no committed records on stream '{stream}'")
+    sigs = {s["record_hash"]: s for s in attest.read_signatures(stream)}
+    anchors: dict[str, dict] = {}
+    for a in attest.read_anchors(stream):  # later lines (upgrades) win
+        anchors[a["day"]] = a
+    days = []
+    for rec in records[-n:]:
+        s = sigs.get(rec["hash"])
+        a = anchors.get(rec["day"])
+        days.append({
+            "day": rec["day"],
+            "record_hash": rec["hash"],
+            "prev_hash": rec["prev_hash"],
+            "signature": {
+                "sig": s["sig"], "public_key": s["public_key"],
+                "algo": s["algo"], "signed_at": s["signed_at"],
+            } if s else None,
+            "anchor": {
+                "status": a["status"],
+                "calendar": a.get("calendar"),
+                "bitcoin_height": a.get("bitcoin_height"),
+                "submitted_at": a.get("submitted_at"),
+            } if a else None,
+        })
+    return {
+        "stream": stream,
+        "n_records": len(records),
+        "verification": attest.verify_stream(stream),
+        "days": days,
+    }
+
+
+@app.get("/api/attest/verify/{stream}")
+async def attest_verify(stream: str):
+    """Public: the full independent verification verdict for a stream (chain,
+    hashes, signatures, anchors)."""
+    from seiche import attest
+
+    if not attest._STREAM_RE.match(stream):
+        raise HTTPException(422, "invalid stream name")
+    if not attest.read_records(stream):
+        raise HTTPException(404, f"no committed records on stream '{stream}'")
+    return attest.verify_stream(stream)
+
+
 # ---- MCP over HTTP ----------------------------------------------------------
 # The hosted, metered Model Context Protocol endpoint: any AI agent adds this
 # URL and reads the board as tools. Anonymous callers get the free public
