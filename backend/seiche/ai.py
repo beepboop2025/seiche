@@ -242,8 +242,39 @@ async def _via_env(messages: list[dict]) -> str | None:
         return r.json()["choices"][0]["message"]["content"]
 
 
+_INSTITUTION_WORDS = ("bank", "nbfc", "lender", "mfi", "microfinance", "sfb",
+                      "institution", "credit suisse", "svb", "silicon valley",
+                      "northern rock", "esaf", "indusind", "counterparty")
+
+
+async def _liquilens_board() -> dict | None:
+    """Sibling MCP in the fleet: LiquiLens watches the INSTITUTIONS the way
+    Seiche watches the plumbing. Fail-soft — an unreachable sibling just
+    means a leaner pack."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.post(
+                "https://api.liquilens.in/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                      "params": {"name": "failure_radar_board", "arguments": {}}})
+            r.raise_for_status()
+            result = r.json().get("result", {})
+            if result.get("isError"):
+                return None
+            return result.get("structuredContent")
+    except Exception:
+        return None
+
+
 async def ask(question: str, snap: dict) -> dict:
     pack = context_pack(snap)
+    if any(w in question.lower() for w in _INSTITUTION_WORDS):
+        board = await _liquilens_board()
+        if board is not None:
+            pack["liquilens_failure_radar"] = board
+            pack["liquilens_note"] = ("institution-level failure screens from the "
+                                      "sibling server api.liquilens.in/mcp — cite "
+                                      "as (liquilens failure-radar, as_of)")
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "CONTEXT PACK:\n" + json.dumps(pack, default=str)
