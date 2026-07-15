@@ -120,4 +120,4 @@ Seiche names its parts after the sea. Here is what each one really does.
 
 Questions or something unclear? Write to desk@seiche.info. The live board is at
 [seiche.info](https://seiche.info), and the code is open at
-[github.com/LiquiLensLabs/seiche](https://github.com/LiquiLensLabs/seiche).
+[github.com/beepboop2025/seiche](https://github.com/beepboop2025/seiche).
