@@ -714,7 +714,12 @@ REGATTA_MIN_ROWS = 300           # common scored days before the race prints
 # honestly delayed: a day's label joins the score pool only after its 5bd
 # window closes.
 SEAROOM_ALPHA = 0.10             # target miscoverage (90% coverage sets)
-SEAROOM_GAMMA = 0.01             # ACI step size
+SEAROOM_GAMMA = 0.01             # ACI step size (single-expert legacy; middle expert)
+# AgACI (Zaffran et al. 2022): run several ACI experts with different step
+# sizes and aggregate their radii by exponentially-weighted average under
+# pinball loss — removes the one arbitrary knob (gamma) a single ACI has.
+SEAROOM_GAMMAS = (0.002, 0.01, 0.05)
+SEAROOM_ETA = 1.0                # EWA learning rate on cumulative pinball loss
 SEAROOM_WARMUP = 250             # resolved scores before sets are emitted
 
 # Sea State — the marine regime scale, estimated not asserted. A 2-state

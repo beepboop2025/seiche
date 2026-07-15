@@ -162,6 +162,61 @@ def test_searoom_refuses_short_history():
     assert not out["ok"]
 
 
+def test_searoom_agaci_experts_reported_with_normalized_weights():
+    rng = np.random.default_rng(11)
+    n = 1500
+    idx = pd.bdate_range("2018-01-01", periods=n)
+    y = pd.Series((rng.random(n) < 0.15).astype(float), index=idx)
+    p = pd.Series((0.5 * y + 0.1 + 0.15 * rng.random(n)).clip(0, 1), index=idx)
+    out = searoom.analyze(p, y)
+    assert out["ok"]
+    experts = out["experts"]
+    assert len(experts) >= 2  # it is an aggregation, not a renamed single ACI
+    assert abs(sum(e["weight"] for e in experts) - 1.0) <= 0.01
+    assert all(0.0 <= e["weight"] <= 1.0 for e in experts)
+    # each expert's own coverage should also hover near target (ACI property)
+    for e in experts:
+        assert e["coverage"] is None or abs(e["coverage"] - 0.9) <= 0.08
+
+
+def test_searoom_regime_accounting_and_leak_detection():
+    """A regime whose labels the forecast is blind to must be NAMED as a leak
+    while a well-covered regime must not be."""
+    rng = np.random.default_rng(3)
+    n = 2200
+    idx = pd.bdate_range("2016-01-01", periods=n)
+    regime = pd.Series(np.where(np.arange(n) % 400 < 320, "calm", "stress"), index=idx)
+    base = (rng.random(n) < 0.05).astype(float)
+    stress_hits = ((regime.to_numpy() == "stress") & (rng.random(n) < 0.6)).astype(float)
+    y = pd.Series(np.maximum(base, stress_hits), index=idx)
+    # forecast sees the base rate but is blind to the stress mechanism
+    p = pd.Series((0.08 + 0.05 * rng.random(n)).clip(0, 1), index=idx)
+    out = searoom.analyze(p, y, regime=regime)
+    assert out["ok"]
+    table = out["coverage_by_regime"]
+    assert set(table) == {"calm", "stress"}
+    assert table["calm"]["coverage"] > table["stress"]["coverage"]
+    assert "stress" in out.get("regime_leaks", [])
+    assert "calm" not in out.get("regime_leaks", [])
+    assert "REGIME LEAK" in out["verdict"]
+
+
+def test_searoom_regime_argument_does_not_change_sets():
+    """Regime accounting is bookkeeping: supplying the series must not alter
+    a single emitted set, radius, or the marginal coverage."""
+    rng = np.random.default_rng(11)
+    n = 1200
+    idx = pd.bdate_range("2018-01-01", periods=n)
+    y = pd.Series((rng.random(n) < 0.15).astype(float), index=idx)
+    p = pd.Series((0.5 * y + 0.1 + 0.15 * rng.random(n)).clip(0, 1), index=idx)
+    regime = pd.Series(np.where(np.arange(n) % 2 == 0, "a", "b"), index=idx)
+    plain = searoom.analyze(p, y)
+    with_regime = searoom.analyze(p, y, regime=regime)
+    assert plain["today"] == with_regime["today"]
+    assert plain["set_counts"] == with_regime["set_counts"]
+    assert plain["coverage"] == with_regime["coverage"]
+
+
 # ---------------------------------------------------------------------------
 # Sea State (2-state HMM)
 # ---------------------------------------------------------------------------

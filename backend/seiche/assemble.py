@@ -876,7 +876,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         stk = out.get("stacker", {})
         if not stk.get("ok"):
             return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
-        return eng_searoom.analyze(stk["_p_pub"], stk["_y"])
+        return eng_searoom.analyze(stk["_p_pub"], stk["_y"],
+                                   regime=hist["regime_series"])
     run("searoom", _searoom)
 
     # Sea State — the statistical regime gauge (filtered 2-state HMM).

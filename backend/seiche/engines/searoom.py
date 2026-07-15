@@ -22,6 +22,16 @@ assumption). The daily reading is the set:
     {}                the forecast is so nonconforming no label fits (counted,
                       never hidden — it means alpha_t has been pushed high)
 
+v2 — AgACI + regime-conditional accounting (arXiv:2512.03298 lineage):
+  - single-gamma ACI trades adaptation speed against stability on one knob;
+    AgACI (Zaffran et al. 2022) runs several gamma experts and aggregates
+    their radii by exponentially-weighted average under PINBALL loss at the
+    target level, so the data — not a config constant — picks the step size;
+  - ACI's guarantee is MARGINAL: 90% on average can hide 70% inside STRESS
+    and 97% inside CALM. When the fleet's regime series is supplied, realized
+    coverage is additionally accounted PER REGIME with Wilson error bars, and
+    the verdict names any regime whose interval excludes the target.
+
 Honesty notes:
   - feedback is honestly DELAYED: a day's label resolves only when its 5bd
     event window closes, so its score joins the pool and its error steers
@@ -44,11 +54,13 @@ import pandas as pd
 from seiche.config import (
     BACKTEST_EVENT_FWD_D,
     SEAROOM_ALPHA,
-    SEAROOM_GAMMA,
+    SEAROOM_ETA,
+    SEAROOM_GAMMAS,
     SEAROOM_WARMUP,
 )
 
 _LAG = BACKTEST_EVENT_FWD_D  # label resolution delay (bd)
+_TAU = 1.0 - SEAROOM_ALPHA   # pinball level the experts are judged at
 
 
 def _finite_sample_q(scores: list[float], alpha: float) -> float:
@@ -67,9 +79,53 @@ def _set_of(p: float, q: float) -> tuple[bool, bool]:
     return (abs(0.0 - p) <= q, abs(1.0 - p) <= q)
 
 
-def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
-    """Inputs: the Stack's published OOS probability stream and the shared
-    PROOF label (NaN while the forward window is open)."""
+def _pinball(q: float, s: float) -> float:
+    """Pinball (quantile) loss of radius q against realized score s at level
+    _TAU — the proper score for a (1-alpha) quantile, so EWA weights favor the
+    expert whose radii are the best conformal quantiles, not the widest."""
+    return _TAU * max(s - q, 0.0) + (1.0 - _TAU) * max(q - s, 0.0)
+
+
+class _Expert:
+    """One ACI run at a fixed gamma. Scores in [0,1] so radii are clipped to
+    1.0 — a radius of 1 already contains both labels, and finite radii keep
+    the pinball aggregation well-defined during thin-pool stretches."""
+
+    def __init__(self, gamma: float):
+        self.gamma = gamma
+        self.alpha = SEAROOM_ALPHA
+        self.emitted: dict[int, float] = {}   # day -> radius used
+        self.cum_loss = 0.0
+        self.covered: list[bool] = []
+
+    def radius(self, resolved_scores: list[float], t: int) -> float:
+        q = min(_finite_sample_q(resolved_scores, self.alpha), 1.0)
+        self.emitted[t] = q
+        return q
+
+    def resolve(self, r: int, score: float) -> None:
+        q_r = self.emitted.get(r)
+        if q_r is None:
+            return
+        in_set = score <= q_r
+        self.covered.append(bool(in_set))
+        self.alpha += self.gamma * (SEAROOM_ALPHA - (0.0 if in_set else 1.0))
+        self.alpha = min(max(self.alpha, 0.001), 0.999)
+        self.cum_loss += _pinball(q_r, score)
+
+
+def _weights(experts: list[_Expert]) -> np.ndarray:
+    """EWA weights on cumulative pinball loss, anchored at the best expert so
+    the exponentials never underflow to an all-zero vector."""
+    losses = np.array([e.cum_loss for e in experts])
+    w = np.exp(-SEAROOM_ETA * (losses - losses.min()))
+    return w / w.sum()
+
+
+def analyze(p_pub: pd.Series, y: pd.Series, regime: pd.Series | None = None) -> dict:
+    """Inputs: the Stack's published OOS probability stream, the shared PROOF
+    label (NaN while the forward window is open), and optionally the fleet's
+    regime series for per-regime coverage accounting."""
     df = pd.concat({"p": p_pub, "y": y}, axis=1).dropna(subset=["p"])
     if len(df) < SEAROOM_WARMUP + 100:
         return {"ok": False, "reason": f"insufficient published-probability history ({len(df)}d)"}
@@ -77,30 +133,40 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
     ps = df["p"].to_numpy(dtype=float)
     ys = df["y"].to_numpy(dtype=float)  # NaN where unresolved
     n = len(df)
+    regimes = (
+        regime.reindex(df.index).astype(str).to_numpy() if regime is not None else None
+    )
 
-    alpha = SEAROOM_ALPHA
-    resolved_scores: list[float] = []
-    emitted: dict[int, tuple[float, float]] = {}  # i -> (q used, p)
+    experts = [_Expert(g) for g in SEAROOM_GAMMAS]
+    emitted: dict[int, tuple[float, float]] = {}  # i -> (aggregated q, p)
     kinds: list[str | None] = [None] * n
     covered: list[bool] = []
+    covered_regime: list[str] = []
+    resolved_scores: list[float] = []
     alphas: list[float] = []
 
     for t in range(n):
         # 1. resolve day t-LAG: its label is now known — score the emitted
-        #    set, steer alpha, and add its nonconformity to the pool.
+        #    aggregated set, steer every expert, add its score to the pool.
         r = t - _LAG
         if r >= 0 and np.isfinite(ys[r]):
+            score_r = abs(ys[r] - ps[r])
             if r in emitted:
                 q_r, p_r = emitted[r]
-                in_set = abs(ys[r] - p_r) <= q_r
+                in_set = score_r <= q_r
                 covered.append(bool(in_set))
-                alpha = alpha + SEAROOM_GAMMA * (SEAROOM_ALPHA - (0.0 if in_set else 1.0))
-                alpha = min(max(alpha, 0.001), 0.999)
-            resolved_scores.append(abs(ys[r] - ps[r]))
+                if regimes is not None:
+                    covered_regime.append(regimes[r])
+            for e in experts:
+                e.resolve(r, score_r)
+            resolved_scores.append(score_r)
 
-        # 2. emit today's set from RESOLVED scores only.
+        # 2. emit today's set: each expert proposes a radius at its own
+        #    working alpha; the EWA-aggregated radius makes the set.
         if len(resolved_scores) >= SEAROOM_WARMUP:
-            q = _finite_sample_q(resolved_scores, alpha)
+            radii = np.array([e.radius(resolved_scores, t) for e in experts])
+            w = _weights(experts)
+            q = float(np.dot(w, radii))
             emitted[t] = (q, ps[t])
             has0, has1 = _set_of(ps[t], q)
             kinds[t] = (
@@ -108,7 +174,8 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
                 "no_event" if has0 else
                 "event" if has1 else "empty"
             )
-        alphas.append(alpha)
+        alphas.append(float(np.dot(_weights(experts),
+                                   [e.alpha for e in experts])))
 
     scored = [k for k in kinds if k is not None]
     if len(covered) < 100 or not scored:
@@ -125,12 +192,35 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
     today_kind = next((k for k in reversed(kinds) if k is not None), None)
     q_now, p_now = emitted[max(emitted)] if emitted else (None, None)
 
+    # Per-regime accounting: marginal coverage can hide regime-conditional
+    # failure; name the regime where it does.
+    coverage_by_regime: dict[str, dict] | None = None
+    drifted_regimes: list[str] = []
+    if regimes is not None and covered_regime:
+        coverage_by_regime = {}
+        for name in sorted(set(covered_regime)):
+            hits = [c for c, g in zip(covered, covered_regime) if g == name]
+            k_cov = sum(hits)
+            lo, hi = _wilson(k_cov, len(hits))
+            coverage_by_regime[name] = {
+                "n": len(hits),
+                "coverage": round(k_cov / len(hits), 3),
+                "wilson95": [lo, hi],
+            }
+            if hi < (1.0 - SEAROOM_ALPHA) - 1e-9:
+                drifted_regimes.append(name)
+
+    w_now = _weights(experts)
     on_target = abs(coverage - (1.0 - SEAROOM_ALPHA)) <= 0.03
     verdict = (
         f"realized coverage {coverage:.1%} vs {1 - SEAROOM_ALPHA:.0%} target "
         + ("(guarantee holding)" if on_target else "(DRIFTED — read the caveats)")
         + f"; informative on {informative:.0%} of days"
         + (f" ({informative_250:.0%} over the last 250)" if informative_250 is not None else "")
+        + (
+            f"; REGIME LEAK: coverage below target inside {', '.join(drifted_regimes)}"
+            if drifted_regimes else ""
+        )
         + " — the rest of the time the honest statement is 'the record cannot rule either outcome out'"
     )
 
@@ -142,7 +232,7 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
         None: "no set emitted yet",
     }[today_kind]
 
-    return {
+    out = {
         "ok": True,
         "asof": df.index[-1].date().isoformat(),
         "today": {
@@ -160,6 +250,15 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
         "set_counts": counts,
         "informative_rate": round(informative, 3),
         "informative_rate_250d": round(informative_250, 3) if informative_250 is not None else None,
+        "experts": [
+            {
+                "gamma": e.gamma,
+                "weight": round(float(w), 3),
+                "coverage": (round(float(np.mean(e.covered)), 3) if e.covered else None),
+                "alpha_working": round(e.alpha, 4),
+            }
+            for e, w in zip(experts, w_now)
+        ],
         "verdict": verdict,
         "caveats": [
             f"label feedback is honestly delayed {_LAG}bd (the event window must close before "
@@ -169,15 +268,37 @@ def analyze(p_pub: pd.Series, y: pd.Series) -> dict:
             "— any single day's set can be wrong; ~10% of them are supposed to be",
             "a set of {event, no-event} is guaranteed AND useless — the informative rate is "
             "the honest headline number, not the coverage",
+            "AgACI: the step size gamma is not chosen by config but by exponentially-weighted "
+            "aggregation of several gamma experts under pinball loss (the proper score for a "
+            "quantile) — radii clipped at 1.0, which already contains both labels",
+            "per-regime coverage is ACCOUNTING, not a per-regime guarantee — ACI steers the "
+            "marginal rate; the regime table exists so conditional failure cannot hide in it",
             "finite-sample quantile rule ceil((n+1)(1-alpha))/n; warmup "
             f"{SEAROOM_WARMUP} resolved scores before the first set; deterministic, no RNG",
             "context layer over the Stack's published stream — never composite (doctrine)",
         ],
         "method": (
-            f"Adaptive Conformal Inference (Gibbs–Candès 2021) on the published fleet "
-            f"probability: nonconformity |y − p|, finite-sample quantile at working level "
-            f"alpha_t, alpha_(t+1) = alpha_t + {SEAROOM_GAMMA:g}(({SEAROOM_ALPHA:g}) − err_t), "
-            f"errors evaluated on resolution ({_LAG}bd delay). Target coverage "
-            f"{1 - SEAROOM_ALPHA:.0%}; sets over {{event, no-event}}."
+            f"Aggregated Adaptive Conformal Inference (Gibbs–Candès 2021; Zaffran et al. 2022) "
+            f"on the published fleet probability: nonconformity |y − p|; gamma experts "
+            f"{tuple(SEAROOM_GAMMAS)} each steering alpha_(t+1) = alpha_t + gamma(alpha* − err_t); "
+            f"radii aggregated by EWA (eta={SEAROOM_ETA:g}) under pinball loss at the "
+            f"{_TAU:.0%} level; errors evaluated on resolution ({_LAG}bd delay). Target "
+            f"coverage {1 - SEAROOM_ALPHA:.0%}; sets over {{event, no-event}}; per-regime "
+            f"coverage accounted with Wilson 95% intervals when the regime series is supplied."
         ),
     }
+    if coverage_by_regime is not None:
+        out["coverage_by_regime"] = coverage_by_regime
+        out["regime_leaks"] = drifted_regimes
+    return out
+
+
+def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score interval — honest small-n error bars for a proportion."""
+    if n <= 0:
+        return (0.0, 1.0)
+    p = k / n
+    denom = 1.0 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return (round(max(0.0, center - half), 3), round(min(1.0, center + half), 3))
