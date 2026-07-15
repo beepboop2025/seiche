@@ -1,10 +1,11 @@
+import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
 /** Minimal XY (non-time) SVG chart: the potential landscape, decay curves —
  *  things uPlot's date axis can't draw. Self-contained, theme-matched. */
 function XYChart({
-  xs, ys, height = 180, yLabel, vline, markers, color = "#7f95cc",
+  xs, ys, height = 180, yLabel, vline, markers, color = P.slate,
 }: {
   xs: number[]; ys: number[]; height?: number; yLabel?: string;
   vline?: { x: number; color: string; label: string } | null;
@@ -29,12 +30,12 @@ function XYChart({
       {yticks.map((t, i) => (
         <g key={`y${i}`}>
           <line x1={padL} x2={W - padR} y1={Y(t)} y2={Y(t)} stroke="rgba(233,233,237,0.07)" />
-          <text x={padL - 6} y={Y(t) + 3} fill="#75798c" fontSize={10} textAnchor="end"
+          <text x={padL - 6} y={Y(t) + 3} fill={P.faint} fontSize={10} textAnchor="end"
             fontFamily="Inter, sans-serif">{t.toFixed(Math.abs(yspan) < 5 ? 1 : 0)}</text>
         </g>
       ))}
       {xticks.map((t, i) => (
-        <text key={`x${i}`} x={X(t)} y={H - 8} fill="#75798c" fontSize={10} textAnchor="middle"
+        <text key={`x${i}`} x={X(t)} y={H - 8} fill={P.faint} fontSize={10} textAnchor="middle"
           fontFamily="Inter, sans-serif">{t.toFixed(Math.abs(xspan) < 5 ? 1 : 0)}</text>
       ))}
       {vline && vline.x >= xmin && vline.x <= xmax && (
@@ -53,7 +54,7 @@ function XYChart({
         </g>
       ))}
       {yLabel && (
-        <text x={12} y={padT + 10} fill="#75798c" fontSize={10} fontFamily="Inter, sans-serif">{yLabel}</text>
+        <text x={12} y={padT + 10} fill={P.faint} fontSize={10} fontFamily="Inter, sans-serif">{yLabel}</text>
       )}
     </svg>
   );
@@ -71,7 +72,7 @@ function BathymetryCard({ e }: { e: Any }) {
       ? [{
           x: fl.well_bp,
           y: Math.min(...curve.map((r: Any) => r[1])),
-          color: "#79c2ad", label: "well",
+          color: P.calm, label: "well",
         }]
       : [];
   return (
@@ -84,7 +85,7 @@ function BathymetryCard({ e }: { e: Any }) {
       </div>
       <XYChart
         xs={curve.map((r: Any) => r[0])} ys={curve.map((r: Any) => r[1])} yLabel="V(x)"
-        vline={{ x: 10, color: "#dd7a72", label: "event bin ≥10bp" }}
+        vline={{ x: 10, color: P.stress, label: "event bin ≥10bp" }}
         markers={wellMarker}
       />
       <div className="kv">
@@ -105,8 +106,8 @@ function BathymetryCard({ e }: { e: Any }) {
       <Chart
         rows={(e.series ?? []).map((r: Any) => [r[0], r[1], r[2]])}
         series={[
-          { label: "relaxation τ (bd)", color: "#b5abfc" },
-          { label: "entropy σ (nats/bd)", color: "#d99274", dash: [4, 3] },
+          { label: "relaxation τ (bd)", color: P.accentSoft },
+          { label: "entropy σ (nats/bd)", color: P.strain, dash: [4, 3] },
         ]}
       />
       {v.ok && (
@@ -143,7 +144,7 @@ function MerianCard({ e }: { e: Any }) {
           {(e.modes ?? []).map((m: Any, i: number) => (
             <tr key={i}>
               <td className="num">{m.period_bd != null ? `${fmt(m.period_bd, 0)}bd` : "non-osc"}</td>
-              <td style={{ color: m.direction === "growing" ? "#dd7a72" : undefined }}>{m.direction}</td>
+              <td style={{ color: m.direction === "growing" ? P.stress : undefined }}>{m.direction}</td>
               <td className="num">{m.efold_bd != null ? `${fmt(m.efold_bd, 0)}bd` : "—"}</td>
               <td className="num">{fmt((m.amp_share ?? 0) * 100, 0)}%</td>
               <td className="dimsmall">{m.label ?? ""}</td>
@@ -153,7 +154,7 @@ function MerianCard({ e }: { e: Any }) {
       </table>
       <Chart
         rows={e.rows ?? []}
-        series={[{ label: "dominant growth rate g*", color: "#d99274" }]}
+        series={[{ label: "dominant growth rate g*", color: P.strain }]}
         yLabel="ln|λ| /bd"
       />
       <div className="dimsmall">{(e.forecast_skill ?? {}).verdict}</div>
@@ -189,22 +190,22 @@ function GyreCard({ e }: { e: Any }) {
       </div>
       <XYChart
         xs={decay.map((d: Any) => d.h)} ys={decay.map((d: Any) => d.rho)}
-        yLabel="skill ρ by horizon (bd)" color="#9184d9" height={140}
+        yLabel="skill ρ by horizon (bd)" color={P.accent} height={140}
       />
       <table className="mini">
         <thead><tr><th>h (bd)</th>{decay.map((d: Any) => <th key={d.h} className="num">{d.h}</th>)}</tr></thead>
         <tbody>
           <tr><td>ρ</td>{decay.map((d: Any) => <td key={d.h} className="num">{fmt(d.rho, 2)}</td>)}</tr>
           <tr><td>MAE vs persistence</td>{decay.map((d: Any) => (
-            <td key={d.h} className="num" style={{ color: d.mae_ratio < 1 ? "#79c2ad" : undefined }}>{fmt(d.mae_ratio, 2)}</td>
+            <td key={d.h} className="num" style={{ color: d.mae_ratio < 1 ? P.calm : undefined }}>{fmt(d.mae_ratio, 2)}</td>
           ))}</tr>
         </tbody>
       </table>
       <div className="dimsmall">{det.verdict} · {nl.verdict}</div>
       <Chart
         rows={e.stability_rows ?? []}
-        series={[{ label: "local expansion multiplier |λ|", color: "#c99c50" }]}
-        refLine={{ value: 1.0, color: "#dd7a72", label: "expanding" }}
+        series={[{ label: "local expansion multiplier |λ|", color: P.gold }]}
+        refLine={{ value: 1.0, color: P.stress, label: "expanding" }}
       />
       {fc.point_bp != null && (
         <div className="dimsmall">
@@ -240,7 +241,7 @@ function RogueWaveCard({ e }: { e: Any }) {
           {(e.return_levels ?? []).map((r: Any) => (
             <tr key={r.years}>
               <td>{r.years}y</td>
-              <td className="num" style={{ color: r.bp > (e.sample_max_bp ?? Infinity) ? "#d99274" : undefined }}>
+              <td className="num" style={{ color: r.bp > (e.sample_max_bp ?? Infinity) ? P.strain : undefined }}>
                 {fmt(r.bp, 0)}bp</td>
               <td className="num dimsmall">{r.ci95 ? `${fmt(r.ci95[0], 0)}–${fmt(r.ci95[1], 0)}` : "—"}</td>
             </tr>
@@ -263,7 +264,7 @@ function RogueWaveCard({ e }: { e: Any }) {
       </table>
       <Chart
         rows={e.xi_rows ?? []}
-        series={[{ label: "tail shape ξ (annual expanding refits)", color: "#dd7a72" }]}
+        series={[{ label: "tail shape ξ (annual expanding refits)", color: P.stress }]}
       />
       <div className="dimsmall">{e.tail_verdict}</div>
       <details>
@@ -314,7 +315,7 @@ function MicroseismCard({ e }: { e: Any }) {
       </div>
       <Chart
         rows={e.branching_rows ?? []}
-        series={[{ label: "branching ratio n (criticality at 1.0)", color: "#dd7a72" }]}
+        series={[{ label: "branching ratio n (criticality at 1.0)", color: P.stress }]}
         yLabel="n"
       />
       <div className="dimsmall">{e.reading}</div>

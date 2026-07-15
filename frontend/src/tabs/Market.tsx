@@ -1,3 +1,4 @@
+import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
@@ -25,7 +26,7 @@ function TellCard({ t }: { t: Any }) {
           ))}
         </div>
       </div>
-      <Chart rows={t.series} series={[{ label: "tell", color: "#b5abfc" }]} refLine={{ value: 0, color: "#595d6c", label: "" }} />
+      <Chart rows={t.series} series={[{ label: "tell", color: P.accentSoft }]} refLine={{ value: 0, color: P.ghost, label: "" }} />
       <Method>{t.method}</Method>
     </div>
   );
@@ -71,7 +72,7 @@ function PlaybookCard({ p }: { p: Any }) {
                 const dim = c.low_confidence ? { opacity: 0.45 } : undefined;
                 return (
                   <>
-                    <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? "#79c2ad" : c.median < 0 ? "#dd7a72" : undefined }}
+                    <td key={h + "m"} className="num" style={{ ...dim, color: c.median > 0 ? P.calm : c.median < 0 ? P.stress : undefined }}
                         title={c.low_confidence ? "fewer than 8 non-overlapping windows — an anecdote, not a distribution" : undefined}>
                       {c.median > 0 ? "+" : ""}{fmt(c.median, 2)}
                     </td>

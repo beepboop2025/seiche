@@ -1,3 +1,4 @@
+import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
@@ -18,8 +19,8 @@ function RvCard({ e }: { e: Any }) {
       <Chart
         rows={e.series}
         series={[
-          { label: "pair proxy $B", color: "#9184d9" },
-          { label: "gross short $B", color: "#b5abfc" },
+          { label: "pair proxy $B", color: P.accent },
+          { label: "gross short $B", color: P.accentSoft },
         ]}
       />
       <table className="mini">
@@ -53,7 +54,7 @@ function CrowdingCard({ e }: { e: Any }) {
             <tr key={r.contract}>
               <td>{r.contract}</td>
               <td className="num">{r.lev_net_share_oi > 0 ? "+" : ""}{fmt(r.lev_net_share_oi, 2)}</td>
-              <td className="num" style={{ color: Math.abs(r.z) >= 2 ? "#dd7a72" : Math.abs(r.z) >= 1.3 ? "#c99c50" : undefined }}>{fmt(r.z, 2)}</td>
+              <td className="num" style={{ color: Math.abs(r.z) >= 2 ? P.stress : Math.abs(r.z) >= 1.3 ? P.gold : undefined }}>{fmt(r.z, 2)}</td>
               <td className="num">{fmt(r.pctl, 0)}</td>
             </tr>
           ))}
@@ -79,7 +80,7 @@ function WarehouseCard({ e }: { e: Any }) {
       </div>
       <div className="warehouse-row">
         <div className="warehouse-chart">
-          <Chart rows={e.series} series={[{ label: "dealer net UST $B", color: "#c99c50" }]} height={150} />
+          <Chart rows={e.series} series={[{ label: "dealer net UST $B", color: P.gold }]} height={150} />
         </div>
         <table className="mini" style={{ maxWidth: 380 }}>
           <thead><tr><th>bucket</th><th>net $B</th><th>pctl</th></tr></thead>
@@ -88,7 +89,7 @@ function WarehouseCard({ e }: { e: Any }) {
               <tr key={b.bucket}>
                 <td>{b.bucket}</td>
                 <td className="num">{fmt(b.net_b, 0)}</td>
-                <td className="num" style={{ color: b.pctl >= 95 ? "#dd7a72" : undefined }}>{fmt(b.pctl, 0)}</td>
+                <td className="num" style={{ color: b.pctl >= 95 ? P.stress : undefined }}>{fmt(b.pctl, 0)}</td>
               </tr>
             ))}
           </tbody>

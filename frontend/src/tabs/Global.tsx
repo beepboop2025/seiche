@@ -1,13 +1,14 @@
+import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method } from "../lib";
 
 const HARBOR_COLORS: Record<string, string> = {
-  "EURO AREA": "#b5abfc",
-  CHINA: "#dd7a72",
-  INDIA: "#79c2ad",
-  JAPAN: "#7f95cc",
-  KOREA: "#d9b274",
-  "US (EFFR)": "#75798c",
+  "EURO AREA": P.accentSoft,
+  CHINA: P.stress,
+  INDIA: P.calm,
+  JAPAN: P.slate,
+  KOREA: P.amber,
+  "US (EFFR)": P.faint,
 };
 
 function HarborsCard({ h }: { h: Any }) {
@@ -18,13 +19,13 @@ function HarborsCard({ h }: { h: Any }) {
   );
   const rateSeries = (h.rate_labels ?? []).map((l: string) => ({
     label: l,
-    color: HARBOR_COLORS[l] ?? "#75798c",
+    color: HARBOR_COLORS[l] ?? P.faint,
     dash: l === "US (EFFR)" ? [4, 4] : undefined,
     pointsOnly: monthly.has(l),
   }));
   const fxSeries = (h.fx_labels ?? []).map((l: string) => ({
     label: l,
-    color: HARBOR_COLORS[l] ?? "#75798c",
+    color: HARBOR_COLORS[l] ?? P.faint,
   }));
   return (
     <div className="card span12">
@@ -40,24 +41,24 @@ function HarborsCard({ h }: { h: Any }) {
           <div className={`basin ${(b.stress ?? 0) >= 80 ? "hot" : ""}`} key={b.harbor}>
             <div className="name">{b.harbor}</div>
             <div className="rate">{b.rate ? `${fmt(b.rate.last_pct, 2)}%` : "—"}</div>
-            <div className="z" style={{ color: (b.stress ?? 0) >= 80 ? "#d99274" : "#75798c" }}>
+            <div className="z" style={{ color: (b.stress ?? 0) >= 80 ? P.strain : P.faint }}>
               {b.stress != null ? `stress ${fmt(b.stress, 0)}` : "accruing"}
               {b.regime ? ` · ${b.regime}` : ""} · {b.rate?.label ?? "rate pending"}
             </div>
             {b.rate2 && (
-              <div className="z" style={{ color: "#75798c" }}>
+              <div className="z" style={{ color: P.faint }}>
                 {fmt(b.rate2.last_pct, 2)}% {b.rate2.label}
               </div>
             )}
             {b.fx && (
-              <div className="z" style={{ color: "#595d6c" }}>
+              <div className="z" style={{ color: P.ghost }}>
                 {b.fx.label} {fmt(b.fx.last, 2)}
                 {b.fx.chg_60d_pct != null
                   ? ` · 60d ${b.fx.chg_60d_pct > 0 ? "+" : ""}${fmt(b.fx.chg_60d_pct, 1)}%`
                   : ""}
               </div>
             )}
-            <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+            <div className="asof" style={{ color: P.ghost, fontSize: 10 }}>
               {b.rate?.asof ?? b.fx?.asof} · {b.cadence}
             </div>
           </div>
@@ -74,7 +75,7 @@ function HarborsCard({ h }: { h: Any }) {
             <Chart
               rows={h.fx_rows}
               series={fxSeries}
-              refLine={{ value: 100, color: "#595d6c", label: "1y ago" }}
+              refLine={{ value: 100, color: P.ghost, label: "1y ago" }}
               yLabel="local per USD, 1y ago = 100 (up = weaker)"
               height={180}
             />
@@ -103,20 +104,20 @@ function MooringsCard({ m }: { m: Any }) {
           <div className={`basin ${p.flag ? "hot" : ""}`} key={p.symbol}>
             <div className="name">{p.symbol}</div>
             <div className="rate">{p.dev_bp == null ? "—" : `${p.dev_bp > 0 ? "+" : ""}${fmt(p.dev_bp, 1)}bp`}</div>
-            <div className="z" style={{ color: "#75798c" }}>${fmt(p.circulating_b, 1)}B circulating</div>
+            <div className="z" style={{ color: P.faint }}>${fmt(p.circulating_b, 1)}B circulating</div>
           </div>
         ))}
         <div className="basin">
           <div className="name">OFFSHORE $ DEMAND</div>
           <div className="rate">${fmt(d.total_b, 0)}B</div>
-          <div className="z" style={{ color: d.draining ? "#d99274" : "#75798c" }}>
+          <div className="z" style={{ color: d.draining ? P.strain : P.faint }}>
             {d.chg_30d_pct > 0 ? "+" : ""}{fmt(d.chg_30d_pct, 1)}%/30d ({fmt(d.chg_30d_b, 1)}B)
           </div>
         </div>
         <div className="basin">
           <div className="name">24/7 CANARY (BTC)</div>
           <div className="rate">${fmt(c.btc_last, 0)}</div>
-          <div className="z" style={{ color: Math.abs(c.btc_rv10_z ?? 0) >= 1.5 ? "#d99274" : "#75798c" }}>
+          <div className="z" style={{ color: Math.abs(c.btc_rv10_z ?? 0) >= 1.5 ? P.strain : P.faint }}>
             rv10 {fmt(c.btc_rv10_pct, 0)}% (z {fmt(c.btc_rv10_z, 2)}) · max wknd move {fmt(c.max_weekend_move_4w_pct, 1)}%
           </div>
         </div>
@@ -124,13 +125,13 @@ function MooringsCard({ m }: { m: Any }) {
       <div className="warehouse-row">
         <div className="warehouse-chart">
           {u.series?.length > 0 && (
-            <Chart rows={u.series} series={[{ label: "USDT peg deviation bp", color: "#79c2ad" }]}
-                   refLine={{ value: 0, color: "#595d6c", label: "" }} height={140} />
+            <Chart rows={u.series} series={[{ label: "USDT peg deviation bp", color: P.calm }]}
+                   refLine={{ value: 0, color: P.ghost, label: "" }} height={140} />
           )}
         </div>
         <div className="warehouse-chart">
           {d.series?.length > 0 && (
-            <Chart rows={d.series} series={[{ label: "total stablecoins $B", color: "#b5abfc" }]} height={140} />
+            <Chart rows={d.series} series={[{ label: "total stablecoins $B", color: P.accentSoft }]} height={140} />
           )}
         </div>
       </div>
@@ -157,19 +158,19 @@ function FarBasinCard({ f }: { f: Any }) {
             <div className="basin" key={k}>
               <div className="name">{c.label?.toUpperCase()}</div>
               <div className="rate">{fmt(c.last, 2)}</div>
-              <div className="z" style={{ color: (c.chg_vs_prior10 ?? 0) > 0 ? "#d99274" : "#75798c" }}>
+              <div className="z" style={{ color: (c.chg_vs_prior10 ?? 0) > 0 ? P.strain : P.faint }}>
                 {c.chg_vs_prior10 != null ? `${c.chg_vs_prior10 > 0 ? "+" : ""}${fmt(c.chg_vs_prior10, 2)} vs prior 10` : c.unit} · {c.n_obs} obs
               </div>
-              <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>{c.asof}</div>
+              <div className="asof" style={{ color: P.ghost, fontSize: 10 }}>{c.asof}</div>
             </div>
           ) : null
         )}
         <div className="basin">
           <div className="name">MODEL STATUS</div>
-          <div className="rate" style={{ color: st.backtestable ? "#79c2ad" : "#d99274", fontSize: 14 }}>
+          <div className="rate" style={{ color: st.backtestable ? P.calm : P.strain, fontSize: 14 }}>
             {st.backtestable ? "CLEARED" : "QUARANTINED"}
           </div>
-          <div className="z" style={{ color: "#75798c" }}>{st.n_obs}/{st.min_obs} daily obs accrued</div>
+          <div className="z" style={{ color: P.faint }}>{st.n_obs}/{st.min_obs} daily obs accrued</div>
         </div>
       </div>
       {(f.top_targets ?? []).length > 0 && (
@@ -180,7 +181,7 @@ function FarBasinCard({ f }: { f: Any }) {
               <tr key={i}>
                 <td>{t.term}</td>
                 <td className="dimsmall">{t.domain}</td>
-                <td className="num" style={{ color: (t.threat ?? 0) >= 2 ? "#dd7a72" : undefined }}>{fmt(t.threat, 2)}</td>
+                <td className="num" style={{ color: (t.threat ?? 0) >= 2 ? P.stress : undefined }}>{fmt(t.threat, 2)}</td>
                 <td className="dimsmall">{t.is_new ? "NEW" : ""}</td>
               </tr>
             ))}
@@ -229,7 +230,7 @@ function ThermohalineCard({ t }: { t: Any }) {
       </div>
       <Chart
         rows={t.yoy_rows ?? []}
-        series={[{ label: "offshore USD credit growth, yoy %", color: "#7f95cc" }]}
+        series={[{ label: "offshore USD credit growth, yoy %", color: P.slate }]}
         yLabel="% yoy"
       />
       <table className="mini">
@@ -238,7 +239,7 @@ function ThermohalineCard({ t }: { t: Any }) {
           {(t.credit_gaps ?? []).map((g: Any) => (
             <tr key={g.economy}>
               <td>{g.economy}</td>
-              <td className="num" style={{ color: g.gap_pp > 0 ? "#d99274" : undefined }}>
+              <td className="num" style={{ color: g.gap_pp > 0 ? P.strain : undefined }}>
                 {g.gap_pp > 0 ? "+" : ""}{fmt(g.gap_pp, 1)}pp</td>
               <td className="num">{fmt(g.pctl, 0)}th</td>
               <td className="dimsmall">{g.reading}</td>
@@ -278,36 +279,36 @@ function StraitCard({ headline, tails, harbors }: { headline: Any; tails: Any; h
       <div className="basingrid">
         <div className={`basin ${dialHot ? "hot" : ""}`}>
           <div className="name">US · THE DIAL</div>
-          <div className="rate" style={{ color: dialHot ? "#d99274" : undefined }}>
+          <div className="rate" style={{ color: dialHot ? P.strain : undefined }}>
             {dialBp == null ? "—" : `${dialBp > 0 ? "+" : ""}${fmt(dialBp, 0)}bp`}
           </div>
-          <div className="z" style={{ color: "#75798c" }}>
+          <div className="z" style={{ color: P.faint }}>
             SOFR minus IORB · {dialBp == null ? "pending" : dialBp > 0 ? "someone paid up for overnight dollars" : "soft floor, calm"}
           </div>
-          <div className="z" style={{ color: "#595d6c" }}>
+          <div className="z" style={{ color: P.ghost }}>
             SOFR {fmt(headline?.sofr_pct?.value, 2)}% · IORB {fmt(headline?.iorb_pct?.value, 2)}%
           </div>
-          <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+          <div className="asof" style={{ color: P.ghost, fontSize: 10 }}>
             {headline?.sofr_pct?.asof ?? ""} · daily
           </div>
         </div>
         <div className={`basin ${(india?.stress ?? 0) >= 80 ? "hot" : ""}`}>
           <div className="name">INDIA · THE WATER LINE</div>
           <div className="rate">{india?.rate ? `${fmt(india.rate.last_pct, 2)}%` : "—"}</div>
-          <div className="z" style={{ color: "#75798c" }}>
+          <div className="z" style={{ color: P.faint }}>
             {india?.rate?.label ?? "rate pending"}
             {india?.stress != null ? ` · stress ${fmt(india.stress, 0)}` : ""}
             {india?.regime ? ` · ${india.regime}` : ""}
           </div>
           {fx && (
-            <div className="z" style={{ color: rupeeWeaker ? "#d99274" : "#595d6c" }}>
+            <div className="z" style={{ color: rupeeWeaker ? P.strain : P.ghost }}>
               {fx.label} {fmt(fx.last, 2)}
               {fx.chg_60d_pct != null
                 ? ` · 60d ${fx.chg_60d_pct > 0 ? "+" : ""}${fmt(fx.chg_60d_pct, 1)}% ${rupeeWeaker ? "(weaker)" : "(stronger)"}`
                 : ""}
             </div>
           )}
-          <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>
+          <div className="asof" style={{ color: P.ghost, fontSize: 10 }}>
             {india?.rate?.asof ?? fx?.asof ?? ""} · {india?.cadence ?? ""}
           </div>
         </div>
@@ -357,23 +358,23 @@ export default function Global({ snap }: { snap: Any }) {
             <div className={`basin ${Math.abs(b.z) >= 1.5 ? "hot" : ""}`} key={b.basin}>
               <div className="name">{b.basin}</div>
               <div className="rate">{fmt(b.value_bp, 1)}bp</div>
-              <div className="z" style={{ color: Math.abs(b.z) >= 1.5 ? "#d99274" : "#75798c" }}>
+              <div className="z" style={{ color: Math.abs(b.z) >= 1.5 ? P.strain : P.faint }}>
                 z {fmt(b.z, 2)} · {b.anchor}
               </div>
-              <div className="asof" style={{ color: "#595d6c", fontSize: 10 }}>{b.asof}</div>
+              <div className="asof" style={{ color: P.ghost, fontSize: 10 }}>{b.asof}</div>
             </div>
           ))}
           <div className="basin">
             <div className="name">DOLLAR (broad)</div>
             <div className="rate">{fmt(ch.dollar_idx, 1)}</div>
-            <div className="z" style={{ color: Math.abs(ch.dollar_idx_z ?? 0) >= 1.5 ? "#d99274" : "#75798c" }}>
+            <div className="z" style={{ color: Math.abs(ch.dollar_idx_z ?? 0) >= 1.5 ? P.strain : P.faint }}>
               z {fmt(ch.dollar_idx_z, 2)} · DTWEXBGS
             </div>
           </div>
           <div className="basin">
             <div className="name">FOREIGN OFFICIAL RRP</div>
             <div className="rate">${fmt(ch.foreign_rrp_b, 0)}B</div>
-            <div className="z" style={{ color: (ch.foreign_rrp_chg_13w_b ?? 0) < -50 ? "#d99274" : "#75798c" }}>
+            <div className="z" style={{ color: (ch.foreign_rrp_chg_13w_b ?? 0) < -50 ? P.strain : P.faint }}>
               Δ13w {fmt(ch.foreign_rrp_chg_13w_b, 0)}B · the offshore dollar pool
             </div>
           </div>
@@ -388,7 +389,7 @@ export default function Global({ snap }: { snap: Any }) {
           · now {fmt(tide.absorption, 3)} ({fmt(tide.pctl, 0)}th pctl of own history, {tide.n_series} series)
         </div>
         {tide.series?.length ? (
-          <Chart rows={tide.series} series={[{ label: "tide (top-2 PC share)", color: "#b5abfc" }]} />
+          <Chart rows={tide.series} series={[{ label: "tide (top-2 PC share)", color: P.accentSoft }]} />
         ) : (
           <div className="sub">insufficient overlapping history yet — the tide needs ~8 months of panel</div>
         )}
@@ -405,7 +406,7 @@ export default function Global({ snap }: { snap: Any }) {
               <tr key={i}>
                 <td>{ed.lead}</td><td>→</td><td>{ed.follows}</td>
                 <td className="num">{ed.lag_d}d</td>
-                <td className="num" style={{ color: Math.abs(ed.corr) >= 0.4 ? "#d99274" : undefined }}>{fmt(ed.corr, 2)}</td>
+                <td className="num" style={{ color: Math.abs(ed.corr) >= 0.4 ? P.strain : undefined }}>{fmt(ed.corr, 2)}</td>
               </tr>
             ))}
           </tbody>

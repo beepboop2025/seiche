@@ -1,3 +1,4 @@
+import { P } from "./palette";
 import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -145,15 +146,15 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       legend: { show: series.length > 1 },
       axes: [
         {
-          stroke: "#75798c",
-          grid: { stroke: "rgba(233,233,237,0.07)" },
-          ticks: { stroke: "rgba(233,233,237,0.07)" },
+          stroke: P.faint,
+          grid: { stroke: P.grid },
+          ticks: { stroke: P.grid },
           font: "10px Inter, sans-serif",
         },
         {
-          stroke: "#75798c",
-          grid: { stroke: "rgba(233,233,237,0.07)" },
-          ticks: { stroke: "rgba(233,233,237,0.07)" },
+          stroke: P.faint,
+          grid: { stroke: P.grid },
+          ticks: { stroke: P.grid },
           font: "10px Inter, sans-serif",
           label: yLabel,
           labelFont: "10px Inter, sans-serif",

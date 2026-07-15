@@ -1,3 +1,4 @@
+import { P } from "../palette";
 /**
  * BOARD — The Dive.
  *
@@ -118,7 +119,7 @@ function TellBracket({ tell }: { tell: Any }) {
           <div className="title">The Tell — surface vs. depth</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4 }}>
             <span className="value"><Num v={tell.tell} d={0} signed /></span>
-            <span style={{ fontSize: 13, color: "#b2b6ca" }}>{tell.reading}</span>
+            <span style={{ fontSize: 13, color: P.ink }}>{tell.reading}</span>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 2 }}>
             plumbing {ord(tell.plumbing_pctl)} pctl − market {ord(tell.market_pctl)} pctl · the gap IS the thesis · asof {tell.asof}
@@ -186,7 +187,7 @@ function WeatherMini({ e }: { e: Any }) {
   const dot = (i: number) => (i === 0 ? "var(--strain)" : "var(--erosion)");
   return (
     <div>
-      <div style={{ fontSize: 12, color: "#b2b6ca" }}>Liquidity Weather — six-week reserve path</div>
+      <div style={{ fontSize: 12, color: P.ink }}>Liquidity Weather — six-week reserve path</div>
       <svg viewBox="0 0 520 148" style={{ width: "100%", height: "auto", display: "block", marginTop: 8, overflow: "visible" }}>
         {[8, 68, 128].map((y) => <line key={y} x1={40} x2={514} y1={y} y2={y} stroke="rgba(233,233,237,0.08)" />)}
         <text x={36} y={12} textAnchor="end" fill="var(--faint)" fontSize={9.5}>${Math.round(w.vmax)}B</text>
@@ -226,7 +227,7 @@ function KinkMini({ e, spreadBp }: { e: Any; spreadBp: number | null }) {
     : `Reserves sit above the estimated kink — the basin has depth to spare, and settlement days should price as noise.`;
   return (
     <div>
-      <div style={{ fontSize: 12, color: "#b2b6ca" }}>Kink Engine — reserve scarcity, located</div>
+      <div style={{ fontSize: 12, color: P.ink }}>Kink Engine — reserve scarcity, located</div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 10 }}>
         <span style={{ fontSize: 34, fontWeight: 500, letterSpacing: "-0.02em", color: below ? "var(--erosion)" : "var(--calm)" }}>
           ${fmt(Math.abs(e.distance_b), 0)}B
@@ -240,7 +241,7 @@ function KinkMini({ e, spreadBp }: { e: Any; spreadBp: number | null }) {
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--ghost)" }}>
         <span>drained</span>
-        <span style={{ color: "#cfd3e5" }}>reserves ${fmt(e.current_reserves_b, 0)}B</span>
+        <span style={{ color: P.inkBright }}>reserves ${fmt(e.current_reserves_b, 0)}B</span>
         <span style={{ color: "var(--stress)" }}>kink ${fmt(e.kink_reserves_b, 0)}B</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 18px", marginTop: 14 }}>
@@ -270,7 +271,7 @@ function Plumbing({ weather, kink, tails }: { weather: Any; kink: Any; tails: An
 function BigCell({ title, big, bigColor, sub, size = 26 }: { title: string; big: any; bigColor?: string; sub: string; size?: number }) {
   return (
     <div>
-      <div style={{ fontSize: 12, color: "#b2b6ca" }}>{title}</div>
+      <div style={{ fontSize: 12, color: P.ink }}>{title}</div>
       <div style={{ fontSize: size, fontWeight: 500, color: bigColor ?? "var(--text)", marginTop: 6 }}>{big}</div>
       <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 2, lineHeight: 1.5 }}>{sub}</div>
     </div>

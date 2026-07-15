@@ -31,6 +31,15 @@
   --strain: #d99274;
   --stress: #dd7a72;
 
+  /* chart-only extensions — series colours that must stay distinct from the
+     status ramp; read at runtime by src/palette.ts for canvas/SVG marks */
+  --chart-gold: #c99c50;
+  --chart-slate: #7f95cc;
+  --chart-amber: #d9b274;
+  --chart-ink: #b2b6ca;
+  --chart-ink-bright: #cfd3e5;
+  --chart-grid: rgba(233, 233, 237, 0.07);
+
   /* THE accent — the product blurple */
   --accent: #9184d9;
   --accent-bright: #d2cefd;   /* accent-300: text-on-dark accent */

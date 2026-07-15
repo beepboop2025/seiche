@@ -1,4 +1,5 @@
 /** Shared primitives for all tabs. */
+import { P } from "./palette";
 import { useEffect, useRef, useState } from "react";
 
 export type Any = Record<string, any>;
@@ -78,7 +79,7 @@ export function Decomp({ composite }: { composite: Any }) {
             <div
               style={{
                 width: `${d.score ?? 0}%`,
-                background: d.status === "DEAD" ? "#dd7a72" : undefined,
+                background: d.status === "DEAD" ? P.stress : undefined,
               }}
             />
           </div>
