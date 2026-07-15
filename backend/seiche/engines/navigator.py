@@ -50,14 +50,30 @@ Your ONLY world is the CONTEXT PACK (the live board of a dollar-funding
 terminal). Commit to a probability that a funding event — SOFR−IORB popping
 ≥ 10bp over its trailing 5-day median — occurs within the next 5 business days.
 
+Reason at TWO resolutions before you commit (this separation is required; a
+single blended number reasons worse — Nexus, arXiv:2605.14389):
+- MACRO: the broad trajectory over the next ~6 weeks. Where is the funding
+  system heading — reserves draining toward the kink, damping eroding, tails
+  fattening — independent of any single day? Give p_macro, the chance the
+  regime is stress-prone over that horizon.
+- MICRO: the immediate 5-day catalysts. Name the specific forcing events in
+  the window — settlement humps, auction supply, quarter/month-end,
+  calendar crunch — that could pop the spread NOW. Give p_micro for the 5bd.
+- SYNTHESIS: weigh the two. The macro sets the baseline the micro is read
+  against; a benign macro discounts a lone catalyst, a fragile macro amplifies
+  it. Commit p_event_5bd and justify how the two views were weighed.
+
 Rules:
 - Use the board: composite, tails, kink runway, weather crunch windows,
   calendar distances, Swell curve, Stack members, resonance/undertow damping.
-- Cite at least two engines with their as-of dates in your rationale.
+- Cite at least two engines with their as-of dates in the rationale.
 - The historical base rate is roughly 2-6% per 5-day window; deviate from it
   only for reasons visible on the board.
 - Answer with STRICT JSON only, no prose outside it:
-  {"p_event_5bd": 0.07, "rationale": "<= 3 sentences, engines cited"}"""
+  {"macro": {"trajectory": "<=2 sentences", "p_macro": 0.15},
+   "micro": {"catalysts": ["...", "..."], "p_micro": 0.06},
+   "p_event_5bd": 0.07,
+   "rationale": "<=3 sentences: engines cited + how macro/micro were weighed"}"""
 
 
 def build_messages(pack: dict) -> list[dict]:
@@ -67,9 +83,18 @@ def build_messages(pack: dict) -> list[dict]:
     ]
 
 
+def _prob(v) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and 0.0 <= float(v) <= 1.0 else None
+
+
 def parse_commitment(text: str | None) -> dict | None:
-    """Strict-ish JSON extraction: accepts a bare object or one inside a
-    code fence; rejects anything without a usable probability."""
+    """Extract a dual-resolution commitment (or the legacy flat form).
+
+    The SCORED number is always p_event_5bd. macro/micro are recorded for
+    transparency when present, but a valid p_event_5bd + rationale is all that
+    is required, so older flat replies and models that skip the decomposition
+    still parse (backward compatible) rather than becoming a FAULT.
+    """
     if not text:
         return None
     m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -79,11 +104,28 @@ def parse_commitment(text: str | None) -> dict | None:
         obj = json.loads(m.group(0))
     except json.JSONDecodeError:
         return None
-    p = obj.get("p_event_5bd")
-    if not isinstance(p, (int, float)) or not (0.0 <= float(p) <= 1.0):
+    p = _prob(obj.get("p_event_5bd"))
+    if p is None:
         return None
-    rationale = str(obj.get("rationale") or "").strip()[:600]
-    return {"p_event_5bd": round(float(p), 3), "rationale": rationale}
+    out = {"p_event_5bd": round(p, 3),
+           "rationale": str(obj.get("rationale") or "").strip()[:600]}
+
+    macro = obj.get("macro")
+    if isinstance(macro, dict):
+        pm = _prob(macro.get("p_macro"))
+        out["macro"] = {
+            "trajectory": str(macro.get("trajectory") or "").strip()[:400],
+            "p_macro": round(pm, 3) if pm is not None else None,
+        }
+    micro = obj.get("micro")
+    if isinstance(micro, dict):
+        pmi = _prob(micro.get("p_micro"))
+        cats = micro.get("catalysts")
+        out["micro"] = {
+            "catalysts": [str(c).strip()[:120] for c in cats][:6] if isinstance(cats, list) else [],
+            "p_micro": round(pmi, 3) if pmi is not None else None,
+        }
+    return out
 
 
 async def commit(pack: dict, asof: str, llm=None) -> dict:
@@ -121,13 +163,23 @@ async def commit(pack: dict, asof: str, llm=None) -> dict:
         "caveats": [
             "an LLM member cannot be backtested (it has read the history) — the forward record below is its ONLY evidence",
             "one commitment per data-day; re-running a snapshot returns the cached commitment unchanged",
+            "dual-resolution reasoning (macro trajectory + micro catalysts) shapes the "
+            "commitment; only the synthesized p_event_5bd is scored — the sub-views are "
+            "shown for transparency, never separately weighted",
         ],
         "method": (
-            "context-pack-grounded LLM commitment, strict-JSON, cached per data-day; "
-            "scored forward-only against realized pops (shared PROOF definition) once "
-            f"each {BACKTEST_EVENT_FWD_D}bd window closes"
+            "context-pack-grounded dual-resolution LLM commitment (macro 6wk trajectory "
+            "+ micro 5bd catalysts → synthesis; Nexus arXiv:2605.14389, WITHOUT its "
+            "backtest-calibration agent — that would be look-ahead for an LLM that has "
+            "read the history), strict-JSON, cached per data-day; scored forward-only "
+            f"against realized pops (shared PROOF definition) once each "
+            f"{BACKTEST_EVENT_FWD_D}bd window closes"
         ),
     }
+    if "macro" in parsed:
+        record["macro"] = parsed["macro"]
+    if "micro" in parsed:
+        record["micro"] = parsed["micro"]
     store.save_blob(key, record)
     return record
 

@@ -759,13 +759,41 @@ def test_undertow_unresolved_pops_do_not_inflate_recovery(rng):
 
 def test_navigator_parses_and_bounds_commitments():
     from seiche.engines import navigator
+    # legacy flat form still parses (backward compatible) and carries no sub-views
     good = navigator.parse_commitment('{"p_event_5bd": 0.07, "rationale": "tails calm (2026-07-07); kink runway wide"}')
-    assert good == {"p_event_5bd": 0.07, "rationale": "tails calm (2026-07-07); kink runway wide"}
+    assert good["p_event_5bd"] == 0.07 and "macro" not in good and "micro" not in good
     fenced = navigator.parse_commitment('```json\n{"p_event_5bd": 0.5, "rationale": "x"}\n```')
     assert fenced is not None and fenced["p_event_5bd"] == 0.5
     assert navigator.parse_commitment('{"p_event_5bd": 1.7, "rationale": "overconfident"}') is None
     assert navigator.parse_commitment("the vibes feel risky, maybe 40%?") is None
     assert navigator.parse_commitment(None) is None
+
+
+def test_navigator_dual_resolution_commitment():
+    """The Nexus decomposition: macro + micro sub-views are captured, but only
+    the synthesized p_event_5bd is the scored number."""
+    from seiche.engines import navigator
+    reply = ('{"macro": {"trajectory": "reserves draining toward the kink", "p_macro": 0.20},'
+             ' "micro": {"catalysts": ["month-end", "7yr auction settle"], "p_micro": 0.06},'
+             ' "p_event_5bd": 0.09,'
+             ' "rationale": "kink runway narrowing (2026-07-07); micro humps modest"}')
+    r = navigator.parse_commitment(reply)
+    assert r["p_event_5bd"] == 0.09  # the scored number is the synthesis
+    assert r["macro"]["p_macro"] == 0.20
+    assert r["micro"]["p_micro"] == 0.06
+    assert r["micro"]["catalysts"] == ["month-end", "7yr auction settle"]
+
+
+def test_navigator_dual_resolution_needs_only_synthesis_to_be_valid():
+    """A malformed macro/micro block must not sink an otherwise-valid
+    commitment — the synthesized probability is what is required."""
+    from seiche.engines import navigator
+    r = navigator.parse_commitment(
+        '{"macro": "not an object", "p_event_5bd": 0.05, "rationale": "ok"}')
+    assert r is not None and r["p_event_5bd"] == 0.05 and "macro" not in r
+    # but a missing/invalid p_event_5bd is still a FAULT even with good sub-views
+    assert navigator.parse_commitment(
+        '{"macro": {"p_macro": 0.2}, "micro": {"p_micro": 0.1}, "rationale": "no synthesis"}') is None
 
 
 def test_navigator_commits_once_per_day(rng, tmp_path, monkeypatch):
