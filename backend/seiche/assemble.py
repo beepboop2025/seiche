@@ -61,6 +61,7 @@ from seiche.engines import echo as eng_echo
 from seiche.engines import farbasin as eng_farbasin
 from seiche.engines import gyre as eng_gyre
 from seiche.engines import harbors as eng_harbors
+from seiche.engines import spillover as eng_spillover
 from seiche.engines import history as eng_history
 from seiche.engines import markov as eng_markov
 from seiche.engines import montecarlo as eng_montecarlo
@@ -465,6 +466,22 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         },
         effr=_pts(fred_s, "EFFR"),
     ))
+
+    # --- Spillover (Diebold-Yilmaz directional connectedness across harbors) ---
+    # Daily nodes only: daily-cadence anchor rates + the H.10 FX legs (daily even
+    # where the local RATE is a monthly OECD mirror). Monthly rates are excluded
+    # from the VAR by construction, never interpolated to pad the panel.
+    run("spillover", lambda: eng_spillover.analyze({
+        "US·rate": _pts(fred_s, "EFFR"),
+        "EUR·rate": _pts(ecb_s, "ESTR"),
+        "CN·rate": _pts(cm_s, "SHIBOR_ON"),
+        "JP·rate": _pts(src.get("boj", {}), "TONA"),
+        "EUR·fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
+        "CNY·fx": _pts(fred_s, "CNY"),
+        "JPY·fx": _pts(fred_s, "JPY"),
+        "INR·fx": _pts(fred_s, "INR"),
+        "KRW·fx": _pts(fred_s, "KRW"),
+    }))
 
     # --- Station-Keeping (maneuver detection) ---
     run("stationkeeping", lambda: eng_stationkeeping.analyze(
