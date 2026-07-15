@@ -1,9 +1,13 @@
 import { useEffect, useState, lazy, Suspense } from "react";
+import { flushSync } from "react-dom";
+import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
 import { Any, fmt } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import { Command } from "./commands";
+import Basin from "./Basin";
+import Descent, { shouldDescend } from "./Descent";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
@@ -47,10 +51,23 @@ export default function App() {
   const [live, setLive] = useState(false);
   const [tab, setTab] = useState<Tab>(hashToTab());
   const [palette, setPalette] = useState(false);
+  const [descending, setDescending] = useState(shouldDescend);
+
+  // Tab switches ride the View Transitions API where it exists: the old view
+  // cross-dissolves into the new one on the compositor. Falls back to the
+  // plain state change everywhere else.
+  const switchTab = (t: Tab) => {
+    const doc = document as Any;
+    if (doc.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      doc.startViewTransition(() => flushSync(() => setTab(t)));
+    } else {
+      setTab(t);
+    }
+  };
 
   const goTab = (t: Tab, sub?: string) => {
     window.location.hash = sub ? `${t.toLowerCase()}/${sub}` : t.toLowerCase();
-    setTab(t);
+    switchTab(t);
   };
 
   const onCommand = (cmd: Command) => {
@@ -87,9 +104,20 @@ export default function App() {
   useEffect(() => {
     load();
     const t = setInterval(load, 5 * 60 * 1000);
-    const onHash = () => setTab(hashToTab());
+    const onHash = () => switchTab(hashToTab());
     window.addEventListener("hashchange", onHash);
     return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
+  }, []);
+
+  // Momentum scroll: Lenis wraps native scroll (sticky, anchors and a11y keep
+  // working) and gives the page its water weight. Reduced motion opts out.
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 0.9 });
+    let raf = 0;
+    const loop = (time: number) => { lenis.raf(time); raf = requestAnimationFrame(loop); };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); lenis.destroy(); };
   }, []);
 
   // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs.
@@ -135,8 +163,18 @@ export default function App() {
 
   const c = snap.engines?.composite ?? {};
 
+  if (descending) {
+    return (
+      <>
+        <Basin value={c.value ?? null} regime={c.regime ?? null} />
+        <Descent snap={snap} onDone={() => setDescending(false)} />
+      </>
+    );
+  }
+
   return (
     <div className="app">
+      <Basin value={c.value ?? null} regime={c.regime ?? null} />
       <div className="masthead">
         <div className="wordmark">SEI<span>CHE</span></div>
         <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
@@ -158,7 +196,7 @@ export default function App() {
             key={t}
             href={`#${t.toLowerCase()}`}
             className={t === tab ? "active" : ""}
-            onClick={() => setTab(t)}
+            onClick={(e) => { e.preventDefault(); goTab(t); }}
           >
             {t}
           </a>

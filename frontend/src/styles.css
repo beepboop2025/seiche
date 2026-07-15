@@ -612,3 +612,128 @@ table.mini tr:hover td { background: rgba(233, 233, 237, 0.03); }
   font-size: 9.5px; color: var(--ghost);
   background: var(--rule) no-repeat top / 100% 1px;
 }
+
+/* ============================ THE LIVING BASIN ============================ */
+/* One fixed canvas behind everything: a water field whose speed, chop and
+   temperature are driven by the live composite reading. Negative z-index
+   puts it between the page ground and the content; panels stay opaque so
+   data reads over still water. */
+.basin-field {
+  position: fixed; inset: 0; z-index: -1;
+  width: 100vw; height: 100vh;
+  opacity: 0.6;
+}
+
+/* ============================ SPRING FABRIC =============================== */
+/* One real spring curve (generated damped oscillation) used everywhere a
+   thing responds to the hand. transform/opacity only: compositor-safe. */
+:root {
+  --spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%,
+    1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%,
+    1.129 32.8%, 1.051 39.6%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%,
+    0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1);
+}
+
+.card {
+  transition: transform 0.5s var(--spring), border-color 0.3s var(--ease),
+              box-shadow 0.5s var(--spring);
+}
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-deep);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+.tabs a { transition: color .15s var(--ease), transform 0.45s var(--spring); }
+.tabs a:hover { transform: translateY(-1px); }
+.tabs a:active { transform: translateY(0); transition-duration: 0.1s; }
+.regime, .chip, .evtag, .tellchip {
+  transition: transform 0.45s var(--spring), box-shadow 0.45s var(--spring);
+}
+.regime:hover, .chip:hover { transform: scale(1.06); }
+.btn-accent, .tmcontrols button, .prolink, .paywall-cta {
+  transition: transform 0.45s var(--spring), background var(--dur) var(--ease),
+              border-color var(--dur) var(--ease);
+}
+.btn-accent:hover, .prolink:hover, .paywall-cta:hover { transform: translateY(-1px); }
+.btn-accent:active, .tmcontrols button:active, .prolink:active { transform: translateY(0) scale(0.98); }
+.dispatch-card { transition: border-color var(--dur) var(--ease), transform 0.5s var(--spring); }
+
+/* ---- view transitions: tabs dissolve on the compositor ---- */
+::view-transition-old(root) { animation: vt-out 0.22s var(--ease) both; }
+::view-transition-new(root) { animation: vt-in 0.34s var(--rise) both; }
+@keyframes vt-out { to { opacity: 0; } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* ============================ THE DESCENT ================================= */
+.descent { position: fixed; inset: 0; z-index: 500; background: transparent; }
+.descent-scroller {
+  position: absolute; inset: 0; z-index: 1; overflow-y: auto;
+  scrollbar-width: none;
+}
+.descent-scroller::-webkit-scrollbar { display: none; }
+.descent-track { height: 420vh; }
+
+.descent-stage {
+  position: fixed; inset: 0; z-index: 2; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.descent-frame {
+  position: absolute; inset: 0; margin: auto; height: fit-content;
+  width: min(620px, calc(100% - 24px)); padding: 0 28px; text-align: left;
+  opacity: 0; will-change: transform, opacity;
+}
+.descent-kicker {
+  font-family: var(--display); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent-soft);
+  margin-bottom: 18px;
+}
+.descent-big {
+  font-size: clamp(56px, 9vw, 96px); font-weight: 500; letter-spacing: -0.03em;
+  color: var(--text); line-height: 1; display: flex; align-items: center; gap: 18px;
+  flex-wrap: wrap;
+}
+.descent-big .regime { font-size: 13px; padding: 5px 14px; }
+.descent-unit { font-size: 17px; color: var(--dim); font-weight: 400; letter-spacing: 0; }
+.descent-line {
+  margin-top: 20px; font-size: 15.5px; line-height: 1.75; color: var(--dim);
+  max-width: 480px;
+}
+.descent-line b { color: var(--text); font-weight: 500; }
+
+.descent-gauge {
+  position: absolute; left: 34px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 34px;
+  border-left: 1px solid rgba(233, 233, 237, 0.14); padding-left: 16px;
+}
+.descent-mark { display: flex; flex-direction: column; gap: 1px; }
+.descent-mark .d-depth { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); transition: color 0.4s; }
+.descent-mark .d-name { font-size: 10.5px; font-weight: 500; letter-spacing: 0.12em; color: var(--faint); transition: color 0.4s; }
+.descent-mark.on .d-depth { color: var(--accent-soft); }
+.descent-mark.on .d-name { color: var(--accent-bright); }
+
+.descent-enter {
+  position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%);
+  pointer-events: auto; cursor: pointer;
+  font-family: var(--display); font-size: 12.5px; font-weight: 500; letter-spacing: 0.06em;
+  color: var(--accent-bright); background: rgba(22, 24, 38, 0.6);
+  border: 1px solid var(--accent-deep); border-radius: 999px; padding: 10px 26px;
+  backdrop-filter: blur(8px);
+  transition: transform 0.45s var(--spring), background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.descent-enter:hover { transform: translateX(-50%) translateY(-2px); background: rgba(145, 132, 217, 0.14); border-color: var(--accent-dim); }
+.descent-hint {
+  position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; color: var(--ghost);
+}
+
+@media (max-width: 720px) {
+  .descent-gauge { display: none; }
+  .descent-big { font-size: clamp(44px, 13vw, 64px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .tabs a, .regime, .chip, .evtag, .tellchip, .btn-accent,
+  .tmcontrols button, .prolink, .paywall-cta, .dispatch-card { transition: none; }
+  .card:hover, .tabs a:hover, .regime:hover, .chip:hover { transform: none; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
