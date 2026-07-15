@@ -8,7 +8,8 @@
  * gesture.
  */
 import { useEffect, useRef, useState } from "react";
-import { Any, fmt } from "../lib";
+import { Any, fmt, Num } from "../lib";
+import { useDepth } from "../depth";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
 
@@ -83,7 +84,7 @@ function Surface({ tell, headline }: { tell: Any; headline: Any }) {
         <div>
           <div className="dive-lbl">market-priced stress</div>
           <div className="dive-bignum">
-            {m == null ? "—" : Math.round(m)}
+            {m == null ? "—" : <Num v={Math.round(m)} d={0} />}
             <span className="unit">{suffix(m)} pctl</span>
           </div>
         </div>
@@ -116,7 +117,7 @@ function TellBracket({ tell }: { tell: Any }) {
         <div>
           <div className="title">The Tell — surface vs. depth</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4 }}>
-            <span className="value">{signed(tell.tell)}</span>
+            <span className="value"><Num v={tell.tell} d={0} signed /></span>
             <span style={{ fontSize: 13, color: "#b2b6ca" }}>{tell.reading}</span>
           </div>
           <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 2 }}>
@@ -126,8 +127,8 @@ function TellBracket({ tell }: { tell: Any }) {
         {t && (
           <svg viewBox="0 0 260 64" style={{ width: 300, height: 74, marginLeft: "auto", overflow: "visible" }}>
             <line x1={0} x2={260} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
-            <path d={t.paths[0]} fill="none" stroke="var(--accent)" strokeWidth={1.6}
-              style={{ filter: "drop-shadow(0 0 6px rgba(145,132,217,0.5))" }} />
+            <path d={t.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--accent)" strokeWidth={1.6}
+              style={{ filter: "drop-shadow(0 0 6px rgba(145,132,217,0.5))", animationDelay: "0.2s" }} />
             <text x={0} y={62} fill="var(--ghost)" fontSize={9}>{startYear}</text>
             <text x={248} y={62} fill="var(--ghost)" fontSize={9}>now</text>
           </svg>
@@ -168,7 +169,8 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
       {sp && (
         <svg viewBox="0 0 880 96" style={{ width: "100%", height: "auto", display: "block", marginTop: 4, overflow: "visible" }}>
           <line x1={0} x2={880} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
-          <path d={sp.paths[0]} fill="none" stroke="var(--dim)" strokeWidth={1.3} />
+          <path d={sp.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--dim)" strokeWidth={1.3}
+            style={{ animationDelay: "0.3s" }} />
           <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB, two years · bp</text>
           <text x={880} y={94} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>last {signed(spreadBp)}bp</text>
         </svg>
@@ -192,8 +194,8 @@ function WeatherMini({ e }: { e: Any }) {
         <text x={36} y={132} textAnchor="end" fill="var(--faint)" fontSize={9.5}>${Math.round(w.vmin)}B</text>
         <path d={w.paths[1]} fill="none" stroke="var(--ghost)" strokeWidth={1.1} strokeDasharray="4 4" />
         <path d={w.paths[2]} fill="none" stroke="var(--ghost)" strokeWidth={1.1} strokeDasharray="4 4" />
-        <path d={w.paths[0]} fill="none" stroke="var(--accent)" strokeWidth={1.7}
-          style={{ filter: "drop-shadow(0 0 6px rgba(145,132,217,0.45))" }} />
+        <path d={w.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--accent)" strokeWidth={1.7}
+          style={{ filter: "drop-shadow(0 0 6px rgba(145,132,217,0.45))", animationDelay: "0.35s" }} />
         <text x={42} y={144} fill="var(--ghost)" fontSize={9.5}>{fmtD(dates[0])}</text>
         <text x={270} y={144} textAnchor="middle" fill="var(--ghost)" fontSize={9.5}>{fmtD(dates[Math.floor(dates.length / 2)])}</text>
         <text x={512} y={144} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>{fmtD(dates[dates.length - 1])}</text>
@@ -351,7 +353,7 @@ function Verdict({ composite, tell, kink }: { composite: Any; tell: Any; kink: A
     <div className="verdict dive-layer" style={{ animationDelay: "0.46s" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-          <span className="num">{fmt(composite.value, 0)}</span>
+          <span className="num"><Num v={composite.value} d={0} /></span>
           <span className={`regime ${composite.regime}`}>{composite.regime ?? "?"}</span>
         </div>
         <div style={{ fontSize: 12.5, color: "var(--dim)", maxWidth: 560, lineHeight: 1.55 }}>
@@ -400,6 +402,45 @@ function AskDesk({ live }: { live: boolean }) {
   );
 }
 
+/* ---------- glance: the drillboard root ----------------------------------- */
+/* The whole dive rolled up to its verdict: the one number, the Tell, and the
+   three facts a passing reader needs. The DESK button is the drill-down. */
+
+function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
+  const e = snap.engines ?? {};
+  const deep = snap.deep ?? {};
+  const c = e.composite ?? {};
+  const tell = deep.tell;
+  const kink = e.kink;
+  const swell = deep.swell;
+  const spreadBp = e.tails?.ok ? e.tails.spread?.sofr_iorb_bp : null;
+  return (
+    <div className="glance">
+      <Verdict composite={c} tell={tell} kink={kink} />
+      <TellBracket tell={tell} />
+      <div className="glance-row dive-layer" style={{ animationDelay: "0.14s" }}>
+        <div className="glance-fact">
+          <div className="dive-lbl">SOFR−IORB</div>
+          <div className="dive-mid">{spreadBp == null ? "—" : <><Num v={spreadBp} d={0} signed />bp</>}</div>
+        </div>
+        <div className="glance-fact">
+          <div className="dive-lbl">reserves vs kink</div>
+          <div className="dive-mid">
+            {kink?.ok ? <>${fmt(Math.abs(kink.distance_b), 0)}B {kink.distance_b < 0 ? "below" : "above"}</> : "—"}
+          </div>
+        </div>
+        <div className="glance-fact">
+          <div className="dive-lbl">P(funding event), 5bd</div>
+          <div className="dive-mid">{swell?.ok ? <><Num v={(swell.event_by_horizon?.h5 ?? 0) * 100} d={1} />%</> : "—"}</div>
+        </div>
+      </div>
+      <div className="glance-descend dive-layer" style={{ animationDelay: "0.2s" }}>
+        <button className="btn-accent" onClick={onDescend}>descend to the desk — the full dive</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- the dive ------------------------------------------------------ */
 
 const STATIONS = [
@@ -413,6 +454,7 @@ const STATIONS = [
 export default function Board({ snap, live }: { snap: Any; live: boolean }) {
   const e = snap.engines ?? {};
   const deep = snap.deep ?? {};
+  const { depth, setDepth } = useDepth();
   const [active, setActive] = useState(0);
   const layerRefs = useRef<(HTMLDivElement | null)[]>([]);
 
@@ -435,6 +477,8 @@ export default function Board({ snap, live }: { snap: Any; live: boolean }) {
   }, []);
 
   const setRef = (i: number) => (el: HTMLDivElement | null) => { layerRefs.current[i] = el; };
+
+  if (depth === "glance") return <Glance snap={snap} onDescend={() => setDepth("desk")} />;
 
   return (
     <div className="dive">

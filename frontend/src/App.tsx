@@ -3,9 +3,10 @@ import { flushSync } from "react-dom";
 import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
-import { Any, fmt } from "./lib";
+import { Any, Num } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import { Command } from "./commands";
+import { useDepth, DepthDial } from "./depth";
 import Basin from "./Basin";
 import Descent, { shouldDescend } from "./Descent";
 
@@ -52,6 +53,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(hashToTab());
   const [palette, setPalette] = useState(false);
   const [descending, setDescending] = useState(shouldDescend);
+  const { setDepth, stepDepth } = useDepth();
 
   // Tab switches ride the View Transitions API where it exists: the old view
   // cross-dissolves into the new one on the compositor. Falls back to the
@@ -74,6 +76,7 @@ export default function App() {
     if (cmd.type === "tab") goTab(cmd.tab as Tab);
     else if (cmd.type === "asof") goTab("TIME MACHINE", cmd.date);
     else if (cmd.type === "href") window.location.href = cmd.url;
+    else if (cmd.type === "depth") setDepth(cmd.level);
   };
 
   // Live API first (dev / self-hosted); fall back to the full snapshot CI
@@ -120,7 +123,8 @@ export default function App() {
     return () => { cancelAnimationFrame(raf); lenis.destroy(); };
   }, []);
 
-  // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs.
+  // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs,
+  // `[` / `]` step the sounding shallower / deeper.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -131,6 +135,8 @@ export default function App() {
       } else if (e.key === "/" && !typing) {
         e.preventDefault();
         setPalette(true);
+      } else if ((e.key === "[" || e.key === "]") && !typing && !e.ctrlKey && !e.metaKey) {
+        stepDepth(e.key === "[" ? -1 : 1);
       } else if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         const t = TABS[parseInt(e.key, 10) - 1];
         if (t) { e.preventDefault(); window.location.hash = t.toLowerCase(); setTab(t); }
@@ -180,8 +186,9 @@ export default function App() {
         <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
         <a className="prolink" href="/guide.html">new? how to read this</a>
         <div className="mastindex">
-          <span className="mastvalue">{fmt(c.value, 0)}</span>
+          <span className="mastvalue"><Num v={c.value} d={0} /></span>
           <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
+          <DepthDial />
         </div>
         <div className="right">
           {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />

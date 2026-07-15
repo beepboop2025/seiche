@@ -91,7 +91,7 @@ export default function CommandPalette({ onClose, onCommand }: {
         </div>
 
         <div className="palette-foot">
-          <span>↑↓ move · ↵ go</span>
+          <span>↑↓ move · ↵ go · [ ] depth</span>
           <span>codes execute directly — <span className="palette-code" style={{ padding: "1px 5px" }}>ASOF 2019-09-12</span> replays the board</span>
         </div>
       </div>

@@ -7,7 +7,8 @@
 export type Command =
   | { type: "tab"; tab: string }
   | { type: "asof"; date: string }
-  | { type: "href"; url: string };
+  | { type: "href"; url: string }
+  | { type: "depth"; level: "glance" | "desk" | "deep" };
 
 export interface Entry {
   code: string;        // the canonical function code
@@ -32,6 +33,9 @@ export const ENTRIES: Entry[] = [
   { code: "PRF", title: "PROOF", hint: "the backtest scoreboard · wrecks", keywords: "proof backtest scoreboard wrecks episodes record", run: { type: "tab", tab: "PROOF" } },
   { code: "SYS", title: "SYSTEM", hint: "feed health · faults", keywords: "health feeds faults sources status", run: { type: "tab", tab: "SYSTEM" } },
   { code: "ACC", title: "ACCOUNT", hint: "email alerts", keywords: "alerts email login account", run: { type: "tab", tab: "ACCOUNT" } },
+  { code: "GLANCE", title: "GLANCE", hint: "sounding: the verdict and the Tell, nothing else", keywords: "depth skim summary simple overview zoom out", run: { type: "depth", level: "glance" } },
+  { code: "DESK", title: "DESK", hint: "sounding: the working board (default depth)", keywords: "depth normal default working", run: { type: "depth", level: "desk" } },
+  { code: "DEEP", title: "DEEP", hint: "sounding: full fathom — every method note surfaces", keywords: "depth methods internals detail expert fathom", run: { type: "depth", level: "deep" } },
   { code: "GUIDE", title: "GUIDE", hint: "how to read this terminal", keywords: "help onboarding manual docs", run: { type: "href", url: "/guide.html" } },
   { code: "SUP", title: "SUPPORT", hint: "keep Seiche free", keywords: "donate support crypto", run: { type: "href", url: "/support.html" } },
 ];
@@ -45,6 +49,7 @@ const ALIAS_CODES: Record<string, string> = {
   COT: "POS", RVX: "POS", UNDERTOW: "RES",
   ASOF: "TM", REPLAY: "TM", WRECKS: "PRF", PROOF: "PRF",
   FEEDS: "SYS", HEALTH: "SYS", ALERTS: "ACC", HELP: "GUIDE",
+  SKIM: "GLANCE", FATHOM: "DEEP", SOUNDING: "DESK",
 };
 
 const CODE_RE = /^[A-Z][A-Z0-9]*$/;

@@ -1,4 +1,5 @@
 /** Shared primitives for all tabs. */
+import { useEffect, useRef, useState } from "react";
 
 export type Any = Record<string, any>;
 
@@ -6,6 +7,43 @@ export const fmt = (v: number | null | undefined, d = 1, unit = "") =>
   v == null
     ? "—"
     : `${v.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d })}${unit}`;
+
+/**
+ * A number that moves instead of swapping. On the five-minute refresh (or a
+ * Time-Machine jump) the displayed value tweens to the new reading, so the
+ * eye sees the direction of the change, not a flicker. Tabular numerals in
+ * the base styles keep the width from jittering mid-tween.
+ */
+export function Num({ v, d = 1, unit = "", signed = false }:
+  { v: number | null | undefined; d?: number; unit?: string; signed?: boolean }) {
+  const [shown, setShown] = useState(v);
+  const prev = useRef(v);
+  const raf = useRef(0);
+
+  useEffect(() => {
+    const from = prev.current;
+    prev.current = v;
+    if (from == null || v == null || from === v ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShown(v);
+      return;
+    }
+    const t0 = performance.now();
+    const dur = 700;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      setShown(from + (v - from) * e);
+      if (p < 1) raf.current = requestAnimationFrame(tick);
+    };
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf.current);
+  }, [v]);
+
+  const sign = signed && shown != null && shown > 0 ? "+" : "";
+  return <>{shown == null ? "—" : `${sign}${fmt(shown, d, unit)}`}</>;
+}
 
 export function Stat({ k, blk, unit, d = 2 }: { k: string; blk: Any; unit: string; d?: number }) {
   return (
