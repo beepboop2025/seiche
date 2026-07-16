@@ -1,0 +1,14 @@
+[Unit]
+Description=Seiche Telegram bot (US funding-stress desk)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/seiche-bot.env
+ExecStart=/usr/bin/python3 /opt/seiche-bot/seiche_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

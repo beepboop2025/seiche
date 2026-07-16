@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Seiche letter at 11:30 UTC (pre-US-open)
+
+[Timer]
+OnCalendar=*-*-* 11:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

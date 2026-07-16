@@ -1,0 +1,8 @@
+[Unit]
+Description=Seiche cross-desk tandem check (plumbing x institutions)
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/seiche-bot.env
+ExecStart=/usr/bin/python3 /opt/seiche-bot/seiche_bot.py --tandem
