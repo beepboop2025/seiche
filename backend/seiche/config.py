@@ -877,7 +877,12 @@ FEDTEXT_TTL_MIN = 24 * 60          # re-check for a new statement daily
 # GDELT DOC 2.0 timeline API: keyless, free, CC — the same class of source as
 # everything else on the board. Queries are FROZEN here (a query that changes
 # under your feet cannot sit under a comparison with its own history).
-GDELT_TTL_MIN = 12 * 60            # two sweeps a day is plenty for topic news
+GDELT_TTL_MIN = 11 * 60 + 30       # two sweeps a day is plenty for topic news.
+                                   # Just under 12h ON PURPOSE: the prod box
+                                   # prewarms the API at 05:00/17:00 UTC, so
+                                   # sweeps land in that slot — staggered away
+                                   # from the other GDELT consumer on the same
+                                   # IP (LiquiLens data-refresh, 01:45-03:15)
 GDELT_TIMESPAN = "6m"              # baseline window for the surge z
 GDELT_CALL_SPACING_S = 5.0         # GDELT fair-use floor is one call per 5s
 GDELT_FAIL_COOLDOWN_MIN = 30       # a 429-blocked IP must not be re-hammered
