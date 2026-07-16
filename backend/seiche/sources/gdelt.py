@@ -78,7 +78,11 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
         # last sweep got nothing (typically a 429-blocked IP) — retrying on
         # every snapshot would extend the block; serve the stale blob if any
         stale = store.load_blob(key)
-        return stale if stale is not None else {"fetched_at": None, "topics": {}}
+        if stale is not None:
+            return stale
+        faults.append({"source": "gdelt",
+                       "detail": "rate-limit cooldown active and no cached sweep yet"})
+        return {"fetched_at": None, "topics": {}}
     topics: dict[str, dict] = {}
     for tkey, label, query in SCUTTLEBUTT_TOPICS:
         try:
