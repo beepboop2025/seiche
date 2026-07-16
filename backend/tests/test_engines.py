@@ -891,6 +891,65 @@ def test_communique_is_deterministic():
 
 
 # --------------------------------------------------------------------------
+# Scuttlebutt: press attention on money-market topics (GDELT, display-only)
+# --------------------------------------------------------------------------
+
+def _gdelt_topic(days: int, base_vol: float, recent_vol: float | None = None,
+                 base_tone: float = -1.0, recent_tone: float | None = None,
+                 recent_d: int = 14) -> dict:
+    """Synthetic GDELT topic blob: flat-noise baseline, optional recent shift."""
+    dates = [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(days)]
+    vol = [base_vol + (0.01 if i % 2 else -0.01) for i in range(days)]
+    tone = [base_tone] * days
+    if recent_vol is not None:
+        vol[-recent_d:] = [recent_vol] * recent_d
+    if recent_tone is not None:
+        tone[-recent_d:] = [recent_tone] * recent_d
+    return {"label": "Repo market", "query": "(frozen)",
+            "volume": list(map(list, zip(dates, vol))),
+            "tone": list(map(list, zip(dates, tone)))}
+
+
+def test_scuttlebutt_flags_a_coverage_surge_and_souring_tone():
+    from seiche.engines import scuttlebutt
+    blob = {"topics": {"repo": _gdelt_topic(180, base_vol=0.1, recent_vol=0.8,
+                                            recent_tone=-5.0)}}
+    r = scuttlebutt.analyze(blob)
+    assert r["ok"] and r["latest"]["n_topics"] == 1
+    top = r["topics"][0]
+    assert top["attention_z"] is not None and top["attention_z"] >= 2.0
+    assert top["tone_delta"] is not None and top["tone_delta"] <= -2.0
+    assert any("chatter surging" in f for f in r["flags"])
+    assert any("coverage souring" in f for f in r["flags"])
+    assert any("never weighted into the composite" in c for c in r["caveats"])
+
+
+def test_scuttlebutt_calm_topic_stays_quiet_and_short_history_declines_a_z():
+    from seiche.engines import scuttlebutt
+    calm = {"topics": {"repo": _gdelt_topic(180, base_vol=0.1)}}
+    r = scuttlebutt.analyze(calm)
+    assert r["ok"] and r["flags"] == []
+    assert abs(r["topics"][0]["attention_z"]) < 2.0
+    thin = {"topics": {"repo": _gdelt_topic(30, base_vol=0.1)}}
+    t = scuttlebutt.analyze(thin)
+    assert t["ok"] and t["topics"][0]["attention_z"] is None, \
+        "no honest z without a real baseline"
+    assert not scuttlebutt.analyze({})["ok"]
+    assert not scuttlebutt.analyze({"topics": {}})["ok"]
+
+
+def test_scuttlebutt_is_deterministic_and_flat_baseline_capped():
+    from seiche.engines import scuttlebutt
+    blob = {"topics": {"repo": _gdelt_topic(180, base_vol=0.1, recent_vol=0.9)}}
+    assert scuttlebutt.analyze(blob) == scuttlebutt.analyze(blob)
+    # perfectly flat zero baseline, then coverage appears: capped z, not a crash
+    flat = _gdelt_topic(180, base_vol=0.0, recent_vol=0.5)
+    flat["volume"] = [[d, 0.0] for d, _ in flat["volume"][:-14]] + flat["volume"][-14:]
+    z = scuttlebutt.analyze({"topics": {"repo": flat}})["topics"][0]["attention_z"]
+    assert z == 4.0
+
+
+# --------------------------------------------------------------------------
 # Transfer learning: TED-era pretraining mechanics
 # --------------------------------------------------------------------------
 

@@ -873,6 +873,29 @@ FOMC_STATEMENT_DATES = [
 ] + FOMC_DECISION_DATES
 FEDTEXT_TTL_MIN = 24 * 60          # re-check for a new statement daily
 
+# ── Scuttlebutt (GDELT news attention for money-market topics) ─────────────
+# GDELT DOC 2.0 timeline API: keyless, free, CC — the same class of source as
+# everything else on the board. Queries are FROZEN here (a query that changes
+# under your feet cannot sit under a comparison with its own history).
+GDELT_TTL_MIN = 12 * 60            # two sweeps a day is plenty for topic news
+GDELT_TIMESPAN = "6m"              # baseline window for the surge z
+GDELT_CALL_SPACING_S = 5.0         # GDELT fair-use floor is one call per 5s
+GDELT_FAIL_COOLDOWN_MIN = 30       # a 429-blocked IP must not be re-hammered
+                                   # by every snapshot while the block lasts
+SCUTTLEBUTT_TOPICS = (
+    # key, board label, frozen GDELT boolean query
+    ("repo", "Repo market", '("repo market" OR "repurchase agreement")'),
+    ("mmf", "Money market funds", '("money market fund" OR "money market funds")'),
+    ("reserves", "Bank reserves", '("bank reserves" OR "reserve scarcity" OR "ample reserves")'),
+    ("bills", "Treasury bills", '("treasury bills" OR "t-bill issuance" OR "bill supply")'),
+    ("facilities", "Fed facilities", '("standing repo facility" OR "discount window")'),
+    ("basis", "Basis trade", '("basis trade" OR "hedge fund leverage")'),
+)
+SCUTTLEBUTT_RECENT_D = 14          # the "now" window for surge and tone
+SCUTTLEBUTT_MIN_BASELINE_D = 60    # no honest z without a real baseline
+SCUTTLEBUTT_Z_FLAG = 2.0           # surge flag threshold
+SCUTTLEBUTT_TONE_FLAG = -2.0       # tone-souring flag threshold (delta vs baseline)
+
 COMMUNIQUE_LEXICON_HAWKISH = (
     "inflation remains elevated", "further tightening", "restrictive",
     "raise the target range", "upside risks to inflation", "vigilant",

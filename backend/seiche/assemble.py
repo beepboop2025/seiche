@@ -72,6 +72,7 @@ from seiche.engines import leakaudit as eng_leakaudit
 from seiche.engines import merian as eng_merian
 from seiche.engines import microseism as eng_microseism
 from seiche.engines import regatta as eng_regatta
+from seiche.engines import scuttlebutt as eng_scuttlebutt
 from seiche.engines import searoom as eng_searoom
 from seiche.engines import seastate as eng_seastate
 from seiche.engines import thermohaline as eng_thermohaline
@@ -94,7 +95,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, nyfed, ofr, palimpsest
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -146,6 +147,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("tff", cftc.fetch_tff_ust(client)),
             guard("palimpsest", palimpsest.fetch_all(client, faults)),
             guard("fedtext", fedtext.fetch_all(client, faults)),
+            guard("gdelt", gdelt.fetch_all(client, faults)),
         )
     return out, faults
 
@@ -368,6 +370,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     # --- Communiqué (the policy text read as data; vintage-stamped) ---
     run("communique", lambda: eng_communique.analyze(
         (src.get("fedtext") or {}).get("texts", {})))
+
+    # --- Scuttlebutt (press attention on the plumbing; context, like
+    #     Communiqué: narrative is never weighted into the composite) ---
+    run("scuttlebutt", lambda: eng_scuttlebutt.analyze(src.get("gdelt") or {}))
 
     # --- The Breakwater (the rescuer's revealed reaction function) ---
     run("breakwater", lambda: eng_breakwater.analyze(drv["spread_bp"], drv["srf"]))

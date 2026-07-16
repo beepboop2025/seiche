@@ -90,11 +90,49 @@ function PlaybookCard({ p }: { p: Any }) {
   );
 }
 
+function ScuttlebuttCard({ s }: { s: Any }) {
+  if (!s?.ok) return <Fault name="Scuttlebutt" reason={s?.reason} span={12} />;
+  return (
+    <div className="card span12">
+      <h2>Scuttlebutt</h2>
+      <div className="sub">
+        press attention on the plumbing (GDELT, keyless) · which pipe the PRESS is staring at —
+        divergence from The Tell is itself worth a look · asof {s.asof ?? "—"}
+      </div>
+      <div className="kv">
+        {(s.topics ?? []).map((t: Any) => (
+          <div className="item" key={t.key}>
+            <div className="k">{t.label}</div>
+            <div className="v" style={{ color: (t.attention_z ?? 0) >= 2 ? P.stress : undefined }}>
+              {t.attention === null ? "—" : fmt(t.attention, 0)}
+              <span className="dimsmall">
+                {" "}z {t.attention_z === null ? "—" : fmt(t.attention_z, 1)} · tone {t.tone_delta === null ? "—" : (t.tone_delta > 0 ? "+" : "") + fmt(t.tone_delta, 1)}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {(s.flags ?? []).length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          {s.flags.map((f: string) => (
+            <div key={f} style={{ fontSize: 12, color: P.stress }}>▲ {f}</div>
+          ))}
+        </div>
+      )}
+      {(s.flags ?? []).length === 0 && (
+        <div style={{ marginTop: 8, fontSize: 12, color: P.calm }}>no topic surging vs its own baseline</div>
+      )}
+      <Method>{s.method} · context only — never weighted into the composite</Method>
+    </div>
+  );
+}
+
 export default function Market({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   return (
     <div className="grid">
       <TellCard t={deep.tell} />
+      <ScuttlebuttCard s={snap.engines?.scuttlebutt} />
       <PlaybookCard p={deep.playbook} />
     </div>
   );
