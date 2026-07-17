@@ -1191,8 +1191,15 @@ async def _build_snapshot() -> dict:
     """Assemble the full payload. Caller holds `_lock`."""
     src, faults = await _gather_sources()
     drv = _derived(src)
-    engines = _run_engines(src, drv, faults)
-    deep = _deep_layer(src, drv, engines, faults)
+    # The engine + deep stages are synchronous CPU work (the deep layer
+    # trains sklearn models in mlpred.walk_forward — minutes, not ms).
+    # Run them on a worker thread: executed inline they starve the event
+    # loop and every HTTP request hangs until the fit finishes (observed
+    # live 2026-07-17: /, /docs and all /api/* timing out while the
+    # keep-warm cycle trained). One rebuild at a time is still guaranteed
+    # by the caller holding `_lock`.
+    engines = await asyncio.to_thread(_run_engines, src, drv, faults)
+    deep = await asyncio.to_thread(_deep_layer, src, drv, engines, faults)
     payload = {
         "generated_at": utcnow_iso(),
         "version": VERSION,
