@@ -255,6 +255,8 @@ export default function App() {
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
         <br />
         Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, the failure radar for banks and lenders.
+        <br />
+        New from the same lab: <a href="https://liquilens.in/undertow/" style={{ color: "var(--dim)" }}>Undertow</a>, the cross market liquidity map. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit.
       </div>
     </div>
   );
