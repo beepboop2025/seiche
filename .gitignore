@@ -14,3 +14,7 @@ frontend/public/dispatches/*.html
 frontend/public/dispatches/feed.xml
 frontend/public/llms.txt
 frontend/public/llms-full.txt
+
+# build artifacts (compiler output, not source)
+backend/dist/
+*.tsbuildinfo
