@@ -9,16 +9,21 @@ traceable to a served, sourced reading. Seiche is a free public good: no
 paywall, no sign-in, voluntary support only.
 
 Modes
-  (no args)   long-poll command loop (systemd service)
-  --letter    compose and send the daily letter to all subscribers
-              (systemd timer, 11:30 UTC = pre-US-open)
-  --tandem    cross-desk check (plumbing × institutions): message subscribers
-              ONLY when the joint quadrant changes class (systemd timer, 6h)
-  --setup     register the command menu and bot description with Telegram
+  (no args)     long-poll command loop (systemd service)
+  --letter      compose and send the daily letter to all subscribers
+                (systemd timer, 11:30 UTC = pre-US-open)
+  --tandem      cross-desk check (plumbing × institutions): message subscribers
+                ONLY when the joint quadrant changes class (systemd timer, 6h)
+  --alert-scan  between-letter flip detector (systemd timer, ~30min): pings
+                subscribers when the regime flips or the composite jumps;
+                silence when nothing moved. Also accrues the bot's own daily
+                gauge history (the sparkline record).
+  --setup       register the command menu and bot description with Telegram
 
 Commands
   /start /stop     subscribe / unsubscribe from the daily letter
   /now             the gauge right now: regime, composite, the Tell
+  /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
   /turns           the next calendar turn + crunch windows + auction desk
   /analogs         historical analogs from the wreck ledger
@@ -28,6 +33,11 @@ Commands
   /tandem          the cross-desk read: plumbing × institutions quadrant
   /ask <question>  desk assistant, grounded strictly in the live board
   /help            this list
+
+Any plain text in a private chat (no slash) is treated as a question for
+/ask — the desk answers, grounded in the live board. Inline mode: type
+@seiche_desk_bot in ANY chat to drop the live gauge card there (enable
+inline mode for the bot in BotFather once).
 
 Tandem: both bots read each other's PUBLIC APIs and recompute the joint
 quadrant from source — no shared state, no trust in the other's summary.
@@ -145,6 +155,51 @@ def pct(x, digits: int = 0) -> str:
         return "n/a"
 
 
+# ------------------------------------------------------- history + sparks ---
+SPARK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def spark(values: list) -> str:
+    """Unicode sparkline. Empty/one-point series -> ''. Pure."""
+    vals = [v for v in values if isinstance(v, (int, float))]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    if hi == lo:
+        return SPARK_CHARS[3] * len(vals)
+    return "".join(SPARK_CHARS[round((v - lo) / (hi - lo) * 7)] for v in vals)
+
+
+def gauge_history_append(gauge: dict | None) -> None:
+    """Accrue the bot's own daily as-seen gauge record (the Undertow
+    pattern): one {index, regime, tell} per UTC day, capped at 120 days.
+    The bot never computes a number — this is the served gauge, replayed."""
+    if not gauge or gauge.get("index") is None:
+        return
+    hist = load_state("gauge_history.json", {})
+    day = datetime.now(timezone.utc).date().isoformat()
+    hist[day] = {"index": gauge.get("index"), "regime": gauge.get("regime"),
+                 "tell": gauge.get("tell")}
+    for k in sorted(hist)[:-120]:
+        hist.pop(k, None)
+    save_state("gauge_history.json", hist)
+
+
+def gauge_spark(days: int = 30) -> str:
+    hist = load_state("gauge_history.json", {})
+    keys = sorted(hist)[-days:]
+    return spark([(hist[k] or {}).get("index") for k in keys])
+
+
+def meter(x, width: int = 20) -> str:
+    """A 0..100 reading as a monospace bar. Pure."""
+    try:
+        filled = max(0, min(width, round(float(x) / 100 * width)))
+    except (TypeError, ValueError):
+        return "?" * width
+    return "█" * filled + "░" * (width - filled)
+
+
 # -------------------------------------------------------------- formatters --
 REGIME_ICON = {"CALM": "🟢", "EROSION": "🟡", "STRAIN": "🟠"}
 
@@ -170,6 +225,9 @@ def fmt_now(gauge: dict | None, pub: dict | None) -> str:
             reading = ((pub or {}).get("conclusion") or {}).get("tell_reading") or (
                 "plumbing leads price" if tell > 0 else "price leads plumbing")
             lines.append(f"The Tell: {tell:+.0f} — {esc(reading)}.")
+    trend = gauge_spark()
+    if trend:
+        lines.append(f"30d composite: <code>{trend}</code>")
     nt = gauge.get("next_turn") or {}
     if nt.get("date"):
         lines.append(f"\nNext turn: <b>{esc(nt['date'])}</b> "
@@ -178,6 +236,41 @@ def fmt_now(gauge: dict | None, pub: dict | None) -> str:
     for w in (gauge.get("crunch_windows") or [])[:2]:
         lines.append(f"⚠ {esc(w.get('date'))}: {esc(w.get('reason'))}")
     return "\n".join(lines) + FOOT
+
+
+def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
+    """The forwardable card: the whole desk in one monospace block that
+    survives any chat theme. Pure over the served gauge (+ the bot's own
+    accrued daily history for the trend row)."""
+    if not gauge:
+        return ("The board did not answer — absence is not calm; the gauge "
+                f"is at {SITE}.")
+    idx = gauge.get("index")
+    regime = str(gauge.get("regime") or "?")
+    rows = [f"SEICHE  US funding stress   {esc(gauge.get('generated_at', '')[:10])}",
+            "",
+            f"{meter(idx)}  {idx}/100  {regime}"]
+    trend = gauge_spark()
+    if trend:
+        rows.append(f"{trend}  30d")
+    tell = gauge.get("tell")
+    if isinstance(tell, (int, float)):
+        rows.append(f"tell {tell:+.0f}  "
+                    + ("plumbing leads price" if tell > 0 else "price leads plumbing"))
+    nt = gauge.get("next_turn") or {}
+    if nt.get("date"):
+        rows.append(f"next turn {esc(nt['date'])}  {nt.get('forecast_bp')}bp  "
+                    f"sev {nt.get('severity')}/5")
+    for w in (gauge.get("crunch_windows") or [])[:1]:
+        rows.append(f"crunch {esc(w.get('date'))}")
+    proof = (pub or {}).get("proof") or {}
+    if proof.get("n_events"):
+        rows.append(f"backtest recall {pct(proof.get('recall'))} over "
+                    f"{proof.get('n_events')} events")
+    body = "<pre>" + "\n".join(rows) + "</pre>"
+    return (f"{_regime_icon(regime)} {body}\n"
+            f"Free public good — {SITE} · forward this card to a desk that "
+            "watches money markets.")
 
 
 def fmt_odds(overview: dict | None) -> str:
@@ -389,6 +482,7 @@ def _tandem_class(p: int, i: int) -> int:
 HELP = (
     "🌊 <b>Seiche</b> — US funding-stress early warning, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
+    "/snap — the forwardable card (meter, trend, next turn)\n"
     "/odds — forward event odds (Navigator)\n"
     "/turns — next calendar turn + crunch windows\n"
     "/analogs — the wreck ledger: past storms on this board\n"
@@ -399,6 +493,9 @@ HELP = (
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
     "/start — subscribe to the daily letter (11:30 UTC, pre-US-open)\n"
     "/stop — unsubscribe\n\n"
+    "Or just type a question — no slash needed; the desk answers, grounded "
+    "in the live board. Type @seiche_desk_bot in any other chat to drop the "
+    "live gauge card there.\n\n"
     "Free public good: no paywall, no sign-in. Institutions are "
     "@LiquiLens_bot's desk."
 )
@@ -408,6 +505,7 @@ HELP = (
 def fmt_daily_letter() -> str:
     today = date.today().strftime("%d %b %Y")
     gauge = api_get("/api/gauge")
+    gauge_history_append(gauge)   # the letter is the sparkline's daily heartbeat
     pub = api_get("/api/public")
     overview = api_get("/api/overview")
     lines = [f"🌊 <b>Seiche morning letter</b> — {today}", ""]
@@ -491,12 +589,17 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd in ("/start", "/now"):
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
-                [_btn("\U0001f4e8 Letter", "/letter"),
+                [_btn("\U0001f5bc Card", "/snap"),
+                 _btn("\U0001f4e8 Letter", "/letter"),
                  _btn("\U0001f4e4 Share", "/share")],
                 FLEET_ROW]
+    if cmd == "/snap":
+        return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL},
+                 _btn("\U0001f321 Gauge now", "/now")], FLEET_ROW]
     if cmd in ("/odds", "/turns", "/analogs", "/proof", "/letter",
-               "/institutions", "/tandem"):
+               "/institutions", "/tandem", "/ask"):
         return [[_btn("\U0001f321 Gauge now", "/now"),
+                 _btn("\U0001f5bc Card", "/snap"),
                  _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
     if cmd == "/share":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}], FLEET_ROW]
@@ -523,9 +626,13 @@ def record_lead(chat_id: int, ref: str) -> None:
                             sort_keys=True) + "\n")
 
 
-def handle(chat_id: int, text: str) -> None:
+def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     cmd, _, arg = text.strip().partition(" ")
     cmd = cmd.split("@")[0].lower()
+    # A plain question in a private chat IS /ask — the desk answers,
+    # grounded in the live board. Groups keep command-only discipline.
+    if not cmd.startswith("/") and chat_type == "private" and text.strip():
+        cmd, arg = "/ask", text.strip()
     if cmd == "/start":
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -541,8 +648,15 @@ def handle(chat_id: int, text: str) -> None:
         save_state("subscribers.json", subs)
         send(chat_id, "Unsubscribed. /start any time.")
     elif cmd == "/now":
-        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),
+        gauge = api_get("/api/gauge")
+        gauge_history_append(gauge)
+        send(chat_id, fmt_now(gauge, api_get("/api/public")),
              keyboard_for("/now"))
+    elif cmd == "/snap":
+        gauge = api_get("/api/gauge")
+        gauge_history_append(gauge)
+        send(chat_id, fmt_snap(gauge, api_get("/api/public")),
+             keyboard_for("/snap"))
     elif cmd == "/odds":
         send(chat_id, fmt_odds(api_get("/api/overview")), keyboard_for("/odds"))
     elif cmd == "/turns":
@@ -562,15 +676,52 @@ def handle(chat_id: int, text: str) -> None:
              keyboard_for("/tandem"))
     elif cmd == "/ask":
         if not arg.strip():
-            send(chat_id, "Usage: /ask <question> — e.g. /ask why is the regime STRAIN?")
+            send(chat_id, "Usage: /ask <question> — e.g. /ask why is the regime "
+                          "STRAIN? (Or just type your question, no slash.)")
         else:
             q = urllib.parse.quote(arg.strip()[:600])
-            send(chat_id, fmt_ask(_get_json(f"{API}/api/ask?q={q}", timeout=60)))
+            send(chat_id, fmt_ask(_get_json(f"{API}/api/ask?q={q}", timeout=60)),
+                 keyboard_for("/ask"))
     elif cmd == "/share":
         record_lead(chat_id, "share-open")
         send(chat_id, fmt_share(api_get("/api/gauge")), keyboard_for("/share"))
     else:
         send(chat_id, HELP)
+
+
+def answer_inline(iq: dict) -> None:
+    """Inline mode: @seiche_desk_bot in any chat drops a live card there.
+    The article list is the desk's shareable surfaces; the query filters by
+    title. (Enable inline mode for the bot in BotFather once.)"""
+    gauge = api_get("/api/gauge")
+    gauge_history_append(gauge)
+    pub = api_get("/api/public")
+    regime = esc((gauge or {}).get("regime", "?"))
+    idx = (gauge or {}).get("index", "?")
+    cards = [
+        ("snap", f"Gauge card — {regime} {idx}/100",
+         "The forwardable monospace card", fmt_snap(gauge, pub)),
+        ("now", f"Gauge now — {regime} {idx}/100",
+         "Regime, composite, the Tell", fmt_now(gauge, pub)),
+        ("odds", "Forward event odds",
+         "Navigator: P(event, 5bd) with caveats", fmt_odds(api_get("/api/overview"))),
+        ("proof", "The PROOF scoreboard",
+         "The backtest, misses included", fmt_proof(pub)),
+    ]
+    q = (iq.get("query") or "").strip().lower()
+    results = []
+    for rid, title, desc, body in cards:
+        if q and q not in title.lower() and q not in rid:
+            continue
+        results.append({
+            "type": "article", "id": rid, "title": title, "description": desc,
+            "input_message_content": {
+                "message_text": body[:4000], "parse_mode": "HTML",
+                "disable_web_page_preview": True},
+        })
+    tg_call("answerInlineQuery", {
+        "inline_query_id": iq["id"], "results": results or [],
+        "cache_time": 120, "is_personal": False})
 
 
 def poll_loop() -> None:
@@ -579,12 +730,20 @@ def poll_loop() -> None:
     while True:
         res = tg_call("getUpdates", {"timeout": POLL_TIMEOUT, "offset": offset,
                                      "allowed_updates": ["message",
-                                                         "callback_query"]})
+                                                         "callback_query",
+                                                         "inline_query"]})
         if not res or not res.get("ok"):
             time.sleep(5)
             continue
         for u in res.get("result", []):
             offset = max(offset, u["update_id"] + 1)
+            iq = u.get("inline_query")
+            if iq:
+                try:
+                    answer_inline(iq)
+                except Exception as exc:   # one bad update must not kill the loop
+                    print(f"inline failed: {exc}", file=sys.stderr)
+                continue
             cb = u.get("callback_query")
             if cb:
                 # a button tap IS a command: same handler path
@@ -594,10 +753,12 @@ def poll_loop() -> None:
             else:
                 msg = u.get("message") or {}
             text = msg.get("text")
-            chat = (msg.get("chat") or {}).get("id")
+            chat_o = msg.get("chat") or {}
+            text_type = chat_o.get("type") or "private"
+            chat = chat_o.get("id")
             if text and chat:
                 try:
-                    handle(chat, text)
+                    handle(chat, text, text_type)
                 except Exception as exc:   # one bad update must not kill the loop
                     print(f"handle failed: {exc}", file=sys.stderr)
         save_state("offset.json", offset)
@@ -641,9 +802,52 @@ def run_tandem() -> None:
     print(f"tandem: class {prev} → {cls}, alerted {len(subs)} subscriber(s)")
 
 
+ALERT_JUMP_PTS = 8   # composite move (points) worth an intraday ping
+
+
+def run_alert_scan() -> None:
+    """Between-letter flip detector (systemd timer, ~30min). Pings
+    subscribers when the REGIME flips or the composite jumps ≥8 points
+    since the last scan; silence otherwise, so the timer never becomes
+    noise. Also accrues the daily gauge history the sparklines read."""
+    gauge = api_get("/api/gauge")
+    if not gauge or gauge.get("index") is None:
+        print("alert-scan: gauge did not answer; no state change recorded")
+        return
+    gauge_history_append(gauge)
+    new = {"regime": gauge.get("regime"), "index": gauge.get("index")}
+    old = load_state("alert_state.json", None)
+    save_state("alert_state.json", new)
+    if old is None:
+        print("alert-scan: state seeded")
+        return
+    lines = []
+    if old.get("regime") and new["regime"] != old["regime"]:
+        lines.append(f"{_regime_icon(new['regime'])} Regime flip: "
+                     f"<b>{esc(old['regime'])} → {esc(new['regime'])}</b> "
+                     f"(composite {new['index']}/100)")
+    try:
+        jump = float(new["index"]) - float(old.get("index"))
+    except (TypeError, ValueError):
+        jump = 0.0
+    if abs(jump) >= ALERT_JUMP_PTS and not lines:
+        lines.append(f"⚡ Composite moved <b>{jump:+.0f} points</b> since the "
+                     f"last scan, to {new['index']}/100 ({esc(new['regime'])})")
+    if not lines:
+        print("alert-scan: no changes")
+        return
+    text = "🌊 <b>Seiche alert</b>\n\n" + "\n".join(lines) + \
+           "\n\n/now for the full gauge · /turns for what's on the calendar"
+    subs = load_state("subscribers.json", {})
+    for chat_id in subs:
+        send(int(chat_id), text, keyboard_for("/now"))
+    print(f"alert-scan: {len(lines)} change(s), alerted {len(subs)} subscriber(s)")
+
+
 def run_setup() -> None:
     tg_call("setMyCommands", {"commands": [
         {"command": "now", "description": "The gauge: regime, composite, the Tell"},
+        {"command": "snap", "description": "The forwardable gauge card"},
         {"command": "odds", "description": "Forward event odds (Navigator)"},
         {"command": "turns", "description": "Next turn + crunch windows"},
         {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
@@ -663,9 +867,12 @@ def run_setup() -> None:
         "description": "The Seiche desk bot: dollar funding stress read from the "
                        "Fed's own public data (H.4.1, NY Fed ops, OFR repo, "
                        "Treasury cash) with a regime gauge, forward event odds, "
-                       "calendar crunch windows and an honest backtest. Free "
-                       "public good — no paywall, no sign-in. Institutions are "
-                       "LiquiLens's desk (@LiquiLens_bot). seiche.info"})
+                       "calendar crunch windows and an honest backtest. Type any "
+                       "question and the desk answers, grounded in the live "
+                       "board; type @seiche_desk_bot in any chat to drop the "
+                       "live gauge card there. Free public good — no paywall, "
+                       "no sign-in. Institutions are LiquiLens's desk "
+                       "(@LiquiLens_bot). seiche.info"})
     me = tg_call("getMe", {})
     print("setup done:", json.dumps((me or {}).get("result", {})))
 
@@ -677,6 +884,8 @@ if __name__ == "__main__":
         run_letter()
     elif "--tandem" in sys.argv:
         run_tandem()
+    elif "--alert-scan" in sys.argv:
+        run_alert_scan()
     elif "--setup" in sys.argv:
         run_setup()
     else:

@@ -1,0 +1,8 @@
+[Unit]
+Description=Seiche alert scan (regime flip / composite jump; silent otherwise)
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/seiche-bot.env
+ExecStart=/usr/bin/python3 /opt/seiche-bot/seiche_bot.py --alert-scan

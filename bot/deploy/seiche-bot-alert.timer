@@ -1,0 +1,9 @@
+[Unit]
+Description=Seiche alert scan every 30 minutes (pings only when something flips)
+
+[Timer]
+OnCalendar=*-*-* *:05,35:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
