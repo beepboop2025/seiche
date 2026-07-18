@@ -80,14 +80,14 @@ def tg_call(method: str, payload: dict) -> dict | None:
         return None
 
 
-def send(chat_id: int, text: str) -> None:
-    # Telegram caps messages at 4096 chars; split on a hard seam.
+def send(chat_id: int, text: str, keyboard: list | None = None) -> None:
     while text:
         chunk, text = text[:4000], text[4000:]
-        tg_call("sendMessage", {
-            "chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        })
+        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
+                   "disable_web_page_preview": True}
+        if keyboard and not text:   # keyboard rides the last chunk
+            payload["reply_markup"] = {"inline_keyboard": keyboard}
+        tg_call("sendMessage", payload)
 
 
 def _get_json(url: str, timeout: int = 25, tries: int = 2) -> dict | list | None:
@@ -465,6 +465,64 @@ def fmt_daily_letter() -> str:
 
 
 # ------------------------------------------------------------------ wiring --
+
+
+# ------------------------------------------------- share, fleet, keyboards
+
+BOT_URL = "https://t.me/seiche_desk_bot"
+SHARE_TEXT = ("Free US funding stress early warning, straight from the Fed's "
+              "own public data. Regime gauge, forward odds, and a backtest "
+              "that publishes its misses. No paywall, no sign in.")
+SHARE_URL = ("https://t.me/share/url?url=" + BOT_URL + "?start=ref_shared"
+             + "&text=" + urllib.parse.quote(SHARE_TEXT))
+
+FLEET_ROW = [
+    {"text": "\U0001f3e6 Institutions desk", "url": "https://t.me/LiquiLens_bot"},
+    {"text": "\U0001f30a Markets desk", "url": "https://t.me/undertow_LiquiLens_bot"},
+]
+
+
+def _btn(text: str, data: str) -> dict:
+    return {"text": text, "callback_data": data}
+
+
+def keyboard_for(cmd: str) -> list | None:
+    """Inline keyboard rows per command. A button tap IS a command."""
+    if cmd in ("/start", "/now"):
+        return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
+                 _btn("\U0001f9fe Proof", "/proof")],
+                [_btn("\U0001f4e8 Letter", "/letter"),
+                 _btn("\U0001f4e4 Share", "/share")],
+                FLEET_ROW]
+    if cmd in ("/odds", "/turns", "/analogs", "/proof", "/letter",
+               "/institutions", "/tandem"):
+        return [[_btn("\U0001f321 Gauge now", "/now"),
+                 _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
+    if cmd == "/share":
+        return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}], FLEET_ROW]
+    return None
+
+
+def fmt_share(gauge: dict | None) -> str:
+    line = ""
+    if gauge and gauge.get("regime"):
+        line = (f"\nRight now the gauge reads <b>{esc(gauge['regime'])}</b> "
+                f"at {gauge.get('index', '?')}/100.")
+    return ("<b>Know someone who watches money markets?</b>\n\n"
+            "Forward this desk to them. Free early warning on dollar funding "
+            "stress, built from the Fed's own published data, with the "
+            f"backtest misses on the record.{line}\n\nTap Share below, or "
+            f"send them {BOT_URL}")
+
+
+def record_lead(chat_id: int, ref: str) -> None:
+    path = _state_path("leads.jsonl")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                             "chat_id": chat_id, "ref": ref},
+                            sort_keys=True) + "\n")
+
+
 def handle(chat_id: int, text: str) -> None:
     cmd, _, arg = text.strip().partition(" ")
     cmd = cmd.split("@")[0].lower()
@@ -472,35 +530,45 @@ def handle(chat_id: int, text: str) -> None:
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         save_state("subscribers.json", subs)
+        if arg.strip():   # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x"
+            record_lead(chat_id, arg.strip()[:64])
         send(chat_id, "Subscribed to the daily letter (11:30 UTC, pre-US-open).\n\n" + HELP)
-        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")))
+        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),
+             keyboard_for("/start"))
     elif cmd == "/stop":
         subs = load_state("subscribers.json", {})
         subs.pop(str(chat_id), None)
         save_state("subscribers.json", subs)
         send(chat_id, "Unsubscribed. /start any time.")
     elif cmd == "/now":
-        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")))
+        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),
+             keyboard_for("/now"))
     elif cmd == "/odds":
-        send(chat_id, fmt_odds(api_get("/api/overview")))
+        send(chat_id, fmt_odds(api_get("/api/overview")), keyboard_for("/odds"))
     elif cmd == "/turns":
-        send(chat_id, fmt_turns(api_get("/api/gauge"), api_get("/api/overview")))
+        send(chat_id, fmt_turns(api_get("/api/gauge"), api_get("/api/overview")),
+             keyboard_for("/turns"))
     elif cmd == "/analogs":
-        send(chat_id, fmt_analogs(api_get("/api/wrecks")))
+        send(chat_id, fmt_analogs(api_get("/api/wrecks")), keyboard_for("/analogs"))
     elif cmd == "/proof":
-        send(chat_id, fmt_proof(api_get("/api/public")))
+        send(chat_id, fmt_proof(api_get("/api/public")), keyboard_for("/proof"))
     elif cmd == "/letter":
-        send(chat_id, fmt_letter(_get_json(f"{SITE}/dispatches/index.json")))
+        send(chat_id, fmt_letter(_get_json(f"{SITE}/dispatches/index.json")),
+             keyboard_for("/letter"))
     elif cmd == "/institutions":
-        send(chat_id, fmt_institutions(ll_get("/failure-radar/board")))
+        send(chat_id, fmt_institutions(ll_get("/failure-radar/board")), keyboard_for("/institutions"))
     elif cmd == "/tandem":
-        send(chat_id, fmt_tandem(api_get("/api/gauge"), ll_get("/failure-radar/board")))
+        send(chat_id, fmt_tandem(api_get("/api/gauge"), ll_get("/failure-radar/board")),
+             keyboard_for("/tandem"))
     elif cmd == "/ask":
         if not arg.strip():
             send(chat_id, "Usage: /ask <question> — e.g. /ask why is the regime STRAIN?")
         else:
             q = urllib.parse.quote(arg.strip()[:600])
             send(chat_id, fmt_ask(_get_json(f"{API}/api/ask?q={q}", timeout=60)))
+    elif cmd == "/share":
+        record_lead(chat_id, "share-open")
+        send(chat_id, fmt_share(api_get("/api/gauge")), keyboard_for("/share"))
     else:
         send(chat_id, HELP)
 
@@ -510,13 +578,21 @@ def poll_loop() -> None:
     print(f"Seiche bot polling (api={API})")
     while True:
         res = tg_call("getUpdates", {"timeout": POLL_TIMEOUT, "offset": offset,
-                                     "allowed_updates": ["message"]})
+                                     "allowed_updates": ["message",
+                                                         "callback_query"]})
         if not res or not res.get("ok"):
             time.sleep(5)
             continue
         for u in res.get("result", []):
             offset = max(offset, u["update_id"] + 1)
-            msg = u.get("message") or {}
+            cb = u.get("callback_query")
+            if cb:
+                # a button tap IS a command: same handler path
+                tg_call("answerCallbackQuery", {"callback_query_id": cb["id"]})
+                msg = {"text": cb.get("data") or "",
+                       "chat": (cb.get("message") or {}).get("chat") or {}}
+            else:
+                msg = u.get("message") or {}
             text = msg.get("text")
             chat = (msg.get("chat") or {}).get("id")
             if text and chat:
@@ -576,6 +652,7 @@ def run_setup() -> None:
         {"command": "proof", "description": "The backtest scoreboard, misses included"},
         {"command": "letter", "description": "Today's dispatch"},
         {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
+        {"command": "share", "description": "Send this free desk to someone"},
         {"command": "start", "description": "Subscribe to the daily letter"},
         {"command": "stop", "description": "Unsubscribe"},
     ]})
