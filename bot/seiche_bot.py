@@ -85,19 +85,70 @@ def tg_call(method: str, payload: dict) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=POLL_TIMEOUT + 10) as r:
             return json.load(r)
+    except urllib.error.HTTPError as exc:
+        # Telegram answers errors with a JSON body (error_code/description);
+        # surface it so callers can react (403 blocked → prune, 400 → retry
+        # without parse_mode) instead of losing the distinction.
+        try:
+            body = json.load(exc)
+        except Exception:
+            body = {"ok": False, "error_code": exc.code}
+        print(f"tg {method} failed: {exc.code} "
+              f"{body.get('description', '')}", file=sys.stderr)
+        return body
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"tg {method} failed: {exc}", file=sys.stderr)
         return None
 
 
-def send(chat_id: int, text: str, keyboard: list | None = None) -> None:
+def send(chat_id: int, text: str, keyboard: list | None = None) -> dict | None:
+    """Send, chunked at line seams (Telegram caps at 4096 and HTML must never
+    be cut mid-tag). Returns the last Telegram reply so timer loops can spot
+    blocked chats (error_code 403) and prune them."""
+    res = None
     while text:
-        chunk, text = text[:4000], text[4000:]
+        cut = len(text)
+        if cut > 4000:
+            nl = text.rfind("\n", 1, 4000)
+            cut = nl if nl > 0 else 4000
+        chunk, text = text[:cut], text[cut:].lstrip("\n")
         payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML",
                    "disable_web_page_preview": True}
         if keyboard and not text:   # keyboard rides the last chunk
             payload["reply_markup"] = {"inline_keyboard": keyboard}
-        tg_call("sendMessage", payload)
+        res = tg_call("sendMessage", payload)
+        if isinstance(res, dict) and not res.get("ok") \
+                and res.get("error_code") == 429:
+            # rate-limited: honor retry_after (capped) and retry once
+            wait = (res.get("parameters") or {}).get("retry_after") or 3
+            time.sleep(min(float(wait), 30.0))
+            res = tg_call("sendMessage", payload)
+        if isinstance(res, dict) and not res.get("ok") \
+                and res.get("error_code") == 400:
+            # HTML Telegram refuses to parse: deliver the words anyway
+            res = tg_call("sendMessage",
+                          {k: v for k, v in payload.items() if k != "parse_mode"})
+    return res
+
+
+def _send_all(subs: dict, text: str, keyboard: list | None = None) -> int:
+    """Deliver to every subscriber, prune chats that blocked the bot, and
+    return how many deliveries actually succeeded."""
+    gone, delivered = [], 0
+    for chat_id in list(subs):
+        res = send(int(chat_id), text, keyboard)
+        if isinstance(res, dict) and res.get("ok"):
+            delivered += 1
+        elif isinstance(res, dict) and res.get("error_code") == 403:
+            gone.append(chat_id)
+        time.sleep(0.05)   # stay far under Telegram's broadcast ceiling
+    if gone:
+        fresh = load_state("subscribers.json", {})
+        for chat_id in gone:
+            fresh.pop(str(chat_id), None)
+        save_state("subscribers.json", fresh)
+        print(f"pruned {len(gone)} blocked subscriber(s)")
+    return delivered
 
 
 def _get_json(url: str, timeout: int = 25, tries: int = 2) -> dict | list | None:
@@ -297,8 +348,12 @@ def render_snap_card(gauge: dict | None) -> bytes | None:
         y += 40
     nt = gauge.get("next_turn") or {}
     if nt.get("date"):
-        d.text((60, y), f"next turn {nt['date']} · {nt.get('forecast_bp')}bp "
-                        f"· severity {nt.get('severity')}/5", font=f_m, fill=dim)
+        bits = [f"next turn {nt['date']}"]
+        if nt.get("forecast_bp") is not None:
+            bits.append(f"{nt.get('forecast_bp')}bp")
+        if nt.get("severity") is not None:
+            bits.append(f"severity {nt.get('severity')}/5")
+        d.text((60, y), " · ".join(bits), font=f_m, fill=dim)
         y += 40
     for w in (gauge.get("crunch_windows") or [])[:1]:
         d.text((60, y), f"crunch {w.get('date')}: "
@@ -372,10 +427,14 @@ def fmt_now(gauge: dict | None, pub: dict | None) -> str:
     if not gauge:
         return ("The board did not answer — absence is not calm; the gauge "
                 f"is at {SITE}.")
+    idx = gauge.get("index")
+    head = (f"Regime: <b>{esc(gauge.get('regime'))}</b> · composite "
+            f"<b>{'?' if idx is None else idx}</b>/100")
+    if gauge.get("coverage_pct") is not None:
+        head += f" · coverage {gauge.get('coverage_pct')}%"
     lines = [f"{_regime_icon(gauge.get('regime'))} <b>US funding stress, right now</b>",
              "",
-             f"Regime: <b>{esc(gauge.get('regime'))}</b> · composite "
-             f"<b>{gauge.get('index')}</b>/100 · coverage {gauge.get('coverage_pct')}%"]
+             head]
     line = ((pub or {}).get("conclusion") or {}).get("line")
     if line:
         lines.append(esc(line))   # already carries the Tell reading
@@ -409,7 +468,7 @@ def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
     regime = str(gauge.get("regime") or "?")
     rows = [f"SEICHE  US funding stress   {esc(gauge.get('generated_at', '')[:10])}",
             "",
-            f"{meter(idx)}  {idx}/100  {regime}"]
+            f"{meter(idx)}  {'?' if idx is None else idx}/100  {esc(regime)}"]
     trend = gauge_spark()
     if trend:
         rows.append(f"{trend}  30d")
@@ -419,8 +478,12 @@ def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
                     + ("plumbing leads price" if tell > 0 else "price leads plumbing"))
     nt = gauge.get("next_turn") or {}
     if nt.get("date"):
-        rows.append(f"next turn {esc(nt['date'])}  {nt.get('forecast_bp')}bp  "
-                    f"sev {nt.get('severity')}/5")
+        bits = [f"next turn {esc(nt['date'])}"]
+        if nt.get("forecast_bp") is not None:
+            bits.append(f"{nt['forecast_bp']}bp")
+        if nt.get("severity") is not None:
+            bits.append(f"sev {nt['severity']}/5")
+        rows.append("  ".join(bits))
     for w in (gauge.get("crunch_windows") or [])[:1]:
         rows.append(f"crunch {esc(w.get('date'))}")
     proof = (pub or {}).get("proof") or {}
@@ -500,12 +563,14 @@ def fmt_proof(pub: dict | None) -> str:
     if not proof.get("n_events"):
         return "The proof scoreboard did not answer — try again shortly."
     ci = proof.get("recall_ci95") or [None, None]
+    ml = proof.get("median_lead_d")
     lines = ["📜 <b>The PROOF scoreboard</b> — the backtest, misses included", "",
              f"Recall: <b>{pct(proof.get('recall'))}</b> "
              f"(95% CI {pct(ci[0])}–{pct(ci[1])}) over {proof.get('n_events')} events",
              f"Precision (runs): {pct(proof.get('precision_runs'))} · "
              f"base rate {pct(proof.get('base_rate'), 1)}",
-             f"Median lead: {proof.get('median_lead_d'):.0f} days"]
+             (f"Median lead: {ml:.0f} days" if isinstance(ml, (int, float))
+              else "Median lead: n/a (no hit leads on record)")]
     lines.append("\nEvery episode with its verdict — hits AND misses — is on "
                  f"the board: {SITE}/#proof")
     return "\n".join(lines) + FOOT
@@ -551,7 +616,9 @@ def _inst_level(board) -> int | None:
     rows = (board or {}).get("rows") or []
     if not rows:
         return None
-    return max(INST_LEVEL.get(r.get("tier"), 0) for r in rows)
+    # unknown tiers read as WORST, mirroring _plumb_level — schema drift must
+    # never degrade the cross-desk read toward "contained"
+    return max(INST_LEVEL.get(r.get("tier"), 3) for r in rows)
 
 
 def fmt_institutions(board: dict | None) -> str:
@@ -565,8 +632,12 @@ def fmt_institutions(board: dict | None) -> str:
              f"{esc(board.get('as_of'))}",
              f"{len(rows)} institutions scored · {tier_line}", ""]
     for r in rows[:5]:
-        lines.append(f"{TIER_ICON.get(r.get('tier'), '·')} {esc(r['name'])} — "
-                     f"12m failure PD {r['hazard']['pd_12m'] * 100:.2f}%")
+        # the other desk's schema is not ours to trust: degrade, never vanish
+        pd12 = (r.get("hazard") or {}).get("pd_12m")
+        pd_s = f"{pd12 * 100:.2f}%" if isinstance(pd12, (int, float)) else "n/a"
+        lines.append(f"{TIER_ICON.get(r.get('tier'), '·')} "
+                     f"{esc(r.get('name') or r.get('slug') or '?')} — "
+                     f"12m failure PD {pd_s}")
     lines.append("\n<i>Institutions are LiquiLens's desk: liquilens.in · "
                  "@LiquiLens_bot. Plumbing is this desk's.</i>")
     return "\n".join(lines)
@@ -688,6 +759,11 @@ def fmt_daily_letter() -> str:
     nav = (overview or {}).get("navigator") or {}
     if nav.get("ok"):
         lines.append(f"Navigator: P(event, 5bd) {pct(nav.get('p_event_5bd'))}.")
+    flags = (((overview or {}).get("engines") or {}).get("scuttlebutt")
+             or {}).get("flags") or []
+    if flags:
+        lines.append(f"🗞 {esc(flags[0])} (press attention; display only, "
+                     "feeds no score).")
 
     # the other desk — institutions, read verbatim
     board = ll_get("/failure-radar/board")
@@ -786,13 +862,23 @@ def record_lead(chat_id: int, ref: str) -> None:
                             sort_keys=True) + "\n")
 
 
+BOT_USERNAME = "seiche_desk_bot"
+
+
 def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
-    cmd, _, arg = text.strip().partition(" ")
-    cmd = cmd.split("@")[0].lower()
+    raw_cmd, _, arg = text.strip().partition(" ")
+    cmd, _, suffix = raw_cmd.partition("@")
+    cmd = cmd.lower()
+    if suffix and suffix.lower() != BOT_USERNAME:
+        return   # addressed to another bot in a shared group — not ours
     # A plain question in a private chat IS /ask — the desk answers,
-    # grounded in the live board. Groups keep command-only discipline.
-    if not cmd.startswith("/") and chat_type == "private" and text.strip():
-        cmd, arg = "/ask", text.strip()
+    # grounded in the live board. Groups keep command-only discipline:
+    # non-command group chatter gets silence, never a help wall.
+    if not cmd.startswith("/"):
+        if chat_type == "private" and text.strip():
+            cmd, arg = "/ask", text.strip()
+        else:
+            return
     if cmd == "/start":
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
@@ -815,7 +901,11 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/snap":
         gauge = api_get("/api/gauge")
         gauge_history_append(gauge)
-        png = render_snap_card(gauge)
+        png = None
+        try:
+            png = render_snap_card(gauge)
+        except Exception as exc:   # a card render falls to text, never silence
+            print(f"snap render failed: {exc}", file=sys.stderr)
         caption = ""
         if gauge:
             caption = (f"{_regime_icon(gauge.get('regime'))} "
@@ -857,13 +947,28 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         send(chat_id, HELP)
 
 
+_INLINE_TTL_S = 60
+_inline_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _inline_payload() -> tuple:
+    """Inline queries fire on every keystroke; one board fetch per minute is
+    plenty. (gauge, pub, overview), cached in-process."""
+    now = time.time()
+    if _inline_cache["data"] is not None and now - _inline_cache["ts"] < _INLINE_TTL_S:
+        return _inline_cache["data"]
+    gauge = api_get("/api/gauge")
+    gauge_history_append(gauge)
+    data = (gauge, api_get("/api/public"), api_get("/api/overview"))
+    _inline_cache.update(ts=now, data=data)
+    return data
+
+
 def answer_inline(iq: dict) -> None:
     """Inline mode: @seiche_desk_bot in any chat drops a live card there.
     The article list is the desk's shareable surfaces; the query filters by
     title. (Enable inline mode for the bot in BotFather once.)"""
-    gauge = api_get("/api/gauge")
-    gauge_history_append(gauge)
-    pub = api_get("/api/public")
+    gauge, pub, overview = _inline_payload()
     regime = esc((gauge or {}).get("regime", "?"))
     idx = (gauge or {}).get("index", "?")
     cards = [
@@ -872,7 +977,7 @@ def answer_inline(iq: dict) -> None:
         ("now", f"Gauge now — {regime} {idx}/100",
          "Regime, composite, the Tell", fmt_now(gauge, pub)),
         ("odds", "Forward event odds",
-         "Navigator: P(event, 5bd) with caveats", fmt_odds(api_get("/api/overview"))),
+         "Navigator: P(event, 5bd) with caveats", fmt_odds(overview)),
         ("proof", "The PROOF scoreboard",
          "The backtest, misses included", fmt_proof(pub)),
     ]
@@ -895,14 +1000,28 @@ def answer_inline(iq: dict) -> None:
 def poll_loop() -> None:
     offset = load_state("offset.json", 0)
     print(f"Seiche bot polling (api={API})")
+    fails = 0
     while True:
         res = tg_call("getUpdates", {"timeout": POLL_TIMEOUT, "offset": offset,
                                      "allowed_updates": ["message",
                                                          "callback_query",
                                                          "inline_query"]})
         if not res or not res.get("ok"):
-            time.sleep(5)
+            code = (res or {}).get("error_code")
+            if code == 401:
+                # a revoked token never comes back — die loudly so systemd's
+                # restart limit surfaces a FAILED unit instead of a zombie
+                sys.exit("Telegram rejected the token (401) — "
+                         "check SEICHE_BOT_TOKEN")
+            if code == 409:
+                print("another getUpdates consumer is live (409); "
+                      "backing off 60s", file=sys.stderr)
+                time.sleep(60)
+                continue
+            fails = min(fails + 1, 7)
+            time.sleep(min(5 * 2 ** (fails - 1), 300))
             continue
+        fails = 0
         for u in res.get("result", []):
             offset = max(offset, u["update_id"] + 1)
             iq = u.get("inline_query")
@@ -937,9 +1056,9 @@ def run_letter() -> None:
     text = fmt_daily_letter()
     if not subs:
         print("no subscribers yet; letter composed but not sent")
-    for chat_id in subs:
-        send(int(chat_id), text)
-    print(f"letter sent to {len(subs)} subscriber(s)")
+        return
+    n = _send_all(subs, text)
+    print(f"letter sent to {n} subscriber(s)")
 
 
 def run_tandem() -> None:
@@ -964,52 +1083,95 @@ def run_tandem() -> None:
     else:
         head = "🟢 <b>Cross-desk de-escalation.</b>"
     text = head + "\n\n" + fmt_tandem(gauge, board)
-    subs = load_state("subscribers.json", {})
-    for chat_id in subs:
-        send(int(chat_id), text)
-    print(f"tandem: class {prev} → {cls}, alerted {len(subs)} subscriber(s)")
+    n = _send_all(load_state("subscribers.json", {}), text)
+    print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s)")
 
 
-ALERT_JUMP_PTS = 8   # composite move (points) worth an intraday ping
+ALERT_JUMP_PTS = 8          # composite move (points) worth an intraday ping
+ALERT_COOLDOWN_S = 2 * 3600  # min gap between non-escalating pings
+ALERT_DWELL_SCANS = 2        # scans a de-escalation must hold before it pings
+
+
+def _alert_decision(state: dict, gauge: dict, now_ts: float) -> tuple[list[str], dict]:
+    """Pure: what to ping, given the prior alert state and the live gauge.
+
+    Escalations (regime level rising) ping immediately. De-escalations and
+    re-crossings must HOLD for ALERT_DWELL_SCANS consecutive scans and clear
+    a 2h cooldown, so a composite hovering at a regime boundary can never
+    turn the 30-min timer into spam. Flips are judged against the last
+    reading actually ANNOUNCED, not the last scan — oscillation A→B→A→B
+    therefore dedupes to at most one ping per side per cooldown.
+
+    State: seen {regime,index} last scan (jump baseline) · alerted
+    {regime,index,ts} last announced · pending {regime,n} dwell counter."""
+    regime, index = gauge.get("regime"), gauge.get("index")
+    alerted = state.get("alerted") or {}
+    seen = state.get("seen") or {}
+    pending = state.get("pending") or {}
+    new_state = {"seen": {"regime": regime, "index": index},
+                 "alerted": alerted, "pending": {}}
+    if not alerted:
+        new_state["alerted"] = {"regime": regime, "index": index, "ts": now_ts}
+        return [], new_state
+
+    lines: list[str] = []
+    cooled = now_ts - float(alerted.get("ts") or 0) >= ALERT_COOLDOWN_S
+    if regime is not None and regime != alerted.get("regime"):
+        n = pending.get("n", 0) + 1 if pending.get("regime") == regime else 1
+        escalating = ((_plumb_level(regime) or 0)
+                      > (_plumb_level(alerted.get("regime")) or 0))
+        if escalating or (n >= ALERT_DWELL_SCANS and cooled):
+            lines.append(f"{_regime_icon(regime)} Regime flip: "
+                         f"<b>{esc(alerted.get('regime'))} → {esc(regime)}</b> "
+                         f"(composite {index}/100)")
+        else:
+            new_state["pending"] = {"regime": regime, "n": n}
+    # the jump detector only speaks when the regime is stable — a move that
+    # comes WITH a flip is the flip's story (held to the same dwell rules)
+    if not lines and regime == alerted.get("regime"):
+        try:
+            jump = float(index) - float(seen.get("index"))
+            drift = float(index) - float(alerted.get("index"))
+        except (TypeError, ValueError):
+            jump = drift = 0.0
+        if abs(jump) >= ALERT_JUMP_PTS and abs(drift) >= ALERT_JUMP_PTS and cooled:
+            lines.append(f"⚡ Composite moved <b>{jump:+.0f} points</b> since "
+                         f"the last scan, to {index}/100 ({esc(regime)})")
+    return lines, new_state
 
 
 def run_alert_scan() -> None:
-    """Between-letter flip detector (systemd timer, ~30min). Pings
-    subscribers when the REGIME flips or the composite jumps ≥8 points
-    since the last scan; silence otherwise, so the timer never becomes
-    noise. Also accrues the daily gauge history the sparklines read."""
+    """Between-letter flip detector (systemd timer, ~30min). Decision logic
+    in _alert_decision (hysteresis: dwell + cooldown, escalations immediate);
+    the announced-state marker advances only after delivery succeeds, so a
+    network blip retries next scan instead of swallowing the alert. Also
+    accrues the daily gauge history the sparklines read."""
     gauge = api_get("/api/gauge")
     if not gauge or gauge.get("index") is None:
         print("alert-scan: gauge did not answer; no state change recorded")
         return
     gauge_history_append(gauge)
-    new = {"regime": gauge.get("regime"), "index": gauge.get("index")}
-    old = load_state("alert_state.json", None)
-    save_state("alert_state.json", new)
-    if old is None:
-        print("alert-scan: state seeded")
-        return
-    lines = []
-    if old.get("regime") and new["regime"] != old["regime"]:
-        lines.append(f"{_regime_icon(new['regime'])} Regime flip: "
-                     f"<b>{esc(old['regime'])} → {esc(new['regime'])}</b> "
-                     f"(composite {new['index']}/100)")
-    try:
-        jump = float(new["index"]) - float(old.get("index"))
-    except (TypeError, ValueError):
-        jump = 0.0
-    if abs(jump) >= ALERT_JUMP_PTS and not lines:
-        lines.append(f"⚡ Composite moved <b>{jump:+.0f} points</b> since the "
-                     f"last scan, to {new['index']}/100 ({esc(new['regime'])})")
+    state = load_state("alert_state.json", {})
+    if state and "seen" not in state:   # migrate the flat pre-hysteresis format
+        state = {"seen": {k: state.get(k) for k in ("regime", "index")},
+                 "alerted": {"regime": state.get("regime"),
+                             "index": state.get("index"), "ts": 0.0},
+                 "pending": {}}
+    lines, new_state = _alert_decision(state, gauge, time.time())
     if not lines:
+        save_state("alert_state.json", new_state)
         print("alert-scan: no changes")
         return
     text = "🌊 <b>Seiche alert</b>\n\n" + "\n".join(lines) + \
            "\n\n/now for the full gauge · /turns for what's on the calendar"
     subs = load_state("subscribers.json", {})
-    for chat_id in subs:
-        send(int(chat_id), text, keyboard_for("/now"))
-    print(f"alert-scan: {len(lines)} change(s), alerted {len(subs)} subscriber(s)")
+    delivered = _send_all(subs, text, keyboard_for("/now")) if subs else 0
+    if delivered or not subs:
+        new_state["alerted"] = {"regime": gauge.get("regime"),
+                                "index": gauge.get("index"), "ts": time.time()}
+        new_state["pending"] = {}
+    save_state("alert_state.json", new_state)
+    print(f"alert-scan: {len(lines)} change(s), alerted {delivered} subscriber(s)")
 
 
 def run_setup() -> None:
