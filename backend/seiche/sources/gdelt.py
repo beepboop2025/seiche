@@ -101,6 +101,14 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
                 faults.append({"source": "gdelt",
                                "detail": "rate-limited — sweep aborted, cooldown set"})
                 break
+    if topics and len(topics) < len(SCUTTLEBUTT_TOPICS):
+        # partial sweep (typically a mid-sweep 429): a fresh 1-topic blob must
+        # never replace a complete stale sweep — carry the missing topics over,
+        # marked stale so the engine can say so
+        stale = store.load_blob(key)
+        for tkey, tv in ((stale or {}).get("topics") or {}).items():
+            if tkey not in topics:
+                topics[tkey] = {**tv, "stale": True}
     out = {"fetched_at": utcnow_iso(), "topics": topics}
     if topics:
         store.save_blob(key, out)

@@ -1252,7 +1252,10 @@ async def snapshot_asof(date: str) -> dict:
     drv = _derived(tsrc)
     if drv["spread_bp"].empty or drv["spread_bp"].index[-1] < asof - pd.Timedelta(days=30):
         return {"ok": False, "reason": f"no data near {date} (coverage starts ~2018-06)"}
-    engines = _run_engines(tsrc, drv, faults)
+    # off the event loop: a cold wrecks rebuild chains many replays and the
+    # engine stage would otherwise starve every HTTP request (same class as
+    # the keep-warm fit incident)
+    engines = await asyncio.to_thread(_run_engines, tsrc, drv, faults)
     payload = {
         "ok": True,
         "generated_at": utcnow_iso(),

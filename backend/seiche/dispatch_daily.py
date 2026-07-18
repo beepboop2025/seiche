@@ -206,6 +206,16 @@ def _movers_para(snap: dict, date: str) -> list[str]:
     return [lead + "; ".join(bits) + "."]
 
 
+def _press_para(snap: dict) -> list[str]:
+    """Scuttlebutt, only when a topic actually flags: press attention on the
+    plumbing, display only, never a score input. One sentence, no dashes."""
+    flags = (snap.get("engines", {}).get("scuttlebutt", {}) or {}).get("flags") or []
+    if not flags:
+        return []
+    shown = "; ".join(str(f) for f in flags[:2])
+    return [f"The scuttlebutt, display only and feeding no score: {shown}."]
+
+
 def _calendar_para(snap: dict) -> list[str]:
     cal = snap.get("calendar", {}) or {}
     turn = (snap.get("deep", {}).get("turn") or {}).get("next_turn")
@@ -339,6 +349,7 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None) -> dict
     paras += _opening(snap, date, prev_value)
     paras += _tell_para(snap, date)
     paras += _movers_para(snap, date)
+    paras += _press_para(snap)
     cal = _calendar_para(snap)
     if cal:
         paras += ["## The dates that matter"] + cal

@@ -71,6 +71,15 @@ def test_rewrite_same_day_does_not_duplicate_index(fake_snap, tmp_path):
     assert len([e for e in idx if e["slug"] == d["slug"]]) == 1
 
 
+def test_press_para_surfaces_scuttlebutt_flags_display_only():
+    from seiche import dispatch_daily
+    assert dispatch_daily._press_para({"engines": {}}) == []
+    out = dispatch_daily._press_para({"engines": {"scuttlebutt": {
+        "flags": ["repo chatter surging (z 2.1 vs own baseline)"]}}})
+    assert out and "display only" in out[0] and "feeding no score" in out[0]
+    assert "—" not in out[0] and "–" not in out[0]   # house copy rule holds
+
+
 def test_no_dashes_in_the_letter(fake_snap):
     """House copy rule: the published letter carries no em or en dashes."""
     d = build_dispatch(fake_snap, prev_value=38.0)
