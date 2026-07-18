@@ -200,6 +200,166 @@ def meter(x, width: int = 20) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+# ------------------------------------------------------------- image card --
+# /snap ships as a rendered card when Pillow is present (the box installs
+# python3-pil); the monospace text card remains the universal fallback, so
+# the stdlib-only deployment story survives — Pillow only ever adds.
+
+CARD_W, CARD_H = 1200, 628
+REGIME_RGB = {"CALM": (124, 205, 180), "EROSION": (221, 179, 118),
+              "STRAIN": (229, 154, 122), "STRESS": (239, 128, 120)}
+
+
+def _card_font(size: int):
+    from PIL import ImageFont
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+              "/System/Library/Fonts/Monaco.ttf"):
+        try:
+            return ImageFont.truetype(p, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def render_snap_card(gauge: dict | None) -> bytes | None:
+    """The abyss card: standing blurple waves on black whose chop scales
+    with the live composite, the reading painted on top, the bot's accrued
+    30-day history as a glowing polyline. None without Pillow/data."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        return None
+    import io
+    import math
+    if not gauge or gauge.get("index") is None:
+        return None
+    idx = float(gauge["index"])
+    regime = str(gauge.get("regime") or "?")
+    stress = max(0.0, min(1.0, idx / 100))
+    rc = REGIME_RGB.get(regime, (156, 143, 232))
+
+    img = Image.new("RGB", (CARD_W, CARD_H))
+    px = img.load()
+    for y in range(CARD_H):
+        t = y / (CARD_H - 1)
+        row = (round(10 * t), round(11 * t), round(5 + 21 * t))
+        for x in range(CARD_W):
+            px[x, y] = row
+    img = img.convert("RGBA")
+
+    # the basin: wave amplitude and frequency rise with the composite
+    for k, col in enumerate(((69, 60, 114), (128, 113, 204), (156, 143, 232))):
+        amp = (12 + 9 * k) * (0.6 + stress)
+        yb = int(CARD_H * 0.86) - k * 30
+        pts = [(x, yb + amp * math.sin(x / CARD_W * math.tau
+                                       * (1.2 + 0.4 * k + stress) + k * 1.3))
+               for x in range(0, CARD_W + 6, 6)]
+        glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(glow).line(pts, fill=col + (80,), width=10)
+        img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(6)))
+        ImageDraw.Draw(img).line(pts, fill=col + (230,), width=3)
+
+    d = ImageDraw.Draw(img)
+    ink, dim, faint = (237, 238, 244), (154, 160, 182), (120, 127, 149)
+    accent = (156, 143, 232)
+    f_h, f_big = _card_font(30), _card_font(124)
+    f_m, f_s = _card_font(26), _card_font(21)
+
+    d.text((60, 46), "SEICHE", font=f_h, fill=accent)
+    d.text((228, 46), "· US FUNDING STRESS", font=f_h, fill=dim)
+    d.text((CARD_W - 60, 50), str(gauge.get("generated_at", ""))[:10],
+           font=f_m, fill=faint, anchor="ra")
+
+    d.text((56, 120), f"{idx:.0f}", font=f_big, fill=ink)
+    bx = 70 + d.textlength(f"{idx:.0f}", font=f_big)
+    # regime chip: translucent tint composited (ImageDraw alone would stamp
+    # the alpha instead of blending), label in the regime colour on top
+    tw = int(d.textlength(regime, font=f_h))
+    chip_box = (bx + 24, 196, bx + 24 + tw + 44, 250)
+    chip = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(chip).rounded_rectangle(chip_box, radius=12,
+                                           fill=rc + (38,),
+                                           outline=rc + (255,), width=2)
+    img.alpha_composite(chip)
+    d = ImageDraw.Draw(img)
+    d.text((chip_box[0] + 22, chip_box[1] + 10), regime, font=f_h, fill=rc)
+
+    # meter
+    mw = 460
+    d.rounded_rectangle((60, 292, 60 + mw, 306), radius=7, fill=(30, 32, 48, 255))
+    d.rounded_rectangle((60, 292, 60 + int(mw * stress), 306), radius=7,
+                        fill=rc + (255,))
+    tell = gauge.get("tell")
+    y = 336
+    if isinstance(tell, (int, float)):
+        lead = "plumbing leads price" if tell > 0 else "price leads plumbing"
+        d.text((60, y), f"tell {tell:+.0f} · {lead}", font=f_m, fill=dim)
+        y += 40
+    nt = gauge.get("next_turn") or {}
+    if nt.get("date"):
+        d.text((60, y), f"next turn {nt['date']} · {nt.get('forecast_bp')}bp "
+                        f"· severity {nt.get('severity')}/5", font=f_m, fill=dim)
+        y += 40
+    for w in (gauge.get("crunch_windows") or [])[:1]:
+        d.text((60, y), f"crunch {w.get('date')}: "
+                        f"{str(w.get('reason', ''))[:52]}", font=f_s, fill=faint)
+
+    # the 30-day history as a glowing polyline (the bot's own accrued record)
+    hist = load_state("gauge_history.json", {})
+    vals = [(hist[k] or {}).get("index") for k in sorted(hist)[-30:]]
+    vals = [v for v in vals if isinstance(v, (int, float))]
+    if len(vals) >= 2:
+        x0, x1, y0, y1 = 720, CARD_W - 60, 200, 330
+        lo, hi = min(vals), max(vals)
+        span = (hi - lo) or 1
+        pts = [(x0 + i * (x1 - x0) / (len(vals) - 1),
+                y1 - (v - lo) / span * (y1 - y0)) for i, v in enumerate(vals)]
+        glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(glow).line(pts, fill=accent + (90,), width=9)
+        img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(5)))
+        d = ImageDraw.Draw(img)
+        d.line(pts, fill=accent + (255,), width=3)
+        d.text((x0, y1 + 16), f"composite · last {len(vals)} days",
+               font=f_s, fill=faint)
+
+    d.text((60, CARD_H - 52), "free public good · seiche.info",
+           font=f_s, fill=faint)
+    d.text((CARD_W - 60, CARD_H - 52), "honest backtest, misses included",
+           font=f_s, fill=faint, anchor="ra")
+
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def send_photo(chat_id: int, png: bytes, caption: str,
+               keyboard: list | None = None) -> bool:
+    """sendPhoto via stdlib multipart. False on failure — callers fall
+    back to the text card."""
+    boundary = "----seichecard" + os.urandom(12).hex()
+    fields = {"chat_id": str(chat_id), "caption": caption[:1024],
+              "parse_mode": "HTML"}
+    if keyboard:
+        fields["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+    body = b""
+    for k, v in fields.items():
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; "
+                 f'name="{k}"\r\n\r\n{v}\r\n').encode()
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; "
+             f'name="photo"; filename="seiche.png"\r\n'
+             "Content-Type: image/png\r\n\r\n").encode() + png + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"{TG}/sendPhoto", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return bool(json.load(r).get("ok"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        print(f"sendPhoto failed: {exc}", file=sys.stderr)
+        return False
+
+
 # -------------------------------------------------------------- formatters --
 REGIME_ICON = {"CALM": "🟢", "EROSION": "🟡", "STRAIN": "🟠"}
 
@@ -655,8 +815,16 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/snap":
         gauge = api_get("/api/gauge")
         gauge_history_append(gauge)
-        send(chat_id, fmt_snap(gauge, api_get("/api/public")),
-             keyboard_for("/snap"))
+        png = render_snap_card(gauge)
+        caption = ""
+        if gauge:
+            caption = (f"{_regime_icon(gauge.get('regime'))} "
+                       f"<b>{esc(gauge.get('regime'))}</b> "
+                       f"{gauge.get('index')}/100 · free public data · "
+                       "seiche.info")
+        if not (png and send_photo(chat_id, png, caption, keyboard_for("/snap"))):
+            send(chat_id, fmt_snap(gauge, api_get("/api/public")),
+                 keyboard_for("/snap"))
     elif cmd == "/odds":
         send(chat_id, fmt_odds(api_get("/api/overview")), keyboard_for("/odds"))
     elif cmd == "/turns":
