@@ -22,26 +22,26 @@ const tok = (name: string, fallback: string): string => {
 
 export const P = {
   // status ramp — the regime colours
-  get calm() { return tok("--calm", "#79c2ad"); },
-  get erosion() { return tok("--erosion", "#d3ab6e"); },
-  get strain() { return tok("--strain", "#d99274"); },
-  get stress() { return tok("--stress", "#dd7a72"); },
+  get calm() { return tok("--calm", "#7ccdb4"); },
+  get erosion() { return tok("--erosion", "#ddb376"); },
+  get strain() { return tok("--strain", "#e59a7a"); },
+  get stress() { return tok("--stress", "#ef8078"); },
 
   // the accent family
-  get accent() { return tok("--accent", "#9184d9"); },
-  get accentSoft() { return tok("--accent-soft", "#b5abfc"); },
-  get accentBright() { return tok("--accent-bright", "#d2cefd"); },
+  get accent() { return tok("--accent", "#9c8fe8"); },
+  get accentSoft() { return tok("--accent-soft", "#bbaffe"); },
+  get accentBright() { return tok("--accent-bright", "#d9d4ff"); },
 
   // neutrals
-  get bg() { return tok("--bg", "#161826"); },
-  get faint() { return tok("--faint", "#75798c"); },
-  get ghost() { return tok("--ghost", "#595d6c"); },
+  get bg() { return tok("--bg", "#000000"); },
+  get faint() { return tok("--faint", "#787f95"); },
+  get ghost() { return tok("--ghost", "#5a5f70"); },
 
   // chart-only extensions (series that need to be distinct from status hues)
-  get gold() { return tok("--chart-gold", "#c99c50"); },
-  get slate() { return tok("--chart-slate", "#7f95cc"); },
-  get amber() { return tok("--chart-amber", "#d9b274"); },
-  get ink() { return tok("--chart-ink", "#b2b6ca"); },
-  get inkBright() { return tok("--chart-ink-bright", "#cfd3e5"); },
-  get grid() { return tok("--chart-grid", "rgba(233,233,237,0.07)"); },
+  get gold() { return tok("--chart-gold", "#d3a558"); },
+  get slate() { return tok("--chart-slate", "#879ed8"); },
+  get amber() { return tok("--chart-amber", "#e2bb7c"); },
+  get ink() { return tok("--chart-ink", "#b7bbd0"); },
+  get inkBright() { return tok("--chart-ink-bright", "#d4d8ea"); },
+  get grid() { return tok("--chart-grid", "rgba(237,238,244,0.08)"); },
 };

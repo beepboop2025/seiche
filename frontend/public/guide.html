@@ -13,14 +13,14 @@
      that fade to transparent at their ends. */
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   :root {
-    --bg:#161826; --panel:#1c1e2d; --panel-2:#232532; --edge:#292b31; --edge-2:#3f424d;
-    --text:#e9e9ed; --dim:#9397ab; --faint:#75798c; --ghost:#595d6c;
-    --accent:#9184d9; --accent-bright:#d2cefd; --accent-soft:#b5abfc; --accent-dim:#796cbf; --accent-deep:#423a6a;
-    --accent-glow:rgba(145,132,217,.45);
-    --calm:#79c2ad; --erosion:#d3ab6e; --strain:#d99274; --stress:#dd7a72;
+    --bg:#000000; --panel:#0b0d15; --panel-2:#11131d; --edge:#1c1f2b; --edge-2:#333748;
+    --text:#edeef4; --dim:#9aa0b6; --faint:#787f95; --ghost:#5a5f70;
+    --accent:#9c8fe8; --accent-bright:#d9d4ff; --accent-soft:#bbaffe; --accent-dim:#8071cc; --accent-deep:#453c72;
+    --accent-glow:rgba(156,143,232,.45);
+    --calm:#7ccdb4; --erosion:#ddb376; --strain:#e59a7a; --stress:#ef8078;
     --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
     --display:"Inter",system-ui,-apple-system,sans-serif;
-    --rule:linear-gradient(to right,transparent,rgba(233,233,237,.16) 48px,rgba(233,233,237,.16) calc(100% - 48px),transparent);
+    --rule:linear-gradient(to right,transparent,rgba(237,238,244,.16) 48px,rgba(237,238,244,.16) calc(100% - 48px),transparent);
     color-scheme:dark;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
@@ -31,7 +31,7 @@
   }
   a { color:var(--accent-soft); text-decoration:none; }
   a:hover { color:var(--accent-bright); text-decoration:underline; }
-  ::selection { background:rgba(145,132,217,.30); }
+  ::selection { background:rgba(156,143,232,.30); }
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
 
   .top { display:flex; align-items:baseline; justify-content:space-between; gap:14px; flex-wrap:wrap;
@@ -56,10 +56,10 @@
   /* outlined tints, as on the board — the word carries the state, colour supports */
   .rg .tag { font-family:var(--display); font-weight:500; font-size:11px; letter-spacing:.09em; padding:3px 10px;
              border-radius:6px; display:inline-block; text-transform:uppercase; border:1px solid transparent; }
-  .rg.calm .tag { color:var(--calm); border-color:rgba(121,194,173,.45); background:rgba(121,194,173,.10); }
-  .rg.erosion .tag { color:var(--erosion); border-color:rgba(211,171,110,.45); background:rgba(211,171,110,.10); }
-  .rg.strain .tag { color:var(--strain); border-color:rgba(217,146,116,.5); background:rgba(217,146,116,.10); }
-  .rg.stress .tag { color:var(--stress); border-color:rgba(221,122,114,.55); background:rgba(221,122,114,.12); }
+  .rg.calm .tag { color:var(--calm); border-color:rgba(124,205,180,.45); background:rgba(124,205,180,.10); }
+  .rg.erosion .tag { color:var(--erosion); border-color:rgba(221,179,118,.45); background:rgba(221,179,118,.10); }
+  .rg.strain .tag { color:var(--strain); border-color:rgba(229,154,122,.5); background:rgba(229,154,122,.10); }
+  .rg.stress .tag { color:var(--stress); border-color:rgba(239,128,120,.55); background:rgba(239,128,120,.12); }
   .rg p { font-size:12.5px; color:var(--dim); margin:10px 0 0; }
 
   ol.steps { list-style:none; counter-reset:s; display:grid; gap:12px; margin:8px 0; }
@@ -67,7 +67,7 @@
                 background:var(--panel); border:1px solid var(--edge); border-radius:10px; padding:13px 15px; }
   ol.steps li::before { content:counter(s); font-family:var(--display); font-weight:500; font-size:15px; color:var(--accent-soft);
                         border:1px solid var(--accent-deep); border-radius:8px; width:30px; height:30px; display:grid; place-items:center;
-                        background:rgba(145,132,217,.06); }
+                        background:rgba(156,143,232,.06); }
   ol.steps b { color:var(--text); font-weight:600; }
 
   dl.tabs { display:grid; gap:1px; background:var(--edge); border:1px solid var(--edge); border-radius:10px; overflow:hidden; }

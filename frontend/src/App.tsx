@@ -1,13 +1,16 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
-import { Any, Num } from "./lib";
+import { Any, Roll } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import { Command } from "./commands";
 import { useDepth, DepthDial } from "./depth";
+import { useAttentionMarks } from "./attention";
 import Basin from "./Basin";
+import Tape from "./Tape";
+import DepthRail from "./DepthRail";
 import Descent, { shouldDescend } from "./Descent";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
@@ -54,6 +57,9 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [descending, setDescending] = useState(shouldDescend);
   const { setDepth, stepDepth } = useDepth();
+
+  // unseen-panel marks re-arm on every tab visit
+  useAttentionMarks(tab);
 
   // Tab switches ride the View Transitions API where it exists: the old view
   // cross-dissolves into the new one on the compositor. Falls back to the
@@ -181,12 +187,21 @@ export default function App() {
   return (
     <div className="app">
       <Basin value={c.value ?? null} regime={c.regime ?? null} />
+      <DepthRail />
       <div className="masthead">
         <div className="wordmark">SEI<span>CHE</span></div>
         <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
         <a className="prolink" href="/guide.html">new? how to read this</a>
         <div className="mastindex">
-          <span className="mastvalue"><Num v={c.value} d={0} /></span>
+          {/* sonar: ping period tightens as the composite rises — CALM pings
+              lazily, STRESS pings urgently. The number itself rolls up on
+              first paint (the live-counter moment). */}
+          <span
+            className="mastvalue sonar"
+            style={{ "--ping": `${(3.6 - 2.6 * Math.min(1, (c.value ?? 20) / 100)).toFixed(2)}s` } as CSSProperties}
+          >
+            <Roll v={c.value} d={0} />
+          </span>
           <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
           <DepthDial />
         </div>
@@ -196,6 +211,8 @@ export default function App() {
           <a className="prolink" href="/support.html">free · support Seiche</a>
         </div>
       </div>
+
+      <Tape snap={snap} />
 
       <nav className="tabs">
         {TABS.map((t) => (

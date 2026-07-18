@@ -46,11 +46,51 @@ export function Num({ v, d = 1, unit = "", signed = false }:
   return <>{shown == null ? "—" : `${sign}${fmt(shown, d, unit)}`}</>;
 }
 
+/**
+ * A reading that rolls up from zero on first paint — the "live counter"
+ * moment (arXiv 2602.19853: motion as progress review, kept short enough to
+ * never be tedious). After the landing it behaves like Num: later refreshes
+ * tween in place. Lands with a brief glow exhale (.roll-done).
+ */
+export function Roll({ v, d = 1, unit = "", dur = 950 }:
+  { v: number | null | undefined; d?: number; unit?: string; dur?: number }) {
+  const [shown, setShown] = useState<number | null | undefined>(
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? v : v == null ? v : 0,
+  );
+  const [landed, setLanded] = useState(false);
+  const raf = useRef(0);
+  const first = useRef(true);
+
+  useEffect(() => {
+    if (v == null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShown(v);
+      setLanded(true);
+      return;
+    }
+    const from = first.current ? 0 : (shown ?? 0);
+    first.current = false;
+    const t0 = performance.now();
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - t0) / dur);
+      const e = 1 - Math.pow(1 - p, 4);
+      setShown(from + (v - from) * e);
+      if (p < 1) raf.current = requestAnimationFrame(tick);
+      else setLanded(true);
+    };
+    cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf.current);
+  }, [v]);
+
+  return <span className={landed ? "roll-done" : ""}>{shown == null ? "—" : fmt(shown, d, unit)}</span>;
+}
+
 export function Stat({ k, blk, unit, d = 2 }: { k: string; blk: Any; unit: string; d?: number }) {
   return (
     <div className="stat">
       <div className="k">{k}</div>
-      <div className="v">{blk ? fmt(blk.value, d, unit) : "—"}</div>
+      <div className="v">{blk ? <Roll v={blk.value} d={d} unit={unit} /> : "—"}</div>
       <div className="asof">{blk?.asof ?? "no data"}</div>
     </div>
   );

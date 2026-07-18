@@ -156,10 +156,10 @@ def md_to_html(src: str) -> str:
 # ---------------------------------------------------------------------------
 _CSS = """
 :root {
-  --bg:#161826; --panel:#1c1e2d; --panel-2:#232532; --edge:#292b31; --edge-2:#3f424d;
-  --text:#e9e9ed; --dim:#9397ab; --faint:#75798c;
-  --accent:#9184d9; --accent-soft:#b5abfc; --accent-deep:#423a6a;
-  --divider:rgba(233,233,237,0.16);
+  --bg:#000000; --panel:#0b0d15; --panel-2:#11131d; --edge:#1c1f2b; --edge-2:#333748;
+  --text:#edeef4; --dim:#9aa0b6; --faint:#787f95;
+  --accent:#9c8fe8; --accent-soft:#bbaffe; --accent-deep:#453c72;
+  --divider:rgba(237,238,244,0.16);
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
   --display:"Inter",system-ui,-apple-system,sans-serif;
   color-scheme:dark;
@@ -238,7 +238,7 @@ def _page(title: str, description: str, canonical_path: str, jsonld: dict, body:
 <meta name="description" content="{d}">
 <link rel="canonical" href="{url}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<meta name="theme-color" content="#161826">
+<meta name="theme-color" content="#000000">
 {_FONTS}
 <meta property="og:type" content="{og_type}">
 <meta property="og:site_name" content="Seiche">
