@@ -18,11 +18,11 @@
   <key>Label</key><string>com.seiche.watch</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/mrinal/dev/seiche/backend/.venv/bin/seiche</string>
+    <string>/Users/USERNAME/dev/seiche/backend/.venv/bin/seiche</string>
     <string>alert</string>
     <string>--force</string>
   </array>
-  <key>WorkingDirectory</key><string>/Users/mrinal/dev/seiche/backend</string>
+  <key>WorkingDirectory</key><string>/Users/USERNAME/dev/seiche/backend</string>
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>

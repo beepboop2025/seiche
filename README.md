@@ -37,7 +37,6 @@ layer none of them have: **honest evidence about itself**.
 > and the **Far Basin** — Palimpsest's censorship-fear channel
 > (palimpsest.info), a policy confession signal no market data vendor
 > carries, honestly quarantined until it accrues testable history.
-> Strategy doc: [docs/STRATEGY.md](docs/STRATEGY.md).
 
 | Engine | Question it answers |
 |---|---|
