@@ -93,6 +93,15 @@ jobs:
 
       # Secondary: Cloudflare Pages — works the day CLOUDFLARE_API_TOKEN is
       # minted; until then this step fails without failing the publish.
+      # Loud preflight first: without the token, seiche.info's _headers (HSTS,
+      # CSP, …) never go live — GitHub Pages sends no custom headers.
+      - name: Cloudflare token preflight
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning title=Cloudflare Pages deploy skipped::CLOUDFLARE_API_TOKEN is not set — seiche.info security headers (frontend/public/_headers) only go live via the Cloudflare Pages deployment; the GitHub Pages mirror sends none. One-time setup: ops/cloudflare/README.md."
+          fi
       - name: Deploy to Cloudflare Pages (optional)
         continue-on-error: true
         uses: cloudflare/wrangler-action@v3

@@ -1,0 +1,32 @@
+name: security-headers
+
+# Regression guard for the live security posture: seiche.info and
+# api.seiche.info must keep the house-standard headers (HSTS with
+# includeSubDomains+preload, CSP, X-Frame-Options DENY, nosniff,
+# Referrer-Policy, Permissions-Policy) — 404s included — plus the
+# http→https and www→apex redirects. ops/security/check_headers.sh does
+# the checking (~6 polite GETs against the live hosts).
+#
+# Fail-loud on purpose: no continue-on-error — a red board is the nudge.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # daily 04:17 UTC — off the :00/:30 rush
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-headers
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify live security headers
+        run: bash ops/security/check_headers.sh

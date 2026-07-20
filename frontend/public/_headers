@@ -1,0 +1,14 @@
+# Live only on the Cloudflare Pages deployment (ops/cloudflare/) — the
+# GitHub Pages mirror of seiche.info cannot send custom headers.
+# style-src 'unsafe-inline' is load-bearing: 190+ inline style attributes in
+# the terminal plus <style> blocks in the static pages. script-src stays
+# strict: the one inline script moved to /support.js; ld+json is data, CSP
+# does not touch it.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' https://api.seiche.info; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Opener-Policy: same-origin

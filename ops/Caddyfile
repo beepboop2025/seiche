@@ -1,10 +1,29 @@
 # api.seiche.info — read-only public window + subscriber auth.
 # Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
 # Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
+
+# Security headers on EVERY response — the LiquiLens house standard, tightened
+# (payment/usb permissions, COOP, plus base-uri in the CSP). The CSP is a hard
+# lockdown because this host serves JSON only — no HTML, no assets. Imported
+# at site level below so preflight and the catch-all 404 carry them too, and
+# it strips the Server header (defers to write time, so upstream's goes too).
+(security_headers) {
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    header X-Frame-Options "DENY"
+    header X-Content-Type-Options "nosniff"
+    header Referrer-Policy "strict-origin-when-cross-origin"
+    header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    header Cross-Origin-Opener-Policy "same-origin"
+    header -Server
+}
+
 api.seiche.info {
     # Compress every JSON/text response the app didn't already compress
     # (the app pre-gzips /api/overview itself; encode skips those).
     encode zstd gzip
+
+    import security_headers
 
     @public {
         method GET HEAD
@@ -17,7 +36,6 @@ api.seiche.info {
     handle @public {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
-        header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
     handle @login {
@@ -39,7 +57,6 @@ api.seiche.info {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
         header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE"
-        header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
     handle {

@@ -71,17 +71,6 @@
 
 <p class="dim" style="margin-top:32px"><a href="/">← back to the terminal</a> · <a href="/terms.html">terms</a> · <a href="/privacy.html">privacy</a></p>
 
-<script>
-  document.querySelectorAll("button.copy").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var text = document.getElementById(b.dataset.for).textContent;
-      navigator.clipboard.writeText(text).then(function () {
-        var old = b.textContent;
-        b.textContent = "copied";
-        setTimeout(function () { b.textContent = old; }, 1200);
-      });
-    });
-  });
-</script>
+<script src="/support.js" defer></script>
 </body>
 </html>
