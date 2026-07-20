@@ -193,6 +193,52 @@ OFR_SERIES = [
     SeriesSpec("MMF_REPO_TOT", "ofr", "MMF-MMF_RP_TOT-M", "MMF total repo lending", "$B", "M", 10080),
 ]
 
+# ---------------------------------------------------------------------------
+# Collector additions (v2.7): more verified keyless feeds, all probed live
+# 2026-07-20. CP + 3M bill rates and the Fed's foreign-official custody book
+# from FRED (fredgraph.csv); the GCF repo pair and primary-dealer financing
+# from OFR STFM; DeFi exploit losses from the DeFiLlama hacks API (dedicated
+# collector, seiche/sources/llamahacks.py — TTL constant below).
+# ---------------------------------------------------------------------------
+
+# Unsecured cash next to the bill curve: CP − bill is the classic funding-
+# stress spread (2008, Sep-2019, Mar-2020 all printed here first). DTB4WK is
+# already fetched as TB4W in MARKET_SERIES — deliberately not duplicated.
+FRED_CP_SERIES = [
+    SeriesSpec("CP_NONFIN_3M", "fred", "DCPN3M", "3M AA nonfinancial commercial paper rate", "%", "D", 360),
+    SeriesSpec("CP_FIN_3M", "fred", "DCPF3M", "3M AA financial commercial paper rate", "%", "D", 360),
+    SeriesSpec("DGS3M", "fred", "DGS3MO", "3-month Treasury constant maturity yield", "%", "D", 360),
+]
+
+# Foreign officials' Treasuries parked at the Fed (H.4.1, Wednesday levels) —
+# the custody drawdown is the official-sector twin of the RRP drain.
+FRED_CUSTODY_SERIES = [
+    SeriesSpec("CUSTODY_TSY", "fred", "WMTSECL1", "Treasuries in Fed custody for foreign officials", "$M", "W", 720),
+]
+
+# GCF repo: the interdealer FICC-cleared leg beside DVP/tri-party. The OO
+# pair (rate + volume) prints only on days with overnight/open trades —
+# nulls are "no print", not a collector gap (verified 2026-07-20: 20
+# non-null prints in the trailing 52 days, identical coverage on both legs).
+OFR_GCF_SERIES = [
+    SeriesSpec("GCF_RATE_OO", "ofr", "REPO-GCF_AR_OO-P", "GCF repo overnight/open avg rate", "%", "D", 360),
+    SeriesSpec("GCF_VOL_OO", "ofr", "REPO-GCF_TV_OO-P", "GCF repo overnight/open volume", "$B", "D", 360),
+]
+
+# Primary-dealer financing, total securities-in (OFR STFM, weekly) — how much
+# of the street's book is funded in repo; the financing twin of the NY Fed
+# warehouse positions. Arrives in raw dollars, like the other OFR volumes.
+OFR_PD_SERIES = [
+    SeriesSpec("PD_FIN_TOT", "ofr", "NYPD-PD_AFtD_TOT-A", "Primary dealer financing total (securities in)", "$B", "W", 720),
+]
+
+# DeFiLlama hacks API (https://api.llama.fi/hacks): keyless JSON, verified
+# live 2026-07-20 (~590 events, full history in one ~150KB GET). DeFi
+# exploits are crypto-native funding events — forced unwinds hit the same
+# stablecoin/basis complex the moorings board watches. One request per
+# refresh, TTL-gated: far inside the 1 req/2s politeness floor.
+LLAMA_HACKS_TTL_MIN = 360          # 6h — hacks are event-driven, not intraday
+
 # NY Fed + FiscalData + CFTC are fetched through dedicated collectors
 # (structured payloads, not single series). TTLs below.
 NYFED_TTL_MIN = 240        # rates with percentiles, SRF ops
@@ -258,6 +304,10 @@ ALL_SERIES: dict[str, SeriesSpec] = {
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
 # (they are declared later in the file to keep the Far Basin block coherent).
+ALL_SERIES.update({
+    s.mnemonic: s
+    for s in FRED_CP_SERIES + FRED_CUSTODY_SERIES + OFR_GCF_SERIES + OFR_PD_SERIES
+})
 
 # ---------------------------------------------------------------------------
 # Staleness classification (fail-loud provenance).

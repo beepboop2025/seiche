@@ -39,11 +39,15 @@ from seiche.config import (
     CRYPTO_PRODUCTS,
     ECB_SERIES,
     FOMC_DECISION_DATES,
+    FRED_CP_SERIES,
+    FRED_CUSTODY_SERIES,
     FRED_SERIES,
     GLOBAL_FRED_SERIES,
     GLOBAL_MM_FRED_SERIES,
     INDIA_FRED_SERIES,
     MARKET_SERIES,
+    OFR_GCF_SERIES,
+    OFR_PD_SERIES,
     OFR_SERIES,
     PLAYBOOK_OUTCOMES,
     PRETRAIN_FRED_SERIES,
@@ -55,9 +59,12 @@ from seiche.engines import basins as eng_basins
 from seiche.engines import bathymetry as eng_bathymetry
 from seiche.engines import book as eng_book
 from seiche.engines import breakwater as eng_breakwater
+from seiche.engines import caesar as eng_caesar
 from seiche.engines import communique as eng_communique
 from seiche.engines import composite as eng_composite
+from seiche.engines import cpsentinel as eng_cpsentinel
 from seiche.engines import echo as eng_echo
+from seiche.engines import edetect as eng_edetect
 from seiche.engines import farbasin as eng_farbasin
 from seiche.engines import gyre as eng_gyre
 from seiche.engines import harbors as eng_harbors
@@ -95,7 +102,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, nyfed, ofr, palimpsest
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, ofr, palimpsest
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -131,7 +138,12 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
+            guard("fred_cp_rates", fred.fetch_many(client, [s.mnemonic for s in FRED_CP_SERIES], faults)),
+            guard("fred_custody", fred.fetch_many(client, [s.mnemonic for s in FRED_CUSTODY_SERIES], faults)),
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
+            guard("ofr_gcf", ofr.fetch_many(client, [s.mnemonic for s in OFR_GCF_SERIES], faults)),
+            guard("ofr_pd_financing", ofr.fetch_many(client, [s.mnemonic for s in OFR_PD_SERIES], faults)),
+            guard("llama_hacks", llamahacks.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
             guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
@@ -156,12 +168,14 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
     out: dict = {}
-    for group in ("fred", "ofr", "ecb", "bis", "chinamoney", "boj"):
+    for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
+                  "ofr_pd_financing", "ecb", "bis", "chinamoney", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             pts = s.points[s.points.index <= asof]
             cut[m] = Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at, pts)
         out[group] = cut
+    out["llama_hacks"] = llamahacks.truncate(src.get("llama_hacks") or {}, asof)
     fxs = (src.get("nyfed_fxs") or {}).get("ops", [])
     out["nyfed_fxs"] = {
         "fetched_at": (src.get("nyfed_fxs") or {}).get("fetched_at"),
@@ -266,6 +280,18 @@ def _derived(src: dict) -> dict:
     else:
         d["tail_bp"] = pd.Series(dtype=float)
 
+    # 3m AA nonfinancial CP − 3m Treasury, in bp (CP Sentinel's spread leg)
+    cp_s = src.get("fred_cp_rates", {})
+    cp3m, dgs3m = _pts(cp_s, "CP_NONFIN_3M"), _pts(cp_s, "DGS3M")
+    if not cp3m.empty and not dgs3m.empty:
+        d["cp_spread_bp"] = ((cp3m - dgs3m.reindex(cp3m.index).ffill()) * 100.0).dropna()
+    else:
+        d["cp_spread_bp"] = pd.Series(dtype=float)
+
+    # DeFi exploit losses, daily USD (DeFiLlama hacks; zeros are real quiet days)
+    hacks = (src.get("llama_hacks") or {}).get("daily")
+    d["hacks_usd"] = hacks.points.dropna() if hacks is not None else pd.Series(dtype=float)
+
     res = _pts(fred_s, "WRESBAL") / 1000.0            # $B weekly
     gdp = _pts(fred_s, "GDP")                          # $B quarterly
     if not res.empty and not gdp.empty:
@@ -367,6 +393,11 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     # --- Undertow (free decay — the other half of the resonance physics) ---
     run("undertow", lambda: eng_undertow.analyze(drv["spread_bp"], drv["tail_bp"]))
 
+    # --- E-Detector (regime-break tripwire on the two funding streams, with a
+    #     nonasymptotic false-alarm warranty; context, never composite) ---
+    run("edetect", lambda: eng_edetect.analyze(
+        spread_bp=drv["spread_bp"], tail_bp=drv["tail_bp"]))
+
     # --- Communiqué (the policy text read as data; vintage-stamped) ---
     run("communique", lambda: eng_communique.analyze(
         (src.get("fedtext") or {}).get("texts", {})))
@@ -409,6 +440,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
 
     # Rogue Wave — the tail law (POT/GPD on the shared pop statistic)
     run("roguewave", lambda: eng_roguewave.analyze(drv["spread_bp"]))
+
+    # CAESar — tomorrow's (VaR, ES) bands from the pop statistic's own CAViaR
+    # dynamics (the operational sibling of Rogue Wave's static tail law; context)
+    run("caesar", lambda: eng_caesar.analyze(spread_bp=drv["spread_bp"]))
 
     # --- Warehouse ---
     run("warehouse", lambda: eng_warehouse.analyze(
@@ -521,6 +556,11 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         stable_total_b=stable.get("total", pd.Series(dtype=float)),
         btc_usd=drv["btc"],
     ))
+
+    # --- CP Sentinel (do major DeFi exploits narrow CP spreads? cross-market
+    #     channel context; a missing leg degrades to an honest ok=False) ---
+    run("cpsentinel", lambda: eng_cpsentinel.analyze(
+        hacks_usd=drv["hacks_usd"], cp_spread_bp=drv["cp_spread_bp"]))
 
     # --- SONAR ---
     def _sonar():
@@ -1156,7 +1196,7 @@ async def snapshot(force: bool = False) -> dict:
 
     Fresh cache → returned without touching the build lock. Stale cache →
     returned instantly while ONE background rebuild refreshes it (a reader
-    must never pay the assembly bill — sources, 22 engines, the Navigator).
+    must never pay the assembly bill — sources, 25 engines, the Navigator).
     Cold start / force → build inline; boot warming makes cold rare.
     """
     global _refreshing
