@@ -1,7 +1,3 @@
-# api.seiche.info — read-only public window + subscriber auth.
-# Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
-# Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
-
 # Security headers on EVERY response — the LiquiLens house standard, tightened
 # (payment/usb permissions, COOP, plus base-uri in the CSP). The CSP is a hard
 # lockdown because this host serves JSON only — no HTML, no assets. Imported
@@ -18,16 +14,52 @@
     header -Server
 }
 
+# api.seiche.info — read-only public window + subscriber auth.
+# Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
+# Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
 api.seiche.info {
-    # Compress every JSON/text response the app didn't already compress
-    # (the app pre-gzips /api/overview itself; encode skips those).
-    encode zstd gzip
-
     import security_headers
+
+    # AnakE-Nyx external-factor feeds — static public-data mirror,
+    # pulled hourly from the private repo; consumed by LiquiLens/DragonScope.
+    handle_path /anake-nyx/feeds/* {
+        header Access-Control-Allow-Origin "*"
+        header Cache-Control "public, max-age=600"
+        header X-Content-Type-Options "nosniff"
+        root * /opt/anake-nyx/feeds
+        file_server
+    }
+
+    # Undertow x402 machine-payable feed (paid attested data; free
+    # summary/manifest). Must sit ABOVE the static /undertow/* mirror —
+    # handle blocks match in source order. Path passes intact.
+    handle /undertow/x402/* {
+        reverse_proxy 127.0.0.1:8791
+    }
+
+    # Undertow published packs — static public mirror (board + retail
+    # packs only; refreshed by undertow-public-mirror.timer). Consumed by
+    # the LiquiLens app's Undertow Retail layer.
+    handle_path /undertow/* {
+        header Access-Control-Allow-Origin "*"
+        header Cache-Control "public, max-age=600"
+        header X-Content-Type-Options "nosniff"
+        root * /opt/undertow-public
+        file_server
+    }
+
+    # Palimpsest MCP (censorship signals) rides this host until
+    # mcp.palimpsest.info DNS lands; strip the prefix and proxy.
+    handle_path /palimpsest/mcp* {
+        rewrite * /
+        reverse_proxy 127.0.0.1:8793
+    }
+
+    encode zstd gzip
 
     @public {
         method GET HEAD
-        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/badge/*
+        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/*
     }
     @login {
         method POST
@@ -36,6 +68,7 @@ api.seiche.info {
     handle @public {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
     handle @login {
@@ -57,9 +90,42 @@ api.seiche.info {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
         header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE"
+        header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
     handle {
         respond "not here" 404
     }
+}
+
+# groundcheck.seiche.info — public fact-check engine + x402 machine-payable /check.
+# The engine has no operator surface; every endpoint is public by design.
+groundcheck.seiche.info {
+    @preflight method OPTIONS
+    handle @preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE"
+        respond 204
+    }
+    handle {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE"
+        header Access-Control-Expose-Headers "X-PAYMENT-RESPONSE, PAYMENT-RESPONSE, PAYMENT-REQUIRED, X-Groundcheck-Free-Remaining"
+        header X-Content-Type-Options "nosniff"
+        reverse_proxy 127.0.0.1:8723
+    }
+}
+
+# breach.seiche.info — read-only breach-intelligence MCP (public defensive tool).
+breach.seiche.info {
+    reverse_proxy 127.0.0.1:8790 {
+        header_up Host 127.0.0.1:8790
+    }
+}
+
+# mcp.palimpsest.info — Palimpsest MCP proper home (goes live when the DNS
+# A record to this box is added; cert issues automatically then).
+mcp.palimpsest.info {
+    reverse_proxy 127.0.0.1:8793
 }
