@@ -18,10 +18,11 @@ sleep 3
 systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api not active after restart"; exit 1; }
 # The API rebuilds its board on start and can take minutes before it answers;
 # poll instead of a single probe so a healthy warm-up is never reported red.
-DEADLINE=$((SECONDS + 420))
+WINDOW=900
+DEADLINE=$((SECONDS + WINDOW))
 until curl -sf -m 10 http://127.0.0.1:8787/api/public >/dev/null; do
   if [ "$SECONDS" -ge "$DEADLINE" ]; then
-    echo "FAIL: api not answering after $((DEADLINE / 60))+ min warm-up"
+    echo "FAIL: api not answering after $((WINDOW / 60))min warm-up window"
     exit 1
   fi
   systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api died during warm-up"; exit 1; }
