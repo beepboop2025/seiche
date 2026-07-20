@@ -28,7 +28,7 @@ if ! backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1; then
 fi
 
 echo "=== pytest $(date -u +%FT%TZ) ===" >>"$LOG"
-if backend/.venv/bin/python -m pytest backend/tests -q >>"$LOG" 2>&1; then
+if backend/.venv/bin/python -m pytest backend/tests -q --memray --pystack-threshold=300 >>"$LOG" 2>&1; then
   echo "updated to $(git rev-parse --short HEAD) — install ok, tests green"
   exit 0
 else

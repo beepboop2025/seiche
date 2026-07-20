@@ -42,4 +42,4 @@ echo
 echo "Seiche is up on 127.0.0.1:8787 (put a reverse proxy with TLS in front:"
 echo "  caddy:  reverse_proxy 127.0.0.1:8787  — or nginx proxy_pass)."
 echo "First load fetches several years of history and is slow; then cached."
-echo "Update later with: bash $APP_DIR/ops/deploy/update.sh"
+echo "Update later with: bash $APP_DIR/ops/deploy/update.sh (see its header — production chain deploys via GitHub Actions)"

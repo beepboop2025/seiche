@@ -205,8 +205,10 @@ A launchd template lives in `ops/com.seiche.watch.plist`.
 # installs systemd units (API on 127.0.0.1:8787 + a 30-min alert timer)
 bash ops/deploy/install.sh
 
-# every release after that — pull main, re-gate, rebuild, restart
-bash /opt/seiche/ops/deploy/update.sh
+# every release after that: push to main — the deploy-hetzner workflow
+# runs the box's forced-command chain (test gate, rollback, restart,
+# warm-up-aware health check). Manual equivalent, as root on the box:
+bash /home/seiche/app/ops/deploy/update.sh   # engine deploy + Caddyfile
 ```
 
 Put a TLS reverse proxy in front. The box already serving another site

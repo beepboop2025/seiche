@@ -1,48 +1,36 @@
 #!/usr/bin/env bash
-# Update a deployed Seiche to the latest main and restart — the one command
-# that makes new engine work visible on the box. Run as root.
-set -euo pipefail
-
-APP_DIR=/opt/seiche
-cd "$APP_DIR"
-
-# git operations run as root (root owns the deploy key / remote credentials).
-git fetch origin main
-git checkout main
-git pull --ff-only origin main
-
-# HARDENING: hand the tree to the unprivileged service user BEFORE building, so
-# the build/test steps run WITHOUT root. A compromised build/test dependency then
-# can only touch seiche-owned files, never the rest of the box. Only the
-# systemctl actions below stay root. `runuser` is part of util-linux (always
-# present on a systemd host) and needs no sudo config.
+# Manual full deploy on the PRODUCTION box (run as root ON the box).
+# Rewritten 2026-07-20: the previous version assumed /opt/seiche +
+# seiche.service — a layout that never existed on the box (/home/seiche/app,
+# seiche-api.service) — and could never have worked there.
 #
-# NOTE (needs a real on-box deploy to confirm): this reorders the chown to run
-# before the build, and wraps pip/pytest/npm in `runuser -u seiche`. .venv and
-# node_modules must therefore be writable by seiche (they are after this chown).
-# If a future change makes the build need root, revert to running these as root.
-chown -R seiche:seiche "$APP_DIR"
+# The engine deploy is exactly what GitHub Actions (deploy-hetzner) triggers:
+#
+#   /root/seiche-deploy-wrapper.sh          (mirror: seiche-deploy-wrapper.sh)
+#     └─ /home/seiche/update.sh             (mirror: box-update.sh)
+#        pull main → pip install → full test suite, rollback on red
+#     └─ systemctl restart seiche-api + poll /api/public through warm-up
+#
+# This script adds the one thing the auto chain does not do: deploying
+# ops/Caddyfile to the edge, test-gated with backup and rollback.
+# Frontend is NOT built here — seiche.info ships via the publish workflow
+# (Cloudflare Pages), the box serves only api.seiche.info.
+set -uo pipefail
 
-cd "$APP_DIR/backend"
-runuser -u seiche -- .venv/bin/pip install -q -e ".[dev]"
-runuser -u seiche -- .venv/bin/python -m pytest tests -q --memray --pystack-threshold=300   # same gate as CI: a red suite never deploys
+APP_DIR=/home/seiche/app
 
-cd "$APP_DIR/frontend"
-runuser -u seiche -- npm ci --silent
-runuser -u seiche -- npm run build
-
-# pick up any unit changes shipped with the release
-cp "$APP_DIR"/ops/deploy/seiche.service /etc/systemd/system/
-cp "$APP_DIR"/ops/deploy/seiche-alert.service /etc/systemd/system/
-cp "$APP_DIR"/ops/deploy/seiche-alert.timer /etc/systemd/system/
-systemctl daemon-reload
-systemctl restart seiche.service
+if [ ! -x /root/seiche-deploy-wrapper.sh ]; then
+    echo "FATAL: /root/seiche-deploy-wrapper.sh missing — this is not the production box (or the wrapper was removed). See header." >&2
+    exit 1
+fi
+/root/seiche-deploy-wrapper.sh || exit 1
 
 # HARDENING: deploy the edge (Caddy) config for api.seiche.info — but only
 # when it changed, and never at the cost of the engine deploy. Every caddy
 # step is if-guarded so a failure warns and continues instead of tripping
-# set -e. Sits after the pytest gate above, so a red suite also skips edge
-# changes. Runs as root (writes /etc/caddy, talks to the caddy admin API).
+# set -e. Sits after the wrapper's test gate above, so a red suite also
+# skips edge changes. Runs as root (writes /etc/caddy, talks to the caddy
+# admin API).
 if ! command -v caddy >/dev/null 2>&1; then
     echo "Caddy: caddy binary not found — skipping Caddyfile deploy."
 elif [ ! -f /etc/caddy/Caddyfile ]; then
@@ -71,4 +59,4 @@ else
     fi
 fi
 
-echo "Deployed $(git rev-parse --short HEAD) — $(git log -1 --format=%s)"
+echo "Deployed $(git -C "$APP_DIR" rev-parse --short HEAD) — $(git -C "$APP_DIR" log -1 --format=%s)"
