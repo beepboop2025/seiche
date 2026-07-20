@@ -8,9 +8,10 @@ import { P } from "../palette";
  * below it. Causality is ordered top-to-bottom, so the morning scan is one
  * gesture.
  */
-import { useEffect, useRef, useState } from "react";
-import { Any, fmt, Num } from "../lib";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Any, AsOf, Decomp, fmt, Num, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
 import { useDepth } from "../depth";
+import "../styles-board.css";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
 
@@ -164,7 +165,7 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
         <RateCell k="EFFR" v={fmt(headline?.effr_pct?.value, 2, "%")} note={headline?.effr_pct?.asof?.slice(5) ?? ""} />
         <RateCell k="IORB" v={fmt(headline?.iorb_pct?.value, 2, "%")} note={headline?.iorb_pct?.asof?.slice(5) ?? ""} />
         <RateCell k="SOFR−IORB" v={spreadBp == null ? "—" : `${signed(spreadBp)}bp`} color={spreadColor}
-          note={spreadBp == null ? "" : spreadBp <= 0 ? "soft floor" : "above the floor"} />
+          note={spreadBp == null ? "" : `P50 basis · ${spreadBp <= 0 ? "soft floor" : "above the floor"}`} />
         <RateCell k="Tail z" v={fmt(tails?.ok ? tails.tail_index_z : null, 2)} note="P99−P50 blend" />
       </div>
       {sp && (
@@ -172,7 +173,7 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
           <line x1={0} x2={880} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
           <path d={sp.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--dim)" strokeWidth={1.3}
             style={{ animationDelay: "0.3s" }} />
-          <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB, two years · bp</text>
+          <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB · P50 basis (tails engine daily series — not the tape's same-day print), two years · bp</text>
           <text x={880} y={94} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>last {signed(spreadBp)}bp</text>
         </svg>
       )}
@@ -180,7 +181,7 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
   );
 }
 
-function WeatherMini({ e }: { e: Any }) {
+function WeatherMini({ e, gen }: { e: Any; gen?: string }) {
   if (!e?.ok) return <div className="dive-lbl">Liquidity Weather unavailable — {e?.reason ?? "engine down"}</div>;
   const w = scalePaths(e.path ?? [], 3, { x0: 40, x1: 514, y0: 8, y1: 128 });
   const dates: string[] = (e.path ?? []).map((r: Any) => r[0]);
@@ -188,6 +189,7 @@ function WeatherMini({ e }: { e: Any }) {
   return (
     <div>
       <div style={{ fontSize: 12, color: P.ink }}>Liquidity Weather — six-week reserve path</div>
+      <AsOf asof={e.asof} generatedAt={gen} />
       <svg viewBox="0 0 520 148" style={{ width: "100%", height: "auto", display: "block", marginTop: 8, overflow: "visible" }}>
         {[8, 68, 128].map((y) => <line key={y} x1={40} x2={514} y1={y} y2={y} stroke="rgba(233,233,237,0.08)" />)}
         <text x={36} y={12} textAnchor="end" fill="var(--faint)" fontSize={9.5}>${Math.round(w.vmax)}B</text>
@@ -217,7 +219,7 @@ function WeatherMini({ e }: { e: Any }) {
   );
 }
 
-function KinkMini({ e, spreadBp }: { e: Any; spreadBp: number | null }) {
+function KinkMini({ e, spreadBp, gen }: { e: Any; spreadBp: number | null; gen?: string }) {
   if (!e?.ok) return <div className="dive-lbl">Kink Engine unavailable — {e?.reason ?? "engine down"}</div>;
   const below = e.distance_b < 0;
   const kinkPct = 85;
@@ -228,6 +230,7 @@ function KinkMini({ e, spreadBp }: { e: Any; spreadBp: number | null }) {
   return (
     <div>
       <div style={{ fontSize: 12, color: P.ink }}>Kink Engine — reserve scarcity, located</div>
+      <AsOf asof={e.asof} generatedAt={gen} />
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 10 }}>
         <span style={{ fontSize: 34, fontWeight: 500, letterSpacing: "-0.02em", color: below ? "var(--erosion)" : "var(--calm)" }}>
           ${fmt(Math.abs(e.distance_b), 0)}B
@@ -255,30 +258,32 @@ function KinkMini({ e, spreadBp }: { e: Any; spreadBp: number | null }) {
   );
 }
 
-function Plumbing({ weather, kink, tails }: { weather: Any; kink: Any; tails: Any }) {
+function Plumbing({ weather, kink, tails, gen }: { weather: Any; kink: Any; tails: Any; gen?: string }) {
   const spreadBp = tails?.ok ? tails.spread?.sofr_iorb_bp : null;
   return (
     <div className="dive-layer" style={{ animationDelay: "0.24s" }}>
       <Kicker k="Plumbing · the reserve basin" sub="where every squeeze started — weeks before the surface noticed" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 28, marginTop: 14 }}>
-        <WeatherMini e={weather} />
-        <KinkMini e={kink} spreadBp={spreadBp} />
+        <WeatherMini e={weather} gen={gen} />
+        <KinkMini e={kink} spreadBp={spreadBp} gen={gen} />
       </div>
     </div>
   );
 }
 
-function BigCell({ title, big, bigColor, sub, size = 26 }: { title: string; big: any; bigColor?: string; sub: string; size?: number }) {
+function BigCell({ title, big, bigColor, sub, size = 26, asof, gen }:
+  { title: string; big: any; bigColor?: string; sub: string; size?: number; asof?: string | null; gen?: string }) {
   return (
     <div>
       <div style={{ fontSize: 12, color: P.ink }}>{title}</div>
       <div style={{ fontSize: size, fontWeight: 500, color: bigColor ?? "var(--text)", marginTop: 6 }}>{big}</div>
       <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 2, lineHeight: 1.5 }}>{sub}</div>
+      <AsOf asof={asof} generatedAt={gen} />
     </div>
   );
 }
 
-function Positioning({ rv, wh, crowd }: { rv: Any; wh: Any; crowd: Any }) {
+function Positioning({ rv, wh, crowd, gen }: { rv: Any; wh: Any; crowd: Any; gen?: string }) {
   const topBucket = wh?.ok
     ? [...(wh.buckets ?? [])].filter((b: Any) => b.bucket !== "Bills").sort((a: Any, b: Any) => (b.pctl ?? 0) - (a.pctl ?? 0))[0]
     : null;
@@ -290,16 +295,16 @@ function Positioning({ rv, wh, crowd }: { rv: Any; wh: Any; crowd: Any }) {
       <Kicker k="Positioning · who is leaning on the water" sub="the leverage that turns a slosh into a wave · CFTC T+3, shown not hidden" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 28, marginTop: 14 }}>
         {rv?.ok ? (
-          <BigCell title="RV X-Ray" big={`$${fmt(rv.pair_proxy_b, 0)}B`}
+          <BigCell title="RV X-Ray" big={`$${fmt(rv.pair_proxy_b, 0)}B`} asof={rv.asof} gen={gen}
             sub={`leveraged Treasury pair proxy · z ${fmt(rv.size_z, 2)} · DV01 $${fmt(rv.dv01_m_per_bp, 0)}M/bp · Δ13w ${signed(rv.pair_change_13w_b, 0)}B`} />
         ) : <BigCell title="RV X-Ray" big="—" sub={rv?.reason ?? "engine down"} />}
         {wh?.ok ? (
-          <BigCell title="Dealer Warehouse" bigColor={wh.total_pctl >= 90 ? "var(--strain)" : undefined}
+          <BigCell title="Dealer Warehouse" bigColor={wh.total_pctl >= 90 ? "var(--strain)" : undefined} asof={wh.asof} gen={gen}
             big={<>{Math.round(wh.total_pctl)}<span style={{ fontSize: 14, color: "var(--dim)" }}>{suffix(wh.total_pctl)} pctl</span></>}
             sub={`$${fmt(wh.total_net_b, 0)}B net UST inventory${wh.total_pctl >= 90 ? " — the shock absorber is nearly spent" : ""}${topBucket ? ` · ${String(topBucket.bucket).replace("Coupons ", "")} bucket at ${ord(topBucket.pctl)}` : ""}`} />
         ) : <BigCell title="Dealer Warehouse" big="—" sub={wh?.reason ?? "engine down"} />}
         {worstRow ? (
-          <BigCell title="Crowding" big={`z ${fmt(worstRow.z, 2)}`}
+          <BigCell title="Crowding" big={`z ${fmt(worstRow.z, 2)}`} asof={crowd.asof} gen={gen}
             sub={`${worstRow.contract} leveraged net at the ${ord(worstRow.pctl)} pctl of its history${Math.abs(worstRow.z ?? 0) >= 2 ? " — an unwind waiting for a reason" : ""}`} />
         ) : <BigCell title="Crowding" big="—" sub={crowd?.reason ?? "engine down"} />}
       </div>
@@ -307,7 +312,7 @@ function Positioning({ rv, wh, crowd }: { rv: Any; wh: Any; crowd: Any }) {
   );
 }
 
-function Floor({ resonance, undertow, bathy, swell }: { resonance: Any; undertow: Any; bathy: Any; swell: Any }) {
+function Floor({ resonance, undertow, bathy, swell, gen }: { resonance: Any; undertow: Any; bathy: Any; swell: Any; gen?: string }) {
   const worst = resonance?.ok ? resonance.worst_mode : null;
   const modeWord = worst?.mode ? String(worst.mode).replace(/_/g, "-") : "calendar";
   const ut = undertow?.ok ? undertow.per_series?.spread : null;
@@ -318,23 +323,23 @@ function Floor({ resonance, undertow, bathy, swell }: { resonance: Any; undertow
       <Kicker k="The Floor · what the physics knows" sub="damping, resonance and the shape of the basin — fragility measured on days when nothing happens" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 22, marginTop: 14 }}>
         {worst ? (
-          <BigCell size={24} title="Resonance" big={`${fmt(worst.amplification, 2)}×`}
+          <BigCell size={24} title="Resonance" big={`${fmt(worst.amplification, 2)}×`} asof={resonance.asof} gen={gen}
             bigColor={worst.amplification >= 3 ? "var(--strain)" : undefined}
             sub={`${modeWord} forcing now sloshes ${fmt(worst.amplification, 1)}× its old amplitude`} />
         ) : <BigCell size={24} title="Resonance" big="—" sub={resonance?.reason ?? "engine down"} />}
         {ut ? (
-          <BigCell size={24} title="Undertow"
+          <BigCell size={24} title="Undertow" asof={undertow.asof} gen={gen}
             big={<>AC1 {Math.round(ut.ac1_pctl)}<span style={{ fontSize: 13, color: "var(--dim)" }}>{suffix(ut.ac1_pctl)}</span></>}
             sub={stretch != null && stretch > 1.5
               ? `recovery half-life stretched ${fmt(stretch, 1)}× — damping eroding`
               : `recovery τ ${fmt(ut?.tau_bd, 1)}bd — damping ${ut?.mechanism ?? "steady"}`} />
         ) : <BigCell size={24} title="Undertow" big="—" sub={undertow?.reason ?? "engine down"} />}
         {fl ? (
-          <BigCell size={24} title="Bathymetry" big={<>{fmt(fl.barrier_kt, 2)} k<span style={{ fontSize: 13 }}>B</span>T</>}
+          <BigCell size={24} title="Bathymetry" big={<>{fmt(fl.barrier_kt, 2)} k<span style={{ fontSize: 13 }}>B</span>T</>} asof={bathy.asof} gen={gen}
             sub={`escape barrier from the measured floor · first passage ~${fmt(bathy.mfpt_bd, 0)}bd`} />
         ) : <BigCell size={24} title="Bathymetry" big="—" sub="dynamics unavailable" />}
         {swell?.ok ? (
-          <BigCell size={24} title="Swell, 5bd" big={`${fmt((swell.event_by_horizon?.h5 ?? 0) * 100, 1)}%`}
+          <BigCell size={24} title="Swell, 5bd" big={`${fmt((swell.event_by_horizon?.h5 ?? 0) * 100, 1)}%`} asof={swell.asof} gen={gen}
             bigColor="var(--accent-bright)"
             sub={`P(funding event) from the forcing calendar · 42bd: ${fmt((swell.event_by_horizon?.h42 ?? 0) * 100, 0)}%`} />
         ) : <BigCell size={24} title="Swell, 5bd" big="—" sub="forecast unavailable" />}
@@ -407,6 +412,103 @@ function AskDesk({ live }: { live: boolean }) {
 /* The whole dive rolled up to its verdict: the one number, the Tell, and the
    three facts a passing reader needs. The DESK button is the drill-down. */
 
+/* One year of the composite, drawn on, with a hover crosshair that reads the
+   date and value under the cursor. Local SVG (not uPlot): at sparkline size
+   the shared Chart's gesture layer and axis chrome would be pure noise. */
+function CompositeSpark({ history }: { history: Any }) {
+  const reduced = usePrefersReducedMotion();
+  const [hover, setHover] = useState<number | null>(null);
+  const all: (string | number | null)[][] = history?.ok ? history.series ?? [] : [];
+  const rows = useMemo(() => {
+    if (all.length < 8) return all;
+    const last = new Date(all[all.length - 1][0] as string).getTime();
+    const cutoff = last - 366 * 86400000;
+    return all.filter((r) => new Date(r[0] as string).getTime() >= cutoff);
+  }, [all]);
+  if (!history?.ok || rows.length < 8) return null;
+  const box = { x0: 2, x1: 318, y0: 8, y1: 82 };
+  const t = scalePaths(rows, 1, box);
+  const hov = hover != null ? rows[hover] : null;
+  const lastV = rows[rows.length - 1][1] as number | null;
+  const onMove = (ev: ReactMouseEvent<SVGSVGElement>) => {
+    const rect = ev.currentTarget.getBoundingClientRect();
+    const vbX = ((ev.clientX - rect.left) / rect.width) * 320;
+    const k = Math.round(((vbX - box.x0) / (box.x1 - box.x0)) * (rows.length - 1));
+    setHover(Math.max(0, Math.min(rows.length - 1, k)));
+  };
+  return (
+    <div className="sparkbox">
+      <div className="spark-read">
+        {hov
+          ? `${hov[0]} · ${hov[1] == null ? "—" : fmt(hov[1] as number, 1)}`
+          : `seiche index · one year · last ${lastV == null ? "—" : fmt(lastV, 1)}`}
+      </div>
+      <svg viewBox="0 0 320 100" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <path d={t.paths[0]} pathLength={1} className={reduced ? undefined : "draw"} fill="none"
+          stroke="var(--accent)" strokeWidth={1.5}
+          style={{ filter: "drop-shadow(0 0 6px rgba(145,132,217,0.5))" }} />
+        {hover != null && rows[hover][1] != null && (
+          <>
+            <line className="spark-cross" x1={t.X(hover)} x2={t.X(hover)} y1={box.y0} y2={box.y1} />
+            <circle className="spark-dot" cx={t.X(hover)} cy={t.Y(rows[hover][1] as number)} r={2.6} />
+          </>
+        )}
+        <text x={2} y={97} fill="var(--ghost)" fontSize={9}>{fmtD(String(rows[0][0]))}</text>
+        <text x={318} y={97} textAnchor="end" fill="var(--ghost)" fontSize={9}>now</text>
+      </svg>
+    </div>
+  );
+}
+
+/* Directly under the verdict: what the number is made of (the shared Decomp,
+   compacted to glance density) beside the year it took to get here. */
+function GlanceDecomp({ composite, history }: { composite: Any; history: Any }) {
+  if (!composite?.ok) return null;
+  const n = (composite.decomposition ?? []).length;
+  return (
+    <div className="glance-decomp dive-layer" style={{ animationDelay: "0.1s" }}>
+      <div>
+        <div className="dive-lbl" style={{ marginBottom: 8 }}>the {n} components, weighted</div>
+        <Decomp composite={composite} compact />
+      </div>
+      <CompositeSpark history={history} />
+    </div>
+  );
+}
+
+/* Forward odds: P(funding event) at the three swell horizons, rolled up from
+   zero on mount. The middle horizon is 21bd in the current snapshot; h20 is
+   accepted so an older backend shape still renders. */
+function OddsTriplet({ swell, gen }: { swell: Any; gen?: string }) {
+  if (!swell?.ok)
+    return <div className="dive-lbl" style={{ marginTop: 22 }}>P(funding event) — forecast unavailable · {swell?.reason ?? "engine down"}</div>;
+  const eb = swell.event_by_horizon ?? {};
+  const cells: { h: string; v: number | null }[] = [
+    { h: "5bd", v: eb.h5 ?? null },
+    { h: "21bd", v: eb.h21 ?? eb.h20 ?? null },
+    { h: "42bd", v: eb.h42 ?? null },
+  ];
+  return (
+    <div className="odds">
+      <div className="odds-head">
+        <span className="dive-lbl">P(funding event) — forward odds from the forcing calendar</span>
+        <span className="asof-inline">
+          {swell.asof ? `as of ${swell.asof}` : ""}
+          {stalenessChip(swell.asof, gen)}
+        </span>
+      </div>
+      <div className="odds-grid">
+        {cells.map((c) => (
+          <div className="odd" key={c.h}>
+            <div className="h">{c.h}</div>
+            <div className="p">{c.v == null ? "—" : <Roll v={c.v * 100} d={1} unit="%" />}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
   const e = snap.engines ?? {};
   const deep = snap.deep ?? {};
@@ -414,15 +516,20 @@ function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
   const tell = deep.tell;
   const kink = e.kink;
   const swell = deep.swell;
+  const gen = snap.generated_at;
   const spreadBp = e.tails?.ok ? e.tails.spread?.sofr_iorb_bp : null;
   return (
     <div className="glance">
       <Verdict composite={c} tell={tell} kink={kink} />
+      <GlanceDecomp composite={c} history={deep.history} />
       <TellBracket tell={tell} />
       <div className="glance-row dive-layer" style={{ animationDelay: "0.14s" }}>
         <div className="glance-fact">
-          <div className="dive-lbl">SOFR−IORB</div>
+          <div className="dive-lbl">SOFR−IORB · P50 basis</div>
           <div className="dive-mid">{spreadBp == null ? "—" : <><Num v={spreadBp} d={0} signed />bp</>}</div>
+          <div style={{ fontSize: 10, color: "var(--ghost)", marginTop: 3 }}>
+            tails engine daily series — not the tape's same-day print
+          </div>
         </div>
         <div className="glance-fact">
           <div className="dive-lbl">reserves vs kink</div>
@@ -430,11 +537,8 @@ function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
             {kink?.ok ? <>${fmt(Math.abs(kink.distance_b), 0)}B {kink.distance_b < 0 ? "below" : "above"}</> : "—"}
           </div>
         </div>
-        <div className="glance-fact">
-          <div className="dive-lbl">P(funding event), 5bd</div>
-          <div className="dive-mid">{swell?.ok ? <><Num v={(swell.event_by_horizon?.h5 ?? 0) * 100} d={1} />%</> : "—"}</div>
-        </div>
       </div>
+      <OddsTriplet swell={swell} gen={gen} />
       <div className="glance-descend dive-layer" style={{ animationDelay: "0.2s" }}>
         <button className="btn-accent" onClick={onDescend}>descend to the desk — the full dive</button>
       </div>
@@ -455,6 +559,7 @@ const STATIONS = [
 export default function Board({ snap, live }: { snap: Any; live: boolean }) {
   const e = snap.engines ?? {};
   const deep = snap.deep ?? {};
+  const gen = snap.generated_at;
   const { depth, setDepth } = useDepth();
   const [active, setActive] = useState(0);
   const layerRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -509,19 +614,19 @@ export default function Board({ snap, live }: { snap: Any; live: boolean }) {
         <div className="dive-rule" />
 
         <div ref={setRef(2)}>
-          <Plumbing weather={e.weather} kink={e.kink} tails={e.tails} />
+          <Plumbing weather={e.weather} kink={e.kink} tails={e.tails} gen={gen} />
         </div>
 
         <div className="dive-rule" />
 
         <div ref={setRef(3)}>
-          <Positioning rv={e.rvxray} wh={e.warehouse} crowd={e.crowding} />
+          <Positioning rv={e.rvxray} wh={e.warehouse} crowd={e.crowding} gen={gen} />
         </div>
 
         <div className="dive-rule" />
 
         <div ref={setRef(4)}>
-          <Floor resonance={e.resonance} undertow={e.undertow} bathy={deep.bathymetry} swell={deep.swell} />
+          <Floor resonance={e.resonance} undertow={e.undertow} bathy={deep.bathymetry} swell={deep.swell} gen={gen} />
           <Verdict composite={e.composite ?? {}} tell={deep.tell} kink={e.kink} />
         </div>
 

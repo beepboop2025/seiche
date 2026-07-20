@@ -1,6 +1,8 @@
+import { useMemo, useState } from "react";
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, Roll } from "../lib";
+import "../styles-fx.css";
 
 const BUCKET_COLORS: Record<string, string> = {
   year_turn: P.stress,
@@ -456,12 +458,295 @@ function SeaRoomCard({ e }: { e: Any }) {
   );
 }
 
+/* ---------------------------------------------------------------------------
+   SwellCurveCard — the forward curve drawn as a curve, not a table.
+   Main line = the engine's published P(≥10bp event by date) accumulating over
+   the horizon; band = a ≥5bp…≥20bp severity envelope recomputed from the
+   published per-day p5/p20 under the engine's own day-independence assumption
+   (the same one it flags as an upper bound on h≥10). The line draws itself in
+   via the house `svg path.draw` idiom; the band breathes and carries a light
+   sweep (CSS, no-preference only); forcing days and heavy settlements are
+   marked on the axis; hover reads any day off the curve.
+   ------------------------------------------------------------------------- */
+function SwellCurveCard({ s }: { s: Any }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const curve: Any[] = s?.ok ? s.curve ?? [] : [];
+  const m = useMemo(() => {
+    if (!curve.length) return null;
+    const n = curve.length;
+    let c5 = 0, c20 = 0;
+    const upper: number[] = [], lower: number[] = [], main: number[] = [];
+    for (const r of curve) {
+      const p5 = Math.min(Math.max(r.p5 ?? 0, 0), 1);
+      const p20 = Math.min(Math.max(r.p20 ?? 0, 0), 1);
+      c5 = 1 - (1 - c5) * (1 - p5);
+      c20 = 1 - (1 - c20) * (1 - p20);
+      upper.push(c5 * 100);
+      lower.push(c20 * 100);
+      main.push((r.cum10 ?? 0) * 100);
+    }
+    const W = 920, H = 260, PL = 46, PR = 16, PT = 16, PB = 30;
+    const yMax = Math.max(...upper, 4) * 1.12;
+    const x = (i: number) => PL + (i / Math.max(n - 1, 1)) * (W - PL - PR);
+    const y = (v: number) => PT + (1 - v / yMax) * (H - PT - PB);
+    const lineD = main.map((v, i) => `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+    const bandD =
+      upper.map((v, i) => `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ") +
+      " " +
+      lower.map((_, i) => `L ${x(n - 1 - i).toFixed(1)} ${y(lower[n - 1 - i]).toFixed(1)}`).join(" ") +
+      " Z";
+    return { n, W, H, PL, PR, PT, PB, yMax, x, y, lineD, bandD, main, upper, lower };
+  }, [curve]);
+  if (!s?.ok || !m) return null; // SwellCard above already carries the Fault
+
+  const hz = s.event_by_horizon ?? {};
+  const flagB = s.settlement?.flag_b ?? Infinity;
+  const axisY = m.H - m.PB;
+  const anchors = [5, 10, 21, 42].filter((h) => h <= m.n && hz[`h${h}`] != null);
+  const hv = hover != null ? curve[hover] : null;
+
+  return (
+    <div className="card span12">
+      <h2>Swell Forward Curve</h2>
+      <div className="sub">
+        P(funding event ≥10bp by date) accumulating across the next {s.horizon_bd} business days ·
+        band = the ≥5bp…≥20bp severity envelope · colored ticks = forcing days, diamonds = heavy
+        settlements (≥${fmt(flagB, 0)}B) · anchors = the engine's event_by_horizon checkpoints
+      </div>
+      <svg viewBox={`0 0 ${m.W} ${m.H}`} style={{ display: "block", width: "100%", height: "auto" }}
+           role="img" aria-label="forward curve of funding-event probability by horizon">
+        <defs>
+          <linearGradient id="fxSwellShine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#fff" stopOpacity="0" />
+            <stop offset="0.5" stopColor="#fff" stopOpacity="0.10" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </linearGradient>
+          <clipPath id="fxSwellBand"><path d={m.bandD} /></clipPath>
+        </defs>
+        {[0.25, 0.5, 0.75].map((f) => (
+          <g key={f}>
+            <line x1={m.PL} x2={m.W - m.PR} y1={m.y(m.yMax * f)} y2={m.y(m.yMax * f)} stroke={P.grid} strokeWidth={1} />
+            <text x={m.PL - 6} y={m.y(m.yMax * f) + 3} textAnchor="end" className="fx-axis">
+              {fmt(m.yMax * f, 0)}%
+            </text>
+          </g>
+        ))}
+        <line x1={m.PL} x2={m.W - m.PR} y1={axisY} y2={axisY} stroke={P.grid} strokeWidth={1} />
+        <path d={m.bandD} className="fx-band" stroke="none" />
+        <g clipPath="url(#fxSwellBand)">
+          <rect className="fx-shine" x={-180} y={0} width={150} height={m.H} fill="url(#fxSwellShine)" />
+        </g>
+        {curve.map((r, i) => {
+          const bc = BUCKET_COLORS[r.bucket];
+          const forcing = r.bucket && r.bucket !== "plain";
+          const heavy = (r.settle_b ?? 0) >= flagB;
+          return (
+            <g key={r.date}>
+              {forcing && (
+                <line x1={m.x(i)} x2={m.x(i)} y1={axisY} y2={axisY - (r.bucket === "mid_month" ? 4 : 7)}
+                      stroke={bc} strokeWidth={2} strokeOpacity={r.bucket === "mid_month" ? 0.55 : 0.9}>
+                  <title>{`${r.date} · ${r.bucket.replace("_", "-")}`}</title>
+                </line>
+              )}
+              {heavy && (
+                <path d={`M ${m.x(i)} ${axisY + 4} l 3.6 3.6 l -3.6 3.6 l -3.6 -3.6 Z`} fill={P.erosion} fillOpacity={0.9}>
+                  <title>{`${r.date} · $${fmt(r.settle_b, 0)}B settles (heavy day)`}</title>
+                </path>
+              )}
+            </g>
+          );
+        })}
+        {curve.map((r, i) =>
+          i % 5 === 4 || i === m.n - 1 ? (
+            <text key={`xl${i}`} x={m.x(i)} y={axisY + 22} textAnchor="middle" className="fx-axis">
+              {String(r.date).slice(5)}
+            </text>
+          ) : null,
+        )}
+        <path d={m.lineD} pathLength={1} className="draw" fill="none" stroke={P.calm} strokeWidth={1.8} />
+        {anchors.map((h) => (
+          <g key={h}>
+            <circle cx={m.x(h - 1)} cy={m.y(m.main[h - 1])} r={3} fill="#000" stroke={P.accentBright} strokeWidth={1.4} />
+            <text x={m.x(h - 1)} y={m.y(m.main[h - 1]) - 8} textAnchor={h >= m.n ? "end" : "middle"}
+                  className="fx-axis" fill={P.accentSoft}>
+              {`h${h} ${fmt((hz[`h${h}`] ?? 0) * 100, 0)}%`}
+            </text>
+          </g>
+        ))}
+        {hover != null && (
+          <g className="fx-cross">
+            <line x1={m.x(hover)} x2={m.x(hover)} y1={m.PT} y2={axisY} stroke={P.ghost} strokeWidth={1} strokeDasharray="2 3" />
+            <circle cx={m.x(hover)} cy={m.y(m.main[hover])} r={3.2} fill={P.calm} stroke="#000" strokeWidth={1} />
+          </g>
+        )}
+        <rect x={m.PL} y={m.PT} width={m.W - m.PL - m.PR} height={m.H - m.PT - m.PB}
+              fill="transparent"
+              onMouseMove={(ev) => {
+                const svg = ev.currentTarget.ownerSVGElement;
+                if (!svg) return;
+                const rect = svg.getBoundingClientRect();
+                const vx = ((ev.clientX - rect.left) / rect.width) * m.W;
+                const i = Math.round(((vx - m.PL) / (m.W - m.PL - m.PR)) * (m.n - 1));
+                setHover(Math.max(0, Math.min(m.n - 1, i)));
+              }}
+              onMouseLeave={() => setHover(null)} />
+      </svg>
+      <div className="fx-readout">
+        {hv ? (
+          <>
+            h+{hover! + 1}bd · <b>{hv.date}</b> · {String(hv.bucket).replace("_", "-")} ·
+            P(≥10bp by then) <b>{fmt(m.main[hover!], 1)}%</b> · that day alone p10 {fmt((hv.p10 ?? 0) * 100, 1)}% ·
+            envelope {fmt(m.lower[hover!], 1)}–{fmt(m.upper[hover!], 1)}%
+            {(hv.settle_b ?? 0) > 0 && <> · ${fmt(hv.settle_b, 0)}B settles</>}
+          </>
+        ) : (
+          <>hover the curve — per-day readout · band = ≥5bp…≥20bp cumulative envelope (day-independence, the engine's own h≥10 caveat — an upper bound)</>
+        )}
+      </div>
+      <Method>
+        cumulative line as published by the engine; envelope recomputed from its per-day p5/p20 under the
+        same independence assumption · {s.method}
+      </Method>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   QuantOddsStrip — three independent estimators of the same stress tail, side
+   by side: regime counting (markov p_reach_stress), the analytic OU+jump
+   endpoint (oujump p_above_stress), and the simulated path-max (montecarlo
+   p_touch_stress). Numbers roll up on first paint via the shared Roll
+   primitive (which itself honors reduced-motion).
+   ------------------------------------------------------------------------- */
+function QuantOddsStrip({ deep }: { deep: Any }) {
+  const mk = deep.markov, ou = deep.oujump, mc = deep.montecarlo;
+  const pct = (v: number | null | undefined, d = 2) => (v == null ? "—" : `${fmt(v * 100, d)}%`);
+  const tone = (v: number) =>
+    v >= 0.5 ? P.stress : v >= 0.2 ? P.strain : v >= 0.05 ? P.erosion : undefined;
+  const chips: { k: string; v: number | null; s: string }[] = [];
+  if (mk?.ok) {
+    const p = mk.p_reach_stress ?? {};
+    chips.push({
+      k: "markov · P(STRESS regime ≤ 21bd)",
+      v: p.h21 ?? null,
+      s: `5bd ${pct(p.h5)} · 10bd ${pct(p.h10)} · from ${mk.current_regime} · regime counting, STRESS absorbing`,
+    });
+  }
+  if (ou?.ok) {
+    const h21 = (ou.horizons ?? []).find((r: Any) => r.h === 21);
+    chips.push({
+      k: "ou+jump · P(above stress line @21bd)",
+      v: h21?.p_above_stress ?? null,
+      s: `endpoint, not path-max · jump share of tail ${pct(h21?.jump_share_of_tail, 0)} · τ½ ${fmt(ou.fit?.half_life_bd, 0)}bd`,
+    });
+  }
+  if (mc?.ok) {
+    const p = mc.p_touch_stress ?? {};
+    chips.push({
+      k: "montecarlo · P(touch stress ≤ 21bd)",
+      v: p.h21 ?? null,
+      s: `path-max (any crossing) · ${(mc.n_paths ?? 0).toLocaleString("en-US")} paths · P(back to calm) ${pct(mc.p_back_to_calm?.h21)}`,
+    });
+  }
+  if (!chips.length) return null;
+  return (
+    <div className="card span12">
+      <h2>Quant Odds — one tail, three estimators</h2>
+      <div className="sub">
+        the stress tail read three independent ways — they answer slightly different questions (regime
+        entry · level at the endpoint · any touch along the path), so honest disagreement is the point
+      </div>
+      <div className="fx-chips">
+        {chips.map((c, i) => (
+          <div className="fx-chip" key={c.k} style={{ animationDelay: `${i * 0.12}s` }}>
+            <div className="k">{c.k}</div>
+            <div className="v" style={{ color: c.v != null ? tone(c.v) : undefined }}>
+              <Roll v={c.v == null ? null : c.v * 100} d={1} unit="%" />
+            </div>
+            <div className="s">{c.s}</div>
+          </div>
+        ))}
+      </div>
+      <Method>
+        markov: empirical transition counts · oujump: analytic OU+jump fit · montecarlo: seeded path
+        simulation — all from the deep layer's published blocks, no recomputation
+      </Method>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   CaesarCard — tomorrow's tail, estimated from the tail's own dynamics
+   (engines.caesar): joint (VaR, ES) bands for the next business day's pop at
+   95/99, walk-forward skill vs climatology stated as a loss ratio, and the
+   verdict — which SELF-DEMOTES to "use climatology" when the model stops
+   beating the unconditional band (never paint a demoted verdict green).
+   ------------------------------------------------------------------------- */
+function CaesarCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="CAESar" reason={e?.reason ?? "not in this snapshot"} span={12} />;
+  const lv = e.levels ?? {};
+  const demoted = e.verdict !== "use caesar";
+  const bandTone = (v: number | null | undefined) =>
+    (v ?? 0) >= 10 ? "bad" : (v ?? 0) >= 5 ? "warn" : "";
+  return (
+    <div className="card span12">
+      <h2>CAESar</h2>
+      <div className="sub">
+        tomorrow's tail from the tail's own dynamics — CAViaR extended to a joint (VaR, ES) estimator;
+        bands for the next business day's pop (SOFR−IORB vs its 5bd median) · {e.n_origins} scored
+        origins · asof {e.asof}
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">VaR 95 · next bd</div>
+          <div className={`v ${bandTone(e.var95_bp)}`}>{fmt(e.var95_bp, 1)}bp</div></div>
+        <div className="item"><div className="k">ES 95 · next bd</div>
+          <div className={`v ${bandTone(e.es95_bp)}`}>{fmt(e.es95_bp, 1)}bp</div></div>
+        <div className="item"><div className="k">VaR 99 · next bd</div>
+          <div className={`v ${bandTone(e.var99_bp)}`}>{fmt(e.var99_bp, 1)}bp</div></div>
+        <div className="item"><div className="k">ES 99 · next bd</div>
+          <div className={`v ${bandTone(e.es99_bp)}`}>{fmt(e.es99_bp, 1)}bp</div></div>
+        <div className="item"><div className="k">loss ratio vs climatology</div>
+          <div className="v" style={{ fontSize: 13 }}>
+            q95 {lv.q95?.loss_ratio_vs_climatology != null ? fmt(lv.q95.loss_ratio_vs_climatology, 3) : "n/a"}
+            {" · "}q99 {lv.q99?.loss_ratio_vs_climatology != null ? fmt(lv.q99.loss_ratio_vs_climatology, 3) : "n/a"}
+            <span className="dimsmall"> (below 1 beats the unconditional band)</span>
+          </div></div>
+        <div className="item"><div className="k">verdict</div>
+          <div className="v" style={{ fontSize: 13, color: demoted ? P.erosion : P.calm }}>{e.verdict}</div></div>
+      </div>
+      <div className="dimsmall" style={{ marginTop: 4 }}>{e.verdict_detail}</div>
+      {(e.reliability ?? []).length > 0 && (
+        <table className="mini">
+          <thead><tr><th>level</th><th>nominal tail</th><th>exceedance rate</th><th>Wilson 95% CI</th><th>origins</th></tr></thead>
+          <tbody>
+            {(e.reliability ?? []).map((r: Any) => (
+              <tr key={r.level}>
+                <td>{r.level}</td>
+                <td className="num">{fmt(r.nominal, 2)}</td>
+                <td className="num" style={{ color: r.exceedance_rate > (r.nominal ?? 0) * 1.6 ? P.stress : undefined }}>
+                  {fmt(r.exceedance_rate, 3)}
+                </td>
+                <td className="num dimsmall">{r.wilson95 ? `${fmt(r.wilson95[0], 3)}–${fmt(r.wilson95[1], 3)}` : "—"}</td>
+                <td className="num dimsmall">{r.n_origins}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
 export default function Forecast({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   return (
     <div className="grid">
       <RiptideCard r={deep.riptide} />
       <SwellCard s={deep.swell} />
+      <SwellCurveCard s={deep.swell} />
+      <QuantOddsStrip deep={deep} />
+      <CaesarCard e={snap.engines?.caesar} />
       <BathymetryCard b={deep.bathymetry} />
       <SeaStateCard e={deep.seastate} />
       <SeaRoomCard e={deep.searoom} />

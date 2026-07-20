@@ -109,9 +109,9 @@ export function Method({ children }: { children: any }) {
   return <div className="method">{children}</div>;
 }
 
-export function Decomp({ composite }: { composite: Any }) {
+export function Decomp({ composite, compact = false }: { composite: Any; compact?: boolean }) {
   return (
-    <div className="decomp">
+    <div className={compact ? "decomp compact" : "decomp"}>
       {(composite.decomposition ?? []).map((d: Any) => (
         <div className="row" key={d.component}>
           <span className={d.status === "DEAD" ? "dead" : ""}>{d.component}</span>
@@ -129,5 +129,119 @@ export function Decomp({ composite }: { composite: Any }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * One media-query check, shared. Num/Roll read matchMedia inline on each
+ * tween; components that gate entrance animation or chrome on motion
+ * preference subscribe here so a runtime change flips them too.
+ */
+export function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
+/**
+ * Honesty is the brand: an engine whose asof lags the snapshot by more than
+ * ten days wears the stale chip (styles.css .chip.stale) wherever it is
+ * quoted. Returns null when fresh or when either date is missing/unparseable —
+ * absence of a chip must never imply freshness we cannot verify.
+ */
+export function stalenessChip(
+  asof: string | null | undefined,
+  generatedAt: string | null | undefined,
+) {
+  if (!asof || !generatedAt) return null;
+  const a = new Date(asof).getTime();
+  const g = new Date(generatedAt).getTime();
+  if (!isFinite(a) || !isFinite(g)) return null;
+  const days = Math.floor((g - a) / 86400000);
+  if (days <= 10) return null;
+  return (
+    <span className="chip stale" title={`engine data is ${days} days behind the snapshot`}>
+      stale · {days}d
+    </span>
+  );
+}
+
+/**
+ * The 'as of' line every quoted engine figure carries: the engine's own asof
+ * plus the stale chip when it has fallen behind. Renders nothing without an
+ * asof — a missing date stays visible as absence, not as a guess.
+ */
+export function AsOf({ asof, generatedAt }: { asof?: string | null; generatedAt?: string | null }) {
+  if (!asof) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6, fontSize: 10, color: "var(--ghost)" }}>
+      <span>as of {asof}</span>
+      {stalenessChip(asof, generatedAt)}
+    </div>
+  );
+}
+
+/* ---------- copy csv -------------------------------------------------------
+   table.mini companion: any table the desk renders can be lifted straight
+   into a spreadsheet. Rows are plain arrays (header row included by the
+   caller); cells are quoted only when they need it. */
+
+const csvCell = (v: unknown): string => {
+  const s = v == null ? "" : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+export const toCSV = (rows: unknown[][]): string =>
+  rows.map((r) => r.map(csvCell).join(",")).join("\n");
+
+export async function copyCSV(rows: unknown[][]): Promise<boolean> {
+  const text = toCSV(rows);
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // non-secure context or denied permission: the old-school fallback
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function CopyCSV({ rows, label = "copy csv" }: { rows: unknown[][]; label?: string }) {
+  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return (
+    <button
+      type="button"
+      className="copycsv"
+      onClick={async () => {
+        const ok = await copyCSV(rows);
+        setState(ok ? "ok" : "err");
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setState("idle"), 1400);
+      }}
+    >
+      {state === "ok" ? "copied ✓" : state === "err" ? "copy failed" : label}
+    </button>
   );
 }

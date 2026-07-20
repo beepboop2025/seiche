@@ -110,6 +110,24 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
       </div>
 
       <div className="descent-stage">
+        {/* Skip, visible from the first scene. Inline styles on purpose:
+            Descent renders before the lazy tab chunks (and their CSS) load,
+            so the one button a new reader must always be able to find cannot
+            wait on a stylesheet. Esc is wired in the key handler above. */}
+        <button
+          onClick={leave}
+          aria-label="Skip the introduction and enter the terminal"
+          style={{
+            position: "absolute", top: 22, right: 26, pointerEvents: "auto", cursor: "pointer",
+            fontFamily: "var(--display)", fontSize: 11, fontWeight: 500, letterSpacing: "0.08em",
+            color: "var(--accent-bright)", background: "rgba(5, 6, 12, 0.62)",
+            border: "1px solid var(--accent-deep)", borderRadius: 999, padding: "8px 18px",
+            backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+          }}
+        >
+          skip to the terminal <span aria-hidden="true" style={{ opacity: 0.55, fontSize: 9.5 }}>· esc</span>
+        </button>
+
         <div className="descent-gauge" aria-hidden="true">
           {SCENES.map((s, i) => (
             <div key={s.kicker} className={`descent-mark ${i === scene ? "on" : ""}`}>
@@ -160,7 +178,7 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
         <button className="descent-enter" onClick={leave}>
           enter the terminal <span aria-hidden="true">→</span>
         </button>
-        <div className="descent-hint">scroll to descend · Enter to skip</div>
+        <div className="descent-hint">scroll to descend · esc to skip</div>
       </div>
     </div>
   );

@@ -140,6 +140,77 @@ function MooringsCard({ m }: { m: Any }) {
   );
 }
 
+/* ---------------------------------------------------------------------------
+   CpSentinelCard — do big DeFi exploits NARROW commercial-paper spreads?
+   (engines.cpsentinel, after arXiv:2601.08263). Live state: days since the
+   last big exploit, the CP spread level with its expanding percentile, and
+   whether a post-exploit narrowing window is open right now. The evidence:
+   the narrowing hit rate against 100 seeded placebo calendars — the min-over-
+   window statistic is selection-biased by construction, so the shuffle
+   percentile, not the raw rate, drives the verdict. Associational, not
+   causal; context, never a score.
+   ------------------------------------------------------------------------- */
+function CpSentinelCard({ e }: { e: Any }) {
+  if (!e?.ok) return <Fault name="CP Sentinel" reason={e?.reason ?? "not in this snapshot"} span={12} />;
+  const lv = e.live ?? {};
+  const plc = e.placebo ?? {};
+  const active = e.verdict === "channel active";
+  return (
+    <div className="card span12">
+      <h2>CP Sentinel</h2>
+      <div className="sub">
+        the flight-to-quality channel from the offshore basin: after major DeFi exploits, 3m AA
+        commercial-paper spreads tend to NARROW (liquidity re-intermediated into prime paper) ·
+        {e.n_events} declustered exploits, {e.n_events_scored} scored · asof {e.asof}
+      </div>
+      <div className="kv">
+        <div className="item"><div className="k">days since big exploit</div>
+          <div className="v">{lv.days_since_big_exploit ?? "—"}</div>
+          {lv.last_big_exploit_date && (
+            <div className="dimsmall" style={{ marginTop: 3 }}>last {lv.last_big_exploit_date}</div>
+          )}
+        </div>
+        <div className="item"><div className="k">3m AA CP−bill spread</div>
+          <div className="v">{fmt(lv.cp_spread_bp, 1)}bp
+            <span className="dimsmall"> ({fmt(lv.level_pctl, 0)}th pctl, expanding)</span></div></div>
+        <div className="item"><div className="k">narrowing window</div>
+          <div className={`v ${lv.window_active ? "warn" : ""}`}>{lv.window_active ? "ACTIVE" : "closed"}</div>
+          {lv.last_event && (
+            <div className="dimsmall" style={{ marginTop: 3 }}>
+              {lv.last_event.date} · Δ {lv.last_event.change_bp_so_far != null ? `${fmt(lv.last_event.change_bp_so_far, 1)}bp` : "—"} so far
+              {lv.last_event.hit_so_far != null && (lv.last_event.hit_so_far ? " · narrowing hit" : " · no hit")}
+            </div>
+          )}
+        </div>
+        <div className="item"><div className="k">hit rate vs placebo</div>
+          <div className="v" style={{ fontSize: 13 }}>
+            {e.hit_rate != null ? `${fmt(e.hit_rate * 100, 0)}%` : "—"}
+            {e.hit_rate_ci95 && (
+              <span className="dimsmall"> (CI {fmt(e.hit_rate_ci95[0] * 100, 0)}–{fmt(e.hit_rate_ci95[1] * 100, 0)}%)</span>
+            )}
+            {plc.hit_rate_mean != null && (
+              <span className="dimsmall">
+                {" "}vs placebo {fmt(plc.hit_rate_mean * 100, 0)}%
+                {" "}({fmt((plc.hit_rate_p05 ?? 0) * 100, 0)}–{fmt((plc.hit_rate_p95 ?? 0) * 100, 0)}%)
+              </span>
+            )}
+          </div>
+          {e.placebo_percentile != null && (
+            <div className="dimsmall" style={{ marginTop: 3 }}>
+              real rate at the {fmt(e.placebo_percentile, 0)}th percentile of {plc.n_shuffles ?? 100} shuffled calendars
+            </div>
+          )}
+        </div>
+        <div className="item"><div className="k">verdict</div>
+          <div className="v" style={{ fontSize: 13, color: active ? P.strain : e.verdict === "insufficient events" ? P.erosion : undefined }}>
+            {e.verdict}
+          </div></div>
+      </div>
+      <Method>{(e.caveats ?? []).join(" · ")} · {e.method}</Method>
+    </div>
+  );
+}
+
 function FarBasinCard({ f }: { f: Any }) {
   if (!f?.ok) return <Fault name="Far Basin — Palimpsest" reason={f?.reason} span={12} />;
   const ch = f.channels ?? {};
@@ -450,6 +521,7 @@ export default function Global({ snap }: { snap: Any }) {
 
       <HarborsCard h={snap.engines?.harbors} />
       <MooringsCard m={snap.engines?.moorings} />
+      <CpSentinelCard e={snap.engines?.cpsentinel} />
       <ThermohalineCard t={snap.engines?.thermohaline} />
       <FarBasinCard f={snap.engines?.farbasin} />
     </div>

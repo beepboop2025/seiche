@@ -1,0 +1,147 @@
+/* ============================================================================
+   SEICHE — the CINEMA layer (src/motion/*)
+   Everything here is owned by the motion module: the wave tank behind the
+   masthead, the sprung gauge, the odometer digits, the live pulse, the motion
+   toggle and the keyboard-shortcut overlay. Global styles stay in styles.css;
+   this sheet only adds — it overrides other components solely to park their
+   ambient motion under DESK mode ([data-motion="desk"]), which is the mode's
+   whole job.
+   ========================================================================== */
+
+/* ---- the masthead hero band: the seiche sloshes behind the words --------- */
+.masthero { position: relative; }
+.masthero .masthead { position: relative; z-index: 1; }
+.wavetank {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+  /* let the band dissolve into the page ground at its ends */
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+          mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+}
+.wavetank-canvas { width: 100%; height: 100%; display: block; animation: tank-in 1.2s var(--ease); }
+@keyframes tank-in { from { opacity: 0; } to { opacity: 1; } }
+.wavetank-static { animation: none; }
+
+/* ---- the gauge: needle + arc, tint crossfades with the regime ------------ */
+.gauge { display: block; overflow: visible; }
+.gauge-value, .gauge-needle, .gauge-hub { transition: stroke 0.6s var(--ease); }
+
+/* ---- the odometer: digit strips roll on transform only ------------------- */
+.odo { display: inline-flex; align-items: baseline; }
+.odo-col {
+  display: inline-block; height: 1em; line-height: 1; overflow: hidden;
+  vertical-align: baseline;
+}
+.odo-strip {
+  display: inline-flex; flex-direction: column;
+  transition: transform 0.65s var(--rise); will-change: transform;
+}
+.odo-digit { height: 1em; line-height: 1; display: block; }
+.odo-lit { display: inline-block; }
+
+/* ---- the live pulse: heartbeat dot + as-of clock + refresh countdown ----- */
+.livepulse {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 10px; color: var(--faint);
+  letter-spacing: 0.02em;
+}
+.livepulse-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: livepulse var(--pulse-t, 3s) var(--ease) infinite;
+}
+@keyframes livepulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.85); }
+  12% { opacity: 1; transform: scale(1.15); }
+  28% { opacity: 0.6; transform: scale(1); }
+}
+
+/* ---- the change-flash: refreshed readings blink DIRECTIONALLY ------------
+   Up is amber, down is blue — never green/red. This is a stress gauge: a
+   rising number is bad news, and the house ramp must not read as approval. */
+.flash-up { animation: flash-up 1.4s var(--ease); }
+.flash-down { animation: flash-down 1.4s var(--ease); }
+@keyframes flash-up {
+  0% { color: var(--erosion); text-shadow: 0 0 16px rgba(221, 179, 118, 0.65); }
+  100% { color: inherit; text-shadow: 0 0 0 rgba(0, 0, 0, 0); }
+}
+@keyframes flash-down {
+  0% { color: var(--chart-slate); text-shadow: 0 0 16px rgba(135, 158, 216, 0.65); }
+  100% { color: inherit; text-shadow: 0 0 0 rgba(0, 0, 0, 0); }
+}
+
+/* ---- the motion toggle: same radiogroup idiom as the sounding dial ------- */
+.motiontoggle {
+  display: flex; gap: 2px; align-self: center; align-items: center;
+  border: 1px solid var(--panel-edge-2); border-radius: 999px;
+  padding: 2px; background: var(--panel);
+}
+.motiontoggle button {
+  font-family: var(--display); font-size: 9px; font-weight: 500; line-height: 1;
+  letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--faint); background: transparent; border: none; border-radius: 999px;
+  padding: 4px 9px; cursor: pointer;
+  transition: color 0.15s var(--ease), background 0.2s var(--ease);
+}
+.motiontoggle button:hover { color: var(--text); }
+.motiontoggle button.on { color: var(--accent-bright); background: rgba(156, 143, 232, 0.14); }
+.motiontoggle-note {
+  font-size: 8.5px; color: var(--ghost); letter-spacing: 0.06em;
+  padding: 0 8px 0 2px; text-transform: uppercase;
+}
+
+/* ---- the '?' shortcut overlay -------------------------------------------- */
+.kshort-backdrop {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 14vh;
+  animation: kshort-in 0.16s var(--ease);
+}
+@keyframes kshort-in { from { opacity: 0; } to { opacity: 1; } }
+.kshort {
+  width: min(460px, calc(100vw - 48px));
+  background: var(--panel); border: 1px solid var(--panel-edge-2);
+  border-radius: var(--r-lg); padding: 18px 22px 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+}
+.kshort h2 {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 12px;
+}
+.kshort .row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 18px;
+  padding: 5px 0; font-size: 12px; color: var(--dim);
+}
+.kshort .row + .row { border-top: 1px solid rgba(237, 238, 244, 0.05); }
+.kshort kbd {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--panel-edge-2);
+  border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+}
+.kshort .foot { margin-top: 12px; font-size: 10.5px; color: var(--ghost); }
+
+/* ============================ DESK mode ===================================
+   Micro-interactions only: the ambient layer parks. The wave tank and the
+   marquee never render/animate; sweeps, pings and rolls are stilled. Colour
+   crossfades and hover states stay — they encode state and cost nothing. */
+[data-motion="desk"] .tape-inner { animation: none; }
+[data-motion="desk"] .sonar::before,
+[data-motion="desk"] .sonar::after { animation: none; }
+[data-motion="desk"] .odo-strip { transition: none; }
+[data-motion="desk"] .livepulse-dot { animation: none; opacity: 0.8; }
+[data-motion="desk"] .flash-up,
+[data-motion="desk"] .flash-down { animation: none; }
+[data-motion="desk"] .roll-done { animation: none; }
+[data-motion="desk"] .wavetank-canvas { animation: none; }
+
+/* Reduced motion is forced-DESK at the OS level (motionMode sets
+   data-motion="desk" too — these rules cover the window before React mounts). */
+@media (prefers-reduced-motion: reduce) {
+  .odo-strip { transition: none; }
+  .livepulse-dot { animation: none; }
+  .flash-up, .flash-down { animation: none; }
+  .wavetank-canvas { animation: none; }
+  .kshort-backdrop { animation: none; }
+}

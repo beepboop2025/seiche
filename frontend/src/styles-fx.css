@@ -1,0 +1,202 @@
+/* ============================================================================
+   SEICHE — FX layer (maps & curves)
+   Animated data-viz primitives for the Resonance / Forecast / Calendar tabs:
+   the HydrophoneMap pulse graph, the Spillover gauge + directional bars, the
+   Swell forward-curve draw-in + band shimmer, the quant-odds chips, and the
+   Calendar event-horizon timeline.
+
+   Motion charter inherited from styles.css: every animation encodes state or
+   answers the hand. All perpetual motion here is declared inside
+   `@media (prefers-reduced-motion: no-preference)` so the static render IS
+   the reduced-motion fallback — nothing to override. JS-driven loops (the
+   hydrophone pulses) additionally gate on a local matchMedia check and pause
+   offscreen / when document.hidden.
+   ========================================================================== */
+
+/* ---- shared readout line under interactive SVGs (hover answers the hand) -- */
+.fx-readout {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--faint);
+  min-height: 14px;            /* holds the row so hover never shifts layout */
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.fx-readout b { color: var(--accent-bright); font-weight: 500; }
+
+/* ---- HydrophoneMap --------------------------------------------------------*/
+.fx-hydromap { display: block; width: 100%; height: auto; }
+.fx-nodelabel {
+  font-family: var(--display);
+  font-size: 9.5px;
+  fill: var(--faint);
+  letter-spacing: 0.02em;
+}
+.fx-node { cursor: crosshair; }
+.fx-edge { cursor: crosshair; }
+
+/* ---- Spillover gauge + directional bars ------------------------------------*/
+.fx-gauge-cap {
+  font-family: var(--display);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: var(--ghost);
+}
+.fx-bars { display: grid; gap: 5px; margin-top: 10px; }
+.fx-barrow {
+  display: grid;
+  grid-template-columns: 92px 1fr 74px;
+  gap: 8px;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.fx-barrow .node {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-barrow .track {
+  position: relative;
+  height: 7px;
+  background: var(--panel-2);
+  border-radius: 3px;
+}
+/* center axis of the diverging NET bar */
+.fx-barrow .track::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--panel-edge-2);
+}
+.fx-barrow .fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+.fx-barrow .nums {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- Swell forward curve ----------------------------------------------------*/
+.fx-axis {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  fill: var(--ghost);
+  letter-spacing: 0.03em;
+}
+.fx-band { fill: var(--accent); opacity: 0.10; }
+.fx-cross { pointer-events: none; }
+
+/* ---- quant odds chips --------------------------------------------------------*/
+.fx-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+.fx-chip {
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--r-md);
+  padding: 10px 12px 9px;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.fx-chip:hover { border-color: var(--panel-edge-2); transform: translateY(-1px); }
+.fx-chip .k {
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.fx-chip .v {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.fx-chip .s {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ghost);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Calendar event-horizon timeline ------------------------------------------*/
+.fx-tl { display: block; width: 100%; height: auto; }
+.fx-tl-track { stroke: var(--panel-edge-2); stroke-width: 1; }
+.fx-tl-tick { stroke: var(--panel-edge); stroke-width: 1; }
+.fx-tl-marker { cursor: crosshair; }
+.fx-tl-cursor { stroke: var(--accent-bright); stroke-width: 1; }
+
+/* ============================================================================
+   PERPETUAL MOTION — declared only under no-preference; the un-animated
+   render above is the reduced-motion fallback by construction.
+   ========================================================================== */
+@media (prefers-reduced-motion: no-preference) {
+
+  /* directional bars grow out of the center axis on mount */
+  .fx-barrow .fill {
+    animation: fx-barx 0.7s var(--rise) both;
+  }
+  @keyframes fx-barx {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+
+  /* chips rise in on mount, staggered by inline animation-delay */
+  .fx-chip { animation: fx-chipin 0.5s var(--rise) both; }
+  @keyframes fx-chipin {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* the swell band breathes faintly and a light sweep crosses it */
+  .fx-band { animation: fx-bandpulse 5.2s var(--ease) infinite alternate; }
+  @keyframes fx-bandpulse {
+    from { opacity: 0.08; }
+    to { opacity: 0.16; }
+  }
+  .fx-shine { animation: fx-sweepx 4.6s linear infinite; }
+  @keyframes fx-sweepx {
+    from { transform: translateX(0); }
+    to { transform: translateX(1200px); }
+  }
+
+  /* calendar markers bob at staggered phases (delay set inline) */
+  .fx-bob { animation: fx-bob 3.4s ease-in-out infinite; }
+  @keyframes fx-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+
+  /* the today cursor breathes; a slow radar sweep scans the horizon */
+  .fx-tl-cursor { animation: fx-cursor 2.6s var(--ease) infinite alternate; }
+  @keyframes fx-cursor {
+    from { opacity: 0.45; }
+    to { opacity: 1; }
+  }
+  .fx-tl-sweep { animation: fx-sweepx 11s linear infinite; }
+
+  /* hydrophone pulses fade in once the loop is live (JS drives position) */
+  .fx-pulse { transition: opacity 0.4s var(--ease); }
+}

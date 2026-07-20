@@ -1,10 +1,17 @@
 import type { CSSProperties } from "react";
 import { Any, fmt } from "./lib";
+import { useMotion } from "./motion/motionMode";
+// The cinema layer's stylesheet rides in on the tape: Tape is imported
+// eagerly by App, so styles-cinema.css always ships with the main chunk.
+import "./styles-cinema.css";
 
 // The tape: the ten headline gauges drifting under the masthead, terminal
 // style. The drift is data too — the loop tightens as the composite rises
-// (CALM ~95s per pass, STRESS ~30s). Hover holds it still to read; the
-// second copy of the list exists only to make the loop seamless.
+// (CALM ~95s per pass, STRESS ~30s). Hover holds it still to read. The loop
+// is a pure CSS transform on duplicated content (translateX 0 → -50%), so it
+// runs on the compositor and never drops a frame; four copies keep the seam
+// invisible even on wide viewports. In DESK mode the marquee parks: one
+// static copy, every reading still there to be read.
 
 interface Item {
   k: string;
@@ -50,14 +57,15 @@ function buildItems(snap: Any): Item[] {
 }
 
 export default function Tape({ snap }: { snap: Any }) {
+  const { effective } = useMotion();
   const items = buildItems(snap);
   const stress = Math.min(1, Math.max(0, (snap.engines?.composite?.value ?? 20) / 100));
   const loopSeconds = Math.round(95 - 65 * stress);
 
-  const run = (hidden: boolean) => (
-    <span aria-hidden={hidden || undefined}>
+  const run = (hidden: boolean, tag: string) => (
+    <span aria-hidden={hidden || undefined} key={tag}>
       {items.map((it, i) => (
-        <span className="tape-item" key={`${hidden ? "b" : "a"}-${i}`}>
+        <span className="tape-item" key={`${tag}-${i}`}>
           <span className="tk">{it.k}</span>
           <span className={`tv ${it.tone ?? ""}`}>{it.v}</span>
           <span className="tape-sep">·</span>
@@ -66,11 +74,22 @@ export default function Tape({ snap }: { snap: Any }) {
     </span>
   );
 
+  if (effective === "desk") {
+    // parked marquee: a single static pass of the readings
+    return (
+      <div className="tape" role="marquee" aria-label="headline money market readings">
+        <div className="tape-inner">{run(false, "a")}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="tape" role="marquee" aria-label="headline money market readings">
       <div className="tape-inner" style={{ "--tape-t": `${loopSeconds}s` } as CSSProperties}>
-        {run(false)}
-        {run(true)}
+        {run(false, "a")}
+        {run(true, "b")}
+        {run(true, "c")}
+        {run(true, "d")}
       </div>
     </div>
   );

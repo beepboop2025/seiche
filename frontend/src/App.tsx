@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
-import { Any, Roll } from "./lib";
+import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
 import { Command } from "./commands";
 import { useDepth, DepthDial } from "./depth";
@@ -12,6 +12,12 @@ import Basin from "./Basin";
 import Tape from "./Tape";
 import DepthRail from "./DepthRail";
 import Descent, { shouldDescend } from "./Descent";
+import { MotionProvider, MotionToggle } from "./motion/motionMode";
+import WaveTank from "./motion/WaveTank";
+import Gauge from "./motion/Gauge";
+import Odo from "./motion/Odo";
+import LivePulse from "./motion/LivePulse";
+import { useChangeFlash } from "./motion/useLive";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
@@ -32,16 +38,17 @@ const Proof = lazy(() => import("./tabs/Proof"));
 const System = lazy(() => import("./tabs/System"));
 const Account = lazy(() => import("./tabs/Account"));
 
-// GLOBAL leads: most arrivals come from India and want their own water line
-// first, not the US basin. DISPATCHES (the writing) moves last — the instrument
-// should be the first thing a visitor meets, the prose is what they find after.
+// BOARD leads: the instrument itself is the front door — the index, the
+// regime, the dive. Hash routing stays authoritative: any #tab in the URL
+// wins, and GLOBAL is one keystroke away for arrivals who want their own
+// water line first.
 const TABS = [
   "GLOBAL", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR", "POSITIONING",
   "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT", "DISPATCHES",
 ] as const;
 type Tab = (typeof TABS)[number];
 
-const DEFAULT_TAB: Tab = "GLOBAL";
+const DEFAULT_TAB: Tab = "BOARD";
 
 const hashToTab = (): Tab => {
   const raw = decodeURIComponent(window.location.hash.replace("#", ""));
@@ -50,13 +57,24 @@ const hashToTab = (): Tab => {
 };
 
 export default function App() {
+  return (
+    <MotionProvider>
+      <AppInner />
+    </MotionProvider>
+  );
+}
+
+function AppInner() {
   const [snap, setSnap] = useState<Any | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   const [tab, setTab] = useState<Tab>(hashToTab());
   const [palette, setPalette] = useState(false);
+  const [help, setHelp] = useState(false);
   const [descending, setDescending] = useState(shouldDescend);
   const { setDepth, stepDepth } = useDepth();
+  // direction-flash for the masthead composite (up = amber, down = blue)
+  const flash = useChangeFlash(snap?.engines?.composite?.value);
 
   // unseen-panel marks re-arm on every tab visit
   useAttentionMarks(tab);
@@ -130,7 +148,7 @@ export default function App() {
   }, []);
 
   // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs,
-  // `[` / `]` step the sounding shallower / deeper.
+  // `[` / `]` step the sounding shallower / deeper, `?` the shortcut overlay.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -141,6 +159,11 @@ export default function App() {
       } else if (e.key === "/" && !typing) {
         e.preventDefault();
         setPalette(true);
+      } else if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setHelp((h) => !h);
+      } else if (e.key === "Escape") {
+        setHelp(false);
       } else if ((e.key === "[" || e.key === "]") && !typing && !e.ctrlKey && !e.metaKey) {
         stepDepth(e.key === "[" ? -1 : 1);
       } else if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
@@ -188,27 +211,33 @@ export default function App() {
     <div className="app">
       <Basin value={c.value ?? null} regime={c.regime ?? null} />
       <DepthRail />
-      <div className="masthead">
-        <div className="wordmark">SEI<span>CHE</span></div>
-        <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
-        <a className="prolink" href="/guide.html">new? how to read this</a>
-        <div className="mastindex">
-          {/* sonar: ping period tightens as the composite rises — CALM pings
-              lazily, STRESS pings urgently. The number itself rolls up on
-              first paint (the live-counter moment). */}
-          <span
-            className="mastvalue sonar"
-            style={{ "--ping": `${(3.6 - 2.6 * Math.min(1, (c.value ?? 20) / 100)).toFixed(2)}s` } as CSSProperties}
-          >
-            <Roll v={c.value} d={0} />
-          </span>
-          <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
-          <DepthDial />
-        </div>
-        <div className="right">
-          {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
-          FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
-          <a className="prolink" href="/support.html">free · support Seiche</a>
+      <div className="masthero">
+        <WaveTank value={c.value ?? null} regime={c.regime ?? null} />
+        <div className="masthead">
+          <div className="wordmark">SEI<span>CHE</span></div>
+          <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
+          <a className="prolink" href="/guide.html">new? how to read this</a>
+          <div className="mastindex">
+            {/* sonar: ping period tightens as the composite rises — CALM pings
+                lazily, STRESS pings urgently. The gauge needle sweeps up on
+                first paint and the odometer digits roll on every refresh. */}
+            <Gauge v={c.value ?? null} size={44} />
+            <span
+              className={`mastvalue sonar${flash ? ` flash-${flash}` : ""}`}
+              style={{ "--ping": `${(3.6 - 2.6 * Math.min(1, (c.value ?? 20) / 100)).toFixed(2)}s` } as CSSProperties}
+            >
+              <Odo v={c.value} d={0} />
+            </span>
+            <span className={`regime ${c.regime}`} style={{ fontSize: 10, padding: "3px 8px" }}>{c.regime}</span>
+            <DepthDial />
+            <MotionToggle />
+          </div>
+          <div className="right">
+            <LivePulse snap={snap} /><br />
+            {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
+            FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
+            <a className="prolink" href="/support.html">free · support Seiche</a>
+          </div>
         </div>
       </div>
 
@@ -226,7 +255,24 @@ export default function App() {
           </a>
         ))}
         <button className="cmdk" onClick={() => setPalette(true)} title="command line — function codes or search">⌘K</button>
+        <button className="cmdk" onClick={() => setHelp(true)} title="keyboard shortcuts">?</button>
       </nav>
+
+      {help && (
+        <div className="kshort-backdrop" onClick={() => setHelp(false)}>
+          <div className="kshort" role="dialog" aria-label="keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+            <h2>Keyboard shortcuts</h2>
+            <div className="row"><span>command line — function codes (BRD, FCT, SWELL…) or search</span><kbd>⌘K</kbd></div>
+            <div className="row"><span>command line (same)</span><kbd>/</kbd></div>
+            <div className="row"><span>this panel</span><kbd>?</kbd></div>
+            <div className="row"><span>sounding shallower / deeper (glance · desk · deep)</span><kbd>[ &nbsp; ]</kbd></div>
+            <div className="row"><span>jump to tab 1–9</span><kbd>Ctrl/⌘ 1–9</kbd></div>
+            <div className="row"><span>replay a date — type it in the command line</span><kbd>ASOF 2019-09-16</kbd></div>
+            <div className="row"><span>close</span><kbd>Esc</kbd></div>
+            <div className="foot">hash routing is authoritative — any #tab in the URL wins.</div>
+          </div>
+        </div>
+      )}
 
       {palette && (
         <Suspense fallback={null}>

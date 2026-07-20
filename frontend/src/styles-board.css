@@ -1,0 +1,67 @@
+/* ============================ BOARD DESK PASS =============================
+   Styles for the Board's desk-grade additions. Imported from tabs/Board.tsx
+   (the Board chunk), so anything here must be Board-scoped or harmless when
+   absent elsewhere; shared primitives keep working without this file.
+   Entrance motion staggers at 40ms and dies under prefers-reduced-motion. */
+
+/* ---- under the verdict: the components, weighted + one year of the index -- */
+.glance-decomp {
+  display: grid; grid-template-columns: minmax(240px, 1fr) minmax(260px, 1.25fr);
+  gap: 26px; margin-top: 18px; padding-top: 16px;
+  background: var(--rule-soft) no-repeat top / 100% 1px;
+}
+@media (max-width: 700px) {
+  .glance-decomp { grid-template-columns: 1fr; }
+}
+
+/* the shared Decomp, tightened for the glance density */
+.decomp.compact { min-width: 0; gap: 4px; }
+.decomp.compact .row { grid-template-columns: 86px 1fr 36px; gap: 8px; font-size: 10.5px; }
+.decomp.compact .bar { height: 4px; }
+
+/* one-year composite sparkline with hover crosshair */
+.sparkbox { min-width: 0; }
+.spark-read {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.03em;
+  color: var(--ghost); text-align: right; min-height: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.sparkbox svg { width: 100%; height: auto; display: block; overflow: visible; cursor: crosshair; }
+.spark-cross { stroke: rgba(233, 233, 237, 0.22); stroke-width: 1; stroke-dasharray: 2 3; }
+.spark-dot { fill: var(--accent-bright); filter: drop-shadow(0 0 4px rgba(156, 143, 232, 0.7)); }
+
+/* ---- the glance forward-odds triplet ------------------------------------ */
+.odds { margin-top: 22px; }
+.odds-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.odds-head .asof-inline { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--ghost); }
+.odds-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px; }
+.odd {
+  border: 1px solid var(--panel-edge); border-radius: var(--r-md);
+  background: var(--panel); padding: 10px 14px 9px;
+  animation: rise 0.6s var(--rise) both;
+}
+.odd:nth-child(1) { animation-delay: 0.04s; }
+.odd:nth-child(2) { animation-delay: 0.08s; }
+.odd:nth-child(3) { animation-delay: 0.12s; }
+.odd .h { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.odd .p {
+  font-family: var(--mono); font-size: 22px; font-weight: 500;
+  letter-spacing: -0.03em; color: var(--accent-bright); margin-top: 3px;
+}
+
+/* ---- copy csv: the table.mini companion (also mounted by sibling tabs) --- */
+.copycsv {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+  color: var(--ghost); background: transparent; cursor: pointer;
+  border: 1px solid var(--panel-edge-2); border-radius: 4px; padding: 1px 7px;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.copycsv:hover { color: var(--accent-bright); border-color: var(--accent-deep); }
+
+@media (prefers-reduced-motion: reduce) {
+  .odd { animation: none; }
+  .copycsv { transition: none; }
+}
