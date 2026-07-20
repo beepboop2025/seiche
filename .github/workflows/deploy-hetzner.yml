@@ -46,8 +46,22 @@ jobs:
           printf '%s\n' "$HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" > ~/.ssh/known_hosts
           # The forced command runs regardless of what is requested here; the
           # word "deploy" is just a log-friendly placeholder.
+          #
+          # Keepalive: the on-box wrapper runs a long, OUTPUT-LESS step
+          # (git pull -> pip install -> pytest 386 tests + memray gate ->
+          # restart). With no traffic on the channel an intermediary NAT/
+          # firewall drops the idle TCP connection, and the client dies with
+          # "client_loop: send disconnect: Broken pipe" (~4.5min in — seen
+          # 2026-07-20 after 90 new engine tests pushed the on-box test run
+          # past the idle window). ServerAliveInterval keeps the connection
+          # ticking through the quiet build; CountMax=20 tolerates up to
+          # ~10min of true server silence before giving up (well inside the
+          # 25min job timeout, so a genuinely hung box still fails, not hangs).
           ssh -i ~/.ssh/hetzner_key \
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
+              -o TCPKeepAlive=yes \
               "root@$HOST" deploy
