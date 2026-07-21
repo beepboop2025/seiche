@@ -239,6 +239,12 @@ OFR_PD_SERIES = [
 # refresh, TTL-gated: far inside the 1 req/2s politeness floor.
 LLAMA_HACKS_TTL_MIN = 360          # 6h — hacks are event-driven, not intraday
 
+# Undertow FETCH pack (the lab's current-affairs wind, funding-routed slice
+# read back as an overlay). Published by the lab's own box to the public
+# window; refreshes on the Undertow collect cadence, so 6h TTL is generous.
+WINDFETCH_URL = "https://api.seiche.info/undertow/fetch.json"
+WINDFETCH_TTL_MIN = 360
+
 # NY Fed + FiscalData + CFTC are fetched through dedicated collectors
 # (structured payloads, not single series). TTLs below.
 NYFED_TTL_MIN = 240        # rates with percentiles, SRF ops

@@ -63,6 +63,7 @@ from seiche.engines import caesar as eng_caesar
 from seiche.engines import communique as eng_communique
 from seiche.engines import composite as eng_composite
 from seiche.engines import cpsentinel as eng_cpsentinel
+from seiche.engines import windfetch as eng_windfetch
 from seiche.engines import echo as eng_echo
 from seiche.engines import edetect as eng_edetect
 from seiche.engines import farbasin as eng_farbasin
@@ -102,7 +103,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, ofr, palimpsest
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, ofr, palimpsest, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -144,6 +145,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("ofr_gcf", ofr.fetch_many(client, [s.mnemonic for s in OFR_GCF_SERIES], faults)),
             guard("ofr_pd_financing", ofr.fetch_many(client, [s.mnemonic for s in OFR_PD_SERIES], faults)),
             guard("llama_hacks", llamahacks.fetch_all(client, faults)),
+            guard("windfetch", windfetch.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
             guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
@@ -176,6 +178,10 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
             cut[m] = Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at, pts)
         out[group] = cut
     out["llama_hacks"] = llamahacks.truncate(src.get("llama_hacks") or {}, asof)
+    # windfetch is a live-only pack (no archive): a replay stamps the marker
+    # and the engine refuses to backfill wind that was never recorded
+    out["windfetch"] = {**(src.get("windfetch") or {}),
+                        "replay_asof": asof.date().isoformat()}
     fxs = (src.get("nyfed_fxs") or {}).get("ops", [])
     out["nyfed_fxs"] = {
         "fetched_at": (src.get("nyfed_fxs") or {}).get("fetched_at"),
@@ -561,6 +567,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     #     channel context; a missing leg degrades to an honest ok=False) ---
     run("cpsentinel", lambda: eng_cpsentinel.analyze(
         hacks_usd=drv["hacks_usd"], cp_spread_bp=drv["cp_spread_bp"]))
+
+    # --- Windfetch (the lab's current-affairs wind read back from the
+    #     Undertow FETCH pack; overlay only — never enters the composite) ---
+    run("windfetch", lambda: eng_windfetch.analyze(src.get("windfetch")))
 
     # --- SONAR ---
     def _sonar():
