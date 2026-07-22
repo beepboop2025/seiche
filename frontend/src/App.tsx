@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense, type CSSProperties } from "react";
+import { useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
@@ -103,28 +103,45 @@ function AppInner() {
     else if (cmd.type === "depth") setDepth(cmd.level);
   };
 
-  // Live API first (dev / self-hosted); fall back to the full snapshot CI
-  // bakes into the static build — the board should render even when the box
-  // is unreachable, just marked "static snapshot" instead of "live".
-  const load = () =>
-    fetch(`${API_BASE}/api/overview`, { headers: authHeaders() })
+  // Boot from the snapshot CI bakes into the static build, upgrade to live
+  // when the API answers. Both fetches race from the first paint: the board
+  // renders the moment either lands, marked "static snapshot" until the live
+  // one wins. The API call carries a hard timeout so a busy box (mid-deploy,
+  // pegged CPU) can be slow without holding the terminal on the loading
+  // screen — slow-but-alive used to hang boot; only a hard error fell back.
+  const gotLive = useRef(false);
+
+  const loadSnapshot = () =>
+    fetch("/data/overview.json")
+      .then((r) => {
+        const ct = r.headers.get("content-type") ?? "";
+        if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw new Error("snapshot unavailable");
+        return r.json();
+      })
+      .then((data) => {
+        if (gotLive.current) return; // never replace live data with the baked copy
+        setSnap(data); setLive(false); setErr(null);
+      });
+
+  const loadApi = (timeoutMs = 6000) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    return fetch(`${API_BASE}/api/overview`, { headers: authHeaders(), signal: ctl.signal })
       .then((r) => {
         if (r.status === 401) throw new Error("session expired — sign in again");
         const ct = r.headers.get("content-type") ?? "";
         if (!r.ok || !ct.includes("json")) throw new Error("the board is temporarily unreachable — retry in a moment");
-        setLive(true);
         return r.json();
       })
-      .then((data) => { setSnap(data); setErr(null); })
-      .catch((apiErr) =>
-        fetch("/data/overview.json")
-          .then((r) => {
-            const ct = r.headers.get("content-type") ?? "";
-            if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw apiErr;
-            return r.json();
-          })
-          .then((data) => { setSnap(data); setLive(false); setErr(null); })
-          .catch(() => setErr(String(apiErr.message ?? apiErr))));
+      .then((data) => { gotLive.current = true; setSnap(data); setLive(true); setErr(null); })
+      .finally(() => clearTimeout(timer));
+  };
+
+  const load = () =>
+    Promise.allSettled([loadApi(), loadSnapshot()]).then(([api, snap]) => {
+      if (api.status === "rejected" && snap.status === "rejected")
+        setErr(String((api.reason as Error)?.message ?? api.reason));
+    });
 
   const retry = () => { setErr(null); setSnap(null); load(); };
 

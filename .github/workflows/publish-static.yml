@@ -1,0 +1,43 @@
+name: publish-static
+
+# Fast path: passthrough files in frontend/public/ (support page, QR assets,
+# robots.txt, …) go straight to the live seiche-site repo without waiting for
+# the ~40-minute engine build. Everything under frontend/public/data/ is build
+# output owned by the full publish pipeline and is never touched here — copying
+# the repo's stale data/ over the live site would corrupt the Book ledger.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/public/**"
+      - "!frontend/public/data/**"
+
+concurrency:
+  group: publish-static
+  cancel-in-progress: true
+
+jobs:
+  copy-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push static files to the live site repo
+        env:
+          DEPLOY_KEY: ${{ secrets.SEICHE_SITE_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/site_key
+          chmod 600 ~/.ssh/site_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site
+          rsync -a --exclude data/ frontend/public/ /tmp/site/
+          cd /tmp/site
+          git config user.name "seiche-publish"
+          git config user.email "noreply@seiche"
+          git add -A
+          if git diff --cached --quiet; then echo "nothing to update"; exit 0; fi
+          git commit -q -m "static fast-path $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q origin main || (git pull --rebase -q origin main && git push -q origin main)
