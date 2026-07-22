@@ -31,6 +31,9 @@
   button.copy:hover { background:rgba(156,143,232,.12); border-color:#8071cc; }
   .warn { color:#787f95; font-size:11px; }
   .note { border-left:2px solid #8071cc; padding-left:12px; margin-top:24px; color:#9aa0b6; font-size:12.5px; }
+  .coin { position:relative; }
+  @media(min-width:560px){ .coin { padding-right:128px; } .coin .qr { position:absolute; right:16px; top:50%; transform:translateY(-50%); } }
+  .coin .qr { width:96px; height:96px; border-radius:8px; display:block; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -43,30 +46,35 @@
   <span class="name">BITCOIN · BTC</span><span class="net">Bitcoin network only</span>
   <code class="addr" id="btc">bc1qjg836tkh4f60twad5l4fhh4tek2wje5x3avc3r</code>
   <div class="row"><button class="copy" data-for="btc">copy</button><span class="warn">send BTC on the Bitcoin network, nothing else</span></div>
+  <img class="qr" src="/qr/pay-btc.svg" alt="QR code — Bitcoin address" width="96" height="96">
 </div>
 
 <div class="coin">
   <span class="name">ETHEREUM · ETH / USDC / USDT</span><span class="net">Ethereum and EVM chains, ERC-20</span>
   <code class="addr" id="eth">0x5B4A78b7EFe482d1579E287dA6F0043f89cf0EA1</code>
   <div class="row"><button class="copy" data-for="eth">copy</button><span class="warn">ETH or ERC-20 stablecoins on Ethereum mainnet</span></div>
+  <img class="qr" src="/qr/pay-evm.svg" alt="QR code — Ethereum / EVM address" width="96" height="96">
 </div>
 
 <div class="coin">
   <span class="name">SOLANA · SOL / USDC</span><span class="net">Solana network</span>
   <code class="addr" id="sol">GSESNjnptegNExWRERN6w6niWcPH7WPh6aqdo9kje4UJ</code>
   <div class="row"><button class="copy" data-for="sol">copy</button><span class="warn">SOL or SPL tokens on Solana</span></div>
+  <img class="qr" src="/qr/pay-sol.svg" alt="QR code — Solana address" width="96" height="96">
 </div>
 
 <div class="coin">
   <span class="name">TRON · USDT / USDC</span><span class="net">Tron network, TRC-20</span>
   <code class="addr" id="trx">TAAUBJ4qcQtBEp7atEiCcyiEY4qYF56Eaa</code>
   <div class="row"><button class="copy" data-for="trx">copy</button><span class="warn">TRC-20 tokens on Tron only</span></div>
+  <img class="qr" src="/qr/pay-trx.svg" alt="QR code — Tron address" width="96" height="96">
 </div>
 
 <div class="coin">
   <span class="name">TON · TON / USDT</span><span class="net">The Open Network</span>
   <code class="addr" id="ton">UQCDAd8-Kt_wdVlvwDUG6eD78bdHVq7TO8D8jce37-XYsY7J</code>
   <div class="row"><button class="copy" data-for="ton">copy</button><span class="warn">TON network only, jettons included</span></div>
+  <img class="qr" src="/qr/pay-ton.svg" alt="QR code — TON address" width="96" height="96">
 </div>
 
 <div class="note">
