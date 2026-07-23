@@ -1,0 +1,21 @@
+name: cache-rules
+
+# Applies the seiche.info edge cache rules (ops/cloudflare/cache_rules.sh).
+# Manual: the rules only change when someone decides they should.
+# Runs here rather than locally because CLOUDFLARE_API_TOKEN lives as a repo
+# secret and is never held on a laptop.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Cloudflare cache rules
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          chmod +x ops/cloudflare/cache_rules.sh
+          ops/cloudflare/cache_rules.sh
