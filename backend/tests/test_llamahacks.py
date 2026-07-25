@@ -5,6 +5,7 @@ No network — the HTTP layer (llamahacks._get) and the blob store are mocked.""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -136,10 +137,17 @@ def _patch_store(monkeypatch, blobs):
 
 
 def test_fetch_fresh_blob_short_circuits_network(monkeypatch):
+    # Staleness is measured against the wall clock (Series.staleness), so the
+    # fixture is dated RELATIVE to today. A hardcoded date makes this a time
+    # bomb: it asserts a fact about the calendar rather than about the code,
+    # and once the date drifts past the 4-day daily grace it fails forever.
+    # That is what froze the publish pipeline on 2026-07-24 (it gates on green).
+    now = datetime.now(timezone.utc)
+    day = (now - timedelta(days=1)).date().isoformat()
     blob = llamahacks._to_blob({
-        "fetched_at": "2026-07-20T00:00:00+00:00",
-        "daily": pd.Series([3.0], index=pd.DatetimeIndex(["2026-07-19"])),
-        "events": [{"name": "X", "date": "2026-07-19", "amount": 3.0,
+        "fetched_at": now.isoformat(),
+        "daily": pd.Series([3.0], index=pd.DatetimeIndex([day])),
+        "events": [{"name": "X", "date": day, "amount": 3.0,
                     "chain": ["Ethereum"], "technique": "T"}],
     })
     blobs = {llamahacks.BLOB_KEY: blob, llamahacks.BLOB_KEY + ":fresh": True}
