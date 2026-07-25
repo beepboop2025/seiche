@@ -11,6 +11,7 @@ import { P } from "../palette";
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Any, AsOf, Decomp, fmt, Num, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
 import { useDepth } from "../depth";
+import { API_BASE } from "../apiBase";
 import "../styles-board.css";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
@@ -370,16 +371,28 @@ function Verdict({ composite, tell, kink }: { composite: Any; tell: Any; kink: A
   );
 }
 
+/* The desk assistant calls an LLM, so /api/ask is never exposed on the public
+   read-only window (ops/Caddyfile keeps it 127.0.0.1-only). Rendering it on
+   seiche.info therefore only ever produced a dead box, so it renders solely
+   where the API shares this origin: dev and the self-hosted board. */
 function AskDesk({ live }: { live: boolean }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<Any | null>(null);
-  if (!live) return null;
+  if (!live || API_BASE) return null;
   const go = () => {
     if (!q.trim()) return;
     setBusy(true);
-    fetch(`/api/ask?q=${encodeURIComponent(q.trim())}`)
-      .then((r) => r.json())
+    setRes(null);
+    fetch(`${API_BASE}/api/ask?q=${encodeURIComponent(q.trim())}`)
+      // A non-2xx is FastAPI's {"detail": …}, which carries neither ok nor
+      // reason — read it through as a reason so a 429 says so out loud
+      // instead of painting an empty fault box.
+      .then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (r.ok && body) return body;
+        return { ok: false, reason: body?.detail ?? `the desk answered ${r.status}` };
+      })
       .then(setRes)
       .catch((e) => setRes({ ok: false, reason: String(e) }))
       .finally(() => setBusy(false));

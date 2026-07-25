@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Any, fmt } from "../lib";
+import { API_BASE } from "../apiBase";
 
 function Provenance({ prov }: { prov: Any[] }) {
   return (
@@ -27,10 +28,13 @@ export default function System({ snap, live }: { snap: Any; live: boolean }) {
   const [alerts, setAlerts] = useState<Any[]>([]);
   const [config, setConfig] = useState<Any | null>(null);
 
+  // Operator surface: alerts/config are 127.0.0.1-only, so on the public
+  // read-only window these can only ever 404 into the static fallback. Ask
+  // for them where they exist rather than swallowing the failure.
   useEffect(() => {
-    if (!live) return;
-    fetch("/api/alerts").then((r) => r.json()).then((j) => setAlerts(j.alerts ?? [])).catch(() => {});
-    fetch("/api/config").then((r) => r.json()).then(setConfig).catch(() => {});
+    if (!live || API_BASE) return;
+    fetch(`${API_BASE}/api/alerts`).then((r) => r.json()).then((j) => setAlerts(j.alerts ?? [])).catch(() => {});
+    fetch(`${API_BASE}/api/config`).then((r) => r.json()).then(setConfig).catch(() => {});
   }, [live]);
 
   return (
