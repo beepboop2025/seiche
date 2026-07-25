@@ -39,19 +39,31 @@ def _robust_z(s: pd.Series) -> float | None:
 
 def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
     """series_map: name -> (label, unit, daily/weekly level series)."""
-    # Age every print against the newest print on the board, not the wall
-    # clock: the same engine reconstructs historical boards in as-of replay,
-    # where today's date would mark the entire sweep stale.
+    # Age every print against the newest print on the board rather than the
+    # wall clock, because as-of replay reconstructs historical boards and
+    # today's date would mark an entire past sweep stale.
+    #
+    # But "newest print" must exclude FORWARD-dated ones. Administered rates
+    # carry a future effective date by design (IORB is announced effective
+    # from a date up to a fortnight out), and letting one set the reference
+    # silently aged every other series toward the gate — the same bug as
+    # calling a stale print a mover, running the other way. The wall clock is
+    # a ceiling only, never the reference, which is safe for replay because
+    # _truncate_sources already caps every replayed series at its as-of date.
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     asofs = [p.index[-1] for _, _, s in series_map.values()
              if not (p := s.dropna()).empty]
-    board_asof = max(asofs) if asofs else None
+    observed = [a for a in asofs if a <= today]
+    board_asof = max(observed) if observed else (max(asofs) if asofs else None)
 
     movers = []
     for name, (label, unit, s) in series_map.items():
         pts = s.dropna()
         if len(pts) < 60:
             continue
-        age_d = int((board_asof - pts.index[-1]).days) if board_asof is not None else 0
+        # Clamped at 0: a forward-dated administered rate is current by
+        # construction, not negatively old.
+        age_d = max(0, int((board_asof - pts.index[-1]).days)) if board_asof is not None else 0
         level_z = _robust_z(pts)
         change_z = _robust_z(pts.diff())
         zs = [abs(z) for z in (level_z, change_z) if z is not None]

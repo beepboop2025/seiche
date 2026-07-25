@@ -104,6 +104,67 @@ def test_sonar_flags_injected_outlier(rng):
     assert not movers["quiet"]["flag"]
 
 
+def _spiked(rng, end, n=300, freq="D", spike=20.0):
+    idx = pd.date_range(end=end, periods=n, freq=freq)
+    s = pd.Series(rng.normal(10, 0.1, n), index=idx)
+    s.iloc[-1] = spike
+    return s
+
+
+def test_sonar_does_not_flag_a_stale_extreme(rng):
+    """A monthly print sitting at an extreme level is not an overnight move.
+
+    Regression: ranking on |z| alone pinned Japan's OECD call rate to the top
+    of the board for weeks, and the daily letter called a June print an
+    overnight move five days running.
+    """
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    res = sonar.sweep({
+        "fresh": ("f", "u", _spiked(rng, today)),
+        "slow": ("s", "u", _spiked(rng, today - pd.Timedelta(days=53), n=90, freq="MS")),
+    })
+    movers = {m["name"]: m for m in res["movers"]}
+    assert movers["fresh"]["flag"] and not movers["fresh"]["stale"]
+    # still ON the board, and ranked -- an extreme level is real information
+    assert "slow" in movers and movers["slow"]["max_abs_z"] >= 2.5
+    assert movers["slow"]["stale"] and not movers["slow"]["flag"]
+    assert movers["slow"]["age_d"] >= 50
+    assert res["n_stale"] >= 1
+
+
+def test_sonar_reference_ignores_forward_dated_prints(rng):
+    """Administered rates carry a FUTURE effective date by design (IORB is
+    announced effective up to a fortnight out). One must not become the board
+    reference: that silently ages every other series toward the gate."""
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    res = sonar.sweep({
+        "iorb": ("i", "%", _spiked(rng, today + pd.Timedelta(days=14))),
+        "fresh": ("f", "u", _spiked(rng, today)),
+        "twodays": ("t", "u", _spiked(rng, today - pd.Timedelta(days=2))),
+    })
+    assert res["board_asof"] == today.date().isoformat()
+    ages = {m["name"]: m["age_d"] for m in res["movers"]}
+    assert ages["fresh"] == 0, ages          # not aged by iorb's future date
+    assert ages["twodays"] == 2, ages
+    assert ages["iorb"] == 0, ages           # forward-dated is current, not negative
+    assert all(not m["stale"] for m in res["movers"])
+
+
+def test_sonar_replay_reference_is_the_replay_date(rng):
+    """As-of replay truncates every series at its as-of date, so the wall-clock
+    ceiling must be a no-op and the sweep must stay deterministic."""
+    asof = pd.Timestamp("2020-03-16")
+    smap = {
+        "at": ("a", "u", _spiked(rng, asof)),
+        "lag": ("l", "u", _spiked(rng, asof - pd.Timedelta(days=4))),
+    }
+    first, second = sonar.sweep(smap), sonar.sweep(smap)
+    assert first["board_asof"] == "2020-03-16"
+    assert first == second
+    ages = {m["name"]: m["age_d"] for m in first["movers"]}
+    assert ages == {"at": 0, "lag": 4}
+
+
 # --------------------------------------------------------------------------
 # History: THE no-look-ahead invariant
 # --------------------------------------------------------------------------
