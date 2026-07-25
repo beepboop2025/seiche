@@ -100,7 +100,11 @@ def _title_summary_tag(snap: dict, date: str, prev_value) -> tuple[str, str, str
         title = f"{regime.title()} with a loud tell: {side} at {_signed(tell_v)}"
     elif movers:
         m = movers[0]
-        title = f"{m.get('label', 'One gauge')} moved overnight: the {regime.lower()} tape gets a data point"
+        # "Overnight" has to be earned. SONAR only flags prints within
+        # SONAR_FRESH_D of the board, but a weekly release is still days old
+        # when it is the freshest thing on the tape, so say which it is.
+        when = "moved overnight" if (m.get("age_d") or 0) <= 1 else "moved on the latest print"
+        title = f"{m.get('label', 'One gauge')} {when}: the {regime.lower()} tape gets a data point"
     else:
         quiet = _pick(date, "title", [
             f"{regime.title()} at {_fmt(v)}: what the pipes say while nothing moves",
@@ -192,17 +196,38 @@ def _movers_para(snap: dict, date: str) -> list[str]:
     sonar = snap.get("engines", {}).get("sonar", {})
     flagged = [m for m in sonar.get("movers", []) if m.get("flag")]
     if not flagged:
-        return [_pick(date, "quiet", [
+        out = [_pick(date, "quiet", [
             "Overnight, nothing cleared the ±2.5 robust z bar. A quiet tape is a data point too; it is what erosion looks like from the inside.",
             "No gauge moved beyond ±2.5 robust z overnight. The letter reports the silence rather than decorating it.",
         ])]
+        # A slow series sitting at an extreme level is worth knowing about,
+        # but it is not news and the letter must not dress it as news.
+        stale = [m for m in sonar.get("movers", []) if m.get("stale")
+                 and (m.get("max_abs_z") or 0) >= 2.5]
+        if stale:
+            s = stale[0]
+            out.append(
+                f"One reading is extreme but not fresh: **{s.get('label')}** sits at "
+                f"{_fmt(s.get('max_abs_z'), 1)} robust z on a print from {s.get('asof')}, "
+                f"{s.get('age_d')} days behind the board. That is a level worth knowing and "
+                "not a move, so it is reported here rather than in the movers line."
+            )
+        return out
     bits = []
     for m in flagged[:3]:
         bits.append(
             f"**{m.get('label')}** printed {_fmt(m.get('last'), 2)} {m.get('unit', '')} "
             f"(level z {_signed(m.get('level_z'), 1)}, change z {_signed(m.get('change_z'), 1)}, as of {m.get('asof')})"
         )
-    lead = "Overnight, the tape did move: " if len(bits) > 1 else "One gauge moved overnight: "
+    # The lead describes the whole list, so it is bound by the OLDEST print in
+    # it, not the newest. Claiming "overnight" because one of three gauges
+    # printed last night is the same overstatement this gate exists to stop.
+    oldest = max((m.get("age_d") or 0) for m in flagged[:3])
+    if oldest <= 1:
+        lead = "Overnight, the tape did move: " if len(bits) > 1 else "One gauge moved overnight: "
+    else:
+        lead = ("The tape moved on its latest prints, none of them from last night: "
+                if len(bits) > 1 else "One gauge moved on its latest print, not overnight: ")
     return [lead + "; ".join(bits) + "."]
 
 

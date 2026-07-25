@@ -480,6 +480,13 @@ HYDROPHONE_MAX_LAG_D = 3
 SONAR_LOOKBACK_D = 250
 SONAR_Z_FLAG = 2.5
 SONAR_TOP_N = 12
+# How far behind the board a print may sit and still be called a mover. The
+# binding case is H.4.1: weekly, Wednesday-dated, published Thursday, so a
+# current release reads up to ~8 days old late in its week. 10 clears that
+# with headroom and still excludes the monthly tape (OECD call rates, MMF
+# month-end), which is what used to headline the daily letter for weeks on
+# a single print. Editorial, like the composite weights.
+SONAR_FRESH_D = 10
 
 # ---------------------------------------------------------------------------
 # Turn Barometer — forecast the severity of the NEXT month/quarter-end turn.

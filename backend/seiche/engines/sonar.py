@@ -6,6 +6,15 @@ Every series the collectors hold, pinged every day with the same question:
 ranked movers board: the terminal's answer to "what actually moved today?"
 
 Context pane, not a composite input: an anomaly is a question, not a verdict.
+
+Freshness is part of the answer. A slow series (monthly OECD, month-end MMF)
+can sit at a structurally extreme level z for weeks, and ranking on |z| alone
+pinned those to the top of the board every day — which is how the daily letter
+came to report a June print as an overnight move for five days running. The
+sweep still SHOWS them, because the level is real information; it just refuses
+to FLAG a print that is too old to have moved overnight, and it says how old
+every print is. Every downstream consumer (dispatch, brief, desk assistant)
+filters on the flag, so the gate lands in one place.
 """
 
 from __future__ import annotations
@@ -13,7 +22,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from seiche.config import SONAR_LOOKBACK_D, SONAR_TOP_N, SONAR_Z_FLAG
+from seiche.config import SONAR_FRESH_D, SONAR_LOOKBACK_D, SONAR_TOP_N, SONAR_Z_FLAG
 
 
 def _robust_z(s: pd.Series) -> float | None:
@@ -30,11 +39,19 @@ def _robust_z(s: pd.Series) -> float | None:
 
 def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
     """series_map: name -> (label, unit, daily/weekly level series)."""
+    # Age every print against the newest print on the board, not the wall
+    # clock: the same engine reconstructs historical boards in as-of replay,
+    # where today's date would mark the entire sweep stale.
+    asofs = [p.index[-1] for _, _, s in series_map.values()
+             if not (p := s.dropna()).empty]
+    board_asof = max(asofs) if asofs else None
+
     movers = []
     for name, (label, unit, s) in series_map.items():
         pts = s.dropna()
         if len(pts) < 60:
             continue
+        age_d = int((board_asof - pts.index[-1]).days) if board_asof is not None else 0
         level_z = _robust_z(pts)
         change_z = _robust_z(pts.diff())
         zs = [abs(z) for z in (level_z, change_z) if z is not None]
@@ -51,7 +68,9 @@ def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
                 "level_z": round(level_z, 2) if level_z is not None else None,
                 "change_z": round(change_z, 2) if change_z is not None else None,
                 "max_abs_z": round(worst, 2),
-                "flag": worst >= SONAR_Z_FLAG,
+                "flag": worst >= SONAR_Z_FLAG and age_d <= SONAR_FRESH_D,
+                "stale": age_d > SONAR_FRESH_D,
+                "age_d": age_d,
                 "asof": pts.index[-1].date().isoformat(),
             }
         )
@@ -60,9 +79,13 @@ def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
         "ok": bool(movers),
         "n_scanned": len(movers),
         "n_flagged": sum(1 for m in movers if m["flag"]),
+        "n_stale": sum(1 for m in movers if m["stale"]),
+        "board_asof": board_asof.date().isoformat() if board_asof is not None else None,
         "movers": movers[:SONAR_TOP_N],
         "method": (
             f"robust z = (last − median) / (1.4826·MAD) over trailing {SONAR_LOOKBACK_D} obs, "
-            f"on level and 1d change; flag |z| ≥ {SONAR_Z_FLAG}"
+            f"on level and 1d change; flag |z| ≥ {SONAR_Z_FLAG} AND the print is no more "
+            f"than {SONAR_FRESH_D} days behind the board. A slower series still shows here "
+            f"with its age; it is not called a mover."
         ),
     }

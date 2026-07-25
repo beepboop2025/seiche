@@ -295,9 +295,14 @@ function SonarCard({ e }: { e: Any }) {
   return (
     <div className="card span12">
       <h2>SONAR</h2>
-      <div className="sub">daily anomaly sweep across every series — {e.n_flagged} of {e.n_scanned} flagged beyond ±2.5 robust z</div>
+      <div className="sub">
+        daily anomaly sweep across every series — {e.n_flagged} of {e.n_scanned} flagged beyond ±2.5 robust z
+        {e.n_stale ? `, ${e.n_stale} held back as too old to have moved` : ""}
+      </div>
       <table className="mini">
-        <thead><tr><th>series</th><th>last</th><th>Δ 1d</th><th>level z</th><th>change z</th><th>asof</th></tr></thead>
+        {/* Δ is print-to-print, not always a day: a monthly series steps a
+            month at a time, and the age column is what says which. */}
+        <thead><tr><th>series</th><th>last</th><th>Δ prev</th><th>level z</th><th>change z</th><th>asof</th><th>age</th></tr></thead>
         <tbody>
           {(e.movers ?? []).map((m: Any) => (
             <tr key={m.name} style={{ opacity: m.flag ? 1 : 0.55 }}>
@@ -307,6 +312,9 @@ function SonarCard({ e }: { e: Any }) {
               <td className="num" style={{ color: Math.abs(m.level_z ?? 0) >= 2.5 ? P.stress : undefined }}>{fmt(m.level_z, 2)}</td>
               <td className="num" style={{ color: Math.abs(m.change_z ?? 0) >= 2.5 ? P.stress : undefined }}>{fmt(m.change_z, 2)}</td>
               <td className="num">{m.asof}</td>
+              <td className="num" style={{ color: m.stale ? P.stress : undefined }}>
+                {m.age_d == null ? "—" : m.stale ? `${m.age_d}d stale` : `${m.age_d}d`}
+              </td>
             </tr>
           ))}
         </tbody>
