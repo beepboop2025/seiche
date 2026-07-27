@@ -17,6 +17,11 @@ const PACK = "https://api.seiche.info/undertow/board.json";
 const SITE = "https://liquilens-undertow.com";
 const BOT = "https://t.me/undertow_LiquiLens_bot";
 const RECORD = "https://api.seiche.info/undertow/sealed_calls.json";
+// The record's Bitcoin anchors (OpenTimestamps): chain heads committed into
+// Bitcoin twice a day, so "nobody can rewrite a bad month" is checkable
+// against block headers rather than against the lab. Same honesty rules as
+// the board fetch: real status or nothing — a pending stamp reads pending.
+const ANCHORS = "https://api.seiche.info/undertow/anchors.json";
 
 const SEGS = ["UST", "IG", "HY", "EQUITY", "ETF", "FX", "CN", "CRYPTO", "BSTOCK"];
 
@@ -33,6 +38,7 @@ function tierColor(tier: string): string | undefined {
 export default function UndertowCard() {
   const [board, setBoard] = useState<Any | null>(null);
   const [failed, setFailed] = useState(false);
+  const [anchor, setAnchor] = useState<Any | null>(null);
 
   useEffect(() => {
     let dead = false;
@@ -40,6 +46,10 @@ export default function UndertowCard() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`http ${r.status}`))))
       .then((j) => { if (!dead) setBoard(j); })
       .catch(() => { if (!dead) setFailed(true); });
+    fetch(ANCHORS, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!dead && j?.anchors?.length) setAnchor(j.anchors[0]); })
+      .catch(() => {});   // unreachable: the anchor line is simply not drawn
     return () => { dead = true; };
   }, []);
 
@@ -54,7 +64,9 @@ export default function UndertowCard() {
         same lab, the other half of the question: Seiche watches the plumbing;
         Undertow watches whether the market will still be there when you exit —
         cross-market liquidity tiers, exit cost at your size, and a sealed,
-        hash-chained record that keeps its own misses.
+        hash-chained record that keeps its own misses, its chain heads
+        anchored into Bitcoin twice a day (OpenTimestamps) so the "nobody can
+        rewrite it" claim checks against block headers, not against the lab.
       </div>
 
       {board && (
@@ -86,6 +98,15 @@ export default function UndertowCard() {
                 {rec.miss > 0 ? " — the misses stay published" : ""}
               </>
             ) : null}
+            {anchor ? (
+              // real status only: "Bitcoin block N" needs the proof to name
+              // the block; before that, a stamp is a submission and says so
+              anchor.status === "attested" && anchor.bitcoin_block != null ? (
+                <> · record anchored in Bitcoin block {anchor.bitcoin_block}</>
+              ) : (
+                <> · latest Bitcoin anchor pending its block</>
+              )
+            ) : null}
           </div>
         </>
       )}
@@ -105,6 +126,8 @@ export default function UndertowCard() {
         <a href={BOT} style={{ color: "var(--dim)" }}>@undertow_LiquiLens_bot</a>
         {" · "}
         <a href={RECORD} style={{ color: "var(--dim)" }}>the raw record (JSON, no login)</a>
+        {" · "}
+        <a href={ANCHORS} style={{ color: "var(--dim)" }}>the Bitcoin anchors (OpenTimestamps)</a>
       </div>
     </div>
   );
