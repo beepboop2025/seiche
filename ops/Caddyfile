@@ -17,7 +17,22 @@
 # api.seiche.info — read-only public window + subscriber auth.
 # Whitelisted: the live board, the (auth-gated) Time Machine, login, me.
 # Everything else (ask/config/alerts, operator surface) stays 127.0.0.1-only.
+# Access logging — one JSON log per site, rotated by Caddy itself.
+# Added 2026-07-23: the box had NO access logs at all, so no property could
+# answer "did anyone visit". Request URIs + status + remote IP only.
+(accesslog) {
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 20MiB
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
 api.seiche.info {
+    import accesslog
     import security_headers
 
     # AnakE-Nyx external-factor feeds — static public-data mirror,
@@ -37,13 +52,18 @@ api.seiche.info {
         reverse_proxy 127.0.0.1:8791
     }
 
-    # Undertow live microstructure relay — ~1.5s snapshots written by
-    # undertow-liverelay.service into /var/lib/undertow-relay (see that
-    # unit's header in undertow-mm). no-store is load-bearing: the
-    # 10-minute pack-mirror cache below would defeat a live snapshot.
-    # Must also sit ABOVE the static /undertow/* mirror. This block ran
-    # live-only until 2026-07-27; synced into the repo so a Caddyfile
-    # deploy can never silently drop it again.
+    # Undertow subscriber web backend (web desk login + entitled
+    # packs). Must sit ABOVE the static /undertow/* mirror —
+    # handle blocks match in source order.
+    handle /undertow/desk/* {
+        reverse_proxy 127.0.0.1:8792
+    }
+
+    # Undertow LIVE relay snapshots (undertow-liverelay.service writes
+    # /var/lib/undertow-relay every ~1.5s; quotes.json + klines.json).
+    # no-store: the mirror 10-minute cache header would defeat a live
+    # snapshot. Must sit ABOVE the static /undertow/* mirror block —
+    # handle blocks match in source order.
     handle_path /undertow/live/* {
         header Access-Control-Allow-Origin "*"
         header Cache-Control "no-store"
@@ -126,6 +146,7 @@ api.seiche.info {
 # groundcheck.seiche.info — public fact-check engine + x402 machine-payable /check.
 # The engine has no operator surface; every endpoint is public by design.
 groundcheck.seiche.info {
+    import accesslog
     @preflight method OPTIONS
     handle @preflight {
         header Access-Control-Allow-Origin "*"
@@ -144,6 +165,7 @@ groundcheck.seiche.info {
 
 # breach.seiche.info — read-only breach-intelligence MCP (public defensive tool).
 breach.seiche.info {
+    import accesslog
     reverse_proxy 127.0.0.1:8790 {
         header_up Host 127.0.0.1:8790
     }
@@ -152,5 +174,6 @@ breach.seiche.info {
 # mcp.palimpsest.info — Palimpsest MCP proper home (goes live when the DNS
 # A record to this box is added; cert issues automatically then).
 mcp.palimpsest.info {
+    import accesslog
     reverse_proxy 127.0.0.1:8793
 }
