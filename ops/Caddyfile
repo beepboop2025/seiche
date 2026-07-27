@@ -37,6 +37,21 @@ api.seiche.info {
         reverse_proxy 127.0.0.1:8791
     }
 
+    # Undertow live microstructure relay — ~1.5s snapshots written by
+    # undertow-liverelay.service into /var/lib/undertow-relay (see that
+    # unit's header in undertow-mm). no-store is load-bearing: the
+    # 10-minute pack-mirror cache below would defeat a live snapshot.
+    # Must also sit ABOVE the static /undertow/* mirror. This block ran
+    # live-only until 2026-07-27; synced into the repo so a Caddyfile
+    # deploy can never silently drop it again.
+    handle_path /undertow/live/* {
+        header Access-Control-Allow-Origin "*"
+        header Cache-Control "no-store"
+        header X-Content-Type-Options "nosniff"
+        root * /var/lib/undertow-relay
+        file_server
+    }
+
     # Undertow published packs — static public mirror (board + retail
     # packs only; refreshed by undertow-public-mirror.timer). Consumed by
     # the LiquiLens app's Undertow Retail layer.
@@ -93,6 +108,16 @@ api.seiche.info {
         header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }
+    # Glama MCP-directory ownership proof — the connector claim for
+    # io.github.beepboop2025/seiche checks this exact path on the
+    # server's domain. Static, public by design; the email is the
+    # project account, not a person's private address.
+    handle /.well-known/glama.json {
+        header Content-Type "application/json"
+        header Cache-Control "public, max-age=3600"
+        respond `{"$schema":"https://glama.ai/mcp/schemas/connector.json","maintainers":[{"email":"mrinallovesbhature@gmail.com"}]}` 200
+    }
+
     handle {
         respond "not here" 404
     }
