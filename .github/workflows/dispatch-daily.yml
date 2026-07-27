@@ -25,7 +25,10 @@ concurrency:
 jobs:
   write-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 75, not 10: the job watches publish.yml to completion (34-47 min in
+    # practice) before announcing, so a 10-minute cap cancelled every run
+    # after the letter was pushed and the Telegram announce never fired.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 

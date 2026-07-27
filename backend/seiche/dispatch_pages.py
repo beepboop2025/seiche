@@ -216,6 +216,15 @@ _HEADER = (
     '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; <a href="/">live board</a></span></div>'
 )
 
+# Cookieless aggregate page counts (Cloudflare Web Analytics); the site CSP in
+# frontend/public/_headers whitelists exactly these two insights hosts.
+_BEACON = (
+    "<!-- Cloudflare Web Analytics -->"
+    "<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' "
+    "data-cf-beacon='{\"token\": \"534f08f7270a4f4f9a9a10f90d723ca7\"}'></script>"
+    "<!-- End Cloudflare Web Analytics -->"
+)
+
 _FOOTER = (
     '<div class="foot">Written by the terminal from the live board, no model in the loop; '
     'every number is checkable on the <a href="/">free board</a>. '
@@ -254,6 +263,7 @@ def _page(title: str, description: str, canonical_path: str, jsonld: dict, body:
 {json.dumps(jsonld, indent=1)}
 </script>
 <style>{_CSS}</style>
+{_BEACON}
 </head>
 <body>
 {_HEADER}
