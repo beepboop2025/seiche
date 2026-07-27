@@ -337,7 +337,7 @@ function AppInner() {
         <br />
         Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, the failure radar for banks and lenders.
         <br />
-        New from the same lab: <a href="https://liquilens.in/undertow/" style={{ color: "var(--dim)" }}>Undertow</a>, the cross market liquidity map. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit.
+        From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal — exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
       </div>
     </div>
   );

@@ -28,6 +28,7 @@ export const ENTRIES: Entry[] = [
   { code: "GLO", title: "GLOBAL", hint: "basin coupling · swap lines · stablecoins", keywords: "basins swap lines moorings stablecoin crypto btc", run: { type: "tab", tab: "GLOBAL" } },
   { code: "CAL", title: "CALENDAR", hint: "forcing calendar — auctions, tax dates, turns", keywords: "auctions tax turn dates", run: { type: "tab", tab: "CALENDAR" } },
   { code: "POS", title: "POSITIONING", hint: "CFTC crowding · RV X-Ray", keywords: "cot crowding rvxray basis leverage", run: { type: "tab", tab: "POSITIONING" } },
+  { code: "UTW", title: "UNDERTOW", hint: "the markets layer \u00b7 exit costs \u00b7 sealed record", keywords: "undertow exit liquidity market terminal fleet", run: { type: "href", url: "https://liquilens-undertow.com" } },
   { code: "RES", title: "RESONANCE", hint: "calendar-forcing amplification · undertow", keywords: "undertow slowing resonance", run: { type: "tab", tab: "RESONANCE" } },
   { code: "TM", title: "TIME MACHINE", hint: "replay the board as of any date — or `ASOF 2019-09-12`", keywords: "asof replay history rewind", run: { type: "tab", tab: "TIME MACHINE" } },
   { code: "PRF", title: "PROOF", hint: "the backtest scoreboard · wrecks", keywords: "proof backtest scoreboard wrecks episodes record", run: { type: "tab", tab: "PROOF" } },
