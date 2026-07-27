@@ -33,6 +33,7 @@ import contextlib
 import json
 import os
 import sys
+import threading
 import time
 from typing import Any
 
@@ -59,6 +60,50 @@ def _resolve_public(public: bool | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# The sync→async bridge — ONE event loop per process, ever.
+#
+# The old bridge was asyncio.run() per tool call: a FRESH event loop each
+# time. assemble's module-level asyncio.Lock binds to the first loop that
+# awaits it, so the next loop to touch it died with "is bound to a different
+# event loop" — and in the API process the uvicorn loop (REST routes + the
+# keep-warm task) had always bound it first, wedging the hosted MCP endpoint
+# solid the moment a tool call missed the snapshot cache (observed live
+# 2026-07-27, requests queueing behind a dead lock). Every coroutine now runs
+# on the one loop the process already has: the HTTP layer registers the
+# uvicorn loop at startup via set_main_loop(); stdio (no loop of its own)
+# lazily starts a single persistent background loop and reuses it for the
+# life of the process — which also lets assemble's stale-refresh task finish
+# instead of being cancelled by asyncio.run()'s teardown.
+# ---------------------------------------------------------------------------
+
+_bridge_mutex = threading.Lock()
+_bridge_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Register the process's serving loop (api.py calls this at startup) so
+    tool calls share the exact loop the REST surface runs assemble on."""
+    global _bridge_loop
+    with _bridge_mutex:
+        _bridge_loop = loop
+
+
+def _run(coro):
+    """Run a coroutine on the process's one loop and return its result.
+    Must be called OFF that loop — the HTTP layer calls tools from a worker
+    thread, stdio from its blocking read loop — or .result() would deadlock."""
+    global _bridge_loop
+    with _bridge_mutex:
+        loop = _bridge_loop
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            threading.Thread(target=loop.run_forever,
+                             name="seiche-mcp-bridge", daemon=True).start()
+            _bridge_loop = loop
+    return asyncio.run_coroutine_threadsafe(coro, loop).result()
+
+
+# ---------------------------------------------------------------------------
 # Snapshot access — one assemble per TTL, shared across tool calls. The
 # assembler does its own upstream caching; this avoids re-assembling the
 # (expensive) board on every tool call within a short window.
@@ -70,15 +115,15 @@ _cache: dict[str, Any] = {"snap": None, "at": 0.0}
 
 def _get_snapshot(force: bool = False) -> dict:
     """Return the live board, memoised for _CACHE_TTL_S. Synchronous wrapper
-    around the async assembler (mirrors how cli.py bridges with asyncio.run).
-    Must be called off the event loop — the HTTP layer runs it in a worker
+    around the async assembler, bridged through _run() — never asyncio.run().
+    Must be called off the serving loop — the HTTP layer runs it in a worker
     thread, stdio runs it at top level."""
     from seiche import assemble
 
     now = time.time()
     if not force and _cache["snap"] is not None and now - _cache["at"] < _CACHE_TTL_S:
         return _cache["snap"]
-    snap = asyncio.run(assemble.snapshot(force=force))
+    snap = _run(assemble.snapshot(force=force))
     _cache["snap"] = snap
     _cache["at"] = now
     return snap
@@ -87,7 +132,7 @@ def _get_snapshot(force: bool = False) -> dict:
 def _get_asof(date: str) -> dict:
     from seiche import assemble
 
-    return asyncio.run(assemble.snapshot_asof(date))
+    return _run(assemble.snapshot_asof(date))
 
 
 @contextlib.contextmanager
@@ -372,7 +417,7 @@ def tool_ask(args: dict, public: bool) -> Any:
     if len(q) > 600:
         raise ToolError("`question` must be 1-600 characters")
     snap = _get_snapshot()
-    res = asyncio.run(ai.ask(q, snap))
+    res = _run(ai.ask(q, snap))
     if not res.get("ok"):
         raise ToolError(
             res.get("reason", "the desk assistant is not configured "

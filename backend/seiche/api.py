@@ -626,9 +626,10 @@ async def attest_verify(stream: str):
 # full surface at the tier's quota. Reuses the exact stdio dispatch, so there is
 # one tool implementation for both transports.
 #
-# This is a SYNC endpoint on purpose: the tool handlers bridge to the async
-# assembler with asyncio.run(), which cannot run inside FastAPI's event loop —
-# a sync route runs in the threadpool where that bridge is legal.
+# This is a SYNC endpoint on purpose: the tool handlers block on
+# mcp_server._run(), which submits assemble coroutines to THIS process's one
+# serving loop and waits — a wait that would deadlock on the loop itself, so
+# it must happen in the threadpool a sync route provides.
 
 MCP_SERVER_ERROR = -32000  # JSON-RPC server-defined error (rate limit, bad body)
 
@@ -865,6 +866,12 @@ async def _keep_warm() -> None:
 
 @app.on_event("startup")
 async def _start_keep_warm() -> None:
+    # Hand the MCP bridge THIS loop before any tool call can arrive: the tool
+    # handlers run in worker threads and must run assemble coroutines on the
+    # same loop the REST routes and keep-warm task use, or assemble's
+    # module-level asyncio.Lock ends up shared across loops and wedges
+    # (mcp_server._run has the full story).
+    mcp_server.set_main_loop(asyncio.get_running_loop())
     if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
         asyncio.get_running_loop().create_task(_keep_warm())
 
