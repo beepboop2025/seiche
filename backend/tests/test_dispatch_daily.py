@@ -860,3 +860,121 @@ def test_standing_flags_carry_the_scale_caveat_too(fake_snap):
     assert "Still flagged" in d["free_md"]
     assert "[de minimis]" in d["free_md"]
     assert "rounding error against their own history" in d["free_md"]
+
+
+def test_level_only_flag_is_not_called_a_move(fake_snap):
+    """A flag from the level alone under a heading called 'what moved' is a
+    category error; the letter qualifies it instead."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["sonar"] = {"ok": True, "movers": [{
+        "label": "10y Treasury constant maturity yield", "last": 4.69, "unit": "%",
+        "level_z": 2.6, "change_z": -0.5, "max_abs_z": 2.6, "flag": True,
+        "stale": False, "age_d": 3, "asof": "2026-07-09"}]}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "flag is on LEVEL, not on change" in d["free_md"]
+    assert "did not travel to get there today" in d["free_md"]
+
+
+def test_every_saturated_component_is_named(fake_snap):
+    """The letter stated a disclosure rule and then named only the largest
+    pinned component while a second sat at its ceiling."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["decomposition"] = [
+        {"component": "weather", "score": 100.0, "contribution": 11.0, "status": "OK"},
+        {"component": "buffers", "score": 99.7, "contribution": 3.0, "status": "OK"},
+        {"component": "kink", "score": 55.0, "contribution": 6.0, "status": "OK"},
+    ]
+    d = build_dispatch(snap)
+    assert "Pinned at the ceiling today" in d["free_md"]
+    assert "the calendar squeeze (weather)" in d["free_md"]
+    assert "buffers" in d["free_md"]
+    assert "components are" in d["free_md"]
+
+
+def test_saturation_uses_the_engine_flag_when_present(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["decomposition"] = [
+        {"component": "weather", "score": 88.0, "contribution": 11.0, "status": "OK",
+         "saturated": True},
+        {"component": "kink", "score": 99.9, "contribution": 6.0, "status": "OK",
+         "saturated": False},
+    ]
+    d = build_dispatch(snap)
+    assert "the calendar squeeze (weather)" in d["free_md"]
+    assert "reserve scarcity (kink)" not in d["free_md"].split("Pinned at the ceiling today")[1][:120]
+
+
+def test_tell_components_reconcile_with_the_headline(fake_snap):
+    """53 minus 39 is 14, and the letter printed +15 in bold in the same
+    sentence. Now the arithmetic is shown and it adds up."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["tell"] = {"ok": True, "tell": 14.6, "plumbing_pctl": 53.0,
+                            "market_pctl": 39.0, "reading": "plumbing leads"}
+    d = build_dispatch(snap)
+    assert "**+14.6**" in d["free_md"]
+    assert "a gap of +14.0" in d["free_md"]
+
+
+def test_announce_uses_the_published_headline(tmp_path):
+    """CI announces the better part of an hour after writing, and the board
+    recomputes six times a day. The digest must match the letter it links to,
+    not a fresh rebuild of it."""
+    from seiche.dispatch_daily import _published_entry
+    idx = tmp_path / "index.json"
+    idx.write_text(json.dumps([
+        {"slug": "2026-07-29-daily", "title": "as published", "date": "2026-07-29",
+         "tag": "STRAIN", "summary": "the published summary"},
+    ]))
+    e = _published_entry(idx, "2026-07-29-daily")
+    assert e and e["title"] == "as published"
+    assert _published_entry(idx, "2026-07-30-daily") is None
+    assert _published_entry(tmp_path / "missing.json", "x") is None
+
+
+def test_stack_says_it_pools_its_own_members(fake_snap):
+    """14 percent, 5 percent and a pooled 6 percent in one paragraph reads as
+    arithmetic that does not work unless the letter says the pool is over a
+    different member set."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["stacker"]["members_now"] = {"rule": 0.076, "ml": 0.038, "swell": 0.18}
+    d = build_dispatch(snap)
+    assert "pooled over its own 3 members rather than the views quoted above" in d["desk_md"]
+    # with no member list published, the letter makes no claim about the pool
+    plain = build_dispatch(fake_snap)
+    assert "pooled over its own" not in plain["desk_md"]
+
+
+def test_echoes_states_its_threshold_is_editorial(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["echo"] = {"ok": True, "matches": [
+        {"episode": "Mar 2020 dash-for-cash", "lead_days": 13, "similarity": 0.68}]}
+    d = build_dispatch(snap)
+    assert "editorial convention, not a validated threshold" in d["desk_md"]
+    assert "publishes no null distribution" in d["desk_md"]
+
+
+def test_a_broken_section_costs_one_section_not_the_letter(fake_snap):
+    """Engine payload shapes are not the letter's to control. A type that
+    drifts upstream must cost one section, never the day's letter."""
+    from seiche import dispatch_daily as dd
+
+    def boom(*_a, **_k):
+        raise TypeError("upstream shape drifted")
+
+    orig, dd._tell_para = dd._tell_para, boom
+    try:
+        d = build_dispatch(fake_snap)
+    finally:
+        dd._tell_para = orig
+    assert "Tell section could not be built" in d["free_md"]
+    assert "Section faults today: Tell" in d["free_md"]
+    # and the rest of the letter is intact
+    assert "## 1 · The reading" in d["free_md"]
+    assert "## 7 · What the board is honest about" in d["free_md"]
+    assert d["title"]
+
+
+def test_a_clean_board_reports_no_section_faults(fake_snap):
+    d = build_dispatch(fake_snap)
+    assert "Section faults today" not in d["free_md"]
+    assert "could not be built" not in d["free_md"]

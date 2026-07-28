@@ -55,10 +55,37 @@ FREQ_DESC = {
     "QL": ("quarterly, lagged", "publishes about two quarters after the reference period by design"),
 }
 
-# Third-party licensed series hosted on FRED (CBOE, ICE BofA, S&P DJI). The
-# board may display derived readings; bulk redistribution of the raw history
-# is not ours to grant, so the CSV export refuses these and points upstream.
+# Bulk export is opt-IN by upstream, not opt-out by exception.
+#
+# The board reads from eight upstreams and only some of them let us hand their
+# raw history to a third party. US government and US public-agency data (FRED's
+# own Federal Reserve and Treasury series, OFR, Treasury FiscalData) is public
+# domain and exports freely. Everything else is somebody's licensed product:
+# CFETS asserts rights over its China fixings, BIS restricts redistribution of
+# its statistics, exchange market data carries redistribution terms, and FRED
+# itself mirrors copyrighted index data from CBOE, ICE BofA and S&P DJI.
+#
+# For those the board publishes DERIVED readings, which is a different act from
+# republishing the series, and points the reader upstream for the raw history.
+# A deny-list would silently start exporting the next licensed source somebody
+# adds; an allow-list fails closed instead, which is the right direction for a
+# question nobody wants to answer to a lawyer after the fact.
+CSV_ALLOWED_SOURCES = {"fred", "ofr", "fiscaldata"}
+
+# Licensed series that ride in on an otherwise-exportable upstream: FRED hosts
+# these but does not own them.
 CSV_RESTRICTED = {"VIX", "HY_OAS", "IG_OAS", "SP500"}
+
+# Why each restricted upstream is restricted, named in the refusal so the
+# reader knows exactly whose permission they need rather than ours.
+CSV_SOURCE_OWNER = {
+    "chinamoney": "CFETS, the China Foreign Exchange Trade System",
+    "bis": "the Bank for International Settlements",
+    "boj": "the Bank of Japan",
+    "ecb": "the European Central Bank",
+    "crypto": "the exchanges the quotes come from",
+    "palimpsest": "the upstream fixing publishers behind the China series",
+}
 
 
 def _plain(x: float) -> str:
@@ -80,13 +107,20 @@ def _no_dashes(s: str) -> str:
 
 def csv_restriction(mnemonic: str) -> str | None:
     """Reason string when a series cannot be bulk-exported; None when it can."""
+    spec = ALL_SERIES.get(mnemonic)
+    label = spec.label if spec else mnemonic
     if mnemonic in CSV_RESTRICTED:
-        spec = ALL_SERIES.get(mnemonic)
-        label = spec.label if spec else mnemonic
         return (f"{label} is third-party licensed data mirrored on FRED; "
                 f"bulk redistribution is not ours to grant. Pull the raw "
                 f"history from the upstream source; the board publishes only "
                 f"derived readings of it.")
+    source = getattr(spec, "source", None)
+    if spec is not None and source not in CSV_ALLOWED_SOURCES:
+        owner = CSV_SOURCE_OWNER.get(str(source), f"the {source} upstream")
+        return (f"{label} comes from {owner}, which licenses its data rather than "
+                f"placing it in the public domain; bulk redistribution is not ours "
+                f"to grant. The board publishes derived readings of it and points "
+                f"you upstream for the raw history.")
     return None
 
 

@@ -13,10 +13,12 @@ _SNAP = {
     "generated_at": "2026-07-28T00:00:00+00:00",
     "engines": {
         "composite": {"value": 45.0, "regime": "STRAIN", "coverage_pct": 100},
-        "modelcourt": {"ok": True, "p_event_5bd": 0.11},
     },
     "deep": {
         "tell": {"ok": True, "tell": 9.0},
+        # The court sits on the finished deep layer, so assemble publishes it
+        # under `deep`, and its pooled read is ensemble.p, not p_event_5bd.
+        "modelcourt": {"ok": True, "ensemble": {"p": 0.11, "rule": "skill weighted"}},
         "stacker": {"ok": True, "p_now": 0.058, "dispersion_now": 0.019,
                     "members_now": {"rule": 0.076, "ml": 0.038}},
     },
@@ -155,7 +157,7 @@ def test_gauge_carries_ensemble_members(client):
     members = g["p_event_5bd_members"]
     assert members["rule"] == 0.076 and members["ml"] == 0.038
     assert members["navigator"] == 0.09
-    # a modelcourt engine wired under engines joins without an api change
+    # the court's pooled read joins from `deep`, where assemble writes it
     assert members["modelcourt"] == 0.11
 
 
@@ -169,3 +171,30 @@ def test_gauge_ensemble_degrades_to_null(client, monkeypatch):
     assert g["p_event_5bd"] is None
     assert g["p_event_5bd_dispersion"] is None
     assert g["p_event_5bd_members"] is None
+
+
+# ---- CSV export licensing ---------------------------------------------------
+
+def test_csv_export_is_allowlisted_by_upstream():
+    """Bulk export fails closed: a licensed upstream added tomorrow is
+    refused by default rather than silently redistributed."""
+    from seiche import methodology as m
+    # US government upstreams export freely
+    assert m.csv_restriction("WRESBAL") is None
+    assert m.csv_restriction("DVP_VOL") is None
+    # FRED-hosted third-party index data stays refused, by name
+    assert "mirrored on FRED" in (m.csv_restriction("VIX") or "")
+    # licensed non-US upstreams are refused with their owner named
+    for mnemonic, owner in (("SHIBOR_ON", "CFETS"),
+                            ("CREDIT_GAP_US", "Bank for International Settlements"),
+                            ("BTC_USD", "exchanges")):
+        reason = m.csv_restriction(mnemonic)
+        assert reason and owner in reason, (mnemonic, reason)
+
+
+def test_every_restricted_series_is_refused_by_the_route(client):
+    from seiche import methodology as m
+    from seiche.config import ALL_SERIES
+    for mnemonic, spec in ALL_SERIES.items():
+        if spec.source not in m.CSV_ALLOWED_SOURCES or mnemonic in m.CSV_RESTRICTED:
+            assert m.csv_restriction(mnemonic) is not None, mnemonic

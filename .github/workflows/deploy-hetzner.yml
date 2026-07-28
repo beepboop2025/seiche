@@ -28,7 +28,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The on-box gate runs the whole suite under memray on a shared-vCPU box,
+    # so this ceiling has to track the suite's growth. It was 25 when the
+    # suite was ~400 tests; 649 tests pushed a real deploy past it on
+    # 2026-07-28, and the job was killed AFTER the box had pulled but BEFORE
+    # it restarted the service. The wrapper then short-circuits on a matching
+    # SHA ("already at X, nothing to deploy"), so the box sat on new code
+    # running an old process, and only a fresh commit could dislodge it.
+    # If this fires again the answer is a faster on-box gate, not a longer
+    # wait: a deploy that cannot finish inside an hour is a broken deploy.
+    timeout-minutes: 55
     steps:
       - name: Deploy over SSH (forced-command wrapper on the box)
         env:

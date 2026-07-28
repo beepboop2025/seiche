@@ -248,17 +248,20 @@ async def gauge(response: Response):
     cal = snap.get("calendar", {}) or {}
     # Forward ensemble, additive to the v1 contract: the Stack's published
     # 5-business-day event probability plus every member view by name (the
-    # Navigator included; a modelcourt engine joins automatically once the
-    # orchestrator wires it under engines). Absent members are omitted, an
+    # Navigator and the Model Court included). Absent members are omitted, an
     # absent ensemble is null; consumers must not assume a fixed member set.
     stk = deep.get("stacker", {}) or {}
     members: dict[str, Any] = dict(stk.get("members_now") or {})
     nav = snap.get("navigator", {}) or {}
     if nav.get("ok") and nav.get("p_event_5bd") is not None:
         members["navigator"] = nav.get("p_event_5bd")
-    mcourt = engines.get("modelcourt", {}) or {}
-    if mcourt.get("ok") and mcourt.get("p_event_5bd") is not None:
-        members["modelcourt"] = mcourt.get("p_event_5bd")
+    # The court sits on the finished deep layer, so it is published under
+    # `deep`, not `engines`; reading the wrong branch silently omitted it.
+    # Its pooled read lives in ensemble.p, not a p_event_5bd key.
+    mcourt = deep.get("modelcourt", {}) or {}
+    court_p = (mcourt.get("ensemble") or {}).get("p")
+    if mcourt.get("ok") and court_p is not None:
+        members["modelcourt"] = court_p
     return {
         "schema": "seiche.gauge.v1",
         "generated_at": snap.get("generated_at"),

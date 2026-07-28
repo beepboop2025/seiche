@@ -116,7 +116,7 @@ DISPLAY_NAMES = {
     "resonance": "calendar amplification (resonance)",
     "kink": "reserve scarcity (kink)",
     "rvxray": "futures-basis plumbing (rvxray)",
-    "buffers": "the buffers, RRP and TGA (buffers)",
+    "buffers": "the cash buffers, RRP and TGA (buffers)",
     "undertow": "market microstructure (undertow)",
     "confession": "the swap-line confession (confession)",
     "warehouse": "the dealer warehouse (warehouse)",
@@ -368,13 +368,26 @@ def _opening(snap: dict, date: str, prev_value) -> list[str]:
     decomp = [d for d in comp.get("decomposition", []) if d.get("contribution")]
     if decomp:
         top = decomp[0]
+        # Saturation disclosure applies to EVERY pinned component, not just the
+        # largest. Naming one while a second sits at its ceiling is the letter
+        # breaking its own stated rule inside the paragraph that states it.
+        def _pinned(d: dict) -> bool:
+            if d.get("saturated") is not None:
+                return bool(d["saturated"])
+            try:
+                return float(d.get("score") or 0) >= 99.5
+            except (TypeError, ValueError):
+                return False
+
+        all_pinned = [d.get("component") for d in comp.get("decomposition", []) if _pinned(d)]
         pinned = ""
-        try:
-            if float(top.get("score") or 0) >= 99.5:
-                pinned = (" That gauge is pinned at its ceiling; a saturated component "
-                          "gets said out loud instead of left for the reader to wonder about.")
-        except (TypeError, ValueError):
-            pass
+        if all_pinned:
+            names = ", ".join(_display(c) for c in all_pinned)
+            body = ("Those components are carrying no new information from day to day"
+                    if len(all_pinned) > 1
+                    else "That component is carrying no new information from day to day")
+            pinned = (f" Pinned at the ceiling today: {names}. {body}, and the letter names "
+                      "every one of them rather than only the loudest.")
         out.append(
             f"The heaviest hand on the dial is **{_display(top.get('component'))}** at a score of "
             f"{_fmt(top.get('score'))}, worth {_signed(top.get('contribution'), 1)} points of the total."
@@ -448,14 +461,21 @@ def _tell_para(snap: dict, date: str) -> list[str]:
     t = tell.get("tell")
     p, m = tell.get("plumbing_pctl"), tell.get("market_pctl")
     reading = _clean(tell.get("reading", ""))
+    # The headline is the unrounded difference; the components print as
+    # integers. A reader who subtracts them gets a number one off the bold
+    # one, so the letter shows the arithmetic to one decimal instead of
+    # inviting the subtraction and then failing it.
+    detail = "."
+    if p is not None and m is not None:
+        try:
+            detail = (f": plumbing indicators at the {_fmt(p, 1)}th percentile of their own history, "
+                      f"market indicators at the {_fmt(m, 1)}th, a gap of {_signed(float(p) - float(m), 1)}.")
+        except (TypeError, ValueError):
+            detail = (f": plumbing indicators at the {_ordinal(p)} percentile of their own history, "
+                      f"market indicators at the {_ordinal(m)}.")
     lines = [
         f"The Tell, the gap between what the pipes measure and what the screens price, reads "
-        f"**{_signed(t)}**"
-        + (
-            f": plumbing indicators at the {_ordinal(p)} percentile of their own history, "
-            f"market indicators at the {_ordinal(m)}."
-            if p is not None and m is not None else "."
-        )
+        f"**{_signed(t, 1)}**" + detail
     ]
     if t is not None and abs(float(t)) >= 30:
         lines.append(
@@ -492,7 +512,18 @@ def _movers_para(snap: dict, date: str, baseline: dict) -> list[str]:
 
     if novel:
         bits = []
+        level_only = []
         for m in novel[:3]:
+            # A flag can come from the LEVEL alone. Under a heading called
+            # "what moved", presenting a series whose change statistic is
+            # unremarkable as a mover is a category error, so the letter
+            # says which kind of flag it is holding.
+            try:
+                cz = abs(float(m.get("change_z")))
+            except (TypeError, ValueError):
+                cz = None
+            if cz is not None and cz < 1.0:
+                level_only.append(_clean(m.get("label")))
             bits.append(
                 f"**{_clean(m.get('label'))}** printed {_fmt(m.get('last'), 2)} {_clean(m.get('unit') or '')} "
                 f"(level z {_signed(m.get('level_z'), 1)}, change z {_signed(m.get('change_z'), 1)}, as of {m.get('asof')})"
@@ -507,6 +538,13 @@ def _movers_para(snap: dict, date: str, baseline: dict) -> list[str]:
             lead = ("The tape moved on its latest prints, none of them from last night: "
                     if len(bits) > 1 else "One gauge moved on its latest print, not overnight: ")
         out.append(lead + "; ".join(bits) + ".")
+        if level_only:
+            plural = "flags are" if len(level_only) > 1 else "flag is"
+            out.append(
+                f"One qualification on that list: the {', '.join(level_only)} {plural} on LEVEL, not on "
+                "change. The series sits somewhere unusual in its own history and did not travel to get "
+                "there today, which is worth knowing and is not the same claim as a move."
+            )
         for m in novel[:3]:
             note = _deminimis_note(m)
             if note:
@@ -908,9 +946,16 @@ def _court_paras(snap: dict) -> list[str]:
             if v_txt and not v_txt.endswith("."):
                 v_txt += "."
             verdict = f". Its own verdict, in full: {v_txt}" if v_txt else ""
+            # The stack pools its OWN member set, which is not the three
+            # sentences above it. Printing 14 percent, 5 percent and a pooled
+            # 6 percent in one paragraph without saying that invites a reader
+            # to try the arithmetic and conclude the letter cannot add up.
+            n_members = len(st.get("members_now") or {})
+            scope = (f", pooled over its own {n_members} members rather than the views quoted above"
+                     if n_members else "")
             out.append(
                 f"The stack pools the members at **{float(st['p_now']):.0%}** for the five-day window, "
-                f"dispersion {_fmt(st.get('dispersion_now'), 2)}{verdict or '.'}"
+                f"dispersion {_fmt(st.get('dispersion_now'), 2)}{scope}{verdict or '.'}"
             )
         except (TypeError, ValueError):
             pass
@@ -1204,14 +1249,20 @@ def _desk_read(snap: dict, date: str, letter_prev: dict | None = None) -> str:
             close = sim is not None and float(sim) >= 0.6
         except (TypeError, ValueError):
             close = False
+        # "Close enough to matter" is unfalsifiable without a stated bar and a
+        # null to read it against. The 0.60 line is the desk's own convention,
+        # not a validated threshold, and the letter says which it is.
         if close:
-            judgment = (f"Similarity is not destiny, but the top rhyme is close enough to matter: "
-                        f"{top.get('episode')} at {_fmt(sim, 2)}. PROOF's outcome tables say what followed "
-                        "matches at this distance; that table, not this one, is the judgment.")
+            judgment = (f"The top rhyme is {top.get('episode')} at {_fmt(sim, 2)}, above the desk's 0.60 "
+                        "attention line. That line is an editorial convention, not a validated threshold: "
+                        "the engine publishes no null distribution for this distance, so nothing here "
+                        "says how often a 0.60 rhyme is a coincidence. Similarity is not destiny, and "
+                        "PROOF's outcome tables, not this one, carry what actually followed.")
         else:
-            judgment = (f"Similarity is not destiny, and no match clears 0.60 today (top: {_fmt(sim, 2)}). "
-                        "The desk reads this table as texture, not signal, and says so rather than "
-                        "letting the echo do the alarming.")
+            judgment = (f"No match clears the desk's 0.60 attention line today (top: {_fmt(sim, 2)}). "
+                        "That line is an editorial convention rather than a validated threshold, and the "
+                        "desk reads this table as texture, not signal, rather than letting the echo do "
+                        "the alarming.")
         parts += ["", judgment, ""]
 
     parts += ["### The ledger: what would change the desk's mind", ""]
@@ -1335,22 +1386,49 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
 
     novel, _held = _split_flagged(snap, baseline)
 
-    s1 = _opening(snap, date, prev_value) + _attribution(snap, letter_prev)
-    s2 = _movers_para(snap, date, baseline)
-    if not novel:
-        s2 += _forward_pulse(snap, date)
-    s2 += _tripwire_para(snap)
-    s2 += _press_para(snap)
-    s3 = _tell_para(snap, date) or [
-        "The Tell is dark today. When both sides of it are live, this section prints the gap "
-        "between what the pipes measure and what the screens price."
-    ]
-    s4 = _kink_para(snap)
-    s5 = _official_para(snap)
-    s6 = _calendar_para(snap, letter_prev, date) or [
-        "No flagged windows inside the calendar's horizon. A clear calendar is a reading too."
-    ]
-    s7 = _honesty_coda(snap)
+    # Section-level fault isolation. Every section reads engine payloads whose
+    # shape the letter does not control, and a type that drifts upstream should
+    # cost one section, never the day's letter. A section that raises says so
+    # in its own place, and the honesty coda counts how many did.
+    broken: list[str] = []
+
+    def section(name: str, fn, fallback: str):
+        try:
+            out = fn()
+            return out if out else [fallback]
+        except Exception as e:  # noqa: BLE001 - the letter must publish
+            broken.append(name)
+            return [f"The {name} section could not be built from today's board "
+                    f"({type(e).__name__}). The letter publishes the gap rather than the day, "
+                    "and the fault is on the record here."]
+
+    s1 = section("reading",
+                 lambda: _opening(snap, date, prev_value) + _attribution(snap, letter_prev),
+                 "The composite is live but its decomposition did not render.")
+
+    def _moved():
+        out = _movers_para(snap, date, baseline)
+        if not novel:
+            out += _forward_pulse(snap, date)
+        return out + _tripwire_para(snap) + _press_para(snap)
+
+    s2 = section("what moved", _moved, "Nothing cleared the bar and nothing is flagged.")
+    s3 = section("Tell", lambda: _tell_para(snap, date),
+                 "The Tell is dark today. When both sides of it are live, this section prints "
+                 "the gap between what the pipes measure and what the screens price.")
+    s4 = section("reserve scarcity", lambda: _kink_para(snap),
+                 "The kink engine is dark today.")
+    s5 = section("official sector", lambda: _official_para(snap),
+                 "The official sector engine is dark today.")
+    s6 = section("dates that matter", lambda: _calendar_para(snap, letter_prev, date),
+                 "No flagged windows inside the calendar's horizon. A clear calendar is a "
+                 "reading too.")
+    s7 = section("honesty", lambda: _honesty_coda(snap),
+                 "The board's record is in PROOF.")
+    if broken:
+        s7 = s7 + [f"Section faults today: {', '.join(broken)}. A section that cannot be built "
+                   "prints its failure in place rather than being dropped silently, because a "
+                   "letter with a visible hole is honest and a letter with an invisible one is not."]
 
     paras: list[str] = []
     if issue_no is not None:
@@ -1552,6 +1630,17 @@ def _prev_published_value(history_url: str):
     return None
 
 
+def _published_entry(index_path: Path, slug: str) -> dict | None:
+    """The archive entry for a slug, as published. None when absent."""
+    try:
+        for e in json.loads(index_path.read_text()):
+            if e.get("slug") == slug:
+                return e
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def _issue_number(index_path: Path, slug: str) -> int | None:
     """The issue number is the letter's position in the DAILY archive.
 
@@ -1589,6 +1678,18 @@ def main(argv: list[str] | None = None) -> int:
                        issue_no=_issue_number(INDEX, slug))
 
     if args.announce_only:
+        # Announce what was PUBLISHED, not what a fresh snapshot would say.
+        # CI runs this step the better part of an hour after the write, and
+        # the board recomputes six times a day, so rebuilding here can send a
+        # digest whose headline contradicts the letter it links to.
+        published = _published_entry(INDEX, slug)
+        if published:
+            d = {**d, "title": published.get("title", d["title"]),
+                 "summary": published.get("summary", d["summary"]),
+                 "date": published.get("date", d["date"]),
+                 "slug": published.get("slug", d["slug"])}
+        else:
+            print(f"warning: {slug} is not in the index; announcing the rebuilt letter")
         announce_telegram(d, snap)
         return 0
 
