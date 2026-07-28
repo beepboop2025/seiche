@@ -23,6 +23,34 @@ if [ ! -x /root/seiche-deploy-wrapper.sh ]; then
     echo "FATAL: /root/seiche-deploy-wrapper.sh missing — this is not the production box (or the wrapper was removed). See header." >&2
     exit 1
 fi
+
+# SYNC THE MIRRORS FIRST. The two scripts the auto chain runs live ON the box,
+# so "mirrored in the repo, edit both" was a promise nothing enforced, and both
+# copies drifted: the wrapper lost the Caddyfile step, and the update script
+# kept a full-suite test gate that outgrew every deploy timeout we gave it.
+# Editing the repo did nothing until someone remembered to copy by hand, which
+# is the same as not fixing it. This installs the repo versions, with a backup
+# and a syntax check, BEFORE the wrapper runs, so from here the repo is the
+# source of truth and a stale box is a one-command fix rather than a mystery.
+for pair in "seiche-deploy-wrapper.sh:/root/seiche-deploy-wrapper.sh" \
+            "box-update.sh:/home/seiche/update.sh"; do
+    src="$APP_DIR/ops/deploy/${pair%%:*}"
+    dst="${pair##*:}"
+    [ -f "$src" ] || { echo "::warning ::sync: $src missing, leaving $dst as is."; continue; }
+    if cmp -s "$src" "$dst"; then
+        echo "sync: $dst already matches the repo."
+    elif ! bash -n "$src"; then
+        echo "::warning ::sync: $src FAILED a syntax check, leaving $dst as is."
+    else
+        cp "$dst" "$dst.bak-$(date +%s)" 2>/dev/null || true
+        if cp "$src" "$dst" && chmod +x "$dst"; then
+            echo "sync: installed $dst from the repo (previous copy kept as $dst.bak-*)."
+        else
+            echo "::warning ::sync: could not install $dst — the box keeps its old copy."
+        fi
+    fi
+done
+
 /root/seiche-deploy-wrapper.sh || exit 1
 
 # HARDENING: deploy the edge (Caddy) config for api.seiche.info — but only
