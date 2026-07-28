@@ -128,4 +128,16 @@ async def fetch_upcoming_auctions(client: httpx.AsyncClient) -> dict:
             cached = store.load_blob(key)
             if cached is None:
                 raise SourceFault("fiscaldata", f"upcoming auctions: {exc}") from exc
-    return {"fetched_at": cached["fetched_at"], "upcoming": pd.DataFrame(cached["rows"])}
+    df = pd.DataFrame(cached["rows"])
+    # Treasury leaves stale vintages in this "current state" dataset
+    # (verified live 2026-07-28: 84 of 94 rows carried 2024-2025 record
+    # dates), which is how bill_desk printed 2024 next-auction dates. A row
+    # is live only while its auction or its settlement is still ahead;
+    # filter after the cache load so it stays correct as the blob ages.
+    if not df.empty and "auction_date" in df.columns:
+        today = pd.Timestamp.now().normalize()
+        pending = pd.to_datetime(df["auction_date"], errors="coerce") >= today
+        if "issue_date" in df.columns:
+            pending = pending | (pd.to_datetime(df["issue_date"], errors="coerce") >= today)
+        df = df[pending].reset_index(drop=True)
+    return {"fetched_at": cached["fetched_at"], "upcoming": df}

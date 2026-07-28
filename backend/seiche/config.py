@@ -47,6 +47,8 @@ FRED_SERIES = [
     SeriesSpec("WTREGEN", "fred", "WTREGEN", "Treasury General Account (weekly avg)", "$M", "W", 720),
     SeriesSpec("RRPONTSYD", "fred", "RRPONTSYD", "ON RRP take-up", "$B", "D", 360),
     SeriesSpec("IORB", "fred", "IORB", "Interest on reserve balances", "%", "D", 720),
+    SeriesSpec("SRF_CEILING", "fred", "DFEDTARU", "Fed funds target range top (equals the SRF offering rate since Jul 2021)", "%", "D", 720),
+    SeriesSpec("WCURCIR", "fred", "WCURCIR", "Currency in circulation (H.4.1)", "$M", "W", 720),
     SeriesSpec("IOER", "fred", "IOER", "Interest on excess reserves (pre-2021 splice leg)", "%", "D", 100000),
     SeriesSpec("EFFR", "fred", "EFFR", "Effective federal funds rate", "%", "D", 360),
     SeriesSpec("SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", 360),
@@ -138,7 +140,7 @@ CHINAMONEY_WINDOW_D = 45       # single-request fetch window (range-limited API)
 # CALL_JP stays fetched as the lag-honesty cross-check.
 BOJ_SERIES = [
     SeriesSpec("TONA", "boj", "fm01_d_1_en.csv:FM01'STRDCLUCON",
-               "TONA — uncollateralized overnight call rate (BOJ, daily)", "%", "D", 360,
+               "TONA, the uncollateralized overnight call rate (BOJ, daily)", "%", "D", 360,
                start="1998-01-05"),
 ]
 
@@ -211,10 +213,18 @@ FRED_CP_SERIES = [
 ]
 
 # Foreign officials' Treasuries parked at the Fed (H.4.1, Wednesday levels) —
-# the custody drawdown is the official-sector twin of the RRP drain.
+# the custody drawdown is the official-sector twin of the RRP drain. FIMA repo
+# is the third leg: officials borrowing dollars against custody collateral
+# instead of selling is the stress tell that outranks rotation-vs-retreat.
 FRED_CUSTODY_SERIES = [
     SeriesSpec("CUSTODY_TSY", "fred", "WMTSECL1", "Treasuries in Fed custody for foreign officials", "$M", "W", 720),
+    SeriesSpec("FIMA_REPO", "fred", "H41RESPPALGTRFNWW", "Fed repos with foreign official accounts (FIMA)", "$M", "W", 720),
 ]
+
+# Reserve Runway: the QT pace the projection states as an assumption,
+# $B/month, positive = drain. Runoff is halted as of mid-2025; the engine
+# publishes the number either way so the assumption is visible, not implied.
+RUNWAY_QT_PACE_B_PER_MONTH = 0.0
 
 # GCF repo: the interdealer FICC-cleared leg beside DVP/tri-party. The OO
 # pair (rate + volume) prints only on days with overnight/open trades —
@@ -901,7 +911,7 @@ PALIMPSEST_SERIES = [
     # closest public daily proxy to the PBOC's DR007 policy anchor — the
     # secured leg beside SHIBOR's unsecured one.
     SeriesSpec("CN_FDR007", "palimpsest", "china-econ-history.jsonl:fdr007",
-               "China FDR007 — 7d repo fixing, depository institutions (CFETS)", "%", "D", PALIMPSEST_TTL_MIN),
+               "China FDR007, the 7d repo fixing for depository institutions (CFETS)", "%", "D", PALIMPSEST_TTL_MIN),
     SeriesSpec("CN_PARITY", "palimpsest", "china-econ-history.jsonl:usdcny_parity",
                "USD/CNY central parity fix (CFETS)", "CNY", "D", PALIMPSEST_TTL_MIN),
 ]

@@ -440,6 +440,9 @@ def test_rvxray_ignores_non_ust_contracts(rng):
     hist = rvxray.position_history(df)
     # only the UST contract contributes: min(40k, 35k) * $200k face = $7.0B
     assert round(float(hist["pair_b"].iloc[0]), 1) == 7.0
+    # net rides alongside gross: (10k long - 40k short) * $200k face = -$6.0B
+    assert round(float(hist["net_b"].iloc[0]), 1) == -6.0
+    assert round(float(hist["gross_short_b"].iloc[0]), 1) == 8.0
 
 
 # --------------------------------------------------------------------------

@@ -24,25 +24,56 @@ from seiche.config import UST_CONTRACTS
 
 
 def position_history(tff: pd.DataFrame) -> pd.DataFrame:
-    """Weekly pair-proxy / gross-short / DV01 history from TFF rows."""
+    """Weekly pair-proxy / gross-short / net / DV01 history from TFF rows."""
     rows = []
     for date, grp in tff.groupby("date"):
         pair_notional = 0.0
         gross_short = 0.0
+        net = 0.0
         dv01 = 0.0
         for _, r in grp.iterrows():
             c = UST_CONTRACTS.get(r["contract"])
             if c is None:  # crowding-panel extras (FF/SOFR/ES) — not RV legs
                 continue
             ls = float(r.get("lev_money_positions_short_all") or 0)
+            ll = float(r.get("lev_money_positions_long_all") or 0)
             al = float(r.get("asset_mgr_positions_long_all") or 0)
             pair_notional += min(ls, al) * c["face"]
             gross_short += ls * c["face"]
+            net += (ll - ls) * c["face"]
             dv01 += ls * c["dv01"]
         rows.append(
-            {"date": date, "pair_b": pair_notional / 1e9, "gross_short_b": gross_short / 1e9, "dv01_m": dv01 / 1e6}
+            {
+                "date": date,
+                "pair_b": pair_notional / 1e9,
+                "gross_short_b": gross_short / 1e9,
+                "net_b": net / 1e9,
+                "dv01_m": dv01 / 1e6,
+            }
         )
     return pd.DataFrame(rows).set_index("date").sort_index()
+
+
+def _by_contract_latest(tff: pd.DataFrame) -> list[dict]:
+    """Per-contract gross short and net (long minus short) for the latest week, $B."""
+    ust = tff[tff["contract"].isin(UST_CONTRACTS)]
+    if ust.empty:
+        return []
+    latest = ust[ust["date"] == ust["date"].max()]
+    out = []
+    for _, r in latest.iterrows():
+        c = UST_CONTRACTS[r["contract"]]
+        ls = float(r.get("lev_money_positions_short_all") or 0)
+        ll = float(r.get("lev_money_positions_long_all") or 0)
+        out.append(
+            {
+                "contract": r["contract"],
+                "gross_short_b": round(ls * c["face"] / 1e9, 1),
+                "net_b": round((ll - ls) * c["face"] / 1e9, 1),
+            }
+        )
+    out.sort(key=lambda x: -x["gross_short_b"])
+    return out
 
 
 def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
@@ -87,16 +118,23 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
         "asof": hist.index[-1].date().isoformat(),
         "pair_proxy_b": round(float(latest["pair_b"]), 1),
         "gross_short_b": round(float(latest["gross_short_b"]), 1),
+        "net_b": round(float(latest["net_b"]), 1),
+        "by_contract": _by_contract_latest(tff),
         "dv01_m_per_bp": round(float(latest["dv01_m"]), 1),
         "pair_change_13w_b": round(chg_13w, 1) if chg_13w is not None else None,
         "size_z": round(size_z, 2),
         "dvp_volume_b": round(dvp_now, 1) if dvp_now else None,
         "scenarios": scenarios,
         "series": [
-            [d.date().isoformat(), round(float(r["pair_b"]), 1), round(float(r["gross_short_b"]), 1)]
+            [
+                d.date().isoformat(),
+                round(float(r["pair_b"]), 1),
+                round(float(r["gross_short_b"]), 1),
+                round(float(r["net_b"]), 1),
+            ]
             for d, r in hist.tail(200).iterrows()
         ],
-        "method": "TFF futures-only; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume",
+        "method": "TFF futures-only; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume; net=(levLong minus levShort)xface rides alongside gross, per contract and total",
     }
 
 

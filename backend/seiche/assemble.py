@@ -19,10 +19,12 @@ backtest reconstruction can be accused of polishing.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 import traceback
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -51,6 +53,7 @@ from seiche.config import (
     OFR_SERIES,
     PLAYBOOK_OUTCOMES,
     PRETRAIN_FRED_SERIES,
+    RUNWAY_QT_PACE_B_PER_MONTH,
     SWAP_LINE_OPS_N,
 )
 from seiche.engines import auctions as eng_auctions
@@ -92,7 +95,15 @@ from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import riptide as eng_riptide
 from seiche.engines import roguewave as eng_roguewave
+from seiche.engines import ledger as eng_ledger
+from seiche.engines import modelcourt as eng_modelcourt
+from seiche.engines import officialbid as eng_officialbid
+from seiche.engines import rdenowcast as eng_rdenowcast
+from seiche.engines import reportcard as eng_reportcard
+from seiche.engines import runway as eng_runway
 from seiche.engines import rvxray as eng_rvxray
+from seiche.engines import stigma as eng_stigma
+from seiche.engines import supplydesk as eng_supplydesk
 from seiche.engines import sonar as eng_sonar
 from seiche.engines import stacker as eng_stacker
 from seiche.engines import stationkeeping as eng_stationkeeping
@@ -103,7 +114,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, ofr, palimpsest, windfetch
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -155,9 +166,11 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("nyfed_srf", nyfed.fetch_srf_ops(client)),
             guard("nyfed_pd", nyfed.fetch_pd_positions(client)),
             guard("nyfed_fxs", nyfed.fetch_fx_swaps(client, SWAP_LINE_OPS_N)),
+            guard("nyfed_rde", nyfed_rde.fetch_rde(client)),
             guard("tga", fiscaldata.fetch_tga_daily(client)),
             guard("auctions", fiscaldata.fetch_auctions(client)),
             guard("upcoming", fiscaldata.fetch_upcoming_auctions(client)),
+            guard("mspd", td_auctions.fetch_mspd_maturities(client)),
             guard("tff", cftc.fetch_tff_ust(client)),
             guard("palimpsest", palimpsest.fetch_all(client, faults)),
             guard("fedtext", fedtext.fetch_all(client, faults)),
@@ -224,6 +237,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
         au = au[mask]
     out["auctions"] = {"fetched_at": (src.get("auctions") or {}).get("fetched_at"), "auctions": au}
     out["upcoming"] = {"upcoming": pd.DataFrame()}  # current-state feed: no historical vintage
+    out["mspd"] = {"mspd": pd.DataFrame()}  # monthly current-state feed: no historical vintage
     fedtexts = (src.get("fedtext") or {}).get("texts", {})
     out["fedtext"] = {
         "fetched_at": (src.get("fedtext") or {}).get("fetched_at"),
@@ -333,7 +347,11 @@ def _derived(src: dict) -> dict:
 # Engines (the light layer — sub-second, replayable)
 # ---------------------------------------------------------------------------
 
-def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
+def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | None = None) -> dict:
+    """`asof` is set only on Time Machine replays. Most engines infer their own
+    present from the truncated series they are handed, but a forward calendar
+    has no series to infer it from: without this, a replayed board would carry
+    a settlement table built around the wall clock and blob-cache it forever."""
     fred_s = src.get("fred", {})
     ofr_s = src.get("ofr", {})
     frames = (src.get("nyfed_rates") or {}).get("frames", {})
@@ -356,15 +374,59 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
         results["kink"] = {"ok": False, "reason": "IORB/SOFR unavailable"}
     kink_b = results["kink"].get("kink_reserves_b") if results["kink"].get("ok") else None
 
+    # --- RDE Nowcast (our kink fit vs the NY Fed official print) ---
+    run("rdenowcast", lambda: eng_rdenowcast.nowcast(
+        results["kink"],
+        (src.get("nyfed_rde") or {}).get("rde", pd.DataFrame()),
+        (drv["spread_bp"] / 100.0) if iorb is not None else None,
+        _pts(fred_s, "WRESBAL"),
+        _pts(fred_s, "GDP")))
+
     # --- Weather (with auction settlement overlay) ---
     settlements = eng_weather.settlement_calendar(
         (src.get("upcoming") or {}).get("upcoming", pd.DataFrame()))
     run("weather", lambda: eng_weather.forecast(
         _pts(fred_s, "WRESBAL"), _pts(fred_s, "WALCL"), drv["tga"], kink_b, settlements))
 
+    # --- Supply Desk (net-new-cash forward table, Wrightson style) ---
+    if asof is not None:
+        # Replay blanks the current-state upcoming feed, so a forward supply
+        # table cannot be reconstructed for a past date. Refusing is the
+        # honest answer; guessing one from wall-clock data is not.
+        results["supplydesk"] = {
+            "ok": False,
+            "reason": "forward supply table needs the current-state auction feed, "
+                      "which has no historical vintage; not reconstructable point-in-time",
+        }
+    else:
+        run("supplydesk", lambda: eng_supplydesk.forward_table(
+            (src.get("upcoming") or {}).get("upcoming", pd.DataFrame()),
+            (src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+            (src.get("mspd") or {}).get("mspd", pd.DataFrame()),
+        ))
+
+    # --- Reserve Runway (13-week kink-crossing projection) ---
+    run("runway", lambda: eng_runway.project(
+        _pts(fred_s, "WRESBAL"),
+        drv["rrp"],
+        drv["tga"],
+        results["kink"],
+        [{"date": d.date().isoformat(), "amount_b": round(float(v), 1)}
+         for d, v in settlements.items()],
+        RUNWAY_QT_PACE_B_PER_MONTH,
+    ))
+
     # --- Tails ---
     run("tails", lambda: eng_tails.analyze(
         frames, iorb if iorb is not None else pd.Series(dtype=float)))
+
+    # --- Stigma (SRF ceiling leak: repo paying up while the backstop sits idle) ---
+    run("stigma", lambda: eng_stigma.gauge(
+        frames.get("SOFR", pd.DataFrame()),
+        _pts(fred_s, "SRF_CEILING"),
+        drv["srf"],
+        iorb,
+    ))
 
     # --- Echo ---
     def _echo():
@@ -389,9 +451,36 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
     run("rvxray", lambda: eng_rvxray.analyze(tff, _pts(ofr_s, "DVP_VOL")))
     run("crowding", lambda: eng_rvxray.crowding(tff, CROWD_LOOKBACK_WEEKS))
 
+    # --- Foreign Official Bid (custody vs foreign RRP: rotation or retreat) ---
+    custody_s = src.get("fred_custody", {})
+    run("officialbid", lambda: eng_officialbid.analyze(
+        custody_tsy_weekly=_pts(custody_s, "CUSTODY_TSY"),
+        foreign_rrp_weekly=_pts(fred_s, "FOREIGN_RRP"),
+        fima_repo_weekly=_pts(custody_s, "FIMA_REPO"),
+    ))
+
     # --- Auctions ---
     run("auctions", lambda: eng_auctions.analyze(
         (src.get("auctions") or {}).get("auctions", pd.DataFrame())))
+
+    # --- Auction Report Card (the event study behind each auction grade) ---
+    run("reportcard", lambda: eng_reportcard.report_cards(
+        results["auctions"],
+        drv["spread_bp"],
+        drv["srf"],
+        _pts(fred_s, "WRESBAL"),
+        auctions_frame=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+    ))
+
+    # --- Where the Dollars Sit (the H.4.1 identity, reconciled to the dollar) ---
+    run("ledger", lambda: eng_ledger.reconcile(
+        _pts(fred_s, "WALCL"),
+        _pts(fred_s, "WCURCIR"),
+        _pts(fred_s, "WRESBAL"),
+        _pts(fred_s, "WTREGEN"),
+        drv["rrp"],
+        _pts(fred_s, "FOREIGN_RRP"),
+    ))
 
     # --- Resonance ---
     run("resonance", lambda: eng_resonance.analyze(drv["spread_bp"]))
@@ -627,6 +716,22 @@ def _run_engines(src: dict, drv: dict, faults: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Deep layer (history reconstruction + Tell + Turn + Playbook + PROOF)
 # ---------------------------------------------------------------------------
+
+def _odds_ledger() -> list | None:
+    """The as-published forward odds, appended daily by the dispatch CI and
+    committed, one JSON object per line. None (not []) when the file is
+    missing, so the court reports 'no ledger' rather than 'empty ledger'."""
+    path = Path(__file__).resolve().parent / "dispatches" / "odds_ledger.jsonl"
+    if not path.exists():
+        return None
+    rows = []
+    for line in path.read_text().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows or None
+
 
 def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict:
     spread = drv["spread_bp"]
@@ -1250,6 +1355,12 @@ async def _build_snapshot() -> dict:
     # by the caller holding `_lock`.
     engines = await asyncio.to_thread(_run_engines, src, drv, faults)
     deep = await asyncio.to_thread(_deep_layer, src, drv, engines, faults)
+    # Model Court sits on the finished deep layer (published payloads, never
+    # raw series) and re-reads the as-published odds ledger on every rebuild,
+    # so it stays OUTSIDE _deep_layer's per-day blob cache. The ledger is the
+    # git-tracked JSONL the dispatch CI appends to, which makes the court's
+    # record auditable in history rather than a box-local file.
+    deep["modelcourt"] = eng_modelcourt.convene(deep, odds_ledger=_odds_ledger())
     payload = {
         "generated_at": utcnow_iso(),
         "version": VERSION,
@@ -1305,7 +1416,7 @@ async def snapshot_asof(date: str) -> dict:
     # off the event loop: a cold wrecks rebuild chains many replays and the
     # engine stage would otherwise starve every HTTP request (same class as
     # the keep-warm fit incident)
-    engines = await asyncio.to_thread(_run_engines, tsrc, drv, faults)
+    engines = await asyncio.to_thread(_run_engines, tsrc, drv, faults, asof)
     payload = {
         "ok": True,
         "generated_at": utcnow_iso(),
