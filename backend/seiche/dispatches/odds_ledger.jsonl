@@ -1,0 +1,6 @@
+{"date": "2026-07-28", "model": "bathymetry", "horizon_bd": 5, "p": 0.078}
+{"date": "2026-07-28", "model": "ml", "horizon_bd": 5, "p": 0.086}
+{"date": "2026-07-28", "model": "swell", "horizon_bd": 5, "p": 0.12}
+{"date": "2026-07-28", "model": "tidetables", "horizon_bd": 5, "p": 0.16}
+{"date": "2026-07-28", "model": "stacker", "horizon_bd": 5, "p": 0.067}
+{"date": "2026-07-28", "kind": "spread", "spread_bp": -1.0}

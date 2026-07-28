@@ -3,9 +3,31 @@
   "reported_prev": {},
   "reported": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-22",
-    "SRF accepted": "2026-07-27",
+    "SRF accepted": "2026-07-28",
     "2y Treasury constant maturity yield": "2026-07-24",
-    "4-week T-bill secondary market rate": "2026-07-23",
-    "3-month T-bill secondary market rate": "2026-07-23"
+    "10y Treasury constant maturity yield": "2026-07-24"
+  },
+  "letter_prev": {},
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.2,
+    "decomp": {
+      "weather": 11.0,
+      "resonance": 7.1,
+      "kink": 6.8,
+      "rvxray": 6.1,
+      "buffers": 3.0,
+      "undertow": 2.8,
+      "confession": 2.6,
+      "warehouse": 2.4,
+      "tails": 2.0,
+      "auctions": 1.2,
+      "hydrophone": 0.1
+    },
+    "crunch": {
+      "date": "2026-07-31",
+      "worst_case_b": 3008.7,
+      "settlement_b": 30.0
+    }
   }
 }
