@@ -13,6 +13,16 @@ on:
   schedule:
     - cron: "45 10 * * *" # 10:45 UTC — before the US open, after overnight data
   workflow_dispatch:
+    inputs:
+      force:
+        description: >-
+          Rewrite today's letter even though it is already published. For the
+          day the generator itself changes: the morning letter was written by
+          the old code and the board has not moved, so the honest move is to
+          reissue the same day rather than wait a cycle. It rewrites TODAY
+          only, never a past date, so the archive stays as published.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -38,7 +48,14 @@ jobs:
 
       # stdlib-only generator: no install, PYTHONPATH is enough
       - name: Write today's dispatch from the live board
-        run: PYTHONPATH=backend python -m seiche.dispatch_daily
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          if [ "$FORCE" = "true" ]; then
+            PYTHONPATH=backend python -m seiche.dispatch_daily --force
+          else
+            PYTHONPATH=backend python -m seiche.dispatch_daily
+          fi
 
       - name: Commit and push
         run: |
