@@ -330,6 +330,7 @@ function AppInner() {
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
         <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
+        <a href="/methodology.html" style={{ color: "var(--dim)" }}>methodology</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}

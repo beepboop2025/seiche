@@ -51,6 +51,19 @@ jobs:
       - name: Render dispatch pages
         run: python -m seiche.dispatch_pages
 
+      # The versioned methodology page (citations, changelog, cite-as block),
+      # regenerated from config weights and engine docstrings so it can never
+      # drift from the code it documents. Must run before the vite build so
+      # public/ carries it into dist/.
+      - name: Render methodology page
+        run: python -m seiche.methodology
+
+      # The skeptic pack: the leakage audit and the orthogonal event-capture
+      # test, rendered from the snapshot baked above so the page can never
+      # claim a result the board did not compute.
+      - name: Render skeptic pack
+        run: python -m seiche.skeptic
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

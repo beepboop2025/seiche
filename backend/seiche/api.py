@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import accounts, assemble, mcp_server, provisioning, public_view, store, usage, x402
+from seiche import accounts, assemble, mcp_server, methodology, provisioning, public_view, store, usage, x402
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
@@ -246,6 +246,19 @@ async def gauge(response: Response):
     comp = engines.get("composite", {})
     tell = deep.get("tell", {}) or {}
     cal = snap.get("calendar", {}) or {}
+    # Forward ensemble, additive to the v1 contract: the Stack's published
+    # 5-business-day event probability plus every member view by name (the
+    # Navigator included; a modelcourt engine joins automatically once the
+    # orchestrator wires it under engines). Absent members are omitted, an
+    # absent ensemble is null; consumers must not assume a fixed member set.
+    stk = deep.get("stacker", {}) or {}
+    members: dict[str, Any] = dict(stk.get("members_now") or {})
+    nav = snap.get("navigator", {}) or {}
+    if nav.get("ok") and nav.get("p_event_5bd") is not None:
+        members["navigator"] = nav.get("p_event_5bd")
+    mcourt = engines.get("modelcourt", {}) or {}
+    if mcourt.get("ok") and mcourt.get("p_event_5bd") is not None:
+        members["modelcourt"] = mcourt.get("p_event_5bd")
     return {
         "schema": "seiche.gauge.v1",
         "generated_at": snap.get("generated_at"),
@@ -253,6 +266,9 @@ async def gauge(response: Response):
         "regime": comp.get("regime"),
         "coverage_pct": comp.get("coverage_pct"),
         "tell": tell.get("tell"),
+        "p_event_5bd": stk.get("p_now") if stk.get("ok") else None,
+        "p_event_5bd_dispersion": stk.get("dispersion_now") if stk.get("ok") else None,
+        "p_event_5bd_members": members or None,
         "next_turn": cal.get("next_turn"),
         "crunch_windows": (cal.get("crunch_windows") or [])[:3],
         "faults": len(snap.get("faults") or []),
@@ -393,6 +409,43 @@ async def book(_ident: dict | None = Depends(require_board)):
     """The Book: today's positions, walk-forward P&L, live track record."""
     snap = await assemble.snapshot()
     return snap.get("deep", {}).get("book", {"ok": False, "reason": "unavailable"})
+
+
+# Citability surface: registered BEFORE /api/series/{mnemonic} on purpose;
+# Starlette matches in registration order and the generic route would swallow
+# "index.json" and "SOFR.csv" as mnemonics. Public by design: a reading nobody
+# can download and check is a vibe, and the raw registry series are free
+# public data (the licensed exceptions are refused per-series).
+
+@app.get("/api/series/index.json")
+async def series_index(response: Response):
+    """Public: the citable-series catalog, every registry mnemonic with its
+    config metadata, native lag, export URLs, and current availability."""
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return methodology.series_index()
+
+
+@app.get("/api/series/{mnemonic}.csv")
+async def series_csv(mnemonic: str):
+    """Public: date,value CSV for any series the board holds, with source,
+    unit, native lag and retrieved-at in a comment header."""
+    if mnemonic not in ALL_SERIES:
+        raise HTTPException(404, f"unknown series '{mnemonic}'")
+    restricted = methodology.csv_restriction(mnemonic)
+    if restricted:
+        raise HTTPException(403, restricted)
+    await assemble.snapshot()  # ensure fetched
+    s = store.load_series(mnemonic)
+    if s is None:
+        raise HTTPException(503, f"series '{mnemonic}' not yet available")
+    return Response(
+        content=methodology.render_series_csv(s),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{mnemonic}.csv"',
+            "Cache-Control": "public, max-age=300",
+        },
+    )
 
 
 @app.get("/api/series/{mnemonic}")

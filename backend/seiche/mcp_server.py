@@ -450,11 +450,11 @@ TOOLS: dict[str, tuple] = {
     "funding_stress_forecast": (
         "Forward odds of a funding-stress event",
         "Forward odds of a funding-stress event over the next 5/10/21 business "
-        "days from six independent views: three P(event) models (term-structure, "
-        "first-passage physics, ML) and three stochastic scenarios on the index "
-        "(regime-transition Markov, OU+jump analytic marginal, Monte Carlo path "
-        "fan). Agreement is the signal. Use for forward-looking liquidity-risk "
-        "questions. Subscriber tool.",
+        "days from six independent views: three P(event) models (term structure, "
+        "first-passage physics, gradient boosting) and three stochastic scenarios "
+        "on the index (regime-transition Markov, OU plus jump analytic marginal, "
+        "Monte Carlo path fan). Agreement across views is the signal. Built from "
+        "free public data. Use for any forward-looking liquidity-risk question.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_forecast,
         False,
@@ -462,7 +462,7 @@ TOOLS: dict[str, tuple] = {
     "historical_analogs": (
         "Nearest historical analogs",
         "The historical days most similar to today's funding conditions, and "
-        "how often those analogs led to a stress event — plus a novelty flag "
+        "how often those analogs led to a stress event, plus a novelty flag "
         "for whether today has any close precedent. Use to ground a 'what "
         "usually happens from here' question in real history.",
         {"type": "object", "properties": {}, "additionalProperties": False},
@@ -472,9 +472,11 @@ TOOLS: dict[str, tuple] = {
     "replay_asof": (
         "Time Machine: the board on a past date",
         "Reconstruct the entire funding-stress board as it read on a historical "
-        "date, point-in-time with no lookahead. Use to test whether Seiche "
-        "would have flagged a past liquidity episode, or to align a backtest "
-        "with what was knowable then. Subscriber tool (the Time Machine).",
+        "date, point-in-time with no lookahead: the composite, the regime, the "
+        "per-component decomposition and the crunch windows for that date. Use "
+        "to test whether Seiche would have flagged a past liquidity episode, or "
+        "to align a backtest with what was knowable then. Built from free "
+        "public data.",
         {
             "type": "object",
             "properties": {
@@ -524,26 +526,28 @@ TOOLS: dict[str, tuple] = {
     "positioning_book": (
         "The Book: implied stance & positions",
         "The stance (risk_on / risk_off / neutral) and positions implied by the "
-        "stress read, with walk-forward Sharpe and the live as-published "
-        "record. Not investment advice. Subscriber tool.",
+        "stress read, with the walk-forward Sharpe, the live as-published "
+        "record, and the ensemble event odds. Not investment advice, a codified "
+        "reading. Built from free public data.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_book,
         False,
     ),
     "desk_brief": (
         "This morning's desk note (markdown)",
-        "The full human-readable desk brief for today as markdown — the "
-        "narrative summary of the whole board. Good when you want prose to "
-        "quote or summarise rather than structured fields. Subscriber tool.",
+        "The full human-readable desk brief for today as markdown, a narrative "
+        "summary of the whole board. Good when you want prose to quote or "
+        "summarise rather than structured fields. Built from free public data.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_brief,
         False,
     ),
     "ask_desk": (
         "Ask the desk assistant (grounded)",
-        "Ask a natural-language question answered strictly from the live board, "
-        "with the grounding cited. Requires an LLM endpoint configured on the "
-        "server. Subscriber tool.",
+        "Ask a natural-language question about funding conditions, answered "
+        "strictly from the live board with the grounding cited. Requires an LLM "
+        "endpoint configured on the server; if none is configured the tool "
+        "says so instead of guessing.",
         {
             "type": "object",
             "properties": {

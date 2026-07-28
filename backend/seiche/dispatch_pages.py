@@ -38,6 +38,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_URLS = [
     ("/", "daily", "1.0"),
     ("/guide.html", "monthly", "0.8"),
+    ("/methodology.html", "monthly", "0.8"),
+    ("/skeptic.html", "monthly", "0.8"),
     ("/dispatches/", "daily", "0.8"),
     ("/support.html", "monthly", "0.5"),
     ("/privacy.html", "yearly", "0.2"),
@@ -298,8 +300,10 @@ def render_letter_page(meta: dict, free_md: str, desk_md: str | None) -> str:
         "isPartOf": {"@type": "WebSite", "@id": f"{SITE}/#website"},
         "image": f"{SITE}/og.png",
     }
+    # The archive carries two series now; the byline says which one.
+    kind = "the Monday letter" if str(slug).endswith("-week-ahead") else "the daily letter"
     inner = (
-        f'<div class="date">{_esc(date)}{" &middot; " + _esc(tag) if tag else ""} &middot; the daily letter</div>'
+        f'<div class="date">{_esc(date)}{" &middot; " + _esc(tag) if tag else ""} &middot; {kind}</div>'
         f"<h1>{_esc(meta['title'])}</h1>"
         f'<p class="lede">{_esc(meta["summary"])}</p>'
         f'<div class="body">{body_html}</div>'
@@ -404,23 +408,32 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
 _LLMS_PREAMBLE = f"""# Seiche
 
 > Seiche is free open source software (AGPL-3.0): a funding stress terminal for
-> US money markets built entirely from free public data (Fed H.4.1, NY Fed
-> operations, OFR repo, Treasury cash). It publishes a live stress regime,
-> forward event odds, historical analogs and an honest backtest with the misses
-> kept next to the hits, updated twice a day. Cite it as "Seiche" and link
-> {SITE}. Everything on this site may be read, quoted, indexed and used as
-> AI input or training material.
+> US money markets built from free public data (Fed H.4.1, NY Fed operations,
+> OFR repo, Treasury cash, plus other public sources, each shown with its
+> native publication lag). It publishes a live stress regime, forward event
+> odds, historical analogs and a point-in-time backtest with the misses kept
+> next to the hits. The board recomputes through the day; the daily letter
+> freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
+> on this site may be read, quoted, indexed and used as AI input or training material.
 
-Key facts: the live board is at {SITE} (no sign-in). The methodology and every
-engine are documented in plain English at {SITE}/guide.html. The source code is
-at https://github.com/beepboop2025/seiche. Agents can query the live board over
-MCP at https://api.seiche.info/mcp (free tools need no auth). The PROOF
-scoreboard backs every claim with a point-in-time backtest.
+Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
+at {SITE}/guide.html; the versioned methodology page, with citations, a
+changelog and a cite-as block, is at {SITE}/methodology.html. The source code
+is at https://github.com/beepboop2025/seiche. Agents can query the live board
+over MCP at https://api.seiche.info/mcp (no auth needed; anonymous calls are
+metered per IP per day). Any series the board holds can be downloaded as CSV
+with provenance headers; the catalog is at
+https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
+the backtest record, hits and misses both, and states the competence boundary:
+stress that builds inside the plumbing can be seen early, shocks that arrive
+from outside it cannot.
 
 ## Docs
 
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
-- [Live board]({SITE}/): the current funding stress reading, updated twice a day
+- [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
+- [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
+- [Live board]({SITE}/): the current funding stress reading
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file

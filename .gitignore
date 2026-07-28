@@ -14,6 +14,10 @@ frontend/public/dispatches/*.html
 frontend/public/dispatches/feed.xml
 frontend/public/llms.txt
 frontend/public/llms-full.txt
+# generated at publish time from the config weights and the engine docstrings,
+# so the pages can never drift from the code they document
+frontend/public/methodology.html
+frontend/public/skeptic.html
 
 # build artifacts (compiler output, not source)
 backend/dist/
