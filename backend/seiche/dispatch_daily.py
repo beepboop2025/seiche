@@ -371,12 +371,11 @@ def _honesty_coda(snap: dict) -> list[str]:
     ]
 
 
-def _desk_read(snap: dict, date: str) -> str:
-    """The continuation: the forward read. Free, like everything else."""
+def _forward_sentences(snap: dict) -> list[str]:
+    """The forward-odds sentences, one per live model. The desk read always
+    carries them; the free letter borrows them on days with no new print."""
     eng = snap.get("engines", {})
     deep = snap.get("deep", {})
-    parts: list[str] = ["## The desk's forward read", ""]
-
     fwd = []
     bath = deep.get("bathymetry", {}) or {}
     if bath.get("ok"):
@@ -404,6 +403,30 @@ def _desk_read(snap: dict, date: str) -> str:
                 f"Resonance reads {_fmt(res.get('score'))}: the {wm.get('label')} mode is amplifying at "
                 f"{_fmt(wm.get('amplification'), 1)}x, which is the basin ringing louder to the same calendar."
             )
+    return fwd
+
+
+def _forward_pulse(snap: dict, date: str) -> list[str]:
+    """On a day with no new print, the free letter takes its spine from the
+    forward read: the odds recompute daily even when the tape does not, so
+    this paragraph is the part of a quiet letter that is genuinely new."""
+    fwd = _forward_sentences(snap)
+    if not fwd:
+        return []
+    lead = _pick(date, "pulse", [
+        "With nothing new on the tape, the forward read carries the letter. ",
+        "No fresh print does not mean no information; the odds recompute either way. ",
+        "The tape is quiet, so the forward odds do the talking. ",
+    ])
+    return [lead + " ".join(fwd[:3])]
+
+
+def _desk_read(snap: dict, date: str) -> str:
+    """The continuation: the forward read. Free, like everything else."""
+    eng = snap.get("engines", {})
+    parts: list[str] = ["## The desk's forward read", ""]
+
+    fwd = _forward_sentences(snap)
     if fwd:
         parts += [" ".join(fwd), ""]
 
@@ -463,6 +486,9 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
     paras += _opening(snap, date, prev_value)
     paras += _tell_para(snap, date)
     paras += _movers_para(snap, date, baseline)
+    novel, _ = _split_flagged(snap, baseline)
+    if not novel:
+        paras += _forward_pulse(snap, date)
     paras += _press_para(snap)
     cal = _calendar_para(snap)
     if cal:

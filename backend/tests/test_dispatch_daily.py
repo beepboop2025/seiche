@@ -193,6 +193,30 @@ def test_write_persists_state_sidecar(fake_snap, tmp_path):
     assert state["reported"] == {"Swap lines (H.4.1)": "2026-07-09"}
 
 
+def test_quiet_day_pulls_the_forward_read(fake_snap):
+    """A day with no new print borrows its spine from the forward odds, which
+    recompute daily even when the tape does not."""
+    d = build_dispatch(fake_snap, date="2026-07-10")  # no sonar movers at all
+    assert "Bathymetry puts the odds" in d["free_md"]
+    assert "15%" in d["free_md"]   # bathymetry h5 from the fixture
+    assert "17%" in d["free_md"]   # the learned model's read
+
+
+def test_held_only_day_pulls_the_forward_read(fake_snap):
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-05", 5, 16.5)])
+    state = {"date": "2026-07-09", "reported": {"Swap lines (H.4.1)": "2026-07-05"}}
+    d = build_dispatch(snap, date="2026-07-10", state=state)
+    assert "Still flagged" in d["free_md"]
+    assert "Bathymetry puts the odds" in d["free_md"]
+
+
+def test_news_day_leaves_forward_read_to_the_desk_section(fake_snap):
+    snap = _snap_with_movers(fake_snap, [_mover("SRF accepted", "2026-07-09", 1, 12.8)])
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "Bathymetry puts the odds" not in d["free_md"]
+    assert "Bathymetry puts the odds" in d["desk_md"]  # the desk read still carries it
+
+
 def test_held_and_quiet_variants_carry_no_dashes(fake_snap):
     """House copy rule holds across the new date-seeded variants."""
     held_state = {"date": "2026-07-09", "reported": {"Swap lines (H.4.1)": "2026-07-05"}}
