@@ -40,6 +40,7 @@ BASE_URLS = [
     ("/guide.html", "monthly", "0.8"),
     ("/methodology.html", "monthly", "0.8"),
     ("/skeptic.html", "monthly", "0.8"),
+    ("/ampleness.html", "daily", "0.8"),
     ("/dispatches/", "daily", "0.8"),
     ("/support.html", "monthly", "0.5"),
     ("/privacy.html", "yearly", "0.2"),
@@ -433,6 +434,7 @@ from outside it cannot.
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
 - [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
+- [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
 - [Live board]({SITE}/): the current funding stress reading
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed

@@ -1,20 +1,22 @@
-"""Sea Room — guaranteed coverage for the fleet's probability.
+"""Sea Room: long-run coverage for the fleet's probability.
 
-Sea room is the margin a navigator keeps between the ship and the rocks —
-not a bet about where the ship is, a GUARANTEE about where it isn't. The
-Stack publishes P(event); Venn–Abers calibrates that number. What neither
-provides is a coverage guarantee: a daily statement over {event, no-event}
-that CONTAINS the truth a stated fraction of the time, no matter how the
-regime drifts. Adaptive Conformal Inference (Gibbs & Candès 2021) provides
-exactly that, assumption-free: emit the set of labels whose nonconformity
-score fits within a quantile of past scores, and steer the working
-miscoverage level alpha_t by the realized errors —
+Sea room is the margin a navigator keeps between the ship and the rocks, not
+a bet about where the ship is but a statement about where it is not. The
+Stack publishes P(event); Venn-Abers calibrates that number. What neither
+provides is a coverage statement: a daily set over {event, no-event} that
+contains the truth a stated fraction of the time while the regime drifts.
+Adaptive Conformal Inference (Gibbs & Candès 2021) provides that fraction as
+a LONG-RUN AVERAGE and nothing stronger: emit the set of labels whose
+nonconformity score fits within a quantile of past scores, and steer the
+working miscoverage level alpha_t by the realized errors,
 
     alpha_{t+1} = alpha_t + gamma * (alpha_target - err_t)
 
-so long-run miscoverage tracks the target even under distribution shift
-(the guarantee is on the FEEDBACK LOOP, not on any distributional
-assumption). The daily reading is the set:
+so the realized miscoverage rate converges on the target as the record
+lengthens, whatever the distribution does in between. The result is about
+the FEEDBACK LOOP across the whole record: it is not finite-sample and it is
+not per-day, no single day's set is guaranteed, and about alpha of them are
+meant to miss. The daily reading is the set:
 
     {no-event}        confident quiet — the record licenses ruling stress out
     {event, no-event} the record cannot separate the outcomes today
@@ -27,7 +29,7 @@ v2 — AgACI + regime-conditional accounting (arXiv:2512.03298 lineage):
     AgACI (Zaffran et al. 2022) runs several gamma experts and aggregates
     their radii by exponentially-weighted average under PINBALL loss at the
     target level, so the data — not a config constant — picks the step size;
-  - ACI's guarantee is MARGINAL: 90% on average can hide 70% inside STRESS
+  - ACI's long-run rate is MARGINAL: 90% on average can hide 70% inside STRESS
     and 97% inside CALM. When the fleet's regime series is supplied, realized
     coverage is additionally accounted PER REGIME with Wilson error bars, and
     the verdict names any regime whose interval excludes the target.
@@ -36,12 +38,14 @@ Honesty notes:
   - feedback is honestly DELAYED: a day's label resolves only when its 5bd
     event window closes, so its score joins the pool and its error steers
     alpha only then — the machinery never touches an unresolved label;
-  - the empirical quantile uses the finite-sample ceil((n+1)(1-alpha))/n
-    rule (validity, not asymptotics); warmup before any set is emitted;
+  - the empirical quantile uses the conservative ceil((n+1)(1-alpha))/n rule,
+    the finite-n correction rather than a finite-n guarantee: exchangeability
+    is what would make it valid on its own and drift is what breaks it, so
+    the warrant stays the long-run rate; warmup before any set is emitted;
   - deterministic — no RNG anywhere;
-  - the informative rate (share of singleton days) is the honest headline: a
-    coverage guarantee over {0,1} is trivially cheap, so the value of this
-    engine is exactly how often it can say something SMALLER than "either".
+  - the informative rate (share of singleton days) is the honest headline:
+    coverage over {0,1} is trivially cheap, so the value of this engine is
+    exactly how often it can say something SMALLER than "either".
 """
 
 from __future__ import annotations
@@ -214,20 +218,20 @@ def analyze(p_pub: pd.Series, y: pd.Series, regime: pd.Series | None = None) -> 
     on_target = abs(coverage - (1.0 - SEAROOM_ALPHA)) <= 0.03
     verdict = (
         f"realized coverage {coverage:.1%} vs {1 - SEAROOM_ALPHA:.0%} target "
-        + ("(guarantee holding)" if on_target else "(DRIFTED — read the caveats)")
+        + ("(long-run rate on target)" if on_target else "(DRIFTED, read the caveats)")
         + f"; informative on {informative:.0%} of days"
         + (f" ({informative_250:.0%} over the last 250)" if informative_250 is not None else "")
         + (
             f"; REGIME LEAK: coverage below target inside {', '.join(drifted_regimes)}"
             if drifted_regimes else ""
         )
-        + " — the rest of the time the honest statement is 'the record cannot rule either outcome out'"
+        + ", and the rest of the time the honest statement is 'the record cannot rule either outcome out'"
     )
 
     today_reading = {
-        "no_event": "confident quiet: the 90%-coverage set is {no event}",
-        "both": "uncertain: the set is {event, no event} — coverage is guaranteed but uninformative today",
-        "event": "CONFIDENT ALARM: the 90%-coverage set is {event}",
+        "no_event": "confident quiet: at the 90% long-run level the set is {no event}",
+        "both": "uncertain: the set is {event, no event}, covered by construction and uninformative today",
+        "event": "CONFIDENT ALARM: at the 90% long-run level the set is {event}",
         "empty": "empty set: today's forecast conforms to neither outcome at the working level",
         None: "no set emitted yet",
     }[today_kind]
@@ -262,29 +266,37 @@ def analyze(p_pub: pd.Series, y: pd.Series, regime: pd.Series | None = None) -> 
         "verdict": verdict,
         "caveats": [
             f"label feedback is honestly delayed {_LAG}bd (the event window must close before "
-            f"a label may steer alpha or join the score pool) — ACI's guarantee tolerates "
-            f"delayed feedback at the cost of slower adaptation",
-            "the coverage guarantee is over the FEEDBACK LOOP (long-run frequency), not per-day "
-            "— any single day's set can be wrong; ~10% of them are supposed to be",
-            "a set of {event, no-event} is guaranteed AND useless — the informative rate is "
-            "the honest headline number, not the coverage",
+            f"a label may steer alpha or join the score pool), which slows adaptation; the "
+            f"delay costs speed, not the long-run rate",
+            "what ACI delivers is a LONG-RUN AVERAGE coverage rate under distribution shift, "
+            "not a finite-sample and not a per-day guarantee: any single day's set can be "
+            "wrong, and ~10% of them are supposed to be",
+            "the convergence result is a property of one ACI feedback loop; the radius "
+            "published here is an aggregate of several, so the realized coverage printed "
+            "above is the evidence for it, not a theorem",
+            "a set of {event, no-event} is trivially covered AND useless, so the informative "
+            "rate is the honest headline number, not the coverage",
             "AgACI: the step size gamma is not chosen by config but by exponentially-weighted "
             "aggregation of several gamma experts under pinball loss (the proper score for a "
             "quantile) — radii clipped at 1.0, which already contains both labels",
-            "per-regime coverage is ACCOUNTING, not a per-regime guarantee — ACI steers the "
-            "marginal rate; the regime table exists so conditional failure cannot hide in it",
-            "finite-sample quantile rule ceil((n+1)(1-alpha))/n; warmup "
+            "per-regime coverage is ACCOUNTING, not a per-regime claim: ACI steers the "
+            "marginal long-run rate, and the regime table exists so conditional failure "
+            "cannot hide inside it",
+            "quantile rule ceil((n+1)(1-alpha))/n is the conservative finite-n correction, "
+            "valid on its own only under exchangeability, which drift breaks; warmup "
             f"{SEAROOM_WARMUP} resolved scores before the first set; deterministic, no RNG",
             "context layer over the Stack's published stream — never composite (doctrine)",
         ],
         "method": (
-            f"Aggregated Adaptive Conformal Inference (Gibbs–Candès 2021; Zaffran et al. 2022) "
-            f"on the published fleet probability: nonconformity |y − p|; gamma experts "
-            f"{tuple(SEAROOM_GAMMAS)} each steering alpha_(t+1) = alpha_t + gamma(alpha* − err_t); "
+            f"Aggregated Adaptive Conformal Inference (Gibbs and Candès 2021; Zaffran et al. "
+            f"2022) on the published fleet probability: nonconformity |y - p|; gamma experts "
+            f"{tuple(SEAROOM_GAMMAS)} each steering alpha_(t+1) = alpha_t + gamma(alpha* - err_t); "
             f"radii aggregated by EWA (eta={SEAROOM_ETA:g}) under pinball loss at the "
-            f"{_TAU:.0%} level; errors evaluated on resolution ({_LAG}bd delay). Target "
-            f"coverage {1 - SEAROOM_ALPHA:.0%}; sets over {{event, no-event}}; per-regime "
-            f"coverage accounted with Wilson 95% intervals when the regime series is supplied."
+            f"{_TAU:.0%} level; errors evaluated on resolution ({_LAG}bd delay). The claim is a "
+            f"LONG-RUN AVERAGE coverage rate of {1 - SEAROOM_ALPHA:.0%} that tracks its target "
+            f"under distribution shift, not a finite-sample or per-day guarantee; sets over "
+            f"{{event, no-event}}; per-regime coverage accounted with Wilson 95% intervals when "
+            f"the regime series is supplied."
         ),
     }
     if coverage_by_regime is not None:

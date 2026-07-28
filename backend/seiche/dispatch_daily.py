@@ -702,6 +702,13 @@ def _kink_para(snap: dict) -> list[str]:
                     "reaches no threshold is still a reading, and it gets published on the days it "
                     "says nothing is coming."
                 )
+    # Where the reserve change came from, before the reader has to ask. The
+    # kink says whether the level matters; the ledger says which liability
+    # moved it, which is the question every desk asks next.
+    led = snap.get("engines", {}).get("ledger", {}) or {}
+    if led.get("ok") and led.get("letter_line"):
+        out.append(_clean(led["letter_line"]))
+
     rde = snap.get("engines", {}).get("rdenowcast", {}) or {}
     if rde.get("ok"):
         # None means the official release shipped no band this month, which is
@@ -724,8 +731,31 @@ def _kink_para(snap: dict) -> list[str]:
             f"External check: the NY Fed's latest official RDE print ({rde.get('nyfed_asof')}) reads "
             f"{_fmt(rde.get('nyfed_bp_per_1pct'), 2)}bp per one percent of reserves; the desk's continuous "
             f"fit implies {_fmt(rde.get('ours_bp_per_1pct'), 2)}bp{band_txt}, direction "
-            f"{agree}.{lead_txt} Where the two diverge, one of us is wrong, and the scorecard keeps count."
+            f"{agree}.{lead_txt} Where the two diverge, one of us is wrong, and the scorecard "
+            "keeps count."
         )
+        # Today's comparison without the running record is cherry-picking by
+        # omission, and a good day is exactly when the record is easiest to
+        # leave out. It prints in the same paragraph, every day, either way.
+        summ = rde.get("scorecard_summary") or rde.get("summary") or {}
+        n = summ.get("n")
+        try:
+            if n:
+                wb, da = summ.get("within_band"), summ.get("direction_agree")
+                verdict = ("better than their band alone implies"
+                           if wb is not None and wb / float(n) >= 0.68
+                           else "short of the two-in-three a calibrated nowcast should manage, "
+                                "so the fit is directionally useful and not yet precise")
+                out.append(
+                    f"The running record, not just today: across {_fmt(n)} of their releases the desk's "
+                    f"walk-forward fit landed inside their 68% band {_fmt(wb)} times and agreed on "
+                    f"direction {_fmt(da)} times, mean absolute gap {_fmt(summ.get('mean_abs_diff_bp'), 2)}bp. "
+                    f"That is {verdict}. One matching print is an anecdote; this line is the claim, and it "
+                    "is graded against their current-vintage history rather than the print that stood on "
+                    "each cutoff date, which flatters neither side in a way the desk can measure."
+                )
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
     return out
 
 
@@ -1160,6 +1190,13 @@ def _desk_read(snap: dict, date: str, letter_prev: dict | None = None) -> str:
                   "Net new cash is the number that drains reserves. Maturing includes SOMA rollovers, so the "
                   "private-side drain runs smaller on SOMA-heavy dates; projected rows are the desk's house "
                   "estimate and get graded when Treasury announces." + inc_txt, ""]
+
+    rc = eng.get("reportcard", {}) or {}
+    if rc.get("ok") and rc.get("letter_line"):
+        # The auction grade is the market's verdict; the event study is what
+        # the plumbing did about it over the following week. A window that has
+        # not closed says so instead of scoring an absence as calm.
+        parts += [_clean(rc["letter_line"]), ""]
 
     pos = []
     rv = eng.get("rvxray", {}) or {}

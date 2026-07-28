@@ -3,6 +3,9 @@
 Weighted blend of engine sub-scores (weights = config.COMPOSITE_WEIGHTS, the
 tool's editorial voice). Fail-loud: a dead input never silently drops out —
 its weight is renormalized away and the coverage % falls, both published.
+Each decomposition row also says whether the component is SATURATED, pinned
+in the top 5 points of its range with no headroom left to carry information,
+so every consumer can disclose all of them and not only the largest.
 """
 
 from __future__ import annotations
@@ -11,6 +14,12 @@ import numpy as np
 import pandas as pd
 
 from seiche.config import COMPOSITE_WEIGHTS, REGIMES
+
+# A component inside the top 5 points of the 0-100 range has no headroom left,
+# so day to day it carries almost no information. Buffers is the standing case:
+# (1 - ON RRP / $400B) * 100 sits near 100 for as long as the facility is
+# drained, whatever else the plumbing does. Disclosed, never netted out.
+SATURATION_SCORE = 95.0
 
 
 def confession_score(srf_daily: pd.DataFrame, dw_b: pd.Series | None = None) -> float:
@@ -51,6 +60,8 @@ def compose(subscores: dict[str, float | None]) -> dict:
     value = sum(live[k] * COMPOSITE_WEIGHTS[k] for k in live) / wsum
     regime = next(name for cutoff, name in REGIMES if value < cutoff)
 
+    # Saturation is read off the PUBLISHED score so the flag is reproducible
+    # from the row itself. Additive only: no key changes, no weight changes.
     decomposition = [
         {
             "component": k,
@@ -58,6 +69,7 @@ def compose(subscores: dict[str, float | None]) -> dict:
             "weight": COMPOSITE_WEIGHTS[k],
             "contribution": round(live[k] * COMPOSITE_WEIGHTS[k] / wsum, 1) if k in live else None,
             "status": "live" if k in live else "DEAD",
+            "saturated": bool(k in live and round(live[k], 1) >= SATURATION_SCORE),
         }
         for k in COMPOSITE_WEIGHTS
     ]
@@ -70,4 +82,15 @@ def compose(subscores: dict[str, float | None]) -> dict:
         "coverage_pct": round(100.0 * wsum / sum(COMPOSITE_WEIGHTS.values()), 0),
         "dead_inputs": dead,
         "decomposition": decomposition,
+        "method": (
+            f"Weighted blend of engine sub-scores (weights = config.COMPOSITE_WEIGHTS). A "
+            f"dead input is never imputed: its weight is renormalized away and the published "
+            f"coverage falls to say so. Each row also carries 'saturated', true when the "
+            f"published score sits at or above {SATURATION_SCORE:g} on the 0-100 range, the "
+            f"top {100.0 - SATURATION_SCORE:g} points, meaning the component is pinned near "
+            f"its ceiling and cannot move much from one day to the next. Buffers, "
+            f"(1 - ON RRP / $400B) * 100, is the standing example: it reads near 100 for as "
+            f"long as the facility is drained. The flag is disclosure only, it changes no "
+            f"weight, no score and not the index value."
+        ),
     }

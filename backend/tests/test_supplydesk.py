@@ -218,6 +218,29 @@ def test_without_mspd_old_coupons_are_missing_and_caveated():
     assert any("MSPD" in c for c in res["caveats"])
 
 
+def test_renamed_mspd_column_degrades_to_no_overlay_and_names_it():
+    """A renamed upstream column used to raise KeyError and take the whole
+    table down; missing inputs degrade everywhere else in this engine."""
+    m = _mspd().rename(columns={"outstanding_amt": "outstanding_amount"})
+    res = _run(mspd=m)
+    assert res["ok"]
+    r = _row(res, "2026-08-12")
+    assert r["coupons_maturing_b"] == pytest.approx(42.0)   # auction history only
+    caveat = next(c for c in res["caveats"] if "MSPD" in c)
+    assert "missing outstanding_amt" in caveat              # the missing column, named
+
+
+def test_every_required_mspd_column_is_checked():
+    for col in ("maturity_date", "issue_date", "outstanding_amt"):
+        res = _run(mspd=_mspd().drop(columns=[col]))
+        assert res["ok"], f"dropping {col} took the table down"
+        assert any("MSPD" in c and col in c for c in res["caveats"])
+    # all three gone: one caveat naming all three, still no crash
+    res = _run(mspd=_mspd().drop(columns=["maturity_date", "issue_date", "outstanding_amt"]))
+    assert res["ok"]
+    assert any("missing maturity_date, issue_date, outstanding_amt" in c for c in res["caveats"])
+
+
 def test_totals_and_heaviest_day():
     res = _run()
     tot = res["totals"]

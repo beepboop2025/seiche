@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method, Roll } from "../lib";
+import ModelCourt from "../cards/ModelCourt";
 import "../styles-fx.css";
 
 const BUCKET_COLORS: Record<string, string> = {
@@ -742,6 +743,10 @@ export default function Forecast({ snap }: { snap: Any }) {
   const deep = snap.deep ?? {};
   return (
     <div className="grid">
+      {/* The court leads: several models publish odds for the same window and
+          they disagree by an order of magnitude. Which one has the record is
+          the first thing a reader should see, not the last. */}
+      <ModelCourt snap={snap} />
       <RiptideCard r={deep.riptide} />
       <SwellCard s={deep.swell} />
       <SwellCurveCard s={deep.swell} />

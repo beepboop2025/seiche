@@ -2,6 +2,7 @@ import { P } from "../palette";
 import Chart from "../Chart";
 import Wrecks from "../Wrecks";
 import { Any, fmt, Fault, Method } from "../lib";
+import Notary from "../cards/Notary";
 
 function OrthogonalCard({ o }: { o: Any }) {
   if (!o?.ok) {
@@ -207,6 +208,9 @@ export default function Proof({ snap }: { snap: Any }) {
 
   return (
     <div className="grid">
+      {/* PROOF asks to be believed; the notary is how a stranger checks
+          instead of believing. It belongs on this page, not a footnote. */}
+      <Notary snap={snap} />
       <div className="card span12">
         <h2>PROOF — the page that earns the right to be believed</h2>
         <div className="sub">

@@ -154,7 +154,7 @@ def test_scorecard_walkforward_grades_months():
         assert isinstance(r["within_band"], bool)
         assert isinstance(r["direction_agree"], bool)
         assert r["diff_bp"] == pytest.approx(
-            r["ours_bp_per_1pct"] - r["nyfed_bp_per_1pct"], abs=2e-3
+            r["ours_bp_per_1pct"] - r["nyfed_bp_per_1pct_current_vintage"], abs=2e-3
         )
     summ = out["scorecard_summary"]
     assert summ["n"] == len(graded)
@@ -176,6 +176,46 @@ def test_scorecard_has_no_lookahead():
     again = rdenowcast.nowcast(fit, rde, poisoned, res, gdp, n_scorecard=6)
     match = [r for r in again["scorecard"] if r["cutoff"] == target["cutoff"]]
     assert match and match[0]["ours_bp_per_1pct"] == target["ours_bp_per_1pct"]
+
+
+def test_scorecard_labels_their_side_as_current_vintage():
+    """Half point-in-time is not point-in-time, and the payload must say so.
+
+    Our side of each row is refit on truncated data; their side is today's
+    published history, which they re-estimate every release. The field names
+    must not let a reader assume that number was on the wire at the cutoff.
+    """
+    spread, res, gdp = _world()
+    out = rdenowcast.nowcast(_fit_dict(res.iloc[-1] / 1000.0), _rde_frame(),
+                             spread, res, gdp, n_scorecard=8)
+    rows = out["scorecard"]
+    assert rows
+    for r in rows:
+        assert "nyfed_bp_per_1pct_current_vintage" in r
+        # the unqualified names would imply a vintage we do not have
+        assert "nyfed_bp_per_1pct" not in r
+        assert "nyfed_band_68" not in r
+    assert out["scorecard_summary"]["graded_against"] == (
+        "NY Fed current vintage, not their print as of each cutoff"
+    )
+    blob = " ".join(out["caveats"])
+    assert "point-in-time on our side only" in blob
+    assert "no vintage stamp and no release date" in blob
+    # the latest side-by-side is current on both sides, so its keys stay bare
+    assert "nyfed_bp_per_1pct" in out and "nyfed_band_68" in out
+
+
+def test_rde_source_publishes_no_vintage_column():
+    """The reason the caveat has to exist: their file is one vintage deep.
+
+    Date plus five percentiles and nothing else, so there is no release date
+    or vintage id to join on and no way to reconstruct the older print.
+    """
+    assert nyfed_rde.COLUMNS == ["median", "p2_5", "p16", "p84", "p97_5"]
+    csv = REAL_HEADER + "7/6/2026,-0.267904,-0.592405,0.084762,-0.439382,-0.093415\n"
+    df = nyfed_rde.parse_rde(csv.encode())
+    names = [str(c).lower() for c in df.columns] + [str(df.index.name).lower()]
+    assert not any("vintage" in c or "release" in c or "revis" in c for c in names)
 
 
 # --------------------------------------------------------------------------

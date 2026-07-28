@@ -56,9 +56,14 @@ Odds ledger contract (dispatch CI appends one row per model per day):
      "realized": null}       backfilled to true/false once horizon_bd
                              business days have fully elapsed (PROOF event
                              within the horizon); stays null until then
-The backfill must never edit p, only flip realized from null. With >= 30
-resolved rows per model the Court issues a ranked verdict on live Brier;
-below that it reports accrual honestly and refuses to rank.
+The same file also carries the dispatch's daily outcome row,
+    {"date": "YYYY-MM-DD", "kind": "spread", "spread_bp": 3.1}
+which names no model and no horizon and exists so the ledger can resolve its
+own rows without a second source. The Court reads odds rows only: anything
+carrying a `kind` other than "odds" is skipped before it can be mistaken for
+a member. The backfill must never edit p, only flip realized from null. With
+>= 30 resolved rows per model the Court issues a ranked verdict on live
+Brier; below that it reports accrual honestly and refuses to rank.
 """
 
 from __future__ import annotations
@@ -77,6 +82,11 @@ _NOTES = {
     "tidetables": "analog odds (share of 25 nearest analogs with an event within 5bd); its skill block says levels do not beat climatology",
     "markov": "regime-reach odds, a DIFFERENT event (hit STRESS regime), counting only, no validation; context, never pooled",
 }
+
+
+def _sentence(s: str) -> str:
+    """Terminal punctuation: the letter and the API print these verbatim."""
+    return s if s.endswith((".", "!", "?")) else s + "."
 
 
 def _num(x) -> float | None:
@@ -201,12 +211,19 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
     if odds_ledger is None:
         return (
             {"in_session": False, "min_resolved": MIN_RESOLVED, "scores": [], "verdict": None},
-            "no ledger yet; the court reads published backtests only until dispatch starts appending daily odds",
+            "no ledger yet; the court reads published backtests only until dispatch starts appending daily odds.",
         )
 
     tallies: dict[str, dict] = {}
     for r in odds_ledger:
-        if not isinstance(r, dict) or r.get("horizon_bd") != horizon_bd:
+        if not isinstance(r, dict):
+            continue
+        # The dispatch writes its daily spread row into the same file so the
+        # ledger can resolve itself. Only odds rows name a model; a kind of
+        # anything but "odds" is not testimony and must not become a member.
+        if r.get("kind") not in (None, "odds"):
+            continue
+        if r.get("horizon_bd") != horizon_bd:
             continue
         model = r.get("model")
         p = _num(r.get("p"))
@@ -222,7 +239,7 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
     if not tallies:
         return (
             {"in_session": False, "min_resolved": MIN_RESOLVED, "scores": [], "verdict": None},
-            f"ledger present but holds no valid rows at the {horizon_bd}bd horizon; accrual not started",
+            f"ledger present but holds no valid odds rows at the {horizon_bd}bd horizon; accrual not started.",
         )
 
     all_y = [y for t in tallies.values() for (_, y) in t["resolved"]]
@@ -250,7 +267,7 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
         order = ", ".join(
             f"{e['rank']}. {e['model']} (Brier {e['brier']}, n {e['n_resolved']})" for e in ranked
         )
-        verdict = (
+        verdict = _sentence(
             f"live court verdict at {horizon_bd}bd: {order}; lower is better, "
             f"shared base rate {round(base_rate, 3)}"
         )
@@ -262,7 +279,7 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
             )
         return (
             {"in_session": True, "min_resolved": MIN_RESOLVED, "scores": scores, "verdict": verdict},
-            status,
+            _sentence(status),
         )
 
     accrual = ", ".join(
@@ -271,7 +288,7 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
     )
     return (
         {"in_session": False, "min_resolved": MIN_RESOLVED, "scores": scores, "verdict": None},
-        f"ledger accruing: {accrual}; ranked verdict withheld until {MIN_RESOLVED} resolved rows per model",
+        f"ledger accruing: {accrual}; ranked verdict withheld until {MIN_RESOLVED} resolved rows per model.",
     )
 
 
@@ -327,7 +344,7 @@ def convene(deep: dict, odds_ledger: list | None = None, horizon_bd: int = 5) ->
         if rule == "skill_weighted"
         else "median, no member beats climatology"
     )
-    adjudication = (
+    adjudication = _sentence(
         f"Model Court, {horizon_bd}bd event odds: {len(pool)} models span "
         f"{100 * dispersion['min']:.1f} to {100 * dispersion['max']:.1f} pct, pooled "
         f"{100 * pooled:.1f} pct ({rule_txt}); {tail}"

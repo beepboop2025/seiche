@@ -54,12 +54,16 @@ def position_history(tff: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("date").sort_index()
 
 
-def _by_contract_latest(tff: pd.DataFrame) -> list[dict]:
-    """Per-contract gross short and net (long minus short) for the latest week, $B."""
+def _by_contract_latest(tff: pd.DataFrame, asof: pd.Timestamp | None = None) -> list[dict]:
+    """Per-contract gross short and net (long minus short) for the as-of week, $B.
+
+    The as-of date is the caller's, so the table cannot date itself differently
+    from the headline when the last TFF row is partial.
+    """
     ust = tff[tff["contract"].isin(UST_CONTRACTS)]
     if ust.empty:
         return []
-    latest = ust[ust["date"] == ust["date"].max()]
+    latest = ust[ust["date"] == (ust["date"].max() if asof is None else asof)]
     out = []
     for _, r in latest.iterrows():
         c = UST_CONTRACTS[r["contract"]]
@@ -80,9 +84,15 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
     if tff.empty:
         return {"ok": False, "reason": "no TFF data"}
 
-    hist = position_history(tff)
+    # Headline and per-contract table read ONE week. History is built from the
+    # UST rows alone: a report date carrying only crowding-panel contracts is
+    # not an RV observation, and grouping it in dated the totals a week later
+    # than the table.
+    ust = tff[tff["contract"].isin(UST_CONTRACTS)]
+    hist = position_history(ust) if not ust.empty else pd.DataFrame()
     if hist.empty:
         return {"ok": False, "reason": "no UST contracts in TFF data"}
+    asof = hist.index[-1]
     latest = hist.iloc[-1]
 
     chg_13w = (
@@ -115,11 +125,12 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
     return {
         "_pair_full": hist["pair_b"],  # pd.Series for the history layer; stripped from payloads
         "ok": True,
-        "asof": hist.index[-1].date().isoformat(),
+        "asof": asof.date().isoformat(),
         "pair_proxy_b": round(float(latest["pair_b"]), 1),
         "gross_short_b": round(float(latest["gross_short_b"]), 1),
         "net_b": round(float(latest["net_b"]), 1),
-        "by_contract": _by_contract_latest(tff),
+        "by_contract": _by_contract_latest(ust, asof),
+        "by_contract_asof": asof.date().isoformat(),
         "dv01_m_per_bp": round(float(latest["dv01_m"]), 1),
         "pair_change_13w_b": round(chg_13w, 1) if chg_13w is not None else None,
         "size_z": round(size_z, 2),
@@ -134,7 +145,7 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
             ]
             for d, r in hist.tail(200).iterrows()
         ],
-        "method": "TFF futures-only; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume; net=(levLong minus levShort)xface rides alongside gross, per contract and total",
+        "method": "TFF futures-only; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume; net=(levLong minus levShort)xface rides alongside gross, per contract and total; totals and the per-contract table are both dated asof, the last report date carrying UST rows (by_contract_asof repeats it)",
     }
 
 

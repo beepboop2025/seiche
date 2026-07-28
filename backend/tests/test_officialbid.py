@@ -33,27 +33,95 @@ def _ramp_tail(base: np.ndarray, per_week: float, weeks: int = 13) -> np.ndarray
 # Classification rules
 # ---------------------------------------------------------------------------
 
-def test_rotation_custody_down_rrp_up():
+def test_rotation_custody_down_rrp_takes_it_all():
     idx = _weeks(60)
-    # custody sheds $3B/wk for 13 weeks (=39B), foreign RRP absorbs $1.5B/wk
+    # custody sheds $3B/wk for 13 weeks (=39B), foreign RRP absorbs $2.9B/wk,
+    # so the combined footprint barely moves: the money parked, it did not leave
     cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -3_000.0), index=idx)
-    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +1_500.0), index=idx)
+    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +2_900.0), index=idx)
     r = officialbid.analyze(cust, rrp)
     assert r["ok"]
     assert r["classification"] == "rotation"
     assert r["custody_chg_13w_b"] == -39.0
-    assert r["foreign_rrp_chg_13w_b"] == 19.5
+    assert r["foreign_rrp_chg_13w_b"] == 37.7
     assert r["custody_b"] == 2900.0 - 39.0
-    assert r["footprint_b"] == round((2_900_000 - 39_000 + 350_000 + 19_500) / 1000.0, 1)
-    assert "rotation" in r["letter_line"]
+    assert r["footprint_b"] == round((2_900_000 - 39_000 + 350_000 + 37_700) / 1000.0, 1)
+    assert r["footprint_chg_13w_b"] == -1.3
+    assert r["footprint_drain_share"] == 0.03
+    assert "rotation" in r["letter_line"] and "partial" not in r["letter_line"]
 
 
-def test_rotation_custody_down_rrp_flat():
+def test_partial_rotation_when_the_footprint_fell():
+    """Custody down 39B with only 19.5B landing in the foreign RRP pool: half
+    the money left the official sector, which is not the same finding as a
+    parking shift and must not print as one."""
+    idx = _weeks(60)
+    cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -3_000.0), index=idx)
+    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +1_500.0), index=idx)
+    r = officialbid.analyze(cust, rrp)
+    assert r["ok"] and r["classification"] == "partial_rotation"
+    assert r["footprint_chg_13w_b"] == -19.5
+    assert r["footprint_drain_share"] == 0.5
+    line = r["letter_line"]
+    assert "partial rotation" in line
+    assert "19.5B" in line          # the footprint fall is named, not implied
+    assert "50%" in line
+    assert "3,230B" in line         # and the footprint level it fell to
+
+
+def test_partial_rotation_on_the_live_shape():
+    """The 2026-07-22 board: custody down ~105B, foreign RRP up ~28B, footprint
+    down ~78B. That was asserted as a clean parking rotation."""
+    idx = _weeks(60)
+    cust = pd.Series(_ramp_tail(_flat(60, 2_722_000.0), -8_000.0), index=idx)
+    rrp = pd.Series(_ramp_tail(_flat(60, 326_000.0), +2_000.0), index=idx)
+    r = officialbid.analyze(cust, rrp)
+    assert r["classification"] == "partial_rotation"
+    assert r["custody_chg_13w_b"] == -104.0 and r["foreign_rrp_chg_13w_b"] == 26.0
+    assert r["footprint_chg_13w_b"] == -78.0
+    assert r["footprint_drain_share"] == 0.75
+
+
+def test_rotation_custody_down_rrp_flat_is_partial():
+    # Nothing was absorbed at all: the whole custody drop left the footprint.
     idx = _weeks(60)
     cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -3_000.0), index=idx)
     rrp = pd.Series(_flat(60, 350_000.0), index=idx)
     r = officialbid.analyze(cust, rrp)
-    assert r["ok"] and r["classification"] == "rotation"
+    assert r["ok"] and r["classification"] == "partial_rotation"
+    assert r["footprint_drain_share"] == 1.0
+    assert "held flat" in r["letter_line"] and "100%" in r["letter_line"]
+
+
+def test_footprint_drain_below_the_threshold_stays_a_clean_rotation():
+    # 9.1B of 39B leaves = 23%, under the 25% mark: still a parking rotation.
+    idx = _weeks(60)
+    cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -3_000.0), index=idx)
+    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +2_300.0), index=idx)
+    r = officialbid.analyze(cust, rrp)
+    assert r["classification"] == "rotation"
+    assert r["footprint_chg_13w_b"] == -9.1
+    assert r["footprint_drain_share"] == 0.23
+
+
+def test_footprint_fall_inside_the_flat_band_is_not_material():
+    # Two thirds of a 6B custody drop left, but 4B is inside the 5B band:
+    # noise on these pools, so the label stays clean.
+    idx = _weeks(60)
+    cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -6_000.0 / 13), index=idx)
+    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +2_000.0 / 13), index=idx)
+    r = officialbid.analyze(cust, rrp)
+    assert r["custody_chg_13w_b"] == -6.0 and r["footprint_chg_13w_b"] == -4.0
+    assert r["footprint_drain_share"] == 0.67
+    assert r["classification"] == "rotation"
+
+
+def test_threshold_is_documented_in_the_method():
+    idx = _weeks(60)
+    cust = pd.Series(_flat(60, 2_900_000.0), index=idx)
+    rrp = pd.Series(_flat(60, 350_000.0), index=idx)
+    m = officialbid.analyze(cust, rrp)["method"]
+    assert "partial rotation" in m and "25%" in m and "footprint_drain_share" in m
 
 
 def test_retreat_both_down():
@@ -63,6 +131,8 @@ def test_retreat_both_down():
     r = officialbid.analyze(cust, rrp)
     assert r["ok"] and r["classification"] == "retreat"
     assert "retreat" in r["letter_line"] or "leaving" in r["letter_line"]
+    # both pools shrank, so more left than the custody book alone gave up
+    assert r["footprint_drain_share"] > 1.0
 
 
 def test_build_both_up():
@@ -90,14 +160,15 @@ def test_steady_inside_flat_band():
 def test_letter_line_is_one_clean_sentence():
     idx = _weeks(60)
     cust = pd.Series(_ramp_tail(_flat(60, 2_900_000.0), -3_000.0), index=idx)
-    rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), +1_500.0), index=idx)
-    r = officialbid.analyze(cust, rrp)
-    line = r["letter_line"]
-    assert isinstance(line, str) and line.endswith(".")
-    assert ". " not in line  # one sentence; decimals in numbers allowed
-    for ch in NO_DASH:
-        assert ch not in line
-    assert "39.0B" in line  # numbers inline, plain
+    # every branch, the partial one included, prints one clean sentence
+    for per_week in (+2_900.0, +1_500.0, -1_000.0, 0.0):
+        rrp = pd.Series(_ramp_tail(_flat(60, 350_000.0), per_week), index=idx)
+        line = officialbid.analyze(cust, rrp)["letter_line"]
+        assert isinstance(line, str) and line.endswith(".")
+        assert ". " not in line  # one sentence; decimals in numbers allowed
+        for ch in NO_DASH:
+            assert ch not in line
+        assert "39.0B" in line  # numbers inline, plain
 
 
 def test_payload_keys_and_series_shape():
@@ -106,7 +177,7 @@ def test_payload_keys_and_series_shape():
     rrp = pd.Series(_flat(200, 350_000.0), index=idx)
     r = officialbid.analyze(cust, rrp)
     for k in ("ok", "method", "caveats", "asof", "classification", "letter_line",
-              "custody_chg_4w_b", "footprint_chg_13w_b", "series"):
+              "custody_chg_4w_b", "footprint_chg_13w_b", "footprint_drain_share", "series"):
         assert k in r
     assert len(r["series"]) == 156  # capped history for the chart
     assert all(len(row) == 4 for row in r["series"])
@@ -191,3 +262,57 @@ def test_rvxray_net_total_and_per_contract():
     # series rows carry net as a 4th column, prior columns unchanged
     assert all(len(row) == 4 for row in r["series"])
     assert r["series"][-1][2] == 8.5 and r["series"][-1][3] == -4.5
+    # headline and table are dated the same week, and the date is published
+    assert r["asof"] == "2026-01-13" and r["by_contract_asof"] == "2026-01-13"
+
+
+def _panel_row(date: pd.Timestamp, contract: str) -> dict:
+    return {
+        "date": date, "contract": contract, "open_interest_all": 50_000.0,
+        "lev_money_positions_long_all": 5_000.0,
+        "lev_money_positions_short_all": 9_000.0,
+        "asset_mgr_positions_long_all": 8_000.0,
+        "asset_mgr_positions_short_all": 1_000.0,
+    }
+
+
+def test_rvxray_partial_last_report_does_not_split_the_asof():
+    """A last TFF row carrying only crowding-panel contracts dated the headline
+    a week ahead of the by_contract table, and zeroed the totals with it: the
+    history grouped every contract while the table looked at UST rows only."""
+    df = pd.concat(
+        [_tff_two_weeks(), pd.DataFrame([_panel_row(pd.Timestamp("2026-01-20"), "FED FUNDS")])],
+        ignore_index=True,
+    )
+    dvp = pd.Series([4e12], index=pd.to_datetime(["2026-01-20"]))
+    r = rvxray.analyze(df, dvp)
+    assert r["ok"]
+    assert r["asof"] == "2026-01-13"              # the last week with UST rows
+    assert r["by_contract_asof"] == r["asof"]
+    assert r["gross_short_b"] == 8.5              # not zeroed by the panel-only row
+    assert r["net_b"] == -4.5
+    assert r["series"][-1][0] == "2026-01-13"
+    assert sum(row["gross_short_b"] for row in r["by_contract"]) == r["gross_short_b"]
+
+
+def test_rvxray_thin_ust_week_still_reads_one_date():
+    """When the last week reports some UST contracts and not others, both reads
+    move to that week together; the table always adds up to the headline."""
+    thin = pd.DataFrame([
+        _panel_row(pd.Timestamp("2026-01-20"), "FED FUNDS"),
+        {
+            "date": pd.Timestamp("2026-01-20"), "contract": "UST 2Y NOTE",
+            "open_interest_all": 100_000.0,
+            "lev_money_positions_long_all": 10_000.0,
+            "lev_money_positions_short_all": 40_000.0,
+            "asset_mgr_positions_long_all": 35_000.0,
+            "asset_mgr_positions_short_all": 5_000.0,
+        },
+    ])
+    df = pd.concat([_tff_two_weeks(), thin], ignore_index=True)
+    dvp = pd.Series([4e12], index=pd.to_datetime(["2026-01-20"]))
+    r = rvxray.analyze(df, dvp)
+    assert r["asof"] == "2026-01-20" and r["by_contract_asof"] == "2026-01-20"
+    assert [row["contract"] for row in r["by_contract"]] == ["UST 2Y NOTE"]
+    assert r["gross_short_b"] == 8.0
+    assert sum(row["gross_short_b"] for row in r["by_contract"]) == r["gross_short_b"]

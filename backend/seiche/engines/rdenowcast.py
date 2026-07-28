@@ -17,6 +17,14 @@ kink and exactly 0 above it. Residual differences the mapping cannot remove:
 they regress the fed funds-IORB spread, we fit SOFR-IORB; theirs is a smooth
 time-varying coefficient, ours a hard hinge, so we print exactly 0 on the
 flat side where they can print small negatives.
+
+The scorecard is half point-in-time and says so. Our side refits on data
+truncated to each cutoff; their side is whatever their file says today,
+because they re-estimate the whole history at every monthly release and the
+published file carries date plus five percentile columns and nothing else,
+no vintage stamp and no release date. Their number as of our cutoff is not
+recoverable from the public file, so the graded rows are our point-in-time
+fit against their final read. Hence the vintage suffix on their fields.
 """
 
 from __future__ import annotations
@@ -85,10 +93,14 @@ def _scorecard(
         theirs = float(their["median"])
         p16 = float(their["p16"]) if pd.notna(their.get("p16")) else None
         p84 = float(their["p84"]) if pd.notna(their.get("p84")) else None
+        # Their fields carry the vintage suffix: the value is today's published
+        # history at that date, not the number that was on the wire back then.
         row = {
             "cutoff": cutoff.date().isoformat(),
-            "nyfed_bp_per_1pct": round(theirs, 3),
-            "nyfed_band_68": [round(p16, 3), round(p84, 3)] if p16 is not None and p84 is not None else None,
+            "nyfed_bp_per_1pct_current_vintage": round(theirs, 3),
+            "nyfed_band_68_current_vintage": (
+                [round(p16, 3), round(p84, 3)] if p16 is not None and p84 is not None else None
+            ),
             "ours_bp_per_1pct": round(ours, 3) if ours is not None else None,
         }
         if ours is None:
@@ -154,6 +166,8 @@ def nowcast(
             "within_band": sum(1 for r in banded if r["within_band"]),
             "direction_agree": sum(1 for r in graded if r["direction_agree"]),
             "mean_abs_diff_bp": round(float(np.mean([abs(r["diff_bp"]) for r in graded])), 3),
+            # Travels with the counts so the asymmetry cannot be read off alone.
+            "graded_against": "NY Fed current vintage, not their print as of each cutoff",
         }
 
     kink_asof = pd.Timestamp(kink_fit["asof"])
@@ -174,6 +188,17 @@ def nowcast(
             "scorecard cutoffs use their last obs date per month, which our "
             "public inputs predate by weeks at each release; GDP truncation "
             "by obs date is roughly one quarter optimistic on availability"
+        )
+        caveats.append(
+            "the scorecard is point-in-time on our side only: we refit on data "
+            "truncated to each cutoff, then grade against the NY Fed's current "
+            "vintage, which they re-estimate across the whole history at every "
+            "monthly release; their published file carries a date and five "
+            "percentile columns and nothing else, no vintage stamp and no "
+            "release date, so the number that was actually on the wire at each "
+            "cutoff cannot be recovered; the graded rows read their later "
+            "revisions as if we had them, and the size of that effect is not "
+            "measurable from the public file"
         )
     else:
         caveats.append("raw series not supplied: month-by-month scorecard skipped")
@@ -200,7 +225,8 @@ def nowcast(
             "reserve change = -slope*x/100 below the kink, 0 above (x = "
             "reserves/GDP); latest print compared against their published "
             "median and bands; scorecard = walk-forward refits truncated to "
-            "each monthly release period"
+            "each monthly release period, graded against their current-vintage "
+            "published history because no earlier vintage is published"
         ),
         "caveats": caveats,
     }

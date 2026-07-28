@@ -64,6 +64,12 @@ jobs:
       - name: Render skeptic pack
         run: python -m seiche.skeptic
 
+      # The ampleness check: the Fed's own indicator set, walked line by line
+      # with a stated threshold and a verdict token per line. It counts the
+      # tokens rather than inventing a second composite, on purpose.
+      - name: Render ampleness check
+        run: python -m seiche.ampleness
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

@@ -28,6 +28,7 @@ import pandas as pd
 PROJ_LOOKBACK_D = 180     # issue history window for cadence estimation
 PROJ_MIN_ISSUES = 4       # issues needed before a tenor earns a projection
 PROJ_MAX_GAP_D = 35       # weekly bills and monthly coupons; quarterly originals excluded
+MSPD_COLS = ("maturity_date", "issue_date", "outstanding_amt")  # overlay needs all three
 
 
 def _num(col: pd.Series) -> pd.Series:
@@ -245,25 +246,30 @@ def forward_table(
     mat_bill = mat[mat["bill"]].groupby("maturity_date")["accepted_b"].sum()
     mat_cpn = mat[~mat["bill"]].groupby("maturity_date")["accepted_b"].sum()
 
+    # A renamed or dropped MSPD column degrades to no overlay, named in the
+    # caveats, the same as an absent frame. It never takes the table down.
     mspd_used = False
-    if mspd is not None and not mspd.empty and "maturity_date" in mspd.columns:
-        m = mspd.copy()
-        m["maturity_date"] = pd.to_datetime(m["maturity_date"], errors="coerce")
-        m["issue_date"] = pd.to_datetime(m.get("issue_date"), errors="coerce")
-        m["out_b"] = _num(m["outstanding_amt"]) / 1e3  # $M -> $B, null on continuation rows
-        m = m.dropna(subset=["maturity_date", "issue_date", "out_b"])
-        m["maturity_date"] = m["maturity_date"].map(_roll_to_bday)
-        # Only pre-window issues: everything since auctions_start is already
-        # counted from auction results, and MSPD is too stale for fresh bills.
-        m = m[
-            (m["issue_date"] < pd.Timestamp(auctions_start))
-            & (m["maturity_date"] >= today)
-            & (m["maturity_date"] <= end)
-        ]
-        if not m.empty:
-            old_cpn = m.groupby("maturity_date")["out_b"].sum()
-            mat_cpn = mat_cpn.add(old_cpn, fill_value=0.0)
-            mspd_used = True
+    mspd_missing: list[str] = []
+    if mspd is not None and not mspd.empty:
+        mspd_missing = [c for c in MSPD_COLS if c not in mspd.columns]
+        if not mspd_missing:
+            m = mspd.copy()
+            m["maturity_date"] = pd.to_datetime(m["maturity_date"], errors="coerce")
+            m["issue_date"] = pd.to_datetime(m["issue_date"], errors="coerce")
+            m["out_b"] = _num(m["outstanding_amt"]) / 1e3  # $M -> $B, null on continuation rows
+            m = m.dropna(subset=["maturity_date", "issue_date", "out_b"])
+            m["maturity_date"] = m["maturity_date"].map(_roll_to_bday)
+            # Only pre-window issues: everything since auctions_start is already
+            # counted from auction results, and MSPD is too stale for fresh bills.
+            m = m[
+                (m["issue_date"] < pd.Timestamp(auctions_start))
+                & (m["maturity_date"] >= today)
+                & (m["maturity_date"] <= end)
+            ]
+            if not m.empty:
+                old_cpn = m.groupby("maturity_date")["out_b"].sum()
+                mat_cpn = mat_cpn.add(old_cpn, fill_value=0.0)
+                mspd_used = True
 
     # ---- the table -----------------------------------------------------------
     iss = pd.DataFrame(issuance)
@@ -324,8 +330,9 @@ def forward_table(
         "projected rows carry each tenor's last size forward at its observed cadence; tenors without a regular cadence under 5 weeks (quarterly refunding originals, one-off CMBs) are not projected",
     ]
     if not mspd_used:
+        why = f" (frame is missing {', '.join(mspd_missing)})" if mspd_missing else ""
         caveats.append(
-            f"no MSPD overlay: coupons issued before {auctions_start} are missing, so maturing is understated on mid-month refunding dates"
+            f"no MSPD overlay{why}: coupons issued before {auctions_start} are missing, so maturing is understated on mid-month refunding dates"
         )
 
     return {

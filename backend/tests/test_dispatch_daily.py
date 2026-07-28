@@ -978,3 +978,66 @@ def test_a_clean_board_reports_no_section_faults(fake_snap):
     d = build_dispatch(fake_snap)
     assert "Section faults today" not in d["free_md"]
     assert "could not be built" not in d["free_md"]
+
+
+def test_ledger_attribution_reaches_the_scarcity_section(fake_snap):
+    """The kink says whether the reserve level matters; the ledger says which
+    liability moved it, which is the question a desk asks next."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["ledger"] = {"ok": True, "letter_line":
+        "Reserves fell $80.6B on the week to $3,062B, and the ledger says where from: "
+        "the TGA rebuilt $73.4B."}
+    d = build_dispatch(snap)
+    assert "the ledger says where from" in d["free_md"]
+    assert "the TGA rebuilt $73.4B" in d["free_md"]
+
+
+def test_auction_report_card_reaches_the_desk_read(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["reportcard"] = {"ok": True, "letter_line":
+        "The last auction on the board is the 7y note of 2026-07-28, graded C, and its "
+        "funding window is still open at 0 of 4 marks."}
+    d = build_dispatch(snap)
+    assert "graded C" in d["desk_md"]
+    assert "still open at 0 of 4 marks" in d["desk_md"]
+
+
+def test_rde_prints_the_running_record_not_just_a_good_day(fake_snap):
+    """The whole credibility claim rests on this comparison, so a favourable
+    single print must never appear without the track record beside it."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["rdenowcast"] = {
+        "ok": True, "nyfed_asof": "2026-07-06", "nyfed_bp_per_1pct": -0.268,
+        "ours_bp_per_1pct": -0.315, "within_68_band": True, "direction_agree": True,
+        "nowcast_lead_days": 16,
+        "scorecard_summary": {"n": 18, "within_band": 8, "direction_agree": 10,
+                              "mean_abs_diff_bp": 0.265}}
+    d = build_dispatch(snap)
+    md = d["free_md"]
+    assert "The running record, not just today" in md
+    assert "landed inside their 68% band 8 times" in md
+    assert "short of the two-in-three" in md          # 8/18 = 44%, honest verdict
+    assert "One matching print is an anecdote" in md
+
+
+def test_rde_record_is_praised_only_when_it_earns_it(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["rdenowcast"] = {
+        "ok": True, "nyfed_asof": "2026-07-06", "nyfed_bp_per_1pct": -0.268,
+        "ours_bp_per_1pct": -0.315, "within_68_band": True, "direction_agree": True,
+        "scorecard_summary": {"n": 18, "within_band": 15, "direction_agree": 17,
+                              "mean_abs_diff_bp": 0.08}}
+    d = build_dispatch(snap)
+    assert "better than their band alone implies" in d["free_md"]

@@ -192,7 +192,7 @@ def test_no_ledger_is_reported_honestly():
 
     r2 = mc.convene(_deep_sample(), odds_ledger=[])
     assert r2["court"]["in_session"] is False
-    assert "no valid rows" in r2["ledger_status"]
+    assert "no valid odds rows" in r2["ledger_status"]
 
 
 def test_accruing_ledger_withholds_the_verdict():
@@ -278,3 +278,77 @@ def test_adjudication_is_one_printable_line_without_dashes():
     # (the fixture is dash free, so any dash here is court-generated)
     dumped = json.dumps(r)
     assert "\u2014" not in dumped and "\u2013" not in dumped
+
+
+def test_every_emitted_line_terminates_its_own_sentence():
+    """The letter and the API print these verbatim, so they end themselves.
+
+    All three ledger states are checked: no ledger, accruing, in session.
+    An unterminated adjudication used to leave the reader on 'live ledger
+    not yet accruing' with nothing after it.
+    """
+    accruing = _ledger(2, 3, "swell", 0.6, 0.1)
+    ranked = _ledger(10, 30, "swell", 0.9, 0.05) + _ledger(10, 30, "ml", 0.5, 0.5)
+    for led in (None, [], accruing, ranked):
+        r = mc.convene(_deep_sample(), odds_ledger=led)
+        assert r["adjudication"].endswith("."), r["adjudication"]
+        assert r["ledger_status"].endswith("."), r["ledger_status"]
+        verdict = r["court"]["verdict"]
+        if verdict is not None:
+            assert verdict.endswith("."), verdict
+    # a second period is not the fix for a missing one
+    r = mc.convene(_deep_sample(), odds_ledger=ranked)
+    for line in (r["adjudication"], r["ledger_status"], r["court"]["verdict"]):
+        assert not line.endswith("..")
+
+
+# ---------------------------------------------------------------------------
+# Mixed ledger: the dispatch writes spread rows beside the odds
+# ---------------------------------------------------------------------------
+
+def _spread_rows(days: int = 40) -> list[dict]:
+    """Outcome rows exactly as dispatch_daily writes them, from the writer."""
+    from seiche import dispatch_daily as dd
+
+    rows = []
+    for i in range(days):
+        snap = {"headline": {"sofr_pct": {"value": 4.32 + i * 0.001},
+                             "iorb_pct": {"value": 4.30}}}
+        rows.append(dd._spread_row(snap, f"2026-03-{i + 1:02d}"))
+    assert all(r is not None and r["kind"] == "spread" and "model" not in r for r in rows)
+    return rows
+
+
+def test_spread_rows_are_not_testimony():
+    """A row with no model is an outcome, not a member. It must not be scored."""
+    led = _ledger(10, 30, "swell", 0.9, 0.05) + _ledger(10, 30, "ml", 0.5, 0.5)
+    clean = mc.convene(_deep_sample(), odds_ledger=led)
+
+    mixed = mc.convene(_deep_sample(), odds_ledger=led + _spread_rows())
+    by = {e["model"] for e in mixed["court"]["scores"]}
+    assert by == {"swell", "ml"}, "a spread row became a defendant"
+    assert mixed["court"]["scores"] == clean["court"]["scores"]
+    assert mixed["court"]["verdict"] == clean["court"]["verdict"]
+    assert mixed["ledger_status"] == clean["ledger_status"]
+
+
+def test_ledger_of_spread_rows_only_reports_no_odds():
+    r = mc.convene(_deep_sample(), odds_ledger=_spread_rows(5))
+    assert r["ok"]
+    assert r["court"]["in_session"] is False
+    assert r["court"]["scores"] == []
+    assert "no valid odds rows" in r["ledger_status"]
+
+
+def test_unknown_row_kinds_are_skipped_not_scored():
+    """Forward compatible: a future kind must not be mistaken for a member."""
+    led = _ledger(10, 30, "swell", 0.9, 0.05) + _ledger(10, 30, "ml", 0.5, 0.5)
+    led = led + [
+        {"date": "2026-05-01", "kind": "note", "model": "swell",
+         "horizon_bd": 5, "p": 0.99, "realized": True},
+        {"date": "2026-05-02", "kind": "odds", "model": "swell",
+         "horizon_bd": 5, "p": 0.9, "realized": True},
+    ]
+    scores = {e["model"]: e for e in mc.convene(_deep_sample(), odds_ledger=led)["court"]["scores"]}
+    # the explicit odds row counts, the unknown kind does not
+    assert scores["swell"]["n_resolved"] == 41

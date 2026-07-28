@@ -31,6 +31,8 @@ const Helm = lazy(() => import("./tabs/Helm"));
 const Market = lazy(() => import("./tabs/Market"));
 const Global = lazy(() => import("./tabs/Global"));
 const Calendar = lazy(() => import("./tabs/Calendar"));
+const Scarcity = lazy(() => import("./tabs/Scarcity"));
+const Supply = lazy(() => import("./tabs/Supply"));
 const Positioning = lazy(() => import("./tabs/Positioning"));
 const Resonance = lazy(() => import("./tabs/Resonance"));
 const TimeMachine = lazy(() => import("./tabs/TimeMachine"));
@@ -42,9 +44,15 @@ const Account = lazy(() => import("./tabs/Account"));
 // regime, the dive. Hash routing stays authoritative: any #tab in the URL
 // wins, and GLOBAL is one keystroke away for arrivals who want their own
 // water line first.
+// SCARCITY and SUPPLY sit third and fourth on purpose: the reserve demand
+// curve against the Fed's own elasticity print, and the forward net-new-cash
+// table, are the two analyses nobody else publishes free, and a first-time
+// reader should meet them without hunting. The digit shortcut indexes TABS
+// positionally, so this costs POSITIONING and RESONANCE their number keys;
+// prominence for the differentiating work is worth two power-user shortcuts.
 const TABS = [
-  "GLOBAL", "BOARD", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR", "POSITIONING",
-  "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT", "DISPATCHES",
+  "GLOBAL", "BOARD", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR",
+  "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT", "DISPATCHES",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -308,6 +316,8 @@ function AppInner() {
         <div className="tabview" key={tab}>
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
+          {tab === "SCARCITY" && <Scarcity snap={snap} />}
+          {tab === "SUPPLY" && <Supply snap={snap} />}
           {tab === "FORECAST" && <Forecast snap={snap} />}
           {tab === "PHYSICS" && <Physics snap={snap} />}
           {tab === "HELM" && <Helm snap={snap} />}
@@ -331,6 +341,8 @@ function AppInner() {
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
         <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
         <a href="/methodology.html" style={{ color: "var(--dim)" }}>methodology</a> ·{" "}
+        <a href="/ampleness.html" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
+        <a href="/skeptic.html" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
