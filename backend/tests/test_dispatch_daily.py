@@ -225,3 +225,186 @@ def test_held_and_quiet_variants_carry_no_dashes(fake_snap):
         d = build_dispatch(snap, date=day, state=held_state)
         for field in ("title", "summary", "free_md"):
             assert "—" not in d[field] and "–" not in d[field], (day, field)
+
+
+# ---------------------------------------------------------------------------
+# skeleton v2: lint, live falsifiers, attribution, kink, de minimis, memory
+# ---------------------------------------------------------------------------
+def test_lint_blocks_bad_copy():
+    from seiche.dispatch_daily import lint_letter
+    assert lint_letter("the 53th percentile") == ["malformed ordinal ('53th')"]
+    assert "miscased SRF ('Srf')" in lint_letter("Srf or discount window")
+    assert any("em dash" in i for i in lint_letter("a — b"))
+    assert any("None" in i for i in lint_letter("reads None today"))
+    assert lint_letter("None of those printed") == []           # legit English
+    assert lint_letter("the 53rd percentile, the 21st, the 112th") == []
+
+
+def test_ordinal_helper():
+    from seiche.dispatch_daily import _ordinal
+    assert _ordinal(53) == "53rd"
+    assert _ordinal(11) == "11th"
+    assert _ordinal(21) == "21st"
+    assert _ordinal(None) == "?"
+
+
+def test_letter_never_publishes_lint_violations(fake_snap):
+    """The gate is wired into build_dispatch: a malformed ordinal survives
+    the engine-text sanitizer, reaches the letter, and the build refuses."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["ml"]["verdict"] = "elevated, the 53th percentile of history"
+    with pytest.raises(SystemExit):
+        build_dispatch(snap)
+
+
+def test_engine_dashes_are_sanitized_not_fatal(fake_snap):
+    """An engine's em dash is the engine's problem, not the reader's: the
+    letter cleans it at the interpolation point instead of refusing to
+    publish over someone else's copy."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["scuttlebutt"] = {"flags": ["press piece — with an em dash"]}
+    d = build_dispatch(snap)
+    assert "press piece" in d["free_md"]
+    assert "—" not in d["free_md"]
+
+
+def test_fixed_skeleton_sections_present(fake_snap):
+    d = build_dispatch(fake_snap, issue_no=19)
+    for header in ("## 1 · The reading", "## 2 · What moved", "## 3 · The Tell",
+                   "## 4 · Reserve scarcity", "## 5 · The official sector",
+                   "## 6 · The dates that matter", "## 7 · What the board is honest about"):
+        assert header in d["free_md"], header
+    assert "Issue 19" in d["free_md"]
+
+
+def test_dark_sections_say_so(fake_snap):
+    """No kink, no officialbid engine in the fixture: the sections stay in
+    the skeleton and say the engine is dark instead of vanishing."""
+    d = build_dispatch(fake_snap)
+    assert "kink engine is dark" in d["free_md"]
+    assert "official sector engine is dark" in d["free_md"]
+
+
+def test_kink_section_carries_the_fit(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {
+        "ok": True, "kink_reserves_b": 3634.4, "current_reserves_b": 3062.1,
+        "distance_b": -572.3, "drain_per_bday_b": 2.39, "days_to_kink": None,
+        "r2": 0.617, "consistency": 0.87,
+        "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1,
+    }
+    d = build_dispatch(snap)
+    assert "3,634" in d["free_md"] and "3,062" in d["free_md"]
+    assert "below the estimate" in d["free_md"]
+    assert "Reserve Demand Elasticity" in d["free_md"]
+    assert "R² 0.62" in d["free_md"]
+    assert "watches the slope, not the distance" in d["free_md"]
+
+
+def test_deminimis_print_gets_scale_context(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["sonar"] = {"ok": True, "movers": [{
+        "label": "Central bank liquidity swaps", "last": 378.0, "unit": "$M",
+        "level_z": 1.5, "change_z": 16.5, "max_abs_z": 16.5, "flag": True,
+        "stale": False, "age_d": 1, "asof": "2026-07-09",
+        "hist_peak_abs": 449000.0, "share_of_peak": 0.0008, "woke_from_zero": True,
+    }]}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "For scale" in d["free_md"]
+    assert "449,000" in d["free_md"]
+    assert "de minimis" in d["free_md"]
+    assert "first nonzero print" in d["free_md"]
+
+
+def test_falsifiers_carry_live_numbers(fake_snap):
+    d = build_dispatch(fake_snap)   # EROSION, tell +12
+    assert "- **E1**" in d["desk_md"]
+    assert "today it reads +12" in d["desk_md"]
+
+
+def test_falsifier_resolution_on_regime_change(fake_snap):
+    state = {"date": "2026-07-09",
+             "letter": {"regime": "STRAIN", "value": 47.0, "decomp": {}, "crunch": {}}}
+    d = build_dispatch(fake_snap, date="2026-07-10", state=state)
+    assert "written for STRAIN" in d["desk_md"]
+    assert "moved to EROSION" in d["desk_md"]
+
+
+def test_day_change_attribution_from_letter_memory(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["decomposition"] = [
+        {"component": "kink", "score": 70.0, "contribution": 9.0, "status": "OK"},
+        {"component": "auctions", "score": 40.0, "contribution": 4.0, "status": "OK"},
+    ]
+    state = {"date": "2026-07-09",
+             "letter": {"regime": "EROSION", "value": 38.0,
+                        "decomp": {"kink": 8.0, "auctions": 4.5}, "crunch": {}}}
+    d = build_dispatch(snap, date="2026-07-10", state=state)
+    assert "Change gets attributed" in d["free_md"]
+    assert "reserve scarcity (kink) +1.0" in d["free_md"]
+    assert "auction digestion (auctions) -0.5" in d["free_md"]
+
+
+def test_calendar_revision_is_acknowledged(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["weather"]["crunch_windows"] = [
+        {"date": "2026-07-31", "reason": "auction settlement", "settlement_b": 95.0,
+         "worst_case_b": 3014.0}]
+    state = {"date": "2026-07-09",
+             "letter": {"regime": "EROSION", "value": 38.0, "decomp": {},
+                        "crunch": {"date": "2026-07-31", "settlement_b": 266.0,
+                                   "worst_case_b": 3014.0}}}
+    d = build_dispatch(snap, date="2026-07-10", state=state)
+    assert "Revisions get said, not slipped" in d["free_md"]
+    assert "266" in d["free_md"] and "95" in d["free_md"]
+
+
+def test_worst_case_names_its_referent(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["weather"]["crunch_windows"] = [
+        {"date": "2026-07-31", "reason": "auction settlement", "worst_case_b": 3014.0}]
+    d = build_dispatch(snap)
+    assert "worst case reserves near $3,014B after the drain" in d["free_md"]
+
+
+def test_fomc_eve_gets_a_stanza(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["calendar"] = {"fomc_next_90d": [{"date": "2026-07-11", "days_until": 1}]}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "FOMC decides tomorrow" in d["free_md"]
+    assert "IORB and ON RRP settings" in d["free_md"]
+    assert "grades this stanza against the statement" in d["free_md"]
+
+
+def test_court_adjudicates_by_brier(fake_snap):
+    d = build_dispatch(fake_snap)
+    assert "Adjudication, not averaging" in d["desk_md"]
+    assert "the dated term structure (Swell)" in d["desk_md"]   # brier 0.04 beats 0.05
+    assert "0.04" in d["desk_md"]
+    # the stack's pooled read is printed with its dispersion
+    assert "19%" in d["desk_md"] and "0.03" in d["desk_md"]
+
+
+def test_proof_numbers_reach_the_honesty_coda(fake_snap):
+    d = build_dispatch(fake_snap)
+    assert "event recall 79%" in d["free_md"]
+    assert "base rate of 6%" in d["free_md"]
+    assert "run precision 61%" in d["free_md"]
+
+
+def test_odds_ledger_appends_once(fake_snap, tmp_path):
+    d = build_dispatch(fake_snap, date="2026-07-10")
+    assert {r["model"] for r in d["odds"]} >= {"bathymetry", "ml", "swell", "stacker"}
+    write_dispatch(d, repo_root=tmp_path)
+    write_dispatch(d, repo_root=tmp_path)   # same-day rebuild must not double-append
+    ledger = (tmp_path / "backend" / "seiche" / "dispatches" / "odds_ledger.jsonl").read_text()
+    rows = [json.loads(l) for l in ledger.splitlines()]
+    assert len([r for r in rows if r["date"] == "2026-07-10"]) == len(d["odds"])
+
+
+def test_state_letter_memory_roundtrip(fake_snap):
+    d1 = build_dispatch(fake_snap, date="2026-07-10")
+    assert d1["state"]["letter"]["regime"] == "EROSION"
+    # same-day rebuild with the new state reproduces the letter exactly
+    again = build_dispatch(fake_snap, date="2026-07-10", state=d1["state"])
+    assert again == d1

@@ -70,6 +70,11 @@ def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
         if not zs:
             continue
         worst = max(zs)
+        # Scale context travels with the z. A 16-sigma change on a series
+        # whose baseline is near zero is a wake-up call, not a large flow;
+        # downstream prose needs the peak to say which, so it ships here.
+        peak = float(pts.abs().max())
+        last_v = float(pts.iloc[-1])
         movers.append(
             {
                 "name": name,
@@ -80,6 +85,9 @@ def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
                 "level_z": round(level_z, 2) if level_z is not None else None,
                 "change_z": round(change_z, 2) if change_z is not None else None,
                 "max_abs_z": round(worst, 2),
+                "hist_peak_abs": round(peak, 3),
+                "share_of_peak": round(abs(last_v) / peak, 4) if peak > 0 else None,
+                "woke_from_zero": bool(len(pts) > 1 and float(pts.iloc[-2]) == 0.0 and last_v != 0.0),
                 "flag": worst >= SONAR_Z_FLAG and age_d <= SONAR_FRESH_D,
                 "stale": age_d > SONAR_FRESH_D,
                 "age_d": age_d,
