@@ -1,0 +1,86 @@
+name: dispatch-weekly
+
+# The Monday flagship: "The Week Ahead" (backend/seiche/dispatch_weekly.py).
+# A numbered weekly issue with forward tables and pre-registered calls printed
+# in advance, which the following Monday's issue grades. Deterministic, no LLM.
+# Commits the issue to main, then explicitly dispatches publish (site rebuild)
+# and deploy-hetzner (box picks up the continuation), because pushes made with
+# GITHUB_TOKEN do not trigger workflows on their own.
+#
+# Runs 105 minutes BEFORE dispatch-daily so its publish run finishes before the
+# daily triggers its own: publish.yml is cancel-in-progress, so an overlapping
+# trigger would cancel this job's watch step after the issue was already pushed.
+#
+# Fail-loud: if the live board is unreachable there is no issue that week --
+# the generator refuses to write from nothing.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # 09:00 UTC Monday, before the daily letter at 10:45
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: dispatch-weekly
+  cancel-in-progress: false
+
+jobs:
+  write-and-publish:
+    runs-on: ubuntu-latest
+    # 75, same reason as the daily: the job watches publish.yml to completion
+    # before announcing, and a short cap cancelled every run after the push.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # stdlib-only generator: no install, PYTHONPATH is enough
+      - name: Write this week's issue from the live board
+        run: PYTHONPATH=backend python -m seiche.dispatch_weekly
+
+      - name: Commit and push
+        run: |
+          git config user.name "seiche-desk"
+          git config user.email "desk@seiche.info"
+          git add frontend/public/dispatches backend/seiche/dispatches
+          if git diff --cached --quiet; then
+            echo "nothing new to publish this week"
+            exit 0
+          fi
+          TITLE=$(python -c "import json; print(json.load(open('frontend/public/dispatches/index.json'))[0]['title'])")
+          git commit -m "week ahead: $TITLE"
+          git pull --rebase origin main
+          git push origin main
+          echo "PUSHED=1" >> "$GITHUB_ENV"
+
+      - name: Trigger site publish + box deploy
+        if: env.PUSHED == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run publish.yml --ref main
+          gh workflow run deploy-hetzner.yml --ref main
+
+      # Wait for the site to actually carry the issue before telling Telegram
+      # about it -- an announcement with a dead link is worse than a late one.
+      - name: Wait for the site publish
+        if: env.PUSHED == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 20
+          RUN=$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')
+          gh run watch "$RUN" --exit-status --interval 30
+
+      - name: Announce on Telegram
+        if: env.PUSHED == '1'
+        env:
+          SEICHE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SEICHE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: PYTHONPATH=backend python -m seiche.dispatch_weekly --announce-only
