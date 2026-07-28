@@ -11,6 +11,9 @@ Outputs (relative to the repo root):
   backend/seiche/dispatches/{slug}.paid.md    the desk's forward read (also free;
                                               filename is the historical contract)
   frontend/public/dispatches/index.json       prepended, deduped, newest first
+  backend/seiche/dispatches/state.json        the letter's memory: which prints it
+                                              has already reported, so a slow series
+                                              at an extreme is news once, not daily
 
 Run:  python -m seiche.dispatch_daily [--api URL] [--date YYYY-MM-DD] [--force]
 Stdlib only, so CI can run it with PYTHONPATH=backend and no install.
@@ -35,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FREE_DIR = REPO_ROOT / "frontend" / "public" / "dispatches"
 PAID_DIR = REPO_ROOT / "backend" / "seiche" / "dispatches"
 INDEX = FREE_DIR / "index.json"
+STATE = PAID_DIR / "state.json"
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +70,62 @@ def _pick(date: str, salt: str, options: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# novelty state — the letter's memory of what it has already told the reader.
+# A mover is news on the first letter after its print date; after that it is a
+# standing flag, and re-headlining it would be the letter dressing persistence
+# as news. The state keeps two maps: `reported` (as of after today's letter)
+# and `reported_prev` (the baseline today's letter was built from), keyed by
+# `date`, so a same-day rebuild — the CI announce step runs the generator
+# again the better part of an hour after the write — reproduces the same
+# novelty decisions instead of finding its own morning's letter in the state
+# and calling everything old news.
+# ---------------------------------------------------------------------------
+def load_state(path: Path | None = None) -> dict:
+    p = path or STATE
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _novelty_baseline(state: dict, date: str) -> dict:
+    """label -> asof of the last print the letter reported for that series."""
+    if state.get("date") == date:
+        return state.get("reported_prev") or {}
+    return state.get("reported") or {}
+
+
+def _is_novel(m: dict, baseline: dict) -> bool:
+    prev = baseline.get(str(m.get("label")))
+    asof = m.get("asof")
+    # ISO dates compare lexicographically; an unknown asof is treated as news
+    # because the letter cannot prove it already told the reader.
+    return asof is None or prev is None or str(asof) > str(prev)
+
+
+def _split_flagged(snap: dict, baseline: dict) -> tuple[list[dict], list[dict]]:
+    """Flagged movers split into (novel, held). Novel sorts freshest print
+    first, loudest second: the headline goes to what is actually new."""
+    flagged = [m for m in snap.get("engines", {}).get("sonar", {}).get("movers", [])
+               if m.get("flag")]
+    novel = sorted((m for m in flagged if _is_novel(m, baseline)),
+                   key=lambda m: ((m.get("age_d") or 0), -(m.get("max_abs_z") or 0)))
+    held = [m for m in flagged if not _is_novel(m, baseline)]
+    return novel, held
+
+
+def _updated_state(snap: dict, baseline: dict, date: str) -> dict:
+    """Every currently flagged print is on the record after today's letter
+    (novel ones in the movers line, held ones in the standing-flags line).
+    Labels that stop flagging fall out, which keeps the file bounded; a
+    series can only re-flag on a newer print, which is novel again anyway."""
+    reported = {str(m.get("label")): str(m.get("asof"))
+                for m in snap.get("engines", {}).get("sonar", {}).get("movers", [])
+                if m.get("flag") and m.get("asof") is not None}
+    return {"date": date, "reported_prev": baseline, "reported": reported}
+
+
+# ---------------------------------------------------------------------------
 # the letter
 # ---------------------------------------------------------------------------
 _REGIME_FRAME = {
@@ -77,7 +137,7 @@ _REGIME_FRAME = {
 }
 
 
-def _title_summary_tag(snap: dict, date: str, prev_value) -> tuple[str, str, str]:
+def _title_summary_tag(snap: dict, date: str, prev_value, baseline: dict) -> tuple[str, str, str]:
     comp = snap.get("engines", {}).get("composite", {})
     tell = snap.get("deep", {}).get("tell", {}) or {}
     v = comp.get("value")
@@ -89,7 +149,7 @@ def _title_summary_tag(snap: dict, date: str, prev_value) -> tuple[str, str, str
         except (TypeError, ValueError):
             delta = None
 
-    movers = [m for m in snap.get("engines", {}).get("sonar", {}).get("movers", []) if m.get("flag")]
+    novel, held = _split_flagged(snap, baseline)
     tell_v = tell.get("tell") if tell.get("ok") else None
 
     if delta is not None and abs(delta) >= 5:
@@ -98,13 +158,22 @@ def _title_summary_tag(snap: dict, date: str, prev_value) -> tuple[str, str, str
     elif tell_v is not None and abs(tell_v) >= 30:
         side = "plumbing leads price" if tell_v > 0 else "price leads plumbing"
         title = f"{regime.title()} with a loud tell: {side} at {_signed(tell_v)}"
-    elif movers:
-        m = movers[0]
+    elif novel:
+        m = novel[0]
         # "Overnight" has to be earned. SONAR only flags prints within
         # SONAR_FRESH_D of the board, but a weekly release is still days old
         # when it is the freshest thing on the tape, so say which it is.
         when = "moved overnight" if (m.get("age_d") or 0) <= 1 else "moved on the latest print"
         title = f"{m.get('label', 'One gauge')} {when}: the {regime.lower()} tape gets a data point"
+    elif held:
+        # Everything flagged was already reported on the day it printed.
+        # Persistence is worth a title, but a different one each day, not
+        # the same headline until the next release cycle.
+        title = _pick(date, "title-held", [
+            f"{regime.title()} at {_fmt(v)}: the flags hold, no new print to report",
+            f"No new prints, standing flags: the {regime.lower()} reading for {date}",
+            f"{regime.title()}, carried: the same flags, one day older",
+        ])
     else:
         quiet = _pick(date, "title", [
             f"{regime.title()} at {_fmt(v)}: what the pipes say while nothing moves",
@@ -192,14 +261,38 @@ def _tell_para(snap: dict, date: str) -> list[str]:
     return lines
 
 
-def _movers_para(snap: dict, date: str) -> list[str]:
+def _movers_para(snap: dict, date: str, baseline: dict) -> list[str]:
     sonar = snap.get("engines", {}).get("sonar", {})
-    flagged = [m for m in sonar.get("movers", []) if m.get("flag")]
-    if not flagged:
-        out = [_pick(date, "quiet", [
+    novel, held = _split_flagged(snap, baseline)
+    out: list[str] = []
+
+    if novel:
+        bits = []
+        for m in novel[:3]:
+            bits.append(
+                f"**{m.get('label')}** printed {_fmt(m.get('last'), 2)} {m.get('unit', '')} "
+                f"(level z {_signed(m.get('level_z'), 1)}, change z {_signed(m.get('change_z'), 1)}, as of {m.get('asof')})"
+            )
+        # The lead describes the whole list, so it is bound by the OLDEST print in
+        # it, not the newest. Claiming "overnight" because one of three gauges
+        # printed last night is the same overstatement this gate exists to stop.
+        oldest = max((m.get("age_d") or 0) for m in novel[:3])
+        if oldest <= 1:
+            lead = "Overnight, the tape did move: " if len(bits) > 1 else "One gauge moved overnight: "
+        else:
+            lead = ("The tape moved on its latest prints, none of them from last night: "
+                    if len(bits) > 1 else "One gauge moved on its latest print, not overnight: ")
+        out.append(lead + "; ".join(bits) + ".")
+    elif held:
+        out.append(_pick(date, "held-quiet", [
+            "No new print cleared the ±2.5 robust z bar since the last letter. What is flagged today was flagged when it printed, and re-breaking old news is not this letter's trade.",
+            "Nothing new crossed the ±2.5 robust z bar overnight. The standing flags below are persistence, not news, and the letter labels them as such.",
+        ]))
+    else:
+        out.append(_pick(date, "quiet", [
             "Overnight, nothing cleared the ±2.5 robust z bar. A quiet tape is a data point too; it is what erosion looks like from the inside.",
             "No gauge moved beyond ±2.5 robust z overnight. The letter reports the silence rather than decorating it.",
-        ])]
+        ]))
         # A slow series sitting at an extreme level is worth knowing about,
         # but it is not news and the letter must not dress it as news.
         stale = [m for m in sonar.get("movers", []) if m.get("stale")
@@ -212,23 +305,17 @@ def _movers_para(snap: dict, date: str) -> list[str]:
                 f"{s.get('age_d')} days behind the board. That is a level worth knowing and "
                 "not a move, so it is reported here rather than in the movers line."
             )
-        return out
-    bits = []
-    for m in flagged[:3]:
-        bits.append(
-            f"**{m.get('label')}** printed {_fmt(m.get('last'), 2)} {m.get('unit', '')} "
-            f"(level z {_signed(m.get('level_z'), 1)}, change z {_signed(m.get('change_z'), 1)}, as of {m.get('asof')})"
+
+    if held:
+        bits = "; ".join(
+            f"**{m.get('label')}** (|z| {_fmt(m.get('max_abs_z'), 1)}, as of {m.get('asof')})"
+            for m in held[:3]
         )
-    # The lead describes the whole list, so it is bound by the OLDEST print in
-    # it, not the newest. Claiming "overnight" because one of three gauges
-    # printed last night is the same overstatement this gate exists to stop.
-    oldest = max((m.get("age_d") or 0) for m in flagged[:3])
-    if oldest <= 1:
-        lead = "Overnight, the tape did move: " if len(bits) > 1 else "One gauge moved overnight: "
-    else:
-        lead = ("The tape moved on its latest prints, none of them from last night: "
-                if len(bits) > 1 else "One gauge moved on its latest print, not overnight: ")
-    return [lead + "; ".join(bits) + "."]
+        out.append(
+            f"Still flagged from prints already covered in an earlier letter: {bits}. "
+            "A standing flag is context, not news; when a fresh print lands it goes back in the movers line."
+        )
+    return out
 
 
 def _press_para(snap: dict) -> list[str]:
@@ -363,17 +450,19 @@ def _desk_read(snap: dict, date: str) -> str:
     return "\n".join(parts)
 
 
-def build_dispatch(snap: dict, prev_value=None, date: str | None = None) -> dict:
+def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
+                   state: dict | None = None) -> dict:
     comp = snap.get("engines", {}).get("composite", {})
     if comp.get("value") is None or not comp.get("regime"):
         raise SystemExit("refusing to write a dispatch without a live composite (no board, no letter)")
     date = date or (snap.get("generated_at") or datetime.now(timezone.utc).isoformat())[:10]
-    title, summary, tag = _title_summary_tag(snap, date, prev_value)
+    baseline = _novelty_baseline(state or {}, date)
+    title, summary, tag = _title_summary_tag(snap, date, prev_value, baseline)
 
     paras: list[str] = []
     paras += _opening(snap, date, prev_value)
     paras += _tell_para(snap, date)
-    paras += _movers_para(snap, date)
+    paras += _movers_para(snap, date, baseline)
     paras += _press_para(snap)
     cal = _calendar_para(snap)
     if cal:
@@ -391,6 +480,7 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None) -> dict
         "summary": summary,
         "free_md": free_md,
         "desk_md": desk_md,
+        "state": _updated_state(snap, baseline, date),
     }
 
 
@@ -414,6 +504,11 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
         paid_path = paid_dir / f"{d['slug']}.paid.md"
         paid_path.write_text(d["desk_md"] + "\n")
         written.append(str(paid_path))
+
+    if d.get("state"):
+        state_path = paid_dir / "state.json"
+        state_path.write_text(json.dumps(d["state"], indent=2) + "\n")
+        written.append(str(state_path))
 
     entries = []
     if index.exists():
@@ -513,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
 
     snap = _get_json(f"{args.api}/api/overview")
     prev = _prev_published_value(args.history_url)
-    d = build_dispatch(snap, prev_value=prev, date=date)
+    d = build_dispatch(snap, prev_value=prev, date=date, state=load_state())
 
     if args.announce_only:
         announce_telegram(d, snap)

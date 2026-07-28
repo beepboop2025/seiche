@@ -107,3 +107,97 @@ def test_announce_fails_loud_without_credentials(fake_snap, monkeypatch):
     d = build_dispatch(fake_snap)
     with pytest.raises(SystemExit):
         announce_telegram(d, fake_snap)
+
+
+# ---------------------------------------------------------------------------
+# novelty state: a print is news once, then a standing flag
+# ---------------------------------------------------------------------------
+def _mover(label, asof, age_d, z):
+    return {"label": label, "last": 378.0, "unit": "$M", "level_z": z, "change_z": z,
+            "max_abs_z": abs(z), "flag": True, "stale": False, "age_d": age_d, "asof": asof}
+
+
+def _snap_with_movers(fake_snap, movers):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["sonar"] = {"ok": True, "movers": movers}
+    return snap
+
+
+def test_new_print_headlines_and_enters_state(fake_snap):
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "Swap lines (H.4.1)" in d["title"]
+    assert "printed" in d["free_md"]
+    assert d["state"]["reported"] == {"Swap lines (H.4.1)": "2026-07-09"}
+
+
+def test_already_reported_print_does_not_reheadline(fake_snap):
+    """The Jul 24-28 failure: the same weekly print headlined five days
+    running. With the state carried forward it headlines once, then moves to
+    the standing-flags line with a title that says nothing new printed."""
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d1 = build_dispatch(snap, date="2026-07-10")
+
+    snap2 = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 2, 16.5)])
+    d2 = build_dispatch(snap2, prev_value=41.0, date="2026-07-11", state=d1["state"])
+    assert "Swap lines (H.4.1)" not in d2["title"]
+    assert d2["title"] != d1["title"]
+    assert "Still flagged" in d2["free_md"]
+    assert "printed" not in d2["free_md"]  # no movers line dressed as news
+    # the standing flag still carries its number and its print date
+    assert "Swap lines (H.4.1)" in d2["free_md"] and "2026-07-09" in d2["free_md"]
+
+
+def test_freshest_novel_print_takes_the_headline(fake_snap):
+    """The buried-SRF failure: a loud week-old print must not outrank a
+    quieter print from last night when both are news."""
+    snap = _snap_with_movers(fake_snap, [
+        _mover("Swap lines (H.4.1)", "2026-07-04", 6, 16.5),
+        _mover("SRF accepted", "2026-07-09", 1, 12.8),
+    ])
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "SRF accepted" in d["title"] and "overnight" in d["title"]
+
+
+def test_newer_print_of_held_series_is_news_again(fake_snap):
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d1 = build_dispatch(snap, date="2026-07-10")
+    snap2 = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-16", 1, 9.0)])
+    d2 = build_dispatch(snap2, date="2026-07-17", state=d1["state"])
+    assert "Swap lines (H.4.1)" in d2["title"]
+
+
+def test_same_day_rebuild_reproduces_the_letter(fake_snap):
+    """CI rebuilds the letter for the Telegram announce the better part of an
+    hour after writing it; finding its own morning's state must not change
+    the novelty read."""
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d = build_dispatch(snap, date="2026-07-10")
+    again = build_dispatch(snap, date="2026-07-10", state=d["state"])
+    assert again == d
+
+
+def test_unflagged_series_falls_out_of_state(fake_snap):
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d1 = build_dispatch(snap, date="2026-07-10")
+    d2 = build_dispatch(fake_snap, date="2026-07-11", state=d1["state"])  # no sonar at all
+    assert d2["state"]["reported"] == {}
+
+
+def test_write_persists_state_sidecar(fake_snap, tmp_path):
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d = build_dispatch(snap, date="2026-07-10")
+    write_dispatch(d, repo_root=tmp_path)
+    state = json.loads((tmp_path / "backend" / "seiche" / "dispatches" / "state.json").read_text())
+    assert state["date"] == "2026-07-10"
+    assert state["reported"] == {"Swap lines (H.4.1)": "2026-07-09"}
+
+
+def test_held_and_quiet_variants_carry_no_dashes(fake_snap):
+    """House copy rule holds across the new date-seeded variants."""
+    held_state = {"date": "2026-07-09", "reported": {"Swap lines (H.4.1)": "2026-07-05"}}
+    for day in ("2026-07-10", "2026-07-11", "2026-07-12"):
+        snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-05", 5, 16.5)])
+        d = build_dispatch(snap, date=day, state=held_state)
+        for field in ("title", "summary", "free_md"):
+            assert "—" not in d[field] and "–" not in d[field], (day, field)
