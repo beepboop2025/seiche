@@ -144,6 +144,26 @@ def _suffix_for(n: int) -> str:
     return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
 
+_LEAK_RE = re.compile(r"(?<![\w.])(?:None|nan|NaN)(?![\w.])")
+
+
+def sanitize_leaks(text: str) -> tuple[str, int]:
+    """Turn a stray None or nan into the letter's own missing-value mark.
+
+    The lint below is publish-blocking, and a letter that does not publish is
+    worse than a letter with a question mark in it: the reader loses the day's
+    reading over one absent upstream field. So a format leak is repaired and
+    then CONFESSED in the honesty section rather than being fatal. Everything
+    else the lint catches is the desk's own copy and stays fatal, because
+    those are fixed by editing, not by degrading gracefully.
+    """
+    out, n = _LEAK_RE.subn("?", text or "")
+    # "None of those printed" is English, not a leak; the negative lookahead in
+    # the pattern misses it, so restore the word when it led a sentence.
+    out = out.replace("? of those", "None of those")
+    return out, n
+
+
 def lint_letter(*texts: str) -> list[str]:
     issues: set[str] = set()
     for t in texts:
@@ -297,7 +317,7 @@ def _title_summary_tag(snap: dict, date: str, prev_value, baseline: dict) -> tup
         # SONAR_FRESH_D of the board, but a weekly release is still days old
         # when it is the freshest thing on the tape, so say which it is.
         when = "moved overnight" if (m.get("age_d") or 0) <= 1 else "moved on the latest print"
-        title = f"{m.get('label', 'One gauge')} {when}: the {regime.lower()} tape gets a data point"
+        title = f"{_clean(m.get('label') or 'One gauge')} {when}: the {regime.lower()} tape gets a data point"
     elif held:
         # Everything flagged was already reported on the day it printed.
         # Persistence is worth a title, but a different one each day, not
@@ -340,9 +360,9 @@ def _opening(snap: dict, date: str, prev_value) -> list[str]:
             delta_txt = f", {_signed(d, 1)} against the last published reading"
         except (TypeError, ValueError):
             pass
+    cov_txt = f", on {_fmt(cov)}% coverage" if cov is not None else ""
     out.append(
-        f"The composite reads **{_fmt(v)} out of 100, {regime}**{delta_txt}, "
-        f"on {_fmt(cov)}% coverage. "
+        f"The composite reads **{_fmt(v)} out of 100, {regime}**{delta_txt}{cov_txt}. "
         + _REGIME_FRAME.get(regime, "The board publishes what it sees and nothing else.")
     )
     decomp = [d for d in comp.get("decomposition", []) if d.get("contribution")]
@@ -385,13 +405,27 @@ def _attribution(snap: dict, letter_prev: dict) -> list[str]:
     comp = snap.get("engines", {}).get("composite", {}) or {}
     cur = {str(d.get("component")): d.get("contribution")
            for d in comp.get("decomposition", []) if d.get("contribution") is not None}
+    # A component that went DEAD publishes no contribution today, so iterating
+    # over today's keys alone drops it and the stated net silently excludes a
+    # component the letter's own dead-inputs line is about to name. Yesterday's
+    # keys are in the union, and a vanished contribution is a fall to zero.
+    dropped: list[str] = []
     deltas = {}
-    for k, cv in cur.items():
-        if k in prev:
+    for k in set(cur) | set(prev):
+        if k not in prev:
+            continue                    # brand new component: no baseline to difference
+        try:
+            before = float(prev[k])
+        except (TypeError, ValueError):
+            continue
+        if k in cur:
             try:
-                deltas[k] = round(float(cv) - float(prev[k]), 2)
+                deltas[k] = round(float(cur[k]) - before, 2)
             except (TypeError, ValueError):
                 continue
+        else:
+            deltas[k] = round(-before, 2)
+            dropped.append(k)
     moved = [(k, dv) for k, dv in sorted(deltas.items(), key=lambda kv: -abs(kv[1]))
              if abs(dv) >= 0.1]
     if not moved:
@@ -399,8 +433,12 @@ def _attribution(snap: dict, letter_prev: dict) -> list[str]:
                 "no contribution moved a tenth of a point. Flat gets said too."]
     total = round(sum(deltas.values()), 1)
     parts = ", ".join(f"{_display(k)} {_signed(dv, 1)}" for k, dv in moved[:4])
+    drop_txt = ""
+    if dropped:
+        drop_txt = (f" {', '.join(_display(k) for k in dropped)} stopped contributing entirely today, "
+                    "which is counted above as a fall to zero rather than quietly left out of the sum.")
     return [f"Change gets attributed here, not just level: against the last letter, "
-            f"{parts}, {_signed(total, 1)} points net across the components."]
+            f"{parts}, {_signed(total, 1)} points net across the components." + drop_txt]
 
 
 def _tell_para(snap: dict, date: str) -> list[str]:
@@ -440,8 +478,8 @@ def _deminimis_note(m: dict) -> str | None:
         return None
     woke = (" It is the first nonzero print after a stretch at zero, which is the "
             "actually interesting fact here." if m.get("woke_from_zero") else "")
-    unit = m.get("unit") or ""
-    return (f"For scale: that {m.get('label')} print is {_fmt(m.get('last'), 2)} {unit} "
+    unit = _clean(m.get("unit") or "")
+    return (f"For scale: that {_clean(m.get('label'))} print is {_fmt(m.get('last'), 2)} {unit} "
             f"against a historical peak near {_fmt(peak)} {unit}. The z score marks a "
             f"series waking up on a quiet baseline, not a large flow; the dollar amount is de minimis "
             f"and the letter says so next to the sigma.{woke}")
@@ -456,7 +494,7 @@ def _movers_para(snap: dict, date: str, baseline: dict) -> list[str]:
         bits = []
         for m in novel[:3]:
             bits.append(
-                f"**{m.get('label')}** printed {_fmt(m.get('last'), 2)} {m.get('unit') or ''} "
+                f"**{_clean(m.get('label'))}** printed {_fmt(m.get('last'), 2)} {_clean(m.get('unit') or '')} "
                 f"(level z {_signed(m.get('level_z'), 1)}, change z {_signed(m.get('change_z'), 1)}, as of {m.get('asof')})"
             )
         # The lead describes the whole list, so it is bound by the OLDEST print in
@@ -490,20 +528,38 @@ def _movers_para(snap: dict, date: str, baseline: dict) -> list[str]:
         if stale:
             s = stale[0]
             out.append(
-                f"One reading is extreme but not fresh: **{s.get('label')}** sits at "
+                f"One reading is extreme but not fresh: **{_clean(s.get('label'))}** sits at "
                 f"{_fmt(s.get('max_abs_z'), 1)} robust z on a print from {s.get('asof')}, "
                 f"{s.get('age_d')} days behind the board. That is a level worth knowing and "
                 "not a move, so it is reported here rather than in the movers line."
             )
 
     if held:
-        bits = "; ".join(
-            f"**{m.get('label')}** (|z| {_fmt(m.get('max_abs_z'), 1)}, as of {m.get('asof')})"
-            for m in held[:3]
-        )
+        # A standing flag carries its sigma into every letter until the series
+        # reprints, so the scale caveat has to travel with it. A 16-sigma flag
+        # on $378 million read as an alarm for five days running.
+        bits = []
+        trivial = []
+        for m in held[:3]:
+            share = m.get("share_of_peak")
+            bit = f"**{_clean(m.get('label'))}** (|z| {_fmt(m.get('max_abs_z'), 1)}, as of {m.get('asof')})"
+            try:
+                if share is not None and float(share) < 0.02:
+                    bit += " [de minimis]"
+                    trivial.append(_clean(m.get("label")))
+            except (TypeError, ValueError):
+                pass
+            bits.append(bit)
+        tail = ""
+        if trivial:
+            tail = (f" The flags marked de minimis ({', '.join(trivial)}) sit at large sigma on series "
+                    "whose levels are a rounding error against their own history: the standardizer is "
+                    "reacting to a near-zero baseline, not to a large flow, and the letter would rather "
+                    "say that every day than let a big number do work the dollars do not support.")
         out.append(
-            f"Still flagged from prints already covered in an earlier letter: {bits}. "
+            f"Still flagged from prints already covered in an earlier letter: {'; '.join(bits)}. "
             "A standing flag is context, not news; when a fresh print lands it goes back in the movers line."
+            + tail
         )
     return out
 
@@ -513,7 +569,7 @@ def _tripwire_para(snap: dict) -> list[str]:
     gauge's judgment on top, when the engine is live."""
     st = snap.get("engines", {}).get("stigma", {}) or {}
     if st.get("ok") and st.get("letter_line"):
-        return [str(st["letter_line"])]
+        return [_clean(st["letter_line"])]
     return []
 
 
@@ -540,9 +596,12 @@ def _kink_para(snap: dict) -> list[str]:
     dist = k.get("distance_b")
     below = dist is not None and float(dist) < 0
     out = [
-        "The desk fits the reserve demand curve continuously from the same public series the "
-        "NY Fed uses for its monthly Reserve Demand Elasticity (the Afonso, Giannone, La Spada "
-        f"and Williams lineage). Today's fit puts the kink near **${_fmt(k.get('kink_reserves_b'))}B** "
+        "The desk fits the reserve demand curve continuously, a public-data approximation of the "
+        "NY Fed's monthly Reserve Demand Elasticity (the Afonso, Giannone, La Spada and Williams "
+        "lineage). Theirs is estimated on confidential bank-level fed funds transactions; this one "
+        "is a hinge fit on SOFR minus IORB against reserves over GDP, which is a different and "
+        "coarser instrument reaching for the same quantity, and the comparison below is the check "
+        f"on whether it gets there. Today's fit puts the kink near **${_fmt(k.get('kink_reserves_b'))}B** "
         f"of reserves; the system holds ${_fmt(k.get('current_reserves_b'))}B, "
         f"${_fmt(abs(float(dist)) if dist is not None else None)}B {'below' if below else 'above'} the estimate."
     ]
@@ -560,15 +619,74 @@ def _kink_para(snap: dict) -> list[str]:
         "and the number is printed so you can discount it yourself."
     )
     if below:
+        line = ("Reserves are through the estimated kink, which is exactly where the spread should start "
+                "answering to reserve changes. From here the board watches the slope, not the distance.")
+        # The tape gets the last word over the fit. A system priced below the
+        # administered floor is not behaving like a scarce one, and a letter
+        # that asserts scarcity while its own spread says abundance has told
+        # the reader to stop reading.
+        obs = k.get("observed_spread_now_bp")
+        try:
+            if obs is not None and float(obs) < 0:
+                line += (f" Against that, the tape disagrees: SOFR is printing {_fmt(abs(float(obs)), 1)}bp "
+                         "BELOW IORB, which is the abundance signature, not the scarce one. The honest "
+                         "reading is that the fitted kink is an estimate with a wide band and the observed "
+                         "spread is a fact, so scarcity here is a hypothesis the tape has not yet confirmed.")
+        except (TypeError, ValueError):
+            pass
+        out.append(line)
+    else:
+        if k.get("days_to_kink") is not None:
+            out.append(
+                f"At the trailing drain of ${_fmt(k.get('drain_per_bday_b'), 1)}B a business day, the path "
+                f"reaches the kink in roughly {_fmt(k.get('days_to_kink'))} business days. That is straight-line "
+                "arithmetic; the runway view carries the scenario bands behind it."
+            )
+        rw = snap.get("engines", {}).get("runway", {}) or {}
+        if rw.get("ok"):
+            scen = rw.get("scenarios") or {}
+            cross = (scen.get("base") or {}).get("crossing_date")
+            others = sorted(c for name, s in scen.items() if name != "base"
+                            and isinstance(s, dict) and (c := s.get("crossing_date")))
+            if cross:
+                span = (f"; the fast and slow legs bracket it between {others[0]} and {others[-1]}"
+                        if others else "")
+                out.append(
+                    f"The runway projection puts the base path through the kink on **{cross}**{span}. "
+                    "Every assumption behind that date is published beside it, not implied: the "
+                    "trailing drift, the stated runoff pace, the TGA path and the settlement drains."
+                )
+            else:
+                end_b = (scen.get("base") or {}).get("end_reserves_b")
+                out.append(
+                    "The runway projection finds no kink crossing inside thirteen weeks on any of its "
+                    f"three legs, ending near ${_fmt(end_b)}B on the base path. A projection that "
+                    "reaches no threshold is still a reading, and it gets published on the days it "
+                    "says nothing is coming."
+                )
+    rde = snap.get("engines", {}).get("rdenowcast", {}) or {}
+    if rde.get("ok"):
+        # None means the official release shipped no band this month, which is
+        # not the same as our fit sitting outside one. Publishing "outside"
+        # for an unknown would be inventing a disagreement with the Fed.
+        wb = rde.get("within_68_band")
+        band_txt = (f", {'inside' if wb else 'outside'} their 68% band" if wb is not None
+                    else ". Their release carries no band this month, so this is a level "
+                         "comparison only and the letter will not claim agreement it cannot test")
+        agree = "agrees" if rde.get("direction_agree") else "disagrees"
+        lead = rde.get("nowcast_lead_days")
+        lead_txt = ""
+        try:
+            if lead is not None and int(lead) > 0:
+                lead_txt = (f" The desk's fit runs {_fmt(lead)} days ahead of their release cycle, "
+                            "which is the whole point of fitting it continuously.")
+        except (TypeError, ValueError):
+            pass
         out.append(
-            "Reserves are through the estimated kink, which is exactly where the spread should start "
-            "answering to reserve changes. From here the board watches the slope, not the distance."
-        )
-    elif k.get("days_to_kink") is not None:
-        out.append(
-            f"At the trailing drain of ${_fmt(k.get('drain_per_bday_b'), 1)}B a business day, the path "
-            f"reaches the kink in roughly {_fmt(k.get('days_to_kink'))} business days. The runway view "
-            "on the board carries the scenario bands behind that arithmetic."
+            f"External check: the NY Fed's latest official RDE print ({rde.get('nyfed_asof')}) reads "
+            f"{_fmt(rde.get('nyfed_bp_per_1pct'), 2)}bp per one percent of reserves; the desk's continuous "
+            f"fit implies {_fmt(rde.get('ours_bp_per_1pct'), 2)}bp{band_txt}, direction "
+            f"{agree}.{lead_txt} Where the two diverge, one of us is wrong, and the scorecard keeps count."
         )
     return out
 
@@ -578,18 +696,36 @@ def _official_para(snap: dict) -> list[str]:
     rotation-versus-retreat read comes from the officialbid engine."""
     ob = snap.get("engines", {}).get("officialbid", {}) or {}
     if ob.get("ok") and ob.get("letter_line"):
-        return [str(ob["letter_line"])]
+        return [_clean(ob["letter_line"])]
     return ["The official sector engine is dark today. When it is live this section reads the "
             "foreign official footprint in one place: Treasuries in Fed custody, the foreign "
             "RRP pool, and FIMA repo, decomposed into rotation versus retreat."]
 
 
-def _calendar_para(snap: dict, letter_prev: dict | None = None) -> list[str]:
+def _days_until(event_date, letter_date: str, fallback=None):
+    """Days from the LETTER's dateline to the event, not from the snapshot's.
+
+    The snapshot computes days_until against its own generated_at, and the
+    letter publishes some hours later, sometimes across midnight. Reusing the
+    snapshot's number printed 'FOMC decides tomorrow' on the morning of the
+    meeting. The letter recomputes against the date it is stamped with, and
+    falls back to the snapshot only when the event date is unparseable.
+    """
+    try:
+        a = datetime.strptime(str(event_date)[:10], "%Y-%m-%d").date()
+        b = datetime.strptime(str(letter_date)[:10], "%Y-%m-%d").date()
+        return (a - b).days
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _calendar_para(snap: dict, letter_prev: dict | None = None, date: str = "") -> list[str]:
     cal = snap.get("calendar", {}) or {}
     turn = (snap.get("deep", {}).get("turn") or {}).get("next_turn")
     weather = snap.get("engines", {}).get("weather", {}) or {}
     out = []
-    crunches = (cal.get("crunch_windows") or weather.get("crunch_windows") or [])
+    crunches = [c for c in (cal.get("crunch_windows") or weather.get("crunch_windows") or [])
+                if c.get("date")]
     if crunches:
         c = crunches[0]
         wc = ""
@@ -614,19 +750,22 @@ def _calendar_para(snap: dict, letter_prev: dict | None = None) -> list[str]:
                         break
                 except (TypeError, ValueError):
                     continue
-    if turn:
+    if turn and turn.get("date"):
         band = turn.get("band_bp") or [None, None]
         out.append(
-            f"The turn model puts {turn.get('date')} ({turn.get('mode')}) at "
+            f"The turn model puts {turn.get('date')} ({_clean(turn.get('mode'))}) at "
             f"{_signed(turn.get('forecast_bp'), 1)}bp with a band of "
-            f"[{_signed(band[0], 1)}, {_signed(band[1], 1)}], severity {turn.get('severity')}/5."
+            f"[{_signed(band[0], 1)}, {_signed(band[1], 1)}], severity {_fmt(turn.get('severity'))}/5."
         )
-    fomc = (cal.get("fomc_next_90d") or [])
+    # A calendar entry with no date is not a date that matters. Skipping it is
+    # both the honest read and the thing that stops a missing upstream field
+    # from rendering "None" and tripping the publish-blocking lint.
+    fomc = [f for f in (cal.get("fomc_next_90d") or []) if f.get("date")]
     if fomc:
         f = fomc[0]
-        days = f.get("days_until")
+        days = _days_until(f.get("date"), date, f.get("days_until"))
         if days is not None and int(days) <= 1:
-            when = "today" if int(days) == 0 else "tomorrow"
+            when = "today" if int(days) <= 0 else "tomorrow"
             out.append(
                 f"FOMC decides {when}, and the letter cares in three named places: the IORB and ON RRP "
                 "settings, which are the corridor every spread on this board is priced against; the runoff "
@@ -635,11 +774,12 @@ def _calendar_para(snap: dict, letter_prev: dict | None = None) -> list[str]:
                 "the statement."
             )
         else:
-            out.append(f"FOMC decides {f.get('date')}, {days} days out.")
-    tax = (cal.get("corporate_tax_next_90d") or [])
+            out.append(f"FOMC decides {f.get('date')}, {_fmt(days)} days out.")
+    tax = [t for t in (cal.get("corporate_tax_next_90d") or []) if t.get("date")]
     if tax:
         t = tax[0]
-        out.append(f"The corporate tax date lands {t.get('date')}, {t.get('days_until')} days out; tax dates drain reserves on a schedule everyone can read.")
+        tdays = _days_until(t.get("date"), date, t.get("days_until"))
+        out.append(f"The corporate tax date lands {t.get('date')}, {_fmt(tdays)} days out; tax dates drain reserves on a schedule everyone can read.")
     return [" ".join(out)] if out else []
 
 
@@ -649,27 +789,69 @@ def _honesty_coda(snap: dict) -> list[str]:
     proof = ""
     try:
         if ec.get("recall") is not None:
+            ci = ec.get("recall_ci95") or []
+            ci_txt = (f" (95% interval {float(ci[0]):.0%} to {float(ci[1]):.0%}, which is wide because the "
+                      f"sample is {_fmt(ec.get('n_alert_runs'))} alert runs, not thousands)"
+                      if len(ci) == 2 else "")
+            # A lead time pinned at the evaluation horizon is a censoring
+            # boundary, not an observation. Reporting it as a median would be
+            # the letter's own worst habit, applied to its own scoreboard.
+            leads = [float(x) for x in (ec.get("lead_times_d") or []) if x is not None]
+            med = ec.get("median_lead_d")
+            lead_txt = ""
+            if leads and med is not None:
+                capped = sum(1 for x in leads if x >= float(med))
+                if capped >= max(2, 0.5 * len(leads)) and len(set(leads)) < len(leads):
+                    lead_txt = (f", and the median lead of {_fmt(med)} trading days is censored: "
+                                f"{capped} of {len(leads)} episodes were still flagged at the edge of the "
+                                "evaluation window, so the true lead is at least that and the number is a "
+                                "floor rather than a central estimate")
+                else:
+                    lead_txt = f", median lead {_fmt(med)} trading days"
             proof = (
-                f" The record is in PROOF: event recall {float(ec['recall']):.0%} against a base rate of "
-                f"{float(ec.get('base_rate') or 0):.0%}, run precision {float(ec.get('precision_runs') or 0):.0%}, "
-                f"median lead {_fmt(ec.get('median_lead_d'))} trading days. The misses sit next to the hits; "
-                "read those before weighting today's letter."
+                f" The record is in PROOF: event recall {float(ec['recall']):.0%}{ci_txt} against a base rate of "
+                f"{float(ec.get('base_rate') or 0):.0%}, run precision {float(ec.get('precision_runs') or 0):.0%}"
+                f"{lead_txt}. The misses sit next to the hits; read those before weighting today's letter."
             )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, IndexError):
         proof = ""
     if not proof:
         proof = (" The misses this board has made sit in PROOF next to the hits; read those "
                  "before weighting today's letter.")
 
+    # An engine missing from the payload never raises a fault, so "all engines
+    # report live" could sit two sections below "the official sector engine is
+    # dark today". The coda counts the sections the letter itself found dark.
+    eng = snap.get("engines", {}) or {}
+    dark = [name for name, label in (("kink", "reserve scarcity"),
+                                     ("officialbid", "the official sector"),
+                                     ("stigma", "the facility tripwires"),
+                                     ("runway", "the reserve runway"))
+            if not (eng.get(name) or {}).get("ok")]
+    dark_txt = ""
+    if dark:
+        dark_txt = (f" {len(dark)} of the letter's named sections are dark today "
+                    f"({', '.join(dark)}); each says so in its own place rather than closing the gap "
+                    "with a sentence about something else.")
+
     faults = snap.get("faults") or []
     if faults:
-        srcs = ", ".join(str(f.get("source")) for f in faults[:4])
+        # One source failing twice is one broken gauge, not two; the letter
+        # reports the gauge, not the retry count.
+        seen: list[str] = []
+        for f in faults:
+            s = str(f.get("source"))
+            if s not in seen:
+                seen.append(s)
+        srcs = ", ".join(seen[:4])
         return [
             f"Faults on the board today: {srcs}. The affected inputs are degraded or dead and the "
             "composite's coverage says so. A dashboard that hides its broken gauges is lying with a straight face."
-            + proof
+            + dark_txt + proof
         ]
-    return ["All sources and engines report live." + proof]
+    lead = ("All sources report live, and no engine raised a fault."
+            if dark else "All sources and engines report live.")
+    return [lead + dark_txt + proof]
 
 
 def _forward_sentences(snap: dict) -> list[str]:
@@ -719,33 +901,83 @@ def _court_paras(snap: dict) -> list[str]:
     st = deep.get("stacker", {}) or {}
     if st.get("ok") and st.get("p_now") is not None:
         try:
-            verdict = f"; its own verdict: {_clean(str(st.get('verdict')).split(' (')[0])}" if st.get("verdict") else ""
+            # The stacker's verdict turns self-critical after the first
+            # parenthesis ("does NOT beat the best single member"), which is
+            # exactly the half a credible letter must keep. Print it whole.
+            v_txt = _clean(st.get("verdict")).rstrip()
+            if v_txt and not v_txt.endswith("."):
+                v_txt += "."
+            verdict = f". Its own verdict, in full: {v_txt}" if v_txt else ""
             out.append(
                 f"The stack pools the members at **{float(st['p_now']):.0%}** for the five-day window, "
-                f"dispersion {_fmt(st.get('dispersion_now'), 2)}{verdict}."
+                f"dispersion {_fmt(st.get('dispersion_now'), 2)}{verdict or '.'}"
             )
         except (TypeError, ValueError):
             pass
-    skills: list[tuple[str, float, object]] = []
+    mc = deep.get("modelcourt", {}) or {}
+    if mc.get("ok"):
+        if mc.get("adjudication"):
+            out.append(_clean(mc["adjudication"]))
+        if isinstance(mc.get("ledger_status"), str) and mc["ledger_status"]:
+            out.append("Ledger status: " + _clean(mc["ledger_status"]) + ".")
+        return out
+    # Raw Brier is not comparable across members: each is scored on its own
+    # sample with its own base rate, so a low Brier can mean an easy sample
+    # rather than a good model. Skill against each member's OWN climatology is
+    # the only ranking that survives contact with a statistician, and a member
+    # that never published a climatology cannot be ranked at all.
+    skills: list[tuple[str, float, float, float]] = []
+    unranked: list[str] = []
+
+    def _consider(label: str, brier, clim) -> None:
+        if brier is None:
+            return
+        try:
+            b = float(brier)
+        except (TypeError, ValueError):
+            return
+        if clim is None:
+            unranked.append(label)
+            return
+        try:
+            c = float(clim)
+        except (TypeError, ValueError):
+            unranked.append(label)
+            return
+        if c <= 0:
+            unranked.append(label)
+            return
+        skills.append((label, 1.0 - b / c, b, c))
+
     sk = (deep.get("tidetables", {}) or {}).get("skill") or {}
-    if sk.get("brier") is not None:
-        skills.append(("the analog tables (Tide Tables)", float(sk["brier"]), sk.get("brier_climatology")))
+    _consider("the analog tables (Tide Tables)", sk.get("brier"), sk.get("brier_climatology"))
     sw = (deep.get("swell", {}) or {}).get("validation") or {}
-    if sw.get("brier") is not None:
-        skills.append(("the dated term structure (Swell)", float(sw["brier"]), sw.get("brier_climatology")))
+    _consider("the dated term structure (Swell)", sw.get("brier"), sw.get("brier_climatology"))
     mlv = (deep.get("ml", {}) or {}).get("validation") or {}
-    if mlv.get("brier") is not None:
-        skills.append(("the learned model", float(mlv["brier"]), None))
+    _consider("the learned model", mlv.get("brier"), mlv.get("brier_climatology"))
+
     if skills:
-        best = min(skills, key=lambda s: s[1])
-        clim = f" against a climatology of {_fmt(best[2], 2)}" if best[2] is not None else ""
-        out.append(
-            f"Adjudication, not averaging: of the members with a scored record, {best[0]} carries the best "
-            f"out-of-sample Brier at {_fmt(best[1], 2)}{clim}. When the members disagree, that is the record "
-            "to weight; the disagreement itself is model risk, and the court publishes it instead of hiding "
-            "it in a mean. Every model's daily odds go to the public ledger, so this paragraph gets harder "
-            "to argue with every month."
-        )
+        best = max(skills, key=lambda s: s[1])
+        tail = (f" {', '.join(unranked)} published no climatology, so it cannot be ranked here and is not."
+                if unranked else "")
+        if best[1] <= 0.01:
+            out.append(
+                "Adjudication, not averaging: on their own scored samples, no member clears its own "
+                f"climatology by more than a hair (best is {best[0]} at {best[1]:+.1%} Brier skill, "
+                f"{_fmt(best[2], 3)} against {_fmt(best[3], 3)}). That is the honest read of the forward "
+                "odds today: they are a view, not an edge, and the letter will not dress them up as one."
+                + tail
+            )
+        else:
+            out.append(
+                f"Adjudication, not averaging: ranked on skill against each member's own climatology, "
+                f"{best[0]} leads at {best[1]:+.1%} ({_fmt(best[2], 3)} Brier against a climatology of "
+                f"{_fmt(best[3], 3)}). Raw Brier is not comparable across members because each is scored "
+                "on its own sample, so the ranking uses skill or it says nothing. The disagreement between "
+                "members is model risk, and the court publishes it instead of hiding it in a mean. Every "
+                "model's daily odds go to the public ledger, so this paragraph gets harder to argue with "
+                "every month." + tail
+            )
     return out
 
 
@@ -772,8 +1004,29 @@ def _falsifiers(snap: dict) -> list[tuple[str, str]]:
 
     comp_now = f"; today it reads {_fmt(v)}" if v is not None else ""
     tell_now = f"; today it reads {_signed(tv)}" if tv is not None else ""
-    srf_now = (f"; the latest print is {_fmt(srf.get('last'), 2)} {srf.get('unit') or ''} as of {srf.get('asof')}"
-               if srf and srf.get("last") is not None else "")
+
+    # A tripwire that names two facilities has to read both. The discount
+    # window sits in the headline block, not in SONAR, and reading only SRF
+    # published S1 as untouched on days the window was already through it.
+    dw = (snap.get("headline") or {}).get("dw_b") or {}
+    dw_v = dw.get("value")
+    facility_bits = []
+    if srf and srf.get("last") is not None:
+        facility_bits.append(f"SRF {_fmt(srf.get('last'), 2)} {srf.get('unit') or '$B'} as of {srf.get('asof')}")
+    if dw_v is not None:
+        facility_bits.append(f"discount window ${_fmt(dw_v, 1)}B as of {dw.get('asof')}")
+    srf_now = ("; " + ", ".join(facility_bits)) if facility_bits else ""
+    breached = False
+    try:
+        breached = (dw_v is not None and float(dw_v) >= 1.0) or (
+            srf is not None and srf.get("last") is not None
+            and float(srf.get("last")) >= 1.0 and str(srf.get("unit") or "").strip() == "$B")
+    except (TypeError, ValueError):
+        breached = False
+    if breached:
+        srf_now += (". That is through the $1B line already, so this item reads BREACHED and the "
+                    "standing read is that discount window borrowing is elevated against its own "
+                    "recent history, not that nothing has happened")
     drain = kink.get("drain_per_bday_b") if kink.get("ok") else None
     drain_now = f"; the current drain runs ${_fmt(drain, 1)}B a business day" if drain is not None else ""
     amp = ((res.get("worst_mode") or {}).get("amplification")) if res.get("ok") else None
@@ -819,23 +1072,125 @@ def _desk_read(snap: dict, date: str, letter_prev: dict | None = None) -> str:
         for c in court:
             parts += [c, ""]
 
+    sd = eng.get("supplydesk", {}) or {}
+    # Forward table means forward: a settlement that already happened is not
+    # "ahead", and the board's table is built from its own build date, which
+    # can trail the letter's dateline by a day.
+    sd_rows = [r for r in (sd.get("rows") or []) if str(r.get("date", "")) >= date]
+    if sd.get("ok") and sd_rows:
+        parts += ["### The supply desk", ""]
+        parts += ["| settles | bills $B | coupons $B | maturing $B | net new cash $B | status |",
+                  "|---|---|---|---|---|---|"]
+        incomplete = 0
+        for r in sd_rows[:8]:
+            status = ("projected" if r.get("projected")
+                      else "est. size" if r.get("amount_estimated") else "announced")
+            if r.get("issuance_incomplete"):
+                incomplete += 1
+                status = "refunding not yet announced"
+                net = "n/a"
+            else:
+                net = f"**{_signed(r.get('net_new_cash_b'))}**"
+            parts.append(
+                f"| {r.get('date')} | {_fmt(r.get('bills_gross_b'))} | {_fmt(r.get('coupons_gross_b'))} "
+                f"| {_fmt(r.get('maturing_b'))} | {net} | {status} |"
+            )
+        # Recomputed over the forward rows only, so "ahead" is true of the
+        # date it names rather than of the board's build date.
+        try:
+            hv = max((r for r in sd_rows if not r.get("issuance_incomplete")),
+                     key=lambda r: float(r.get("net_new_cash_b") or 0))
+        except (TypeError, ValueError):
+            hv = {}
+        tail = (f"The heaviest settlement ahead is {hv.get('date')} at ${_signed(hv.get('net_new_cash_b'))}B net. "
+                if hv.get("date") else "")
+        inc_txt = ""
+        if incomplete:
+            inc_txt = (f" {incomplete} row"
+                       + ("s carry" if incomplete > 1 else " carries")
+                       + " no net: the maturities on those dates are known but the refunding that funds "
+                         "them is not announced yet, and the desk will not print a drain it knows Treasury "
+                         "is about to offset.")
+        parts += ["", tail +
+                  "Net new cash is the number that drains reserves. Maturing includes SOMA rollovers, so the "
+                  "private-side drain runs smaller on SOMA-heavy dates; projected rows are the desk's house "
+                  "estimate and get graded when Treasury announces." + inc_txt, ""]
+
     pos = []
+    rv = eng.get("rvxray", {}) or {}
+    if rv.get("ok") and rv.get("gross_short_b") is not None:
+        # The gross short is the number that gets quoted; net is what tells you
+        # whether the book is two-sided. Neither is a directional view on its
+        # own, because the offsetting cash leg is not in this dataset, and
+        # saying that plainly is the difference between a number and a claim.
+        net_b = rv.get("net_b")
+        gross = rv.get("gross_short_b")
+        side = "net short" if (net_b or 0) < 0 else "net long"
+        line = (f"Leveraged funds hold **${_fmt(gross)}B gross short** in Treasury futures, "
+                f"**${_fmt(abs(float(net_b)) if net_b is not None else None)}B {side}** of it after longs.")
+        try:
+            ratio = abs(float(net_b)) / float(gross) if gross else None
+        except (TypeError, ValueError, ZeroDivisionError):
+            ratio = None
+        if ratio is not None and ratio >= 0.7:
+            line += (f" That is {ratio:.0%} of the gross standing one way, the signature of the "
+                     "cash-futures basis trade rather than a two-sided book.")
+        elif ratio is not None:
+            line += (f" Only {ratio:.0%} of the gross stands one way, so most of the position "
+                     "offsets itself and the headline short overstates the exposure.")
+        line += (" Neither number is a directional view by itself: the long cash leg that would "
+                 "offset a basis position is not in this dataset, and the letter will not price "
+                 "a bet it cannot see.")
+        pos.append(line)
     crowd = eng.get("crowding", {}) or {}
     if crowd.get("ok") and crowd.get("rows"):
-        r = crowd["rows"][0]
-        pos.append(
-            f"The most crowded seat is **{r.get('contract')}**, leveraged net {_signed(r.get('lev_net_share_oi'), 2)} "
-            f"of open interest (z {_signed(r.get('z'), 1)})."
-        )
+        # The engine ranks by |z|, which puts unusually LIGHT positioning at the
+        # top just as readily as heavy: a contract at the 3rd percentile has a
+        # big negative z and is the emptiest seat on the board, not the most
+        # crowded. Crowding is the high percentile; say whichever one it is.
+        rows = [r for r in crowd["rows"] if r.get("pctl") is not None]
+        if rows:
+            top = max(rows, key=lambda r: float(r["pctl"]))
+            light = min(rows, key=lambda r: float(r["pctl"]))
+            pos.append(
+                f"The most crowded seat is **{top.get('contract')}** at the {_ordinal(top.get('pctl'))} percentile "
+                f"of its own history, leveraged net {_signed(top.get('lev_net_share_oi'), 2)} of open interest "
+                f"(z {_signed(top.get('z'), 1)}). The emptiest is {light.get('contract')} at the "
+                f"{_ordinal(light.get('pctl'))}, which is worth naming because an unusually light seat is a "
+                "different risk from a heavy one and the ranking statistic alone does not distinguish them."
+            )
+        else:
+            r = crowd["rows"][0]
+            pos.append(
+                f"The loudest positioning reading is **{r.get('contract')}**, leveraged net "
+                f"{_signed(r.get('lev_net_share_oi'), 2)} of open interest (z {_signed(r.get('z'), 1)}); "
+                "no percentile is published today, so the letter will not call it crowded or empty."
+            )
     wh = eng.get("warehouse", {}) or {}
     if wh.get("ok"):
+        # A missing share must not render "?%": the lint reads that as an
+        # unformatted placeholder and refuses the letter. An absent number is
+        # a clause the letter drops, not a hole it prints.
+        share = wh.get("long_end_share_pct")
+        share_txt = f", {_fmt(share)}% of it long end" if share is not None else ""
         pos.append(
             f"Dealer warehouse holds ${_fmt(wh.get('total_net_b'))}B, the {_ordinal(wh.get('total_pctl'))} percentile "
-            f"of its history, {_fmt(wh.get('long_end_share_pct'))}% of it long end."
+            f"of its history{share_txt}"
+            + (f", as of {wh.get('asof')}" if wh.get("asof") else "") + "."
         )
     if pos:
+        # Provenance, precisely: the futures book is CFTC COT (T+3), the dealer
+        # warehouse is the NY Fed primary dealer survey (T+9). Calling both COT
+        # was wrong, and a wrong lag disclosure is worse than none.
+        stamp_txt = (f" Futures positioning is dated {crowd['asof']}." if crowd.get("asof")
+                     else " The futures rows carry no as-of date on the board today, which is itself "
+                          "a gap and is reported rather than papered over.")
         parts += ["### Positioning", "",
-                  " ".join(pos) + " Positioning data is COT and carries its native T+3 lag; the lag is shown, never hidden.", ""]
+                  " ".join(pos)
+                  + " Futures positioning is CFTC Commitments of Traders and carries its native T+3 lag; "
+                    "the dealer warehouse is the NY Fed primary dealer survey, published with a longer lag "
+                    "again." + stamp_txt
+                  + " Every figure here is weeks old by construction and is a stock, not this morning's flow.", ""]
 
     echo = eng.get("echo", {}) or {}
     if echo.get("ok") and echo.get("matches"):
@@ -914,6 +1269,60 @@ def _current_odds(snap: dict, date: str) -> list[dict]:
     return rows
 
 
+def _spread_row(snap: dict, date: str) -> dict | None:
+    """Today's SOFR minus IORB in bp, stored beside the odds.
+
+    The ledger has to be able to grade itself, and grading needs the outcome
+    series, not just the forecasts. Recording the spread daily makes the file
+    self-contained: the same public number the odds are about, on the same
+    line-per-day basis, with no second source to go stale.
+    """
+    hl = snap.get("headline") or {}
+    try:
+        sofr = float((hl.get("sofr_pct") or {}).get("value"))
+        iorb = float((hl.get("iorb_pct") or {}).get("value"))
+    except (TypeError, ValueError):
+        return None
+    return {"date": date, "kind": "spread", "spread_bp": round((sofr - iorb) * 100.0, 2)}
+
+
+def resolve_ledger(rows: list[dict], horizon_bd: int = 5, spike_bp: float = 10.0) -> tuple[list[dict], int]:
+    """Fill in `realized` on odds rows whose horizon has closed.
+
+    The event is the board's own published definition, the one PROOF scores
+    against: SOFR minus IORB jumping at least `spike_bp` against its trailing
+    median inside the horizon. Only null-to-bool transitions are written; a
+    row's `p` is never touched, because editing a published forecast would
+    forge the record the ledger exists to keep.
+    """
+    spreads = {}
+    for r in rows:
+        if r.get("kind") == "spread" and r.get("spread_bp") is not None:
+            spreads[str(r["date"])] = float(r["spread_bp"])
+    if len(spreads) < 3:
+        return rows, 0
+    dates = sorted(spreads)
+    # Trailing median over the prior 20 observations is the yardstick, matching
+    # the backtest's pop statistic closely enough to score the same events.
+    pops: dict[str, float] = {}
+    for i, d in enumerate(dates):
+        prior = [spreads[x] for x in dates[max(0, i - 20):i]]
+        if len(prior) >= 2:
+            med = sorted(prior)[len(prior) // 2]
+            pops[d] = spreads[d] - med
+    resolved = 0
+    for r in rows:
+        if r.get("kind") == "spread" or r.get("realized") is not None:
+            continue
+        d0 = str(r.get("date"))
+        window = [x for x in dates if x > d0][:horizon_bd]
+        if len(window) < horizon_bd:
+            continue        # horizon still open; leave it null and say so
+        r["realized"] = any(pops.get(x, 0.0) >= spike_bp for x in window)
+        resolved += 1
+    return rows, resolved
+
+
 def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
                    state: dict | None = None, issue_no: int | None = None) -> dict:
     comp = snap.get("engines", {}).get("composite", {})
@@ -938,7 +1347,7 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
     ]
     s4 = _kink_para(snap)
     s5 = _official_para(snap)
-    s6 = _calendar_para(snap, letter_prev) or [
+    s6 = _calendar_para(snap, letter_prev, date) or [
         "No flagged windows inside the calendar's horizon. A clear calendar is a reading too."
     ]
     s7 = _honesty_coda(snap)
@@ -958,6 +1367,22 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
     free_md = "\n\n".join(p for p in paras if p)
     desk_md = _desk_read(snap, date, letter_prev)
 
+    # Repair format leaks, then confess them; everything else the lint finds is
+    # the desk's own copy and stops the presses.
+    title, n1 = sanitize_leaks(title)
+    summary, n2 = sanitize_leaks(summary)
+    free_md, n3 = sanitize_leaks(free_md)
+    desk_md, n4 = sanitize_leaks(desk_md)
+    leaks = n1 + n2 + n3 + n4
+    if leaks:
+        free_md += (
+            f"\n\nOne more piece of honesty: {leaks} value"
+            + ("s" if leaks > 1 else "")
+            + " the letter expected to print did not arrive from the board today and shows as a "
+            "question mark above. The letter publishes with the gap visible rather than holding "
+            "the issue or quietly rounding the hole away."
+        )
+
     issues = lint_letter(title, summary, free_md, desk_md)
     if issues:
         raise SystemExit("letter failed lint: " + "; ".join(issues))
@@ -971,7 +1396,7 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
         "free_md": free_md,
         "desk_md": desk_md,
         "state": _updated_state(snap, baseline, letter_prev, date),
-        "odds": _current_odds(snap, date),
+        "odds": _current_odds(snap, date) + [r for r in [_spread_row(snap, date)] if r],
     }
 
 
@@ -1020,18 +1445,23 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
     # rebuilt for the announce step must not double-count the day.
     if d.get("odds"):
         ledger = paid_dir / "odds_ledger.jsonl"
-        seen_dates: set[str] = set()
+        rows: list[dict] = []
         if ledger.exists():
             for line in ledger.read_text().splitlines():
                 try:
-                    seen_dates.add(str(json.loads(line).get("date")))
+                    rows.append(json.loads(line))
                 except ValueError:
                     continue
-        if d["date"] not in seen_dates:
-            with ledger.open("a") as fh:
-                for row in d["odds"]:
-                    fh.write(json.dumps(row) + "\n")
-            written.append(str(ledger))
+        if d["date"] not in {str(r.get("date")) for r in rows}:
+            rows.extend(d["odds"])
+        # Grade whatever has come due. The file is rewritten rather than
+        # appended to because resolution flips nulls in place; `p` is never
+        # rewritten, so the published forecast stays exactly as published.
+        rows, n_resolved = resolve_ledger(rows)
+        ledger.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        written.append(str(ledger))
+        if n_resolved:
+            print(f"resolved {n_resolved} ledger rows")
 
     entries = []
     if index.exists():
@@ -1103,22 +1533,36 @@ def _get_json(url: str, timeout: int = 60):
 
 
 def _prev_published_value(history_url: str):
-    """Yesterday's as-published composite from the hash-chained Book history."""
+    """Yesterday's as-published composite from the hash-chained Book history.
+
+    The record writes the composite under "index" (see scripts/append_book_record.py);
+    reading "value" here silently returned None on every run, which meant the
+    letter never printed a day change. Both keys are accepted so a future
+    rename cannot re-break it quietly.
+    """
     try:
         hist = _get_json(history_url, timeout=30)
         if isinstance(hist, list) and hist:
-            return hist[-1].get("value")
+            last = hist[-1]
+            for key in ("index", "value", "composite"):
+                if last.get(key) is not None:
+                    return last[key]
     except Exception:
         return None
     return None
 
 
 def _issue_number(index_path: Path, slug: str) -> int | None:
-    """The issue number is the letter's position in the archive: entries
-    already published (excluding a same-day rewrite of this slug) plus one."""
+    """The issue number is the letter's position in the DAILY archive.
+
+    The index is shared with the Monday Week Ahead, so counting every entry
+    would step the daily's number by one extra every week. Daily slugs all
+    end in "-daily", which is the series this number belongs to.
+    """
     try:
         entries = json.loads(index_path.read_text())
-        return 1 + sum(1 for e in entries if e.get("slug") != slug)
+        return 1 + sum(1 for e in entries
+                       if str(e.get("slug", "")).endswith("-daily") and e.get("slug") != slug)
     except (OSError, ValueError):
         return None
 

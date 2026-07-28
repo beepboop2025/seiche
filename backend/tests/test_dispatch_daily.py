@@ -408,3 +408,455 @@ def test_state_letter_memory_roundtrip(fake_snap):
     # same-day rebuild with the new state reproduces the letter exactly
     again = build_dispatch(fake_snap, date="2026-07-10", state=d1["state"])
     assert again == d1
+
+
+def test_runway_prints_crossing_when_one_exists(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3700.0, "distance_b": 65.6,
+                               "drain_per_bday_b": 2.39, "days_to_kink": 52,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["runway"] = {"ok": True, "scenarios": {
+        "base": {"crossing_date": "2026-10-14", "end_reserves_b": 3600.0},
+        "fast_drain": {"crossing_date": "2026-09-30", "end_reserves_b": 3560.0},
+        "slow": {"crossing_date": "2026-11-04", "end_reserves_b": 3640.0}}}
+    d = build_dispatch(snap)
+    assert "through the kink on **2026-10-14**" in d["free_md"]
+    assert "bracket it between 2026-09-30 and 2026-11-04" in d["free_md"]
+
+
+def test_runway_says_so_when_no_crossing(fake_snap):
+    """A projection that reaches no threshold is still a reading."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3700.0, "distance_b": 65.6,
+                               "drain_per_bday_b": 0.4, "days_to_kink": None,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["runway"] = {"ok": True, "scenarios": {
+        "base": {"crossing_date": None, "end_reserves_b": 3668.8},
+        "fast_drain": {"crossing_date": None, "end_reserves_b": 3660.6},
+        "slow": {"crossing_date": None, "end_reserves_b": 3684.4}}}
+    d = build_dispatch(snap)
+    assert "no kink crossing inside thirteen weeks" in d["free_md"]
+    assert "3,669" in d["free_md"]
+
+
+def test_official_bid_line_reaches_the_letter(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["officialbid"] = {
+        "ok": True, "classification": "rotation",
+        "letter_line": "Foreign officials cut their Fed custody Treasuries by $9.9B over 13 weeks."}
+    d = build_dispatch(snap)
+    assert "$9.9B" in d["free_md"]
+    assert "official sector engine is dark" not in d["free_md"]
+
+
+def test_stigma_line_reaches_the_letter(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["stigma"] = {
+        "ok": True, "stigma_score": 62,
+        "letter_line": "SOFR's 99th percentile cleared the SRF ceiling on 6 of the last 20 sessions."}
+    d = build_dispatch(snap)
+    assert "cleared the SRF ceiling on 6 of the last 20 sessions" in d["free_md"]
+
+
+def test_supply_desk_table_reaches_the_desk_read(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["supplydesk"] = {"ok": True, "rows": [
+        {"date": "2026-07-30", "bills_gross_b": 190.0, "coupons_gross_b": 0.0,
+         "maturing_b": 95.0, "net_new_cash_b": 95.0, "projected": False, "amount_estimated": False},
+        {"date": "2026-08-06", "bills_gross_b": 180.0, "coupons_gross_b": 0.0,
+         "maturing_b": 200.0, "net_new_cash_b": -20.0, "projected": True, "amount_estimated": False}],
+        "heaviest_day": {"date": "2026-07-30", "net_new_cash_b": 95.0}}
+    d = build_dispatch(snap)
+    assert "### The supply desk" in d["desk_md"]
+    assert "net new cash" in d["desk_md"]
+    assert "projected" in d["desk_md"] and "announced" in d["desk_md"]
+    assert "heaviest settlement ahead is 2026-07-30" in d["desk_md"]
+
+
+def test_model_court_replaces_the_hand_rolled_adjudication(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["modelcourt"] = {
+        "ok": True,
+        "adjudication": "Model Court, 5bd event odds: 4 models span 5.2 to 14.0 pct, pooled 8.2 pct.",
+        "ledger_status": "no ledger yet; the court reads published backtests only"}
+    d = build_dispatch(snap)
+    assert "Model Court, 5bd event odds" in d["desk_md"]
+    assert "Ledger status:" in d["desk_md"]
+    assert "Adjudication, not averaging" not in d["desk_md"]   # the fallback stands down
+
+
+def test_net_and_gross_positioning_print_together(fake_snap):
+    """Gross alone is the number that gets quoted and misleads. Net says
+    whether the book is two-sided; neither is a directional view, because
+    the offsetting cash leg is not in COT, and the letter says so."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["rvxray"] = {"ok": True, "gross_short_b": 1033.8, "net_b": -866.6}
+    d = build_dispatch(snap)
+    assert "$1,034B gross short" in d["desk_md"]
+    assert "$867B net short" in d["desk_md"]
+    assert "signature of the cash-futures basis trade" in d["desk_md"]
+    assert "not price a bet it cannot see" in d["desk_md"]
+
+
+def test_two_sided_book_is_read_as_offsetting(fake_snap):
+    """The other side of the same test: when net is a small share of gross,
+    the headline short overstates the exposure and the letter says that."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["rvxray"] = {"ok": True, "gross_short_b": 1000.0, "net_b": -200.0}
+    d = build_dispatch(snap)
+    assert "Only 20% of the gross stands one way" in d["desk_md"]
+    assert "overstates the exposure" in d["desk_md"]
+
+
+def test_repeated_fault_source_is_named_once(fake_snap):
+    """One source failing twice is one broken gauge, not two."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["faults"] = [{"source": "gdelt", "detail": "timeout"},
+                      {"source": "gdelt", "detail": "timeout"},
+                      {"source": "CFTC", "detail": "stale"}]
+    d = build_dispatch(snap)
+    assert "Faults on the board today: gdelt, CFTC." in d["free_md"]
+
+
+def test_rde_external_check_reads_cleanly(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    snap["engines"]["rdenowcast"] = {
+        "ok": True, "nyfed_asof": "2026-07-06", "nyfed_bp_per_1pct": -0.268,
+        "ours_bp_per_1pct": -0.315, "within_68_band": True, "direction_agree": True,
+        "nowcast_lead_days": 16}
+    d = build_dispatch(snap)
+    md = d["free_md"]
+    assert "inside their 68% band, direction agrees." in md
+    assert "runs 16 days ahead of their release cycle" in md
+    assert ", and the direction" not in md          # the doubled conjunction is gone
+    assert "one of us is wrong" in md
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the 2026-07-28 expert review. Each of these shipped wrong
+# once and would have been caught by the reader we are writing for.
+# ---------------------------------------------------------------------------
+def test_court_ranks_on_skill_not_raw_brier(fake_snap):
+    """The live bug: ML had the lowest raw Brier (0.0383) and was named best,
+    while its own climatology was 0.0384, i.e. no skill at all. Raw Brier is
+    not comparable across members scored on different samples."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"].pop("modelcourt", None)
+    snap["deep"]["ml"]["validation"] = {"brier": 0.0383, "brier_climatology": 0.0384}
+    snap["deep"]["swell"]["validation"] = {"brier": 0.0401, "brier_climatology": 0.0457}
+    snap["deep"]["tidetables"]["skill"] = {"brier": 0.0511, "brier_climatology": 0.0507}
+    d = build_dispatch(snap)
+    assert "the dated term structure (Swell) leads" in d["desk_md"]
+    assert "the learned model leads" not in d["desk_md"]
+    assert "+12" in d["desk_md"]              # swell skill ~12.3%
+
+
+def test_court_says_so_when_nobody_beats_climatology(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"].pop("modelcourt", None)
+    snap["deep"]["ml"]["validation"] = {"brier": 0.0383, "brier_climatology": 0.0384}
+    snap["deep"]["swell"]["validation"] = {"brier": 0.0460, "brier_climatology": 0.0457}
+    snap["deep"]["tidetables"]["skill"] = {"brier": 0.0511, "brier_climatology": 0.0507}
+    d = build_dispatch(snap)
+    assert "no member clears its own climatology" in d["desk_md"]
+    assert "a view, not an edge" in d["desk_md"]
+
+
+def test_member_without_climatology_is_unranked_not_winner(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"].pop("modelcourt", None)
+    snap["deep"]["ml"]["validation"] = {"brier": 0.001}      # unbeatable, no climatology
+    snap["deep"]["swell"]["validation"] = {"brier": 0.0401, "brier_climatology": 0.0457}
+    snap["deep"]["tidetables"]["skill"] = {}
+    d = build_dispatch(snap)
+    assert "the learned model published no climatology" in d["desk_md"]
+    assert "the dated term structure (Swell) leads" in d["desk_md"]
+
+
+def test_falsifier_reads_the_discount_window_it_names(fake_snap):
+    """S1 named 'SRF or discount window' but only read SRF, and published the
+    item as untouched while the window sat at $4.9B against a $1B line."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["regime"] = "STRAIN"
+    snap["headline"] = {"dw_b": {"value": 4.9, "asof": "2026-07-22"}}
+    snap["engines"]["sonar"] = {"ok": True, "movers": [
+        {"label": "SRF accepted", "last": 0.02, "unit": "$B", "level_z": 12.8,
+         "change_z": 3.2, "max_abs_z": 12.8, "flag": False, "stale": False,
+         "age_d": 1, "asof": "2026-07-27"}]}
+    d = build_dispatch(snap)
+    assert "discount window $4.9B" in d["desk_md"]
+    assert "reads BREACHED" in d["desk_md"]
+
+
+def test_falsifier_not_breached_stays_quiet(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["regime"] = "STRAIN"
+    snap["headline"] = {"dw_b": {"value": 0.1, "asof": "2026-07-22"}}
+    d = build_dispatch(snap)
+    assert "reads BREACHED" not in d["desk_md"]
+
+
+def test_days_until_counts_from_the_letter_not_the_snapshot(fake_snap):
+    """The snapshot computes days_until against its own generated_at. A letter
+    published the next morning said 'FOMC decides tomorrow' on the day of."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["calendar"] = {"fomc_next_90d": [{"date": "2026-07-29", "days_until": 1}]}
+    d = build_dispatch(snap, date="2026-07-29")
+    assert "FOMC decides today" in d["free_md"]
+    assert "decides tomorrow" not in d["free_md"]
+
+
+def test_missing_calendar_field_cannot_kill_the_letter(fake_snap):
+    """A None days_until once rendered 'None days out', which the lint treats
+    as a format leak, which raises SystemExit, which means no letter."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["calendar"] = {"corporate_tax_next_90d": [{"date": None, "days_until": None}]}
+    snap["deep"]["turn"] = {"next_turn": {"date": None, "mode": "month_end",
+                                          "forecast_bp": 4.8, "band_bp": [0.9, 8.8],
+                                          "severity": None}}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "None" not in d["free_md"]
+    assert "The turn model puts" not in d["free_md"]   # undated turn is skipped, not printed
+    assert "corporate tax date" not in d["free_md"]    # undated tax entry likewise
+
+
+def test_unforeseen_leak_is_repaired_and_confessed_not_fatal(fake_snap):
+    """A missing letter is worse than a letter with a question mark in it, so
+    a format leak self-heals and says so instead of stopping the presses."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["tell"]["reading"] = "None"      # reaches the letter verbatim
+    snap["deep"]["tell"]["tell"] = 42.0           # force the wide-gap branch that quotes it
+    d = build_dispatch(snap)
+    assert "None" not in d["free_md"]
+    assert "did not arrive from the board today" in d["free_md"]
+
+
+def test_legitimate_none_word_survives_sanitizing():
+    from seiche.dispatch_daily import sanitize_leaks
+    out, n = sanitize_leaks("None of those printed.")
+    assert out == "None of those printed." and n == 1
+
+
+def test_scarcity_claim_is_reconciled_against_the_tape(fake_snap):
+    """Asserting reserves are deep into scarcity while SOFR prints below IORB,
+    with no acknowledgement, is the contradiction an expert catches first."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    d = build_dispatch(snap)
+    assert "the tape disagrees" in d["free_md"]
+    assert "abundance signature" in d["free_md"]
+    assert "hypothesis the tape has not yet confirmed" in d["free_md"]
+
+
+def test_rde_does_not_claim_the_nyfed_uses_public_series(fake_snap):
+    """The NY Fed's RDE is estimated on confidential bank-level fed funds
+    transactions. Claiming 'the same public series' is false and this is
+    exactly the audience that knows it."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["kink"] = {"ok": True, "kink_reserves_b": 3634.4,
+                               "current_reserves_b": 3062.1, "distance_b": -572.3,
+                               "r2": 0.62, "consistency": 0.87,
+                               "observed_spread_now_bp": -3.7, "predicted_spread_now_bp": -2.1}
+    d = build_dispatch(snap)
+    assert "same public series the NY Fed uses" not in d["free_md"]
+    assert "confidential bank-level fed funds transactions" in d["free_md"]
+    assert "public-data approximation" in d["free_md"]
+
+
+def test_crowded_seat_is_the_high_percentile_not_the_loudest_z(fake_snap):
+    """Ranking by |z| named a 3rd-percentile contract 'the most crowded seat'
+    while a 90th-percentile contract sat two rows below it."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["crowding"] = {"ok": True, "asof": "2026-07-21", "rows": [
+        {"contract": "SOFR-3M", "lev_net_share_oi": -0.206, "z": -2.26, "pctl": 3.0},
+        {"contract": "UST 2Y NOTE", "lev_net_share_oi": -0.368, "z": 1.39, "pctl": 90.0}]}
+    d = build_dispatch(snap)
+    assert "most crowded seat is **UST 2Y NOTE** at the 90th percentile" in d["desk_md"]
+    assert "emptiest is SOFR-3M at the 3rd" in d["desk_md"]
+
+
+def test_positioning_provenance_is_correct_and_dated(fake_snap):
+    """The dealer warehouse is the NY Fed primary dealer survey, not COT."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["warehouse"] = {"ok": True, "total_net_b": 432.0, "total_pctl": 96.0,
+                                    "long_end_share_pct": 37.0, "asof": "2026-07-15"}
+    d = build_dispatch(snap)
+    assert "NY Fed primary dealer survey" in d["desk_md"]
+    assert "as of 2026-07-15" in d["desk_md"]
+    assert "Positioning data is COT" not in d["desk_md"]
+
+
+def test_censored_lead_time_is_labelled_not_reported_as_a_median(fake_snap):
+    """7 of 8 lead times pinned at the evaluation horizon is a censoring
+    boundary, not a median."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["backtest"]["event_capture"] = {
+        "recall": 0.62, "precision_runs": 0.17, "base_rate": 0.05,
+        "median_lead_d": 60, "n_alert_runs": 23, "recall_ci95": [0.355, 0.823],
+        "lead_times_d": [8, 60, 60, 60, 60, 60, 60, 60]}
+    d = build_dispatch(snap)
+    assert "is censored" in d["free_md"]
+    assert "7 of 8 episodes" in d["free_md"]
+    assert "a floor rather than a central estimate" in d["free_md"]
+    assert "95% interval 36% to 82%" in d["free_md"]
+
+
+def test_dark_sections_are_counted_in_the_honesty_coda(fake_snap):
+    """Section 5 said an engine was dark while section 7 said all engines
+    report live, because a missing engine never raises a fault."""
+    d = build_dispatch(fake_snap)     # fixture has no kink/officialbid/stigma/runway
+    assert "of the letter's named sections are dark today" in d["free_md"]
+    assert "All sources and engines report live." not in d["free_md"]
+
+
+def test_stacker_verdict_keeps_the_self_critical_half(fake_snap):
+    """The verdict was split on the first ' (' which discarded 'does NOT beat
+    the best single member' — the only part that costs the board anything."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["stacker"] = {
+        "ok": True, "p_now": 0.06, "dispersion_now": 0.02,
+        "verdict": "published signal = mean (Brier 0.0407 vs mean 0.0407); does NOT beat the best single member"}
+    d = build_dispatch(snap)
+    assert "does NOT beat the best single member" in d["desk_md"]
+
+
+def test_supply_desk_shows_only_forward_settlements(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["supplydesk"] = {"ok": True, "rows": [
+        {"date": "2026-07-08", "bills_gross_b": 299.0, "coupons_gross_b": 0.0,
+         "maturing_b": 228.0, "net_new_cash_b": 71.0, "projected": False, "amount_estimated": False},
+        {"date": "2026-07-30", "bills_gross_b": 278.0, "coupons_gross_b": 0.0,
+         "maturing_b": 246.0, "net_new_cash_b": 32.0, "projected": False, "amount_estimated": False}],
+        "heaviest_day": {"date": "2026-07-08", "net_new_cash_b": 71.0}}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "2026-07-08" not in d["desk_md"]                       # already settled
+    assert "heaviest settlement ahead is 2026-07-30" in d["desk_md"]
+
+
+def test_ledger_resolves_closed_horizons_only():
+    """The court can never convene on a ledger nothing ever grades. Rows
+    resolve when their five-day window has closed, and never before."""
+    from seiche.dispatch_daily import resolve_ledger
+    rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2}]
+    # a calm run: no jump anywhere near the 10bp bar
+    for i, day in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06",
+                             "2026-07-07", "2026-07-08", "2026-07-09"]):
+        rows.append({"date": day, "kind": "spread", "spread_bp": -3.0 + 0.1 * i})
+    out, n = resolve_ledger(rows)
+    assert n == 1
+    assert out[0]["realized"] is False
+
+    # the same forecast with an open horizon stays null
+    short = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2},
+             {"date": "2026-07-01", "kind": "spread", "spread_bp": -3.0},
+             {"date": "2026-07-02", "kind": "spread", "spread_bp": -3.0},
+             {"date": "2026-07-03", "kind": "spread", "spread_bp": -3.0}]
+    out2, n2 = resolve_ledger(short)
+    assert n2 == 0 and out2[0].get("realized") is None
+
+
+def test_ledger_marks_a_real_funding_event():
+    from seiche.dispatch_daily import resolve_ledger
+    rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2}]
+    days = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07",
+            "2026-07-08", "2026-07-09"]
+    for i, day in enumerate(days):
+        # flat, then a 15bp pop inside the window
+        rows.append({"date": day, "kind": "spread",
+                     "spread_bp": -3.0 if i < 5 else 12.0})
+    out, n = resolve_ledger(rows)
+    assert n == 1 and out[0]["realized"] is True
+
+
+def test_ledger_never_rewrites_a_published_forecast():
+    from seiche.dispatch_daily import resolve_ledger
+    rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2345}]
+    for i, day in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06",
+                             "2026-07-07", "2026-07-08", "2026-07-09"]):
+        rows.append({"date": day, "kind": "spread", "spread_bp": -3.0})
+    out, _ = resolve_ledger(rows)
+    assert out[0]["p"] == 0.2345
+    # already-resolved rows are left exactly as they are
+    out[0]["realized"] = True
+    again, n = resolve_ledger(out)
+    assert n == 0 and again[0]["realized"] is True
+
+
+def test_spread_row_recorded_with_the_odds(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["headline"] = {"sofr_pct": {"value": 3.64}, "iorb_pct": {"value": 3.65}}
+    d = build_dispatch(snap, date="2026-07-10")
+    spreads = [r for r in d["odds"] if r.get("kind") == "spread"]
+    assert len(spreads) == 1
+    assert spreads[0]["spread_bp"] == -1.0
+
+
+def test_sonar_label_with_a_dash_does_not_kill_the_letter(fake_snap):
+    """A series label is engine-supplied text and must be sanitized like the
+    rest; an em dash in a label once cost the entire day's letter."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["sonar"] = {"ok": True, "movers": [
+        {"label": "SOFR — IORB spread", "last": 4.0, "unit": "%", "level_z": 3.0,
+         "change_z": 3.0, "max_abs_z": 3.0, "flag": True, "stale": False,
+         "age_d": 1, "asof": "2026-07-09"}]}
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "SOFR, IORB spread" in d["free_md"]
+    assert "—" not in d["free_md"]
+
+
+def test_missing_warehouse_share_does_not_render_a_placeholder(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["warehouse"] = {"ok": True, "total_net_b": 432.0,
+                                    "total_pctl": 96.0, "long_end_share_pct": None}
+    d = build_dispatch(snap)
+    assert "?%" not in d["desk_md"]
+    assert "long end" not in d["desk_md"]
+
+
+def test_missing_coverage_does_not_render_a_placeholder(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["coverage_pct"] = None
+    d = build_dispatch(snap)
+    assert "?%" not in d["free_md"]
+
+
+def test_no_series_label_carries_a_dash():
+    """Series labels reach the letter, the CSV headers and the methodology
+    page. Two shipped with em dashes and one of them was six weeks from
+    becoming a publish-blocker the day it cleared SONAR's history gate."""
+    import seiche.config as cfg
+    bad = []
+    for name in dir(cfg):
+        v = getattr(cfg, name)
+        if isinstance(v, list) and v and hasattr(v[0], "label"):
+            bad += [(s.mnemonic, s.label) for s in v
+                    if "—" in str(s.label) or "–" in str(s.label)]
+    assert bad == [], f"dashed series labels: {bad}"
+
+
+def test_standing_flags_carry_the_scale_caveat_too(fake_snap):
+    """The de-minimis note applied only to new movers, but a standing flag
+    reprints its sigma every day until the series moves. A 16-sigma flag on
+    $378M ran for five letters with no scale context."""
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["sonar"] = {"ok": True, "movers": [{
+        "label": "Central bank liquidity swaps", "last": 378.0, "unit": "$M",
+        "level_z": 1.5, "change_z": 16.5, "max_abs_z": 16.5, "flag": True,
+        "stale": False, "age_d": 3, "asof": "2026-07-09",
+        "hist_peak_abs": 449000.0, "share_of_peak": 0.0008}]}
+    state = {"date": "2026-07-09", "reported": {"Central bank liquidity swaps": "2026-07-09"}}
+    d = build_dispatch(snap, date="2026-07-10", state=state)
+    assert "Still flagged" in d["free_md"]
+    assert "[de minimis]" in d["free_md"]
+    assert "rounding error against their own history" in d["free_md"]
