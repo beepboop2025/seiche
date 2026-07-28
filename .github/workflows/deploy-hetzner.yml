@@ -35,9 +35,19 @@ jobs:
     # it restarted the service. The wrapper then short-circuits on a matching
     # SHA ("already at X, nothing to deploy"), so the box sat on new code
     # running an old process, and only a fresh commit could dislodge it.
-    # If this fires again the answer is a faster on-box gate, not a longer
-    # wait: a deploy that cannot finish inside an hour is a broken deploy.
-    timeout-minutes: 55
+    # 55 was still not enough: db72b0e ran the full 55 and was killed mid-gate
+    # on 2026-07-28. Measured, not guessed, the box needs more than an hour for
+    # 731 tests under memray on 4 shared vCPUs, where the same suite takes 8
+    # minutes on a laptop.
+    #
+    # This is the last time the number moves. The real fix is on the box, in
+    # /home/seiche/update.sh: the deploy gate re-runs a suite that publish.yml
+    # has already run to green on the same commit, and it runs it under a
+    # memory profiler that exists to catch regressions in CI, not to guard a
+    # restart. A smoke subset plus the health check would gate the restart just
+    # as safely in two minutes. Until that script is reconciled (it is the same
+    # stale copy that lacks the repo's Caddyfile step), the ceiling absorbs it.
+    timeout-minutes: 120
     steps:
       - name: Deploy over SSH (forced-command wrapper on the box)
         env:
