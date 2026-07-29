@@ -32,6 +32,11 @@ fi
 # is the same as not fixing it. This installs the repo versions, with a backup
 # and a syntax check, BEFORE the wrapper runs, so from here the repo is the
 # source of truth and a stale box is a one-command fix rather than a mystery.
+#
+# Note this copies from whatever is CHECKED OUT (pre-pull) — it exists to
+# bootstrap or un-wedge a box by hand. The auto chain no longer depends on
+# it: the wrapper re-syncs both mirrors from the POST-pull checkout on every
+# deploy, effective the next run, and fails the run loud if the sync drifts.
 for pair in "seiche-deploy-wrapper.sh:/root/seiche-deploy-wrapper.sh" \
             "box-update.sh:/home/seiche/update.sh"; do
     src="$APP_DIR/ops/deploy/${pair%%:*}"

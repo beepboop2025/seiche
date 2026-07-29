@@ -9,22 +9,41 @@ LOG=/tmp/seiche-update.log
 : > "$LOG"
 
 PREV=$(git rev-parse HEAD)
+# The sha whose code is actually RUNNING, recorded by the wrapper after a
+# healthy restart. HEAD matching origin/main is NOT proof there is nothing to
+# do: a deploy killed between pull and restart leaves the new tree on disk
+# with the old process serving it, and the old early-exit here made that
+# state permanent (2026-07-28) — workflow_dispatch re-ran, matched SHAs, and
+# declared victory. Unknown (missing file) means deploy.
+DEPLOYED=$(cat /home/seiche/.seiche-deployed-sha 2>/dev/null || true)
 git fetch -q origin main
 if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
-  exit 0
+  if [ "$DEPLOYED" = "$(git rev-parse HEAD)" ]; then
+    exit 0
+  fi
+  echo "HEAD already at $(git rev-parse --short HEAD) but the running service is ${DEPLOYED:-unknown}: re-running install+smoke so the wrapper can restart onto it"
+else
+  git reset -q --hard origin/main
 fi
-git reset -q --hard origin/main
 
 rollback() {
   echo "ROLLING BACK to ${PREV:0:7}: $1 (see $LOG)" >&2
   git reset -q --hard "$PREV"
-  backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1 || true
+  timeout -k 30 600 backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1 || true
   exit 1
 }
 
+# Every gate below runs under an ON-BOX timeout. The only ceiling used to be
+# the GH job's 30 minutes, and hitting it kills the SSH CLIENT: the remote
+# run keeps going with nobody watching, which is exactly how seven orphaned
+# pytest runs accumulated on 2026-07-28 and starved 14 of 16 cores. coreutils
+# timeout runs the command in its own process group and signals the whole
+# group, so a wedged pip or pytest dies HERE, the rollback path runs, and
+# nothing is ever orphaned. Budgets sit well inside the GH ceiling so the GH
+# timeout stays an outer backstop that never fires first.
 echo "=== pip install $(date -u +%FT%TZ) ===" >>"$LOG"
-if ! backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1; then
-  rollback "pip install failed"
+if ! timeout -k 30 600 backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1; then
+  rollback "pip install failed or timed out"
 fi
 
 # SMOKE GATE, not the full suite.
@@ -54,19 +73,22 @@ fi
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
 export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
+# Six files, collects 173 tests as of this commit. If a commit grows or
+# shrinks this subset, update this count in the same commit — the number is
+# how a reader of the deploy log knows the gate ran what it claims to run.
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \
 tests/test_citability.py tests/test_mcp_server.py tests/test_notary.py \
 tests/test_attest.py"
 
 echo "=== import smoke $(date -u +%FT%TZ) ===" >>"$LOG"
-if ! backend/.venv/bin/python -c "import seiche.api, seiche.assemble, seiche.dispatch_daily" >>"$LOG" 2>&1; then
-  rollback "the tree does not import"
+if ! timeout -k 30 120 backend/.venv/bin/python -c "import seiche.api, seiche.assemble, seiche.dispatch_daily" >>"$LOG" 2>&1; then
+  rollback "the tree does not import (or the import wedged)"
 fi
 
 echo "=== pytest smoke $(date -u +%FT%TZ) ===" >>"$LOG"
-if (cd backend && ../backend/.venv/bin/python -m pytest $SMOKE -q -x) >>"$LOG" 2>&1; then
+if (cd backend && timeout -k 30 600 ../backend/.venv/bin/python -m pytest $SMOKE -q -x) >>"$LOG" 2>&1; then
   echo "updated to $(git rev-parse --short HEAD) — install ok, smoke green"
   exit 0
 else
-  rollback "smoke tests failed"
+  rollback "smoke tests failed or timed out"
 fi

@@ -32,9 +32,12 @@ jobs:
     # so this ceiling has to track the suite's growth. It was 25 when the
     # suite was ~400 tests; 649 tests pushed a real deploy past it on
     # 2026-07-28, and the job was killed AFTER the box had pulled but BEFORE
-    # it restarted the service. The wrapper then short-circuits on a matching
+    # it restarted the service. The wrapper then short-circuited on a matching
     # SHA ("already at X, nothing to deploy"), so the box sat on new code
     # running an old process, and only a fresh commit could dislodge it.
+    # (Fixed since: the wrapper records the DEPLOYED sha at healthy restart,
+    # so a workflow_dispatch recovers that wedge, and the box gates run under
+    # their own on-box timeouts so a kill here orphans nothing.)
     # 30 is deliberate. Four deploys died on 2026-07-28 at 25, 55, 120 and 330
     # minutes and I raised this number three times chasing them. The number was
     # never the problem: the box's gate could not EXIT. It passed
