@@ -406,6 +406,30 @@ def test_supply_call_stays_open_while_the_row_is_projected(week_snap):
     assert "| W6-1 | **HIT**" in d2["free_md"] and "+83B announced" in d2["free_md"]
 
 
+def test_supply_call_stays_open_while_the_amount_is_estimated(week_snap):
+    """A TBA amount is filled with the tenor's last size by the supply desk
+    itself (amount_estimated=true); grading that row as announced would let
+    the desk score a hit against its own fill."""
+    state = {"date": "2026-07-06", "issue": 6, "calls_prev": [],
+             "record": {"graded": 0, "hit": 0, "miss": 0},
+             "calls": [{"id": "W6-1", "kind": "supply", "issue": 6, "issued": "2026-07-06",
+                        "carried": 0, "claim": "The 2026-07-23 settlement lands near +22B.",
+                        "expected": "+22B net new cash, tolerance $5.0B",
+                        "rule": "hit if announced and within tolerance",
+                        "settle_date": "2026-07-23", "target": 22.0, "tol": 5.0,
+                        "resolve_by": "2026-07-13"}]}
+    d = build_weekly(week_snap, date="2026-07-13", state=state, issue_no=7)
+    assert "| W6-1 | **OPEN**" in d["free_md"]
+    assert "TBA" in d["free_md"] and "own fill" in d["free_md"]
+
+    # once the row carries Treasury's amount, the same call grades normally
+    snap = json.loads(json.dumps(week_snap))
+    snap["engines"]["supplydesk"]["rows"][1].update(
+        {"amount_estimated": False, "net_new_cash_b": 24.0})
+    d2 = build_weekly(snap, date="2026-07-13", state=state, issue_no=7)
+    assert "| W6-1 | **HIT**" in d2["free_md"] and "+24B announced" in d2["free_md"]
+
+
 def test_dark_engine_makes_a_call_open_never_a_hit(fake_snap):
     d = build_weekly(fake_snap, date="2026-07-13", state=_prior_state(), issue_no=7)
     md = d["free_md"]
@@ -540,3 +564,33 @@ def test_telegram_digest_carries_the_calls_and_the_link(week_snap):
     assert f"https://seiche.info/#dispatches/{d['slug']}" in msg
     assert len(msg) < 4096
     assert "—" not in msg and "–" not in msg
+
+
+# ---------------------------------------------------------------------------
+# board freshness: the issue that grades the calls must not grade them
+# against a stale board
+# ---------------------------------------------------------------------------
+def test_freshness_gate_refuses_a_stale_board():
+    from seiche.dispatch_weekly import _check_board_freshness
+
+    # a board older than one day against the issue date is refused
+    with pytest.raises(SystemExit, match="refusing to write"):
+        _check_board_freshness({"generated_at": "2026-07-10T09:00:00+00:00"},
+                               "2026-07-13", allow_stale=False)
+    # no generated_at at all is stale, not fresh
+    with pytest.raises(SystemExit, match="missing"):
+        _check_board_freshness({}, "2026-07-13", allow_stale=False)
+    # same-day and one-day-old boards pass (the letter runs in the morning)
+    _check_board_freshness({"generated_at": "2026-07-13T05:00:00+00:00"},
+                           "2026-07-13", allow_stale=False)
+    _check_board_freshness({"generated_at": "2026-07-12T23:50:00+00:00"},
+                           "2026-07-13", allow_stale=False)
+
+
+def test_freshness_override_exists_but_shouts(capsys):
+    from seiche.dispatch_weekly import _check_board_freshness
+
+    _check_board_freshness({"generated_at": "2026-07-01T09:00:00+00:00"},
+                           "2026-07-13", allow_stale=True)
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "stale" in out

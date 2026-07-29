@@ -35,8 +35,11 @@ Outputs (relative to the repo root):
                                                     state.json so the two cannot
                                                     collide on a Monday, when both run.
 
-Run:  python -m seiche.dispatch_weekly [--api URL] [--date YYYY-MM-DD] [--force]
-Stdlib only, so CI can run it with PYTHONPATH=backend and no install.
+Run:  python -m seiche.dispatch_weekly [--api URL | --snapshot FILE] [--date YYYY-MM-DD] [--force]
+Stdlib only, so CI can run it with PYTHONPATH=backend and no install. CI
+passes --snapshot with a board it built itself (same as the daily): the
+weekly grades last issue's calls, so it must not depend on the box being
+current, and it refuses a stale board rather than grade against it.
 """
 
 from __future__ import annotations
@@ -438,8 +441,10 @@ def _call_supply(snap: dict, date: str) -> dict | None:
                   f"{_signed(net)}B of net new cash ({house}), lands within ${_fmt(tol, 1)}B of "
                   "that figure once Treasury has announced it."),
         "expected": f"{_signed(net)}B net new cash, tolerance ${_fmt(tol, 1)}B",
-        "rule": ("hit if next week's supply table shows that date announced and within tolerance, "
-                 "miss if it is announced and outside; open if the row is still projected"),
+        "rule": ("hit if next week's supply table shows that date announced with Treasury's amount "
+                 "and within tolerance, miss if it is announced and outside; open if the row is "
+                 "still projected or its amount is still TBA (a TBA fill is the desk's own "
+                 "estimate and is never graded as announced)"),
         "settle_date": row.get("date"),
         "target": net,
         "tol": tol,
@@ -671,6 +676,15 @@ def _grade(call: dict, snap: dict) -> tuple[str, str]:
                 if r.get("projected"):
                     return "open", (f"still projected at {_signed(r.get('net_new_cash_b'))}B, not "
                                     "yet announced")
+                if r.get("amount_estimated"):
+                    # A TBA amount is filled with the tenor's last size by the
+                    # supply desk itself. Grading that as announced would let
+                    # the desk score a hit against its own fill, so the call
+                    # stays open until Treasury's number is on the row.
+                    return "open", (f"announced, but the amount is still TBA (the board's "
+                                    f"{_signed(r.get('net_new_cash_b'))}B is the desk's own fill "
+                                    "from the tenor's last size, and the desk does not grade "
+                                    "itself against its own estimate)")
                 a = r.get("net_new_cash_b")
                 if a is None:
                     return "open", "the row carries no net new cash"
@@ -1163,9 +1177,39 @@ def announce_telegram(d: dict) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def _check_board_freshness(snap: dict, date: str, allow_stale: bool) -> None:
+    """The weekly is the artifact that GRADES the calls: scoring last Monday's
+    pre-registered numbers against a stale board grades them against the wrong
+    week and corrupts the running record — the same box-staleness failure the
+    daily letter already refuses (a61ea7e). A board more than one day older
+    than the issue date (or with no generated_at at all) is refused unless
+    --allow-stale explicitly overrides, and the override still shouts."""
+    gen = str(snap.get("generated_at") or "")[:10]
+    try:
+        age_d = (datetime.strptime(date, "%Y-%m-%d")
+                 - datetime.strptime(gen, "%Y-%m-%d")).days
+    except ValueError:
+        age_d = None
+    if age_d is not None and age_d <= 1:
+        return
+    msg = (f"board generated_at={gen or 'missing'} is stale against issue date {date}; "
+           "grading pre-registered calls on an old board corrupts the record")
+    if not allow_stale:
+        raise SystemExit(f"refusing to write: {msg} (pass --allow-stale to override)")
+    print(f"WARNING: {msg} — proceeding because --allow-stale was passed")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Write this week's Week Ahead from the live board.")
     ap.add_argument("--api", default=DEFAULT_API)
+    ap.add_argument("--snapshot", default=None,
+                    help="read the board from a JSON file instead of the API. The issue is a "
+                         "pure function of a board snapshot, so CI builds one itself rather "
+                         "than depending on the box being both up and current — the weekly "
+                         "GRADES the previous issue's calls, so a stale box would grade them "
+                         "against the wrong week.")
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="write anyway from a board older than the issue date (loudly)")
     ap.add_argument("--date", default=None, help="override the issue date (YYYY-MM-DD)")
     ap.add_argument("--force", action="store_true", help="rewrite even if this week's issue exists")
     ap.add_argument("--announce", action="store_true",
@@ -1175,10 +1219,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip writing files; just build the issue and send the digest")
     args = ap.parse_args(argv)
 
+    # The issue date comes from the clock (or --date), never from the board,
+    # so a stale box cannot misdate the issue — it can only fail freshness.
     date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     slug = f"{date}-week-ahead"
 
-    snap = _get_json(f"{args.api}/api/overview")
+    if args.snapshot:
+        snap = json.loads(Path(args.snapshot).read_text())
+        print(f"board read from {args.snapshot} (generated {snap.get('generated_at')})")
+    else:
+        snap = _get_json(f"{args.api}/api/overview")
+    _check_board_freshness(snap, date, args.allow_stale)
     d = build_weekly(snap, date=date, state=load_state(),
                      issue_no=issue_number(INDEX, slug))
 

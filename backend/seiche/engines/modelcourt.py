@@ -63,7 +63,10 @@ own rows without a second source. The Court reads odds rows only: anything
 carrying a `kind` other than "odds" is skipped before it can be mistaken for
 a member. The backfill must never edit p, only flip realized from null. With
 >= 30 resolved rows per model the Court issues a ranked verdict on live
-Brier; below that it reports accrual honestly and refuses to rank.
+Brier SKILL against each model's own-sample climatology — each model
+resolves only the days its payload was ok, so raw Brier is not comparable
+across members and is published without ever ranking; below the floor the
+Court reports accrual honestly and refuses to rank.
 """
 
 from __future__ import annotations
@@ -242,9 +245,6 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
             f"ledger present but holds no valid odds rows at the {horizon_bd}bd horizon; accrual not started.",
         )
 
-    all_y = [y for t in tallies.values() for (_, y) in t["resolved"]]
-    base_rate = float(np.mean(all_y)) if all_y else None
-
     scores = []
     for model in sorted(tallies):
         t = tallies[model]
@@ -253,30 +253,46 @@ def _court(odds_ledger, horizon_bd: int) -> tuple[dict, str]:
         if n_res >= MIN_RESOLVED:
             arr = np.asarray(t["resolved"], dtype=float)
             brier = float(np.mean((arr[:, 0] - arr[:, 1]) ** 2))
-            clim = float(np.mean((base_rate - arr[:, 1]) ** 2))
+            # Each model resolves only the days its payload was ok, so the
+            # samples differ per model and raw Brier is NOT comparable across
+            # them: a low Brier can mean an easy sample, not a good model.
+            # The letter said exactly this (f163061) while the court itself
+            # kept ranking raw. Score each model against ITS OWN sample's
+            # climatology instead: Brier skill is each model's edge over the
+            # no-model forecast on the exact days it published, which is the
+            # only ranking that survives unequal samples. MIN_RESOLVED is the
+            # min-n floor. Raw Brier stays published, but it never ranks.
+            own_rate = float(np.mean(arr[:, 1]))
+            clim = float(np.mean((own_rate - arr[:, 1]) ** 2))
+            entry["base_rate"] = round(own_rate, 4)
             entry["brier"] = round(brier, 4)
             entry["brier_climatology"] = round(clim, 4)
             entry["brier_skill"] = round(1.0 - brier / clim, 3) if clim > 0 else None
         scores.append(entry)
 
-    ranked = sorted((e for e in scores if "brier" in e), key=lambda e: e["brier"])
+    ranked = sorted((e for e in scores if e.get("brier_skill") is not None),
+                    key=lambda e: e["brier_skill"], reverse=True)
     for i, e in enumerate(ranked):
         e["rank"] = i + 1
 
     if len(ranked) >= MIN_RANKED:
         order = ", ".join(
-            f"{e['rank']}. {e['model']} (Brier {e['brier']}, n {e['n_resolved']})" for e in ranked
+            f"{e['rank']}. {e['model']} (skill {e['brier_skill']:+.1%}, n {e['n_resolved']})"
+            for e in ranked
         )
         verdict = _sentence(
-            f"live court verdict at {horizon_bd}bd: {order}; lower is better, "
-            f"shared base rate {round(base_rate, 3)}"
+            f"live court verdict at {horizon_bd}bd: {order}; skill is 1 minus Brier over each "
+            f"model's own-sample climatology, so higher is better and the samples need not match"
         )
-        short = [e["model"] for e in scores if "brier" not in e]
-        status = f"court in session: {len(ranked)} models ranked on live Brier"
+        short = [e for e in scores if "brier" not in e]
+        flat = [e["model"] for e in scores if "brier" in e and e.get("brier_skill") is None]
+        status = f"court in session: {len(ranked)} models ranked on live Brier skill"
         if short:
             status += "; still accruing: " + ", ".join(
-                f"{e['model']} {e['n_resolved']}/{MIN_RESOLVED}" for e in scores if "brier" not in e
+                f"{e['model']} {e['n_resolved']}/{MIN_RESOLVED}" for e in short
             )
+        if flat:
+            status += "; unscoreable on a flat sample: " + ", ".join(flat)
         return (
             {"in_session": True, "min_resolved": MIN_RESOLVED, "scores": scores, "verdict": verdict},
             _sentence(status),
@@ -332,8 +348,9 @@ def convene(deep: dict, odds_ledger: list | None = None, horizon_bd: int = 5) ->
     court, ledger_status = _court(odds_ledger, horizon_bd)
 
     if court["in_session"]:
-        leader = min((e for e in court["scores"] if "brier" in e), key=lambda e: e["brier"])
-        tail = f"live ledger ranks {leader['model']} first (Brier {leader['brier']})"
+        leader = min((e for e in court["scores"] if e.get("rank")), key=lambda e: e["rank"])
+        tail = (f"live ledger ranks {leader['model']} first "
+                f"(Brier skill {leader['brier_skill']:+.1%} on its own {leader['n_resolved']} resolved days)")
     elif court["scores"]:
         min_res = min(e["n_resolved"] for e in court["scores"])
         tail = f"live ranking withheld ({min_res} of {MIN_RESOLVED} resolved at worst)"
@@ -378,6 +395,8 @@ def convene(deep: dict, odds_ledger: list | None = None, horizon_bd: int = 5) ->
             f"members = published {horizon_bd}bd odds mined from each engine's payload; "
             "weight = max(Brier skill vs climatology, 0) x AUROC gate clip((AUROC-0.5)/0.2, 0, 1), gate 1 when unpublished; "
             "pooled = weighted mean when any weight > 0 else median of the pool; "
-            f"court = live per-model Brier from the odds ledger once {MIN_RESOLVED} rows per model resolve, ranked ascending"
+            f"court = live per-model Brier skill vs each model's own-sample climatology once "
+            f"{MIN_RESOLVED} rows per model resolve, ranked descending; raw Brier is published "
+            "but never ranked, because each model resolves a different set of days"
         ),
     }

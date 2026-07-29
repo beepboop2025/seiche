@@ -11,8 +11,10 @@ name: dispatch-weekly
 # daily triggers its own: publish.yml is cancel-in-progress, so an overlapping
 # trigger would cancel this job's watch step after the issue was already pushed.
 #
-# Fail-loud: if the live board is unreachable there is no issue that week --
-# the generator refuses to write from nothing.
+# Fail-loud: the job builds its own board (same as dispatch-daily since
+# a61ea7e — the box being up AND current must not gate the writing, least of
+# all for the issue that GRADES last week's calls), and the generator refuses
+# a stale board rather than grade the calls against the wrong week.
 
 on:
   schedule:
@@ -40,9 +42,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      # stdlib-only generator: no install, PYTHONPATH is enough
-      - name: Write this week's issue from the live board
-        run: PYTHONPATH=backend python -m seiche.dispatch_weekly
+      # The weekly used to read api.seiche.info live, the exact box-staleness
+      # dependency a61ea7e removed from the daily — worse here, because this
+      # is the artifact that GRADES the pre-registered calls, and a stale box
+      # would grade them against the wrong week. Build the board in the job,
+      # same as the daily and publish.yml.
+      - name: Install backend
+        run: pip install -e "./backend[dev]"
+
+      - name: Build the board
+        run: python backend/scripts/export_public.py /tmp/pub.json /tmp/overview.json
+
+      - name: Write this week's issue
+        run: PYTHONPATH=backend python -m seiche.dispatch_weekly --snapshot /tmp/overview.json
 
       - name: Commit and push
         run: |
@@ -83,4 +95,6 @@ jobs:
         env:
           SEICHE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SEICHE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: PYTHONPATH=backend python -m seiche.dispatch_weekly --announce-only
+        # Same board the issue was written from, not a fresh read: the digest
+        # must match the issue it links to.
+        run: PYTHONPATH=backend python -m seiche.dispatch_weekly --announce-only --snapshot /tmp/overview.json

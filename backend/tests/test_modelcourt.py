@@ -212,7 +212,7 @@ def test_accruing_ledger_withholds_the_verdict():
     assert "withheld" in r["ledger_status"]
 
 
-def test_court_ranks_on_live_brier():
+def test_court_ranks_on_live_brier_skill():
     # Same 40 outcomes for both models (10 events, 30 quiet): swell sharp,
     # ml blurred at 0.5. Brier by hand: swell 0.004375, ml 0.25.
     led = _ledger(10, 30, "swell", 0.9, 0.05) + _ledger(10, 30, "ml", 0.5, 0.5)
@@ -224,12 +224,38 @@ def test_court_ranks_on_live_brier():
     assert by["ml"]["brier"] == pytest.approx(0.25)
     assert by["swell"]["rank"] == 1
     assert by["ml"]["rank"] == 2
-    # shared base rate 0.25 -> climatology Brier 0.1875 for both
+    # each model's OWN base rate is 0.25 here -> climatology Brier 0.1875
+    assert by["swell"]["base_rate"] == pytest.approx(0.25)
     assert by["swell"]["brier_climatology"] == pytest.approx(0.1875)
     assert by["swell"]["brier_skill"] > 0.9
     assert by["ml"]["brier_skill"] < 0
     assert "1. swell" in court["verdict"]
+    assert "skill" in court["verdict"]
     assert "ranks swell first" in r["adjudication"]
+
+
+def test_court_never_ranks_raw_brier_across_unequal_samples():
+    # The trap f163061 fixed in the letter, now closed in the court itself.
+    # swell resolves an easy quiet-heavy sample (2 events in 40) and blurs at
+    # its own base rate: raw Brier 0.0475, skill exactly 0. ml resolves a
+    # hard sample (20 events in 40) sharply: raw Brier 0.09 — WORSE raw —
+    # but skill 0.64 against its own climatology of 0.25. Raw Brier would
+    # crown the no-skill model; the court must not.
+    led = (_ledger(2, 38, "swell", 0.05, 0.05)
+           + _ledger(20, 20, "ml", 0.7, 0.3))
+    r = mc.convene(_deep_sample(), odds_ledger=led)
+    court = r["court"]
+    assert court["in_session"] is True
+    by = {e["model"]: e for e in court["scores"]}
+    assert by["swell"]["brier"] < by["ml"]["brier"]          # raw favors swell
+    assert by["swell"]["brier_skill"] == pytest.approx(0.0, abs=0.01)
+    assert by["ml"]["brier_skill"] == pytest.approx(0.64, abs=0.01)
+    assert by["ml"]["rank"] == 1                             # skill favors ml
+    assert by["swell"]["rank"] == 2
+    assert "1. ml" in court["verdict"]
+    assert "ranks ml first" in r["adjudication"]
+    # the verdict never prints a raw-Brier ranking
+    assert "lower is better" not in court["verdict"]
 
 
 def test_malformed_and_offhorizon_rows_are_ignored():
