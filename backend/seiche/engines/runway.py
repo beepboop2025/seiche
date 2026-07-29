@@ -34,6 +34,13 @@ UNIT_THRESHOLD = 50_000.0        # RRP/TGA peaks sit near 2500 in $B and million
 
 def _to_b(s: pd.Series) -> pd.Series:
     # Accept $B (native RRPONTSYD / DTS units) or $M; normalize by magnitude.
+    # BRITTLE BY DESIGN: the unit is GUESSED from the series peak against
+    # UNIT_THRESHOLD. That guess is safe only while every series fed here is
+    # either a trillion-scale level in $M or a facility balance in $B. A new
+    # series that straddles ~$50B in its native unit (or a collapsed RRP
+    # history quoted in $M) would be silently mis-scaled a thousandfold —
+    # if you wire a new input, check its unit here first. Same heuristic in
+    # ledger.py; change both or neither.
     s = s.dropna() if s is not None else pd.Series(dtype=float)
     if s.empty:
         return s
@@ -152,7 +159,12 @@ def project(
     # engine's per-bday drain when the weekly history is short.
     if len(res_b) >= DRIFT_WINDOW_WEEKS + 1:
         tail = res_b.tail(DRIFT_WINDOW_WEEKS + 1)
-        drift_w = float((tail.iloc[-1] - tail.iloc[0]) / (len(tail) - 1))
+        # Per CALENDAR week, not per observation: dropna above removes W-WED
+        # grid weeks with no print, so 14 observations can span more than 13
+        # weeks, and dividing by the observation count compressed the elapsed
+        # time and overstated the drift. The index knows the true span.
+        span_w = max(round((tail.index[-1] - tail.index[0]).days / 7.0), 1)
+        drift_w = float((tail.iloc[-1] - tail.iloc[0]) / span_w)
     elif kink.get("drain_per_bday_b") is not None:
         drift_w = float(kink["drain_per_bday_b"]) * 5.0
         caveats.append(f"reserve history short ({len(res_b)} weeks); drift taken from the kink engine's per-bday drain")

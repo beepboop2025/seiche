@@ -749,8 +749,10 @@ def test_ledger_resolves_closed_horizons_only():
     resolve when their five-day window has closed, and never before."""
     from seiche.dispatch_daily import resolve_ledger
     rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2}]
-    # a calm run: no jump anywhere near the 10bp bar
-    for i, day in enumerate(["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06",
+    # a calm run: no jump anywhere near the 10bp bar. Two spread rows sit
+    # BEFORE the odds date so every window day has its pop yardstick.
+    for i, day in enumerate(["2026-06-29", "2026-06-30",
+                             "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06",
                              "2026-07-07", "2026-07-08", "2026-07-09"]):
         rows.append({"date": day, "kind": "spread", "spread_bp": -3.0 + 0.1 * i})
     out, n = resolve_ledger(rows)
@@ -764,6 +766,31 @@ def test_ledger_resolves_closed_horizons_only():
              {"date": "2026-07-03", "kind": "spread", "spread_bp": -3.0}]
     out2, n2 = resolve_ledger(short)
     assert n2 == 0 and out2[0].get("realized") is None
+
+
+def test_ledger_early_history_never_resolves_false_without_a_yardstick():
+    """The first days of ledger history have no pop yardstick (fewer than 2
+    prior spread rows). 'No spike measured' is not 'no spike': a calm-looking
+    window with unmeasurable days stays open, while a MEASURED spike in the
+    same kind of window still resolves True."""
+    from seiche.dispatch_daily import resolve_ledger
+    days = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06",
+            "2026-07-07", "2026-07-08", "2026-07-09"]
+
+    # calm tape from the ledger's first day: 2026-07-02 (day 2) never earns a
+    # yardstick, so the day-1 odds row must not resolve False against it
+    rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2}]
+    rows += [{"date": d, "kind": "spread", "spread_bp": -3.0} for d in days]
+    out, n = resolve_ledger(rows)
+    assert n == 0 and out[0].get("realized") is None
+
+    # a real spike on a measurable day inside the same early window is not
+    # blocked by the unmeasurable one: measured spikes resolve True
+    rows = [{"date": "2026-07-01", "model": "swell", "horizon_bd": 5, "p": 0.2}]
+    rows += [{"date": d, "kind": "spread",
+              "spread_bp": -3.0 if i < 4 else 12.0} for i, d in enumerate(days)]
+    out, n = resolve_ledger(rows)
+    assert n == 1 and out[0]["realized"] is True
 
 
 def test_ledger_marks_a_real_funding_event():

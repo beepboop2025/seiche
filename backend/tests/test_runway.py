@@ -181,3 +181,24 @@ def test_runway_score_orders_urgency():
     slow = runway.project(_weekly_reserves_m(levels_slow), **kw)
     assert runway.runway_score(fast) > runway.runway_score(slow)
     assert runway.runway_score({"ok": False}) == 0.0
+
+
+def test_drift_is_per_calendar_week_not_per_observation():
+    """The W-WED grid loses weeks to dropna (H.4.1 gaps). 14 observations
+    spanning MORE than 13 calendar weeks must not be divided by the
+    observation count: that compresses elapsed time and overstates drift."""
+    # 15 weekly levels draining exactly 40 $B per calendar week, with two
+    # mid-series Wednesdays missing: 13 observations over 14 calendar weeks.
+    idx = pd.date_range("2025-01-01", periods=15, freq="W-WED")
+    levels_b = [3400.0 + 40.0 * (14 - i) for i in range(15)]  # ends at 3400
+    s = pd.Series(np.asarray(levels_b) * 1000.0, index=idx).drop(idx[3]).drop(idx[7])
+    assert len(s) == 13  # too short for the 14-observation window
+    # pad the front so the tail(14) spans the gap: prepend 3 more weeks
+    front = pd.date_range(end=idx[0] - pd.Timedelta(weeks=1), periods=3, freq="W-WED")
+    pad = pd.Series([(3400.0 + 40.0 * (14 + 3 - i)) * 1000.0 for i in range(3)], index=front)
+    s = pd.concat([pad, s]).sort_index()
+    r = runway.project(s, _daily(300, 0.0), _daily(300, 800.0), _kink(2500.0), [], 0.0)
+    assert r["ok"]
+    # true drift is -40/week by construction; per-observation division over
+    # the gapped tail would print about -43
+    assert r["assumptions"]["trailing_drift_b_per_week"] == pytest.approx(-40.0, abs=0.5)

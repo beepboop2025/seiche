@@ -1364,6 +1364,15 @@ def _spread_row(snap: dict, date: str) -> dict | None:
     series, not just the forecasts. Recording the spread daily makes the file
     self-contained: the same public number the odds are about, on the same
     line-per-day basis, with no second source to go stale.
+
+    Stamping convention, disclosed: the letter runs at 10:45 UTC, before that
+    day's SOFR publication, so the row stamped date D carries the PRIOR
+    business day's print. Both sides of the grade share the offset — the
+    odds stamped D and the spreads that resolve them are written by the same
+    run — so a 5bd window is still five published prints, shifted one
+    business day later in calendar terms. Restamping now would fork the
+    meaning of every row already in the file, so the convention stays and is
+    stated here and in resolve_ledger instead.
     """
     hl = snap.get("headline") or {}
     try:
@@ -1382,6 +1391,18 @@ def resolve_ledger(rows: list[dict], horizon_bd: int = 5, spike_bp: float = 10.0
     median inside the horizon. Only null-to-bool transitions are written; a
     row's `p` is never touched, because editing a published forecast would
     forge the record the ledger exists to keep.
+
+    Dating: spread rows follow the stamping convention stated on _spread_row
+    (a row stamped D carries the prior business day's print, because the
+    letter runs before that day's SOFR publication). Odds and spreads share
+    the offset, so the horizon window is five published prints either way;
+    read the calendar dates as one business day later than the label.
+
+    A window date with no pop yardstick (fewer than 2 prior spread rows, the
+    first days of ledger history) is not evidence of quiet: rows whose window
+    contains such a date stay open unless some measurable date in the window
+    already shows a spike, because resolving False against a yardstick that
+    never existed would score a real early spike as a non-event.
     """
     spreads = {}
     for r in rows:
@@ -1406,7 +1427,12 @@ def resolve_ledger(rows: list[dict], horizon_bd: int = 5, spike_bp: float = 10.0
         window = [x for x in dates if x > d0][:horizon_bd]
         if len(window) < horizon_bd:
             continue        # horizon still open; leave it null and say so
-        r["realized"] = any(pops.get(x, 0.0) >= spike_bp for x in window)
+        if any(pops.get(x, 0.0) >= spike_bp for x in window):
+            r["realized"] = True        # a measured spike is a spike
+        elif all(x in pops for x in window):
+            r["realized"] = False       # every window day measured, none popped
+        else:
+            continue        # unmeasurable day in the window: stays open, not False
         resolved += 1
     return rows, resolved
 

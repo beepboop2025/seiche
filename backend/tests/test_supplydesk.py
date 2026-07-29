@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -313,3 +314,50 @@ def test_reopenings_rejoin_their_original_tenor():
     assert keys[:3] == ["Note 10-Year"] * 3
     assert keys[3:5] == ["Bond 30-Year"] * 2
     assert keys[5] == "Bill 4-Week"        # bills keep their stated term
+
+
+# ---------------------------------------------------------------------------
+# business-day rolling and the projection collision window
+# ---------------------------------------------------------------------------
+
+def test_roll_to_bday_covers_weekends_and_federal_holidays():
+    # Saturday rolls to Monday (the pre-existing behavior)
+    assert supplydesk._roll_to_bday(pd.Timestamp("2026-08-15")) == pd.Timestamp("2026-08-17")
+    # Labor Day (Monday 2026-09-07) rolls to Tuesday: weekends-only rolling
+    # used to book this cash a day early, on a date no cash moves
+    assert supplydesk._roll_to_bday(pd.Timestamp("2026-09-07")) == pd.Timestamp("2026-09-08")
+    # Independence Day 2026 falls on a Saturday, observed Friday 07-03: the
+    # roll walks through the observed holiday AND the weekend to Monday
+    assert supplydesk._roll_to_bday(pd.Timestamp("2026-07-03")) == pd.Timestamp("2026-07-06")
+
+
+def test_monday_holiday_maturity_books_next_business_day():
+    today = pd.Timestamp("2026-08-25")  # the Tuesday before Labor Day week
+    au = pd.DataFrame([
+        _auction_row("Bill", "4-Week", "2026-08-11", "2026-09-07", 95e9),  # matures Labor Day
+        _auction_row("Bill", "4-Week", "2026-08-18", "2026-09-15", 95e9),
+    ])
+    up = pd.DataFrame([
+        {"record_date": "2026-08-21", "security_type": "Bill", "security_term": "4-Week",
+         "auction_date": "2026-08-27", "issue_date": "2026-09-01",
+         "offering_amt": "95000000000"},
+    ])
+    res = supplydesk.forward_table(up, au, today=today)
+    assert res["ok"]
+    dates = {r["date"] for r in res["rows"]}
+    assert "2026-09-07" not in dates          # no cash moves on Labor Day
+    r = next(r for r in res["rows"] if r["date"] == "2026-09-08")
+    assert r["bills_maturing_b"] == pytest.approx(95.0)
+
+
+def test_projection_never_lands_beside_an_announced_settlement():
+    """The collision guard is a one-business-day window, not an exact date:
+    a cadence-rounded projection a day off an announced settlement is the
+    same issue re-guessed, and printing both would double-book the tenor."""
+    res = _run()
+    announced = [pd.Timestamp(r["date"]) for r in res["rows"]
+                 if not r["projected"] and r["gross_b"] > 0]
+    projected = [pd.Timestamp(r["date"]) for r in res["rows"] if r["projected"]]
+    for p in projected:
+        for a in announced:
+            assert abs(int(np.busday_count(a.date(), p.date()))) > 1, (a, p)

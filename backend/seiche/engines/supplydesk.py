@@ -80,8 +80,27 @@ def _tenor_key(security_type: pd.Series, security_term: pd.Series) -> pd.Series:
                      index=security_type.index)
 
 
+_US_HOLIDAYS: frozenset | None = None
+
+
+def _us_holidays() -> frozenset:
+    """US federal holidays, computed once per process. The window is generous
+    on both sides: only forward-dated settlement/maturity cash is rolled, but
+    tests replay historic dates."""
+    global _US_HOLIDAYS
+    if _US_HOLIDAYS is None:
+        from pandas.tseries.holiday import USFederalHolidayCalendar
+        _US_HOLIDAYS = frozenset(
+            USFederalHolidayCalendar().holidays(start="2000-01-01", end="2060-12-31"))
+    return _US_HOLIDAYS
+
+
 def _roll_to_bday(d: pd.Timestamp) -> pd.Timestamp:
-    while d.dayofweek >= 5:
+    # Weekend OR federal-holiday cash pays the next business day. Rolling
+    # weekends only booked a Monday-holiday maturity (Labor Day, a Monday
+    # Juneteenth) a day early, on a date no cash moves.
+    hol = _us_holidays()
+    while d.dayofweek >= 5 or d.normalize() in hol:
         d = d + pd.Timedelta(days=1)
     return d
 
@@ -219,7 +238,13 @@ def forward_table(
             if d < today:
                 continue
             d_settle = _roll_to_bday(d)
-            if d_settle in announced_dates.get(term, []):
+            # Within one BUSINESS day of an announced settlement counts as
+            # the same issue: a cadence-rounded projection lands a day off
+            # the real date often enough (holiday rolls, drifting cadence)
+            # that exact-date matching double-booked the tenor — the
+            # projection printed beside the announcement it re-guessed.
+            if any(abs(int(np.busday_count(a.date(), d_settle.date()))) <= 1
+                   for a in announced_dates.get(term, [])):
                 continue  # already booked from the announcement
             issuance.append(
                 {

@@ -111,7 +111,13 @@ def _to_b(s: pd.Series) -> pd.Series:
     """Accept $M (the H.4.1 native unit) or $B (RRPONTSYD native); return $B.
     Every series this ledger reads is either a trillion-scale level in $M or a
     facility balance in $B, so magnitude separates them cleanly. A $M series
-    that never clears $50B would be misread, and none of the six do."""
+    that never clears $50B would be misread, and none of the six do.
+
+    BRITTLE BY DESIGN: this is a guess from the series peak, not a unit read
+    from provenance. It holds only while the inputs keep that clean bimodal
+    shape — a new series straddling ~$50B in its native unit would be
+    silently mis-scaled a thousandfold. If you wire a new input, check its
+    unit here first. Same heuristic in runway.py; change both or neither."""
     s = s.dropna() if s is not None else pd.Series(dtype=float)
     if s.empty:
         return s
