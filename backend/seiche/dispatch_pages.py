@@ -17,8 +17,8 @@ committed):  PYTHONPATH=backend python -m seiche.dispatch_pages
 
 Stdlib only, deterministic, fail-loud: a slug listed in index.json whose
 markdown file is missing is an error, not a skipped page. The desk's forward
-read (the .paid.md continuation, free like everything else) is rendered into
-the page so the full letter is crawlable.
+read (the .desk.md continuation — .paid.md on pre-rename history — free like
+everything else) is rendered into the page so the full letter is crawlable.
 """
 
 from __future__ import annotations
@@ -30,7 +30,15 @@ import sys
 from pathlib import Path
 
 SITE = "https://seiche.info"
-MARKER = "<!--HAS-PAID-->"
+# Old letters carry HAS-PAID (pre open-access naming, gated nothing), new
+# ones HAS-DESK; this renderer reads the whole archive so it accepts both.
+MARKERS = ("<!--HAS-DESK-->", "<!--HAS-PAID-->")
+
+
+def _strip_markers(md: str) -> str:
+    for m in MARKERS:
+        md = md.replace(m, "")
+    return md
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -282,7 +290,7 @@ def render_letter_page(meta: dict, free_md: str, desk_md: str | None) -> str:
     date = meta["date"]
     tag = meta.get("tag", "")
     path = f"/dispatches/{slug}.html"
-    body_md = free_md.replace(MARKER, "").strip()
+    body_md = _strip_markers(free_md).strip()
     body_html = md_to_html(body_md)
     if desk_md:
         body_html += "\n" + md_to_html(desk_md.strip())
@@ -515,13 +523,16 @@ def build_all(repo_root: Path | None = None) -> list[str]:
             raise SystemExit(f"index lists {slug} but {md_path} is missing")
         free_md = md_path.read_text()
         desk_md = None
-        paid_path = paid_dir / f"{slug}.paid.md"
-        if MARKER in free_md and paid_path.exists():
-            desk_md = paid_path.read_text()
+        # new letters write {slug}.desk.md; the box's history is {slug}.paid.md
+        desk_path = paid_dir / f"{slug}.desk.md"
+        if not desk_path.exists():
+            desk_path = paid_dir / f"{slug}.paid.md"
+        if any(m in free_md for m in MARKERS) and desk_path.exists():
+            desk_md = desk_path.read_text()
         out = free_dir / f"{slug}.html"
         out.write_text(render_letter_page(e, free_md, desk_md))
         written.append(str(out))
-        clean = free_md.replace(MARKER, "").strip()
+        clean = _strip_markers(free_md).strip()
         bodies[slug] = md_to_html(clean) + ("\n" + md_to_html(desk_md.strip()) if desk_md else "")
         texts[slug] = clean + (("\n\n" + desk_md.strip()) if desk_md else "")
 

@@ -508,8 +508,8 @@ def test_write_creates_files_and_prepends_index(week_snap, tmp_path):
 
     free = (tmp_path / "frontend" / "public" / "dispatches" / f"{d['slug']}.md").read_text()
     assert MARKER in free
-    paid = (tmp_path / "backend" / "seiche" / "dispatches" / f"{d['slug']}.paid.md").read_text()
-    assert "continuation" in paid
+    desk = (tmp_path / "backend" / "seiche" / "dispatches" / f"{d['slug']}.desk.md").read_text()
+    assert "continuation" in desk
 
     idx = json.loads((tmp_path / "frontend" / "public" / "dispatches" / "index.json").read_text())
     assert [e["slug"] for e in idx] == [d["slug"], "2026-07-10-daily"]

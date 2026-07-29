@@ -4,7 +4,10 @@ import { API_BASE } from "../apiBase";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
 
-const HAS_PAID = "<!--HAS-PAID-->";
+// New letters mark their continuation HAS-DESK; the published archive still
+// carries HAS-PAID from before the open-access rename (it gated nothing —
+// everything on Seiche is free). Accept both.
+const DESK_MARKERS = ["<!--HAS-DESK-->", "<!--HAS-PAID-->"];
 
 function slugFromHash(): string | null {
   const h = decodeURIComponent(window.location.hash.replace("#", ""));
@@ -47,8 +50,8 @@ export default function Dispatches() {
         <a className="dispatch-back" href="#dispatches">← all dispatches</a>
       </div>
     );
-    const hasPaid = body.includes(HAS_PAID);
-    const free = body.replace(HAS_PAID, "").trim();
+    const hasDesk = DESK_MARKERS.some((m) => body.includes(m));
+    const free = DESK_MARKERS.reduce((md, m) => md.replace(m, ""), body).trim();
     return (
       <div className="dispatch" style={{ marginTop: 18 }}>
         <a className="dispatch-back" href="#dispatches">← all dispatches</a>
@@ -59,10 +62,10 @@ export default function Dispatches() {
           </div>
         )}
         <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
-        {hasPaid && deskRead && (
+        {hasDesk && deskRead && (
           <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(deskRead) }} />
         )}
-        {hasPaid && !deskRead && (
+        {hasDesk && !deskRead && (
           <div className="dimsmall" style={{ marginTop: 12 }}>loading the desk's forward read…</div>
         )}
       </div>

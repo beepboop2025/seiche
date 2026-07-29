@@ -25,8 +25,11 @@ Section order is invariant and numbered:
   4 reserves
 
 Outputs (relative to the repo root):
-  frontend/public/dispatches/{slug}.md              the issue (+ HAS-PAID marker)
-  backend/seiche/dispatches/{slug}.paid.md          the continuation (also free)
+  frontend/public/dispatches/{slug}.md              the issue (+ HAS-DESK marker)
+  backend/seiche/dispatches/{slug}.desk.md          the continuation (free, like
+                                                    everything else; pre-rename
+                                                    history is *.paid.md and
+                                                    readers accept both)
   frontend/public/dispatches/index.json             prepended, deduped, newest first
   backend/seiche/dispatches/weekly_state.json       the call ledger: this issue's
                                                     calls, the set the issue graded,
@@ -1108,9 +1111,9 @@ def write_weekly(d: dict, repo_root: Path | None = None) -> list[str]:
     written = [str(free_path)]
 
     if d["desk_md"]:
-        paid_path = paid_dir / f"{d['slug']}.paid.md"
-        paid_path.write_text(d["desk_md"] + "\n")
-        written.append(str(paid_path))
+        desk_path = paid_dir / f"{d['slug']}.desk.md"
+        desk_path.write_text(d["desk_md"] + "\n")
+        written.append(str(desk_path))
 
     if d.get("state"):
         state_path = paid_dir / "weekly_state.json"

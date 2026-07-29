@@ -45,8 +45,29 @@ def test_letter_page_carries_canonical_jsonld_and_both_halves(repo):
     # the free reading and the desk's forward read are both in the static page
     assert "EROSION" in page
     assert "forward read" in page
-    # the HAS-PAID marker never leaks into the rendered page
-    assert "HAS-PAID" not in page
+    # neither marker generation ever leaks into the rendered page
+    assert "HAS-PAID" not in page and "HAS-DESK" not in page
+
+
+def test_pre_rename_history_renders_both_halves(repo):
+    """The box's published archive predates the desk rename: letters carrying
+    the HAS-PAID marker with a .paid.md continuation must keep rendering whole.
+    History is never rewritten to fit a rename; readers accept both names."""
+    root, d = repo
+    free_dir = root / "frontend" / "public" / "dispatches"
+    desk_dir = root / "backend" / "seiche" / "dispatches"
+    index = json.loads((free_dir / "index.json").read_text())
+    index.append({"slug": "2026-07-01-daily", "title": "legacy letter",
+                  "date": "2026-07-01", "tag": "EROSION", "summary": "old naming"})
+    (free_dir / "index.json").write_text(json.dumps(index))
+    (free_dir / "2026-07-01-daily.md").write_text(
+        "## The reading\n\nlegacy free half\n\n<!--HAS-PAID-->\n")
+    (desk_dir / "2026-07-01-daily.paid.md").write_text("## Desk\n\nlegacy desk half\n")
+    build_all(repo_root=root)
+    page = (free_dir / "2026-07-01-daily.html").read_text()
+    assert "legacy free half" in page
+    assert "legacy desk half" in page
+    assert "HAS-PAID" not in page and "HAS-DESK" not in page
 
 
 def test_archive_lists_every_letter(repo):
@@ -96,7 +117,7 @@ def test_llms_full_carries_complete_letters(repo):
     assert d["title"] in full
     assert "EROSION" in full
     assert "forward read" in full          # the desk continuation is in the corpus
-    assert "HAS-PAID" not in full          # the marker never leaks
+    assert "HAS-PAID" not in full and "HAS-DESK" not in full   # markers never leak
 
 
 def test_feed_is_valid_atom_with_full_content(repo):

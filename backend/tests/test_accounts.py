@@ -70,12 +70,17 @@ def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
     from seiche.api import app
     # point the dispatch dir at a temp file
     monkeypatch.setattr(api_mod, "DISPATCH_DIR", tmp_path)
-    (tmp_path / "test-slug.paid.md").write_text("## the desk read\nfull forward take")
+    (tmp_path / "test-slug.desk.md").write_text("## the desk read\nfull forward take")
     client = TestClient(app)
 
     # no token -> full body, open to everyone
     r = client.get("/api/dispatch/test-slug")
     assert r.status_code == 200 and "full forward take" in r.json()["paid"]
+
+    # pre-rename history on the box still serves under the legacy filename
+    (tmp_path / "old-slug.paid.md").write_text("## the desk read\nlegacy continuation")
+    r = client.get("/api/dispatch/old-slug")
+    assert r.status_code == 200 and "legacy continuation" in r.json()["paid"]
 
     # bad slugs still rejected, missing continuations still 404
     assert client.get("/api/dispatch/NOT%20a%20slug").status_code in (404, 422)

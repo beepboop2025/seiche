@@ -17,9 +17,11 @@ blocking lint (no em or en dashes, no miscased SRF, no malformed ordinals,
 no paywall language, no format leaks).
 
 Outputs (relative to the repo root):
-  frontend/public/dispatches/{slug}.md        the free reading (+ HAS-PAID marker)
-  backend/seiche/dispatches/{slug}.paid.md    the desk's forward read (also free;
-                                              filename is the historical contract)
+  frontend/public/dispatches/{slug}.md        the free reading (+ HAS-DESK marker)
+  backend/seiche/dispatches/{slug}.desk.md    the desk's forward read (free, like
+                                              everything else; pre-rename history
+                                              is *.paid.md with a HAS-PAID marker
+                                              and every reader accepts both)
   frontend/public/dispatches/index.json       prepended, deduped, newest first
   backend/seiche/dispatches/state.json        the letter's memory: which prints it
                                               has already reported (a slow series
@@ -49,7 +51,13 @@ from pathlib import Path
 
 DEFAULT_API = "https://api.seiche.info"
 HISTORY_URL = "https://seiche.info/data/book_history.json"
-MARKER = "<!--HAS-PAID-->"
+# The continuation marker. Everything on Seiche is free: ".paid.md" and
+# "HAS-PAID" were pre-open-access names that gated nothing but invited
+# misreading of a free public good, so new letters ship *.desk.md with a
+# HAS-DESK marker. History on the box and in the archive still carries the
+# legacy names, so every READER accepts both; only the writers moved.
+MARKER = "<!--HAS-DESK-->"
+LEGACY_MARKER = "<!--HAS-PAID-->"
 
 # repo root = backend/seiche/dispatch_daily.py -> three parents up
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1573,9 +1581,9 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
 
     written = [str(free_path)]
     if d["desk_md"]:
-        paid_path = paid_dir / f"{d['slug']}.paid.md"
-        paid_path.write_text(d["desk_md"] + "\n")
-        written.append(str(paid_path))
+        desk_path = paid_dir / f"{d['slug']}.desk.md"
+        desk_path.write_text(d["desk_md"] + "\n")
+        written.append(str(desk_path))
 
     if d.get("state"):
         state_path = paid_dir / "state.json"

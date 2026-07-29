@@ -73,7 +73,7 @@ fi
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
 export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
-# Six files, collects 174 tests as of this commit. If a commit grows or
+# Six files, collects 175 tests as of this commit. If a commit grows or
 # shrinks this subset, update this count in the same commit — the number is
 # how a reader of the deploy log knows the gate ran what it claims to run.
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \

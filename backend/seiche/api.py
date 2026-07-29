@@ -333,11 +333,15 @@ DISPATCH_DIR = Path(__file__).parent / "dispatches"
 @app.get("/api/dispatch/{slug}")
 async def dispatch_full(slug: str):
     """The desk's-read continuation of a dispatch. Free, like the rest of the
-    terminal — Seiche is a public good. The `.paid.md` filename and the `paid`
-    response key are historical (pre open-access) and kept for compatibility."""
+    terminal — Seiche is a public good. New letters ship `.desk.md`; history
+    on the box still carries the pre-open-access `.paid.md` name, so both are
+    served. The `paid` response key is historical and kept because deployed
+    frontends read it."""
     if not re.match(r"^[a-z0-9][a-z0-9-]{0,80}$", slug):
         raise HTTPException(422, "bad slug")
-    path = DISPATCH_DIR / f"{slug}.paid.md"
+    path = DISPATCH_DIR / f"{slug}.desk.md"
+    if not path.exists():
+        path = DISPATCH_DIR / f"{slug}.paid.md"
     if not path.exists():
         raise HTTPException(404, "no continuation for this dispatch")
     return {"slug": slug, "paid": path.read_text()}
