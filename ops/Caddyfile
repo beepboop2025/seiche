@@ -92,9 +92,18 @@ api.seiche.info {
 
     encode zstd gzip
 
+    # The edge is an allow-list: anything not named here gets "not here" from
+    # the handle block at the bottom, never the backend. A route added in
+    # api.py is invisible from outside until it is added here too, which is
+    # how the citability endpoints shipped, deployed green, and still 404'd.
+    #
+    # /api/series/* covers both the CSV export and its catalog. The CSV route
+    # enforces its own licence allow-list in methodology.csv_restriction, so
+    # opening the path here does not open the licensed series; the JSON twin
+    # behind the same prefix keeps its own require_board dependency.
     @public {
         method GET HEAD
-        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/*
+        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/*
     }
     @login {
         method POST
