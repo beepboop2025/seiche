@@ -59,7 +59,11 @@ Odds ledger contract (dispatch CI appends one row per model per day):
 The same file also carries the dispatch's daily outcome row,
     {"date": "YYYY-MM-DD", "kind": "spread", "spread_bp": 3.1}
 which names no model and no horizon and exists so the ledger can resolve its
-own rows without a second source. The Court reads odds rows only: anything
+own rows without a second source. Dating disclosure: the letter runs before
+that day's SOFR publication, so a spread row stamped D carries the PRIOR
+business day's print; odds and spreads share the offset (same run stamps
+both), so windows still span five published prints, shifted one business
+day in calendar terms (see dispatch_daily._spread_row). The Court reads odds rows only: anything
 carrying a `kind` other than "odds" is skipped before it can be mistaken for
 a member. The backfill must never edit p, only flip realized from null. With
 >= 30 resolved rows per model the Court issues a ranked verdict on live
