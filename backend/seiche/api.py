@@ -456,6 +456,17 @@ async def series(mnemonic: str, n: int = 750,
                  _ident: dict | None = Depends(require_board)):
     if mnemonic not in ALL_SERIES:
         raise HTTPException(404, f"unknown series '{mnemonic}'")
+    # Same licence allow-list as the CSV twin. This route used to lean on
+    # require_board, which is a deliberate no-op in production (Seiche is
+    # free, SEICHE_BOARD_AUTH=0), so the full held history of licensed
+    # series went out as JSON while the CSV export refused it — the format
+    # changed, the act of redistribution did not. The board's own charts
+    # never read this route (they draw from /api/overview), so there is no
+    # display window to preserve: licensed series refuse outright, with the
+    # owner named, and free public-data series stay fully open.
+    restricted = methodology.csv_restriction(mnemonic)
+    if restricted:
+        raise HTTPException(403, restricted)
     await assemble.snapshot()  # ensure fetched
     s = store.load_series(mnemonic)
     if s is None:

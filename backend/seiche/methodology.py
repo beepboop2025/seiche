@@ -169,6 +169,11 @@ def series_index() -> dict:
     rows = []
     for m, spec in sorted(ALL_SERIES.items()):
         cadence, lag = FREQ_DESC.get(spec.freq, (spec.freq, "cadence unlisted"))
+        # One licence answer for both formats: the CSV export and the JSON
+        # twin enforce csv_restriction, so the catalog must not advertise a
+        # link either route will 403. This also covers source-restricted
+        # upstreams (BIS, CFETS, exchanges), which the old CSV field missed.
+        restricted = csv_restriction(m) is not None
         rows.append({
             "mnemonic": m,
             "label": spec.label,
@@ -177,9 +182,9 @@ def series_index() -> dict:
             "unit": spec.unit,
             "cadence": cadence,
             "native_lag": lag,
-            "csv": None if m in CSV_RESTRICTED else f"/api/series/{m}.csv",
-            "csv_restricted": m in CSV_RESTRICTED or None,
-            "json": f"/api/series/{m}",
+            "csv": None if restricted else f"/api/series/{m}.csv",
+            "csv_restricted": restricted or None,
+            "json": None if restricted else f"/api/series/{m}",
             "available": m in have,
         })
     return {

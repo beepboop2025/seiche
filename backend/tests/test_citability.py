@@ -83,6 +83,30 @@ def test_series_csv_refuses_licensed_series(client, monkeypatch):
     assert "licensed" in r.json()["detail"]
 
 
+def test_series_json_refuses_licensed_series(client, monkeypatch):
+    # The JSON twin is the same act of redistribution as the CSV: with board
+    # auth a production no-op (Seiche is free), the route itself must enforce
+    # the licence allow-list, or the full held history of licensed series
+    # ships anonymously in a different format.
+    monkeypatch.setattr(store, "load_series",
+                        lambda m: pytest.fail("must refuse before loading"))
+    for mnemonic in ("SP500", "VIX", "BTC_USD", "SHIBOR_ON"):
+        r = client.get(f"/api/series/{mnemonic}")
+        assert r.status_code == 403, mnemonic
+        assert "redistribution" in r.json()["detail"], mnemonic
+
+
+def test_series_json_free_series_stays_open(client, monkeypatch):
+    # citability is the point: free public-data series keep full history
+    monkeypatch.setattr(store, "load_series",
+                        lambda m: _sofr_series() if m == "SOFR" else None)
+    r = client.get("/api/series/SOFR")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["provenance"]["mnemonic"] == "SOFR"
+    assert len(body["points"]) == 10
+
+
 # ---- series catalog ---------------------------------------------------------
 
 def test_series_index_catalogs_every_registry_series(client):
@@ -100,6 +124,15 @@ def test_series_index_catalogs_every_registry_series(client):
     assert sofr["cadence"] == "daily" and sofr["native_lag"]
     spx = rows["SP500"]
     assert spx["csv"] is None and spx["csv_restricted"] is True
+    # the catalog advertises no link either export route would 403: the JSON
+    # twin is restricted alongside the CSV, and source-restricted upstreams
+    # (BIS, CFETS, exchanges) are marked too, not just the FRED-hosted four
+    assert spx["json"] is None
+    assert rows["SOFR"]["json"] == "/api/series/SOFR"
+    for licensed in ("BTC_USD", "SHIBOR_ON", "CREDIT_GAP_US"):
+        row = rows[licensed]
+        assert row["csv"] is None and row["json"] is None, licensed
+        assert row["csv_restricted"] is True, licensed
 
 
 def test_csv_route_not_shadowed_by_generic_series_route(client, monkeypatch):
