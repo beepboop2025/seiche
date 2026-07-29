@@ -89,9 +89,13 @@ health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
 
 systemctl restart seiche-api
 sleep 3
+# NOTE: health checks run inside `if` conditions on purpose — under set -e a
+# bare failing check would abort the script here and skip the rollback below.
 HEALTHY=""
 if systemctl is-active --quiet seiche-api; then
-  health_wait 900 && HEALTHY=1
+  if health_wait 900; then
+    HEALTHY=1
+  fi
 else
   echo "FAIL: seiche-api not active after restart"
 fi
