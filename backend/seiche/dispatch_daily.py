@@ -1696,6 +1696,12 @@ def _issue_number(index_path: Path, slug: str) -> int | None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Write today's dispatch from the live board.")
     ap.add_argument("--api", default=DEFAULT_API)
+    ap.add_argument("--snapshot", default=None,
+                    help="read the board from a JSON file instead of the API. The letter is a "
+                         "pure function of a board snapshot, so CI can build one itself rather "
+                         "than depending on the box being both up and current: a stale box "
+                         "would publish a letter whose live sections all print their dark-engine "
+                         "placeholder, which is honest and useless.")
     ap.add_argument("--history-url", default=HISTORY_URL)
     ap.add_argument("--date", default=None, help="override the dispatch date (YYYY-MM-DD)")
     ap.add_argument("--force", action="store_true", help="rewrite even if today's dispatch exists")
@@ -1709,7 +1715,11 @@ def main(argv: list[str] | None = None) -> int:
     date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     slug = f"{date}-daily"
 
-    snap = _get_json(f"{args.api}/api/overview")
+    if args.snapshot:
+        snap = json.loads(Path(args.snapshot).read_text())
+        print(f"board read from {args.snapshot} (generated {snap.get('generated_at')})")
+    else:
+        snap = _get_json(f"{args.api}/api/overview")
     prev = _prev_published_value(args.history_url)
     d = build_dispatch(snap, prev_value=prev, date=date, state=load_state(),
                        issue_no=_issue_number(INDEX, slug))

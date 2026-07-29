@@ -46,16 +46,26 @@ jobs:
         with:
           python-version: "3.12"
 
-      # stdlib-only generator: no install, PYTHONPATH is enough
-      - name: Write today's dispatch from the live board
+      # The letter used to read api.seiche.info, which made it depend on the
+      # box being both up AND current. On 2026-07-28 the box spent a day
+      # stranded on old code while reporting deploys green, and a letter built
+      # from it would have printed the dark-engine placeholder in every new
+      # section: honest, and useless. The board is a pure function of public
+      # data, so this job builds its own, exactly as publish.yml already does.
+      # The box serves the interactive API; it no longer gates the writing.
+      - name: Install backend
+        run: pip install -e "./backend[dev]"
+
+      - name: Build the board
+        run: python backend/scripts/export_public.py /tmp/pub.json /tmp/overview.json
+
+      - name: Write today's dispatch
         env:
           FORCE: ${{ inputs.force }}
         run: |
-          if [ "$FORCE" = "true" ]; then
-            PYTHONPATH=backend python -m seiche.dispatch_daily --force
-          else
-            PYTHONPATH=backend python -m seiche.dispatch_daily
-          fi
+          ARGS="--snapshot /tmp/overview.json"
+          if [ "$FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          PYTHONPATH=backend python -m seiche.dispatch_daily $ARGS
 
       - name: Commit and push
         run: |
@@ -97,4 +107,6 @@ jobs:
         env:
           SEICHE_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SEICHE_TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: PYTHONPATH=backend python -m seiche.dispatch_daily --announce-only
+        # Same board the letter was written from, not a fresh read: the digest
+        # must match the letter it links to.
+        run: PYTHONPATH=backend python -m seiche.dispatch_daily --announce-only --snapshot /tmp/overview.json
