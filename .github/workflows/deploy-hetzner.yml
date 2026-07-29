@@ -35,25 +35,23 @@ jobs:
     # it restarted the service. The wrapper then short-circuits on a matching
     # SHA ("already at X, nothing to deploy"), so the box sat on new code
     # running an old process, and only a fresh commit could dislodge it.
-    # 25 killed a deploy after the pull and before the restart; 55 and then 120
-    # were both burned through mid-gate on 2026-07-28. The cause is measured,
-    # not guessed, and it is NOT the profiler: memray costs about 4% locally,
-    # inside noise. It is CPU contention. The box runs the API (whose board
-    # rebuild is itself heavy), the Undertow relay and the desk bots on four
-    # SHARED vCPUs, and the deploy gate re-runs all 731 tests on top of that.
+    # 30 is deliberate. Four deploys died on 2026-07-28 at 25, 55, 120 and 330
+    # minutes and I raised this number three times chasing them. The number was
+    # never the problem: the box's gate could not EXIT. It passed
+    # --pystack-threshold=300, pytest-pystack could not find the `pystack`
+    # binary (in the venv, not on PATH), its monitor process died, and pytest
+    # hung forever joining a thread blocked on the dead monitor's pipe, AFTER
+    # reporting 731 passed in 11m31s. See ops/deploy/box-update.sh.
     #
-    # ops/deploy/box-update.sh now gates the restart on a smoke subset instead
-    # (171 tests, 1.5s locally), because publish.yml already runs the full
-    # suite on a clean runner for the same commit; re-running it here bought no
-    # signal about the code, only a slower restart decision. That fix cannot
-    # take effect until the box's own copy of the script is synced, which
-    # ops/deploy/update.sh now does on the next manual root deploy.
+    # With the smoke gate a deploy is about two minutes. Thirty is generous
+    # enough for a slow pull or a cold pip install and short enough that a
+    # deploy which wedges again FAILS instead of quietly eating the afternoon.
     #
-    # This ceiling exists to carry the OLD gate until that sync happens. Once
-    # the box is running the smoke gate a deploy takes about two minutes, and
-    # this should come back down to something that fails loudly instead of
-    # waiting half a day.
-    timeout-minutes: 330
+    # If this fires, do not raise it. Read /tmp/seiche-update.log on the box,
+    # and check for orphaned pytest processes: a killed deploy leaves its test
+    # run alive on the box forever, and seven of them had accumulated by the
+    # end of that day, consuming 14 of the 16 cores.
+    timeout-minutes: 30
     steps:
       - name: Deploy over SSH (forced-command wrapper on the box)
         env:

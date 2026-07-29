@@ -27,23 +27,33 @@ if ! backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1; then
   rollback "pip install failed"
 fi
 
-# SMOKE GATE, not the full suite. Measured 2026-07-28: the full suite is 731
-# tests and takes ~8 minutes on a laptop, but over TWO HOURS here, and three
-# deploys were killed by their job timeout mid-run. The cause is not the
-# profiler (memray measured at ~4% overhead, inside noise); it is CPU
-# contention. This box also serves the API, whose board rebuild is itself
-# heavy, plus the Undertow relay and the desk bots, on four SHARED vCPUs.
+# SMOKE GATE, not the full suite.
 #
-# Depth is not lost. publish.yml runs the same full suite, with memray and
-# pystack, on a clean GitHub runner for this same commit. Re-running it here
-# buys no additional signal about the code; it only decides whether to restart
-# a service. What that decision actually needs is: does this tree import, does
-# the API construct, do the letter and the public surfaces still render. That
-# is what runs below, in about a minute, and the wrapper's health check plus
-# this script's rollback still catch anything that gets past it.
+# ROOT CAUSE, found 2026-07-29 after four deploys died at 25, 55, 120 and 330
+# minutes. The suite was never slow: it passes here in 11m31s. It could not
+# EXIT. The old gate passed --pystack-threshold=300, and pytest-pystack spawns
+# the `pystack` binary by name. That binary lives in backend/.venv/bin, which
+# is NOT on PATH here, because this script calls the venv's python directly
+# instead of activating the venv. So the plugin's monitor process died with
+# FileNotFoundError, its multiprocessing queue lost its reader, and the feeder
+# thread blocked forever writing into a dead pipe. At interpreter shutdown
+# pytest joined that thread and hung, permanently, AFTER reporting 731 passed.
+# No timeout could ever have been long enough.
+#
+# Two guards, either of which is sufficient: this gate no longer passes the
+# flag, and PATH below now carries the venv so a future re-add cannot resurrect
+# it. CI does not hit this because pip install there puts pystack on PATH.
+#
+# Depth is not lost by running less here. publish.yml runs the same full suite
+# on a clean runner for this same commit; re-running it on the box bought no
+# signal about the code, it only decided whether to restart a service. What
+# that decision needs is: does this tree import, does the API construct, do the
+# letter and the public surfaces still render. That is what runs below, and
+# the wrapper's health check plus this script's rollback catch the rest.
 #
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
+export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \
 tests/test_citability.py tests/test_mcp_server.py tests/test_notary.py \
 tests/test_attest.py"
