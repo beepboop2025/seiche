@@ -202,6 +202,46 @@ def render_referee_html(snap: dict) -> str:
         f"<tr><td>{h} months ahead</td><td>{e(_fc(rob.get(f'fwd_{h}m')))}</td></tr>"
         for h in (3, 6, 12)
     )
+
+    nl = blk.get("robustness_net_liquidity") or {}
+    if nl.get("ok"):
+        nl_fwd = nl.get("forward_return_corr") or {}
+        nl_rows = "\n".join(
+            f"<tr><td>{h} months ahead</td><td>{e(_fc(nl_fwd.get(f'fwd_{h}m')))}</td></tr>"
+            for h in (3, 6, 12)
+        )
+        nl_rows += (f"\n<tr><td>6 months ahead, 2015 onward</td>"
+                    f"<td>{e(_fc(nl.get('fwd6_since_2015')))}</td></tr>")
+        nlw = nl.get("walkforward_oos")
+        if nlw:
+            nl_wf = (
+                f"<p>Its walk forward evaluation ({e(nlw['eval_window'][0])} to "
+                f"{e(nlw['eval_window'][1])}) lands on exactly the era the exhibit "
+                f"is drawn from, and puts the 6 month spread at "
+                f"{nlw['spread_6m_logret']:+.3f} with a 95 percent interval of "
+                f"[{nlw['spread_ci95'][0]:+.3f}, {nlw['spread_ci95'][1]:+.3f}].</p>"
+            )
+        else:
+            nl_wf = "<p>Its walk forward test needs more overlap than the inputs currently give it.</p>"
+        nl_html = f"""<p>Neither is the definition. The strongest known variant of
+the claim is net liquidity: central bank assets minus the Treasury cash
+balance minus reverse repo take up (today {nl["latest_usd_tn"]:.2f} trillion
+dollars, window {e(nl["window"][0])} to {e(nl["window"][1])}). The level
+chart of that series against equities is the famous exhibit. The honest
+question is whether its growth predicts forward returns, and it reads the
+same way:</p>
+<table class="ref">
+<tr><th>horizon (net liquidity)</th><th>correlation</th></tr>
+{nl_rows}
+</table>
+{nl_wf}"""
+    else:
+        nl_html = (
+            "<p>The strongest known variant of the claim, net liquidity "
+            "(central bank assets minus the Treasury cash balance minus "
+            "reverse repo take up), is not testable on today's inputs: "
+            f"{e(_no_dashes(str(nl.get('reason', 'inputs unavailable'))))}.</p>"
+        )
     sub_rows = "\n".join(
         f"<tr><td>{e(lbl)}</td><td>{e(_fc(subs.get(key)))}</td></tr>"
         for lbl, key in (("full sample", "full"),
@@ -286,12 +326,14 @@ month annualized growth gives the same flat zeros.</p>
 <tr><th>horizon (6m growth)</th><th>correlation</th></tr>
 {rob_rows}
 </table>
+{nl_html}
 <p>Stability check, forward 6 month horizon:</p>
 <table class="ref">
 <tr><th>sample</th><th>correlation</th></tr>
 {sub_rows}
 </table>
-<p>Whatever the 3 to 6 month lead is, it is not in the central bank layer.</p>
+<p>Whatever the 3 to 6 month lead is, it is not in the central bank layer,
+gross or net.</p>
 </div>
 
 <div class="claim">

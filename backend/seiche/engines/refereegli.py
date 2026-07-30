@@ -115,6 +115,45 @@ def _granger(y: pd.Series, x: pd.Series) -> dict | None:
 
 # ---------------------------------------------------------------- claims
 
+def _walkforward(sig: pd.Series, eq_log: pd.Series) -> dict | None:
+    """Trailing median signal, forward 6m outcome, no look ahead."""
+    df = pd.DataFrame({"liq": sig, "fwd6": eq_log.shift(-6) - eq_log}).dropna()
+    burn = REFEREE_OOS_BURN_M
+    if len(df) <= burn + 24:
+        return None
+    labeled = np.array(
+        [(1.0 if df["liq"].iloc[i] > df["liq"].iloc[:i].median() else 0.0,
+          df["fwd6"].iloc[i]) for i in range(burn, len(df))]
+    )
+    hi = labeled[labeled[:, 0] == 1, 1]
+    lo = labeled[labeled[:, 0] == 0, 1]
+    if not len(hi) or not len(lo):
+        return None
+    rng = np.random.default_rng(_SPREAD_SEED)
+    n = len(labeled)
+    block = REFEREE_BOOT_BLOCK_M
+    nblocks = int(np.ceil(n / block))
+    draws = []
+    for _ in range(REFEREE_BOOT_N):
+        starts = rng.integers(0, n, nblocks)
+        idx = np.concatenate([np.arange(s, s + block) % n for s in starts])[:n]
+        bs = labeled[idx]
+        h_, l_ = bs[bs[:, 0] == 1, 1], bs[bs[:, 0] == 0, 1]
+        if len(h_) and len(l_):
+            draws.append(float(h_.mean() - l_.mean()))
+    lo_ci, hi_ci = np.percentile(draws, [2.5, 97.5])
+    return {
+        "eval_window": [df.index[burn].date().isoformat(),
+                        df.index[-1].date().isoformat()],
+        "months_high_liq": int(len(hi)),
+        "months_low_liq": int(len(lo)),
+        "mean_fwd6m_logret_high_liq": round(float(hi.mean()), 4),
+        "mean_fwd6m_logret_low_liq": round(float(lo.mean()), 4),
+        "spread_6m_logret": round(float(hi.mean() - lo.mean()), 4),
+        "spread_ci95": [round(float(lo_ci), 4), round(float(hi_ci), 4)],
+    }
+
+
 def _claim1(liq_yoy: pd.Series, eq_log: pd.Series) -> dict:
     out: dict = {"stated": CLAIMS["claim1"]}
 
@@ -131,42 +170,7 @@ def _claim1(liq_yoy: pd.Series, eq_log: pd.Series) -> dict:
     ks = [k for k, v in correlogram.items() if v is not None]
     out["monthly_correlogram"] = {str(k): v for k, v in correlogram.items()}
     out["peak_lead_months"] = None if not ks else int(max(ks, key=lambda k: correlogram[k]))
-
-    # walk forward: trailing median signal, forward 6m outcome, no look ahead
-    df = pd.DataFrame({"liq": liq_yoy, "fwd6": eq_log.shift(-6) - eq_log}).dropna()
-    burn = REFEREE_OOS_BURN_M
-    if len(df) > burn + 24:
-        labeled = np.array(
-            [(1.0 if df["liq"].iloc[i] > df["liq"].iloc[:i].median() else 0.0,
-              df["fwd6"].iloc[i]) for i in range(burn, len(df))]
-        )
-        hi = labeled[labeled[:, 0] == 1, 1]
-        lo = labeled[labeled[:, 0] == 0, 1]
-        rng = np.random.default_rng(_SPREAD_SEED)
-        n = len(labeled)
-        block = REFEREE_BOOT_BLOCK_M
-        nblocks = int(np.ceil(n / block))
-        draws = []
-        for _ in range(REFEREE_BOOT_N):
-            starts = rng.integers(0, n, nblocks)
-            idx = np.concatenate([np.arange(s, s + block) % n for s in starts])[:n]
-            bs = labeled[idx]
-            h_, l_ = bs[bs[:, 0] == 1, 1], bs[bs[:, 0] == 0, 1]
-            if len(h_) and len(l_):
-                draws.append(float(h_.mean() - l_.mean()))
-        lo_ci, hi_ci = np.percentile(draws, [2.5, 97.5])
-        out["walkforward_oos"] = {
-            "eval_window": [df.index[burn].date().isoformat(),
-                            df.index[-1].date().isoformat()],
-            "months_high_liq": int(len(hi)),
-            "months_low_liq": int(len(lo)),
-            "mean_fwd6m_logret_high_liq": round(float(hi.mean()), 4),
-            "mean_fwd6m_logret_low_liq": round(float(lo.mean()), 4),
-            "spread_6m_logret": round(float(hi.mean() - lo.mean()), 4),
-            "spread_ci95": [round(float(lo_ci), 4), round(float(hi_ci), 4)],
-        }
-    else:
-        out["walkforward_oos"] = None
+    out["walkforward_oos"] = _walkforward(liq_yoy, eq_log)
 
     out["granger"] = {
         "liq_to_returns": _granger(ret, liq_yoy.diff()),
@@ -190,6 +194,41 @@ def _claim2(liq_yoy: pd.Series, indpro: pd.Series) -> dict:
         "peak_detail": None if peak_k is None else _corr(liq_yoy, ip_yoy.shift(-peak_k)),
         "corr_at_claimed_13m": _corr(liq_yoy, ip_yoy.shift(-13)),
         "contemporaneous": correlogram.get(0),
+    }
+
+
+def _net_liquidity(fed_assets: pd.Series, tga: pd.Series | None,
+                   rrp: pd.Series | None, eq_log: pd.Series) -> dict:
+    """The strongest known variant of the asset price claim: net liquidity,
+    central bank assets minus the Treasury cash balance minus reverse repo
+    take up. The level chart of this series against equities is the famous
+    exhibit; the honest question is whether its growth predicts forward
+    returns out of sample, so it gets exactly the tests the gross aggregate
+    got. US only by construction: the drains are dollar system drains."""
+    if tga is None or tga.dropna().empty or rrp is None or rrp.dropna().empty:
+        return {"ok": False, "reason": "tga or rrp series unavailable"}
+    fed_bn = fed_assets.resample("ME").last() / 1_000.0
+    tga_b = tga.dropna()
+    if float(tga_b.iloc[-1]) > 50_000.0:  # a $M print, same heuristic as ledger
+        tga_b = tga_b / 1_000.0
+    tga_b = tga_b.resample("ME").last()
+    rrp_b = rrp.dropna().resample("ME").last()
+    net = (fed_bn - tga_b - rrp_b).dropna()
+    if len(net) < _MIN_MONTHS:
+        return {"ok": False, "reason": f"only {len(net)} overlapping months"}
+    if float(net.min()) <= 0:
+        return {"ok": False, "reason": "net liquidity non positive in window"}
+    net_yoy = np.log(net).diff(12)
+    fwd6 = eq_log.shift(-6) - eq_log
+    return {
+        "ok": True,
+        "window": [net.index[0].date().isoformat(), net.index[-1].date().isoformat()],
+        "latest_usd_tn": round(float(net.iloc[-1]) / 1000.0, 2),
+        "forward_return_corr": {
+            f"fwd_{h}m": _corr(net_yoy, eq_log.shift(-h) - eq_log) for h in (3, 6, 12)
+        },
+        "fwd6_since_2015": _corr(net_yoy.loc["2015-01-31":], fwd6.loc["2015-01-31":]),
+        "walkforward_oos": _walkforward(net_yoy, eq_log),
     }
 
 
@@ -217,7 +256,8 @@ def _claim3(liq_yoy: pd.Series) -> dict:
 
 def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
             usd_per_eur: pd.Series, jpy_per_usd: pd.Series,
-            equity: pd.Series, indpro: pd.Series) -> dict:
+            equity: pd.Series, indpro: pd.Series,
+            tga: pd.Series | None = None, rrp: pd.Series | None = None) -> dict:
     for name, s in (("fed", fed_assets), ("ecb", ecb_assets), ("boj", boj_assets),
                     ("eur", usd_per_eur), ("jpy", jpy_per_usd),
                     ("equity", equity), ("indpro", indpro)):
@@ -262,6 +302,7 @@ def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
         "claim3": _claim3(liq_yoy),
         "subsample_stability_fwd6m": subsamples,
         "robustness_liq_6m": robustness,
+        "robustness_net_liquidity": _net_liquidity(fed_assets, tga, rrp, eq_log),
         "series": [
             [d.date().isoformat(), round(float(v), 1),
              round(float(liq_yoy.loc[d]) * 100.0, 2) if pd.notna(liq_yoy.loc[d]) else None]
@@ -278,6 +319,10 @@ def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
             "with lagged OLS F tests in both causal directions. Cycle length is "
             "read from a linearly detrended periodogram with its resolution "
             "limit stated. The transform choice is stress tested by rerunning "
-            "the forward correlations on six month annualized growth."
+            "the forward correlations on six month annualized growth, and the "
+            "strongest known variant of the claim, net liquidity defined as "
+            "central bank assets minus the Treasury cash balance minus reverse "
+            "repo take up, gets the same forward correlations and the same "
+            "walk forward test."
         ),
     }

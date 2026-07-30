@@ -133,6 +133,36 @@ def test_walkforward_and_granger_present_on_long_sample():
     assert g is not None and 0.0 <= g["p"] <= 1.0
 
 
+def test_net_liquidity_reports_unavailable_without_drains():
+    r = refereegli.analyze(**_inputs())
+    nl = r["robustness_net_liquidity"]
+    assert not nl["ok"]
+    assert "unavailable" in nl["reason"]
+
+
+def test_net_liquidity_subtracts_the_drains():
+    kw = _inputs()
+    idx = kw["fed_assets"].index
+    r = refereegli.analyze(**kw, tga=pd.Series(500.0, index=idx),
+                           rrp=pd.Series(100.0, index=idx))
+    nl = r["robustness_net_liquidity"]
+    assert nl["ok"]
+    fed_tn = r["latest"]["components_usd_tn"]["fed"]
+    assert nl["latest_usd_tn"] == pytest.approx(fed_tn - 0.6, abs=0.02)
+    assert set(nl["forward_return_corr"]) == {"fwd_3m", "fwd_6m", "fwd_12m"}
+
+
+def test_net_liquidity_normalizes_a_millions_tga_print():
+    kw = _inputs()
+    idx = kw["fed_assets"].index
+    in_b = refereegli.analyze(**kw, tga=pd.Series(500.0, index=idx),
+                              rrp=pd.Series(100.0, index=idx))
+    in_m = refereegli.analyze(**kw, tga=pd.Series(500_000.0, index=idx),
+                              rrp=pd.Series(100.0, index=idx))
+    assert (in_b["robustness_net_liquidity"]["latest_usd_tn"]
+            == in_m["robustness_net_liquidity"]["latest_usd_tn"])
+
+
 def test_cycle_block_states_its_power_limit():
     r = refereegli.analyze(**_inputs())
     c3 = r["claim3"]

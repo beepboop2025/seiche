@@ -70,6 +70,26 @@ def _blk() -> dict:
             "fwd_6m": _corr(0.04, -0.262, 0.266),
             "fwd_12m": _corr(0.004, -0.349, 0.309),
         },
+        "robustness_net_liquidity": {
+            "ok": True,
+            "window": ["2003-02-28", "2026-07-31"],
+            "latest_usd_tn": 5.92,
+            "forward_return_corr": {
+                "fwd_3m": _corr(-0.042, -0.245, 0.249, n=165),
+                "fwd_6m": _corr(0.027, -0.155, 0.234, n=162),
+                "fwd_12m": _corr(0.019, -0.253, 0.207, n=156),
+            },
+            "fwd6_since_2015": _corr(0.096, -0.421, 0.413, n=133),
+            "walkforward_oos": {
+                "eval_window": ["2019-08-31", "2026-01-31"],
+                "months_high_liq": 31,
+                "months_low_liq": 47,
+                "mean_fwd6m_logret_high_liq": 0.0835,
+                "mean_fwd6m_logret_low_liq": 0.0796,
+                "spread_6m_logret": 0.0039,
+                "spread_ci95": [-0.1341, 0.1171],
+            },
+        },
         "method": "G3 central bank assets converted at monthly average spot.",
     }
 
@@ -133,6 +153,24 @@ def test_page_renders_lint_clean_with_scope_and_verdicts():
     assert "irreplaceable" in page
     for ch in ("—", "–"):
         assert ch not in page
+
+
+def test_net_liquidity_variant_renders_with_its_window():
+    page = " ".join(referee.render_referee_html(
+        {"deep": {"refereegli": _blk()}}).split())
+    assert "net liquidity" in page
+    assert "5.92 trillion" in page
+    assert "2019-08-31" in page  # the walk forward lands on the famous era
+    assert "gross or net" in page
+
+
+def test_absent_net_liquidity_renders_the_reason():
+    blk = _blk()
+    blk["robustness_net_liquidity"] = {"ok": False,
+                                       "reason": "tga or rrp series unavailable"}
+    page = referee.render_referee_html({"deep": {"refereegli": blk}})
+    assert "not testable on today's inputs" in page
+    assert "tga or rrp series unavailable" in page
 
 
 def test_dark_snapshot_renders_the_notice():

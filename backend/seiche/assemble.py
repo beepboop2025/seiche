@@ -934,6 +934,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         jpy_per_usd=_pts(fred_s, "JPY"),
         equity=_pts(fred_s, "NASDAQ"),
         indpro=_pts(fred_s, "INDPRO"),
+        tga=drv["tga"],
+        rrp=drv["rrp"],
     ))
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
