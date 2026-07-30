@@ -37,6 +37,7 @@ const Positioning = lazy(() => import("./tabs/Positioning"));
 const Resonance = lazy(() => import("./tabs/Resonance"));
 const TimeMachine = lazy(() => import("./tabs/TimeMachine"));
 const Proof = lazy(() => import("./tabs/Proof"));
+const Referee = lazy(() => import("./tabs/Referee"));
 const System = lazy(() => import("./tabs/System"));
 const Account = lazy(() => import("./tabs/Account"));
 
@@ -52,7 +53,7 @@ const Account = lazy(() => import("./tabs/Account"));
 // prominence for the differentiating work is worth two power-user shortcuts.
 const TABS = [
   "GLOBAL", "BOARD", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR",
-  "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "SYSTEM", "ACCOUNT", "DISPATCHES",
+  "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT", "DISPATCHES",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -328,6 +329,7 @@ function AppInner() {
           {tab === "RESONANCE" && <Resonance snap={snap} />}
           {tab === "TIME MACHINE" && <TimeMachine live={live} />}
           {tab === "PROOF" && <Proof snap={snap} />}
+          {tab === "REFEREE" && <Referee snap={snap} />}
           {tab === "SYSTEM" && <System snap={snap} live={live} />}
           {tab === "ACCOUNT" && <Account />}
         </div>

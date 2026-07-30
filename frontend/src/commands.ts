@@ -32,6 +32,7 @@ export const ENTRIES: Entry[] = [
   { code: "RES", title: "RESONANCE", hint: "calendar-forcing amplification · undertow", keywords: "undertow slowing resonance", run: { type: "tab", tab: "RESONANCE" } },
   { code: "TM", title: "TIME MACHINE", hint: "replay the board as of any date — or `ASOF 2019-09-12`", keywords: "asof replay history rewind", run: { type: "tab", tab: "TIME MACHINE" } },
   { code: "PRF", title: "PROOF", hint: "the backtest scoreboard · wrecks", keywords: "proof backtest scoreboard wrecks episodes record", run: { type: "tab", tab: "PROOF" } },
+  { code: "REF", title: "REFEREE", hint: "global liquidity's claims, tested on public data", keywords: "referee global liquidity g3 net liquidity claims lead lag cycle", run: { type: "tab", tab: "REFEREE" } },
   { code: "SYS", title: "SYSTEM", hint: "feed health · faults", keywords: "health feeds faults sources status", run: { type: "tab", tab: "SYSTEM" } },
   { code: "ACC", title: "ACCOUNT", hint: "email alerts", keywords: "alerts email login account", run: { type: "tab", tab: "ACCOUNT" } },
   { code: "GLANCE", title: "GLANCE", hint: "sounding: the verdict and the Tell, nothing else", keywords: "depth skim summary simple overview zoom out", run: { type: "depth", level: "glance" } },
