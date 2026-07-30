@@ -10,3 +10,9 @@
 {"date": "2026-07-29", "model": "tidetables", "horizon_bd": 5, "p": 0.16}
 {"date": "2026-07-29", "model": "stacker", "horizon_bd": 5, "p": 0.067}
 {"date": "2026-07-29", "kind": "spread", "spread_bp": 0.0}
+{"date": "2026-07-30", "model": "bathymetry", "horizon_bd": 5, "p": 0.045}
+{"date": "2026-07-30", "model": "ml", "horizon_bd": 5, "p": 0.09}
+{"date": "2026-07-30", "model": "swell", "horizon_bd": 5, "p": 0.12}
+{"date": "2026-07-30", "model": "tidetables", "horizon_bd": 5, "p": 0.16}
+{"date": "2026-07-30", "model": "stacker", "horizon_bd": 5, "p": 0.066}
+{"date": "2026-07-30", "kind": "spread", "spread_bp": 0.0}
