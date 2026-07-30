@@ -143,6 +143,14 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
             {fmt(c.value, 0)} <span className={`regime ${c.regime}`}>{c.regime}</span>
           </div>
           <p className="descent-line">
+            Liquidity intelligence sits on two shelves. Official dashboards give you raw
+            series and no view. A terminal that has a view runs about $32k a seat each
+            year. Between them, nothing free that holds an opinion and grades itself.
+            That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
+            standing on it, Undertow prices the exits. All of it runs on free public
+            data. The misses are published beside the hits. Read those first.
+          </p>
+          <p className="descent-line">
             One number for the state of dollar funding, composed from the Fed's own
             plumbing data. Right now the basin reads <b>{c.regime ?? "—"}</b>. Scroll to
             see where that number comes from.

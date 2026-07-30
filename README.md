@@ -20,6 +20,19 @@ or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionate
 fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
 layer none of them have: **honest evidence about itself**.
 
+## The lab
+
+Seiche is one of three altitudes in a single liquidity lab that fills that gap:
+**Seiche** reads the plumbing, **[LiquiLens](https://liquilens.in)** ranks the
+institutions standing on it, and **Undertow** prices market liquidity itself
+(who provides depth in each segment, what an exit at position size costs
+today). The wiring between the three is real, not a brochure: the desk
+assistant pulls the LiquiLens failure board over MCP, the MARKET tab renders
+Undertow's published pack live, and the Windfetch engine reads the FETCH pack
+built in the Undertow repo back into this board. On names: the internal
+composite engine called "undertow" (critical slowing down,
+`engines/undertow.py`) is unrelated to the Undertow sister product.
+
 ## v2 "Deep Water" — twenty-two engines, eight analytics layers, twelve tabs
 
 > **v2.3 "Letters of Marque"** (built in tandem across two sessions) adds the
