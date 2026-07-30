@@ -11,9 +11,16 @@ on:
   push:
     branches: [main]
 
+# Queue, never evict. This job takes ~45 minutes and three things trigger it:
+# a push to main, the 4-hourly cron (which GitHub delays by up to hours), and
+# the explicit dispatch from dispatch-daily after it commits the letter. With
+# cancel-in-progress the newest trigger killed whatever was mid-build, so a
+# push that landed inside anyone else's window simply never published. Every
+# other long job here already queues; publish was the outlier. GitHub keeps at
+# most one run pending per group, so this backlogs to two runs, never a pile.
 concurrency:
   group: publish
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
