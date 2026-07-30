@@ -935,15 +935,15 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # citizen for the bootstrap cost; context, never composite. Published
     # standalone at referee.html.
     run("refereegli", lambda: eng_refereegli.analyze(
-        fed_assets=_pts(fred_s, "WALCL"),
+        fed_assets=_pts(fred_s, "FED_ASSETS_LONG"),
         ecb_assets=_pts(fred_s, "ECB_ASSETS"),
         boj_assets=_pts(fred_s, "BOJ_ASSETS"),
-        usd_per_eur=_pts(fred_s, "EURUSD"),
-        jpy_per_usd=_pts(fred_s, "JPY"),
+        usd_per_eur=_pts(fred_s, "EURUSD_LONG"),
+        jpy_per_usd=_pts(fred_s, "JPY_LONG"),
         equity=_pts(fred_s, "NASDAQ"),
         indpro=_pts(fred_s, "INDPRO"),
-        tga=drv["tga"],
-        rrp=drv["rrp"],
+        tga=_pts(fred_s, "TGA_LONG"),
+        rrp=_pts(fred_s, "RRP_LONG"),
     ))
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component

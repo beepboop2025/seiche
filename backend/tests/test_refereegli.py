@@ -163,6 +163,20 @@ def test_net_liquidity_normalizes_a_millions_tga_print():
             == in_m["robustness_net_liquidity"]["latest_usd_tn"])
 
 
+def test_registered_series_reach_back_to_the_window():
+    """The reconstruction needs 2003 onward. The board's own WALCL/FX specs
+    deliberately start in 2017, which is exactly how the page first shipped
+    dark with 'only 114 overlapping months' - so the referee's registry
+    entries are pinned here."""
+    from seiche.config import REFEREE_SERIES
+    specs = {s.mnemonic: s for s in REFEREE_SERIES}
+    for m in ("ECB_ASSETS", "BOJ_ASSETS", "NASDAQ", "INDPRO",
+              "FED_ASSETS_LONG", "EURUSD_LONG", "JPY_LONG",
+              "RRP_LONG", "TGA_LONG"):
+        assert m in specs
+        assert specs[m].start <= "2003-01-31"
+
+
 def test_cycle_block_states_its_power_limit():
     r = refereegli.analyze(**_inputs())
     c3 = r["claim3"]

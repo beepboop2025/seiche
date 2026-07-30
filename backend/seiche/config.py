@@ -122,6 +122,24 @@ REFEREE_SERIES = [
                "pts", "D", 360, start="2000-01-01"),
     SeriesSpec("INDPRO", "fred", "INDPRO", "US industrial production index",
                "idx", "ML", 1440, start="2000-01-01"),
+    # Long-history twins of board series the referee reuses. The board
+    # registers these mnemonics with the default 2017 start on purpose (its
+    # engines look at recent state); the referee needs 2003 onward, and
+    # deepening the board's own specs would silently hand two decades of
+    # extra history to every other engine. Twins keep the blast radius zero
+    # at the cost of one duplicate FRED fetch each per TTL. The lesson that
+    # created them: the reconstruction shipped dark with "only 114
+    # overlapping months" because WALCL and the FX legs started in 2017.
+    SeriesSpec("FED_ASSETS_LONG", "fred", "WALCL", "Fed total assets, referee history",
+               "$M", "W", 720, start="2000-01-01"),
+    SeriesSpec("EURUSD_LONG", "fred", "DEXUSEU", "US dollars per euro, referee history",
+               "$", "D", 720, start="2000-01-01"),
+    SeriesSpec("JPY_LONG", "fred", "DEXJPUS", "Japanese yen per USD, referee history",
+               "JPY", "D", 720, start="2000-01-01"),
+    SeriesSpec("RRP_LONG", "fred", "RRPONTSYD", "ON RRP take-up, referee history",
+               "$B", "D", 720, start="2003-01-01"),
+    SeriesSpec("TGA_LONG", "fred", "WTREGEN", "Treasury General Account, referee history",
+               "$M", "W", 720, start="2000-01-01"),
 ]
 
 REFEREE_START = "2003-01-31"    # first month all three balance sheets exist
