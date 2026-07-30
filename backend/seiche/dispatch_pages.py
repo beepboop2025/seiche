@@ -49,6 +49,7 @@ BASE_URLS = [
     ("/methodology.html", "monthly", "0.8"),
     ("/skeptic.html", "monthly", "0.8"),
     ("/ampleness.html", "daily", "0.8"),
+    ("/referee.html", "daily", "0.8"),
     ("/dispatches/", "daily", "0.8"),
     ("/support.html", "monthly", "0.5"),
     ("/privacy.html", "yearly", "0.2"),

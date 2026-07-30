@@ -70,6 +70,11 @@ jobs:
       - name: Render ampleness check
         run: python -m seiche.ampleness
 
+      # The referee page: the global liquidity category's headline claims
+      # tested on their publicly reconstructible layer, misses included.
+      - name: Render referee page
+        run: python -m seiche.referee
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

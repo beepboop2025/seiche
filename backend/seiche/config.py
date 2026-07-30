@@ -106,6 +106,30 @@ INDIA_FRED_SERIES = [
     SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
 ]
 
+# Referee series: the publicly reconstructible layer of the "global
+# liquidity" story — G3 central bank balance sheets in dollar terms plus the
+# outcome series their headline claims are tested against. G3 only BY
+# DESIGN: no keyless PBoC or BoE balance-sheet feed exists (probed
+# 2026-07-30), and the gap is stated on the page, not interpolated over.
+# BoJ assets and INDPRO are lagged-monthly prints (ML), same doctrine as the
+# OECD call rates above.
+REFEREE_SERIES = [
+    SeriesSpec("ECB_ASSETS", "fred", "ECBASSETSW", "ECB total assets (weekly financial statement)",
+               "EUR M", "W", 720, start="2000-01-01"),
+    SeriesSpec("BOJ_ASSETS", "fred", "JPNASSETS", "BoJ total assets (monthly)",
+               "JPY 100M", "ML", 1440, start="2000-01-01"),
+    SeriesSpec("NASDAQ", "fred", "NASDAQCOM", "Nasdaq Composite index",
+               "pts", "D", 360, start="2000-01-01"),
+    SeriesSpec("INDPRO", "fred", "INDPRO", "US industrial production index",
+               "idx", "ML", 1440, start="2000-01-01"),
+]
+
+REFEREE_START = "2003-01-31"    # first month all three balance sheets exist
+REFEREE_BOOT_N = 2000           # moving-block bootstrap draws
+REFEREE_BOOT_BLOCK_M = 8        # bootstrap block length, months
+REFEREE_GRANGER_LAGS = 6        # OLS F-test lag depth
+REFEREE_OOS_BURN_M = 84         # months reserved before the walk-forward eval
+
 # Harbors: national money markets as harbors off the dollar ocean. Overnight
 # anchors, keyless: daily where a qualifying feed exists (€STR above, SHIBOR
 # O/N via CFETS below), monthly OECD MEI mirrors on FRED where one does not
@@ -317,6 +341,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
+    + REFEREE_SERIES
 }
 # PALIMPSEST_SERIES are appended to ALL_SERIES after their definition below
 # (they are declared later in the file to keep the Far Basin block coherent).

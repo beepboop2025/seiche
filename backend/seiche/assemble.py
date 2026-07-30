@@ -53,6 +53,7 @@ from seiche.config import (
     OFR_SERIES,
     PLAYBOOK_OUTCOMES,
     PRETRAIN_FRED_SERIES,
+    REFEREE_SERIES,
     RUNWAY_QT_PACE_B_PER_MONTH,
     SWAP_LINE_OPS_N,
 )
@@ -99,6 +100,7 @@ from seiche.engines import ledger as eng_ledger
 from seiche.engines import modelcourt as eng_modelcourt
 from seiche.engines import officialbid as eng_officialbid
 from seiche.engines import rdenowcast as eng_rdenowcast
+from seiche.engines import refereegli as eng_refereegli
 from seiche.engines import reportcard as eng_reportcard
 from seiche.engines import runway as eng_runway
 from seiche.engines import rvxray as eng_rvxray
@@ -146,7 +148,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
         fred_mnems = [
             s.mnemonic
             for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-            + GLOBAL_MM_FRED_SERIES + PRETRAIN_FRED_SERIES
+            + GLOBAL_MM_FRED_SERIES + PRETRAIN_FRED_SERIES + REFEREE_SERIES
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
@@ -919,6 +921,20 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # Deep-layer citizen: its full hindcast is the expensive part and its
     # output is forecast-context, never composite evidence.
     run("gyre", lambda: eng_gyre.analyze(spread))
+
+    # Referee GLI — the "global liquidity" headline claims tested on their
+    # publicly reconstructible layer (G3 balance sheets in USD). Deep-layer
+    # citizen for the bootstrap cost; context, never composite. Published
+    # standalone at referee.html.
+    run("refereegli", lambda: eng_refereegli.analyze(
+        fed_assets=_pts(fred_s, "WALCL"),
+        ecb_assets=_pts(fred_s, "ECB_ASSETS"),
+        boj_assets=_pts(fred_s, "BOJ_ASSETS"),
+        usd_per_eur=_pts(fred_s, "EURUSD"),
+        jpy_per_usd=_pts(fred_s, "JPY"),
+        equity=_pts(fred_s, "NASDAQ"),
+        indpro=_pts(fred_s, "INDPRO"),
+    ))
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and

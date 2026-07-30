@@ -19,6 +19,7 @@ frontend/public/llms-full.txt
 frontend/public/methodology.html
 frontend/public/skeptic.html
 frontend/public/ampleness.html
+frontend/public/referee.html
 
 # build artifacts (compiler output, not source)
 backend/dist/
