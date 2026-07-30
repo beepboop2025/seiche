@@ -45,6 +45,21 @@ api.seiche.info {
         file_server
     }
 
+    # Undertow MCP remote (agent tools; bearer-token subscriber tier
+    # verified in-process against the bot entitlement state). Must sit
+    # ABOVE the static /undertow/* mirror — handle blocks match in
+    # source order. The site-wide OPTIONS preflight handler sits below
+    # the mirror and never fires for this path, so answer it here.
+    handle /undertow/mcp* {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
+        header Access-Control-Expose-Headers "X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
+        header X-Content-Type-Options "nosniff"
+        @mcp_opts method OPTIONS
+        respond @mcp_opts 204
+        reverse_proxy 127.0.0.1:8794
+    }
+
     # Undertow x402 machine-payable feed (paid attested data; free
     # summary/manifest). Must sit ABOVE the static /undertow/* mirror —
     # handle blocks match in source order. Path passes intact.
@@ -165,6 +180,16 @@ groundcheck.seiche.info {
         header Access-Control-Allow-Headers "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE"
         respond 204
     }
+    # Glama MCP-directory ownership proof — the connector claim for
+    # io.github.beepboop2025/groundcheck checks this exact path on the
+    # server's domain. Static, public by design; the email is the
+    # project account, not a person's private address.
+    handle /.well-known/glama.json {
+        header Content-Type "application/json"
+        header Cache-Control "public, max-age=3600"
+        respond `{"$schema":"https://glama.ai/mcp/schemas/connector.json","maintainers":[{"email":"mrinallovesbhature@gmail.com"}]}` 200
+    }
+
     handle {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE"
