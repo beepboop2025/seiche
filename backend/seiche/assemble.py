@@ -125,7 +125,15 @@ _cache: dict = {"at": 0.0, "payload": None}
 _lock = asyncio.Lock()
 _refreshing = False  # one background rebuild at a time; readers never wait on it
 
-VERSION = "0.7.0 tier1"
+# Two audiences, two strings. VERSION is the machine-facing contract and must
+# stay bare semver matching server.json and the MCP registry listing — it is
+# what the MCP handshake hands an agent. RELEASE is the human-facing codename
+# the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
+# scenarios, microseism, tier1) and rides along on the citation footers, where
+# it is worth something to a reader.
+VERSION = "0.7.1"
+RELEASE = "tier1"
+VERSION_LABEL = f"{VERSION} {RELEASE}"
 
 
 # ---------------------------------------------------------------------------
@@ -1381,7 +1389,7 @@ async def _build_snapshot() -> dict:
     deep["modelcourt"] = eng_modelcourt.convene(deep, odds_ledger=_odds_ledger())
     payload = {
         "generated_at": utcnow_iso(),
-        "version": VERSION,
+        "version": VERSION_LABEL,
         "headline": _headline(src, drv),
         "engines": _strip_private(engines),
         "deep": _strip_private(deep),
@@ -1438,7 +1446,7 @@ async def snapshot_asof(date: str) -> dict:
     payload = {
         "ok": True,
         "generated_at": utcnow_iso(),
-        "version": VERSION,
+        "version": VERSION_LABEL,
         "replay": True,
         "asof": asof.date().isoformat(),
         "vintage_note": "replayed on final-vintage data; weekly H.4.1 aggregates are lightly revised vs what was on screens that day",

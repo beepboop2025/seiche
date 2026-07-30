@@ -291,7 +291,7 @@ li { margin:6px 0; }
 def render_methodology_html(board_version: str | None = None) -> str:
     if board_version is None:
         from seiche import assemble  # lazy: keeps module import light
-        board_version = assemble.VERSION
+        board_version = assemble.VERSION_LABEL
     e = html.escape
     version_line = (f"methodology {METHODOLOGY_VERSION} / board "
                     f"{board_version}")
