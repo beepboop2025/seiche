@@ -1,40 +1,22 @@
 {
-  "date": "2026-07-30",
+  "date": "2026-07-31",
   "reported_prev": {
-    "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-22",
-    "Total stablecoin circulation": "2026-07-29",
-    "2y Treasury constant maturity yield": "2026-07-27"
-  },
-  "reported": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-22",
     "4-week T-bill secondary market rate": "2026-07-28",
     "3-month T-bill secondary market rate": "2026-07-28",
     "2y Treasury constant maturity yield": "2026-07-28",
     "S&P 500 index": "2026-07-29"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.4,
-    "decomp": {
-      "weather": 11.0,
-      "resonance": 7.1,
-      "kink": 6.8,
-      "rvxray": 6.1,
-      "buffers": 3.0,
-      "undertow": 2.8,
-      "confession": 2.6,
-      "warehouse": 2.4,
-      "tails": 2.2,
-      "auctions": 1.2,
-      "hydrophone": 0.1
-    },
-    "crunch": {
-      "date": "2026-07-31",
-      "worst_case_b": 3015.7,
-      "settlement_b": 30.0
-    }
+  "reported": {
+    "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
+    "3-month T-bill secondary market rate": "2026-07-29",
+    "30y Treasury constant maturity yield": "2026-07-29",
+    "Discount window primary credit (Wed level)": "2026-07-29",
+    "2y Treasury constant maturity yield": "2026-07-29",
+    "Nasdaq Composite index": "2026-07-30",
+    "S&P 500 index": "2026-07-29"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "STRAIN",
     "value": 45.3,
     "decomp": {
@@ -53,6 +35,28 @@
     "crunch": {
       "date": "2026-07-31",
       "worst_case_b": 3023.3,
+      "settlement_b": null
+    }
+  },
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.6,
+    "decomp": {
+      "weather": 11.0,
+      "resonance": 7.1,
+      "rvxray": 6.1,
+      "kink": 5.9,
+      "confession": 3.8,
+      "buffers": 3.0,
+      "undertow": 2.9,
+      "warehouse": 2.4,
+      "tails": 2.2,
+      "auctions": 1.1,
+      "hydrophone": 0.1
+    },
+    "crunch": {
+      "date": "2026-07-31",
+      "worst_case_b": 2954.3,
       "settlement_b": null
     }
   }
