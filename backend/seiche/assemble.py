@@ -30,7 +30,7 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from seiche import store
+from seiche import rubric, store
 from seiche.config import (
     ALL_SERIES,
     BIS_SERIES,
@@ -955,6 +955,18 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         tga=_pts(fred_s, "TGA_LONG"),
         rrp=_pts(fred_s, "RRP_LONG"),
     ))
+
+    # The Rubric — the coded evidence matrix (arXiv:2606.08285, re-coded for
+    # a terminal that trades nothing) applied to Seiche itself FIRST, then to
+    # the GL case above, and shipped inside the refereegli block so the two
+    # matrices publish side by side. Repo facts plus the block above; the
+    # grades ride on the dark block too. Display-only, like every referee
+    # surface.
+    try:
+        out["refereegli"]["rubric"] = rubric.build(out.get("refereegli"))
+    except Exception as e:
+        faults.append({"source": "deep:rubric", "detail": f"{type(e).__name__}: {e}"})
+        out["refereegli"]["rubric"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and

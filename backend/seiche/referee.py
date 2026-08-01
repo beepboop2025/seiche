@@ -37,6 +37,7 @@ import json
 import urllib.request
 from pathlib import Path
 
+from seiche import rubric
 from seiche.dispatch_daily import lint_letter
 from seiche.methodology import _CSS, METHODOLOGY_URL, REPO_URL, SITE, _no_dashes
 
@@ -50,6 +51,10 @@ REFEREE_URL = f"{SITE}/referee.html"
 SKEPTIC_URL = f"{SITE}/skeptic.html"
 
 CHANGELOG: list[tuple[str, str]] = [
+    ("2026-08-01",
+     "the rubric added: the coded evidence matrix (arXiv:2606.08285, two "
+     "rows re coded for a terminal that trades nothing) with Seiche graded "
+     "first and its own PARTIAL rows published."),
     ("2026-07-30",
      "first publication; G3 reconstruction 2003 onward, all three headline "
      "claims tested, the walk forward and both Granger directions published "
@@ -78,6 +83,7 @@ table.ref { border-collapse:collapse; margin:12px 0; font-size:13px; }
 table.ref th, table.ref td { border:1px solid var(--edge); padding:5px 10px;
                              text-align:right; }
 table.ref th:first-child, table.ref td:first-child { text-align:left; }
+table.ref td.rub-ev { text-align:left; max-width:620px; }
 """
 
 _TOK_CLASS = {
@@ -109,6 +115,61 @@ def _ci_excludes_zero(c: dict | None) -> bool:
 
 def _tok(label: str) -> str:
     return f'<span class="tok {_TOK_CLASS[label]}">{e(label)}</span>'
+
+
+_GRADE_CLASS = {
+    rubric.PASS: "tok-pass",
+    rubric.PARTIAL: "tok-part",
+    rubric.FAIL: "tok-fail",
+    rubric.NOT_APPLICABLE: "tok-open",
+}
+
+
+def _grade_tok(grade: str) -> str:
+    cls = _GRADE_CLASS.get(grade, "tok-open")
+    return f'<span class="tok {cls}">{e(grade.replace("_", " "))}</span>'
+
+
+def _rubric_section(rb: dict | None) -> str:
+    """The two graded matrices, self first. Snapshots baked before the rubric
+    shipped carry no block; the section simply does not render then."""
+    if not rb or not rb.get("ok"):
+        return ""
+    labels = dict(rubric.FIELDS)
+    parts = [
+        "<h2>The rubric</h2>",
+        "<p>Verdict tokens are cheap; the evidence matrix behind them is the "
+        "standard. Eight coded rows, adapted from the execution assumption "
+        "matrix of arXiv:2606.08285: the two rows a non trading terminal "
+        "cannot honestly self grade (cost and turnover treatment, execution "
+        "semantics) are re coded as vintage and revision handling and "
+        "threshold provenance, and a verdict revision policy row is added. "
+        "The ordering rule is the feature: Seiche grades itself first, on "
+        "the same rows, and publishes its own PARTIAL rows with the gaps "
+        "named.</p>",
+    ]
+    for case in rb.get("cases") or []:
+        rows_html = "\n".join(
+            f"<tr><td>{e(labels.get(r['field'], r['field']))}</td>"
+            f"<td>{_grade_tok(r['grade'])}</td>"
+            f'<td class="rub-ev">{e(_no_dashes(r["evidence"]))}'
+            + (f' (not applicable because: {e(_no_dashes(r["na_reason"]))})'
+               if r.get("na_reason") else "")
+            + "</td></tr>"
+            for r in case["rows"]
+        )
+        t = case["tally"]
+        parts.append(
+            f"<h3>{e(case['subject'])}</h3>\n"
+            f'<p class="faint">{t[rubric.PASS]} PASS, {t[rubric.PARTIAL]} '
+            f"PARTIAL, {t[rubric.FAIL]} FAIL, {t[rubric.NOT_APPLICABLE]} not "
+            "applicable.</p>\n"
+            '<table class="ref">\n'
+            "<tr><th>row</th><th>grade</th><th>evidence</th></tr>\n"
+            f"{rows_html}\n</table>\n"
+            f"<p>{e(_no_dashes(case['reading']))}</p>"
+        )
+    return "\n".join(parts)
 
 
 # --------------------------------------------------------------- verdicts
@@ -274,6 +335,8 @@ same way:</p>
     else:
         granger_para = "<p>The Granger tests are not available on the current inputs.</p>"
 
+    rubric_html = _rubric_section(blk.get("rubric"))
+
     lag0 = c2.get("contemporaneous")
     lag0_txt = "not available" if lag0 is None else f"{lag0:+.2f}"
     pk2 = c2.get("peak_lead_months")
@@ -365,6 +428,8 @@ the proprietary index is the one genuinely irreplaceable thing its publisher
 owns, and it is the only instrument that could settle their own headline
 claim. We would rather they published the test than the assertion.</p>
 </div>
+
+{rubric_html}
 
 <h2>What would change this page</h2>
 <p>A published lead lag distribution on the full index, with revision errors

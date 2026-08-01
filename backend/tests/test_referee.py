@@ -197,3 +197,38 @@ def test_absent_yoy_prints_prose_not_a_leak():
     blk["latest"]["yoy_pct"] = None
     page = referee.render_referee_html({"deep": {"refereegli": blk}})
     assert "not available" in page
+
+
+# ---------------------------------------------------------------------------
+# The rubric section
+# ---------------------------------------------------------------------------
+
+def test_rubric_section_renders_self_first_and_lint_clean():
+    from seiche import rubric
+    blk = _blk()
+    blk["rubric"] = rubric.build(blk)
+    # render_referee_html raises on any lint issue, so success IS the lint test
+    page = referee.render_referee_html({"deep": {"refereegli": blk}})
+    assert "The rubric" in page
+    i_self = page.index("Seiche itself: the PROOF scoreboard and the composite")
+    i_ext = page.index("three headline claims")
+    assert i_self < i_ext  # the ordering rule survives rendering
+    assert "PARTIAL" in page and "FAIL" in page
+    # the live walk-forward numbers ride into the external case's evidence
+    assert "+0.0171" in page
+    for ch in ("—", "–"):
+        assert ch not in page
+
+
+def test_snapshot_without_rubric_renders_without_the_section():
+    """Snapshots baked before the rubric shipped carry no block; the page
+    must render them unchanged, not crash or fake a matrix."""
+    page = referee.render_referee_html({"deep": {"refereegli": _blk()}})
+    assert "The rubric" not in page
+
+
+def test_failed_rubric_block_is_omitted_not_rendered():
+    blk = _blk()
+    blk["rubric"] = {"ok": False, "reason": "RuntimeError: rubric failed validation"}
+    page = referee.render_referee_html({"deep": {"refereegli": blk}})
+    assert "The rubric" not in page
