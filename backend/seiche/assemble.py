@@ -956,7 +956,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         rrp=_pts(fred_s, "RRP_LONG"),
     ))
 
-    # The Rubric — the coded evidence matrix (arXiv:2606.08285, re-coded for
+    # The Rubric: the coded evidence matrix (arXiv:2606.08285, re-coded for
     # a terminal that trades nothing) applied to Seiche itself FIRST, then to
     # the GL case above, and shipped inside the refereegli block so the two
     # matrices publish side by side. Repo facts plus the block above; the
