@@ -125,7 +125,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
   const doCopy = () => withCard((cv, m) => {
     copyPng(cv).then((ok) => {
       if (ok) { flash("image copied"); return; }
-      // clipboard images are still gated in some browsers — the file is the fallback
+      // clipboard images are still gated in some browsers; the file is the fallback
       savePng(cv, fileName(m.title)).then(() => flash("copy blocked · png saved"), () => flash("export failed"));
     });
   });

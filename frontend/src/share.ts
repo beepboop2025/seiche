@@ -9,7 +9,7 @@ import uPlot from "uplot";
 import type { ChartSeries } from "./Chart";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const S = 2; // export supersample — crisp on retina and on X's compressor
+const S = 2; // export supersample: crisp on retina and on X's compressor
 
 /* export-only tokens, resolved from styles.css with the same fallbacks */
 const cache: Record<string, string> = {};
