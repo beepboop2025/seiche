@@ -1,7 +1,11 @@
 import { P } from "./palette";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
+import {
+  canNativeShare, cardTitle, composeCard, copyPng, copyText,
+  deepLink, fileName, nativeShare, savePng,
+} from "./share";
 
 export interface ChartSeries {
   label: string;
@@ -93,6 +97,44 @@ function gesturePlugin(): uPlot.Plugin {
 export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const noteTimer = useRef<number>(0);
+  const [note, setNote] = useState<string | null>(null);
+
+  const flash = (msg: string) => {
+    setNote(msg);
+    window.clearTimeout(noteTimer.current);
+    noteTimer.current = window.setTimeout(() => setNote(null), 1800);
+  };
+
+  const meta = () => ({
+    title: cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche"),
+    sub: yLabel,
+    series,
+  });
+
+  const withCard = (fn: (cv: HTMLCanvasElement, m: ReturnType<typeof meta>) => void) => {
+    const u = plotRef.current;
+    if (!u) { flash("no data yet"); return; }
+    const m = meta();
+    fn(composeCard(u, m), m);
+  };
+
+  const doPng = () => withCard((cv, m) => {
+    savePng(cv, fileName(m.title)).then(() => flash("png saved"), () => flash("export failed"));
+  });
+  const doCopy = () => withCard((cv, m) => {
+    copyPng(cv).then((ok) => {
+      if (ok) { flash("image copied"); return; }
+      // clipboard images are still gated in some browsers — the file is the fallback
+      savePng(cv, fileName(m.title)).then(() => flash("copy blocked · png saved"), () => flash("export failed"));
+    });
+  });
+  const doLink = () => {
+    copyText(deepLink()).then((ok) => flash(ok ? "link copied" : "copy blocked"));
+  };
+  const doShare = () => withCard((cv, m) => {
+    nativeShare(cv, m).then((ok) => { if (!ok) flash("share failed"); });
+  });
 
   useEffect(() => {
     if (!ref.current || rows.length === 0) return;
@@ -198,7 +240,21 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
   return (
     <div className="chartbox">
       <div className="uplot-wrap reveal" ref={ref} />
-      <div className="zoomhint">drag to zoom · ⌘/ctrl+scroll or pinch to zoom · double-click resets</div>
+      <div className="chartfoot">
+        <div className="sharebar" role="group" aria-label="share this chart">
+          {note ? (
+            <span className="sharenote" role="status">{note}</span>
+          ) : (
+            <>
+              {canNativeShare && <button type="button" onClick={doShare} title="share the chart image">share</button>}
+              <button type="button" onClick={doCopy} title="copy the chart image to the clipboard">copy</button>
+              <button type="button" onClick={doPng} title="download the chart as a png">png</button>
+              <button type="button" onClick={doLink} title="copy a link to this view">link</button>
+            </>
+          )}
+        </div>
+        <div className="zoomhint">drag to zoom · ⌘/ctrl+scroll or pinch to zoom · double-click resets</div>
+      </div>
     </div>
   );
 }

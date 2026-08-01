@@ -621,10 +621,31 @@ svg path.draw {
 }
 .chartbox:hover .zoomhint, .chartbox:focus-within .zoomhint { opacity: 1; }
 
+/* share bar: same reveal contract as the zoomhint, one row under the plot */
+.chartfoot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.chartfoot .zoomhint { margin-top: 0; }
+.sharebar {
+  display: flex; gap: 10px; align-items: baseline; margin-top: 2px;
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.05em;
+  opacity: 0; transition: opacity 0.3s var(--ease);
+}
+.chartbox:hover .sharebar, .chartbox:focus-within .sharebar { opacity: 1; }
+.sharebar button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--faint); font: inherit; letter-spacing: inherit;
+  text-transform: uppercase;
+}
+.sharebar button:hover { color: var(--accent-bright); }
+.sharebar button:focus-visible { outline: 1px solid var(--accent-dim); outline-offset: 2px; color: var(--accent-bright); }
+.sharenote { color: var(--calm); text-transform: uppercase; }
+/* no hover on touch — the bar stays quietly visible instead */
+@media (hover: none) { .sharebar { opacity: 0.85; } }
+
 @media (prefers-reduced-motion: reduce) {
   svg path.draw { animation: none; stroke-dashoffset: 0; }
   .uplot-wrap.reveal { animation: none; }
   .zoomhint { transition: none; }
+  .sharebar { transition: none; }
 }
 
 /* ---- the command line (⌘K) ---- */
