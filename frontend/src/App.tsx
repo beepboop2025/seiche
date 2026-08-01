@@ -353,6 +353,8 @@ function AppInner() {
         Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, the failure radar for banks and lenders.
         <br />
         From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal — exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
+        <br />
+        Sibling project: <a href="https://palimpsest.info" style={{ color: "var(--dim)" }}>Palimpsest</a>, which works the opposite problem. Seiche exists because the Fed publishes its plumbing every week; Palimpsest measures what happens when a state stops publishing, watching China's information controls and the money-market series that go quiet under stress. The CHINA row on this board already reads its keyless CFETS feed.
       </div>
     </div>
   );
