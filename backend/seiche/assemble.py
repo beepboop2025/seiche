@@ -92,6 +92,7 @@ from seiche.engines import market as eng_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
 from seiche.engines import navigator as eng_navigator
+from seiche.engines import phasemap as eng_phasemap
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
 from seiche.engines import riptide as eng_riptide
@@ -497,6 +498,15 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
 
     # --- Undertow (free decay — the other half of the resonance physics) ---
     run("undertow", lambda: eng_undertow.analyze(drv["spread_bp"], drv["tail_bp"]))
+
+    # --- Phase Map (calendar-phase-resolved serial dependence of the shared
+    #     pop statistic: the calendar assumptions Resonance and the Swell/
+    #     Microseism buckets hard-code, graded in public. Display-only:
+    #     context, never composite) ---
+    run("phasemap", lambda: eng_phasemap.analyze(
+        drv["spread_bp"],
+        auctions=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+    ))
 
     # --- E-Detector (regime-break tripwire on the two funding streams, with a
     #     nonasymptotic false-alarm warranty; context, never composite) ---

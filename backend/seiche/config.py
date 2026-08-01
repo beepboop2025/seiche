@@ -804,6 +804,22 @@ MICRO_REFIT_EVERY_BD = 63        # branching-history / walk-forward refit cadenc
 MICRO_HAZARD_FWD_BD = 5          # hazard horizon — same as BACKTEST_EVENT_FWD_D
 MICRO_NEAR_CRITICAL = 0.7        # branching at/above this reads near-critical
 
+# Phase Map (kernel: arXiv 2607.09426, Kim and Hansen). Phase-resolved
+# statistics on the funding calendar clock: serial dependence of the SHARED
+# pop statistic measured per calendar-phase bin, with mandatory bands, so the
+# calendar assumptions Resonance and Swell/Microseism hard-code get graded in
+# public (CONFIRMS / PARTIALLY CONFIRMS / EMBARRASSES). Display-only: no
+# composite weight, no alerts, no score.
+PHASEMAP_NEAR_BD = 3             # signed-distance bins kept around each event
+PHASEMAP_MIN_HISTORY_D = 500     # refuse to speak below this (house floor)
+PHASEMAP_MIN_EVENTS = 8          # events in-sample before a clock speaks
+PHASEMAP_MIN_PAIRS = 12          # pairs before a bin's autocorrelation prints
+# Reserve maintenance periods were 14 days ending on alternating Wednesdays;
+# 2020-03-25 is a known period-end Wednesday, and reserve requirements went
+# to zero with the period beginning 2020-03-26. The clock is kept VESTIGIAL.
+PHASEMAP_RMP_ANCHOR = "2020-03-25"
+PHASEMAP_RMP_ZERO_FROM = "2020-03-26"
+
 # Thermohaline — the deep circulation. BIS global-liquidity aggregates read
 # as the slow, planet-scale layer under the daily plumbing: the offshore
 # dollar-credit stock, its growth percentile vs its own quarter-century
