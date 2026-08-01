@@ -1,11 +1,9 @@
 import { P } from "./palette";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
-import {
-  canNativeShare, cardTitle, composeCard, copyPng, copyText,
-  deepLink, fileName, nativeShare, savePng,
-} from "./share";
+import ShareBar from "./ShareBar";
+import { CHART_EXPORT_W, cardTitle, composeChartCard } from "./share";
 
 export interface ChartSeries {
   label: string;
@@ -97,52 +95,21 @@ function gesturePlugin(): uPlot.Plugin {
 export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
-  const noteTimer = useRef<number>(0);
-  const [note, setNote] = useState<string | null>(null);
 
-  const flash = (msg: string) => {
-    setNote(msg);
-    window.clearTimeout(noteTimer.current);
-    noteTimer.current = window.setTimeout(() => setNote(null), 1800);
-  };
-
-  const meta = () => ({
-    title: cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche"),
-    sub: yLabel,
-    series,
-  });
-
-  const withCard = (fn: (cv: HTMLCanvasElement, m: ReturnType<typeof meta>) => void) => {
-    const u = plotRef.current;
-    if (!u) { flash("no data yet"); return; }
-    const m = meta();
-    fn(composeCard(u, m), m);
-  };
-
-  const doPng = () => withCard((cv, m) => {
-    savePng(cv, fileName(m.title)).then(() => flash("png saved"), () => flash("export failed"));
-  });
-  const doCopy = () => withCard((cv, m) => {
-    copyPng(cv).then((ok) => {
-      if (ok) { flash("image copied"); return; }
-      // clipboard images are still gated in some browsers; the file is the fallback
-      savePng(cv, fileName(m.title)).then(() => flash("copy blocked · png saved"), () => flash("export failed"));
-    });
-  });
-  const doLink = () => {
-    copyText(deepLink()).then((ok) => flash(ok ? "link copied" : "copy blocked"));
-  };
-  const doShare = () => withCard((cv, m) => {
-    nativeShare(cv, m).then((ok) => { if (!ok) flash("share failed"); });
-  });
-
-  useEffect(() => {
-    if (!ref.current || rows.length === 0) return;
+  const buildData = (): uPlot.AlignedData => {
     const xs = rows.map((r) => new Date(r[0] as string).getTime() / 1000);
-    const data: uPlot.AlignedData = [
+    return [
       xs,
       ...series.map((_, i) => rows.map((r) => (r[i + 1] == null ? null : Number(r[i + 1])))),
     ] as uPlot.AlignedData;
+  };
+
+  // One options builder serves the live plot and the export render; the export
+  // draws its own legend and cursor-free frame at card width, with fonts sized
+  // for a 1200px social card instead of a 500px panel.
+  const makeOpts = (width: number, h: number, forExport: boolean): uPlot.Options => {
+    const fontPx = forExport ? 12.5 : 10;
+    const font = `${fontPx}px Inter, sans-serif`;
 
     const drawHooks: ((u: uPlot) => void)[] = [];
     if (refLine) {
@@ -157,7 +124,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
         ctx.lineTo(u.bbox.left + u.bbox.width, y);
         ctx.stroke();
         ctx.fillStyle = refLine.color;
-        ctx.font = "10px Inter, sans-serif";
+        ctx.font = font;
         ctx.fillText(refLine.label, u.bbox.left + 6, y - 5);
         ctx.restore();
       });
@@ -181,25 +148,25 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       });
     }
 
-    const opts: uPlot.Options = {
-      width: ref.current.clientWidth,
-      height,
-      cursor: { points: { size: 5 } },
-      legend: { show: series.length > 1 },
+    return {
+      width,
+      height: h,
+      cursor: forExport ? { show: false } : { points: { size: 5 } },
+      legend: { show: !forExport && series.length > 1 },
       axes: [
         {
           stroke: P.faint,
           grid: { stroke: P.grid },
           ticks: { stroke: P.grid },
-          font: "10px Inter, sans-serif",
+          font,
         },
         {
           stroke: P.faint,
           grid: { stroke: P.grid },
           ticks: { stroke: P.grid },
-          font: "10px Inter, sans-serif",
+          font,
           label: yLabel,
-          labelFont: "10px Inter, sans-serif",
+          labelFont: font,
         },
       ],
       series: [
@@ -207,21 +174,66 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
         ...series.map((s) => ({
           label: s.label,
           stroke: s.pointsOnly ? "transparent" : s.color,
-          width: s.pointsOnly ? 0 : 1.4,
+          width: s.pointsOnly ? 0 : forExport ? 2 : 1.4,
           dash: s.dash,
           fill: s.fill,
           paths: s.pointsOnly ? () => null : undefined,
           points: s.pointsOnly
-            ? { show: true, size: 6, fill: s.color, stroke: s.color }
+            ? { show: true, size: forExport ? 8 : 6, fill: s.color, stroke: s.color }
             : { show: false },
         })),
       ],
       hooks: drawHooks.length ? { draw: drawHooks } : undefined,
-      plugins: [gesturePlugin()],
+      plugins: forExport ? [] : [gesturePlugin()],
     };
+  };
 
+  // The export re-renders the plot at card width offscreen (a scaled-up blit
+  // of a 500px panel canvas would ship soft pixels), carries the live zoom
+  // window over, and hands the crisp frame to the card composer.
+  const composeExport = async (): Promise<HTMLCanvasElement> => {
+    const live = plotRef.current;
+    if (!live || rows.length === 0) throw new Error("no data yet");
+    const cssW = CHART_EXPORT_W;
+    const cssH = Math.max(300, Math.round(height * 1.8));
+    const host = document.createElement("div");
+    host.style.cssText = `position:fixed;left:-99999px;top:0;width:${cssW}px;`;
+    document.body.appendChild(host);
+    try {
+      const exp = new uPlot(makeOpts(cssW, cssH, true), buildData(), host);
+      const xs = live.data[0];
+      const lx = live.scales.x;
+      if (xs && xs.length > 1 && lx.min != null && lx.max != null &&
+          (lx.min > (xs[0] as number) || lx.max < (xs[xs.length - 1] as number))) {
+        exp.setScale("x", { min: lx.min, max: lx.max });
+      }
+      // uPlot commits its first paint on the next frame; snapshotting the
+      // canvas synchronously ships an empty plot area on a finished card
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const dpr = window.devicePixelRatio || 1;
+      const src = exp.ctx.canvas;
+      const lastX = xs && xs.length ? (xs[xs.length - 1] as number) * 1000 : null;
+      const card = composeChartCard(src, {
+        title: cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche"),
+        sub: yLabel,
+        series,
+        cssW: Math.round(src.width / dpr),
+        cssH: Math.round(src.height / dpr),
+        dataThrough: lastX,
+      });
+      exp.destroy();
+      return card;
+    } finally {
+      host.remove();
+    }
+  };
+
+  useEffect(() => {
+    if (!ref.current || rows.length === 0) return;
     plotRef.current?.destroy();
-    plotRef.current = new uPlot(opts, data, ref.current);
+    plotRef.current = new uPlot(
+      makeOpts(ref.current.clientWidth, height, false), buildData(), ref.current,
+    );
 
     const onResize = () => {
       if (ref.current && plotRef.current)
@@ -241,18 +253,10 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
     <div className="chartbox">
       <div className="uplot-wrap reveal" ref={ref} />
       <div className="chartfoot">
-        <div className="sharebar" role="group" aria-label="share this chart">
-          {note ? (
-            <span className="sharenote" role="status">{note}</span>
-          ) : (
-            <>
-              {canNativeShare && <button type="button" onClick={doShare} title="share the chart image">share</button>}
-              <button type="button" onClick={doCopy} title="copy the chart image to the clipboard">copy</button>
-              <button type="button" onClick={doPng} title="download the chart as a png">png</button>
-              <button type="button" onClick={doLink} title="copy a link to this view">link</button>
-            </>
-          )}
-        </div>
+        <ShareBar
+          compose={composeExport}
+          title={() => cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche")}
+        />
         <div className="zoomhint">drag to zoom · ⌘/ctrl+scroll or pinch to zoom · double-click resets</div>
       </div>
     </div>

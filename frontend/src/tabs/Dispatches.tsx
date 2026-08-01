@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { renderMarkdown } from "../md";
 import { API_BASE } from "../apiBase";
+import ShareBar from "../ShareBar";
+import { composeTextCard } from "../share";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
 
@@ -59,6 +61,14 @@ export default function Dispatches() {
           <div className="dispatch-head">
             <div className="dispatch-date">{meta.date}{meta.tag ? ` · ${meta.tag}` : ""}</div>
             <h1 className="dispatch-title">{meta.title}</h1>
+            <ShareBar
+              compose={() => Promise.resolve(composeTextCard({
+                title: meta.title,
+                kicker: `${meta.date}${meta.tag ? ` · ${meta.tag}` : ""} · dispatch`,
+                body: meta.summary,
+              }))}
+              title={() => meta.title}
+            />
           </div>
         )}
         <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
