@@ -207,11 +207,31 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
           (lx.min > (xs[0] as number) || lx.max < (xs[xs.length - 1] as number))) {
         exp.setScale("x", { min: lx.min, max: lx.max });
       }
-      // uPlot commits its first paint on the next frame; snapshotting the
-      // canvas synchronously ships an empty plot area on a finished card
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // uPlot sizes and paints its canvas on a deferred frame, and the delay
+      // is not a fixed frame count. Snapshotting early ships a finished card
+      // with an empty plot, so wait until the canvas is sized AND carries ink,
+      // nudging a redraw if it stalls; past the deadline, fall back to the
+      // on-screen canvas, which always has pixels.
+      const hasInk = (c: HTMLCanvasElement): boolean => {
+        if (!c.width || !c.height) return false;
+        const probe = document.createElement("canvas");
+        probe.width = 48;
+        probe.height = 24;
+        const pctx = probe.getContext("2d", { willReadFrequently: true })!;
+        pctx.drawImage(c, 0, 0, 48, 24);
+        const d = pctx.getImageData(0, 0, 48, 24).data;
+        for (let j = 3; j < d.length; j += 4) if (d[j] > 0) return true;
+        return false;
+      };
+      let painted = false;
+      for (let i = 0; i < 16; i++) {
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+        const c = exp.ctx.canvas;
+        if (c.width >= cssW && hasInk(c)) { painted = true; break; }
+        if (i === 7) { try { exp.redraw(false, false); } catch { /* keep waiting */ } }
+      }
+      const src = painted ? exp.ctx.canvas : live.ctx.canvas;
       const dpr = window.devicePixelRatio || 1;
-      const src = exp.ctx.canvas;
       const lastX = xs && xs.length ? (xs[xs.length - 1] as number) * 1000 : null;
       const card = composeChartCard(src, {
         title: cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche"),
