@@ -168,10 +168,25 @@ body {
 /* ---- cards grid ---- */
 .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-top: 18px; }
 .card {
+  position: relative;
   background: var(--panel);
   border: 1px solid var(--panel-edge);
   border-radius: var(--r-lg); padding: 16px 18px; overflow: hidden;
 }
+
+/* per-card share chip: top-right corner, quiet until the hand arrives */
+.cardshare {
+  position: absolute; top: 12px; right: 14px; z-index: 2;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--ghost);
+  opacity: 0; transition: opacity 0.3s var(--ease), color 0.15s var(--ease);
+}
+.card:hover .cardshare, .cardshare:focus-visible { opacity: 1; }
+.cardshare:hover { color: var(--accent-bright); }
+.cardshare:focus-visible { outline: 1px solid var(--accent-dim); outline-offset: 2px; }
+@media (hover: none) { .cardshare { opacity: 0.7; } }
+@media (prefers-reduced-motion: reduce) { .cardshare { transition: none; } }
 .card h2 {
   font-family: var(--display); font-size: 11px; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--accent); font-weight: 500;

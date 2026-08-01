@@ -18,6 +18,7 @@ import Gauge from "./motion/Gauge";
 import Odo from "./motion/Odo";
 import LivePulse from "./motion/LivePulse";
 import { useChangeFlash } from "./motion/useLive";
+import { mountCardShare } from "./cardShare";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
@@ -87,6 +88,9 @@ function AppInner() {
 
   // unseen-panel marks re-arm on every tab visit
   useAttentionMarks(tab);
+
+  // every card grows a share chip as tabs render; no per-tab wiring
+  useEffect(() => mountCardShare(), []);
 
   // Tab switches ride the View Transitions API where it exists: the old view
   // cross-dissolves into the new one on the compositor. Falls back to the

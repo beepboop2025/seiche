@@ -313,6 +313,88 @@ export function composeTextCard(meta: TextCardMeta): HTMLCanvasElement {
   return cv;
 }
 
+export interface StatCardMeta {
+  title: string;
+  body?: string;
+  stats: { k: string; v: string }[];
+  link?: string;
+}
+
+/** A board card as a social object: title, the honest sub-line, and the
+ *  key/value readings in a two-column grid under the watermark row. */
+export function composeStatCard(meta: StatCardMeta): HTMLCanvasElement {
+  const probe = document.createElement("canvas").getContext("2d")!;
+  probe.font = "650 30px Inter, sans-serif";
+  const titleTop = 132;
+  let y = wrapTextMeasure(probe, meta.title, CARD_W - CARD_PAD * 2, 40, 2, titleTop) + 14;
+  let bodyTop = 0;
+  if (meta.body) {
+    probe.font = "15px Inter, sans-serif";
+    bodyTop = y + 16;
+    y = wrapTextMeasure(probe, meta.body, CARD_W - CARD_PAD * 2 - 4, 25, 3, bodyTop);
+  }
+  const stats = meta.stats.slice(0, 8);
+  const rows = Math.ceil(stats.length / 2);
+  const gridTop = y + 40;
+  const cellH = 64;
+  const H = Math.max(gridTop + rows * cellH + 84, 420);
+  const footRule = H - 50;
+
+  const cv = document.createElement("canvas");
+  cv.width = CARD_W * S;
+  cv.height = H * S;
+  const ctx = cv.getContext("2d")!;
+  ctx.scale(S, S);
+
+  ctx.fillStyle = tok("--panel", "#0b0d15");
+  ctx.fillRect(0, 0, CARD_W, H);
+  ctx.strokeStyle = tok("--panel-edge", "#1c1f2b");
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, CARD_W - 1, H - 1);
+
+  drawWaveChip(ctx, CARD_PAD, 38, 34);
+  ctx.font = `600 15px ${mono()}`;
+  ctx.fillStyle = tok("--accent-soft", "#bbaffe");
+  ctx.fillText("S E I C H E", CARD_PAD + 48, 60);
+  ctx.font = `13px ${mono()}`;
+  ctx.fillStyle = tok("--faint", "#787f95");
+  const dom = "seiche.info";
+  ctx.fillText(dom, CARD_W - CARD_PAD - ctx.measureText(dom).width, 60);
+  fadingRule(ctx, CARD_PAD, CARD_W - CARD_PAD, 84, tok("--panel-edge-2", "#333748"));
+
+  ctx.font = "650 30px Inter, sans-serif";
+  ctx.fillStyle = tok("--text", "#edeef4");
+  wrapText(ctx, meta.title, CARD_PAD, titleTop, CARD_W - CARD_PAD * 2, 40, 2);
+  if (meta.body) {
+    ctx.font = "15px Inter, sans-serif";
+    ctx.fillStyle = tok("--dim", "#9aa0b6");
+    wrapText(ctx, meta.body, CARD_PAD, bodyTop, CARD_W - CARD_PAD * 2 - 4, 25, 3);
+  }
+
+  const colW = (CARD_W - CARD_PAD * 2 - 32) / 2;
+  const clamp = (text: string, maxW: number): string => {
+    if (ctx.measureText(text).width <= maxW) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + "…").width > maxW) t = t.slice(0, -1);
+    return t + "…";
+  };
+  stats.forEach((s, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = CARD_PAD + col * (colW + 32);
+    const yTop = gridTop + row * cellH;
+    ctx.font = `11px ${mono()}`;
+    ctx.fillStyle = tok("--faint", "#787f95");
+    ctx.fillText(clamp(s.k.toUpperCase(), colW), x, yTop);
+    ctx.font = `600 22px ${mono()}`;
+    ctx.fillStyle = tok("--chart-ink-bright", "#d4d8ea");
+    ctx.fillText(clamp(s.v, colW), x, yTop + 30);
+  });
+
+  cardFooter(ctx, footRule, meta.link ?? deepLink(), `exported ${fmtStamp(Date.now())}`);
+  return cv;
+}
+
 /** wrapText without painting, for the measure pass */
 function wrapTextMeasure(
   ctx: CanvasRenderingContext2D, text: string, maxW: number, lineH: number,
