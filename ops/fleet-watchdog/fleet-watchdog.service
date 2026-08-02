@@ -1,0 +1,10 @@
+[Unit]
+Description=Fleet Telegram bot watchdog (out-of-band health probe)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/fleet-watchdog/watchdog.py
+NoNewPrivileges=true
+PrivateTmp=true
