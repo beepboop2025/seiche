@@ -77,7 +77,16 @@ LAB_LINK = "https://t.me/LiquidityLabDesk"
 
 POLL_TIMEOUT = 50
 
-FOOT = ("\n<i>Free public good — no paywall, no sign-in. Every number is on "
+# The backend keys its /api/ask limiter on the client IP, and this bot reaches
+# the backend over loopback, so every Telegram user shares one server-side
+# bucket. These cap a single chat well under that shared ceiling. Nothing here
+# gates who may ask: the desk stays free, only one chat's rate is bounded.
+ASK_PER_CHAT_LIMIT = 6
+ASK_PER_CHAT_WINDOW_S = 60
+
+ASK_BUSY = object()
+
+FOOT = ("\n<i>Free public good: no paywall, no sign-in. Every number is on "
         "the board at seiche.info with sources and an honest backtest.</i>")
 
 
@@ -193,13 +202,25 @@ def post_channel(text: str, ref: str) -> bool:
     return bool(ok)
 
 
-def _get_json(url: str, timeout: int = 25, tries: int = 2) -> dict | list | None:
+def _get_json(url: str, timeout: int = 25,
+              tries: int = 2) -> dict | list | object | None:
     # Explicit User-Agent: some edges 403 Python's default one.
     req = urllib.request.Request(url, headers={"User-Agent": "seiche-bot"})
     for attempt in range(tries):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.load(r)
+        except urllib.error.HTTPError as exc:
+            # HTTPError subclasses URLError, so this arm has to come first or
+            # the one below swallows the status code. A 429 is the backend's
+            # shared limiter refusing, not an outage, and retrying it spends
+            # the bucket the 429 exists to protect.
+            if exc.code == 429:
+                return ASK_BUSY
+            if attempt == tries - 1:
+                print(f"GET {url} failed: {exc.code}", file=sys.stderr)
+            else:
+                time.sleep(1.5)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             if attempt == tries - 1:
                 print(f"GET {url} failed: {exc}", file=sys.stderr)
@@ -208,13 +229,31 @@ def _get_json(url: str, timeout: int = 25, tries: int = 2) -> dict | list | None
     return None
 
 
+def board_get(url: str):
+    """Any board read. Only /ask can act on the ASK_BUSY sentinel, so every
+    other caller gets the plain "did not answer" None its formatter expects."""
+    res = _get_json(url)
+    return None if res is ASK_BUSY else res
+
+
 def api_get(path: str):
-    return _get_json(f"{API}{path}")
+    return board_get(f"{API}{path}")
+
+
+def ask_desk(question: str):
+    """Ask the desk assistant, keeping a 429 distinguishable from an outage.
+
+    Returns the parsed answer, ASK_BUSY when the backend limiter refused, or
+    None on a real failure. tries=1 because a retry on 429 spends the shared
+    bucket the 429 is protecting.
+    """
+    url = f"{API}/api/ask?q={urllib.parse.quote(question[:600])}"
+    return _get_json(url, timeout=60, tries=1)
 
 
 def ll_get(path: str):
     """The other desk: LiquiLens's public institutions API, read verbatim."""
-    return _get_json(f"{LL_API}{path}")
+    return board_get(f"{LL_API}{path}")
 
 
 def _state_path(name: str) -> str:
@@ -235,6 +274,46 @@ def save_state(name: str, value) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(value, fh)
     os.replace(tmp, _state_path(name))
+
+
+def ask_quota(chat_id: int, now: float | None = None) -> tuple[bool, int]:
+    """Per-chat sliding window over /ask. Returns (allowed, retry_after_s).
+
+    Records the hit only when it is allowed, so a refused chat does not push
+    its own window forward and lock itself out indefinitely.
+    """
+    now = time.time() if now is None else now
+    state = load_state("ask_rate.json", {})
+    if not isinstance(state, dict):
+        state = {}
+    kept = {}
+    for chat, stamps in state.items():
+        if not isinstance(stamps, list):
+            continue
+        live = [t for t in stamps
+                if isinstance(t, (int, float)) and 0 <= now - t < ASK_PER_CHAT_WINDOW_S]
+        if live:
+            kept[chat] = live
+    key = str(chat_id)
+    hits = kept.get(key, [])
+    if len(hits) >= ASK_PER_CHAT_LIMIT:
+        retry = max(1, int(ASK_PER_CHAT_WINDOW_S - (now - min(hits))) + 1)
+        save_state("ask_rate.json", kept)
+        return False, retry
+    hits.append(now)
+    kept[key] = hits
+    save_state("ask_rate.json", kept)
+    return True, 0
+
+
+def fmt_ask_throttled(retry_after: int) -> str:
+    return (f"You have sent {ASK_PER_CHAT_LIMIT} questions in the last minute, "
+            f"which is this chat's own limit. Try again in {retry_after}s.\n\n"
+            "This is a per-user pace limit, not an outage: the desk is up and "
+            "the board is live. It exists so one chat cannot take the "
+            "assistant away from everyone else.\n\n"
+            "/now, /odds, /turns, /analogs and /proof are not rate limited and "
+            "answer straight from the board." + FOOT)
 
 
 def esc(s) -> str:
@@ -630,8 +709,15 @@ def fmt_letter(index: list | None) -> str:
 
 
 def fmt_ask(res) -> str:
+    if res is ASK_BUSY:
+        return ("The desk assistant is at its shared answer limit right now, "
+                "so this question was dropped, not queued: nothing is holding "
+                "it and no reply is coming. This is a pace limit, not an "
+                "outage, and the board itself is live. Send the question "
+                "again in a minute, or use /now for the current gauge."
+                + FOOT)
     if not res:
-        return "The desk assistant did not answer — try again shortly."
+        return "The desk assistant did not answer. Try again shortly."
     if isinstance(res, dict):
         ans = res.get("answer") or res.get("text") or res.get("detail") or ""
         lines = [esc(ans).strip()]
@@ -832,7 +918,7 @@ def fmt_daily_letter() -> str:
         lines.append("\n🏦 Institutions (LiquiLens): did not answer — absence "
                      "is not calm; demo.liquilens.in has the board.")
 
-    idx = _get_json(f"{SITE}/dispatches/index.json")
+    idx = board_get(f"{SITE}/dispatches/index.json")
     if isinstance(idx, list) and idx:
         d = idx[0]
         lines.append(f"\n✉️ Today's letter: <b>{esc(d.get('title'))}</b>\n"
@@ -971,7 +1057,7 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/proof":
         send(chat_id, fmt_proof(api_get("/api/public")), keyboard_for("/proof"))
     elif cmd == "/letter":
-        send(chat_id, fmt_letter(_get_json(f"{SITE}/dispatches/index.json")),
+        send(chat_id, fmt_letter(board_get(f"{SITE}/dispatches/index.json")),
              keyboard_for("/letter"))
     elif cmd == "/institutions":
         send(chat_id, fmt_institutions(ll_get("/failure-radar/board")), keyboard_for("/institutions"))
@@ -983,9 +1069,13 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
             send(chat_id, "Usage: /ask <question> — e.g. /ask why is the regime "
                           "STRAIN? (Or just type your question, no slash.)")
         else:
-            q = urllib.parse.quote(arg.strip()[:600])
-            send(chat_id, fmt_ask(_get_json(f"{API}/api/ask?q={q}", timeout=60)),
-                 keyboard_for("/ask"))
+            allowed, retry_after = ask_quota(chat_id)
+            if not allowed:
+                send(chat_id, fmt_ask_throttled(retry_after),
+                     keyboard_for("/ask"))
+            else:
+                send(chat_id, fmt_ask(ask_desk(arg.strip())),
+                     keyboard_for("/ask"))
     elif cmd == "/share":
         record_lead(chat_id, "share-open")
         send(chat_id, fmt_share(api_get("/api/gauge")), keyboard_for("/share"))
