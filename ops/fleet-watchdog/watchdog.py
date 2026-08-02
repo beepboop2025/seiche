@@ -491,12 +491,20 @@ def main() -> int:
     # Every remote failing at the network level is one fault, this box's
     # egress, not N outages, and they also share one reverse proxy. Collapse
     # it into a single alarm; per-remote HTTP failures still report per-remote.
-    if mcp_checks and all(any(p.startswith("unreachable") for p in probs)
-                          for _, _, probs in mcp_checks):
+    collapsed = bool(mcp_checks) and all(
+        any(p.startswith("unreachable") for p in probs)
+        for _, _, probs in mcp_checks)
+    if collapsed:
         checks.append(("mcp", pick_via("mcp", "", cfg),
                        [f"all {len(mcp_checks)} remotes unreachable, "
                         f"likely box-side egress"]))
     else:
+        # The synthetic name is reported healthy rather than omitted. Left out
+        # of checks it is never visited, so its fail counter stays where the
+        # collapse left it: the recovery message never arrives, and the next
+        # collapse alerts on its first run instead of waiting for CONSECUTIVE.
+        # An alarm that cannot say it is over is an alarm nobody trusts twice.
+        checks.append(("mcp", pick_via("mcp", "", cfg), []))
         checks.extend(mcp_checks)
 
     for name, via, problems in checks:

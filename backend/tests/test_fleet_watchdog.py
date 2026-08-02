@@ -276,3 +276,40 @@ def test_a_corrupt_state_entry_does_not_stop_the_run(monkeypatch, tmp_path):
 
     assert wd.main() == 0
     assert isinstance(json.loads(state.read_text())["alpha-bot"], dict)
+
+
+def test_the_collapsed_remote_alarm_can_say_it_is_over(monkeypatch, tmp_path):
+    """A collapsed alarm that is only ever appended when it fires can never
+    recover: the synthetic name is absent from checks on a healthy run, so its
+    counter keeps the value the outage left and the next outage pages on its
+    first run instead of waiting out a blip."""
+    sent = []
+    monkeypatch.setattr(wd, "OWNER_CHAT", "123")
+    monkeypatch.setattr(wd, "CONFIG_PATH", _write(tmp_path, {
+        "default_alert_via": "a-bot",
+        "bots": [{"unit": "a-bot", "env": str(tmp_path / "a.env"),
+                  "var": "T"}],
+        "mcp_remotes": [{"name": "m1", "url": "https://x.test/mcp"},
+                        {"name": "m2", "url": "https://y.test/mcp"}],
+    }))
+    (tmp_path / "a.env").write_text("T=1\n")
+    monkeypatch.setattr(wd, "STATE_PATH", str(tmp_path / "state.json"))
+    monkeypatch.setattr(wd, "MAC_HEARTBEAT", str(tmp_path / "absent.heartbeat"))
+    monkeypatch.setattr(wd, "check", lambda bot: [])
+    monkeypatch.setattr(wd, "notify",
+                        lambda cfg, via, text: sent.append(text) or True)
+    monkeypatch.setattr(wd, "CONSECUTIVE", 1)
+
+    monkeypatch.setattr(wd, "check_mcp", lambda url: ["unreachable (gaierror)"])
+    wd.main()
+    assert any("unreachable" in t for t in sent), sent
+
+    sent.clear()
+    monkeypatch.setattr(wd, "check_mcp", lambda url: [])
+    wd.main()
+    assert any("recovered" in t.lower() for t in sent), \
+        f"the collapsed alarm never said it was over: {sent}"
+
+    # And the counter really is back to zero, so a later outage waits again.
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["mcp"]["fails"] == 0, state["mcp"]
