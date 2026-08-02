@@ -6,7 +6,7 @@
 # report about itself.
 set -u
 nyx_alive=0
-launchctl print "gui/$(id -u)/com.mrinal.claude-telegram" >/dev/null 2>&1 && nyx_alive=1
+launchctl print "gui/$(id -u)/com.beepboop2025.claude-telegram-bridge" >/dev/null 2>&1 && nyx_alive=1
 # Host comes from ~/.config/fleet-watchdog/box (one line, user@host) so no
 # infrastructure address is committed to a public repo.
 BOX=$(cat "$HOME/.config/fleet-watchdog/box" 2>/dev/null) || exit 0
