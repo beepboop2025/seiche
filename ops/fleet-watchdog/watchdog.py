@@ -65,11 +65,45 @@ ALERT_VIA = {
     "hermes-gateway": "seiche-bot",
     "riptide-bot": "seiche-bot",
     "_mac": "seiche-bot",
+    # Report a remote through a bot that does not share its service, so a dead
+    # seiche stack cannot swallow its own alarm.
+    "mcp-seiche": "undertow-bot",
+    "mcp-palimpsest": "undertow-bot",
+    "mcp-undertow": "seiche-bot",
+    "mcp-liquilens": "seiche-bot",
+    "mcp-breach": "seiche-bot",
+    "mcp-groundcheck": "undertow-bot",
 }
 # Mac-hosted bots report in by touching this file over ssh; if the Mac is
 # asleep, offline or logged out, nothing touches it and the box notices.
 MAC_HEARTBEAT = "/var/lib/fleet-watchdog/mac.heartbeat"
 MAC_STALE_S = 3600
+
+# The MCP remotes have the bots' exact failure mode — process up, unit active,
+# answering nothing — for a less forgiving audience. An agent that gets one bad
+# response deselects the tool and, unlike a person, does not retry tomorrow. A
+# route can also go missing without anything dying: the noisefloor route was
+# silently dropped from the reverse proxy once and nobody noticed. So probe the
+# protocol, not the port: a TCP check or a 200 on `/` proves neither that the
+# JSON-RPC layer is alive nor that this path still routes to the right server.
+MCP_REMOTES = [
+    ("mcp-seiche",      "https://api.seiche.info/mcp"),
+    ("mcp-liquilens",   "https://api.liquilens.in/mcp"),
+    ("mcp-palimpsest",  "https://api.seiche.info/palimpsest/mcp"),
+    ("mcp-undertow",    "https://api.seiche.info/undertow/mcp"),
+    ("mcp-breach",      "https://breach.seiche.info/mcp"),
+    ("mcp-groundcheck", "https://groundcheck.seiche.info/mcp"),
+]
+# initialize is the cheapest read-only call that exercises the JSON-RPC layer.
+MCP_INIT = {
+    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+               "clientInfo": {"name": "fleet-watchdog", "version": "1.0"}},
+}
+# Identify as a real client. api.liquilens.in sits behind Cloudflare, whose
+# browser-integrity check answers the stock Python-urllib signature with a 403
+# (error 1010) — probing without this would report a healthy server as down.
+MCP_UA = "fleet-watchdog/1.0 (+https://seiche.info)"
 
 _CTX = ssl.create_default_context()
 
@@ -158,6 +192,47 @@ def check(unit: str, env: str, var: str, state: str | None) -> list[str]:
     return problems
 
 
+def check_mcp(url: str) -> list[str]:
+    """Probe one MCP remote over JSON-RPC. Empty list means healthy."""
+    body = json.dumps(MCP_INIT).encode()
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "User-Agent": MCP_UA,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT, context=_CTX) as r:
+            payload = r.read(65536).decode("utf-8", "replace")
+        if "jsonrpc" not in payload:
+            return [f"answered {url.split('/', 3)[-1]} but not as JSON-RPC "
+                    f"— route may point at the wrong service"]
+        if '"error"' in payload and '"result"' not in payload:
+            return [f"JSON-RPC error on initialize: {payload[:120]}"]
+        return []
+    except urllib.error.HTTPError as e:
+        # A 4xx is ambiguous: an MCP server may legitimately reject a bare
+        # initialize, but a misrouted path answers 4xx too. Distinguish by the
+        # body — a real server refuses in JSON-RPC, a wrong route does not.
+        # Treating every 4xx as healthy would mask the exact failure this
+        # probe exists to catch, so require the protocol marker.
+        if e.code == 401:
+            return []  # auth gate: server is up and this path routes correctly
+        try:
+            body = e.read(8192).decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        if e.code in (400, 405, 406) and "jsonrpc" in body:
+            return []
+        return [f"HTTP {e.code} on initialize"
+                + ("" if body else " (no body)")
+                + (" — route may point at the wrong service"
+                   if "jsonrpc" not in body else "")]
+    except Exception as e:  # network, DNS, TLS
+        # Matches the bot path: transient box-side trouble is not a fault of
+        # the thing being watched. CONSECUTIVE still catches a real outage.
+        return [f"unreachable ({type(e).__name__})"]
+
+
 def notify(via_unit: str, text: str) -> bool:
     for unit, env, var, _ in BOTS:
         if unit != via_unit:
@@ -207,6 +282,8 @@ def main() -> int:
                        if age > MAC_STALE_S else []))
     except OSError:
         pass  # heartbeat not established yet; stay quiet rather than cry wolf
+
+    checks.extend((name, check_mcp(url)) for name, url in MCP_REMOTES)
 
     for name, problems in checks:
         st = state.setdefault(name, {"fails": 0, "alerted_at": 0})

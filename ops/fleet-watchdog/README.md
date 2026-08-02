@@ -25,10 +25,33 @@ days of journal held zero startup banners — nothing to scrape.
 | `getWebhookInfo.url` | a webhook is stealing updates from the poller |
 | state-file mtime (`offset.json`) | the poll loop stopped turning |
 | `systemctl is-active` | the unit died outright |
+| JSON-RPC `initialize` on each MCP remote | the remote is up but not speaking MCP, or the path stopped routing to it |
 
 Both Telegram methods are read-only and neither touches `getUpdates`, so
 probing can **never** conflict with a running poller. Verified against all
 tokens before rollout.
+
+## The MCP remotes, and why they are probed the same way
+
+The six hosted MCP servers (`MCP_REMOTES`) have the bots' exact failure mode
+for a less forgiving audience. An agent that gets one bad response deselects
+the tool and, unlike a person, never retries. A route can also go missing
+without anything dying: the noisefloor route was silently dropped from the
+reverse proxy once and nobody noticed for weeks.
+
+So the probe speaks the protocol rather than checking the port. `initialize` is
+the cheapest read-only JSON-RPC call, and the response must actually look like
+JSON-RPC. A 4xx is deliberately **not** treated as healthy unless the body
+carries the protocol marker (or it is a 401, which proves an auth gate in front
+of a live server): a misrouted path answers 4xx too, and accepting that blindly
+would mask the one failure this exists to catch. A bare 405 with no body now
+reports "route may point at the wrong service".
+
+One field note: `api.liquilens.in` is behind Cloudflare, whose browser
+integrity check answers the stock `Python-urllib` signature with 403 error
+1010. The probe therefore sends an explicit `User-Agent`. Without it the
+watchdog would page about a perfectly healthy server, and any naive Python MCP
+client is bounced the same way.
 
 ## Design rules
 
