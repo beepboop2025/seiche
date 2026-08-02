@@ -53,6 +53,13 @@ from datetime import datetime, timedelta, timezone
 TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
 OWNER_CHAT = os.environ.get("RISSAGA_OWNER_CHAT", "8727818928")
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")   # empty = channel off
+# Who writes the channel post. "hermes": this radar only exports
+# latest.json and the Hermes agent lane posts the desk reads (Mrinal's
+# call 2026-08-03); "direct": this radar posts its deterministic reads
+# itself (fallback lane); "off": no channel activity at all.
+CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "direct").lower()
+LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
+MAX_CHANNEL_POSTS = 2
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 STATE_DIR = os.environ.get("RISSAGA_STATE", "/var/lib/rissaga")
 SEICHE_API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
@@ -64,8 +71,8 @@ UA = os.environ.get("RISSAGA_UA",
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-MARK_BAR = 3.0        # minimum final score to be marked in the DM
-CHANNEL_BAR = 4.5     # higher bar for the one public channel post
+MARK_BAR = float(os.environ.get("RISSAGA_MARK_BAR", "3.0"))
+CHANNEL_BAR = float(os.environ.get("RISSAGA_CHANNEL_BAR", "4.5"))
 MAX_MARKED = 5
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
@@ -80,7 +87,7 @@ FEED_CACHE_TTL_H = 24.0
 # Mrinal: edit weights and terms freely, the test suite only checks shape.
 BEATS: dict[str, dict] = {
     "plumbing": {
-        "product": "SEICHE", "emoji": "\U0001f30a", "label": "plumbing",
+        "desk": "SEICHE", "emoji": "\U0001f30a", "label": "plumbing",
         "terms": [
             (r"discount window", 5), (r"standing repo facility", 5),
             (r"\bSRF\b", 4), (r"repo market", 4), (r"reverse repo", 3),
@@ -98,7 +105,7 @@ BEATS: dict[str, dict] = {
         "gnews": '"discount window" OR "repo market" OR "reverse repo" OR SOFR OR "money market"',
     },
     "bank_stress": {
-        "product": "LIQUILENS", "emoji": "\U0001f3e6", "label": "bank stress",
+        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "bank stress",
         "terms": [
             (r"bank failure", 6), (r"bank collapse", 6), (r"bank run", 6),
             (r"deposit run", 6), (r"receivership", 6), (r"\bFDIC\b", 3),
@@ -115,7 +122,7 @@ BEATS: dict[str, dict] = {
         "gnews": '"bank failure" OR "deposit outflows" OR "bank run" OR FDIC OR "regional bank"',
     },
     "private_credit": {
-        "product": "LIQUILENS", "emoji": "\U0001f3e6", "label": "private credit",
+        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "private credit",
         "terms": [
             (r"private credit", 4), (r"shadow bank\w*", 4), (r"\bNBFC\b", 4),
             (r"\bNDFI\b", 5), (r"direct lending", 3), (r"\bBDC\b", 3),
@@ -127,7 +134,7 @@ BEATS: dict[str, dict] = {
         "gnews": '"private credit" OR "shadow banking" OR "redemptions" fund OR NBFC',
     },
     "market_liquidity": {
-        "product": "UNDERTOW", "emoji": "\U0001f300", "label": "market depth",
+        "desk": "UNDERTOW", "emoji": "\U0001f300", "label": "market depth",
         "terms": [
             (r"basis trade", 5), (r"market depth", 4), (r"margin calls?", 5),
             (r"forced selling", 5), (r"fire sale", 5), (r"deleveraging", 4),
@@ -140,7 +147,7 @@ BEATS: dict[str, dict] = {
         "gnews": '"basis trade" OR "margin calls" OR "forced selling" OR "market liquidity"',
     },
     "stablecoin_rails": {
-        "product": "LIQUILENS", "emoji": "\U0001f3e6", "label": "rails",
+        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "rails",
         "terms": [
             (r"stablecoins?", 3), (r"depeg\w*", 6), (r"\bUSDC\b", 3),
             (r"\bUSDT\b", 3), (r"tether", 3), (r"attestation", 4),
@@ -151,7 +158,7 @@ BEATS: dict[str, dict] = {
         "gnews": 'stablecoin depeg OR tether reserves OR USDC OR "tokenized treasury"',
     },
     "crypto_stress": {
-        "product": "LIQUILENS", "emoji": "\U0001f3e6", "label": "crypto leverage",
+        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "crypto leverage",
         "terms": [
             (r"liquidation cascade", 6), (r"liquidations?", 3),
             (r"withdrawals? (?:halted|paused|suspended)", 6),
@@ -163,7 +170,7 @@ BEATS: dict[str, dict] = {
         "gnews": 'crypto liquidations OR "withdrawals halted" exchange OR "crypto lender"',
     },
     "policy_shock": {
-        "product": "LAB", "emoji": "\U0001f9ea", "label": "policy shock",
+        "desk": "SEICHE", "emoji": "\U0001f30a", "label": "policy shock",
         "terms": [
             (r"emergency (?:meeting|session)", 6), (r"intermeeting", 6),
             (r"unscheduled meeting", 5), (r"emergency (?:rate|cut|hike)", 6),
@@ -175,13 +182,39 @@ BEATS: dict[str, dict] = {
         "gnews": '"emergency meeting" central bank OR "systemic risk" OR "liquidity facility"',
     },
     "india_watch": {
-        "product": "LIQUILENS", "emoji": "\U0001f3e6", "label": "india watch",
+        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "india watch",
         "terms": [
             (r"RBI (?:action|restrictions?|penalty|supersede\w*)", 4),
             (r"PCA framework", 3), (r"co.?operative bank", 3),
             (r"\bDICGC\b", 4), (r"RBI moratorium", 5), (r"\bNPA\b", 2),
         ],
         "gnews": "",   # ET and Mint feeds carry this beat, no gnews query
+    },
+    "corporate_stress": {
+        "desk": "CORPORATE", "emoji": "\U0001f3ed", "label": "corporate stress",
+        "terms": [
+            (r"commercial paper", 4), (r"credit lines?", 3),
+            (r"revolver draw\w*", 5), (r"drawdown wave", 5), (r"\bSLOOS\b", 4),
+            (r"chapter 11", 4), (r"bankruptc\w+", 4),
+            (r"corporate defaults?", 5), (r"interest coverage", 4),
+            (r"leveraged loan defaults?", 5), (r"downgrades?", 2),
+            (r"mass layoffs", 3), (r"capex cuts?", 3),
+            (r"missed (?:coupon|payment)", 5), (r"debt restructuring", 4),
+        ],
+        "gnews": '"commercial paper" OR "chapter 11" OR "corporate defaults" OR "credit line" drawdown',
+    },
+    "real_economy": {
+        "desk": "REALECON", "emoji": "\U0001f6d2", "label": "real economy",
+        "terms": [
+            (r"jobless claims", 4), (r"nonfarm payrolls", 4),
+            (r"unemployment rate", 3), (r"\bCPI\b", 3), (r"inflation", 2),
+            (r"retail sales", 3), (r"consumer delinquenc\w+", 5),
+            (r"credit card delinquenc\w+", 5), (r"household debt", 4),
+            (r"\bGST\b collections?", 3), (r"\bIIP\b", 3), (r"\bPMI\b", 3),
+            (r"monsoon", 2), (r"food (?:prices|inflation)", 3),
+            (r"real wages", 3), (r"consumer confidence", 3),
+        ],
+        "gnews": '"jobless claims" OR "consumer delinquencies" OR CPI inflation OR payrolls',
     },
 }
 
@@ -204,7 +237,13 @@ ANGLES = {
     "crypto_stress": "the exposure register and regime lens are on record, cite them",
     "policy_shock": "what the facility does to the gauge inputs, mechanics over drama",
     "india_watch": "supervisory tape context, actions run ahead of ratings",
+    "corporate_stress": "read it through the transmission board, channel by channel",
+    "real_economy": "the household and India boards say if stress is arriving downstream",
 }
+
+DESK_NICE = {"SEICHE": "Seiche", "LIQUILENS": "LiquiLens",
+             "UNDERTOW": "Undertow", "CORPORATE": "Corporate",
+             "REALECON": "Real economy"}
 
 # ================================================================= FEEDS ===
 # (key, url, tier). Live verified 2026-08-03; a feed that rots reports
@@ -582,9 +621,27 @@ def read_boards() -> dict:
 
     def d_corp(d):
         tr = d.get("transmission")
+        out = {"verdict": None, "funding": None, "real": None}
         if isinstance(tr, dict):
-            tr = tr.get("verdict") or tr.get("state")
-        return {"verdict": tr}
+            out["verdict"] = tr.get("verdict") or tr.get("state")
+            out["funding"] = tr.get("funding_state")
+            out["real"] = tr.get("real_state")
+        elif tr:
+            out["verdict"] = tr
+        return out
+
+    def d_india(d):
+        ch = d.get("channels")
+        if not isinstance(ch, dict) or not ch:
+            return None
+        off = [name for name, c in ch.items()
+               if str((c or {}).get("state") or "CALM").upper() != "CALM"]
+        return {"regime": d.get("regime"), "off": off, "n": len(ch)}
+
+    def d_household(d):
+        ch = d.get("channels") if isinstance(d.get("channels"), dict) else {}
+        dq = ((ch.get("delinquencies") or {}).get("state"))
+        return {"regime": d.get("regime"), "dq": dq}
 
     def d_ut_board(d):
         # live shape: segments{name: {tier}}. PARTIAL means partial
@@ -636,6 +693,8 @@ def read_boards() -> dict:
         ("ut", f"{UT_BASE}/board.json", d_ut_board),
         ("ndfi", f"{LL_API}/us-radar/ndfi", d_ndfi),
         ("rbi_tape", f"{LL_API}/economic/rbi-actions", d_tape),
+        ("india", f"{LL_API}/public-signals/india-macro", d_india),
+        ("household", f"{LL_API}/public-signals/household-credit", d_household),
     ]
     boards: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
@@ -696,6 +755,30 @@ def board_line(beat: str, boards: dict) -> str:
             if c.get("btc") and c.get("eth"):
                 return f"Crypto regime BTC {c['btc']}, ETH {c['eth']}"
             return f"Crypto regime {c['state']}"
+    if beat == "corporate_stress":
+        co = boards.get("corp")
+        if co and co.get("verdict"):
+            line = f"Corporate transmission {co['verdict']}"
+            if co.get("funding"):
+                line += f", funding {co['funding']}"
+            if co.get("real"):
+                line += f", real economy {co['real']}"
+            return line
+    if beat == "real_economy":
+        bits = []
+        ind = boards.get("india")
+        if ind and ind.get("regime"):
+            off = ind.get("off") or []
+            offtxt = ", ".join(off[:3]) if off else "all channels calm"
+            bits.append(f"India macro {ind['regime']} ({offtxt})")
+        hh = boards.get("household")
+        if hh and hh.get("regime"):
+            line = f"US household {hh['regime']}"
+            if hh.get("dq"):
+                line += f", delinquencies {hh['dq']}"
+            bits.append(line)
+        if bits:
+            return "; ".join(bits)
     return "board read unavailable this run"
 
 
@@ -711,6 +794,12 @@ _BEAT_STRESSED = {
                                   .upper() in ("WATCH", "ALARM"),
     "crypto_stress": lambda b: str((b.get("crypto") or {}).get("state") or "")
                                .upper() in ("WATCH", "ALARM"),
+    "corporate_stress": lambda b: str((b.get("corp") or {}).get("verdict") or "")
+                                  == "TRANSMITTING",
+    "real_economy": lambda b: (str((b.get("india") or {}).get("regime") or "")
+                               .upper() == "ALARM"
+                               or str((b.get("household") or {}).get("regime")
+                                      or "").upper() in ("WATCH", "ALARM")),
 }
 
 
@@ -916,7 +1005,7 @@ def compose(marked: list[dict], boards: dict, health: dict,
     for i, cl in enumerate(show, 1):
         rep = cl["rep"]
         spec = BEATS[rep["beat"]]
-        tag = f"{spec['emoji']} <b>[{spec['product']} · {spec['label']}]</b>"
+        tag = f"{spec['emoji']} <b>[{spec['desk']} · {spec['label']}]</b>"
         title = esc(rep["title"])
         link = rep.get("link") or ""
         head_line = (f'{i}. {tag} <a href="{esc(link)}">{title}</a>'
@@ -924,9 +1013,10 @@ def compose(marked: list[dict], boards: dict, health: dict,
         src = esc(rep["source_name"])
         extra = cl["n_sources"] - 1
         src_line = f"{src} plus {extra} more" if extra > 0 else src
+        desk = DESK_NICE.get(spec["desk"], spec["desk"])
         lines = [head_line,
                  f"   {src_line}, {_age_txt(rep)}, score {cl['final']:.1f}",
-                 f"   Board: {esc(board_line(rep['beat'], boards))}"]
+                 f"   {desk} desk: {esc(board_line(rep['beat'], boards))}"]
         if not rep.get("board_event"):
             lines.append(f"   Angle: {esc(ANGLES.get(rep['beat'], ''))}")
         body.append("\n" + "\n".join(lines))
@@ -947,15 +1037,48 @@ def compose_channel(cl: dict, boards: dict) -> str:
     spec = BEATS[rep["beat"]]
     title = esc(rep["title"])
     link = rep.get("link") or ""
+    desk = DESK_NICE.get(spec["desk"], spec["desk"])
     line1 = (f"\U0001f30a <b>Rissaga marked this</b> "
-             f"[{spec['product']} · {spec['label']}]")
+             f"[{spec['desk']} · {spec['label']}]")
     line2 = f'<a href="{esc(link)}">{title}</a>' if link else title
     src = esc(rep["source_name"])
     extra = cl["n_sources"] - 1
     line3 = (f"{src} plus {extra} more outlets, {_age_txt(rep)}"
              if extra > 0 else f"{src}, {_age_txt(rep)}")
-    line4 = f"Lab board: {esc(board_line(rep['beat'], boards))}"
+    line4 = f"{desk} desk: {esc(board_line(rep['beat'], boards))}"
     return "\n".join([line1, line2, line3, line4])
+
+
+def export_latest(marked: list[dict], boards: dict, now: datetime) -> None:
+    """World readable handoff for the Hermes desk-reads lane: the marked
+    items with their deterministic desk lines and which ones are channel
+    worthy. Numbers here are the ground truth the agent must quote."""
+    items = []
+    for cl in marked:
+        rep = cl["rep"]
+        spec = BEATS[rep["beat"]]
+        items.append({
+            "title": rep["title"], "link": rep.get("link") or "",
+            "source": rep["source_name"], "n_sources": cl["n_sources"],
+            "age": _age_txt(rep), "score": round(cl["final"], 2),
+            "desk": spec["desk"], "desk_nice": DESK_NICE.get(spec["desk"]),
+            "beat": rep["beat"], "label": spec["label"],
+            "board_event": bool(rep.get("board_event")),
+            "desk_line": board_line(rep["beat"], boards),
+            "angle": ANGLES.get(rep["beat"], ""),
+        })
+    candidates = [i for i, cl in enumerate(marked)
+                  if not cl["rep"].get("board_event")
+                  and cl["final"] >= CHANNEL_BAR][:MAX_CHANNEL_POSTS]
+    payload = {"generated": now.isoformat(timespec="seconds"),
+               "lexicon": lexicon_version(), "channel_mode": CHANNEL_MODE,
+               "items": items, "channel_candidates": candidates}
+    path = _state_path(LATEST_EXPORT)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=1)
+    os.replace(tmp, path)
+    os.chmod(path, 0o644)
 
 
 def post_channel(text: str, ref: str) -> bool:
@@ -1010,13 +1133,15 @@ def run(dry: bool = False) -> int:
     delivered = isinstance(res, dict) and res.get("ok")
     if not delivered:
         print(f"owner DM failed: {res}", file=sys.stderr)
-    top_news = next((c for c in marked
-                     if not c["rep"].get("board_event")
-                     and c["final"] >= CHANNEL_BAR), None)
-    channel_posted = False
-    if top_news:
-        channel_posted = post_channel(compose_channel(top_news, boards),
-                                      "lab_rissaga")
+    export_latest(marked, boards, now)
+    channel_posted = 0
+    if CHANNEL_MODE == "direct":
+        posts = [c for c in marked if not c["rep"].get("board_event")
+                 and c["final"] >= CHANNEL_BAR][:MAX_CHANNEL_POSTS]
+        for cl in posts:
+            if post_channel(compose_channel(cl, boards), "lab_rissaga"):
+                channel_posted += 1
+            time.sleep(0.5)
     hist = {"ts": now.isoformat(timespec="seconds"),
             "lexicon": lexicon_version(),
             "marked": [{"title": c["rep"]["title"], "beat": c["rep"]["beat"],
@@ -1024,6 +1149,7 @@ def run(dry: bool = False) -> int:
                         "sources": c["n_sources"]} for c in marked],
             "feeds_ok": sum(1 for v in health.values() if v.startswith("ok")),
             "feeds_total": len(health),
+            "channel_mode": CHANNEL_MODE,
             "channel_posted": channel_posted}
     with open(_state_path("history.jsonl"), "a", encoding="utf-8") as fh:
         fh.write(json.dumps(hist, sort_keys=True) + "\n")

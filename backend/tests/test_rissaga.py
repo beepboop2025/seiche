@@ -219,7 +219,7 @@ def test_compose_carries_board_line_angle_and_footer():
                      {"seiche": {"regime": "STRAIN", "index": 46.3}}, NOW)
     text = rz.compose(marked, {"seiche": {"regime": "STRAIN", "index": 46.3}},
                       {"fed_press": "ok"}, NOW_DT)
-    assert "Rissaga" in text and "Board:" in text and "Angle:" in text
+    assert "Rissaga" in text and "Seiche desk:" in text and "Angle:" in text
     assert "Pangram" in text
 
 
@@ -246,6 +246,7 @@ def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
         mk("FDIC seizes First Valley Bank as regulators begin receivership",
            key="fdic", tier=1.0, source="FDIC")])
     monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
     assert rz.run(dry=False) == 0
     chats = [p["chat_id"] for m, p in sent if m == "sendMessage"]
     assert 111 in chats and -100999 in chats
@@ -253,7 +254,7 @@ def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
     assert "Rissaga marked this" in chan["text"]
     assert "start=lab_rissaga" in json.dumps(chan.get("reply_markup", {}))
     hist = open(os.path.join(rz.STATE_DIR, "history.jsonl")).read()
-    assert '"channel_posted": true' in hist
+    assert '"channel_posted": 1' in hist
 
 
 def test_run_channel_off_when_env_empty(monkeypatch, sent):
@@ -261,6 +262,7 @@ def test_run_channel_off_when_env_empty(monkeypatch, sent):
         mk("FDIC seizes First Valley Bank as regulators begin receivership",
            key="fdic", tier=1.0, source="FDIC")])
     monkeypatch.setattr(rz, "LAB_CHANNEL", "")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
     assert rz.run(dry=False) == 0
     assert [p["chat_id"] for m, p in sent] == [111]
 
@@ -272,6 +274,7 @@ def test_board_events_never_reach_the_channel(monkeypatch, sent):
                         lambda: {"seiche": {"regime": "STRAIN", "index": 50}})
     monkeypatch.setattr(rz, "OWNER_CHAT", "111")
     monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
     assert rz.run(dry=False) == 0
     chats = [p["chat_id"] for m, p in sent]
     assert chats == [111]
@@ -294,11 +297,68 @@ def test_config_shape():
     assert len(keys) == len(set(keys))
     for _, _, tier in rz.all_feeds():
         assert 0 < tier <= 1
+    desks = set()
     for beat, spec in rz.BEATS.items():
-        assert spec["product"] in ("SEICHE", "LIQUILENS", "UNDERTOW", "LAB")
+        assert spec["desk"] in ("SEICHE", "LIQUILENS", "UNDERTOW",
+                                "CORPORATE", "REALECON")
+        desks.add(spec["desk"])
         for pat, w in spec["terms"]:
             assert 1 <= w <= 6, (beat, pat)
+    assert desks == {"SEICHE", "LIQUILENS", "UNDERTOW", "CORPORATE",
+                     "REALECON"}, "all five desks must own at least one beat"
+    assert set(rz.DESK_NICE) == desks
     assert len(rz.lexicon_version()) == 12
+
+
+def test_new_desk_beats_score():
+    beat, base = rz.beat_score(
+        "Commercial paper spreads blow out as corporate defaults mount")
+    assert beat == "corporate_stress" and base >= 8
+    beat, base = rz.beat_score(
+        "Jobless claims jump as credit card delinquencies hit a decade high")
+    assert beat == "real_economy" and base >= 8
+
+
+def test_board_lines_for_corporate_and_real_economy():
+    boards = {"corp": {"verdict": "QUIET", "funding": "CALM", "real": "CALM"},
+              "india": {"regime": "ALARM", "off": ["prices", "fiscal"], "n": 7},
+              "household": {"regime": "WATCH", "dq": "WATCH"}}
+    line = rz.board_line("corporate_stress", boards)
+    assert "Corporate transmission QUIET" in line and "funding CALM" in line
+    line = rz.board_line("real_economy", boards)
+    assert "India macro ALARM" in line and "prices" in line
+    assert "US household WATCH" in line and "delinquencies WATCH" in line
+
+
+def test_hermes_mode_exports_latest_and_skips_channel(monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
+    assert rz.run(dry=False) == 0
+    assert [p["chat_id"] for m, p in sent] == [111]   # DM only, no channel
+    latest = json.load(open(os.path.join(rz.STATE_DIR, "latest.json")))
+    assert latest["channel_mode"] == "hermes"
+    assert latest["items"][0]["desk"] == "LIQUILENS"
+    assert latest["items"][0]["desk_line"]
+    assert latest["channel_candidates"] == [0]
+
+
+def test_direct_mode_caps_channel_posts(monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC"),
+        mk("Emergency meeting called as central bank launches liquidity facility",
+           key="fed_press", tier=1.0, source="Federal Reserve"),
+        mk("Treasury market dysfunction forces margin calls and fire sales",
+           key="bbg_markets", tier=0.8, source="Bloomberg")])
+    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
+    assert rz.run(dry=False) == 0
+    channel_msgs = [p for m, p in sent if p.get("chat_id") == -100999]
+    assert len(channel_msgs) == rz.MAX_CHANNEL_POSTS
+    assert all("desk:" in p["text"] for p in channel_msgs)
 
 
 def test_no_em_or_en_dashes_in_user_facing_strings():

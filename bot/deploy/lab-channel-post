@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""lab-channel-post: publish ONE message to the free Liquidity Lab channel.
+
+Built for the Hermes rissaga-desk-reads lane. The bot token is read by THIS
+script (from the gateway's own .env), never passed via argv or a URL: the
+fleet already paid for that lesson when a logged sendMessage URL leaked a
+token. Message text arrives via --text-file PATH or stdin (HTML). The
+standard Rissaga footer and the three desk deep link buttons (ref
+lab_rissaga) are appended here so the caller cannot get them wrong.
+
+Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
+"""
+
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ENV_FILE = os.environ.get("LAB_POST_ENV", "/home/hermes/.hermes/.env")
+CHANNEL = os.environ.get("LAB_CHANNEL_ID", "-1004297805949")
+REF = "lab_rissaga"
+FOOT = ("\n\n<i>Rissaga is the Liquidity Lab news radar. The desks with the "
+        "live numbers are free: https://t.me/LiquidityLabDesk</i>")
+KEYBOARD = [
+    [{"text": "\U0001f321 Plumbing desk",
+      "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
+    [{"text": "\U0001f3e6 Failure radar",
+      "url": f"https://t.me/LiquiLens_bot?start={REF}"},
+     {"text": "\U0001f300 Market depth",
+      "url": f"https://t.me/undertow_LiquiLens_bot?start={REF}"}],
+]
+
+
+def _token() -> str:
+    tok = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not tok:
+        try:
+            with open(ENV_FILE, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("TELEGRAM_BOT_TOKEN="):
+                        tok = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        except OSError:
+            pass
+    if not tok:
+        print("no bot token available", file=sys.stderr)
+        sys.exit(2)
+    return tok
+
+
+def _post(payload: dict) -> dict:
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{_token()}/sendMessage",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.load(exc)
+        except Exception:
+            return {"ok": False, "error_code": exc.code}
+    except Exception as exc:                                  # noqa: BLE001
+        return {"ok": False, "description": type(exc).__name__}
+
+
+def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--text-file":
+        with open(sys.argv[2], encoding="utf-8") as fh:
+            text = fh.read().strip()
+    else:
+        text = sys.stdin.read().strip()
+    if not text:
+        print("empty text", file=sys.stderr)
+        return 2
+    payload = {"chat_id": int(CHANNEL), "text": (text + FOOT)[:4090],
+               "parse_mode": "HTML", "disable_web_page_preview": True,
+               "reply_markup": {"inline_keyboard": KEYBOARD}}
+    res = _post(payload)
+    if not res.get("ok") and res.get("error_code") == 429:
+        wait = (res.get("parameters") or {}).get("retry_after") or 3
+        time.sleep(min(float(wait), 30.0))
+        res = _post(payload)
+    if not res.get("ok") and res.get("error_code") == 400:
+        plain = {k: v for k, v in payload.items() if k != "parse_mode"}
+        res = _post(plain)
+    if res.get("ok"):
+        print(json.dumps({"ok": True,
+                          "message_id": res["result"]["message_id"]}))
+        return 0
+    print(json.dumps({"ok": False,
+                      "error": res.get("description") or res.get("error_code")}),
+          file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
