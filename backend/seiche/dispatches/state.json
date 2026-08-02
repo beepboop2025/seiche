@@ -1,13 +1,11 @@
 {
-  "date": "2026-08-01",
+  "date": "2026-08-02",
   "reported_prev": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
-    "3-month T-bill secondary market rate": "2026-07-29",
-    "30y Treasury constant maturity yield": "2026-07-29",
+    "CBOE VIX index": "2026-07-30",
     "Discount window primary credit (Wed level)": "2026-07-29",
-    "2y Treasury constant maturity yield": "2026-07-29",
-    "Nasdaq Composite index": "2026-07-30",
-    "S&P 500 index": "2026-07-29"
+    "2y Treasury constant maturity yield": "2026-07-30",
+    "10y Treasury constant maturity yield": "2026-07-30"
   },
   "reported": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
@@ -18,11 +16,11 @@
   },
   "letter_prev": {
     "regime": "STRAIN",
-    "value": 45.6,
+    "value": 45.8,
     "decomp": {
       "weather": 11.0,
       "resonance": 7.1,
-      "rvxray": 6.1,
+      "rvxray": 6.3,
       "kink": 5.9,
       "confession": 3.8,
       "buffers": 3.0,
@@ -34,7 +32,7 @@
     },
     "crunch": {
       "date": "2026-07-31",
-      "worst_case_b": 2954.3,
+      "worst_case_b": 2966.3,
       "settlement_b": null
     }
   },

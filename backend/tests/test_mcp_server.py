@@ -169,7 +169,7 @@ def test_tools_list_has_valid_schemas():
 
 
 PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest",
-                "data_health", "crypto_stress_record"}
+                "data_health", "crypto_stress_record", "institutional_flows"}
 PAID_TOOLS = {"funding_stress_forecast", "replay_asof", "desk_brief",
               "positioning_book", "ask_desk"}
 

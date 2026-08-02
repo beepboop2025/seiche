@@ -406,6 +406,32 @@ def tool_wrecks(_args: dict, _public: bool) -> Any:
     return payload
 
 
+def tool_flows(_args: dict, _public: bool) -> Any:
+    from seiche import wakeflows
+
+    try:
+        pack = wakeflows.load()
+    except wakeflows.WakePackError as exc:
+        raise ToolError(
+            f"the institutional-flows pack is unavailable: {exc} "
+            "(operator: the wake timer generates it — /opt/wake on the "
+            "box, `python3 -m wake.cli live`)"
+        )
+    out = wakeflows.readings(pack)
+    out["reading"] = (
+        "who is positioned where, from public prints only: the hedge-fund "
+        "basis-trade size proxy (CFTC leveraged-fund net short UST futures, "
+        "Barth-Kahn recipe) with a fragility flag against the funding "
+        "spread; pension/asset-manager duration demand on the other side; "
+        "foreign-official Treasury custody (H.4.1) as the sovereign flow; "
+        "a mixed-frequency fused positioning index with 68% bands; and the "
+        "Hawkes branching ratio — how much current stress is caused by "
+        "prior stress. Weekly cadence, point-in-time release gating, "
+        "nowcasts not observations."
+    )
+    return out
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError("the desk assistant is a subscriber tool — sign in with a token")
@@ -521,6 +547,22 @@ TOOLS: dict[str, tuple] = {
         "stress reach crypto' question, grounded in the record.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_wrecks,
+        True,
+    ),
+    "institutional_flows": (
+        "Institutional flows: who is positioned where",
+        "Hedge-fund / pension / sovereign positioning nowcast from public "
+        "prints: the Treasury basis-trade size proxy (CFTC leveraged-fund "
+        "net short, with a funding-fragility flag), asset-manager duration "
+        "demand, foreign-official custody flows (H.4.1), a mixed-frequency "
+        "fused positioning index with uncertainty bands, and how "
+        "self-exciting stress events currently are (Hawkes branching "
+        "ratio). Weekly cadence, point-in-time. Ask this when a question "
+        "involves hedge fund leverage, the basis trade, pension duration "
+        "bids, or sovereigns buying/selling Treasuries. Built from free "
+        "public data.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_flows,
         True,
     ),
     "positioning_book": (
