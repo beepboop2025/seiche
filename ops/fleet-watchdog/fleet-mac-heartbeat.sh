@@ -7,6 +7,10 @@
 set -u
 nyx_alive=0
 launchctl print "gui/$(id -u)/com.mrinal.claude-telegram" >/dev/null 2>&1 && nyx_alive=1
-ssh -o ConnectTimeout=15 -o BatchMode=yes root@167.233.225.54 \
+# Host comes from ~/.config/fleet-watchdog/box (one line, user@host) so no
+# infrastructure address is committed to a public repo.
+BOX=$(cat "$HOME/.config/fleet-watchdog/box" 2>/dev/null) || exit 0
+[ -n "$BOX" ] || exit 0
+ssh -o ConnectTimeout=15 -o BatchMode=yes "$BOX" \
   "mkdir -p /var/lib/fleet-watchdog && printf '%s\n' 'nyx=${nyx_alive}' > /var/lib/fleet-watchdog/mac.heartbeat" \
   >/dev/null 2>&1

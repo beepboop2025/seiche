@@ -5,6 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# FLEET_OWNER_CHAT — kept out of git, see README
+EnvironmentFile=/etc/fleet-watchdog.env
 ExecStart=/usr/bin/python3 /opt/fleet-watchdog/watchdog.py
 NoNewPrivileges=true
 PrivateTmp=true

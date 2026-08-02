@@ -41,6 +41,23 @@ tokens before rollout.
   `fleet-mac-heartbeat.sh` (a LaunchAgent), and the box alerts when the
   check-in stops.
 
+## Configuration (kept out of git)
+
+This repo is public, so the operator's chat id and the box address are not in
+it. Create them on the hosts:
+
+```bash
+# on the box
+echo 'FLEET_OWNER_CHAT=<your telegram user id>' > /etc/fleet-watchdog.env
+chmod 600 /etc/fleet-watchdog.env
+
+# on the Mac
+mkdir -p ~/.config/fleet-watchdog
+echo 'root@<box-host>' > ~/.config/fleet-watchdog/box
+```
+
+Without them the watchdog still runs and logs, it just cannot send.
+
 ## Install
 
 ```bash

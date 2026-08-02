@@ -34,7 +34,9 @@ import urllib.error
 import urllib.request
 
 STATE_PATH = "/var/lib/fleet-watchdog/state.json"
-OWNER_CHAT = "8727818928"
+# Never hardcode the operator's chat id: this file lives in a public repo.
+# Supplied by /etc/fleet-watchdog.env (EnvironmentFile in the unit).
+OWNER_CHAT = os.environ.get("FLEET_OWNER_CHAT", "")
 TIMEOUT = 20
 # Alert only after this many consecutive bad runs, so one blip stays quiet.
 CONSECUTIVE = 2
