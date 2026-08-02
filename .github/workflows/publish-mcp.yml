@@ -6,8 +6,19 @@ name: publish-mcp
 #
 # Needs one repo secret for the PyPI step (Settings -> Secrets -> Actions):
 #   PYPI_API_TOKEN   a PyPI token scoped to the `seiche` project
-# The MCP registry step authenticates with the workflow's own OIDC token
-# (id-token: write) against the io.github.beepboop2025/* namespace — no secret.
+# The MCP registry job authenticates with its own OIDC token (id-token: write,
+# granted to that job only, so the PyPI job never holds it) against the
+# io.github.beepboop2025/* namespace, no secret involved.
+#
+# The publisher binary is version-pinned and sha256-verified, same pattern as
+# registry-publish.yml: the registry job holds an OIDC id-token, so executing
+# an unpinned "latest" download would hand namespace publish rights to whoever
+# controls the next release. Bump the version and hash together, from
+# registry_<ver>_checksums.txt on the release.
+#
+# The registry job stays here rather than deferring to registry-publish.yml:
+# that one is workflow_dispatch only, so deleting this job would mean a
+# release no longer lands in the registry unless someone remembers to run it.
 #
 # See docs/PUBLISHING.md for the manual equivalent and the aggregator submissions.
 
@@ -18,14 +29,13 @@ on:
 
 permissions:
   contents: read
-  id-token: write            # lets mcp-publisher prove the namespace via OIDC
 
 jobs:
   pypi:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,15 +56,24 @@ jobs:
     needs: pypi
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      id-token: write        # lets mcp-publisher prove the namespace via OIDC
+      contents: read
+    env:
+      MCP_PUBLISHER_VERSION: "1.8.0"
+      MCP_PUBLISHER_SHA256: "1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf"
     steps:
-      - uses: actions/checkout@v4
-      - name: Install mcp-publisher
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Install mcp-publisher (pinned + checksum-verified)
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher && sudo mv mcp-publisher /usr/local/bin/
+          curl -sSLo mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
       - name: Validate and publish server.json
         run: |
-          mcp-publisher login github-oidc
+          ./mcp-publisher login github-oidc
           # NOTE: current mcp-publisher treats --dry-run as a real publish;
           # a single publish is the whole job.
-          mcp-publisher publish
+          ./mcp-publisher publish
