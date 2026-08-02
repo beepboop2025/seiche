@@ -12,7 +12,7 @@ caches responses, coalesces identical in flight queries, converts GDELT's
 hammer upstream during a cooldown.
 
 Consumers change ONE thing: point their base URL at
-http://127.0.0.1:8794 instead of https://api.gdeltproject.org (env
+http://127.0.0.1:8796 instead of https://api.gdeltproject.org (env
 GDELT_BASE in each repo, default unchanged so laptop runs still go direct).
 Their own retry and cooldown logic keeps working because status codes pass
 through faithfully.
@@ -36,7 +36,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM = os.environ.get("GDELT_GATE_UPSTREAM", "https://api.gdeltproject.org")
-PORT = int(os.environ.get("GDELT_GATE_PORT", "8794"))
+PORT = int(os.environ.get("GDELT_GATE_PORT", "8796"))
 SPACING_S = float(os.environ.get("GDELT_GATE_SPACING_S", "6.5"))
 MAX_WAIT_S = float(os.environ.get("GDELT_GATE_MAX_WAIT_S", "120"))
 TTL_TIMELINE_S = float(os.environ.get("GDELT_GATE_TTL_TIMELINE_S", "10800"))
