@@ -564,6 +564,73 @@ TOOLS: dict[str, tuple] = {
     ),
 }
 
+# Every Seiche tool is a read of the board: no writes, no side effects, and
+# nothing beyond the server's own data. One annotation set fits all, and
+# stating it lets cautious clients auto-approve calls instead of prompting.
+TOOL_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "idempotentHint": True,
+    "destructiveHint": False,
+    "openWorldHint": False,
+}
+
+# Prompts: reusable playbooks MCP clients surface as slash commands. Each
+# steers an agent through the board in the order that yields a grounded
+# answer with the PROOF caveats attached. (name -> (title, description,
+# arguments, template fn taking the args dict))
+PROMPTS: dict[str, tuple] = {
+    "funding_stress_briefing": (
+        "Morning funding-stress briefing",
+        "A grounded morning briefing on US money-market funding stress: "
+        "current regime, forward odds, nearest analogs, data freshness.",
+        [],
+        lambda a: (
+            "Write this morning's US funding-stress briefing from the Seiche "
+            "board, in this order: 1) funding_stress_now for the regime and "
+            "composite; 2) funding_stress_forecast for 5/10/21-day event "
+            "odds; 3) historical_analogs for what usually happens from here; "
+            "4) data_health to confirm freshness. Quote numbers exactly, "
+            "state the regime plainly, and close with the PROOF caveat: cite "
+            "proof_backtest for how much to trust the signal."
+        ),
+    ),
+    "is_now_dangerous": (
+        "Is now a dangerous moment in money markets?",
+        "A direct, evidence-backed answer on whether current funding "
+        "conditions are dangerous, with the honest track record attached.",
+        [],
+        lambda a: (
+            "Answer the question 'is now a dangerous moment in US money "
+            "markets?' strictly from the Seiche board: funding_stress_now "
+            "for the current read, historical_analogs for precedent, "
+            "proof_backtest for how often signals like today's were followed "
+            "by real events. Give a yes/no/qualified answer in the first "
+            "sentence, then the evidence. If the question involves crypto, "
+            "add crypto_stress_record for the transmission evidence."
+        ),
+    ),
+    "crisis_replay": (
+        "Replay a historical stress date",
+        "Reconstruct the funding board on a past date, point-in-time, and "
+        "compare it with today.",
+        [
+            {
+                "name": "date",
+                "description": "Calendar date as YYYY-MM-DD (e.g. 2019-09-17).",
+                "required": True,
+            }
+        ],
+        lambda a: (
+            f"Replay the funding-stress board for {a.get('date', 'the date')} "
+            "using replay_asof, then call funding_stress_now and compare: "
+            "composite, regime, and which components drove each. State what "
+            "was knowable THEN versus what is visible now (the replay is "
+            "point-in-time, no lookahead), and finish with whether today "
+            "rhymes with that episode, citing historical_analogs."
+        ),
+    ),
+}
+
 # Method names that count as billable tool usage (for the HTTP meter).
 BILLABLE_METHODS = {"tools/call"}
 
@@ -638,11 +705,15 @@ def _handle_initialize(msg_id: Any, params: dict) -> dict:
         msg_id,
         {
             "protocolVersion": version,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {
+                "tools": {"listChanged": False},
+                "prompts": {"listChanged": False},
+            },
             "serverInfo": {
                 "name": SERVER_NAME,
                 "title": "Seiche — funding-stress terminal",
                 "version": _server_version(),
+                "websiteUrl": "https://seiche.info",
             },
             "instructions": SERVER_INSTRUCTIONS,
         },
@@ -656,10 +727,43 @@ def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
             "title": title,
             "description": desc,
             "inputSchema": schema,
+            "annotations": {"title": title, **TOOL_ANNOTATIONS},
         }
         for name, (title, desc, schema, _handler, _pub) in _visible_tools(public).items()
     ]
     return _result(msg_id, {"tools": tools})
+
+
+def _handle_prompts_list(msg_id: Any) -> dict:
+    prompts = [
+        {
+            "name": name,
+            "title": title,
+            "description": desc,
+            "arguments": args,
+        }
+        for name, (title, desc, args, _fn) in PROMPTS.items()
+    ]
+    return _result(msg_id, {"prompts": prompts})
+
+
+def _handle_prompts_get(msg_id: Any, params: dict) -> dict:
+    name = (params or {}).get("name")
+    entry = PROMPTS.get(name)
+    if entry is None:
+        return _error(msg_id, INVALID_PARAMS, f"unknown prompt '{name}'")
+    title, desc, args_spec, fn = entry
+    args = (params or {}).get("arguments") or {}
+    missing = [a["name"] for a in args_spec if a.get("required") and not args.get(a["name"])]
+    if missing:
+        return _error(msg_id, INVALID_PARAMS,
+                      f"missing required argument(s): {', '.join(missing)}")
+    return _result(msg_id, {
+        "description": desc,
+        "messages": [
+            {"role": "user", "content": {"type": "text", "text": fn(args)}}
+        ],
+    })
 
 
 def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
@@ -718,12 +822,14 @@ def dispatch(msg: dict, public: bool | None = None) -> dict | None:
         return _handle_tools_list(msg_id, public)
     if method == "tools/call":
         return _handle_tools_call(msg_id, params, public)
+    if method == "prompts/list":
+        return _handle_prompts_list(msg_id)
+    if method == "prompts/get":
+        return _handle_prompts_get(msg_id, params)
     # Politely report empty for capabilities we don't offer, so probing clients
     # don't choke.
     if method == "resources/list":
         return _result(msg_id, {"resources": []})
-    if method == "prompts/list":
-        return _result(msg_id, {"prompts": []})
     return _error(msg_id, METHOD_NOT_FOUND, f"method not found: {method}")
 
 

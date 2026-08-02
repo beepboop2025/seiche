@@ -73,7 +73,57 @@ def test_non_jsonrpc_is_invalid_request():
 
 def test_empty_lists_for_unoffered_capabilities():
     assert mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})["result"] == {"resources": []}
-    assert mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})["result"] == {"prompts": []}
+
+
+# ---- prompts ----------------------------------------------------------------
+
+def test_prompts_list_names_titles_and_arguments():
+    prompts = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})["result"]["prompts"]
+    by_name = {p["name"]: p for p in prompts}
+    assert set(by_name) == {"funding_stress_briefing", "is_now_dangerous", "crisis_replay"}
+    for p in prompts:
+        assert p["title"] and p["description"]
+    # crisis_replay is the only one taking an argument, and it is required
+    args = by_name["crisis_replay"]["arguments"]
+    assert [a["name"] for a in args] == ["date"]
+    assert args[0]["required"] is True
+
+
+def test_prompts_get_renders_argument_into_message():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "prompts/get",
+                         "params": {"name": "crisis_replay",
+                                    "arguments": {"date": "2019-09-17"}}})
+    msgs = resp["result"]["messages"]
+    assert msgs[0]["role"] == "user"
+    assert "2019-09-17" in msgs[0]["content"]["text"]
+    assert "replay_asof" in msgs[0]["content"]["text"]
+
+
+def test_prompts_get_missing_required_argument_is_invalid_params():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 3, "method": "prompts/get",
+                         "params": {"name": "crisis_replay"}})
+    assert resp["error"]["code"] == mcp.INVALID_PARAMS
+
+
+def test_prompts_get_unknown_prompt_is_invalid_params():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 4, "method": "prompts/get",
+                         "params": {"name": "nope"}})
+    assert resp["error"]["code"] == mcp.INVALID_PARAMS
+
+
+def test_initialize_advertises_prompts_capability():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 5, "method": "initialize",
+                         "params": {"protocolVersion": "2025-06-18"}})
+    caps = resp["result"]["capabilities"]
+    assert "prompts" in caps
+    assert resp["result"]["serverInfo"]["websiteUrl"] == "https://seiche.info"
+
+
+def test_tools_list_carries_annotations():
+    tools = mcp.dispatch({"jsonrpc": "2.0", "id": 6, "method": "tools/list"})["result"]["tools"]
+    for t in tools:
+        assert t["annotations"]["readOnlyHint"] is True
+        assert t["annotations"]["destructiveHint"] is False
 
 
 # ---- tools/list -------------------------------------------------------------
