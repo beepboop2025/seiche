@@ -351,6 +351,7 @@ function AppInner() {
         <a href="/skeptic.html" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
+        <a href="https://t.me/LiquidityLabDesk" style={{ color: "var(--dim)" }}>the daily read on Telegram</a> ·{" "}
         <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
         <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
         <br />
