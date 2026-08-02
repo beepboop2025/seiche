@@ -446,3 +446,47 @@ def test_answer_inline_serves_filters_and_caches(monkeypatch):
     bot.answer_inline({"id": "iq2", "query": "proof"})
     assert len(fetches) == n_first          # served from the 60s cache
     assert [r["id"] for r in calls[-1][1]["results"]] == ["proof"]
+
+
+# ------------------------------------------- Liquidity Lab channel publishing
+
+
+def test_post_channel_is_off_without_env(monkeypatch, sent):
+    """No LAB_CHANNEL_ID means no publishing. Guards every laptop run and
+    every timer on a box that has not opted in."""
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "")
+    assert bot.post_channel("hello", "lab_letter") is False
+    assert sent == []
+
+
+def test_post_channel_carries_deep_links_with_ref(monkeypatch, sent):
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
+    assert bot.post_channel("the read", "lab_letter") is True
+    m, p = sent[-1]
+    assert m == "sendMessage"
+    assert p["chat_id"] == -1004297805949
+    assert "the read" in p["text"]
+    urls = [b["url"] for row in p["reply_markup"]["inline_keyboard"]
+            for b in row]
+    # every desk reachable, and every link attributes back to this post type
+    assert any("seiche_desk_bot?start=lab_letter" in u for u in urls)
+    assert any("LiquiLens_bot?start=lab_letter" in u for u in urls)
+    assert any("undertow_LiquiLens_bot?start=lab_letter" in u for u in urls)
+
+
+def test_post_channel_survives_a_rejection(monkeypatch):
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
+    monkeypatch.setattr(bot, "tg_call",
+                        lambda m, p: {"ok": False, "error_code": 403,
+                                      "description": "bot is not a member"})
+    assert bot.post_channel("x", "lab_alert") is False
+
+
+def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
+    """The bootstrap case: the channel must carry the letter on a day when
+    nobody has subscribed yet, which is precisely when it earns subscribers."""
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
+    monkeypatch.setattr(bot, "fmt_daily_letter", lambda: "today's letter")
+    bot.run_letter()
+    assert any(p.get("chat_id") == -1004297805949 and
+               "today's letter" in p.get("text", "") for _, p in sent)

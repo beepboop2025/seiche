@@ -69,6 +69,12 @@ SITE = "https://seiche.info"
 STATE_DIR = os.environ.get("SEICHE_BOT_STATE", "/var/lib/seiche-bot")
 TG = f"https://api.telegram.org/bot{TOKEN}"
 
+# The free Liquidity Lab channel (@LiquidityLabDesk). Empty = publishing off,
+# which is how every offline test and every laptop run must behave: a timer
+# that is only meant to DM subscribers should never accidentally publish.
+LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
+LAB_LINK = "https://t.me/LiquidityLabDesk"
+
 POLL_TIMEOUT = 50
 
 FOOT = ("\n<i>Free public good — no paywall, no sign-in. Every number is on "
@@ -149,6 +155,42 @@ def _send_all(subs: dict, text: str, keyboard: list | None = None) -> int:
         save_state("subscribers.json", fresh)
         print(f"pruned {len(gone)} blocked subscriber(s)")
     return delivered
+
+
+def post_channel(text: str, ref: str) -> bool:
+    """Publish a read to the free Liquidity Lab channel.
+
+    `ref` rides the desk deep link as `?start=<ref>`, so `record_lead` can
+    attribute every arrival to the exact post type that earned it. That is the
+    only way the channel's worth is measurable rather than believed.
+
+    Never raises and never blocks the caller: publishing is strictly additive
+    to the subscriber DMs, so a channel outage must not cost anyone their
+    letter.
+    """
+    if not LAB_CHANNEL:
+        return False
+    body = text + (
+        f"\n\n<i>Seiche is the lab's free plumbing desk. Open it for the live "
+        f"gauge, forward odds and the backtest: {LAB_LINK}</i>"
+    )
+    keyboard = [
+        [{"text": "📈 Open the Seiche desk",
+          "url": f"https://t.me/seiche_desk_bot?start={ref}"}],
+        [{"text": "🏦 Bank failure radar",
+          "url": f"https://t.me/LiquiLens_bot?start={ref}"},
+         {"text": "🌊 Market depth",
+          "url": f"https://t.me/undertow_LiquiLens_bot?start={ref}"}],
+    ]
+    try:
+        res = send(int(LAB_CHANNEL), body, keyboard)
+    except Exception as exc:                      # noqa: BLE001 - see docstring
+        print(f"channel post failed: {exc}", file=sys.stderr)
+        return False
+    ok = isinstance(res, dict) and res.get("ok")
+    if not ok:
+        print(f"channel post rejected: {res}", file=sys.stderr)
+    return bool(ok)
 
 
 def _get_json(url: str, timeout: int = 25, tries: int = 2) -> dict | list | None:
@@ -814,6 +856,9 @@ FLEET_ROW = [
     {"text": "\U0001f3e6 Institutions desk", "url": "https://t.me/LiquiLens_bot"},
     {"text": "\U0001f30a Markets desk", "url": "https://t.me/undertow_LiquiLens_bot"},
 ]
+# The free channel is the fleet's top of funnel: a reader who joins it keeps
+# receiving the lab long after this one conversation scrolls away.
+LAB_ROW = [{"text": "\U0001f4e1 Liquidity Lab channel", "url": LAB_LINK}]
 
 
 def _btn(text: str, data: str) -> dict:
@@ -838,7 +883,8 @@ def keyboard_for(cmd: str) -> list | None:
                  _btn("\U0001f5bc Card", "/snap"),
                  _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
     if cmd == "/share":
-        return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}], FLEET_ROW]
+        return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}],
+                LAB_ROW, FLEET_ROW]
     return None
 
 
@@ -1054,11 +1100,15 @@ def poll_loop() -> None:
 def run_letter() -> None:
     subs = load_state("subscribers.json", {})
     text = fmt_daily_letter()
+    # Publish BEFORE the subscriber check. The channel is the top of the
+    # funnel, so it has to work at zero subscribers; gating it behind a
+    # non-empty subscriber list would silence it exactly when it matters most.
+    published = post_channel(text, "lab_letter")
     if not subs:
-        print("no subscribers yet; letter composed but not sent")
+        print(f"no subscribers yet; letter published to channel={published}")
         return
     n = _send_all(subs, text)
-    print(f"letter sent to {n} subscriber(s)")
+    print(f"letter sent to {n} subscriber(s), published to channel={published}")
 
 
 def run_tandem() -> None:
@@ -1083,8 +1133,10 @@ def run_tandem() -> None:
     else:
         head = "🟢 <b>Cross-desk de-escalation.</b>"
     text = head + "\n\n" + fmt_tandem(gauge, board)
+    published = post_channel(text, "lab_tandem")
     n = _send_all(load_state("subscribers.json", {}), text)
-    print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s)")
+    print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s), "
+          f"published to channel={published}")
 
 
 ALERT_JUMP_PTS = 8          # composite move (points) worth an intraday ping
@@ -1164,6 +1216,7 @@ def run_alert_scan() -> None:
         return
     text = "🌊 <b>Seiche alert</b>\n\n" + "\n".join(lines) + \
            "\n\n/now for the full gauge · /turns for what's on the calendar"
+    published = post_channel(text, "lab_alert")
     subs = load_state("subscribers.json", {})
     delivered = _send_all(subs, text, keyboard_for("/now")) if subs else 0
     if delivered or not subs:
@@ -1171,7 +1224,8 @@ def run_alert_scan() -> None:
                                 "index": gauge.get("index"), "ts": time.time()}
         new_state["pending"] = {}
     save_state("alert_state.json", new_state)
-    print(f"alert-scan: {len(lines)} change(s), alerted {delivered} subscriber(s)")
+    print(f"alert-scan: {len(lines)} change(s), alerted {delivered} "
+          f"subscriber(s), published to channel={published}")
 
 
 def run_setup() -> None:
