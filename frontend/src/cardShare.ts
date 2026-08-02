@@ -18,7 +18,13 @@ function harvest(card: HTMLElement) {
   return { title, body, stats, link: deepLink() };
 }
 
+// A second navigator.share() while the first is still open throws
+// InvalidStateError on Safari and Chrome, so a double click must not start
+// two. Tracked per chip, since two different cards may legitimately overlap.
+const inFlight = new WeakSet<HTMLButtonElement>();
+
 function onShare(card: HTMLElement, chip: HTMLButtonElement) {
+  if (inFlight.has(chip)) return;
   const say = (msg: string) => {
     chip.textContent = msg;
     window.setTimeout(() => { chip.textContent = "share"; }, 2000);
@@ -34,22 +40,27 @@ function onShare(card: HTMLElement, chip: HTMLButtonElement) {
     });
   } catch { shareable = false; }
 
+  inFlight.add(chip);
+  const done = () => { inFlight.delete(chip); };
+
   if (shareable) {
     compose()
       .then((cv) => nativeShare(cv, meta.title, meta.link))
-      .then((ok) => { if (!ok) say("share failed"); });
+      .then((ok) => { if (!ok) say("share failed"); })
+      .catch(() => say("share failed"))
+      .then(done, done);
     return;
   }
   copyCard(compose).then((ok) => {
     if (ok) { say("copied ✓"); return; }
-    compose()
+    return compose()
       .then((cv) => savePng(cv, fileName(meta.title)))
       .then(() => say("saved ✓"), () => say("failed"));
-  });
+  }).catch(() => say("failed")).then(done, done);
 }
 
-function decorate() {
-  document.querySelectorAll<HTMLElement>(".tabview .card").forEach((card) => {
+function decorate(root: ParentNode) {
+  root.querySelectorAll<HTMLElement>(".tabview .card").forEach((card) => {
     if (card.querySelector(":scope > .cardshare")) return;
     if (!card.querySelector("h2")) return;
     const chip = document.createElement("button");
@@ -62,9 +73,34 @@ function decorate() {
   });
 }
 
+// Cheap gate in front of the query. The board polls, so document mutates
+// constantly, and re-running querySelectorAll plus a per-card lookup on every
+// text-node change was most of this module's cost.
+const addsACard = (records: MutationRecord[]): boolean =>
+  records.some((r) =>
+    Array.from(r.addedNodes).some(
+      (n) => n instanceof Element && (n.matches(".card") || !!n.querySelector(".card")),
+    ),
+  );
+
 export function mountCardShare(): () => void {
-  const mo = new MutationObserver(decorate);
-  mo.observe(document.body, { childList: true, subtree: true });
-  decorate();
+  // The .tabview element is keyed by tab, so React replaces it on every tab
+  // switch and it cannot be the observer root. Its parent survives, and
+  // watching that instead of document.body also skips the offscreen host the
+  // chart export mounts on the body.
+  const shell = (): Element => document.querySelector(".tabview")?.parentElement
+    ?? document.body;
+  let host = shell();
+  const mo = new MutationObserver((records) => {
+    const want = shell();
+    if (want !== host) {
+      host = want;
+      mo.disconnect();
+      mo.observe(host, { childList: true, subtree: true });
+    }
+    if (addsACard(records)) decorate(host);
+  });
+  mo.observe(host, { childList: true, subtree: true });
+  decorate(host);
   return () => mo.disconnect();
 }
