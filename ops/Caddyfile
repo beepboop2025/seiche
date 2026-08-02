@@ -98,8 +98,11 @@ api.seiche.info {
         file_server
     }
 
-    # Palimpsest MCP (censorship signals) rides this host until
-    # mcp.palimpsest.info DNS lands; strip the prefix and proxy.
+    # Palimpsest MCP (censorship signals). This is its permanent home: a
+    # dedicated mcp.palimpsest.info was considered and declined 2026-08-02,
+    # since the only thing it bought was keeping the Palimpsest name out of a
+    # seiche.info URL, and both hosts resolve to this same box anyway. Strip
+    # the prefix and proxy.
     handle_path /palimpsest/mcp* {
         rewrite * /
         reverse_proxy 127.0.0.1:8793
@@ -205,11 +208,4 @@ breach.seiche.info {
     reverse_proxy 127.0.0.1:8790 {
         header_up Host 127.0.0.1:8790
     }
-}
-
-# mcp.palimpsest.info — Palimpsest MCP proper home (goes live when the DNS
-# A record to this box is added; cert issues automatically then).
-mcp.palimpsest.info {
-    import accesslog
-    reverse_proxy 127.0.0.1:8793
 }
