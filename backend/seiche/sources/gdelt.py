@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 
 import httpx
@@ -35,7 +36,11 @@ from seiche.config import (
 )
 from seiche.sources.base import utcnow_iso
 
-API = "https://api.gdeltproject.org/api/v2/doc/doc"
+# GDELT_BASE lets the box route through the local gdelt-gate (one polite
+# client per IP, ops/gdelt-gate/); default stays direct so laptop runs and
+# CI are unaffected.
+API = (os.environ.get("GDELT_BASE", "https://api.gdeltproject.org").rstrip("/")
+       + "/api/v2/doc/doc")
 
 _DIGITS = re.compile(r"\D")
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=Rissaga news radar every 6h (02,08,14,20:50 UTC = 08:20,14:20,20:20,02:20 IST)
+
+[Timer]
+OnCalendar=*-*-* 02,08,14,20:50:00 UTC
+RandomizedDelaySec=90
+Persistent=true
+
+[Install]
+WantedBy=timers.target

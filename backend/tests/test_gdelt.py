@@ -42,3 +42,16 @@ def test_partial_sweep_carries_stale_topics(monkeypatch):
     assert out["topics"][t2]["volume"][0]["value"] == 3.0
     assert saved["gdelt:index"] == out
     assert any("rate-limited" in f.get("detail", "") for f in faults)
+
+
+def test_gdelt_base_env_override(monkeypatch):
+    """GDELT_BASE reroutes the fetcher (box gdelt-gate); default is direct."""
+    import importlib
+
+    from seiche.sources import gdelt as g
+    monkeypatch.setenv("GDELT_BASE", "http://127.0.0.1:8794")
+    g2 = importlib.reload(g)
+    assert g2.API == "http://127.0.0.1:8794/api/v2/doc/doc"
+    monkeypatch.delenv("GDELT_BASE")
+    g3 = importlib.reload(g2)
+    assert g3.API.startswith("https://api.gdeltproject.org")

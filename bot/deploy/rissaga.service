@@ -1,0 +1,13 @@
+[Unit]
+Description=Rissaga lab news radar dispatch (facts only, owner DM + top item to channel)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Token rides the seiche bot env so a rotation happens in ONE file;
+# rissaga.env carries the radar's own knobs (LAB_CHANNEL_ID etc.).
+EnvironmentFile=/etc/seiche-bot.env
+EnvironmentFile=-/etc/rissaga.env
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=rissaga
+ExecStart=/usr/bin/python3 /opt/rissaga/rissaga.py --run

@@ -1,0 +1,19 @@
+[Unit]
+Description=gdelt-gate, the box's one polite GDELT client (spacing + cache + honest 429s)
+After=network-online.target
+# A crash loop must be able to reach the failed state (fleet lesson:
+# systemd's 10s default StartLimitIntervalSec with RestartSec=10 makes the
+# burst mathematically unreachable).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/gdelt-gate.env
+ExecStart=/usr/bin/python3 /opt/gdelt-gate/gdelt_gate.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
