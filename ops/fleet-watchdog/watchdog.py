@@ -50,6 +50,8 @@ BOTS = [
     ("undertow-bot",   "/etc/undertow-bot.env",   "UNDERTOW_BOT_TOKEN",   None),
     ("scamshield-bot", "/etc/scamshield.env",     "SCAMSHIELD_TOKEN",     None),
     ("anake-gateway",  "/home/anake/.hermes/.env", "TELEGRAM_BOT_TOKEN",  None),
+    ("hermes-gateway", "/home/hermes/.hermes/.env", "TELEGRAM_BOT_TOKEN", None),
+    ("riptide-bot",    "/opt/riptide/bot/config.json", "bot_token",        None),
 ]
 # Report a bot through a bot that is not itself.
 ALERT_VIA = {
@@ -58,6 +60,8 @@ ALERT_VIA = {
     "undertow-bot": "seiche-bot",
     "scamshield-bot": "seiche-bot",
     "anake-gateway": "seiche-bot",
+    "hermes-gateway": "seiche-bot",
+    "riptide-bot": "seiche-bot",
     "_mac": "seiche-bot",
 }
 # Mac-hosted bots report in by touching this file over ssh; if the Mac is
@@ -69,13 +73,18 @@ _CTX = ssl.create_default_context()
 
 
 def read_env(path: str, key: str) -> str:
+    """Read a secret by name from a KEY=value env file or a JSON config."""
     try:
+        if path.endswith(".json"):
+            import json
+            with open(path) as fh:
+                return str(json.load(fh).get(key, "") or "")
         with open(path) as fh:
             for line in fh:
                 line = line.strip()
                 if line.startswith(f"{key}="):
                     return line.split("=", 1)[1].strip().strip("'\"")
-    except OSError:
+    except (OSError, ValueError):
         pass
     return ""
 
@@ -192,7 +201,7 @@ def main() -> int:
     try:
         age = now - os.path.getmtime(MAC_HEARTBEAT)
         checks.append(("mac-bots", [f"no Mac check-in for {int(age // 60)} min "
-                                    f"(riptide + nyx unreachable: asleep, offline or logged out)"]
+                                    f"(nyx bridge unreachable: Mac asleep, offline or logged out)"]
                        if age > MAC_STALE_S else []))
     except OSError:
         pass  # heartbeat not established yet; stay quiet rather than cry wolf
