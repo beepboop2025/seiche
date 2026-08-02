@@ -199,38 +199,57 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
     const host = document.createElement("div");
     host.style.cssText = `position:fixed;left:-99999px;top:0;width:${cssW}px;`;
     document.body.appendChild(host);
+    // Declared outside the try so the finally can destroy it: a compose
+    // failure must not leak the export instance's window listeners.
+    let exp: uPlot | undefined;
     try {
-      const exp = new uPlot(makeOpts(cssW, cssH, true), buildData(), host);
+      const plot = new uPlot(makeOpts(cssW, cssH, true), buildData(), host);
+      exp = plot;
       const xs = live.data[0];
       const lx = live.scales.x;
       if (xs && xs.length > 1 && lx.min != null && lx.max != null &&
           (lx.min > (xs[0] as number) || lx.max < (xs[xs.length - 1] as number))) {
-        exp.setScale("x", { min: lx.min, max: lx.max });
+        plot.setScale("x", { min: lx.min, max: lx.max });
       }
       // uPlot sizes and paints its canvas on a deferred frame, and the delay
       // is not a fixed frame count. Snapshotting early ships a finished card
       // with an empty plot, so wait until the canvas is sized AND carries ink,
       // nudging a redraw if it stalls; past the deadline, fall back to the
       // on-screen canvas, which always has pixels.
-      const hasInk = (c: HTMLCanvasElement): boolean => {
+      const hasInk = (u: uPlot): boolean => {
+        const c = u.ctx.canvas;
         if (!c.width || !c.height) return false;
+        // Probe only the plot region (bbox, in device px): axis ink alone
+        // must not pass a chart whose data area is still blank.
+        const b = u.bbox;
+        const usable = b && b.width > 0 && b.height > 0;
+        const sx = usable ? b.left : 0;
+        const sy = usable ? b.top : 0;
+        const sw = usable ? b.width : c.width;
+        const sh = usable ? b.height : c.height;
         const probe = document.createElement("canvas");
         probe.width = 48;
         probe.height = 24;
         const pctx = probe.getContext("2d", { willReadFrequently: true })!;
-        pctx.drawImage(c, 0, 0, 48, 24);
+        pctx.drawImage(c, sx, sy, sw, sh, 0, 0, 48, 24);
         const d = pctx.getImageData(0, 0, 48, 24).data;
         for (let j = 3; j < d.length; j += 4) if (d[j] > 0) return true;
         return false;
       };
+      // rAF is suspended in hidden tabs, so race each frame wait against a
+      // shared 2s timeout; wall-clock time, not frame count, bounds the wait.
+      const deadline = Date.now() + 2000;
       let painted = false;
-      for (let i = 0; i < 16; i++) {
-        await new Promise((r) => requestAnimationFrame(() => r(null)));
-        const c = exp.ctx.canvas;
-        if (c.width >= cssW && hasInk(c)) { painted = true; break; }
-        if (i === 7) { try { exp.redraw(false, false); } catch { /* keep waiting */ } }
+      for (let i = 0; i < 16 && Date.now() < deadline; i++) {
+        await new Promise((r) => {
+          const t = setTimeout(() => r(null), Math.max(0, deadline - Date.now()));
+          requestAnimationFrame(() => { clearTimeout(t); r(null); });
+        });
+        const c = plot.ctx.canvas;
+        if (c.width >= cssW && hasInk(plot)) { painted = true; break; }
+        if (i === 7) { try { plot.redraw(false, false); } catch { /* keep waiting */ } }
       }
-      const src = painted ? exp.ctx.canvas : live.ctx.canvas;
+      const src = painted ? plot.ctx.canvas : live.ctx.canvas;
       const dpr = window.devicePixelRatio || 1;
       const lastX = xs && xs.length ? (xs[xs.length - 1] as number) * 1000 : null;
       const card = composeChartCard(src, {
@@ -241,9 +260,9 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
         cssH: Math.round(src.height / dpr),
         dataThrough: lastX,
       });
-      exp.destroy();
       return card;
     } finally {
+      exp?.destroy();
       host.remove();
     }
   };

@@ -111,6 +111,37 @@ def test_prompts_get_unknown_prompt_is_invalid_params():
     assert resp["error"]["code"] == mcp.INVALID_PARAMS
 
 
+def test_public_surface_hides_prompts_whose_tools_are_hidden():
+    """A gated client offered /crisis_replay would be told to call replay_asof,
+    which that client cannot see. Only prompts whose whole recipe is visible."""
+    names = {p["name"] for p in mcp.dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": "prompts/list"},
+        public=True)["result"]["prompts"]}
+    assert names == {"is_now_dangerous"}
+    for name in names:
+        tools_used = set(mcp.PROMPTS[name][4])
+        assert tools_used <= set(mcp._visible_tools(True))
+
+
+def test_public_surface_refuses_to_render_a_hidden_prompt():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "prompts/get",
+                         "params": {"name": "crisis_replay",
+                                    "arguments": {"date": "2019-09-17"}}},
+                        public=True)
+    assert resp["error"]["code"] == mcp.INVALID_PARAMS
+
+
+def test_every_prompt_declares_tools_that_exist():
+    for name, entry in mcp.PROMPTS.items():
+        tools_used = entry[4]
+        assert tools_used, f"{name} declares no tools"
+        assert set(tools_used) <= set(mcp.TOOLS), name
+        # the declaration has to match the template, or the gate above lies
+        text = entry[3]({a["name"]: "x" for a in entry[2]})
+        for tool in tools_used:
+            assert tool in text, f"{name} declares {tool} but never names it"
+
+
 def test_initialize_advertises_prompts_capability():
     resp = mcp.dispatch({"jsonrpc": "2.0", "id": 5, "method": "initialize",
                          "params": {"protocolVersion": "2025-06-18"}})

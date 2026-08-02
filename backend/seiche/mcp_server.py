@@ -577,7 +577,11 @@ TOOL_ANNOTATIONS = {
 # Prompts: reusable playbooks MCP clients surface as slash commands. Each
 # steers an agent through the board in the order that yields a grounded
 # answer with the PROOF caveats attached. (name -> (title, description,
-# arguments, template fn taking the args dict))
+# arguments, template fn taking the args dict, tools the template names))
+#
+# That last field is load-bearing, not documentation: the public surface hides
+# several tools, and a prompt that tells an agent to call one it cannot see is
+# worse than no prompt at all. _visible_prompts drops those.
 PROMPTS: dict[str, tuple] = {
     "funding_stress_briefing": (
         "Morning funding-stress briefing",
@@ -593,6 +597,8 @@ PROMPTS: dict[str, tuple] = {
             "state the regime plainly, and close with the PROOF caveat: cite "
             "proof_backtest for how much to trust the signal."
         ),
+        ("funding_stress_now", "funding_stress_forecast", "historical_analogs",
+         "proof_backtest", "data_health"),
     ),
     "is_now_dangerous": (
         "Is now a dangerous moment in money markets?",
@@ -608,6 +614,8 @@ PROMPTS: dict[str, tuple] = {
             "sentence, then the evidence. If the question involves crypto, "
             "add crypto_stress_record for the transmission evidence."
         ),
+        ("funding_stress_now", "historical_analogs", "proof_backtest",
+         "crypto_stress_record"),
     ),
     "crisis_replay": (
         "Replay a historical stress date",
@@ -628,6 +636,7 @@ PROMPTS: dict[str, tuple] = {
             "point-in-time, no lookahead), and finish with whether today "
             "rhymes with that episode, citing historical_analogs."
         ),
+        ("replay_asof", "funding_stress_now", "historical_analogs"),
     ),
 }
 
@@ -640,6 +649,12 @@ def _visible_tools(public: bool | None = None) -> dict[str, tuple]:
     if pub:
         return {k: v for k, v in TOOLS.items() if v[4]}
     return TOOLS
+
+
+def _visible_prompts(public: bool | None = None) -> dict[str, tuple]:
+    """Only offer a prompt whose whole recipe the caller can actually run."""
+    visible = set(_visible_tools(public))
+    return {k: v for k, v in PROMPTS.items() if visible.issuperset(v[4])}
 
 
 SERVER_INSTRUCTIONS = (
@@ -734,7 +749,7 @@ def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
     return _result(msg_id, {"tools": tools})
 
 
-def _handle_prompts_list(msg_id: Any) -> dict:
+def _handle_prompts_list(msg_id: Any, public: bool | None) -> dict:
     prompts = [
         {
             "name": name,
@@ -742,17 +757,17 @@ def _handle_prompts_list(msg_id: Any) -> dict:
             "description": desc,
             "arguments": args,
         }
-        for name, (title, desc, args, _fn) in PROMPTS.items()
+        for name, (title, desc, args, _fn, _tools) in _visible_prompts(public).items()
     ]
     return _result(msg_id, {"prompts": prompts})
 
 
-def _handle_prompts_get(msg_id: Any, params: dict) -> dict:
+def _handle_prompts_get(msg_id: Any, params: dict, public: bool | None) -> dict:
     name = (params or {}).get("name")
-    entry = PROMPTS.get(name)
+    entry = _visible_prompts(public).get(name)
     if entry is None:
         return _error(msg_id, INVALID_PARAMS, f"unknown prompt '{name}'")
-    title, desc, args_spec, fn = entry
+    title, desc, args_spec, fn, _tools = entry
     args = (params or {}).get("arguments") or {}
     missing = [a["name"] for a in args_spec if a.get("required") and not args.get(a["name"])]
     if missing:
@@ -823,9 +838,9 @@ def dispatch(msg: dict, public: bool | None = None) -> dict | None:
     if method == "tools/call":
         return _handle_tools_call(msg_id, params, public)
     if method == "prompts/list":
-        return _handle_prompts_list(msg_id)
+        return _handle_prompts_list(msg_id, public)
     if method == "prompts/get":
-        return _handle_prompts_get(msg_id, params)
+        return _handle_prompts_get(msg_id, params, public)
     # Politely report empty for capabilities we don't offer, so probing clients
     # don't choke.
     if method == "resources/list":
@@ -847,7 +862,8 @@ def serve_stdio() -> int:
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout.
     Runs until stdin closes."""
     surface = "public" if PUBLIC_ONLY else "full"
-    print(f"seiche mcp: serving {len(_visible_tools())} tools ({surface} surface) "
+    print(f"seiche mcp: serving {len(_visible_tools())} tools and "
+          f"{len(_visible_prompts())} prompts ({surface} surface) "
           f"on stdio — protocol {PROTOCOL_VERSION}", file=sys.stderr, flush=True)
     for line in sys.stdin:
         line = line.strip()

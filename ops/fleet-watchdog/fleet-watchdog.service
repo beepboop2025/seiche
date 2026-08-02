@@ -5,7 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# FLEET_OWNER_CHAT — kept out of git, see README
+# Type=oneshot disables the start timeout by default, so a wedged probe would
+# leave this unit "activating" forever, OnUnitActiveSec would never come round
+# again, and the fleet alarm would be silently dead. This is the backstop, not
+# a budget for a healthy run: a healthy run is a few seconds.
+TimeoutStartSec=180
+# FLEET_OWNER_CHAT is kept out of git, see README. The probe table lives
+# beside it in /etc/fleet-watchdog.json, also out of git.
 EnvironmentFile=/etc/fleet-watchdog.env
 ExecStart=/usr/bin/python3 /opt/fleet-watchdog/watchdog.py
 NoNewPrivileges=true
