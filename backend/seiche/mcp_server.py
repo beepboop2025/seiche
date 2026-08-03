@@ -406,7 +406,13 @@ def tool_wrecks(_args: dict, _public: bool) -> Any:
     return payload
 
 
-def tool_flows(_args: dict, _public: bool) -> Any:
+def tool_flows(_args: dict, public: bool) -> Any:
+    # institutional_flows is deliberately part of the free surface: its inputs
+    # are public prints (CFTC leveraged-fund positioning) and the READING is a
+    # conclusion Seiche gives away. What it must not give away is the engine
+    # that produced it. This tool took `_public` and never read it, so the
+    # anonymous surface also carried `method_versions`, naming the fusion
+    # techniques (kalman_fusion, hawkes) with their running versions.
     from seiche import wakeflows
 
     try:
@@ -418,6 +424,13 @@ def tool_flows(_args: dict, _public: bool) -> Any:
             "box, `python3 -m wake.cli live`)"
         )
     out = wakeflows.readings(pack)
+    if public:
+        # The literature-level method disclosure STAYS: the reading below
+        # names the Barth-Kahn recipe and the Hawkes branching ratio on
+        # purpose, the same honest posture as Undertow's calibration ledger.
+        # The versioned identifiers describe the running implementation
+        # rather than the published method, so they are not free.
+        out.pop("method_versions", None)
     out["reading"] = (
         "who is positioned where, from public prints only: the hedge-fund "
         "basis-trade size proxy (CFTC leveraged-fund net short UST futures, "

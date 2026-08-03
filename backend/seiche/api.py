@@ -745,10 +745,19 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     JSON-RPC message or a batch; returns the JSON-RPC response(s), or 202 for a
     notification-only body."""
     ident = _bearer_identity(authorization)
-    # Anonymous callers get the FULL tool surface whenever the board gate is
-    # off (Seiche is a free public good); the restricted "public" shaping only
-    # applies if an operator explicitly re-gates the board.
-    public = ident is None and _board_gate_enabled()
+    # An anonymous caller is ALWAYS the public surface. This used to read
+    # `ident is None and _board_gate_enabled()`, which coupled MCP
+    # entitlements to SEICHE_BOARD_AUTH — a setting about the BROWSER board.
+    # With the gate off (the shipped default) the conjunction was false for
+    # everyone, so every anonymous caller received the full surface: the
+    # positioning book, the desk brief and the institutional-flows engine
+    # were readable by plain unauthenticated curl.
+    #
+    # Seiche stays a free public good: the conclusion, the analogs, the PROOF
+    # scoreboard and data health remain anonymous, per-tool, as they always
+    # were. What the board gate must never decide is who may read the
+    # proprietary derived engines.
+    public = ident is None
     ip = _client_ip(request)
 
     burst_key = ident["username"] if ident else ip
