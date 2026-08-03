@@ -108,6 +108,22 @@ api.seiche.info {
         reverse_proxy 127.0.0.1:8793
     }
 
+    # noisefloor MCP (is this number real, or is it noise? — six zero-dep
+    # stats tools). Strip the prefix; the server answers on any path.
+    # DO NOT DROP in rewrites: this block was lost in the 2026-07-30 Caddy
+    # rewrite and every registry/Smithery listing 404'd until restored
+    # 2026-08-02. The site preflight handler below never fires for handled
+    # paths, so OPTIONS is answered here, undertow-mcp style.
+    handle_path /noisefloor/* {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
+        header Access-Control-Expose-Headers "Mcp-Session-Id"
+        header X-Content-Type-Options "nosniff"
+        @nf_opts method OPTIONS
+        respond @nf_opts 204
+        reverse_proxy 127.0.0.1:8795
+    }
+
     encode zstd gzip
 
     # The edge is an allow-list: anything not named here gets "not here" from
@@ -205,7 +221,17 @@ groundcheck.seiche.info {
 # breach.seiche.info — read-only breach-intelligence MCP (public defensive tool).
 breach.seiche.info {
     import accesslog
-    reverse_proxy 127.0.0.1:8790 {
-        header_up Host 127.0.0.1:8790
+    # Glama MCP-directory ownership proof — the same claim file the
+    # api.seiche.info and groundcheck vhosts serve; the email is the project
+    # account, not a person's private address.
+    handle /.well-known/glama.json {
+        header Content-Type "application/json"
+        header Cache-Control "public, max-age=3600"
+        respond `{"$schema":"https://glama.ai/mcp/schemas/connector.json","maintainers":[{"email":"mrinallovesbhature@gmail.com"}]}` 200
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8790 {
+            header_up Host 127.0.0.1:8790
+        }
     }
 }
