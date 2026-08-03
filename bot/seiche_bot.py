@@ -1035,7 +1035,12 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         save_state("subscribers.json", subs)
-        if arg.strip():   # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x"
+        # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x".
+        # A group is not a lead. Seiche is free, so a room subscribing to the
+        # letter is fine and stays, but booking it as an arrival would credit
+        # one person's ref with a whole channel and inflate the only number
+        # that decides what the desks publish more of. Leads are people.
+        if arg.strip() and chat_type == "private":
             record_lead(chat_id, arg.strip()[:64])
         send(chat_id, "Subscribed to the daily letter (11:30 UTC, pre-US-open).\n\n" + HELP)
         send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),
