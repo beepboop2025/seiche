@@ -724,6 +724,20 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
             "result": {"content": [{"type": "text", "text": text}], "isError": True}}
 
 
+@app.get("/mcp")
+def mcp_http_get() -> Response:
+    """Streamable-HTTP GET channel (SSE). The transport is stateless
+    single-response mode and never emits server-initiated messages, so the
+    stream closes right after opening; clients and registry indexers probe
+    it only to judge transport compliance, and a 405 here reads as the SSE
+    channel being absent."""
+    return Response(
+        ": stateless transport; no server-initiated messages\n\n",
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform"},
+    )
+
+
 @app.post("/mcp")
 def mcp_http(request: Request, body: Any = Body(default=None),
              authorization: str | None = Header(default=None)):

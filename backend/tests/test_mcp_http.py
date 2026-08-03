@@ -153,10 +153,12 @@ def test_empty_body_is_400(client):
     assert r.status_code == 400
 
 
-def test_get_is_405(client):
+def test_get_opens_sse_channel(client):
     r = client.get("/mcp")
-    assert r.status_code == 405
-    assert r.headers["Allow"] == "POST"
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    # SSE comment line only: the stateless transport never sends messages.
+    assert r.text.startswith(":")
 
 
 def test_batch_returns_array(client):
