@@ -240,3 +240,48 @@ def test_the_pace_limit_never_touches_the_board_commands(sent, monkeypatch):
         bot.handle(8080, "/now", "private")
     assert len(_bodies(sent)) == bot.ASK_PER_CHAT_LIMIT + 5
     assert bot.load_state("ask_rate.json", {}) == {}
+
+
+# --------------------------------------------------------------- fail-open
+#
+# The pace limit is an availability guard, so it must never become the reason
+# a user gets no answer. ask_quota runs before the reply is sent and inside
+# poll_loop's broad per-update except, so an unguarded state write turns a
+# disk fault into silence: the fleet's second silent-death shape, installed on
+# this bot's busiest path. These tests pin the degradation direction.
+
+
+def _readonly_state(monkeypatch):
+    """Make every ask_rate.json write fail the way an unwritable dir does."""
+    def boom(name, value):
+        if name == "ask_rate.json":
+            raise OSError(13, "Permission denied")
+        return None
+    monkeypatch.setattr(bot, "save_state", boom)
+
+
+def test_a_disk_fault_never_costs_the_user_their_answer(monkeypatch, capsys):
+    _readonly_state(monkeypatch)
+
+    allowed, retry = bot.ask_quota(4242)
+
+    assert allowed is True, "a rate limiter must not deny on its own disk fault"
+    assert retry == 0
+    err = capsys.readouterr().err
+    assert "cannot persist" in err, "the operator must see it, not just the user"
+
+
+def test_the_reply_still_goes_out_when_the_window_cannot_be_written(
+        monkeypatch, sent):
+    """The property the user feels: a question still gets an answer.
+
+    Exercised through handle(), which is what poll_loop calls, so this covers
+    the real path rather than ask_quota in isolation.
+    """
+    _readonly_state(monkeypatch)
+    monkeypatch.setattr(bot, "ask_desk", lambda q: "the desk answered")
+
+    bot.handle(4242, "is repo stressed today?", "private")
+
+    assert sent, "handle() sent nothing at all: the user got silence"
+    assert any("desk answered" in json.dumps(p) for _m, p in sent)
