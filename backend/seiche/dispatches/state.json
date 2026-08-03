@@ -1,5 +1,5 @@
 {
-  "date": "2026-08-02",
+  "date": "2026-08-03",
   "reported_prev": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
     "CBOE VIX index": "2026-07-30",
@@ -38,7 +38,7 @@
   },
   "letter": {
     "regime": "STRAIN",
-    "value": 45.8,
+    "value": 46.0,
     "decomp": {
       "weather": 11.0,
       "resonance": 7.1,
@@ -47,8 +47,8 @@
       "confession": 3.8,
       "buffers": 3.0,
       "undertow": 2.9,
+      "tails": 2.4,
       "warehouse": 2.4,
-      "tails": 2.2,
       "auctions": 1.1,
       "hydrophone": 0.1
     },
