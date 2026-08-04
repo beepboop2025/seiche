@@ -94,6 +94,19 @@ jobs:
           npm ci
           npm run build
 
+      # The SPA shell ships an empty <div id="root">, so anything that does not
+      # execute JavaScript saw ~400 characters of body text: every AI crawler
+      # that reads raw HTML, every link unfurler, every reader with scripting
+      # off. This writes the board into the page's <noscript> (masthead, the
+      # composite reading with its gloss, the headline numbers, PROOF, the
+      # latest letter, the Week Ahead's pre-registered calls) and makes the
+      # card meta carry the live reading. Runs AFTER the vite build because it
+      # rewrites dist/index.html; the interactive bundle is untouched.
+      # Fail-loud on purpose: a home page that quietly reverts to the empty
+      # shell is the bug, so a missing snapshot stops the publish.
+      - name: Prerender the no-JS home page
+        run: python -m seiche.prerender frontend/dist
+
       # Primary 24/7 publish: push the built site + snapshot to the PUBLIC
       # seiche-site repo (GitHub Pages) — no tokens beyond the deploy key,
       # no user hands, survives forever on the free tier.
