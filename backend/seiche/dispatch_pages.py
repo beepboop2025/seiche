@@ -439,9 +439,12 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide.html; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology.html. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp (no auth needed; anonymous calls are
-metered per IP per day). Any series the board holds can be downloaded as CSV
-with provenance headers; the catalog is at
+over MCP at https://api.seiche.info/mcp. Six tools answer with no auth at all:
+funding_stress_now, historical_analogs, proof_backtest, data_health,
+crypto_stress_record and institutional_flows, metered per IP per day. Five more
+read the derived engines and want a bearer token: funding_stress_forecast,
+replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
+holds can be downloaded as CSV with provenance headers; the catalog is at
 https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
 the backtest record, hits and misses both, and states the competence boundary:
 stress that builds inside the plumbing can be seen early, shocks that arrive

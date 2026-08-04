@@ -139,11 +139,18 @@ api.seiche.info {
     # the app, where it deploys through the normal chain.)
     @public {
         method GET HEAD
-        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/*
+        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
+    # The Week Ahead list. GET is in @public above (the front door asks whether
+    # the list is wired up before it draws a form); POST needs its own name here
+    # because @public is GET/HEAD only. Without both, the subscribe field would
+    # deploy green and 404 at the edge, which is this file's oldest bug.
+    #
+    # This is not an auth route. It is grouped with @login purely because that
+    # is where POST lives; the handler takes no token and gates no content.
     @login {
         method POST
-        path /api/auth/login /api/alerts/prefs
+        path /api/auth/login /api/alerts/prefs /api/subscribe
     }
     handle @public {
         header Access-Control-Allow-Origin "*"

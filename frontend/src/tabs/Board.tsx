@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { Any, AsOf, Decomp, fmt, Num, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
 import { useDepth } from "../depth";
 import { API_BASE } from "../apiBase";
+import WeekAhead from "../WeekAhead";
 import "../styles-board.css";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
@@ -597,7 +598,17 @@ export default function Board({ snap, live }: { snap: Any; live: boolean }) {
 
   const setRef = (i: number) => (el: HTMLDivElement | null) => { layerRefs.current[i] = el; };
 
-  if (depth === "glance") return <Glance snap={snap} onDescend={() => setDepth("desk")} />;
+  // The Week Ahead rides above the board at every sounding. It is the one
+  // artifact here that travels (a dated call, graded in public a week later),
+  // and it was reachable only from the last of seventeen tabs. It renders
+  // itself away when there is no issue, so a fresh install shows nothing
+  // rather than an empty promise.
+  if (depth === "glance") return (
+    <>
+      <WeekAhead />
+      <Glance snap={snap} onDescend={() => setDepth("desk")} />
+    </>
+  );
 
   return (
     <div className="dive">
@@ -615,6 +626,8 @@ export default function Board({ snap, live }: { snap: Any; live: boolean }) {
       </div>
 
       <div className="dive-col">
+        <WeekAhead />
+
         <div ref={setRef(0)}>
           <Surface tell={deep.tell} headline={snap.headline} />
           <TellBracket tell={deep.tell} />

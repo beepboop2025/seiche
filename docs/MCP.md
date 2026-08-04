@@ -80,10 +80,20 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
 }
 ```
 
-- **Anonymous** (no token) → the free public surface (the conclusion, historical
-  analogs, the PROOF scoreboard, data health), capped per IP per day. Try it with
-  zero setup.
-- **Subscriber** (bearer token) → the full surface at your tier's quota.
+- **Anonymous** (no token) → six tools, named so you can check this against the
+  code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
+  `proof_backtest`, `data_health`, `crypto_stress_record` and
+  `institutional_flows`. The conclusion, the precedent, the track record with
+  its misses, the freshness of every input, the crypto transmission record, and
+  who is positioned where. Capped per IP per day. Zero setup, and it stays free.
+- **Subscriber** (bearer token) → the same six plus the five that read the
+  derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
+  `desk_brief`, `ask_desk`. At your tier's quota.
+
+`tools/list` returns exactly what the caller can run, so an anonymous agent
+never sees a tool it would be refused on. The list is generated from the
+`is_public` flag on each entry in `TOOLS` (`backend/seiche/mcp_server.py`);
+that flag is the boundary, and this page is downstream of it.
 
 The endpoint lives on the existing FastAPI app behind the same Caddy reverse
 proxy as the rest of the API — no separate service to run or deploy.
@@ -196,16 +206,39 @@ returned in `X-PAYMENT-RESPONSE`.
 
 ## Public vs. full surface
 
-Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools — the conclusion, the
-historical analogs, the PROOF scoreboard, and data health. This mirrors the
-anonymous `/api/public` surface and is the mode a **hosted, no-auth endpoint**
-runs so agent-builders can try Seiche with zero friction:
+Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
+the same six the hosted endpoint gives an anonymous caller, so a local run and a
+no-token HTTP call see the same surface:
 
 ```bash
 SEICHE_MCP_PUBLIC=1 seiche-mcp
 ```
 
-The `positioning_book` and `ask_desk` tools are hidden in public mode.
+| tool | public | why |
+|---|---|---|
+| `funding_stress_now` | yes | the conclusion, which is the free good |
+| `historical_analogs` | yes | precedent from the public record |
+| `proof_backtest` | yes | the track record, misses included |
+| `data_health` | yes | you should be able to check freshness before trusting a number |
+| `crypto_stress_record` | yes | labelled episodes replayed against the board |
+| `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
+| `funding_stress_forecast` | no | six modelled views of forward event odds |
+| `replay_asof` | no | full point-in-time board reconstruction |
+| `positioning_book` | no | sleeves, weights, `p_ensemble`, tcost |
+| `desk_brief` | no | the whole board as prose, with driver weights |
+| `ask_desk` | no | runs the operator's LLM budget |
+
+The rule behind the column: what Seiche gives away is the **conclusion**; what
+it keeps is the **engine that produced it**. That is why `institutional_flows`
+is public but drops its `method_versions`, and why the literature-level method
+disclosure stays in the reading either way.
+
+`is_public` on each `TOOLS` entry in `backend/seiche/mcp_server.py` is the one
+place this is decided. Before commit `82d5700` the HTTP layer disagreed with it
+(`public = ident is None and _board_gate_enabled()` tied MCP entitlements to a
+setting about the browser board, so with the gate off, which is the shipped
+default, every anonymous caller ran on the full surface). An anonymous caller
+is now always the public surface. If you change `is_public`, change this table.
 
 ## Notes
 

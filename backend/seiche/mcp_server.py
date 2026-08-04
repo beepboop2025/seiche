@@ -19,11 +19,22 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface exposes only the free tools (the conclusion, the
-forward odds, the analogs, the PROOF scoreboard, data health, the brief),
-mirroring the anonymous ``/api/public`` surface; the *full* surface adds the
-subscriber tools (positioning book, desk assistant). For stdio the surface is
-fixed by ``SEICHE_MCP_PUBLIC``; for HTTP it is chosen from the caller's token.
+Surface: the *public* surface is the six tools flagged ``is_public`` in
+``TOOLS``: ``funding_stress_now``, ``historical_analogs``, ``proof_backtest``,
+``data_health``, ``crypto_stress_record`` and ``institutional_flows``. That is
+the conclusion, the precedent, the honest record, the freshness of the inputs
+and the transmission evidence, and it is free to everyone with no token. The
+*full* surface adds the five that read the derived engines:
+``funding_stress_forecast``, ``replay_asof``, ``positioning_book``,
+``desk_brief`` and ``ask_desk``. For stdio the surface is fixed by
+``SEICHE_MCP_PUBLIC``; for HTTP an anonymous caller is always the public one.
+
+The line to hold is *conclusion free, engine not*: ``institutional_flows`` is
+public and still withholds its ``method_versions``, and the earlier docstring
+here listed the forward odds and the brief as public when neither ever was.
+``is_public`` in ``TOOLS`` is the single source of truth; ``_visible_tools``
+and ``_visible_prompts`` derive from it, so a caller is never offered a tool or
+a prompt recipe it cannot run.
 """
 
 from __future__ import annotations

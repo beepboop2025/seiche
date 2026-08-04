@@ -192,10 +192,31 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`) — the full tool surface, free for everyone,
-no token needed (rate-limited per caller so one client can't crowd out the rest).
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Six tools
+answer anonymously, no token, no sign-up, no email:
 
-Full setup, the tool catalogue, client config, and metering: **[docs/MCP.md](docs/MCP.md)**.
+| tool | what it answers |
+|---|---|
+| `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |
+| `historical_analogs` | the closest days in the record, and what followed them |
+| `proof_backtest` | the track record with its misses and its confidence intervals |
+| `data_health` | freshness and provenance for every input, before you trust a reading |
+| `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
+| `institutional_flows` | who is positioned where, from public prints |
+
+That is the conclusion, the precedent, the honest record, the freshness and the
+transmission evidence, and it stays free. Five tools want a bearer token, because
+they read the derived engines rather than the published conclusion:
+`funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief` and
+`ask_desk`. `institutional_flows` answers anonymously but keeps its
+`method_versions` back for the same reason.
+
+Nothing fails at call time over this: `tools/list` returns exactly the tools the
+caller can run, so an agent never sees a tool it cannot use. Both surfaces are
+rate-limited per caller and metered per UTC day (anonymous callers per IP).
+
+Full setup, the tool catalogue, client config, metering, tokens, and the
+pay-per-call option for the five: **[docs/MCP.md](docs/MCP.md)**.
 
 Want the board in your pocket instead of a client config? The
 **[Hermes desk-agent kit](integrations/hermes/)** turns

@@ -303,7 +303,10 @@ table.mini tr:hover td { background: rgba(237, 238, 244, 0.03); }
 
 /* ---- time machine ---- */
 .tmcontrols { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
-.tmcontrols input[type="date"], .tmcontrols input[type="text"], .tmcontrols input[type="password"] {
+/* type="email" was missing here, so the ACCOUNT tab's alert-email field has
+   always rendered as an unstyled browser input next to two styled ones. Adding
+   it also keeps that field and the new Week Ahead field looking like one site. */
+.tmcontrols input[type="date"], .tmcontrols input[type="text"], .tmcontrols input[type="password"], .tmcontrols input[type="email"] {
   background: var(--panel-2); border: 1px solid var(--panel-edge-2); color: var(--text);
   font-family: var(--display); font-size: 12px; padding: 8px 11px; border-radius: var(--r-md);
   caret-color: var(--accent);
@@ -418,6 +421,85 @@ table.mini tr:hover td { background: rgba(237, 238, 244, 0.03); }
 .paywall-cta:hover { background: rgba(156, 143, 232, 0.12); }
 .paywall-alt { font-size: 11.5px; color: var(--faint); text-decoration: none; align-self: center; }
 .paywall-alt:hover { color: var(--dim); }
+
+/* ======================= THE WEEK AHEAD, ON THE BOARD ===================== */
+/* The Monday issue, surfaced on the default view. Deliberately quieter than
+   .paywall above: it borrows that block's shape and none of its urgency,
+   because this asks for nothing and withholds nothing. */
+.weekahead { max-width: 1180px; margin: 14px auto 4px; }
+.wa-card {
+  border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
+  background: linear-gradient(180deg, rgba(156, 143, 232, 0.05), transparent 62%), var(--panel);
+  padding: 15px 18px 16px;
+}
+.wa-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.wa-kicker {
+  font-family: var(--display); font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--accent-soft);
+}
+.wa-open {
+  margin-left: auto; font-size: 11.5px; color: var(--accent-soft); text-decoration: none;
+  font-family: var(--display); font-weight: 500; letter-spacing: 0.03em; white-space: nowrap;
+}
+.wa-open:hover { color: var(--accent-bright); }
+.wa-title {
+  font-family: var(--display); font-size: 17px; font-weight: 500; color: var(--text);
+  line-height: 1.28; margin-top: 7px; max-width: 780px;
+}
+.wa-callhead {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; color: var(--faint);
+  margin-top: 12px; text-transform: uppercase;
+}
+.wa-when { color: var(--accent-soft); font-variant-numeric: tabular-nums; }
+.wa-calls { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.wa-calls li {
+  display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: baseline;
+  font-size: 12.5px; line-height: 1.55; color: var(--dim);
+  padding-top: 6px; background: var(--rule-soft) no-repeat top / 100% 1px;
+}
+.wa-calls li:first-child { background: none; padding-top: 0; }
+.wa-id {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--accent-soft);
+}
+.wa-claim { color: var(--text); }
+.wa-calls .wa-when { grid-column: 2; font-family: var(--mono); font-size: 10px; }
+.wa-foot { font-size: 11.5px; color: var(--faint); line-height: 1.6; margin-top: 12px; max-width: 780px; }
+@media (max-width: 640px) {
+  .wa-calls li { grid-template-columns: 1fr; gap: 2px; }
+  .wa-calls .wa-when { grid-column: 1; }
+}
+
+/* ---- the optional email field ------------------------------------------- */
+/* Optional, and styled to look it. No modal, no interstitial, no dimmed page
+   behind it: it is a field on a page that is already fully readable. */
+.subscribe { margin-top: 14px; padding: 14px 18px 15px; border: 1px solid var(--panel-edge); border-radius: var(--r-lg); background: var(--panel); }
+.subscribe.compact { margin-top: 10px; }
+.sub-pitch { font-size: 12.5px; line-height: 1.65; color: var(--dim); margin: 0; max-width: 720px; }
+.sub-pitch strong { color: var(--text); font-weight: 600; }
+.sub-form { margin-top: 11px; }
+.sub-label {
+  display: block; font-family: var(--display); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--faint); margin-bottom: 6px;
+}
+.sub-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sub-row input[type="email"] {
+  flex: 1 1 260px; max-width: 340px; min-width: 0;
+  background: var(--panel-2); border: 1px solid var(--panel-edge-2); color: var(--text);
+  font-family: var(--display); font-size: 12px; padding: 8px 11px; border-radius: var(--r-md);
+  caret-color: var(--accent); color-scheme: dark;
+}
+.sub-row input[type="email"]:focus { border-color: var(--accent); outline: none; }
+.sub-row button {
+  background: transparent; border: 1px solid var(--accent-deep); color: var(--accent-bright);
+  font-family: var(--display); font-size: 11.5px; padding: 8px 15px; border-radius: 999px;
+  cursor: pointer; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.sub-row button:hover:not(:disabled) { background: rgba(156, 143, 232, 0.12); border-color: var(--accent-dim); }
+.sub-row button:disabled { opacity: 0.45; cursor: default; }
+.sub-said { font-size: 12px; line-height: 1.6; margin-top: 9px; }
+.sub-note { font-size: 11px; color: var(--ghost); line-height: 1.6; margin: 10px 0 0; max-width: 720px; }
+.sub-note a { color: var(--faint); }
+.sub-note a:hover { color: var(--dim); }
 
 /* ============================ FREE LANDING ================================ */
 .freewrap { max-width: 860px; margin: 0 auto; }

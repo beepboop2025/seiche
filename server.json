@@ -26,7 +26,7 @@
       "environmentVariables": [
         {
           "name": "SEICHE_MCP_PUBLIC",
-          "description": "Set to 1 to expose only the free public tools (the conclusion, PROOF scoreboard, analogs, data health).",
+          "description": "Set to 1 to expose only the six free public tools over stdio: funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows. The hosted endpoint gives an anonymous caller the same six with no token.",
           "isRequired": false
         }
       ]

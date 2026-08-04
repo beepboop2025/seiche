@@ -22,7 +22,18 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from seiche import accounts, assemble, mcp_server, methodology, provisioning, public_view, store, usage, x402
+from seiche import (
+    accounts,
+    assemble,
+    mcp_server,
+    methodology,
+    provisioning,
+    public_view,
+    store,
+    subscribe as subscribe_list,
+    usage,
+    x402,
+)
 from seiche.config import (
     ALERT_RULES,
     ALL_SERIES,
@@ -97,6 +108,7 @@ LOGIN_RATE_LIMIT_PER_MIN = 10   # max login attempts per IP per rolling minute
 LOGIN_LOCKOUT_AFTER = 5         # consecutive failures before a backoff lockout
 LOGIN_LOCKOUT_SECONDS = 300     # how long that lockout lasts (5 min)
 ASK_RATE_LIMIT_PER_MIN = 20     # max desk-assistant (LLM) calls per IP / minute
+SUBSCRIBE_RATE_LIMIT_PER_MIN = 5  # a human types one address, not five a minute
 
 
 class _RateLimiter:
@@ -150,6 +162,7 @@ _login_limiter = _RateLimiter(LOGIN_RATE_LIMIT_PER_MIN)
 _login_guard = _LoginGuard()
 _ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
 _mcp_limiter = _RateLimiter(MCP_RATE_LIMIT_PER_MIN)
+_subscribe_limiter = _RateLimiter(SUBSCRIBE_RATE_LIMIT_PER_MIN)
 
 
 def _client_ip(request: Request) -> str:
@@ -345,6 +358,75 @@ async def dispatch_full(slug: str):
     if not path.exists():
         raise HTTPException(404, "no continuation for this dispatch")
     return {"slug": slug, "paid": path.read_text()}
+
+
+# ---- The Week Ahead list ----------------------------------------------------
+# Optional, anonymous, and it gates nothing. No `require_board` here and none
+# wanted: an address is how a reader asks to be told when the Monday letter
+# lands, and Seiche stays readable in full without ever giving one.
+#
+# Both handlers are sync `def` on purpose. The Listmonk hop is blocking stdlib
+# urllib; declared `async` it would block the event loop for every other open
+# tab while a wedged newsletter box burned its four-second timeout. FastAPI runs
+# a sync handler on the threadpool, which is exactly what this wants.
+
+
+@app.get("/api/subscribe")
+def subscribe_status():
+    """Is the list wired up? The front door asks before it draws anything, so a
+    reader never types an address into a form that has nowhere to post it: with
+    the feature off the UI renders a plain mailto link to the desk instead.
+
+    Returns configuration state, never configuration. The endpoint URL and the
+    list UUID stay on the box."""
+    return subscribe_list.status()
+
+
+@app.post("/api/subscribe")
+def subscribe_join(request: Request, body: Any = Body(default=None)):
+    """Put an address on The Week Ahead list, via Listmonk's public endpoint.
+
+    Listmonk owns consent: the address lands `unconfirmed`, one confirmation
+    link goes out, and only a click on it promotes the row to `confirmed`.
+    Nothing here can shortcut that, because nothing here holds a credential
+    that could.
+
+    The address is never written to `seiche.sqlite`. That database holds
+    subscriber password hashes and does not gain a marketing list; the
+    subscribe module imports neither `store` nor `sqlite3`, and a test asserts
+    it."""
+    if not _subscribe_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "too many attempts, slow down",
+                            headers={"Retry-After": "60"})
+
+    email = subscribe_list.clean_email((body or {}).get("email") if isinstance(body, dict) else None)
+    if email is None:
+        raise HTTPException(422, "that does not look like an email address")
+
+    if not subscribe_list.enabled():
+        # Not an error: the list simply is not open yet. Say so plainly and
+        # hand back the desk address rather than pretending it worked.
+        return {"ok": False, "enabled": False, "delivered": False,
+                "mailto": subscribe_list.DESK_EMAIL,
+                "message": (f"The list is not open yet. Mail {subscribe_list.DESK_EMAIL} "
+                            "and you go on it the day it opens.")}
+
+    delivered = subscribe_list.submit(email)
+    # `delivered` False means Listmonk was unreachable or unhappy. The reader's
+    # request still succeeds, because a newsletter box having a bad day is not
+    # their failure, but the message stays honest about what to do if nothing
+    # lands.
+    return {
+        "ok": True,
+        "enabled": True,
+        "delivered": delivered,
+        "mailto": subscribe_list.DESK_EMAIL,
+        "message": (
+            "Check your inbox for the confirmation link. Nothing is sent until you click it."
+            if delivered else
+            f"Taken. If the confirmation link does not arrive, mail {subscribe_list.DESK_EMAIL}."
+        ),
+    }
 
 
 @app.get("/api/me")

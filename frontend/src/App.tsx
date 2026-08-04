@@ -46,18 +46,27 @@ const Account = lazy(() => import("./tabs/Account"));
 // regime, the dive. Hash routing stays authoritative: any #tab in the URL
 // wins, and GLOBAL is one keystroke away for arrivals who want their own
 // water line first.
-// SCARCITY and SUPPLY sit third and fourth on purpose: the reserve demand
-// curve against the Fed's own elasticity print, and the forward net-new-cash
-// table, are the two analyses nobody else publishes free, and a first-time
-// reader should meet them without hunting. The digit shortcut indexes TABS
-// positionally, so this costs POSITIONING and RESONANCE their number keys;
-// prominence for the differentiating work is worth two power-user shortcuts.
+// DISPATCHES sits third. It was last of seventeen, which put The Week Ahead at
+// the far end of a tab strip most readers never scroll, and that letter is the
+// only artifact here that carries a dated, pre-registered call and grades
+// itself in public a week later. The letters are also the one thing a reader
+// forwards, so burying them cost the board its cheapest introduction.
+// SCARCITY and SUPPLY follow: the reserve demand curve against the Fed's own
+// elasticity print, and the forward net-new-cash table, are the two analyses
+// nobody else publishes free, and a first-time reader should meet them without
+// hunting. The digit shortcut indexes TABS positionally, so this ordering
+// costs CALENDAR, POSITIONING and RESONANCE their number keys; prominence for
+// the differentiating work is worth three power-user shortcuts.
 const TABS = [
-  "GLOBAL", "BOARD", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET", "CALENDAR",
-  "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT", "DISPATCHES",
+  "GLOBAL", "BOARD", "DISPATCHES", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
 
+// Unchanged, and deliberately: every existing deep link is a #tab hash that
+// hashToTab resolves by NAME, so reordering above moves nothing. Changing this
+// would silently redirect every bare seiche.info/ bookmark that expects the
+// board, which is a different decision from promoting a tab.
 const DEFAULT_TAB: Tab = "BOARD";
 
 const hashToTab = (): Tab => {

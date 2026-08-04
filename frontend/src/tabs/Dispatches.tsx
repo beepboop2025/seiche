@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { renderMarkdown } from "../md";
 import { API_BASE } from "../apiBase";
 import ShareBar from "../ShareBar";
+import Subscribe from "../Subscribe";
 import { composeTextCard } from "../share";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
@@ -89,6 +90,10 @@ export default function Dispatches() {
         <h1>Dispatches</h1>
         <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. All of it is free, including the desk's forward read; if it earns its keep, <a href="/support.html">support keeps it running</a>.</p>
       </div>
+      {/* The field is here and on the board, and it gates nothing in either
+          place: the whole archive below renders identically whether or not an
+          address was ever typed. */}
+      <Subscribe />
       {!index ? (
         <div className="loading" style={{ padding: 40 }}>loading…</div>
       ) : index.length === 0 ? (
