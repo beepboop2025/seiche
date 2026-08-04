@@ -22,7 +22,7 @@ def _regime_line(composite: dict, tell: dict) -> str:
     if val is not None:
         bits[0] += f" ({val:.0f}/100)"
     if t is not None:
-        bits.append(f"the Tell is {t:+.0f} — {reading}")
+        bits.append(f"The Tell is {t:+.0f}, {reading}")
     return ". ".join(bits) + "."
 
 

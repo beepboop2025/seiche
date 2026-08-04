@@ -1370,3 +1370,24 @@ def test_every_headline_obeys_the_house_copy_rules(fake_snap):
     for c in cands:
         assert "—" not in c and "–" not in c, c
         assert lint_letter(c) == [], (c, lint_letter(c))
+
+
+def test_tell_paragraph_never_emits_a_malformed_ordinal():
+    """A percentile whose first decimal is 1, 2 or 3 used to render "81.2th".
+
+    The publish lint calls that a malformed ordinal and raises SystemExit, so
+    there was simply no letter that day. It ran unattended at 10:45 UTC and
+    fired on roughly three first-decimals in ten; published letters had only
+    ever landed on .0, which is the only reason it never bit.
+    """
+    from seiche.dispatch_daily import _tell_para, lint_letter
+
+    for d in range(10):
+        snap = {"deep": {"tell": {"ok": True, "tell": 31.9,
+                                  "plumbing_pctl": 81.0 + d / 10,
+                                  "market_pctl": 49.0 + d / 10,
+                                  "reading": "plumbing leads price"}}}
+        lines = _tell_para(snap, "2026-08-04")
+        assert lines, d
+        for ln in lines:
+            assert lint_letter(ln) == [], (d, ln, lint_letter(ln))

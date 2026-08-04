@@ -780,8 +780,11 @@ def _tell_para(snap: dict, date: str) -> list[str]:
     detail = "."
     if p is not None and m is not None:
         try:
-            detail = (f": plumbing indicators at the {_fmt(p, 1)}th percentile of their own history, "
-                      f"market indicators at the {_fmt(m, 1)}th, a gap of {_signed(float(p) - float(m), 1)}.")
+            # No ordinal suffix on a one-decimal figure: "81.2th" is what the
+            # publish lint calls a malformed ordinal, and it would kill the
+            # letter outright on any percentile whose first decimal is 1, 2 or 3.
+            detail = (f": plumbing indicators at the {_fmt(p, 1)} percentile of their own history, "
+                      f"market indicators at the {_fmt(m, 1)}, a gap of {_signed(float(p) - float(m), 1)}.")
         except (TypeError, ValueError):
             detail = (f": plumbing indicators at the {_ordinal(p)} percentile of their own history, "
                       f"market indicators at the {_ordinal(m)}.")
