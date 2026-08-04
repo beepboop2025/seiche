@@ -685,17 +685,17 @@ STACK_DISPERSION_WARN = 0.30     # member std-dev that reads as ambiguity
 NAVIGATOR_MIN_RESOLVED = 20      # resolved forward forecasts before a verdict prints
 
 # ---------------------------------------------------------------------------
-# Riptide — the pop prognosis: the morning the spread pops, chop or current?
+# Funding Pop: the pop prognosis: the morning the spread pops, chop or current?
 # Unit of analysis = the declustered pop; discriminators = RRP co-sign,
 # calendar bucket, damping state. Speaks only when there is a live pop.
 # ---------------------------------------------------------------------------
 
-RIPTIDE_POP_BP = 4.0            # pop threshold (smallest turn-firming in every sample year)
-RIPTIDE_STICKY_MIN_BD = 3       # half-give-back at/after this = STICKY (a current)
-RIPTIDE_WINDOW_BD = 15          # sticky observation window
-RIPTIDE_ESCALATE_BD = 10        # horizon for escalation to a full PROOF event
-RIPTIDE_MIN_POPS = 30           # warmup pops before the walk-forward speaks
-RIPTIDE_LIVE_BD = 5             # a pop this recent makes the question live
+FUNDING_POP_POP_BP = 4.0            # pop threshold (smallest turn-firming in every sample year)
+FUNDING_POP_STICKY_MIN_BD = 3       # half-give-back at/after this = STICKY (a current)
+FUNDING_POP_WINDOW_BD = 15          # sticky observation window
+FUNDING_POP_ESCALATE_BD = 10        # horizon for escalation to a full PROOF event
+FUNDING_POP_MIN_POPS = 30           # warmup pops before the walk-forward speaks
+FUNDING_POP_LIVE_BD = 5             # a pop this recent makes the question live
 
 # ---------------------------------------------------------------------------
 # The Breakwater — the rescuer modeled. A dated catalog of Fed plumbing

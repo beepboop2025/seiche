@@ -211,15 +211,19 @@ def evaluate(snap: dict) -> list[dict]:
                            + ", ".join(f"{k} {p:.0%}" for k, p in vs.items() if p is not None)
                            + " — regime ambiguity, trust ranges not points"))
 
-    rt = (deep.get("riptide") or {})
+    # Funding Pop (renamed from Riptide on 2026-08-04). Read either key so a
+    # board assembled before the rename still fires. The alert CODE stays
+    # `riptide_sticky`: subscriber alert preferences are stored against it, and
+    # changing the code would silently unsubscribe everyone who opted in.
+    rt = (deep.get("funding_pop") or deep.get("riptide") or {})
     thr = ALERT_RULES.get("riptide_sticky")
     lv = rt.get("live") if rt.get("ok") else None
     if thr is not None and lv and (lv.get("p_sticky") or 0.0) >= thr:
         candidates.append(("riptide_sticky", lv.get("date", "?"),
-                           f"Riptide: the {lv.get('pop_bp')}bp pop on {lv.get('date')} reads as a "
+                           f"Funding Pop: the {lv.get('pop_bp')}bp pop on {lv.get('date')} reads as a "
                            f"CURRENT (P(sticky) {lv['p_sticky']:.0%}, P(escalates) "
                            f"{(lv.get('p_escalates') or 0):.0%}; RRP co-sign "
-                           f"{'present' if lv.get('rrp_cosigned') else 'ABSENT — genuine scarcity'})"))
+                           f"{'present' if lv.get('rrp_cosigned') else 'ABSENT, genuine scarcity'})"))
 
     ms = deep.get("microseism") or {}
     thr = ALERT_RULES.get("microseism_branching")

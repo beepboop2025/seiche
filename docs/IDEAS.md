@@ -138,7 +138,7 @@ coupon settlements, compounded to P(event by horizon), walk-forward validated
 vs climatology with the reliability table printed. FORECAST tab + `seiche
 swell` + `swell_event_prob` alert.
 
-## 12. Riptide — the pop prognosis ✅ *shipped*
+## 12. Funding Pop: the pop prognosis ✅ *shipped*
 
 **Pattern:** the morning the spread pops, the only question on the desk is
 *chop or current?* Three discriminators say it's answerable at the pop-day

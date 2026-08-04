@@ -95,7 +95,7 @@ from seiche.engines import navigator as eng_navigator
 from seiche.engines import phasemap as eng_phasemap
 from seiche.engines import playbook as eng_playbook
 from seiche.engines import resonance as eng_resonance
-from seiche.engines import riptide as eng_riptide
+from seiche.engines import funding_pop as eng_funding_pop
 from seiche.engines import roguewave as eng_roguewave
 from seiche.engines import ledger as eng_ledger
 from seiche.engines import modelcourt as eng_modelcourt
@@ -927,12 +927,17 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     run("oujump", lambda: eng_oujump.analyze(idx, current_value=_cval))
     run("montecarlo", lambda: eng_montecarlo.analyze(idx, current_value=_cval))
 
-    # Riptide — the pop prognosis: chop or current? (speaks on live pops)
-    run("riptide", lambda: eng_riptide.analyze(
+    # Funding Pop: the pop prognosis, chop or current? (speaks on live pops)
+    # Published under BOTH keys. `funding_pop` is canonical from 2026-08-04;
+    # `riptide` is the original wire key and stays for compatibility, because
+    # /api/overview consumers read deep.riptide and the resolved-pop history was
+    # recorded under it. Do not drop the alias without a deprecation window.
+    run("funding_pop", lambda: eng_funding_pop.analyze(
         spread_bp=spread,
         rrp_b=drv["rrp"],
         damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
     ))
+    out["riptide"] = out["funding_pop"]
 
     # The Gyre — Takens/EDM: is the basin deterministic enough to predict at
     # all, how fast does predictability decay, and is it state-dependent?

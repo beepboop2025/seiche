@@ -1087,12 +1087,12 @@ def test_walk_forward_with_pretrain_scores_same_days(rng):
 
 
 # --------------------------------------------------------------------------
-# Riptide: pop grammar, discriminators, walk-forward honesty
+# Funding Pop: pop grammar, discriminators, walk-forward honesty
 # --------------------------------------------------------------------------
 
-def _riptide_world(rng, n=3200):
+def _funding_pop_world(rng, n=3200):
     """Turn pops co-signed by RRP mean-revert; plain-day pops without the
-    co-sign stick and escalate — the grammar Riptide must learn."""
+    co-sign stick and escalate — the grammar Funding Pop must learn."""
     from seiche.engines import swell as sw
     idx = _bdays(n)
     s = pd.Series(rng.normal(0, 0.8, n), index=idx)
@@ -1109,15 +1109,15 @@ def _riptide_world(rng, n=3200):
     return s, rrp
 
 
-def test_riptide_learns_the_cosign_grammar(rng):
-    from seiche.engines import riptide
-    s, rrp = _riptide_world(rng)
-    r = riptide.analyze(s, rrp)
+def test_funding_pop_learns_the_cosign_grammar(rng):
+    from seiche.engines import funding_pop
+    s, rrp = _funding_pop_world(rng)
+    r = funding_pop.analyze(s, rrp)
     assert r["ok"], r.get("reason")
     v = r["validation"]["sticky"]
     assert v.get("auroc") is not None and v["auroc"] > 0.65, \
         f"co-sign grammar must be learnable (AUROC {v.get('auroc')})"
-    P = riptide.extract_pops(s, rrp, None)
+    P = funding_pop.extract_pops(s, rrp, None)
     # turn pops carry the co-sign; plain scarcity pops don't
     turn = P[P["is_turn"] == 1.0]
     plain = P[P["is_turn"] == 0.0]
@@ -1126,29 +1126,29 @@ def test_riptide_learns_the_cosign_grammar(rng):
         assert plain["sticky"].mean(skipna=True) > turn["sticky"].mean(skipna=True)
 
 
-def test_riptide_open_windows_get_no_verdict(rng):
-    from seiche.engines import riptide
-    s, rrp = _riptide_world(rng)
+def test_funding_pop_open_windows_get_no_verdict(rng):
+    from seiche.engines import funding_pop
+    s, rrp = _funding_pop_world(rng)
     # a pop 2bd before the sample end that has NOT given back — undecidable
     s.iloc[-2] += 9.0
     s.iloc[-1] = s.iloc[-2] + 0.2   # still riding high at the sample edge
-    P = riptide.extract_pops(s, rrp, None)
+    P = funding_pop.extract_pops(s, rrp, None)
     last = P.iloc[-1]
     assert last["date"] == s.index[-2]
     assert pd.isna(last["sticky"]), "an undecided open window must carry NO verdict"
     assert pd.isna(last["escalates"])
     # but early resolution IS a verdict: a pop that gives back half by day 1
     # is decidedly chop, and appending future data can never change that
-    s2, rrp2 = _riptide_world(rng)
+    s2, rrp2 = _funding_pop_world(rng)
     s2.iloc[-2] += 9.0              # noise next day = immediate give-back
-    P2 = riptide.extract_pops(s2, rrp2, None)
+    P2 = funding_pop.extract_pops(s2, rrp2, None)
     assert P2.iloc[-1]["sticky"] == 0.0
 
 
-def test_riptide_refuses_thin_history(rng):
-    from seiche.engines import riptide
+def test_funding_pop_refuses_thin_history(rng):
+    from seiche.engines import funding_pop
     idx = _bdays(300)
-    r = riptide.analyze(pd.Series(rng.normal(0, 0.5, 300), index=idx),
+    r = funding_pop.analyze(pd.Series(rng.normal(0, 0.5, 300), index=idx),
                         pd.Series(50.0, index=idx))
     assert not r["ok"]
 

@@ -1,4 +1,4 @@
-"""Riptide — the pop prognosis: chop or current?
+"""Funding Pop: the pop prognosis: chop or current?
 
 The morning the spread pops is the only morning the whole desk asks the same
 question, and no tool answers it: is this a one-day slosh (chop) or the
@@ -15,11 +15,11 @@ make the question answerable at the pop-day close:
      already thinning) re-anchor instead of mean-reverting — the diagnostic
      transition of the scarcity ladder.
 
-Unit of analysis = the POP, not the day (declustered ≥ RIPTIDE_POP_BP via
+Unit of analysis = the POP, not the day (declustered ≥ FUNDING_POP_POP_BP via
 the shared PROOF statistic — ~independent trials). Two targets per pop, from
 data strictly after it: STICKY (the spread has not given back half the pop
-after RIPTIDE_STICKY_MIN_BD) and ESCALATES (a full ≥10bp PROOF event lands
-within RIPTIDE_ESCALATE_BD). Tiny walk-forward logistic (4 features against
+after FUNDING_POP_STICKY_MIN_BD) and ESCALATES (a full ≥10bp PROOF event lands
+within FUNDING_POP_ESCALATE_BD). Tiny walk-forward logistic (4 features against
 a few hundred pops), validated pop-by-pop against the base rate; verdicts
 self-demote. The engine SPEAKS only when there is a live pop — exactly when
 the operator is staring at the screen — and otherwise shows flat water plus
@@ -33,12 +33,12 @@ import pandas as pd
 
 from seiche.config import (
     BACKTEST_SPIKE_BP,
-    RIPTIDE_ESCALATE_BD,
-    RIPTIDE_LIVE_BD,
-    RIPTIDE_MIN_POPS,
-    RIPTIDE_POP_BP,
-    RIPTIDE_STICKY_MIN_BD,
-    RIPTIDE_WINDOW_BD,
+    FUNDING_POP_ESCALATE_BD,
+    FUNDING_POP_LIVE_BD,
+    FUNDING_POP_MIN_POPS,
+    FUNDING_POP_POP_BP,
+    FUNDING_POP_STICKY_MIN_BD,
+    FUNDING_POP_WINDOW_BD,
 )
 from seiche.engines.backtest import _wilson, pop_bp
 from seiche.engines.swell import classify_days
@@ -80,7 +80,7 @@ def extract_pops(
     spv = sp.to_numpy()
     rows = []
     last_kept: pd.Timestamp | None = None
-    for i in np.where(vals >= RIPTIDE_POP_BP)[0]:
+    for i in np.where(vals >= FUNDING_POP_POP_BP)[0]:
         d = grid[i]
         if last_kept is not None and (d - last_kept).days <= 7:
             continue  # same episode — one trial (backtest's decluster rule)
@@ -90,10 +90,10 @@ def extract_pops(
         peak = spv[i]
         half_level = baseline + (peak - baseline) / 2.0 if np.isfinite(baseline) else np.nan
 
-        # STICKY: still above half-give-back after RIPTIDE_STICKY_MIN_BD
+        # STICKY: still above half-give-back after FUNDING_POP_STICKY_MIN_BD
         sticky: float | None = np.nan
         if np.isfinite(half_level):
-            horizon = min(RIPTIDE_WINDOW_BD, len(grid) - 1 - i)
+            horizon = min(FUNDING_POP_WINDOW_BD, len(grid) - 1 - i)
             gave_back_at = None
             for k in range(1, horizon + 1):
                 v = spv[i + k]
@@ -101,15 +101,15 @@ def extract_pops(
                     gave_back_at = k
                     break
             if gave_back_at is not None:
-                sticky = float(gave_back_at >= RIPTIDE_STICKY_MIN_BD)
-            elif horizon >= RIPTIDE_WINDOW_BD:
+                sticky = float(gave_back_at >= FUNDING_POP_STICKY_MIN_BD)
+            elif horizon >= FUNDING_POP_WINDOW_BD:
                 sticky = 1.0  # never gave it back inside the full window
             # else: window still open at sample end -> NaN (no verdict yet)
 
         # ESCALATES: a full PROOF event strictly after the pop, within horizon
         esc: float | None = np.nan
-        if i + RIPTIDE_ESCALATE_BD < len(grid):
-            fwd = vals[i + 1 : i + 1 + RIPTIDE_ESCALATE_BD]
+        if i + FUNDING_POP_ESCALATE_BD < len(grid):
+            fwd = vals[i + 1 : i + 1 + FUNDING_POP_ESCALATE_BD]
             if not np.all(np.isnan(fwd)):
                 esc = float(np.nanmax(fwd) >= BACKTEST_SPIKE_BP)
 
@@ -133,11 +133,11 @@ def _walk_forward_probs(P: pd.DataFrame, target: str) -> pd.Series:
 
     probs = pd.Series(np.nan, index=P.index)
     y_all = P[target]
-    for i in range(RIPTIDE_MIN_POPS, len(P)):
+    for i in range(FUNDING_POP_MIN_POPS, len(P)):
         train = P.iloc[:i]
         yt = y_all.iloc[:i]
         ok = yt.notna()
-        if ok.sum() < RIPTIDE_MIN_POPS or yt[ok].nunique() < 2:
+        if ok.sum() < FUNDING_POP_MIN_POPS or yt[ok].nunique() < 2:
             continue
         # a feature with no data yet (damping starts late / absent) drops for
         # this fit and re-enters once it has history — same rule as ML Lab
@@ -162,7 +162,7 @@ def analyze(
     damping_pctl: pd.Series | None = None,
 ) -> dict:
     P = extract_pops(spread_bp, rrp_b, damping_pctl)
-    if len(P) < RIPTIDE_MIN_POPS + 10:
+    if len(P) < FUNDING_POP_MIN_POPS + 10:
         return {"ok": False, "reason": f"too few pops to learn the grammar ({len(P)})"}
 
     validation: dict = {}
@@ -191,7 +191,7 @@ def analyze(
     s = spread_bp.dropna()
     last_pop = P.iloc[-1]
     age_bd = int(np.busday_count(last_pop["date"].date(), s.index[-1].date()))
-    live = age_bd <= RIPTIDE_LIVE_BD
+    live = age_bd <= FUNDING_POP_LIVE_BD
     live_block = None
     if live:
         # predict with everything known (final walk-forward style: all closed pops)
@@ -246,10 +246,10 @@ def analyze(
             "a pop with its expected RRP co-move is choreography; without it, scarcity — the discriminator the 2025 squeezes proved",
         ],
         "method": (
-            f"pop = shared PROOF statistic ≥ {RIPTIDE_POP_BP:g}bp, declustered; targets: STICKY = "
-            f"half-give-back time ≥ {RIPTIDE_STICKY_MIN_BD}bd (window {RIPTIDE_WINDOW_BD}bd), "
-            f"ESCALATES = ≥{BACKTEST_SPIKE_BP:g}bp event within {RIPTIDE_ESCALATE_BD}bd; features "
+            f"pop = shared PROOF statistic ≥ {FUNDING_POP_POP_BP:g}bp, declustered; targets: STICKY = "
+            f"half-give-back time ≥ {FUNDING_POP_STICKY_MIN_BD}bd (window {FUNDING_POP_WINDOW_BD}bd), "
+            f"ESCALATES = ≥{BACKTEST_SPIKE_BP:g}bp event within {FUNDING_POP_ESCALATE_BD}bd; features "
             f"as-of pop-day close ({', '.join(FEATURES)}); expanding walk-forward logistic across "
-            f"pops after {RIPTIDE_MIN_POPS} warmup; validated pop-by-pop vs the base rate"
+            f"pops after {FUNDING_POP_MIN_POPS} warmup; validated pop-by-pop vs the base rate"
         ),
     }

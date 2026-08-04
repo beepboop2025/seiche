@@ -82,7 +82,7 @@ Seiche names its parts after the sea. Here is what each one really does.
 | **Stablecoin Moorings** | The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed. |
 | **ML Lab** | A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses. |
 | **Station-Keeping** | Watches for moves in the system's cash that the normal seasonal model cannot explain, and flags them early. |
-| **Riptide** | When a spike happens, is it just harmless calendar noise or the start of a real squeeze. |
+| **Funding Pop** | When a spike happens, is it just harmless calendar noise or the start of a real squeeze. |
 | **Breakwater** | How close the Fed is to stepping in, read from its own track record of when it acted before. |
 | **Bathymetry** | Maps the shape of the basin floor from the water's motion. The full physics read, for the deep dive. |
 | **Microseism** | Faint pre quake tremors clustering ahead of stress. |

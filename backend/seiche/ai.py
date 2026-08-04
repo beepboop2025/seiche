@@ -59,6 +59,15 @@ Hard rules:
 7. Output ONLY the final answer. No reasoning preamble, no "we need to", no meta-commentary about the task."""
 
 
+def _fp(deep: dict) -> dict:
+    """Funding Pop reading, canonical key first, legacy `riptide` as fallback.
+
+    The engine was renamed on 2026-08-04. Boards assembled before that date
+    carry only the old key, so read both rather than going dark on history.
+    """
+    return (deep.get("funding_pop") or deep.get("riptide") or {})
+
+
 def context_pack(snap: dict) -> dict:
     """Compact, deterministic extract of the payload — the model's whole world."""
     eng = snap.get("engines", {})
@@ -177,11 +186,13 @@ def context_pack(snap: dict) -> dict:
             "flags": eng.get("communique", {}).get("flags"),
             "n_statements": eng.get("communique", {}).get("n_statements"),
         } if eng.get("communique", {}).get("ok") else None,
-        "riptide": {
-            "live": deep.get("riptide", {}).get("live"),
-            "flat_water": deep.get("riptide", {}).get("flat_water"),
-            "asof": deep.get("riptide", {}).get("asof"),
-        } if (deep.get("riptide") or {}).get("ok") else None,
+        # Read the canonical key, fall back to the legacy one so a board
+        # assembled before the 2026-08-04 rename still answers.
+        "funding_pop": {
+            "live": _fp(deep).get("live"),
+            "flat_water": _fp(deep).get("flat_water"),
+            "asof": _fp(deep).get("asof"),
+        } if _fp(deep).get("ok") else None,
         "breakwater": {
             "rescue_proximity": eng.get("breakwater", {}).get("rescue_proximity"),
             "revealed_threshold": eng.get("breakwater", {}).get("revealed_threshold"),
