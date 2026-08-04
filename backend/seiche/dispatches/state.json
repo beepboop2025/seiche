@@ -1,5 +1,5 @@
 {
-  "date": "2026-08-03",
+  "date": "2026-08-04",
   "reported_prev": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
     "CBOE VIX index": "2026-07-30",
@@ -9,34 +9,13 @@
   },
   "reported": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
-    "CBOE VIX index": "2026-07-30",
+    "DVP repo total volume (preliminary)": "2026-07-31",
     "Discount window primary credit (Wed level)": "2026-07-29",
-    "2y Treasury constant maturity yield": "2026-07-30",
-    "10y Treasury constant maturity yield": "2026-07-30"
+    "2y Treasury constant maturity yield": "2026-07-31",
+    "10y Treasury constant maturity yield": "2026-07-31",
+    "30y Treasury constant maturity yield": "2026-07-31"
   },
   "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.8,
-    "decomp": {
-      "weather": 11.0,
-      "resonance": 7.1,
-      "rvxray": 6.3,
-      "kink": 5.9,
-      "confession": 3.8,
-      "buffers": 3.0,
-      "undertow": 2.9,
-      "warehouse": 2.4,
-      "tails": 2.2,
-      "auctions": 1.1,
-      "hydrophone": 0.1
-    },
-    "crunch": {
-      "date": "2026-07-31",
-      "worst_case_b": 2966.3,
-      "settlement_b": null
-    }
-  },
-  "letter": {
     "regime": "STRAIN",
     "value": 46.0,
     "decomp": {
@@ -57,5 +36,28 @@
       "worst_case_b": 2966.3,
       "settlement_b": null
     }
+  },
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.5,
+    "decomp": {
+      "weather": 11.0,
+      "resonance": 6.7,
+      "rvxray": 6.3,
+      "kink": 5.9,
+      "confession": 3.8,
+      "buffers": 3.0,
+      "undertow": 2.9,
+      "warehouse": 2.4,
+      "tails": 2.2,
+      "auctions": 1.2,
+      "hydrophone": 0.1
+    },
+    "crunch": {
+      "date": "2026-08-06",
+      "worst_case_b": 2966.9,
+      "settlement_b": 147.0
+    },
+    "tell": 31.9
   }
 }
