@@ -56,6 +56,8 @@ jobs:
     # end of that day, consuming 14 of the 16 cores.
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
       - name: Deploy over SSH (forced-command wrapper on the box)
         env:
           HOST: ${{ secrets.HETZNER_HOST }}
@@ -83,11 +85,16 @@ jobs:
           # ticking through the quiet build; CountMax=20 tolerates up to
           # ~10min of true server silence before giving up (well inside the
           # 25min job timeout, so a genuinely hung box still fails, not hangs).
-          ssh -i ~/.ssh/hetzner_key \
-              -o IdentitiesOnly=yes \
-              -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              -o ServerAliveInterval=30 \
-              -o ServerAliveCountMax=20 \
-              -o TCPKeepAlive=yes \
-              "root@$HOST" deploy
+          # Two identical forced-command connections make the first rollout
+          # self-bootstrapping: an old wrapper installs the new mirror on pass
+          # one, and pass two executes it on the same SHA before route smoke.
+          SEICHE_DEPLOY_HOST="$HOST" \
+          SEICHE_DEPLOY_KEY_FILE="$HOME/.ssh/hetzner_key" \
+          SEICHE_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts" \
+            bash ops/deploy/trigger-forced-deploy.sh
+
+      # The wrapper proves localhost health and deploys Caddy safely. This
+      # second gate proves the named public routes actually crossed DNS and
+      # the edge allow-list; it is read-only and submits no subscriber data.
+      - name: Verify external routes
+        run: bash ops/deploy/external-route-smoke.sh

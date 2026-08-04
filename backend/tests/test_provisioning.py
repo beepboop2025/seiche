@@ -6,6 +6,9 @@ skipped when unconfigured.
 import hashlib
 import hmac
 import json
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,6 +70,74 @@ def test_provision_never_overwrites_existing_account(prov):
     # the original account is untouched
     assert accounts.verify_user("mrinal", "the founders own password")["tier"] == "founder"
     assert accounts.verify_user("mrinal", r["password"]) is None
+
+
+def test_account_failure_rolls_back_payment_and_retry_succeeds(prov, monkeypatch):
+    """A paid reference is retryable when account creation fails mid-grant."""
+    from seiche import accounts
+
+    real_add = accounts.add_user
+    monkeypatch.setattr(
+        accounts,
+        "add_user",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("disk full")),
+    )
+    with pytest.raises(RuntimeError, match="disk full"):
+        prov.provision("pro", username="retry_me", payment_ref="retry-ref")
+
+    with sqlite3.connect(prov.DB_PATH) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM provisions WHERE payment_ref='retry-ref'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM users WHERE username='retry_me'"
+        ).fetchone()[0] == 0
+
+    monkeypatch.setattr(accounts, "add_user", real_add)
+    retried = prov.provision("pro", username="retry_me", payment_ref="retry-ref")
+    assert retried["already"] is False
+    assert accounts.verify_user("retry_me", retried["password"])["tier"] == "pro"
+
+
+def _run_together(*calls):
+    barrier = threading.Barrier(len(calls))
+
+    def start(call):
+        barrier.wait(timeout=5)
+        return call()
+
+    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+        return list(pool.map(start, calls))
+
+
+def test_concurrent_duplicate_payment_mints_one_account(prov):
+    results = _run_together(
+        lambda: prov.provision("pro", username="same_buyer", payment_ref="same-ref"),
+        lambda: prov.provision("pro", username="same_buyer", payment_ref="same-ref"),
+    )
+    assert sorted(r["already"] for r in results) == [False, True]
+    assert {r["username"] for r in results} == {"same_buyer"}
+    with sqlite3.connect(prov.DB_PATH) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM provisions WHERE payment_ref='same-ref'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM users WHERE username='same_buyer'"
+        ).fetchone()[0] == 1
+
+
+def test_concurrent_username_collision_suffixes_second_grant(prov):
+    results = _run_together(
+        lambda: prov.provision("pro", username="shared", payment_ref="first-ref"),
+        lambda: prov.provision("pro", username="shared", payment_ref="second-ref"),
+    )
+    names = {r["username"] for r in results}
+    assert len(names) == 2
+    assert "shared" in names
+    assert any(name.startswith("shared_") for name in names - {"shared"})
+    with sqlite3.connect(prov.DB_PATH) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM provisions").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 2
 
 
 # ---- signature & gate -------------------------------------------------------

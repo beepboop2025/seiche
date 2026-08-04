@@ -224,6 +224,16 @@ def test_get_opens_sse_channel(client):
     assert r.text.startswith(":")
 
 
+def test_get_mcp_route_is_unique():
+    """Registration order must not silently shadow the SSE contract."""
+    routes = [
+        route for route in api.app.routes
+        if getattr(route, "path", None) == "/mcp"
+        and "GET" in (getattr(route, "methods", None) or set())
+    ]
+    assert len(routes) == 1
+
+
 def test_batch_returns_array(client):
     r = client.post("/mcp", json=[_rpc("ping", msg_id=1), _rpc("ping", msg_id=2)])
     body = r.json()

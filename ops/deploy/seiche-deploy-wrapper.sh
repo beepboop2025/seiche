@@ -2,7 +2,8 @@
 # Forced-command target for the GitHub Actions deploy key. The key in
 # authorized_keys can run THIS script and nothing else (no pty, no forwarding).
 # update.sh pulls main, pip-installs and runs the smoke gate with rollback;
-# only a green tree gets restarted.
+# only a green tree gets restarted. After that restart is healthy, the same
+# green checkout's Caddyfile is validated, backed up, installed and reloaded.
 #
 # Mirrored in the repo at ops/deploy/seiche-deploy-wrapper.sh. Edit the REPO
 # copy: after update.sh pulls, this script installs the post-pull checkout's
@@ -63,9 +64,22 @@ sync_verdict() {  # loud drift check at exit: a red run, never a wedged box
   fi
 }
 
+deploy_caddy() {
+  local installer="$APP/ops/deploy/install-caddy.sh"
+  if [ ! -f "$installer" ]; then
+    echo "FAIL: Caddy installer missing from the post-pull checkout: $installer"
+    return 1
+  fi
+  # Invoke with bash rather than trusting the executable bit: old checkouts can
+  # carry the helper before its mode has been repaired on the box.
+  bash "$installer"
+}
+
 if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
-  echo "already deployed ${AFTER:0:7} — nothing to deploy"
+  echo "already running ${AFTER:0:7} — checking edge config"
+  deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  echo "already deployed ${AFTER:0:7} — application and edge match the repo"
   exit 0
 fi
 if [ "$BEFORE" = "$AFTER" ]; then
@@ -102,8 +116,10 @@ fi
 
 if [ -n "$HEALTHY" ]; then
   printf '%s\n' "$AFTER" > "$STATE"
-  echo "deployed ${AFTER:0:7} — service active, api healthy"
+  echo "application ${AFTER:0:7} active and healthy — deploying edge config"
+  deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  echo "deployed ${AFTER:0:7} — service active, api healthy, edge config current"
   exit 0
 fi
 

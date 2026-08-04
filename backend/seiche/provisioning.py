@@ -10,9 +10,10 @@ operator CLI calls ``provision()`` with a tier and a payment reference. It:
   * best-effort emails the credentials if an address and SMTP are configured.
 
 Idempotent on ``payment_ref`` — a retried webhook never double-grants and never
-re-issues a password, even under a concurrent retry (the ref is claimed
-atomically via a PRIMARY KEY before any account is created). stdlib-only,
-matching the project ethos.
+re-issues a password, even under a concurrent retry.  The payment claim and
+insert-only account creation share one ``BEGIN IMMEDIATE`` transaction, so a
+failed account insert leaves no orphaned payment claim. stdlib-only, matching
+the project ethos.
 """
 
 from __future__ import annotations
@@ -66,6 +67,11 @@ def _conn() -> sqlite3.Connection:
                created_utc REAL NOT NULL
            )"""
     )
+    # Both schemas must exist before BEGIN IMMEDIATE.  Provisioning then uses
+    # this same connection for both writes; accounts must never open a second
+    # transaction in the middle of a paid grant.
+    accounts._ensure_schema(conn)
+    conn.commit()
     return conn
 
 
@@ -120,38 +126,44 @@ def provision(tier: str, *, email: str = "", username: str = "",
 
     conn = _conn()
     try:
+        # Take the writer reservation before checking either uniqueness key.
+        # Concurrent retries now line up here: after the winner commits, the
+        # loser observes its provision and returns the replay shape.
+        conn.execute("BEGIN IMMEDIATE")
         prior = _existing(conn, payment_ref)
         if prior is not None:
+            conn.commit()
             return _replay(prior)
 
-        # Never overwrite an existing account: accounts.add_user is INSERT OR
-        # REPLACE (used elsewhere for deliberate password resets), so a colliding
-        # username — including a buyer-supplied one echoed through the webhook —
-        # would clobber that account (account takeover). Grant a suffixed name
-        # instead; the payer still gets access, the victim is untouched.
+        # Never overwrite an existing account. A colliding username — including
+        # a buyer-supplied one echoed through the webhook — gets a suffixed
+        # account; the payer receives access and the existing identity is
+        # untouched. This lookup shares the writer transaction, so another
+        # provision cannot race between the check and insert.
         uname = requested
-        while accounts.user_exists(uname):
+        while conn.execute(
+            "SELECT 1 FROM users WHERE username=?", (uname,)
+        ).fetchone() is not None:
             uname = f"{requested}_{secrets.token_hex(3)}"
         password = secrets.token_urlsafe(14)
 
-        # Claim the payment_ref ATOMICALLY before creating the account. A
-        # concurrent retry of the same ref loses this PRIMARY KEY insert and is
-        # handled as a replay, so one payment can never mint two accounts.
-        try:
-            conn.execute(
-                "INSERT INTO provisions (payment_ref, username, tier, email, "
-                "amount, currency, created_utc) VALUES (?,?,?,?,?,?,?)",
-                (payment_ref, uname, tier, email or "", amount, currency or "", time.time()),
-            )
-            conn.commit()
-        except sqlite3.IntegrityError:
-            return _replay(_existing(conn, payment_ref))
-
-        accounts.add_user(uname, password, tier=tier)
+        conn.execute(
+            "INSERT INTO provisions (payment_ref, username, tier, email, "
+            "amount, currency, created_utc) VALUES (?,?,?,?,?,?,?)",
+            (payment_ref, uname, tier, email or "", amount, currency or "", time.time()),
+        )
+        accounts.add_user(uname, password, tier=tier, conn=conn)
+        # Token creation is also inside the failure boundary. It does not touch
+        # SQLite, but if secret access fails the caller must be able to retry the
+        # payment instead of inheriting an account whose credentials were lost.
+        token = accounts.issue_token(uname, tier)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
-    token = accounts.issue_token(uname, tier)
     result = {
         "already": False,
         "username": uname,

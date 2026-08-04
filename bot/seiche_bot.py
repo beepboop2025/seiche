@@ -276,6 +276,26 @@ def save_state(name: str, value) -> None:
     os.replace(tmp, _state_path(name))
 
 
+def _persist_ask_rate(kept) -> None:
+    """Write the window back, but never let a disk fault swallow a reply.
+
+    load_state already treats an unreadable file as empty, but save_state
+    raises OSError, and ask_quota runs BEFORE the answer is sent, inside
+    poll_loop's broad per-update except. Unguarded, an unwritable state dir
+    turned "the disk is full" into "the desk is silently ignoring you" on this
+    bot's busiest path, which is the fleet's second silent-death shape.
+
+    A rate limiter is not worth a dropped answer. On a write fault the throttle
+    degrades to allowing the call and says so loudly in the journal: fail
+    visible, never fail closed.
+    """
+    try:
+        save_state("ask_rate.json", kept)
+    except OSError as exc:
+        print(f"ask_quota: cannot persist the rate window ({exc}); "
+              f"serving this call unthrottled", file=sys.stderr)
+
+
 def ask_quota(chat_id: int, now: float | None = None) -> tuple[bool, int]:
     """Per-chat sliding window over /ask. Returns (allowed, retry_after_s).
 
@@ -298,11 +318,11 @@ def ask_quota(chat_id: int, now: float | None = None) -> tuple[bool, int]:
     hits = kept.get(key, [])
     if len(hits) >= ASK_PER_CHAT_LIMIT:
         retry = max(1, int(ASK_PER_CHAT_WINDOW_S - (now - min(hits))) + 1)
-        save_state("ask_rate.json", kept)
+        _persist_ask_rate(kept)
         return False, retry
     hits.append(now)
     kept[key] = hits
-    save_state("ask_rate.json", kept)
+    _persist_ask_rate(kept)
     return True, 0
 
 
@@ -1015,7 +1035,12 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         save_state("subscribers.json", subs)
-        if arg.strip():   # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x"
+        # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x".
+        # A group is not a lead. Seiche is free, so a room subscribing to the
+        # letter is fine and stays, but booking it as an arrival would credit
+        # one person's ref with a whole channel and inflate the only number
+        # that decides what the desks publish more of. Leads are people.
+        if arg.strip() and chat_type == "private":
             record_lead(chat_id, arg.strip()[:64])
         send(chat_id, "Subscribed to the daily letter (11:30 UTC, pre-US-open).\n\n" + HELP)
         send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),

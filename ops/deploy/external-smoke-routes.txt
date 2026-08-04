@@ -1,0 +1,5 @@
+# METHOD|PATH|EXPECTED_STATUS|CONTENT_TYPE_PREFIX|BODY_IDENTITY
+# Read-only probes only: this file must never subscribe an address or mutate data.
+GET|/api/public|200|application/json|"conclusion"
+GET|/api/subscribe|200|application/json|"gates_nothing":true
+GET|/mcp|200|text/event-stream|stateless

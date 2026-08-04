@@ -29,8 +29,13 @@ _SCRYPT = dict(n=2**14, r=8, p=1)
 TOKEN_TTL_S = 30 * 24 * 3600  # 30 days
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create/migrate the account table on an existing connection.
+
+    Provisioning deliberately supplies its own connection so the paid grant
+    and account insert can live in one transaction.  Keeping schema setup here
+    avoids a second connection (and therefore a second transaction boundary).
+    """
     conn.execute(
         """CREATE TABLE IF NOT EXISTS users (
                username TEXT PRIMARY KEY,
@@ -46,6 +51,12 @@ def _conn() -> sqlite3.Connection:
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
     if "alerts_on" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN alerts_on INTEGER DEFAULT 0")
+
+
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute("PRAGMA busy_timeout=5000")
+    _ensure_schema(conn)
     return conn
 
 
@@ -64,18 +75,35 @@ def _hash(password: str, salt: bytes) -> str:
     return hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT).hex()
 
 
-def add_user(username: str, password: str, tier: str = "pro") -> None:
+def add_user(
+    username: str,
+    password: str,
+    tier: str = "pro",
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Insert a new account, never replace an existing identity.
+
+    ``conn`` is used by the payment provisioner to make the account insert
+    part of its ``BEGIN IMMEDIATE`` transaction.  Other callers retain the
+    simple one-call API and get a transaction owned by this function.
+    """
     if not username or not username.replace("_", "").replace("-", "").isalnum():
         raise ValueError("username must be alphanumeric (plus - _)")
     if len(password) < 10:
         raise ValueError("password must be at least 10 characters")
     salt = os.urandom(16)
-    with _conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO users (username, salt_hex, hash_hex, tier, created_utc) "
-            "VALUES (?,?,?,?,?)",
-            (username, salt.hex(), _hash(password, salt), tier, time.time()),
-        )
+    params = (username, salt.hex(), _hash(password, salt), tier, time.time())
+    statement = (
+        "INSERT INTO users (username, salt_hex, hash_hex, tier, created_utc) "
+        "VALUES (?,?,?,?,?)"
+    )
+    if conn is not None:
+        _ensure_schema(conn)
+        conn.execute(statement, params)
+        return
+    with _conn() as owned:
+        owned.execute(statement, params)
 
 
 def verify_user(username: str, password: str) -> dict | None:
