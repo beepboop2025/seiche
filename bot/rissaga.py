@@ -4,29 +4,36 @@
 A rissaga is a seiche set off by a travelling atmospheric pressure jump:
 weather arrives from outside and the basin swings. This service watches the
 outside weather (news) and marks, every six hours, the few items that matter
-to the lab's three desks (Seiche plumbing, LiquiLens institutions, Undertow
-market depth), each item paired with what the lab's own boards say right now.
+to the lab's desks, from funding and institutions through market depth, risk
+timing and information controls. Each item is paired with the relevant live
+board or authority line.
 
-WHAT IT IS NOT. It writes no prose for the public, changes no score, no tier,
-no regime. It is a fact sheet with links: Mrinal writes the posts herself
-(house rule, Pangram gate applies). The one public surface is a single
-desk voice channel post of the top external item, ref tagged lab_rissaga.
+WHAT IT IS NOT. It runs no generative model and changes no product score,
+tier or regime. It emits linked facts, grounded board lines and bounded
+fallback commentary for seven desk routes. The shared channel receives at
+most two selected primary routes per sweep, ref tagged lab_rissaga.
 
-SOURCES, all quota free: ~20 live verified RSS feeds (official regulators
-tier 1.0 down to market blogs 0.35) plus 7 Google News query feeds, one per
-beat. Zero GDELT calls: attention context is read from the lab's own already
-published packs. Board reads come from the three desks' public APIs.
+SOURCES, all quota free: 23 live verified RSS feeds (official regulators
+tier 1.0 down to market blogs 0.35) plus 11 Google News query feeds across
+12 beats. Zero GDELT calls: attention context is read from the lab's own
+already published packs. Board context comes from the product APIs, with an
+explicit authority boundary where Riptide has no public board.
 
 RANKING, deterministic and auditable (no LLM in the path, house style per
 ml/mpc_gauge.py): weighted beat lexicon x source tier x recency x cross
 outlet cluster bonus x board corroboration boost, then a seen ledger so a
 story is marked once and resurfaces only on escalation. The lexicon below is
-the tuning surface and it is versioned by content hash.
+the tuning surface and it is versioned by content hash. Every relevant
+external story is appended to a durable world readable JSONL subscriber
+outbox before its seen suppression is committed. Stable story identifiers
+group revisions, while dispatch identifiers separate escalations and later
+re-entry.
 
 Deploy (fleet convention): copy this file to /opt/rissaga/, env from
 /etc/seiche-bot.env (token) plus /etc/rissaga.env, systemd rissaga.timer at
-02,08,14,20:50 UTC. Modes: --run (fetch, compose, DM owner, channel top item),
---print (fetch + compose to stdout, sends nothing, safe anywhere).
+02,08,14,20:50 UTC. Modes: --run (fetch, route, append outbox, DM owner and
+publish selected channel items), --print (fetch and compose to stdout without
+mutating seen, board or outbox delivery state).
 
 House prose rule holds in every user facing string here: commas, colons or
 parentheses, never an em or en dash (offline test enforces it).
@@ -39,6 +46,7 @@ import email.utils
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -59,12 +67,22 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")   # empty = channel off
 # itself (fallback lane); "off": no channel activity at all.
 CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "direct").lower()
 LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
+OUTBOX_EXPORT = "outbox.jsonl"   # durable multi-desk subscriber handoff
 MAX_CHANNEL_POSTS = 2
+OUTBOX_TTL_H = float(os.environ.get("RISSAGA_OUTBOX_TTL_H", "24"))
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 STATE_DIR = os.environ.get("RISSAGA_STATE", "/var/lib/rissaga")
 SEICHE_API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
 UT_BASE = os.environ.get("UNDERTOW_BASE", "https://api.seiche.info/undertow").rstrip("/")
+PALIMPSEST_BOARD = os.environ.get(
+    "PALIMPSEST_BOARD",
+    "https://api.seiche.info/palimpsest/osint/osint-china.json",
+)
+PALIMPSEST_DDTI = os.environ.get(
+    "PALIMPSEST_DDTI",
+    "https://palimpsest.info/readings/ddti-latest.json",
+)
 TG = f"https://api.telegram.org/bot{TOKEN}"
 UA = os.environ.get("RISSAGA_UA",
                     "Mozilla/5.0 (compatible; rissaga/1.0; +https://seiche.info)")
@@ -73,6 +91,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 MARK_BAR = float(os.environ.get("RISSAGA_MARK_BAR", "3.0"))
 CHANNEL_BAR = float(os.environ.get("RISSAGA_CHANNEL_BAR", "4.5"))
+ROUTE_BAR = float(os.environ.get("RISSAGA_ROUTE_BAR", "3.0"))
 MAX_MARKED = 5
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
@@ -216,6 +235,42 @@ BEATS: dict[str, dict] = {
         ],
         "gnews": '"jobless claims" OR "consumer delinquencies" OR CPI inflation OR payrolls',
     },
+    "information_controls": {
+        "desk": "PALIMPSEST", "emoji": "\U0001f9f1",
+        "label": "information controls",
+        "terms": [
+            (r"internet censorship", 5), (r"state censorship", 5),
+            (r"information controls?", 4), (r"digital repression", 4),
+            (r"great firewall", 6), (r"\bGFW\b", 4), (r"\bOONI\b", 5),
+            (r"censored planet", 5), (r"citizen lab", 4),
+            (r"website block\w*", 4), (r"internet shutdown", 6),
+            (r"network blackout", 5), (r"content remov\w+", 4),
+            (r"deleted posts?", 4), (r"deletion threat", 5),
+            (r"we(?:ibo|chat).{0,30}(?:censor|delet|remov|block)", 5),
+            (r"(?:censor|delet|remov|block).{0,30}we(?:ibo|chat)", 5),
+            (r"Chinese (?:AI|LLM).{0,35}(?:refus|censor|redirect)", 5),
+            (r"generative firewall", 6), (r"VPN crackdown", 5),
+        ],
+        "gnews": ('China censorship OR "Great Firewall" OR "deleted posts" '
+                  'OR "Chinese AI" refusal OR "internet shutdown"'),
+    },
+    "risk_timing": {
+        "desk": "RIPTIDE", "emoji": "\U0001f9ed", "label": "risk timing",
+        "terms": [
+            (r"volatility (?:spike|surge|shock)", 5), (r"\bVIX\b", 3),
+            (r"risk.?off", 4), (r"equity selloff", 4),
+            (r"stock market selloff", 4), (r"market turmoil", 4),
+            (r"drawdown", 3), (r"flight to quality", 5),
+            (r"safe haven", 3), (r"credit spreads?", 3),
+            (r"cross.?asset", 3), (r"systematic sell\w*", 5),
+            (r"volatility control", 4), (r"portfolio deleveraging", 5),
+            (r"liquidation cascade", 5), (r"margin calls?", 4),
+            (r"bitcoin (?:slump|crash|selloff)", 4),
+            (r"crypto market (?:slump|crash|selloff)", 4),
+        ],
+        "gnews": ('"volatility spike" OR VIX OR "risk off" OR '
+                  '"equity selloff" OR "flight to quality"'),
+    },
 }
 
 # Routine noise killed unless the item also carries a strong distress term
@@ -239,11 +294,42 @@ ANGLES = {
     "india_watch": "supervisory tape context, actions run ahead of ratings",
     "corporate_stress": "read it through the transmission board, channel by channel",
     "real_economy": "the household and India boards say if stress is arriving downstream",
+    "information_controls": "separate network blocking, content deletion and model refusal before reading coincidence",
+    "risk_timing": "test persistence across volatility, spreads and trend before treating one shock as a regime",
 }
 
 DESK_NICE = {"SEICHE": "Seiche", "LIQUILENS": "LiquiLens",
              "UNDERTOW": "Undertow", "CORPORATE": "Corporate",
-             "REALECON": "Real economy"}
+             "REALECON": "Real economy", "PALIMPSEST": "Palimpsest",
+             "RIPTIDE": "Riptide"}
+
+# These are editorial boundaries, not ornamental names. Consumers may write
+# their own commentary, but each route's deterministic fallback must remain in
+# the desk's register and must not turn a news match into a prediction.
+DESK_PERSONAS = {
+    "SEICHE": "funding mechanics, facilities and reserve plumbing",
+    "LIQUILENS": "institution balance sheets, thresholds and failure paths",
+    "UNDERTOW": "quoted depth, exit cost and market carrying capacity",
+    "CORPORATE": "transmission from funding access into company cash flows",
+    "REALECON": "households, employment, prices and downstream demand",
+    "PALIMPSEST": "network blocking, content deletion and model refusal as distinct measurements",
+    "RIPTIDE": "risk persistence across volatility, spreads and trend",
+}
+
+FALLBACK_COMMENTARY = {
+    "plumbing": "The mechanical question is whether funding data confirm the headline.",
+    "bank_stress": "The institution belongs against the failure radar before the event is treated as systemic.",
+    "private_credit": "The transmission question is whether nonbank concentration is reaching regulated balance sheets.",
+    "market_liquidity": "Quoted depth and exit cost decide whether the headline has become an execution problem.",
+    "stablecoin_rails": "Reserve quality and redemption rails separate plumbing stress from token noise.",
+    "crypto_stress": "Leverage and withdrawal conditions separate a positioning flush from balance sheet stress.",
+    "policy_shock": "Facility mechanics matter before the policy label.",
+    "india_watch": "Supervisory action is the signal, ratings and market reaction arrive later.",
+    "corporate_stress": "Trace the shock from funding access into investment, payrolls and supplier terms.",
+    "real_economy": "Household and India channels show whether financial stress is reaching demand.",
+    "information_controls": "Treat blocking, deletion and refusal as separate layers, then ask whether independent measurements agree.",
+    "risk_timing": "The relevant read is whether volatility, spreads and trend confirm persistence beyond one session.",
+}
 
 # ================================================================= FEEDS ===
 # (key, url, tier). Live verified 2026-08-03; a feed that rots reports
@@ -252,6 +338,7 @@ FEEDS: list[tuple[str, str, float]] = [
     ("fed_press", "https://www.federalreserve.gov/feeds/press_all.xml", 1.0),
     ("fdic", "https://public.govdelivery.com/topics/USFDIC_26/feed.rss", 1.0),
     ("occ", "https://www.occ.gov/rss/occ_news.xml", 1.0),
+    ("rbi_press", "https://rbi.org.in/pressreleases_rss.xml", 1.0),
     ("ecb", "https://www.ecb.europa.eu/rss/press.html", 1.0),
     ("sec", "https://www.sec.gov/news/pressreleases.rss", 0.95),
     ("fsb", "https://www.fsb.org/feed/", 0.9),
@@ -267,6 +354,9 @@ FEEDS: list[tuple[str, str, float]] = [
     ("mw_top", "https://feeds.content.dowjones.io/public/rss/mw_topstories", 0.5),
     ("coindesk", "https://www.coindesk.com/arc/outboundfeeds/rss/", 0.6),
     ("theblock", "https://www.theblock.co/rss.xml", 0.6),
+    ("ooni", "https://ooni.org/index.xml", 0.9),
+    ("citizen_lab", "https://citizenlab.ca/feed/", 0.9),
+    ("china_digital_times", "https://chinadigitaltimes.net/feed/", 0.85),
     ("et_markets",
      "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms", 0.5),
     ("mint_markets", "https://www.livemint.com/rss/markets", 0.5),
@@ -277,11 +367,13 @@ GNEWS_TIER = 0.65
 
 SOURCE_NICE = {
     "fed_press": "Federal Reserve", "fdic": "FDIC", "occ": "OCC",
-    "ecb": "ECB", "sec": "SEC", "fsb": "FSB", "bbg_markets": "Bloomberg",
+    "rbi_press": "Reserve Bank of India", "ecb": "ECB", "sec": "SEC",
+    "fsb": "FSB", "bbg_markets": "Bloomberg",
     "bbg_econ": "Bloomberg Econ", "wsj_markets": "WSJ", "ft_home": "FT",
     "ft_markets": "FT Markets", "cnbc_markets": "CNBC",
     "yahoo_fin": "Yahoo Finance", "mw_top": "MarketWatch",
-    "coindesk": "CoinDesk", "theblock": "The Block",
+    "coindesk": "CoinDesk", "theblock": "The Block", "ooni": "OONI",
+    "citizen_lab": "Citizen Lab", "china_digital_times": "China Digital Times",
     "et_markets": "Economic Times", "mint_markets": "Mint",
     "zerohedge": "ZeroHedge",
 }
@@ -307,7 +399,8 @@ def lexicon_version() -> str:
     """Content hash of the ranking surface, stamped into every dispatch
     history row so a tuning change is visible in the record."""
     blob = json.dumps({"beats": {k: v["terms"] for k, v in BEATS.items()},
-                       "kill": KILL, "bars": [MARK_BAR, CHANNEL_BAR]},
+                       "kill": KILL,
+                       "bars": [MARK_BAR, CHANNEL_BAR, ROUTE_BAR]},
                       sort_keys=True, default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
@@ -682,6 +775,79 @@ def read_boards() -> dict:
             return {"top": r0.get("title") or r0.get("headline")}
         return None
 
+    def d_palimpsest(d):
+        """Published OSINT board, with shape tolerance during its rollout.
+
+        Only the upstream headline and health state are carried through. An
+        absent value stays absent, because silence is not a healthy reading.
+        """
+        headline = d.get("headline") or d.get("title")
+        summary = d.get("summary")
+        if not headline and isinstance(summary, str):
+            headline = summary
+        elif not headline and isinstance(summary, dict):
+            headline = summary.get("headline") or summary.get("title")
+        health = d.get("health_status") or d.get("health") or d.get("status")
+        if isinstance(health, dict):
+            health = (health.get("status") or health.get("state")
+                      or health.get("verdict"))
+        if not headline:
+            ddti = d.get("ddti") or {}
+            ranked = ddti.get("ranked") if isinstance(ddti, dict) else []
+            top = (ranked[0] if isinstance(ranked, list) and ranked
+                   and isinstance(ranked[0], dict) else {})
+            term, threat = top.get("term"), top.get("threat")
+            if isinstance(term, str) and term.strip():
+                headline = f"top observed term {term.strip()[:120]}"
+                if (isinstance(threat, (int, float))
+                        and not isinstance(threat, bool)
+                        and math.isfinite(float(threat))):
+                    headline += f", threat {threat}"
+        coverage = d.get("coverage") or {}
+        health_bits = [str(health)[:60]] if health else []
+        if isinstance(coverage, dict):
+            sources = coverage.get("observed_source_count")
+            if (isinstance(sources, int) and not isinstance(sources, bool)
+                    and sources >= 0):
+                noun = "source" if sources == 1 else "sources"
+                health_bits.append(f"{sources} observed {noun}")
+            completeness = coverage.get("completeness")
+            if isinstance(completeness, str) and completeness:
+                health_bits.append(
+                    "coverage not measured" if completeness == "not_measured"
+                    else f"coverage {completeness[:40]}"
+                )
+        health = ", ".join(health_bits) or None
+        if not headline and not health:
+            return None
+        return {"headline": str(headline)[:180] if headline else None,
+                "health": str(health)[:180] if health else None}
+
+    def d_palimpsest_ddti(d):
+        ranked = d.get("ranked") or []
+        top = ranked[0] if ranked and isinstance(ranked[0], dict) else {}
+        term, threat = top.get("term"), top.get("threat")
+        headline = None
+        if term:
+            headline = f"top ranked term {term}"
+            if isinstance(threat, (int, float)):
+                headline += f", threat {threat}"
+        feed = d.get("feed_health") or {}
+        health = None
+        if isinstance(feed, dict):
+            covered = feed.get("history_window_covered")
+            if covered is True:
+                health = "history window covered"
+            elif covered is False:
+                health = "history window incomplete"
+            missing = feed.get("roles_missing")
+            if isinstance(missing, list) and missing:
+                tail = "roles missing " + ", ".join(str(x) for x in missing[:4])
+                health = f"{health}, {tail}" if health else tail
+        if not headline and not health:
+            return None
+        return {"headline": headline, "health": health}
+
     jobs = [
         ("seiche", f"{SEICHE_API}/api/gauge", d_gauge),
         ("scuttlebutt", f"{SEICHE_API}/api/overview", d_overview),
@@ -695,6 +861,8 @@ def read_boards() -> dict:
         ("rbi_tape", f"{LL_API}/economic/rbi-actions", d_tape),
         ("india", f"{LL_API}/public-signals/india-macro", d_india),
         ("household", f"{LL_API}/public-signals/household-credit", d_household),
+        ("palimpsest", PALIMPSEST_BOARD, d_palimpsest),
+        ("palimpsest_ddti", PALIMPSEST_DDTI, d_palimpsest_ddti),
     ]
     boards: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
@@ -702,6 +870,9 @@ def read_boards() -> dict:
         for fut in concurrent.futures.as_completed(futs):
             name, val = fut.result()
             boards[name] = val
+    if not boards.get("palimpsest"):
+        boards["palimpsest"] = boards.get("palimpsest_ddti")
+    boards.pop("palimpsest_ddti", None)
     return boards
 
 
@@ -779,6 +950,19 @@ def board_line(beat: str, boards: dict) -> str:
             bits.append(line)
         if bits:
             return "; ".join(bits)
+    if beat == "information_controls":
+        pal = boards.get("palimpsest")
+        if not pal:
+            return "Palimpsest OSINT board UNAVAILABLE this run"
+        bits = []
+        if pal.get("health"):
+            bits.append(f"health {pal['health']}")
+        if pal.get("headline"):
+            bits.append(f"headline {pal['headline']}")
+        return "Palimpsest OSINT board: " + ", ".join(bits)
+    if beat == "risk_timing":
+        return ("Riptide authority: news is advisory only, paper sizing "
+                "changes only from permitted cues")
     return "board read unavailable this run"
 
 
@@ -800,10 +984,14 @@ _BEAT_STRESSED = {
                                .upper() == "ALARM"
                                or str((b.get("household") or {}).get("regime")
                                       or "").upper() in ("WATCH", "ALARM")),
+    "information_controls": lambda b: False,
+    "risk_timing": lambda b: ((b.get("seiche") or {}).get("regime") == "STRAIN"
+                              or ((b.get("ut") or {}).get("off") or 0) > 0),
 }
 
 
-def board_events(boards: dict, now_ts: float) -> list[dict]:
+def board_events(boards: dict, now_ts: float,
+                 persist: bool = True) -> list[dict]:
     """The lab's own state changes, synthesized as first class items. The
     channel never gets these (the desks announce their own flips), the DM
     does."""
@@ -839,11 +1027,17 @@ def board_events(boards: dict, now_ts: float) -> list[dict]:
                or (prev.get(name) or {}).get("verdict"))
         if cur and old and cur != old:
             ev(beat, f"{label} moved {old} to {cur}", site)
-    # persist only boards that answered, absence must not fake a flip later
+    if persist:
+        commit_boards(boards)
+    return events
+
+
+def commit_boards(boards: dict) -> None:
+    """Persist only boards that answered, so absence cannot fake a flip."""
+    prev = load_state("last_boards.json", {})
     keep = {k: v for k, v in boards.items() if v is not None}
     merged = {**prev, **keep}
     save_state("last_boards.json", merged)
-    return events
 
 
 # --------------------------------------------------------------- ranking ---
@@ -863,13 +1057,49 @@ def fingerprint(tokens: frozenset) -> str:
     return hashlib.sha1(" ".join(core).encode()).hexdigest()[:16]
 
 
-def beat_score(text: str) -> tuple[str | None, float]:
-    best_beat, best = None, 0.0
+def beat_scores(text: str) -> dict[str, float]:
+    """Every positive lexical beat score, before source and age weights."""
+    scores = {}
     for beat, pats in _COMPILED.items():
         s = sum(w for rx, w in pats if rx.search(text))
-        if s > best:
-            best_beat, best = beat, s
-    return best_beat, min(best, 10.0)
+        if s > 0:
+            scores[beat] = min(s, 10.0)
+    return scores
+
+
+def beat_score(text: str) -> tuple[str | None, float]:
+    """The original primary beat contract, now derived from all matches."""
+    scores = beat_scores(text)
+    if not scores:
+        return None, 0.0
+    beat = max(scores, key=scores.get)
+    return beat, scores[beat]
+
+
+def _best_route_beats(score_maps, primary_beat: str | None = None) -> list[dict]:
+    """Choose one highest relevance beat per desk across a story cluster."""
+    best_by_desk: dict[str, dict] = {}
+    for scores in score_maps:
+        for beat, relevance in scores.items():
+            desk = BEATS[beat]["desk"]
+            old = best_by_desk.get(desk)
+            if old is None or relevance > old["relevance"]:
+                best_by_desk[desk] = {
+                    "desk": desk, "beat": beat, "relevance": relevance,
+                }
+    primary_desk = BEATS[primary_beat]["desk"] if primary_beat else None
+    routes = [route for route in best_by_desk.values()
+              if route["desk"] == primary_desk
+              or route["relevance"] >= ROUTE_BAR]
+    routes.sort(key=lambda r: (r["desk"] != primary_desk,
+                               -r["relevance"], r["desk"]))
+    return routes
+
+
+def route_beats(text: str) -> list[dict]:
+    """Public scoring seam: zero or one best route for every matching desk."""
+    primary, _ = beat_score(text)
+    return _best_route_beats([beat_scores(text)], primary)
 
 
 def recency_factor(age_h: float) -> float:
@@ -886,7 +1116,8 @@ def recency_factor(age_h: float) -> float:
     return 0.0
 
 
-def rank(items: list[dict], boards: dict, now_ts: float) -> list[dict]:
+def rank(items: list[dict], boards: dict, now_ts: float,
+         persist_seen: bool = True) -> list[dict]:
     """Score, cluster, boost, dedup against the seen ledger. Returns marked
     clusters, best first, each carrying its display fields."""
     scored = []
@@ -895,11 +1126,16 @@ def rank(items: list[dict], boards: dict, now_ts: float) -> list[dict]:
             it["base"] = 6.0
             it["score"] = 6.0 * (1.25 if _BEAT_STRESSED.get(it["beat"],
                                                             lambda b: False)(boards) else 1.0)
+            it["beat_scores"] = {it["beat"]: 6.0}
             it["tokens"] = title_tokens(it["title"])
             scored.append(it)
             continue
         text = f"{it['title']} {it['snippet']}"
-        beat, base = beat_score(text)
+        scores = beat_scores(text)
+        if not scores:
+            continue
+        beat = max(scores, key=scores.get)
+        base = scores[beat]
         if not beat or base <= 0:
             continue
         if base < 6 and any(rx.search(text) for rx in _KILL):
@@ -910,6 +1146,7 @@ def rank(items: list[dict], boards: dict, now_ts: float) -> list[dict]:
             continue
         it["beat"] = beat
         it["base"] = base
+        it["beat_scores"] = scores
         it["age_h"] = age_h
         it["tokens"] = title_tokens(it["title"])
         it["score"] = base * it["tier"] * rec
@@ -932,7 +1169,6 @@ def rank(items: list[dict], boards: dict, now_ts: float) -> list[dict]:
                              "sources": {it["source_name"]}})
 
     seen = load_state("seen.json", {})
-    now_iso = datetime.fromtimestamp(now_ts, timezone.utc).isoformat(timespec="seconds")
     marked = []
     for cl in clusters:
         rep = cl["rep"]
@@ -949,18 +1185,38 @@ def rank(items: list[dict], boards: dict, now_ts: float) -> list[dict]:
                 continue
         cl["final"] = score
         cl["fp"] = fp
+        cl["story_id"] = f"rissaga-{fp}"
         cl["n_sources"] = len(cl["sources"])
+        cl["route_beats"] = _best_route_beats(
+            (member.get("beat_scores") or {} for member in cl["members"]),
+            rep["beat"],
+        )
         marked.append(cl)
 
     marked.sort(key=lambda c: -c["final"])
     top = marked[:MAX_MARKED]
-    for cl in top:
+    if persist_seen:
+        commit_seen(top, now_ts)
+    return top
+
+
+def commit_seen(marked: list[dict], now_ts: float) -> None:
+    """Commit suppression only after every required durable export exists."""
+    seen = load_state("seen.json", {})
+    now_dt = datetime.fromtimestamp(now_ts, timezone.utc)
+    now_iso = now_dt.isoformat(timespec="seconds")
+    # If a prior process appended successfully and died before this commit,
+    # retain that durable score. A lower retry score must not lower the
+    # escalation baseline and make later seen/outbox thresholds disagree.
+    outbox_scores = _outbox_active(_state_path(OUTBOX_EXPORT), now_dt)
+    for cl in marked:
         if cl["final"] >= MARK_BAR:
-            seen[cl["fp"]] = {"ts": now_ts, "score": cl["final"], "at": now_iso}
+            score = max(float(cl["final"]),
+                        outbox_scores.get(cl.get("story_id"), 0.0))
+            seen[cl["fp"]] = {"ts": now_ts, "score": score, "at": now_iso}
     seen = {fp: rec for fp, rec in seen.items()
             if now_ts - rec.get("ts", 0) < 7 * 24 * 3600}
     save_state("seen.json", seen)
-    return top
 
 
 # --------------------------------------------------------------- compose ---
@@ -1049,36 +1305,239 @@ def compose_channel(cl: dict, boards: dict) -> str:
     return "\n".join([line1, line2, line3, line4])
 
 
-def export_latest(marked: list[dict], boards: dict, now: datetime) -> None:
-    """World readable handoff for the Hermes desk-reads lane: the marked
-    items with their deterministic desk lines and which ones are channel
-    worthy. Numbers here are the ground truth the agent must quote."""
+def _route_payloads(cl: dict, boards: dict) -> list[dict]:
+    routes = []
+    for matched in cl.get("route_beats") or []:
+        beat = matched["beat"]
+        spec = BEATS[beat]
+        routes.append({
+            "desk": spec["desk"],
+            "desk_nice": DESK_NICE.get(spec["desk"], spec["desk"]),
+            "beat": beat,
+            "label": spec["label"],
+            "relevance": round(float(matched["relevance"]), 2),
+            "desk_line": board_line(beat, boards),
+            "angle": ANGLES.get(beat, ""),
+            "fallback_commentary": FALLBACK_COMMENTARY.get(beat, ""),
+            "channel_candidate": False,
+        })
+    return routes
+
+
+def dispatch_id(story_id: str, generated: str, score: float,
+                n_sources: int) -> str:
+    """Stable identifier for one story delivery revision."""
+    blob = json.dumps({
+        "story_id": story_id,
+        "generated": generated,
+        "score": float(score),
+        "n_sources": int(n_sources),
+    }, sort_keys=True, separators=(",", ":"))
+    return ("rissaga-dispatch-"
+            + hashlib.sha256(blob.encode()).hexdigest()[:20])
+
+
+def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
+    """Build the v2 handoff while preserving every v1 field and index."""
+    generated = now.isoformat(timespec="seconds")
     items = []
     for cl in marked:
         rep = cl["rep"]
         spec = BEATS[rep["beat"]]
+        score = round(cl["final"], 2)
         items.append({
+            "story_id": cl["story_id"],
+            "dispatch_id": dispatch_id(cl["story_id"], generated, score,
+                                       cl["n_sources"]),
             "title": rep["title"], "link": rep.get("link") or "",
             "source": rep["source_name"], "n_sources": cl["n_sources"],
-            "age": _age_txt(rep), "score": round(cl["final"], 2),
+            "age": _age_txt(rep), "score": score,
             "desk": spec["desk"], "desk_nice": DESK_NICE.get(spec["desk"]),
             "beat": rep["beat"], "label": spec["label"],
             "board_event": bool(rep.get("board_event")),
             "desk_line": board_line(rep["beat"], boards),
             "angle": ANGLES.get(rep["beat"], ""),
+            "routes": _route_payloads(cl, boards),
         })
     candidates = [i for i, cl in enumerate(marked)
                   if not cl["rep"].get("board_event")
                   and cl["final"] >= CHANNEL_BAR][:MAX_CHANNEL_POSTS]
-    payload = {"generated": now.isoformat(timespec="seconds"),
-               "lexicon": lexicon_version(), "channel_mode": CHANNEL_MODE,
-               "items": items, "channel_candidates": candidates}
+    for index in candidates:
+        routes = items[index]["routes"]
+        if routes:
+            # _best_route_beats places the primary desk first. Only that route
+            # owns the shared-channel slot; every route still reaches its bot.
+            routes[0]["channel_candidate"] = True
+    return {"schema": "rissaga.news.v2",
+            "generated": generated,
+            "lexicon": lexicon_version(), "channel_mode": CHANNEL_MODE,
+            "items": items, "channel_candidates": candidates}
+
+
+def export_latest(marked: list[dict], boards: dict, now: datetime,
+                  payload: dict | None = None) -> None:
+    """Atomically publish the world readable current-run handoff."""
+    payload = payload or latest_payload(marked, boards, now)
     path = _state_path(LATEST_EXPORT)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
     os.chmod(path, 0o644)
+
+
+def _repair_outbox_tail(path: str) -> None:
+    """Remove only an interrupted final JSONL fragment before appending.
+
+    A complete final object without its newline is preserved and terminated.
+    Corruption in earlier lines remains visible and is ignored by readers.
+    """
+    try:
+        with open(path, "r+b") as fh:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+            if end == 0:
+                return
+            fh.seek(end - 1)
+            if fh.read(1) == b"\n":
+                return
+            cursor = end
+            start = 0
+            while cursor > 0:
+                size = min(4096, cursor)
+                cursor -= size
+                fh.seek(cursor)
+                block = fh.read(size)
+                offset = block.rfind(b"\n")
+                if offset >= 0:
+                    start = cursor + offset + 1
+                    break
+            fh.seek(start)
+            tail = fh.read(end - start)
+            try:
+                json.loads(tail.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                fh.truncate(start)
+            else:
+                fh.seek(0, os.SEEK_END)
+                fh.write(b"\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except FileNotFoundError:
+        pass
+
+
+def _outbox_active_records(path: str, now: datetime) -> dict[str, dict]:
+    """Highest active dispatch per story, ignoring expired history."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    active: dict[str, dict] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                expires = record.get("expires_at")
+                if expires:
+                    try:
+                        expiry = datetime.fromisoformat(
+                            str(expires).replace("Z", "+00:00"))
+                        if expiry.tzinfo is None:
+                            expiry = expiry.replace(tzinfo=timezone.utc)
+                        if expiry <= now:
+                            continue
+                    except ValueError:
+                        pass
+                story_id = record.get("story_id")
+                if isinstance(story_id, str):
+                    try:
+                        score = float(record.get("score") or 0)
+                    except (TypeError, ValueError):
+                        score = 0.0
+                    old = active.get(story_id)
+                    if old is None or score >= old["score"]:
+                        active[story_id] = {
+                            "score": score,
+                            "dispatch_id": record.get("dispatch_id")
+                                           or story_id,
+                        }
+    except OSError:
+        pass
+    return active
+
+
+def _outbox_active(path: str, now: datetime) -> dict[str, float]:
+    """Compatibility score view of active outbox revisions."""
+    return {story_id: record["score"]
+            for story_id, record in _outbox_active_records(path, now).items()}
+
+
+def _outbox_story_ids(path: str, now: datetime | None = None) -> set[str]:
+    """Compatibility seam returning only unexpired story identifiers."""
+    return set(_outbox_active(path, now or datetime.now(timezone.utc)))
+
+
+def append_outbox(payload: dict, now: datetime) -> int:
+    """Durably append each new routed story exactly once.
+
+    The outbox itself is the retry idempotency ledger. This closes the crash
+    window where the append succeeded but the seen ledger did not.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    path = _state_path(OUTBOX_EXPORT)
+    _repair_outbox_tail(path)
+    active = _outbox_active_records(path, now)
+    generated = payload["generated"]
+    expires_at = (now + timedelta(hours=OUTBOX_TTL_H)).isoformat(
+        timespec="seconds")
+    records = []
+    for item in payload.get("items") or []:
+        story_id = item.get("story_id")
+        routes = item.get("routes") or []
+        if (item.get("board_event") or item.get("score", 0) < MARK_BAR
+                or not story_id or not routes):
+            continue
+        score = float(item["score"])
+        prior = active.get(story_id)
+        if prior is not None and score < prior["score"] * SEEN_ESCALATE:
+            # A retry after append but before seen commit gets the already
+            # durable revision key in latest.json, so Hermes cannot replay it.
+            item["dispatch_id"] = prior["dispatch_id"]
+            continue
+        item_dispatch_id = item.get("dispatch_id") or dispatch_id(
+            story_id, generated, score, item["n_sources"])
+        records.append({
+            "schema": "rissaga.news.v2",
+            "story_id": story_id,
+            "dispatch_id": item_dispatch_id,
+            "generated": generated,
+            "expires_at": expires_at,
+            "title": item["title"],
+            "link": item.get("link") or "",
+            "source": item["source"],
+            "n_sources": item["n_sources"],
+            "age": str(item["age"])[:40],
+            "score": item["score"],
+            "routes": routes,
+            "shared_candidate": any(r.get("channel_candidate")
+                                    for r in routes),
+        })
+        active[story_id] = {"score": score,
+                            "dispatch_id": item_dispatch_id}
+    if records:
+        with open(path, "a", encoding="utf-8") as fh:
+            for record in records:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    if os.path.exists(path):
+        os.chmod(path, 0o644)
+    return len(records)
 
 
 def post_channel(text: str, ref: str) -> bool:
@@ -1087,8 +1546,8 @@ def post_channel(text: str, ref: str) -> bool:
     if not LAB_CHANNEL:
         return False
     body = text + (
-        f"\n\n<i>Rissaga is the Liquidity Lab news radar. The desks with the "
-        f"live numbers are free: {LAB_LINK}</i>"
+        f"\n\n<i>Rissaga is the Liquidity Lab news radar. Open the matching "
+        f"desk for its own grounded read: {LAB_LINK}</i>"
     )
     keyboard = [
         [{"text": "\U0001f321 Plumbing desk",
@@ -1097,6 +1556,14 @@ def post_channel(text: str, ref: str) -> bool:
           "url": f"https://t.me/LiquiLens_bot?start={ref}"},
          {"text": "\U0001f300 Market depth",
           "url": f"https://t.me/undertow_LiquiLens_bot?start={ref}"}],
+        [{"text": "\U0001f9ed Riptide risk desk",
+          "url": f"https://t.me/riptide_anake_bot?start={ref}"},
+         {"text": "\U0001f9f1 Palimpsest watch",
+          "url": f"https://t.me/palimpsest_watch_bot?start={ref}"}],
+        [{"text": "\U0001f3ed Corporate stress",
+          "url": f"https://t.me/corporate_stress_bot?start={ref}"},
+         {"text": "\U0001f6d2 Real economy",
+          "url": f"https://t.me/real_economy_desk_bot?start={ref}"}],
     ]
     try:
         res = send(int(LAB_CHANNEL), body, keyboard)
@@ -1110,18 +1577,20 @@ def post_channel(text: str, ref: str) -> bool:
 
 
 # ------------------------------------------------------------------ runs ---
-def gather(now: datetime):
+def gather(now: datetime, mutate: bool = True):
     now_ts = now.timestamp()
     items, health = fetch_feeds(now_ts)
     boards = read_boards()
-    items.extend(board_events(boards, now_ts))
-    marked = rank(items, boards, now_ts)
+    items.extend(board_events(boards, now_ts, persist=mutate))
+    marked = rank(items, boards, now_ts, persist_seen=mutate)
     return marked, boards, health
 
 
 def run(dry: bool = False) -> int:
     now = datetime.now(timezone.utc)
-    marked, boards, health = gather(now)
+    # Production and print both calculate without committing delivery state.
+    # A real run commits only after the durable multi-desk outbox append.
+    marked, boards, health = gather(now, mutate=False)
     text = compose(marked, boards, health, now)
     if dry:
         print(text)
@@ -1129,11 +1598,27 @@ def run(dry: bool = False) -> int:
         for k in sorted(health):
             print(f"{k:22s} {health[k]}", file=sys.stderr)
         return 0
+    payload = latest_payload(marked, boards, now)
+    try:
+        append_outbox(payload, now)
+    except OSError as exc:
+        print(f"outbox append failed, seen not committed: {exc}", file=sys.stderr)
+        return 1
+    # Both delivery handoffs must exist before suppression is committed. If
+    # latest.json fails after the JSONL append, the next run reuses the durable
+    # dispatch_id and retries this export without replaying bot recipients.
+    try:
+        export_latest(marked, boards, now, payload=payload)
+    except OSError as exc:
+        print(f"latest export failed, seen not committed: {exc}",
+              file=sys.stderr)
+        return 1
+    commit_seen(marked, now.timestamp())
+    commit_boards(boards)
     res = send(int(OWNER_CHAT), text)
     delivered = isinstance(res, dict) and res.get("ok")
     if not delivered:
         print(f"owner DM failed: {res}", file=sys.stderr)
-    export_latest(marked, boards, now)
     channel_posted = 0
     if CHANNEL_MODE == "direct":
         posts = [c for c in marked if not c["rep"].get("board_event")

@@ -4,6 +4,8 @@ is stubbed per test. State is isolated per test."""
 
 import json
 import os
+import runpy
+import stat
 import sys
 from datetime import datetime, timezone
 
@@ -110,6 +112,35 @@ def test_board_boost_raises_score_when_beat_stressed():
     assert stressed[0]["final"] > calm[0]["final"]
 
 
+def test_multi_desk_routes_keep_best_beat_per_desk():
+    text = ("Repo market margin calls trigger a liquidation cascade, "
+            "risk-off volatility spike follows")
+    routes = rz.route_beats(text)
+    by_desk = {route["desk"]: route for route in routes}
+    assert len(by_desk) == len(routes)
+    assert by_desk["SEICHE"]["beat"] == "plumbing"
+    assert by_desk["UNDERTOW"]["beat"] == "market_liquidity"
+    assert by_desk["LIQUILENS"]["beat"] == "crypto_stress"
+    assert by_desk["RIPTIDE"]["beat"] == "risk_timing"
+    weak_secondary = rz.route_beats(
+        "Great Firewall censorship expands after a routine downgrade")
+    assert [route["desk"] for route in weak_secondary] == ["PALIMPSEST"]
+    primary_below_floor = rz.route_beats("A routine downgrade")
+    assert [route["desk"] for route in primary_below_floor] == ["LIQUILENS"]
+
+
+def test_palimpsest_and_riptide_beats_and_source_coverage():
+    beat, base = rz.beat_score(
+        "Great Firewall expands as internet censorship blocks new websites")
+    assert beat == "information_controls" and base >= 9
+    beat, base = rz.beat_score(
+        "VIX jumps in a volatility spike as an equity selloff turns risk-off")
+    assert beat == "risk_timing" and base >= 9
+    keys = {key for key, _, _ in rz.all_feeds()}
+    assert {"ooni", "citizen_lab", "china_digital_times", "rbi_press"} <= keys
+    assert {"gnews_information_controls", "gnews_risk_timing"} <= keys
+
+
 # -------------------------------------------------------- board events ----
 def test_board_event_synthesized_on_regime_flip():
     rz.save_state("last_boards.json", {"seiche": {"regime": "CALM", "index": 30}})
@@ -131,6 +162,57 @@ def test_absent_board_does_not_fake_a_flip_later():
     rz.board_events({"rails": None}, NOW)
     kept = rz.load_state("last_boards.json", {})
     assert kept["rails"] == {"state": "CALM"}
+
+
+def test_palimpsest_board_falls_back_to_live_ddti(monkeypatch):
+    def fake_get(url, timeout=20):
+        if url == rz.PALIMPSEST_DDTI:
+            return {"feed_health": {"history_window_covered": True,
+                                    "roles_missing": []},
+                    "ranked": [{"term": "WeChat", "threat": 0.8938}]}
+        return None
+
+    monkeypatch.setattr(rz, "get_json", fake_get)
+    boards = rz.read_boards()
+    assert boards["palimpsest"] == {
+        "headline": "top ranked term WeChat, threat 0.8938",
+        "health": "history window covered",
+    }
+    line = rz.board_line("information_controls", boards)
+    assert "health history window covered" in line
+    assert "top ranked term WeChat" in line
+
+
+def test_palimpsest_board_reads_signed_osint_snapshot(monkeypatch):
+    snapshot = {
+        "schema": "palimpsest-nemesis.public-snapshot",
+        "health": {"status": "ok", "ready": True},
+        "coverage": {
+            "observed_source_count": 1,
+            "completeness": "not_measured",
+        },
+        "ddti": {"ranked": [{
+            "term": "social media censorship", "threat": 3.56,
+        }]},
+    }
+
+    monkeypatch.setattr(
+        rz, "get_json", lambda url, timeout=20:
+        snapshot if url == rz.PALIMPSEST_BOARD else None)
+    boards = rz.read_boards()
+    assert boards["palimpsest"] == {
+        "headline": "top observed term social media censorship, threat 3.56",
+        "health": "ok, 1 observed source, coverage not measured",
+    }
+    line = rz.board_line("information_controls", boards)
+    assert "coverage not measured" in line
+    assert "top observed term social media censorship" in line
+
+
+def test_riptide_board_line_states_authority_boundary():
+    line = rz.board_line("risk_timing", {})
+    assert "news is advisory only" in line
+    assert "paper sizing changes only from permitted cues" in line
 
 
 # ---------------------------------------------------------- feed parse ----
@@ -252,9 +334,27 @@ def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
     assert 111 in chats and -100999 in chats
     chan = next(p for m, p in sent if p.get("chat_id") == -100999)
     assert "Rissaga marked this" in chan["text"]
-    assert "start=lab_rissaga" in json.dumps(chan.get("reply_markup", {}))
-    hist = open(os.path.join(rz.STATE_DIR, "history.jsonl")).read()
+    markup = json.dumps(chan.get("reply_markup", {}))
+    assert "start=lab_rissaga" in markup
+    for handle in ("seiche_desk_bot", "LiquiLens_bot",
+                   "undertow_LiquiLens_bot", "riptide_anake_bot",
+                   "palimpsest_watch_bot", "corporate_stress_bot",
+                   "real_economy_desk_bot"):
+        assert handle in markup
+    with open(os.path.join(rz.STATE_DIR, "history.jsonl"), encoding="utf-8") as fh:
+        hist = fh.read()
     assert '"channel_posted": 1' in hist
+
+
+def test_lab_channel_helper_exposes_all_seven_desks():
+    helper = runpy.run_path(os.path.join(
+        _ROOT, "bot", "deploy", "lab-channel-post"))
+    urls = json.dumps(helper["KEYBOARD"])
+    for handle in ("seiche_desk_bot", "LiquiLens_bot",
+                   "undertow_LiquiLens_bot", "riptide_anake_bot",
+                   "palimpsest_watch_bot", "corporate_stress_bot",
+                   "real_economy_desk_bot"):
+        assert handle in urls
 
 
 def test_run_channel_off_when_env_empty(monkeypatch, sent):
@@ -300,13 +400,16 @@ def test_config_shape():
     desks = set()
     for beat, spec in rz.BEATS.items():
         assert spec["desk"] in ("SEICHE", "LIQUILENS", "UNDERTOW",
-                                "CORPORATE", "REALECON")
+                                "CORPORATE", "REALECON", "PALIMPSEST",
+                                "RIPTIDE")
         desks.add(spec["desk"])
         for pat, w in spec["terms"]:
             assert 1 <= w <= 6, (beat, pat)
     assert desks == {"SEICHE", "LIQUILENS", "UNDERTOW", "CORPORATE",
-                     "REALECON"}, "all five desks must own at least one beat"
+                     "REALECON", "PALIMPSEST", "RIPTIDE"}
     assert set(rz.DESK_NICE) == desks
+    assert set(rz.DESK_PERSONAS) == desks
+    assert set(rz.FALLBACK_COMMENTARY) == set(rz.BEATS)
     assert len(rz.lexicon_version()) == 12
 
 
@@ -338,11 +441,226 @@ def test_hermes_mode_exports_latest_and_skips_channel(monkeypatch, sent):
     monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
     assert rz.run(dry=False) == 0
     assert [p["chat_id"] for m, p in sent] == [111]   # DM only, no channel
-    latest = json.load(open(os.path.join(rz.STATE_DIR, "latest.json")))
+    with open(os.path.join(rz.STATE_DIR, "latest.json"), encoding="utf-8") as fh:
+        latest = json.load(fh)
     assert latest["channel_mode"] == "hermes"
     assert latest["items"][0]["desk"] == "LIQUILENS"
     assert latest["items"][0]["desk_line"]
     assert latest["channel_candidates"] == [0]
+
+
+def test_v2_latest_preserves_primary_and_caps_route_channel_flags():
+    marked = rz.rank([
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC"),
+        mk("Emergency meeting called as central bank launches liquidity facility",
+           key="fed_press", tier=1.0, source="Federal Reserve"),
+        mk("Treasury market dysfunction forces margin calls and fire sales",
+           key="bbg_markets", tier=1.0, source="Bloomberg"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+    assert payload["schema"] == "rissaga.news.v2"
+    assert len(payload["channel_candidates"]) == rz.MAX_CHANNEL_POSTS
+    flagged = []
+    for index, item in enumerate(payload["items"]):
+        assert item["story_id"].startswith("rissaga-")
+        assert item["dispatch_id"].startswith("rissaga-dispatch-")
+        assert item["beat"] == marked[index]["rep"]["beat"]
+        assert item["routes"]
+        selected = [r for r in item["routes"] if r["channel_candidate"]]
+        assert len(selected) <= 1
+        flagged.extend((index, route) for route in selected)
+    assert len(flagged) == rz.MAX_CHANNEL_POSTS
+    assert {index for index, _ in flagged} == set(payload["channel_candidates"])
+
+
+def test_outbox_is_durable_world_readable_and_idempotent():
+    marked = rz.rank([
+        mk("Repo market margin calls trigger a liquidation cascade and risk-off volatility spike",
+           key="fed_press", tier=1.0, source="Federal Reserve"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+    assert rz.append_outbox(payload, NOW_DT) == 1
+    assert rz.append_outbox(payload, NOW_DT) == 0
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert len(records) == 1
+    record = records[0]
+    assert record["schema"] == "rissaga.news.v2"
+    assert record["dispatch_id"].startswith("rissaga-dispatch-")
+    assert record["dispatch_id"] == payload["items"][0]["dispatch_id"]
+    assert record["story_id"] == payload["items"][0]["story_id"]
+    assert record["routes"] == payload["items"][0]["routes"]
+    assert record["shared_candidate"] is True
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o644
+
+
+def test_outbox_allows_escalation_and_expired_reentry():
+    marked = rz.rank([
+        mk("Repo market seizes as SOFR spikes overnight",
+           key="fed_press", tier=1.0, source="Federal Reserve"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+    same_revision = rz.latest_payload(marked, {}, NOW_DT)
+    assert (same_revision["items"][0]["dispatch_id"]
+            == payload["items"][0]["dispatch_id"])
+    assert rz.append_outbox(payload, NOW_DT) == 1
+
+    retry_at = NOW_DT + rz.timedelta(minutes=30)
+    retry = rz.latest_payload(marked, {}, retry_at)
+    assert (retry["items"][0]["dispatch_id"]
+            != payload["items"][0]["dispatch_id"])
+    assert rz.append_outbox(retry, retry_at) == 0
+    assert (retry["items"][0]["dispatch_id"]
+            == payload["items"][0]["dispatch_id"])
+
+    escalated_at = NOW_DT + rz.timedelta(hours=1)
+    marked[0]["final"] *= 1.31
+    escalated = rz.latest_payload(marked, {}, escalated_at)
+    first_item, escalated_item = payload["items"][0], escalated["items"][0]
+    assert escalated_item["story_id"] == first_item["story_id"]
+    assert escalated_item["dispatch_id"] != first_item["dispatch_id"]
+    first_route = next(r for r in first_item["routes"]
+                       if r["channel_candidate"])
+    escalated_route = next(r for r in escalated_item["routes"]
+                           if r["channel_candidate"])
+    first_delivery_key = f"{first_item['dispatch_id']}:{first_route['desk']}"
+    same_delivery_key = (f"{same_revision['items'][0]['dispatch_id']}:"
+                         f"{first_route['desk']}")
+    escalated_delivery_key = (f"{escalated_item['dispatch_id']}:"
+                              f"{escalated_route['desk']}")
+    assert same_delivery_key == first_delivery_key
+    assert escalated_delivery_key != first_delivery_key
+    assert rz.append_outbox(escalated, escalated_at) == 1
+    assert rz.append_outbox(escalated, escalated_at) == 0
+
+    reentry_at = escalated_at + rz.timedelta(hours=rz.OUTBOX_TTL_H + 1)
+    reentry = rz.latest_payload(marked, {}, reentry_at)
+    assert (reentry["items"][0]["dispatch_id"]
+            != escalated_item["dispatch_id"])
+    assert rz.append_outbox(reentry, reentry_at) == 1
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert len(records) == 3
+    assert [record["dispatch_id"] for record in records] == [
+        payload["items"][0]["dispatch_id"],
+        escalated["items"][0]["dispatch_id"],
+        reentry["items"][0]["dispatch_id"],
+    ]
+    assert len({record["dispatch_id"] for record in records}) == 3
+    assert len({record["story_id"] for record in records}) == 1
+
+
+def test_outbox_repairs_only_an_interrupted_trailing_record():
+    marked = rz.rank([
+        mk("Repo market seizes as SOFR spikes overnight",
+           key="fed_press", tier=1.0, source="Federal Reserve"),
+    ], {}, NOW, persist_seen=False)
+    first = rz.latest_payload(marked, {}, NOW_DT)
+    assert rz.append_outbox(first, NOW_DT) == 1
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, "ab") as fh:
+        fh.write(b'{"schema":"rissaga.news.v2","story_id":"cut')
+
+    second = json.loads(json.dumps(first))
+    second["generated"] = (NOW_DT + rz.timedelta(hours=1)).isoformat(
+        timespec="seconds")
+    second["items"][0]["story_id"] += "-other"
+    second["items"][0]["title"] = "A separate repo market story"
+    second["items"][0]["dispatch_id"] = rz.dispatch_id(
+        second["items"][0]["story_id"], second["generated"],
+        second["items"][0]["score"], second["items"][0]["n_sources"])
+    assert rz.append_outbox(second, NOW_DT + rz.timedelta(hours=1)) == 1
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert len(records) == 2
+    assert records[0]["story_id"] == first["items"][0]["story_id"]
+    assert records[1]["story_id"] == second["items"][0]["story_id"]
+
+
+def test_run_publishes_both_handoffs_before_seen_commit(monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+    original_append = rz.append_outbox
+    original_export = rz.export_latest
+    observed = []
+
+    def checked_append(payload, now):
+        assert not os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+        observed.append("outbox")
+        return original_append(payload, now)
+
+    def checked_export(marked, boards, now, payload=None):
+        assert not os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+        assert os.path.exists(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT))
+        observed.append("latest")
+        return original_export(marked, boards, now, payload=payload)
+
+    monkeypatch.setattr(rz, "append_outbox", checked_append)
+    monkeypatch.setattr(rz, "export_latest", checked_export)
+    assert rz.run(dry=False) == 0
+    assert observed == ["outbox", "latest"]
+    assert os.path.exists(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT))
+    assert os.path.exists(os.path.join(rz.STATE_DIR, rz.LATEST_EXPORT))
+    assert os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+
+
+def test_outbox_failure_leaves_seen_uncommitted(monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+
+    def fail(payload, now):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rz, "append_outbox", fail)
+    assert rz.run(dry=False) == 1
+    assert not os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+    assert sent == []
+
+
+def test_latest_failure_leaves_seen_uncommitted_and_outbox_durable(
+        monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rz, "export_latest", fail)
+    assert rz.run(dry=False) == 1
+    assert os.path.exists(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT))
+    assert not os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+    assert sent == []
+
+
+def test_dry_run_does_not_mutate_seen_boards_or_outbox(monkeypatch, capsys):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+    states = {
+        "seen.json": b'{"sentinel": {"ts": 1}}',
+        "last_boards.json": b'{"seiche": {"regime": "CALM"}}',
+        rz.OUTBOX_EXPORT: b'{"story_id": "sentinel"}\n',
+    }
+    for name, body in states.items():
+        with open(os.path.join(rz.STATE_DIR, name), "wb") as fh:
+            fh.write(body)
+    before = {}
+    for name in states:
+        with open(os.path.join(rz.STATE_DIR, name), "rb") as fh:
+            before[name] = fh.read()
+    assert rz.run(dry=True) == 0
+    capsys.readouterr()
+    after = {}
+    for name in states:
+        with open(os.path.join(rz.STATE_DIR, name), "rb") as fh:
+            after[name] = fh.read()
+    assert after == before
 
 
 def test_direct_mode_caps_channel_posts(monkeypatch, sent):

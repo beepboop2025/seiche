@@ -5,7 +5,7 @@ Built for the Hermes rissaga-desk-reads lane. The bot token is read by THIS
 script (from the gateway's own .env), never passed via argv or a URL: the
 fleet already paid for that lesson when a logged sendMessage URL leaked a
 token. Message text arrives via --text-file PATH or stdin (HTML). The
-standard Rissaga footer and the three desk deep link buttons (ref
+standard Rissaga footer and the seven desk deep link buttons (ref
 lab_rissaga) are appended here so the caller cannot get them wrong.
 
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
@@ -21,8 +21,8 @@ import urllib.request
 ENV_FILE = os.environ.get("LAB_POST_ENV", "/home/hermes/.hermes/.env")
 CHANNEL = os.environ.get("LAB_CHANNEL_ID", "-1004297805949")
 REF = "lab_rissaga"
-FOOT = ("\n\n<i>Rissaga is the Liquidity Lab news radar. The desks with the "
-        "live numbers are free: https://t.me/LiquidityLabDesk</i>")
+FOOT = ("\n\n<i>Rissaga is the Liquidity Lab news radar. Open the matching "
+        "desk for its own grounded read: https://t.me/LiquidityLabDesk</i>")
 KEYBOARD = [
     [{"text": "\U0001f321 Plumbing desk",
       "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
@@ -30,6 +30,14 @@ KEYBOARD = [
       "url": f"https://t.me/LiquiLens_bot?start={REF}"},
      {"text": "\U0001f300 Market depth",
       "url": f"https://t.me/undertow_LiquiLens_bot?start={REF}"}],
+    [{"text": "\U0001f9ed Riptide risk desk",
+      "url": f"https://t.me/riptide_anake_bot?start={REF}"},
+     {"text": "\U0001f9f1 Palimpsest watch",
+      "url": f"https://t.me/palimpsest_watch_bot?start={REF}"}],
+    [{"text": "\U0001f3ed Corporate stress",
+      "url": f"https://t.me/corporate_stress_bot?start={REF}"},
+     {"text": "\U0001f6d2 Real economy",
+      "url": f"https://t.me/real_economy_desk_bot?start={REF}"}],
 ]
 
 
