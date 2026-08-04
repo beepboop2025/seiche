@@ -1,5 +1,6 @@
 """Subscriber accounts: hashing, tokens, and the opt-in Time Machine gate."""
 
+import sqlite3
 import time
 
 import pytest
@@ -26,6 +27,15 @@ def test_weak_password_and_bad_username_refused(accounts):
         accounts.add_user("desk", "short")
     with pytest.raises(ValueError):
         accounts.add_user("evil name;--", "long enough password")
+
+
+def test_duplicate_user_is_insert_only(accounts):
+    """Adding a name twice must not become an implicit password reset."""
+    accounts.add_user("desk_01", "the original password", tier="founder")
+    with pytest.raises(sqlite3.IntegrityError):
+        accounts.add_user("desk_01", "a replacement password", tier="pro")
+    assert accounts.verify_user("desk_01", "the original password")["tier"] == "founder"
+    assert accounts.verify_user("desk_01", "a replacement password") is None
 
 
 def test_token_verify_expiry_and_tamper(accounts):

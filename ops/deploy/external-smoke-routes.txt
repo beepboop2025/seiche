@@ -1,0 +1,5 @@
+# METHOD PATH EXPECTED_STATUS
+# Read-only probes only: this file must never subscribe an address or mutate data.
+GET /api/public 200
+GET /api/subscribe 200
+GET /mcp 200

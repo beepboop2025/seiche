@@ -954,12 +954,6 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     return JSONResponse(payload, headers=headers)
 
 
-@app.get("/mcp")
-def mcp_http_get():
-    """We don't offer a server-initiated SSE stream — the spec allows 405."""
-    return Response(status_code=405, headers={"Allow": "POST"})
-
-
 @app.post("/api/provision")
 async def provision_webhook(request: Request,
                            x_seiche_signature: str | None = Header(default=None)):

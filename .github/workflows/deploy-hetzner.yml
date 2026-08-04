@@ -56,6 +56,8 @@ jobs:
     # end of that day, consuming 14 of the 16 cores.
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+
       - name: Deploy over SSH (forced-command wrapper on the box)
         env:
           HOST: ${{ secrets.HETZNER_HOST }}
@@ -91,3 +93,9 @@ jobs:
               -o ServerAliveCountMax=20 \
               -o TCPKeepAlive=yes \
               "root@$HOST" deploy
+
+      # The wrapper proves localhost health and deploys Caddy safely. This
+      # second gate proves the named public routes actually crossed DNS and
+      # the edge allow-list; it is read-only and submits no subscriber data.
+      - name: Verify external routes
+        run: bash ops/deploy/external-route-smoke.sh
