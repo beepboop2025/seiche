@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
+FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
+DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 
 
 def _executable(path: Path, body: str) -> Path:
@@ -28,9 +30,17 @@ def _caddy_env(tmp_path: Path, *, reject_new_reload: bool = False) -> tuple[dict
 
     caddy = _executable(
         tmp_path / "caddy",
-        f'''echo "caddy $* $(tr -d '\\n' < "${{SEICHE_CADDY_DEST}}")" >> "{calls}"
+        f'''config=""
+want_config=0
+for arg in "$@"; do
+    if [ "$want_config" = 1 ]; then config="$arg"; want_config=0; continue; fi
+    if [ "$arg" = --config ]; then want_config=1; fi
+done
+content=MISSING
+[ -z "$config" ] || [ ! -f "$config" ] || content=$(tr -d '\\n' < "$config")
+echo "caddy $1 config=$config content=$content" >> "{calls}"
 if [ "$1" = validate ]; then exit 0; fi
-if [ "${{REJECT_NEW_RELOAD:-0}}" = 1 ] && grep -q NEW "${{SEICHE_CADDY_DEST}}"; then exit 1; fi
+if [ "${{REJECT_NEW_RELOAD:-0}}" = 1 ] && [ "$content" = NEW ]; then exit 1; fi
 exit 0
 ''',
     )
@@ -41,8 +51,17 @@ if [ "${{REJECT_NEW_RELOAD:-0}}" = 1 ] && grep -q NEW "${{SEICHE_CADDY_DEST}}"; 
 exit 0
 ''',
     )
+    _executable(
+        tmp_path / "mv",
+        f'''printf 'mv' >> "{calls}"
+for arg in "$@"; do printf ' <%s>' "$arg" >> "{calls}"; done
+printf '\\n' >> "{calls}"
+exec /bin/mv "$@"
+''',
+    )
     env = {
         **os.environ,
+        "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}",
         "SEICHE_CADDY_SOURCE": str(source),
         "SEICHE_CADDY_DEST": str(installed),
         "SEICHE_CADDY_BIN": str(caddy),
@@ -61,8 +80,14 @@ def test_caddy_installer_validates_backs_up_installs_and_reloads(tmp_path):
     assert installed.read_text() == "NEW\n"
     assert list(tmp_path.glob("installed.Caddyfile.bak-*"))[0].read_text() == "OLD\n"
     log = calls.read_text()
-    assert "caddy validate" in log
-    assert "caddy reload" in log
+    validation = next(line for line in log.splitlines() if line.startswith("caddy validate"))
+    assert "content=NEW" in validation
+    assert str(tmp_path / ".installed.Caddyfile.new.") in validation
+    assert str(tmp_path / "repo.Caddyfile") not in validation
+    assert f"mv <-f> <{tmp_path}/.installed.Caddyfile.new." in log
+    assert f"<{installed}>" in log
+    assert f"caddy reload config={installed} content=NEW" in log
+    assert not list(tmp_path.glob(".installed.Caddyfile.*"))
 
 
 def test_caddy_reload_failure_restores_previous_config_and_stays_red(tmp_path):
@@ -73,20 +98,57 @@ def test_caddy_reload_failure_restores_previous_config_and_stays_red(tmp_path):
     assert result.returncode != 0
     assert installed.read_text() == "OLD\n"
     log = calls.read_text()
-    assert "caddy reload --config" in log and "NEW" in log
+    assert f"caddy reload config={installed} content=NEW" in log
     assert "systemctl reload caddy NEW" in log
-    assert "caddy reload --config" in log and "OLD" in log
+    assert f"caddy reload config={installed} content=OLD" in log
+    assert f"mv <-f> <{tmp_path}/.installed.Caddyfile.restore." in log
+    assert not list(tmp_path.glob(".installed.Caddyfile.*"))
     assert "previous Caddyfile restored and reloaded" in result.stdout
 
 
-def test_external_smoke_definition_includes_subscribe_and_is_mockable(tmp_path):
-    definitions = EXTERNAL_ROUTES.read_text()
-    assert "GET /api/subscribe 200" in definitions
+def test_equal_caddyfile_is_validated_and_reloaded_to_heal_runtime(tmp_path):
+    env, installed, calls = _caddy_env(tmp_path)
+    Path(env["SEICHE_CADDY_SOURCE"]).write_text(installed.read_text())
+    result = subprocess.run(
+        ["bash", str(CADDY_INSTALLER)], env=env, text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = calls.read_text()
+    assert f"caddy validate config={installed} content=OLD" in log
+    assert f"caddy reload config={installed} content=OLD" in log
+    assert "mv " not in log
+    assert not list(tmp_path.glob("installed.Caddyfile.bak-*"))
+
+
+def _smoke_env(tmp_path: Path, scenario: str = "success") -> tuple[dict, Path]:
     calls = tmp_path / "curl.log"
-    curl = _executable(
+    _executable(
         tmp_path / "curl",
-        f'''echo "$*" >> "{calls}"
-printf 200
+        f'''out=""
+url=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --output) out="$2"; shift 2 ;;
+        http://*|https://*) url="$1"; shift ;;
+        *) shift ;;
+    esac
+done
+echo "$url $*" >> "{calls}"
+status=200
+case "$url" in
+    */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
+    */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
+    */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
+    *) type=text/plain; body='generic' ;;
+esac
+if [ "${{SMOKE_SCENARIO:-success}}" = redirect ] && [[ "$url" = */api/subscribe ]]; then
+    status=302; type=text/html; body='redirecting'
+fi
+if [ "${{SMOKE_SCENARIO:-success}}" = generic ] && [[ "$url" = */api/subscribe ]]; then
+    status=200; type=application/json; body='{{"ok":true}}'
+fi
+printf '%s' "$body" > "$out"
+printf '%s|%s' "$status" "$type"
 ''',
     )
     env = {
@@ -94,12 +156,71 @@ printf 200
         "PATH": f"{tmp_path}:{os.environ.get('PATH', '')}",
         "SEICHE_EXTERNAL_BASE_URL": "https://edge.invalid",
         "SEICHE_EXTERNAL_ROUTES_FILE": str(EXTERNAL_ROUTES),
+        "SMOKE_SCENARIO": scenario,
     }
+    return env, calls
+
+
+def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
+    definitions = EXTERNAL_ROUTES.read_text()
+    assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
+    env, calls = _smoke_env(tmp_path)
     result = subprocess.run(
         ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
+    assert "--location" not in EXTERNAL_SMOKE.read_text()
+
+
+def test_external_smoke_rejects_redirect(tmp_path):
+    env, _ = _smoke_env(tmp_path, "redirect")
+    result = subprocess.run(
+        ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
+    )
+    assert result.returncode != 0
+    assert "/api/subscribe returned 302" in result.stderr
+
+
+def test_external_smoke_rejects_generic_json_200(tmp_path):
+    env, _ = _smoke_env(tmp_path, "generic")
+    result = subprocess.run(
+        ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
+    )
+    assert result.returncode != 0
+    assert "not its route identity" in result.stderr
+
+
+def test_forced_command_bootstrap_converges_in_one_workflow_run(tmp_path):
+    calls = tmp_path / "ssh.log"
+    ssh = _executable(
+        tmp_path / "ssh",
+        f'''for arg in "$@"; do printf '<%s>' "$arg" >> "{calls}"; done
+printf '\\n' >> "{calls}"
+''',
+    )
+    key = tmp_path / "key"
+    known = tmp_path / "known_hosts"
+    key.write_text("test-only")
+    known.write_text("test-only")
+    env = {
+        **os.environ,
+        "SEICHE_DEPLOY_HOST": "192.0.2.10",
+        "SEICHE_DEPLOY_KEY_FILE": str(key),
+        "SEICHE_KNOWN_HOSTS_FILE": str(known),
+        "SEICHE_SSH_BIN": str(ssh),
+    }
+    result = subprocess.run(
+        ["bash", str(FORCED_DEPLOY)], env=env, text=True, capture_output=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 2
+    assert all(line.endswith("<root@192.0.2.10><deploy>") for line in lines)
+    workflow = DEPLOY_WORKFLOW.read_text()
+    assert workflow.index("trigger-forced-deploy.sh") < workflow.index(
+        "external-route-smoke.sh"
+    )
 
 
 def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
