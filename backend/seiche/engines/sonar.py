@@ -22,7 +22,38 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from seiche.config import SONAR_FRESH_D, SONAR_LOOKBACK_D, SONAR_TOP_N, SONAR_Z_FLAG
+from seiche.config import (
+    ALL_SERIES,
+    SONAR_FRESH_D,
+    SONAR_LOOKBACK_D,
+    SONAR_TOP_N,
+    SONAR_Z_FLAG,
+)
+
+
+def _cadence_days(s: pd.Series) -> float | None:
+    """Median spacing between this series' own observations, in days.
+
+    Cadence ships with every mover because downstream prose has to know how
+    fast a series is ALLOWED to move before it describes the move. Reading it
+    off the series index rather than off a list of series names is the whole
+    point: OECD MEI publishes call rates for Japan, India and Korea on one
+    cadence, the Korean one is even LABELLED "overnight call rate", and a name
+    list would have to be extended by hand for every sibling anyone adds.
+    An index cannot be forgotten.
+
+    Derived legs (the SRF, TGA and spread series are assembled here, not
+    fetched) never reach the registry, so the empirical answer is the only
+    answer they have.
+    """
+    idx = s.dropna().index
+    if len(idx) < 3:
+        return None
+    gaps = pd.Series(idx[-13:]).diff().dropna().dt.total_seconds() / 86400.0
+    if gaps.empty:
+        return None
+    med = float(gaps.median())
+    return round(med, 2) if med > 0 else None
 
 
 def _robust_z(s: pd.Series) -> float | None:
@@ -75,11 +106,20 @@ def sweep(series_map: dict[str, tuple[str, str, pd.Series]]) -> dict:
         # downstream prose needs the peak to say which, so it ships here.
         peak = float(pts.abs().max())
         last_v = float(pts.iloc[-1])
+        spec = ALL_SERIES.get(name)
         movers.append(
             {
                 "name": name,
                 "label": label,
                 "unit": unit,
+                # Cadence, twice over: the registry's declared frequency code
+                # (D, W, M, ML, Q, QL) when the series is registered, and the
+                # spacing actually observed on its index. Consumers take the
+                # SLOWER of the two, so neither a registry entry that drifted
+                # nor a gap-filled index can talk a slow series into being
+                # described as fast.
+                "freq": spec.freq if spec is not None else None,
+                "cadence_d": _cadence_days(pts),
                 "last": round(float(pts.iloc[-1]), 3),
                 "chg_1d": round(float(pts.diff().iloc[-1]), 3) if len(pts) > 1 else None,
                 "level_z": round(level_z, 2) if level_z is not None else None,

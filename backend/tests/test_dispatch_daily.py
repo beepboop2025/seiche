@@ -113,9 +113,18 @@ def test_announce_fails_loud_without_credentials(fake_snap, monkeypatch):
 # ---------------------------------------------------------------------------
 # novelty state: a print is news once, then a standing flag
 # ---------------------------------------------------------------------------
-def _mover(label, asof, age_d, z):
+def _mover(label, asof, age_d, z, freq="D", cadence_d=1.0):
+    """A sonar mover as sonar.sweep() actually ships it.
+
+    freq and cadence_d are part of that payload since the cadence guard went
+    in: the letter refuses to describe a print as overnight unless the
+    series' own metadata says it can print that often. A fixture without them
+    is not a realistic mover, and defaulting them to daily here keeps every
+    pre-existing case meaning exactly what it meant.
+    """
     return {"label": label, "last": 378.0, "unit": "$M", "level_z": z, "change_z": z,
-            "max_abs_z": abs(z), "flag": True, "stale": False, "age_d": age_d, "asof": asof}
+            "max_abs_z": abs(z), "flag": True, "stale": False, "age_d": age_d, "asof": asof,
+            "freq": freq, "cadence_d": cadence_d}
 
 
 def _snap_with_movers(fake_snap, movers):
@@ -1069,3 +1078,295 @@ def test_rde_record_is_praised_only_when_it_earns_it(fake_snap):
                               "mean_abs_diff_bp": 0.08}}
     d = build_dispatch(snap)
     assert "better than their band alone implies" in d["free_md"]
+
+
+# ---------------------------------------------------------------------------
+# The headline: it must name what changed, it must not repeat itself, and it
+# must never describe a slow series in fast language.
+#
+# The failure being fixed: 25 entries in the archive carried 15 distinct
+# titles. "Strain with a loud tell: plumbing leads price at +32" ran four
+# times including three consecutive days, and "Japan uncollateralized call
+# rate (OECD MEI, monthly) moved overnight" ran three times, which a monthly
+# series cannot do.
+# ---------------------------------------------------------------------------
+def _slow_mover(label, freq="ML", cadence_d=30.44, age_d=1, name="CALL_XX"):
+    return {"name": name, "label": label, "unit": "%", "last": 0.84, "chg_1d": 0.31,
+            "level_z": 5.8, "change_z": 15.4, "max_abs_z": 15.4, "hist_peak_abs": 8.0,
+            "share_of_peak": 0.105, "flag": True, "stale": False, "age_d": age_d,
+            "asof": "2026-06-01", "freq": freq, "cadence_d": cadence_d}
+
+
+def _tell_snap(fake_snap, tell, plumbing=81.0, market=48.6):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["deep"]["tell"] = {"ok": True, "tell": tell,
+                            "plumbing_pctl": plumbing, "market_pctl": market}
+    return snap
+
+
+# --- the cadence guard ------------------------------------------------------
+def test_a_monthly_series_is_never_said_to_have_moved_overnight(fake_snap):
+    """The reported incoherence: a monthly OECD series cannot move overnight,
+    and the practitioners this letter is written for are exactly the readers
+    who notice."""
+    snap = _snap_with_movers(
+        fake_snap, [_slow_mover("Japan uncollateralized call rate (OECD MEI, monthly)")])
+    d = build_dispatch(snap, date="2026-07-23")
+    assert "Japan uncollateralized call rate (OECD MEI, monthly)" in d["title"]
+    assert "overnight" not in d["title"].lower()
+    assert "monthly print" in d["title"]
+
+
+def test_cadence_is_read_from_metadata_not_from_a_list_of_names(fake_snap):
+    """Sibling coverage. OECD MEI publishes the same cadence for Japan, India
+    and Korea, the Korean series is LABELLED an overnight call rate, and a
+    gauge nobody has listed yet is still monthly. A name list covers the one
+    series that already embarrassed you."""
+    siblings = [
+        ("India call money rate (OECD MEI, monthly)", "ML", 30.44),
+        ("Korea overnight call rate (OECD MEI, monthly)", "ML", 30.44),
+        # never registered: cadence known only from its own index
+        ("A monthly gauge no registry has heard of", None, 30.44),
+    ]
+    for label, freq, cad in siblings:
+        snap = _snap_with_movers(fake_snap, [_slow_mover(label, freq=freq, cadence_d=cad)])
+        title = build_dispatch(snap, date="2026-07-23")["title"]
+        assert label in title, label
+        assert "monthly print" in title, label
+        # the only "overnight" allowed anywhere is the one inside Korea's NAME
+        assert title.lower().replace(label.lower(), "").count("overnight") == 0, label
+
+
+def test_a_series_whose_name_contains_overnight_is_not_a_false_positive():
+    """Narrowing the guard to dodge this false positive would re-open the
+    whole family, so the NAME is removed and the CLAIM is what gets scanned."""
+    from seiche.dispatch_daily import cadence_issues
+
+    m = _slow_mover("Korea overnight call rate (OECD MEI, monthly)")
+    ok = ("Korea overnight call rate (OECD MEI, monthly) moves +0.31 % to 0.84 % "
+          "on its latest monthly print: 15.4 sigma against its own history")
+    assert cadence_issues(ok, [m]) == []
+    # the same series, this time actually claiming an overnight move
+    bad = "Korea overnight call rate (OECD MEI, monthly) moved overnight: a data point"
+    assert cadence_issues(bad, [m]), "an intraday CLAIM over a monthly series must be caught"
+
+
+def test_a_daily_series_still_earns_overnight(fake_snap):
+    """The positive control. A guard that never lets anything say 'overnight'
+    would pass every test above and be worthless."""
+    snap = _snap_with_movers(
+        fake_snap, [{"name": "SRF", "label": "SRF accepted", "unit": "$B", "last": 12.4,
+                     "chg_1d": 9.8, "level_z": 6.1, "change_z": 12.8, "max_abs_z": 12.8,
+                     "hist_peak_abs": 74.6, "share_of_peak": 0.166, "flag": True,
+                     "stale": False, "age_d": 0, "asof": "2026-07-10",
+                     "freq": None, "cadence_d": 1.0}])
+    d = build_dispatch(snap, date="2026-07-10")
+    assert "SRF accepted" in d["title"] and "overnight" in d["title"]
+
+
+def test_a_weekly_series_is_described_weekly_not_overnight(fake_snap):
+    snap = _snap_with_movers(
+        fake_snap, [_slow_mover("Central bank liquidity swaps outstanding (H.4.1)",
+                                freq="W", cadence_d=7.0, name="SWAP_LINES")])
+    title = build_dispatch(snap, date="2026-07-30")["title"]
+    assert "weekly print" in title and "overnight" not in title.lower()
+
+
+def test_unknown_cadence_does_not_earn_overnight(fake_snap):
+    """The letter cannot prove the claim, so it does not make it."""
+    m = _slow_mover("Some gauge with no cadence metadata", freq=None, cadence_d=None)
+    title = build_dispatch(_snap_with_movers(fake_snap, [m]), date="2026-07-10")["title"]
+    assert "overnight" not in title.lower()
+
+
+def test_a_missing_age_is_not_read_as_zero(fake_snap):
+    """`m.get("age_d") or 0` turned an absent age into a print from last
+    night. Absent is absent."""
+    from seiche.dispatch_daily import _moves_overnight
+
+    assert _moves_overnight({"freq": "D", "cadence_d": 1.0, "age_d": 0}) is True
+    assert _moves_overnight({"freq": "D", "cadence_d": 1.0, "age_d": None}) is False
+    assert _moves_overnight({"freq": "D", "cadence_d": 1.0}) is False
+
+
+def test_the_slower_of_the_two_cadence_readings_wins():
+    """A registry entry that says daily while the index says monthly is a
+    registry that has drifted; the safe reading of a disagreement about speed
+    is the slow one."""
+    from seiche.dispatch_daily import _cadence_days, _moves_overnight
+
+    drifted = {"freq": "D", "cadence_d": 30.44, "age_d": 1}
+    assert _cadence_days(drifted) == 30.44
+    assert _moves_overnight(drifted) is False
+
+
+def test_the_cadence_guard_is_publish_blocking(fake_snap, monkeypatch):
+    """The backstop for the next template somebody writes. Every candidate is
+    rejected, so the chosen title violates and the letter refuses."""
+    from seiche import dispatch_daily
+
+    m = _slow_mover("Japan uncollateralized call rate (OECD MEI, monthly)")
+    monkeypatch.setattr(
+        dispatch_daily, "_title_candidates",
+        lambda *a, **k: ["Japan uncollateralized call rate (OECD MEI, monthly) moved overnight"])
+    with pytest.raises(SystemExit, match="cadence guard"):
+        build_dispatch(_snap_with_movers(fake_snap, [m]), date="2026-07-23")
+
+
+# --- the repeat guard -------------------------------------------------------
+def test_a_persisting_tell_reports_its_own_number_not_a_rounded_label(fake_snap):
+    """The reported failure, reproduced. A wide Tell persisted across
+    2026-08-01, 08-02 and 08-03 and the old generator rounded it to whole
+    points, so three different readings all printed as 'Strain with a loud
+    tell: plumbing leads price at +32'.
+
+    This pins the CONTENT half of the fix, not the repeat guard: the headline
+    has to carry the number that actually moved. The guard itself is pinned by
+    test_a_frozen_board_still_yields_distinct_headlines, where the board does
+    not move at all.
+    """
+    titles, recent, state = [], [], None
+    for date, tell in (("2026-08-01", 32.4), ("2026-08-02", 32.1), ("2026-08-03", 31.9)):
+        d = build_dispatch(_tell_snap(fake_snap, tell), prev_value=41.0, date=date,
+                           state=state, recent_titles=recent)
+        state, recent = d["state"], [d["title"]] + recent
+        titles.append(d["title"])
+    assert len(set(titles)) == 3, titles
+    # each day's headline carries that day's reading, not a shared rounding
+    for reading, t in zip(("+32.4", "+32.1", "+31.9"), titles):
+        assert reading in t, (reading, t)
+    assert not any(t.endswith("at +32") for t in titles), titles
+
+
+def test_a_frozen_board_still_yields_distinct_headlines(fake_snap):
+    """Nothing moves at all for five days. The ladder has to keep finding a
+    true thing to say rather than reprinting one."""
+    titles, recent, state = [], [], None
+    for i in range(5):
+        date = f"2026-08-0{i + 4}"
+        d = build_dispatch(_tell_snap(fake_snap, 32.4), prev_value=41.0, date=date,
+                           state=state, recent_titles=recent)
+        state, recent = d["state"], [d["title"]] + recent
+        titles.append(d["title"])
+    assert len(set(titles)) == 5, titles
+
+
+def test_the_repeat_guard_matches_on_normalised_text(fake_snap):
+    d1 = build_dispatch(_tell_snap(fake_snap, 32.4), prev_value=41.0, date="2026-08-01")
+    # same headline, different casing and spacing: still a repeat
+    noisy = "  " + d1["title"].upper().replace(" ", "  ") + " "
+    d2 = build_dispatch(_tell_snap(fake_snap, 32.4), prev_value=41.0, date="2026-08-02",
+                        recent_titles=[noisy])
+    assert d2["title"] != d1["title"]
+
+
+def test_two_headlines_differing_only_by_a_number_are_different(fake_snap):
+    """Normalising case and spacing is the whole of it. Folding the numbers
+    away would make the guard reject a genuinely new reading."""
+    from seiche.dispatch_daily import _title_key
+
+    assert _title_key("The Tell reads +32.4") != _title_key("The Tell reads +31.9")
+    assert _title_key("The  Tell READS +32.4 ") == _title_key("The Tell reads +32.4")
+
+
+def test_recent_titles_excludes_todays_own_entry(tmp_path):
+    """CI rebuilds the letter for the announce step after the write, and
+    `--force` reissues the same day. A run that found its own morning headline
+    in the archive would reject it and publish a different one under the same
+    link."""
+    from seiche.dispatch_daily import _recent_titles
+
+    idx = tmp_path / "index.json"
+    idx.write_text(json.dumps([
+        {"slug": "2026-08-03-daily", "title": "today as published", "date": "2026-08-03"},
+        {"slug": "2026-08-02-daily", "title": "yesterday", "date": "2026-08-02"},
+    ]))
+    assert _recent_titles(idx, "2026-08-03-daily") == ["yesterday"]
+
+
+def test_recent_titles_is_bounded_and_newest_first(tmp_path):
+    from seiche.dispatch_daily import TITLE_MEMORY_N, _recent_titles
+
+    idx = tmp_path / "index.json"
+    idx.write_text(json.dumps([
+        {"slug": f"2026-07-{d:02d}-daily", "title": f"letter {d}", "date": f"2026-07-{d:02d}"}
+        for d in range(1, 29)
+    ]))
+    got = _recent_titles(idx, "2026-08-01-daily")
+    assert len(got) == TITLE_MEMORY_N
+    assert got[0] == "letter 28"
+
+
+def test_same_day_rebuild_still_reproduces_the_letter_with_the_guard(fake_snap):
+    """The announce step rebuilds and must not drift, guard or no guard."""
+    snap = _snap_with_movers(fake_snap, [_mover("Swap lines (H.4.1)", "2026-07-09", 1, 16.5)])
+    d = build_dispatch(snap, date="2026-07-10", recent_titles=[])
+    again = build_dispatch(snap, date="2026-07-10", state=d["state"], recent_titles=[])
+    assert again == d
+
+
+# --- the headline names what changed ---------------------------------------
+def test_the_headline_names_the_series_and_the_magnitude(fake_snap):
+    """The titles used to discard the work the body had already done: the
+    regime label told the reader nothing the tag did not."""
+    snap = _snap_with_movers(
+        fake_snap, [{"name": "SRF", "label": "SRF accepted", "unit": "$B", "last": 12.4,
+                     "chg_1d": 9.8, "level_z": 6.1, "change_z": 12.8, "max_abs_z": 12.8,
+                     "hist_peak_abs": 74.6, "share_of_peak": 0.166, "flag": True,
+                     "stale": False, "age_d": 0, "asof": "2026-07-10",
+                     "freq": None, "cadence_d": 1.0}])
+    t = build_dispatch(snap, date="2026-07-10")["title"]
+    assert "SRF accepted" in t          # which series
+    assert "12.40" in t and "+9.80" in t  # what it printed and how far it travelled
+    assert "12.8 sigma" in t            # how unusual that is
+    assert "tape gets a data point" not in t
+
+
+def test_a_level_only_flag_is_not_called_a_move(fake_snap):
+    """A flag can come from the LEVEL alone. Under a headline, presenting that
+    as a move is the same category error the body already refuses."""
+    m = _slow_mover("A gauge sitting somewhere unusual", freq="D", cadence_d=1.0, age_d=0)
+    m["change_z"] = 0.2
+    m["max_abs_z"] = 5.8
+    t = build_dispatch(_snap_with_movers(fake_snap, [m]), date="2026-07-10")["title"]
+    assert "a level, not a move" in t
+    assert "moves" not in t
+
+
+def test_a_de_minimis_flag_says_so_in_the_headline(fake_snap):
+    """A 16 sigma z on a near-zero baseline is a series waking up, not a large
+    flow. A headline implying size the dollars do not support would be undone
+    by its own paragraph."""
+    m = _slow_mover("Central bank liquidity swaps outstanding (H.4.1)",
+                    freq="W", cadence_d=7.0, name="SWAP_LINES")
+    m["share_of_peak"] = 0.0008
+    t = build_dispatch(_snap_with_movers(fake_snap, [m]), date="2026-07-30")["title"]
+    assert "near-zero base" in t and "not a large flow" in t
+
+
+def test_the_board_move_names_the_component_that_did_it(fake_snap):
+    snap = json.loads(json.dumps(fake_snap))
+    snap["engines"]["composite"]["decomposition"] = [
+        {"component": "kink", "score": 70.0, "contribution": 26.0},
+        {"component": "buffers", "score": 40.0, "contribution": 11.0},
+    ]
+    state = {"date": "2026-07-09",
+             "letter": {"decomp": {"kink": 20.0, "buffers": 11.0}, "tell": 12.0}}
+    t = build_dispatch(snap, prev_value=30.0, date="2026-07-10", state=state)["title"]
+    assert "reserve scarcity (kink)" in t and "+6.0" in t
+
+
+def test_every_headline_obeys_the_house_copy_rules(fake_snap):
+    """No dashes, and nothing the publish lint would reject."""
+    from seiche.dispatch_daily import _title_candidates, lint_letter
+
+    snap = _snap_with_movers(fake_snap, [
+        _slow_mover("Japan uncollateralized call rate (OECD MEI, monthly)"),
+        _mover("SRF accepted", "2026-07-09", 1, 12.8),
+    ])
+    cands = _title_candidates(snap, "2026-07-10", 38.0, {},
+                              {"decomp": {"repo": 20.0}, "tell": 12.0})
+    assert cands
+    for c in cands:
+        assert "—" not in c and "–" not in c, c
+        assert lint_letter(c) == [], (c, lint_letter(c))

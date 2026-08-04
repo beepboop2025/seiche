@@ -132,6 +132,38 @@ def test_sonar_does_not_flag_a_stale_extreme(rng):
     assert res["n_stale"] >= 1
 
 
+def test_sonar_ships_the_cadence_every_consumer_needs(rng):
+    """Downstream prose has to know how fast a series is ALLOWED to move
+    before it describes the move, and it must not learn that from a list of
+    series names: OECD MEI publishes Japan, India and Korea on one cadence and
+    the Korean series is LABELLED an overnight call rate. Cadence therefore
+    ships with the mover, read off the series' own index, plus the registry's
+    declared code when the series is registered at all.
+    """
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    res = sonar.sweep({
+        # registered, lagged-monthly in the registry
+        "CALL_JP": ("Japan uncollateralized call rate (OECD MEI, monthly)", "%",
+                    _spiked(rng, today, n=90, freq="MS")),
+        # registered, weekly
+        "SWAP_LINES": ("Central bank liquidity swaps outstanding (H.4.1)", "$M",
+                       _spiked(rng, today, n=120, freq="W-WED")),
+        # never registered: a derived leg, cadence known only from its index
+        "SRF": ("SRF accepted", "$B", _spiked(rng, today, n=300, freq="B")),
+    })
+    m = {x["name"]: x for x in res["movers"]}
+
+    assert m["CALL_JP"]["freq"] == "ML"
+    assert 28 <= m["CALL_JP"]["cadence_d"] <= 32
+
+    assert m["SWAP_LINES"]["freq"] == "W"
+    assert m["SWAP_LINES"]["cadence_d"] == 7.0
+
+    # the derived leg has no registry entry and still answers honestly
+    assert m["SRF"]["freq"] is None
+    assert m["SRF"]["cadence_d"] == 1.0
+
+
 def test_sonar_reference_ignores_forward_dated_prints(rng):
     """Administered rates carry a FUTURE effective date by design (IORB is
     announced effective up to a fortnight out). One must not become the board

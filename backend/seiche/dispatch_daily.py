@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 import urllib.request
@@ -136,6 +137,133 @@ DISPLAY_NAMES = {
 
 def _display(key) -> str:
     return DISPLAY_NAMES.get(str(key), str(key))
+
+
+def _f(x):
+    """float(x) or None. Every guard below has to distinguish 'zero' from
+    'absent', and `x or 0` silently turns the second into the first: that is
+    exactly how a print with no age became an overnight move."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(v) else v   # NaN is not a number the letter can use
+
+
+# ---------------------------------------------------------------------------
+# cadence: how fast a series is ALLOWED to move.
+#
+# A monthly series cannot move overnight, and the readers this letter is
+# written for are precisely the people who notice when it is said to have.
+# The frequency is therefore taken from the series' own metadata that SONAR
+# ships with every mover (the registry's declared code, plus the spacing
+# observed on its own index) rather than from a list of series names: OECD
+# MEI publishes call rates for Japan, India and Korea on one cadence and the
+# Korean one is LABELLED "overnight call rate". A name list covers the series
+# that already embarrassed you; metadata covers its siblings too.
+# ---------------------------------------------------------------------------
+# Registry cadence codes as the number of days one print covers.
+# D=daily, W=weekly, M=monthly, ML=lagged monthly, Q/QL=quarterly.
+_FREQ_DAYS = {"D": 1.0, "W": 7.0, "M": 31.0, "ML": 31.0, "Q": 92.0, "QL": 92.0}
+
+# Business-daily series have a median gap of one day and a Friday to Monday
+# gap of three, so the daily bucket has to reach three and stop well short of
+# a weekly seven.
+_DAILY_CADENCE_MAX_D = 3.5
+
+# Vocabulary that asserts the move happened inside a single session. Every
+# phrase here is a claim about ARRIVAL, which is the claim a slow series
+# cannot support.
+_INTRADAY_RE = re.compile(
+    r"\b(overnight|over ?night|intraday|last night|this morning|"
+    r"since the close|in the session|on the session|on the day|"
+    r"day ?over ?day|hourly|by the hour|tick by tick)\b",
+    re.IGNORECASE,
+)
+
+
+def _cadence_days(m: dict) -> float | None:
+    """How many days one print of this series covers, from its metadata.
+
+    The SLOWER of the declared code and the observed spacing wins. A registry
+    entry that says daily while the index says monthly is a registry that has
+    drifted, and the safe reading of a disagreement about speed is the slow
+    one: overstating cadence is what puts "overnight" on a monthly print.
+    """
+    cands = []
+    code = str(m.get("freq") or "").strip().upper()
+    if code in _FREQ_DAYS:
+        cands.append(_FREQ_DAYS[code])
+    observed = _f(m.get("cadence_d"))
+    if observed is not None and observed > 0:
+        cands.append(observed)
+    return max(cands) if cands else None
+
+
+def _moves_overnight(m: dict) -> bool:
+    """True only when the series' own cadence PROVES a print can be an
+    overnight event AND the print is in fact from last night.
+
+    Unknown cadence returns False. The letter cannot prove the claim, so it
+    does not make it: silence costs a shade of colour, a wrong "overnight"
+    costs the reader.
+    """
+    cad = _cadence_days(m)
+    if cad is None or cad > _DAILY_CADENCE_MAX_D:
+        return False
+    age = _f(m.get("age_d"))
+    return age is not None and age <= 1
+
+
+def _cadence_word(m: dict) -> str:
+    cad = _cadence_days(m)
+    if cad is None:
+        return "latest"
+    if cad >= 60:
+        return "latest quarterly"
+    if cad >= 20:
+        return "latest monthly"
+    if cad >= 4:
+        return "latest weekly"
+    return "latest"
+
+
+def _arrival(m: dict) -> str:
+    """How this print arrived, said in the series' own cadence."""
+    if _moves_overnight(m):
+        return "overnight"
+    return f"on its {_cadence_word(m)} print"
+
+
+def cadence_issues(title: str, movers: list[dict] | None) -> list[str]:
+    """Publish guard: intraday language must never attach to a slow series.
+
+    Structurally the titles below cannot produce this, because they take their
+    arrival phrase from `_arrival`. This is the backstop for the next template
+    somebody writes, and it is the thing the tests break on purpose.
+
+    A series NAME may legitimately contain "overnight" (Korea's overnight call
+    rate, the secured overnight financing rate). Narrowing the check to dodge
+    that false positive by dropping the word would re-open the whole family,
+    so the name is REMOVED from the string first and the remaining CLAIM is
+    what gets scanned.
+    """
+    text = title or ""
+    named = [m for m in (movers or [])
+             if str(m.get("label") or "") and str(m.get("label")) in text]
+    claim = text
+    for m in named:
+        claim = claim.replace(str(m.get("label")), " ")
+    if not _INTRADAY_RE.search(claim):
+        return []
+    issues = {f"intraday language over a {_cadence_word(m)}-cadence series "
+              f"('{m.get('label')!s}')"
+              for m in named if not _moves_overnight(m)}
+    return sorted(issues)
+
+
+def _all_movers(snap: dict) -> list[dict]:
+    return (snap.get("engines", {}).get("sonar", {}) or {}).get("movers") or []
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +392,7 @@ def _letter_memory(snap: dict) -> dict:
         c = crunches[0]
         crunch = {"date": c.get("date"), "worst_case_b": c.get("worst_case_b"),
                   "settlement_b": c.get("settlement_b")}
+    tell = snap.get("deep", {}).get("tell", {}) or {}
     return {
         "regime": (comp.get("regime") or "UNRATED").upper(),
         "value": comp.get("value"),
@@ -271,6 +400,11 @@ def _letter_memory(snap: dict) -> dict:
                    for d in comp.get("decomposition", [])
                    if d.get("contribution") is not None},
         "crunch": crunch,
+        # The Tell is carried so tomorrow's headline can say what it DID.
+        # A headline that reports the same standing level three days running
+        # is how "plumbing leads price at +32" ran on 2026-08-01, 08-02 and
+        # 08-03: the number was true every day and news on none of them.
+        "tell": tell.get("tell") if tell.get("ok") else None,
     }
 
 
@@ -298,50 +432,208 @@ _REGIME_FRAME = {
 }
 
 
-def _title_summary_tag(snap: dict, date: str, prev_value, baseline: dict) -> tuple[str, str, str]:
+# How many recent dispatches a headline has to differ from. Two weeks: long
+# enough that nobody scanning the archive sees the same line twice on one
+# screen, short enough that a condition which genuinely recurs may be
+# described the same way again once it has been out of sight.
+TITLE_MEMORY_N = 14
+
+
+def _title_key(t: str) -> str:
+    """Normalised form for the repeat check. Case and spacing only: two
+    headlines that differ by a number are DIFFERENT headlines, and folding
+    the numbers away would defeat the guard it is here to enforce."""
+    return " ".join(str(t or "").split()).casefold()
+
+
+def _is_deminimis(m: dict) -> bool:
+    share = _f(m.get("share_of_peak"))
+    return share is not None and share < 0.02
+
+
+def _mover_titles(m: dict, regime: str, v) -> list[str]:
+    """Headlines for one novel print: the series, what it printed, and how
+    far out that is. The regime label is the tape's mood, not the news."""
+    label = _clean(m.get("label") or "one gauge")
+    unit = _clean(m.get("unit") or "").strip()
+    qty = f"{_fmt(m.get('last'), 2)} {unit}".strip()
+    arrival = _arrival(m)
+    absz = m.get("max_abs_z")
+    lz, cz, chg = m.get("level_z"), m.get("change_z"), m.get("chg_1d")
+    out: list[str] = []
+
+    if _is_deminimis(m):
+        # A 16 sigma z on a near-zero baseline is a series waking up, not a
+        # large flow. The body already says so; a headline that implies size
+        # the dollars do not support would be undone by its own paragraph.
+        out.append(f"{label} wakes to {qty} {arrival}: "
+                   f"{_fmt(absz, 1)} sigma on a near-zero base, not a large flow")
+    czf = _f(cz)
+    if czf is not None and abs(czf) < 1.0:
+        # Flagged on LEVEL alone. Calling that a move is the category error
+        # the "what moved" section exists to avoid, so the headline says which
+        # kind of flag it is holding.
+        out.append(f"{label} sits at {qty}, {_signed(lz, 1)} sigma from its own median: "
+                   "a level, not a move")
+    elif _f(chg) is not None:
+        move = f"{_signed(chg, 2)} {unit}".strip()
+        out.append(f"{label} moves {move} to {qty} {arrival}: "
+                   f"{_fmt(absz, 1)} sigma against its own history")
+    out.append(f"{label} prints {qty} {arrival}: "
+               f"{_fmt(absz, 1)} sigma against its own history")
+    out.append(f"{label} at {qty}, {_fmt(absz, 1)} sigma out: "
+               f"{regime.lower()} reads {_fmt(v)}")
+    return out
+
+
+def _title_candidates(snap: dict, date: str, prev_value, baseline: dict,
+                      letter_prev: dict) -> list[str]:
+    """Every true headline the day supports, best first.
+
+    Each one names what actually CHANGED and carries the number that makes it
+    checkable. The last entry carries the date, so the ladder can always end
+    somewhere no earlier letter has been.
+    """
     comp = snap.get("engines", {}).get("composite", {})
     tell = snap.get("deep", {}).get("tell", {}) or {}
     v = comp.get("value")
     regime = (comp.get("regime") or "UNRATED").upper()
     delta = None
     if prev_value is not None and v is not None:
-        try:
-            delta = float(v) - float(prev_value)
-        except (TypeError, ValueError):
-            delta = None
+        vf, pf = _f(v), _f(prev_value)
+        delta = None if (vf is None or pf is None) else vf - pf
 
     novel, held = _split_flagged(snap, baseline)
-    tell_v = tell.get("tell") if tell.get("ok") else None
+    tell_v = _f(tell.get("tell")) if tell.get("ok") else None
+    p_pctl, m_pctl = _f(tell.get("plumbing_pctl")), _f(tell.get("market_pctl"))
+    cands: list[str] = []
 
+    # 1. The board itself moved. Name the component that did the work.
     if delta is not None and abs(delta) >= 5:
         direction = "climbs" if delta > 0 else "eases"
-        title = f"The board {direction} {abs(delta):.0f} points: {regime.lower()} at {_fmt(v)}"
-    elif tell_v is not None and abs(tell_v) >= 30:
+        deltas, _dropped = _component_deltas(snap, letter_prev)
+        moved = sorted(deltas.items(), key=lambda kv: -abs(kv[1]))
+        if moved and abs(moved[0][1]) >= 0.1:
+            k, dv = moved[0]
+            cands.append(f"The board {direction} {abs(delta):.0f} points to {_fmt(v)}: "
+                         f"{_display(k)} {_signed(dv, 1)} of it")
+        cands.append(f"The board {direction} {abs(delta):.0f} points to {_fmt(v)}, "
+                     f"regime {regime.lower()}")
+
+    # 2. A print the reader has not been told about yet.
+    for m in novel[:2]:
+        cands += _mover_titles(m, regime, v)
+
+    # 3. The Tell. What it DID, not the standing level: a wide gap is true
+    #    every day it persists and news on the day it changes.
+    if tell_v is not None and abs(tell_v) >= 30:
         side = "plumbing leads price" if tell_v > 0 else "price leads plumbing"
-        title = f"{regime.title()} with a loud tell: {side} at {_signed(tell_v)}"
-    elif novel:
-        m = novel[0]
-        # "Overnight" has to be earned. SONAR only flags prints within
-        # SONAR_FRESH_D of the board, but a weekly release is still days old
-        # when it is the freshest thing on the tape, so say which it is.
-        when = "moved overnight" if (m.get("age_d") or 0) <= 1 else "moved on the latest print"
-        title = f"{_clean(m.get('label') or 'One gauge')} {when}: the {regime.lower()} tape gets a data point"
-    elif held:
-        # Everything flagged was already reported on the day it printed.
-        # Persistence is worth a title, but a different one each day, not
-        # the same headline until the next release cycle.
-        title = _pick(date, "title-held", [
-            f"{regime.title()} at {_fmt(v)}: the flags hold, no new print to report",
-            f"No new prints, standing flags: the {regime.lower()} reading for {date}",
-            f"{regime.title()}, carried: the same flags, one day older",
-        ])
-    else:
-        quiet = _pick(date, "title", [
-            f"{regime.title()} at {_fmt(v)}: what the pipes say while nothing moves",
-            f"A quiet tape, a {regime.lower()} board: the reading for {date}",
-            f"{regime.title()}, held: the desk letter for {date}",
-        ])
-        title = quiet
+        prev_tell = _f((letter_prev or {}).get("tell"))
+        d_t = None if prev_tell is None else tell_v - prev_tell
+        # A gap that MOVED outranks a gap that is merely wide.
+        if d_t is not None and abs(d_t) >= 1:
+            verb = "widens" if abs(tell_v) > abs(prev_tell) else "narrows"
+            cands.append(f"The Tell {verb} {abs(d_t):.0f} to {_signed(tell_v, 1)}: "
+                         f"{side}, {regime.lower()} at {_fmt(v)}")
+        if p_pctl is not None and m_pctl is not None:
+            cands.append(f"The Tell reads {_signed(tell_v, 1)}: plumbing at the "
+                         f"{_ordinal(p_pctl)} percentile of its own history, screens at the "
+                         f"{_ordinal(m_pctl)}")
+        if d_t is not None and abs(d_t) < 1:
+            held_txt = ("unchanged against the last letter" if abs(d_t) < 0.005
+                        else f"{_signed(d_t, 2)} against the last letter")
+            cands.append(f"The Tell holds at {_signed(tell_v, 1)}, {held_txt}: {side}")
+        cands.append(f"{regime.title()} with a loud tell: {side} at {_signed(tell_v, 1)}")
+
+    # 4. Nothing new printed, but something is still flagged. The only fact
+    #    that changed is the age of the flag, so the headline prints the age
+    #    and NOT the series: a standing flag was already headlined on the day
+    #    it printed, and putting its name back up top is the re-headline this
+    #    letter refuses to do. The series stays named in the body, where it is
+    #    labelled as persistence.
+    if held:
+        n = len(held)
+        ages = [a for a in (_f(x.get("age_d")) for x in held) if a is not None]
+        if ages:
+            cands.append(f"No print cleared the 2.5 sigma bar: the freshest standing flag is "
+                         f"{int(min(ages))} days old, {regime.lower()} at {_fmt(v)}")
+        cands.append(f"{regime.title()} at {_fmt(v)}: "
+                     f"{n} standing flag{'s' if n != 1 else ''}, none of them new today")
+
+    # 5. A genuinely quiet tape. The forward read recomputes even when the
+    #    tape does not, and the calendar counts down, so both are news of a
+    #    kind and both carry a number that moves.
+    p5 = _f(((snap.get("deep", {}).get("bathymetry") or {}).get("p_by_horizon") or {}).get("h5"))
+    if p5 is None:
+        p5 = _f((snap.get("deep", {}).get("ml") or {}).get("p_event_5bd"))
+    if p5 is not None:
+        cands.append(f"{regime.title()} at {_fmt(v)}, nothing over the 2.5 sigma bar: "
+                     f"five-day event odds {_fmt(p5 * 100)}%")
+    cal = snap.get("calendar", {}) or {}
+    weather = snap.get("engines", {}).get("weather", {}) or {}
+    crunches = cal.get("crunch_windows") or weather.get("crunch_windows") or []
+    if crunches and crunches[0].get("date"):
+        days = _days_until(crunches[0].get("date"), date)
+        if days is not None:
+            cands.append(f"{regime.title()} at {_fmt(v)}, {days} days to "
+                         f"{crunches[0].get('date')}: the tape stays quiet into it")
+
+    # 6. The floor. Carries the date, so the ladder cannot run out.
+    cands.append(f"{regime.title()} at {_fmt(v)}: the desk letter for {date}")
+    return cands
+
+
+def _choose_title(cands: list[str], recent_titles, movers) -> str:
+    """First candidate that is neither a repeat nor a cadence overstatement.
+
+    Two guards, one pass. The repeat guard is why the same line cannot run
+    three days together; the cadence guard is why no line here can say a
+    monthly series moved overnight even if a future template tries to.
+    """
+    seen = {_title_key(t) for t in (recent_titles or [])}
+    first_clean = ""
+    first_any = ""
+    for c in cands:
+        c = " ".join(str(c or "").split())
+        if not c:
+            continue
+        first_any = first_any or c
+        if cadence_issues(c, movers):
+            continue
+        first_clean = first_clean or c
+        if _title_key(c) not in seen:
+            return c
+    # Nothing survived. Hand back the best candidate there was rather than an
+    # empty headline: a letter with no title publishes silently, and the
+    # caller's guard is waiting to refuse this one out loud.
+    return first_clean or first_any
+
+
+def _title_summary_tag(snap: dict, date: str, prev_value, baseline: dict,
+                       letter_prev: dict | None = None,
+                       recent_titles: list[str] | None = None) -> tuple[str, str, str]:
+    comp = snap.get("engines", {}).get("composite", {})
+    tell = snap.get("deep", {}).get("tell", {}) or {}
+    v = comp.get("value")
+    regime = (comp.get("regime") or "UNRATED").upper()
+    delta = None
+    if prev_value is not None and v is not None:
+        vf, pf = _f(v), _f(prev_value)
+        delta = None if (vf is None or pf is None) else vf - pf
+    tell_v = tell.get("tell") if tell.get("ok") else None
+
+    cands = _title_candidates(snap, date, prev_value, baseline, letter_prev or {})
+    title = _choose_title(cands, recent_titles, _all_movers(snap))
+    if not title:
+        raise SystemExit("refusing to publish a letter with no headline")
+
+    # Fail visible. The ladder ends in a candidate that names no series, so a
+    # violation here means the guard above stopped working rather than that
+    # today's board was awkward, and a wrong claim about arrival is the desk's
+    # own copy: fixed by editing, not by degrading gracefully.
+    bad = cadence_issues(title, _all_movers(snap))
+    if bad:
+        raise SystemExit("title failed the cadence guard: " + "; ".join(bad))
 
     hook = ""
     if tell_v is not None:
@@ -415,14 +707,15 @@ def _opening(snap: dict, date: str, prev_value) -> list[str]:
     return out
 
 
-def _attribution(snap: dict, letter_prev: dict) -> list[str]:
-    """Two-way attribution: the day's change decomposed by component, from
-    the letter's own memory of yesterday's decomposition. Level attribution
-    is the table on the board; change attribution is what a reader diffing
-    consecutive letters actually wants."""
+def _component_deltas(snap: dict, letter_prev: dict) -> tuple[dict, list[str]]:
+    """Per-component change against the letter's memory of yesterday.
+
+    Shared by the attribution paragraph and by the headline, which needs to
+    name the component that did the work rather than restate the regime.
+    """
     prev = (letter_prev or {}).get("decomp") or {}
     if not prev:
-        return []
+        return {}, []
     comp = snap.get("engines", {}).get("composite", {}) or {}
     cur = {str(d.get("component")): d.get("contribution")
            for d in comp.get("decomposition", []) if d.get("contribution") is not None}
@@ -447,6 +740,17 @@ def _attribution(snap: dict, letter_prev: dict) -> list[str]:
         else:
             deltas[k] = round(-before, 2)
             dropped.append(k)
+    return deltas, dropped
+
+
+def _attribution(snap: dict, letter_prev: dict) -> list[str]:
+    """Two-way attribution: the day's change decomposed by component, from
+    the letter's own memory of yesterday's decomposition. Level attribution
+    is the table on the board; change attribution is what a reader diffing
+    consecutive letters actually wants."""
+    if not ((letter_prev or {}).get("decomp") or {}):
+        return []
+    deltas, dropped = _component_deltas(snap, letter_prev)
     moved = [(k, dv) for k, dv in sorted(deltas.items(), key=lambda kv: -abs(kv[1]))
              if abs(dv) >= 0.1]
     if not moved:
@@ -1446,14 +1750,16 @@ def resolve_ledger(rows: list[dict], horizon_bd: int = 5, spike_bp: float = 10.0
 
 
 def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
-                   state: dict | None = None, issue_no: int | None = None) -> dict:
+                   state: dict | None = None, issue_no: int | None = None,
+                   recent_titles: list[str] | None = None) -> dict:
     comp = snap.get("engines", {}).get("composite", {})
     if comp.get("value") is None or not comp.get("regime"):
         raise SystemExit("refusing to write a dispatch without a live composite (no board, no letter)")
     date = date or (snap.get("generated_at") or datetime.now(timezone.utc).isoformat())[:10]
     baseline = _novelty_baseline(state or {}, date)
     letter_prev = _letter_baseline(state or {}, date)
-    title, summary, tag = _title_summary_tag(snap, date, prev_value, baseline)
+    title, summary, tag = _title_summary_tag(snap, date, prev_value, baseline,
+                                             letter_prev, recent_titles)
 
     novel, _held = _split_flagged(snap, baseline)
 
@@ -1712,6 +2018,27 @@ def _published_entry(index_path: Path, slug: str) -> dict | None:
     return None
 
 
+def _recent_titles(index_path: Path, slug: str, n: int = TITLE_MEMORY_N) -> list[str]:
+    """The last N published headlines, today's own entry excluded.
+
+    Excluding the slug is what lets a same-day rebuild reproduce the letter.
+    CI runs the generator again for the announce step the better part of an
+    hour after the write, and a run that found its own morning headline in the
+    archive would reject it and announce a different one under the same link.
+    The `--force` reissue depends on the same exclusion.
+    """
+    try:
+        entries = json.loads(index_path.read_text())
+    except (OSError, ValueError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    entries = [e for e in entries
+               if isinstance(e, dict) and e.get("slug") != slug and e.get("title")]
+    entries.sort(key=lambda e: str(e.get("date", "")), reverse=True)
+    return [str(e["title"]) for e in entries[:n]]
+
+
 def _issue_number(index_path: Path, slug: str) -> int | None:
     """The issue number is the letter's position in the DAILY archive.
 
@@ -1756,7 +2083,8 @@ def main(argv: list[str] | None = None) -> int:
         snap = _get_json(f"{args.api}/api/overview")
     prev = _prev_published_value(args.history_url)
     d = build_dispatch(snap, prev_value=prev, date=date, state=load_state(),
-                       issue_no=_issue_number(INDEX, slug))
+                       issue_no=_issue_number(INDEX, slug),
+                       recent_titles=_recent_titles(INDEX, slug))
 
     if args.announce_only:
         # Announce what was PUBLISHED, not what a fresh snapshot would say.
