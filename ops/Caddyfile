@@ -98,6 +98,19 @@ api.seiche.info {
         file_server
     }
 
+    # Palimpsest OSINT China receives exactly the signed, sanitized Nemesis
+    # snapshot and its detached authentication tag. The private database,
+    # dashboard, and API remain unreachable from the edge.
+    @palimpsest_osint path /palimpsest/osint/osint-china.json /palimpsest/osint/osint-china.json.hmac-sha256
+    handle @palimpsest_osint {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/osint
+        root * /var/lib/palimpsest-nemesis/public
+        file_server
+    }
+
     # Palimpsest MCP (censorship signals). This is its permanent home: a
     # dedicated mcp.palimpsest.info was considered and declined 2026-08-02,
     # since the only thing it bought was keeping the Palimpsest name out of a

@@ -3,3 +3,4 @@
 GET|/api/public|200|application/json|"conclusion"
 GET|/api/subscribe|200|application/json|"gates_nothing":true
 GET|/mcp|200|text/event-stream|stateless
+GET|/palimpsest/osint/osint-china.json|200|application/json|"schema": "palimpsest-nemesis.public-snapshot"

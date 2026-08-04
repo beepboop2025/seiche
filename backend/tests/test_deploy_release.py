@@ -10,6 +10,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
+CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
@@ -139,6 +140,10 @@ case "$url" in
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
     */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
+    */palimpsest/osint/osint-china.json)
+        type=application/json
+        body='{{"schema": "palimpsest-nemesis.public-snapshot"}}'
+        ;;
     *) type=text/plain; body='generic' ;;
 esac
 if [ "${{SMOKE_SCENARIO:-success}}" = redirect ] && [[ "$url" = */api/subscribe ]]; then
@@ -164,6 +169,10 @@ printf '%s|%s' "$status" "$type"
 def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
     definitions = EXTERNAL_ROUTES.read_text()
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
+    assert (
+        'GET|/palimpsest/osint/osint-china.json|200|application/json|'
+        '"schema": "palimpsest-nemesis.public-snapshot"'
+    ) in definitions
     env, calls = _smoke_env(tmp_path)
     result = subprocess.run(
         ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
@@ -227,3 +236,18 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     wrapper = (ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh").read_text()
     assert wrapper.count("deploy_caddy ||") == 2
     assert "already running ${AFTER:0:7} — checking edge config" in wrapper
+
+
+def test_palimpest_osint_edge_is_an_exact_static_allowlist():
+    caddy = CADDYFILE.read_text()
+    assert "handle_path /palimpsest/osint/*" not in caddy
+    assert (
+        "@palimpsest_osint path /palimpsest/osint/osint-china.json "
+        "/palimpsest/osint/osint-china.json.hmac-sha256"
+    ) in caddy
+    assert "root * /var/lib/palimpsest-nemesis/public" in caddy
+    osint_block = caddy[caddy.index("@palimpsest_osint path") : caddy.index("# Palimpsest MCP")]
+    assert 'header Cache-Control "no-store"' in osint_block
+    assert "stale-if-error" not in osint_block
+    assert "uri strip_prefix /palimpsest/osint" in osint_block
+    assert "reverse_proxy" not in osint_block
