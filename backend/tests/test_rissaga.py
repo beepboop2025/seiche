@@ -141,6 +141,34 @@ def test_palimpsest_and_riptide_beats_and_source_coverage():
     assert {"gnews_information_controls", "gnews_risk_timing"} <= keys
 
 
+def test_rank_keeps_above_bar_palimpsest_item_outside_global_digest_cap():
+    headlines = (
+        "FDIC declares Alpha bank failure and begins receivership",
+        "Uninsured deposits flee Bravo during a deposit run",
+        "Regional bank Charlie needs emergency capital after deposit outflows",
+        "Delta enters a moratorium as a bank run sparks bailout talks",
+        "Echo reports a capital shortfall and seeks a bank rescue",
+        "FHLB liquidity support arrives after Foxtrot deposit flight",
+    )
+    busy_finance = [
+        mk(title, key=f"finance_{index}", tier=1.0,
+           source=f"Source {index}", link=f"https://example.com/{index}")
+        for index, title in enumerate(headlines)
+    ]
+    palimpsest = mk(
+        "Great Firewall censorship blocks a new independent news website",
+        key="citizen_lab", tier=0.7, source="Citizen Lab",
+        link="https://example.com/palimpsest",
+    )
+
+    marked = rz.rank(busy_finance + [palimpsest], {}, NOW, persist_seen=False)
+
+    assert len(marked) > rz.MAX_MARKED
+    assert any(cl["rep"]["link"].endswith("/palimpsest") for cl in marked)
+    owner_text = rz.compose(marked, {}, {"citizen_lab": "ok"}, NOW_DT)
+    assert owner_text.count("\n6. ") == 0
+
+
 # -------------------------------------------------------- board events ----
 def test_board_event_synthesized_on_regime_flip():
     rz.save_state("last_boards.json", {"seiche": {"regime": "CALM", "index": 30}})

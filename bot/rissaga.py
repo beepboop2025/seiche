@@ -93,6 +93,7 @@ MARK_BAR = float(os.environ.get("RISSAGA_MARK_BAR", "3.0"))
 CHANNEL_BAR = float(os.environ.get("RISSAGA_CHANNEL_BAR", "4.5"))
 ROUTE_BAR = float(os.environ.get("RISSAGA_ROUTE_BAR", "3.0"))
 MAX_MARKED = 5
+MAX_DESK_COVERAGE = 2
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
 SEEN_TTL_H = 48.0     # a marked story stays suppressed this long
@@ -1194,7 +1195,22 @@ def rank(items: list[dict], boards: dict, now_ts: float,
         marked.append(cl)
 
     marked.sort(key=lambda c: -c["final"])
-    top = marked[:MAX_MARKED]
+    # The owner digest stays globally ranked, while the delivery handoff also
+    # retains a small above-bar slice for every matched desk. Without this
+    # union, a busy banking cycle can consume all five slots and make a valid
+    # Palimpsest or Real Economy story unreachable by its own bot.
+    selected_ids = {cl["story_id"] for cl in marked[:MAX_MARKED]}
+    desks = sorted({route["desk"] for cl in marked
+                    for route in cl.get("route_beats") or []})
+    for desk in desks:
+        coverage = [cl for cl in marked
+                    if cl["final"] >= MARK_BAR
+                    and not cl["rep"].get("board_event")
+                    and any(route["desk"] == desk
+                            for route in cl.get("route_beats") or [])]
+        selected_ids.update(
+            cl["story_id"] for cl in coverage[:MAX_DESK_COVERAGE])
+    top = [cl for cl in marked if cl["story_id"] in selected_ids]
     if persist_seen:
         commit_seen(top, now_ts)
     return top
@@ -1251,7 +1267,9 @@ def compose(marked: list[dict], boards: dict, health: dict,
              f"({now.astimezone(IST).strftime('%H:%M IST')})")
     head = [f"\U0001f30a <b>Rissaga</b>, lab news radar, {stamp}"]
     body: list[str] = []
-    above = [c for c in marked if c["final"] >= MARK_BAR]
+    # `rank` can retain extra desk-coverage items for private fanout. Keep the
+    # human owner digest at its established global cap.
+    above = [c for c in marked if c["final"] >= MARK_BAR][:MAX_MARKED]
     below = [c for c in marked if c["final"] < MARK_BAR]
     if not above:
         body.append("\nNothing cleared the bar this run. Closest to it:")

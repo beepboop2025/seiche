@@ -1,0 +1,47 @@
+[Unit]
+Description=Rissaga deterministic shared channel fallback
+Documentation=https://seiche.info
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/rissaga/latest.json
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+Environment=PYTHONUNBUFFERED=1
+Environment=RISSAGA_LATEST=/var/lib/rissaga/latest.json
+Environment=RISSAGA_POSTED=/home/hermes/.hermes/state/rissaga_posted.json
+Environment=RISSAGA_CHANNEL_HELPER=/usr/local/bin/lab-channel-post
+ExecStart=/usr/bin/python3 /opt/rissaga/rissaga_channel_fallback.py --run
+TimeoutStartSec=180
+
+# Hermes gets the first channel attempt. This marker-backed job is the same
+# logical owner filling only quota-failed gaps ten minutes later.
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/var/lib/rissaga/latest.json
+ReadOnlyPaths=/usr/local/bin/lab-channel-post
+ReadWritePaths=-/home/hermes/.hermes/state

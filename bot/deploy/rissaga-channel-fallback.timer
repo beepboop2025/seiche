@@ -1,0 +1,15 @@
+[Unit]
+Description=Rissaga channel fallback ten minutes after Hermes
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+OnCalendar=*-*-* 09:15:00 UTC
+OnCalendar=*-*-* 15:15:00 UTC
+OnCalendar=*-*-* 21:15:00 UTC
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=true
+Unit=rissaga-channel-fallback.service
+
+[Install]
+WantedBy=timers.target
