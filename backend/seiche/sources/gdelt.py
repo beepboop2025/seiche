@@ -60,6 +60,7 @@ WEB_INDEX_KEY = "gdelt:web-ngrams:index:v1"
 WEB_COOLDOWN_KEY = "gdelt:web-ngrams:cooldown:v1"
 WEB_MODE = "web-ngrams"
 WEB_HISTORY_FILE = os.environ.get("GDELT_WEB_HISTORY_FILE")
+_web_refresh_task: asyncio.Task[tuple[dict, str | None]] | None = None
 
 _DIGITS = re.compile(r"\D")
 _NON_WORD = re.compile(r"[^a-z0-9]+")
@@ -285,6 +286,46 @@ def _history_age_hours(history: dict) -> float | None:
     return (datetime.now(timezone.utc) - stamp.astimezone(timezone.utc)).total_seconds() / 3600
 
 
+async def _refresh_web_once() -> tuple[dict, str | None]:
+    """Own one cancellation-safe bulk refresh and its persistence.
+
+    The client belongs to this task rather than to an incoming API request.
+    Callers can therefore time out without closing the connection underneath
+    the shared refresh.  The optional string is a user-visible source fault;
+    a recent last-known-good observation deliberately returns no top fault.
+    """
+    history = _load_web_history()
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            sample = await _fetch_web_sample(client)
+    except Exception as exc:  # noqa: BLE001 — source failures stay explicit
+        detail = f"WEB-NGRAM {type(exc).__name__}: {exc}"
+        store.save_blob(WEB_COOLDOWN_KEY, {"at": utcnow_iso(), "detail": detail})
+        age_h = _history_age_hours(history)
+        if age_h is not None and age_h <= GDELT_WEB_MAX_STALE_H:
+            return _web_blob(
+                history,
+                stale=True,
+                refresh_note=f"{detail}; serving {age_h:.1f}h-old last-known-good",
+            ), None
+        return _web_blob(history, stale=True, refresh_note=detail), detail
+
+    history = _merge_web_sample(history, sample)
+    out = _web_blob(history)
+    store.save_blob(WEB_INDEX_KEY, out)
+    return out, None
+
+
+def _shared_web_refresh() -> asyncio.Task[tuple[dict, str | None]]:
+    """Return the one in-flight refresh for the current event loop."""
+    global _web_refresh_task
+    loop = asyncio.get_running_loop()
+    if _web_refresh_task is None or _web_refresh_task.done() \
+            or _web_refresh_task.get_loop() is not loop:
+        _web_refresh_task = loop.create_task(_refresh_web_once())
+    return _web_refresh_task
+
+
 async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     """Fetch the production bulk feed, with a bounded last-known-good grace."""
     if os.environ.get("GDELT_SOURCE_MODE", WEB_MODE).lower() == "legacy-doc":
@@ -308,24 +349,12 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
             )
         faults.append({"source": "gdelt", "detail": detail})
         return _web_blob(history, stale=True, refresh_note=detail)
-    try:
-        sample = await _fetch_web_sample(client)
-    except Exception as exc:  # noqa: BLE001 — source failures stay explicit
-        detail = f"WEB-NGRAM {type(exc).__name__}: {exc}"
-        store.save_blob(WEB_COOLDOWN_KEY, {"at": utcnow_iso(), "detail": detail})
-        age_h = _history_age_hours(history)
-        if age_h is not None and age_h <= GDELT_WEB_MAX_STALE_H:
-            return _web_blob(
-                history,
-                stale=True,
-                refresh_note=f"{detail}; serving {age_h:.1f}h-old last-known-good",
-            )
-        faults.append({"source": "gdelt", "detail": detail})
-        return _web_blob(history, stale=True, refresh_note=detail)
-
-    history = _merge_web_sample(history, sample)
-    out = _web_blob(history)
-    store.save_blob(WEB_INDEX_KEY, out)
+    # Shielding is essential: asyncio cannot stop the worker thread doing the
+    # gzip scan.  If a health probe or browser disconnects, this refresh keeps
+    # its own HTTP client alive, finishes once, and populates the shared cache.
+    out, fault_detail = await asyncio.shield(_shared_web_refresh())
+    if fault_detail:
+        faults.append({"source": "gdelt", "detail": fault_detail})
     return out
 
 

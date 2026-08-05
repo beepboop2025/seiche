@@ -136,6 +136,54 @@ def test_web_history_sidecar_survives_a_fresh_database(monkeypatch, tmp_path):
     assert gdelt._load_web_history() == expected
 
 
+def test_web_refresh_survives_caller_cancellation_and_runs_once(monkeypatch):
+    blobs = {}
+    calls = {"n": 0}
+    monkeypatch.setenv("GDELT_SOURCE_MODE", "web-ngrams")
+    monkeypatch.setattr(gdelt, "_web_refresh_task", None)
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key))
+    monkeypatch.setattr(gdelt.store, "save_blob",
+                        lambda key, value: blobs.__setitem__(key, value))
+
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_sample(_client, asof=None):
+            calls["n"] += 1
+            started.set()
+            await release.wait()
+            return {
+                "batch_at": "2026-08-05T17:32:00+00:00",
+                "documents": 4479,
+                "topic_counts": {"mmf": 1},
+            }
+
+        monkeypatch.setattr(gdelt, "_fetch_web_sample", slow_sample)
+        first = asyncio.create_task(gdelt.fetch_all(None, []))
+        await started.wait()
+        first.cancel()
+        try:
+            await first
+        except asyncio.CancelledError:
+            pass
+
+        shared = gdelt._web_refresh_task
+        assert shared is not None and not shared.cancelled()
+        release.set()
+        await shared
+
+        faults = []
+        recovered = await gdelt.fetch_all(None, faults)
+        assert faults == []
+        assert recovered["topics"]["mmf"]["matched_documents"] == 1
+
+    asyncio.run(scenario())
+    assert calls["n"] == 1
+    assert gdelt.WEB_INDEX_KEY in blobs
+
+
 def test_web_fetch_uses_recent_lkg_without_claiming_freshness(monkeypatch):
     now = datetime.now(timezone.utc).isoformat()
     history = {"schema": "seiche.gdelt-web-history.v1", "samples": [{
