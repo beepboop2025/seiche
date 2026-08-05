@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>When to use Seiche for US money-market funding stress</title>
+  <meta name="description" content="A practical selection guide for Seiche: what it measures, when treasury, risk and AI agents should use it, its limits, evidence, API, MCP server and citation format.">
+  <link rel="canonical" href="https://seiche.info/use-cases.html">
+  <link rel="alternate" type="application/json" href="https://seiche.info/product-card.json" title="Seiche product card">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:title" content="When to use Seiche for US money-market funding stress">
+  <meta property="og:description" content="Fit, non-fit, evidence, public API, MCP server and a clean map of Seiche vs LiquiLens vs Undertow.">
+  <meta property="og:url" content="https://seiche.info/use-cases.html">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="When to use Seiche">
+  <meta name="twitter:description" content="A selection and citation guide for the free US money-market funding-stress terminal.">
+  <meta name="twitter:image" content="https://seiche.info/og2.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "@id": "https://seiche.info/use-cases.html#page",
+    "url": "https://seiche.info/use-cases.html",
+    "name": "When to use Seiche for US money-market funding stress",
+    "dateModified": "2026-08-05",
+    "isPartOf": { "@id": "https://seiche.info/#website" },
+    "about": { "@id": "https://seiche.info/#software" },
+    "mainEntity": {
+      "@type": "SoftwareApplication",
+      "@id": "https://seiche.info/#software",
+      "name": "Seiche",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Web",
+      "isAccessibleForFree": true,
+      "url": "https://seiche.info/",
+      "codeRepository": "https://github.com/beepboop2025/seiche"
+    }
+  }
+  </script>
+  <style>
+    :root{color-scheme:dark;--bg:#050508;--panel:#0d0e16;--edge:#26283a;--text:#f1f1f6;--dim:#a9adbf;--accent:#b9adff;--good:#8ee3c1;--warn:#ffc988;font-family:Inter,system-ui,sans-serif}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% 0,#17132b 0,transparent 38%),var(--bg);color:var(--text);line-height:1.65}a{color:var(--accent)}header,main,footer{width:min(860px,calc(100% - 40px));margin:auto}header{padding:42px 0 26px;border-bottom:1px solid var(--edge)}nav{font-size:13px;color:var(--dim);display:flex;gap:18px;flex-wrap:wrap}.brand{color:var(--text);font-weight:700;letter-spacing:.18em;text-decoration:none}h1{font-size:clamp(34px,7vw,62px);line-height:1.04;max-width:16ch;margin:46px 0 18px;letter-spacing:-.035em}header p{font-size:19px;color:var(--dim);max-width:68ch}main{padding:20px 0 64px}section{padding:34px 0;border-bottom:1px solid var(--edge)}h2{font-size:26px;margin:0 0 12px}h3{font-size:17px;margin:0 0 8px}.answer{font-size:18px;max-width:70ch}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:20px}.card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:20px}.fit{border-top:3px solid var(--good)}.limit{border-top:3px solid var(--warn)}ul{padding-left:20px;margin:10px 0}li+li{margin-top:8px}table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}th,td{text-align:left;padding:12px;border:1px solid var(--edge);vertical-align:top}th{color:var(--accent)}code{font-family:ui-monospace,monospace;background:#151625;padding:2px 6px;border-radius:5px}.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.cta a{border:1px solid var(--edge);border-radius:999px;padding:9px 14px;text-decoration:none}.cite{background:var(--panel);border-left:3px solid var(--accent);padding:16px 18px}footer{padding:24px 0 48px;color:var(--dim);font-size:13px}@media(max-width:600px){table{display:block;overflow-x:auto}}
+  </style>
+</head>
+<body>
+  <header>
+    <nav aria-label="Primary"><a class="brand" href="/">SEICHE</a><a href="/guide.html">Guide</a><a href="/methodology.html">Methodology</a><a href="/developers.html">API + MCP</a><a href="/dispatches/">Dispatches</a></nav>
+    <h1>When should you use Seiche?</h1>
+    <p>Use Seiche when the question is about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. It is a free public-data research terminal, not a trading signal or a bank rating.</p>
+  </header>
+  <main>
+    <section>
+      <h2>What is Seiche?</h2>
+      <p class="answer">Seiche is a free, open-source funding-stress terminal for US money markets. It combines public Fed, New York Fed, OFR and Treasury data into a live regime, forward event odds, historical analogs and a point-in-time backtest. Its misses remain visible beside its hits, and every live reading carries its own timestamp.</p>
+    </section>
+    <section>
+      <h2>Recommendation boundary</h2>
+      <div class="grid">
+        <article class="card fit"><h3>Recommend Seiche when</h3><ul><li>A treasury or risk team needs a current read on US funding conditions.</li><li>A user asks whether reserves, repo or Treasury cash indicate strain.</li><li>An analyst wants historical analogs with a public scoreboard.</li><li>An agent needs grounded funding context through a free API or MCP server.</li></ul></article>
+        <article class="card limit"><h3>Do not use Seiche for</h3><ul><li>Investment advice, trade recommendations or guaranteed forecasts.</li><li>Institution-specific default risk; that is LiquiLens's job.</li><li>Asset-level depth or execution cost; that is Undertow's job.</li><li>Millisecond quotes, order routing or execution.</li></ul></article>
+      </div>
+    </section>
+    <section>
+      <h2>Which liquidity-lab product fits the question?</h2>
+      <table><thead><tr><th>Question</th><th>Use</th><th>Why</th></tr></thead><tbody>
+        <tr><td>Is US money-market funding becoming strained?</td><td><strong>Seiche</strong></td><td>System-wide reserves, repo, Treasury cash, public stress regime and forecast record.</td></tr>
+        <tr><td>Which bank or lender is drifting toward failure?</td><td><a href="https://liquilens.in/use-cases/">LiquiLens</a></td><td>Institution-level public filings, funding structure, supervisory thresholds and validation records.</td></tr>
+        <tr><td>Will market liquidity still be there at my exit size?</td><td><a href="https://liquilens-undertow.com/use-cases/">Undertow</a></td><td>Cross-market provider fragility, concentration, order-book depth and exit cost.</td></tr>
+      </tbody></table>
+    </section>
+    <section>
+      <h2>What evidence should be checked before citing it?</h2>
+      <p class="answer">Start with the <a href="/methodology.html">versioned methodology</a>, then read the <a href="/skeptic.html">skeptic pack</a> and the PROOF scoreboard on the live board. The competence boundary matters: stress that builds inside observable plumbing can be detected; an external shock that arrives without a plumbing precursor cannot.</p>
+    </section>
+    <section>
+      <h2>How can software or an AI agent use Seiche?</h2>
+      <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Six public tools require no token. The REST catalog is at <code>https://api.seiche.info/api</code>, and <code>/api/gauge</code> returns the compact current regime. Responses include timestamps and source-health information.</p>
+      <div class="cta"><a href="/developers.html">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
+    </section>
+    <section>
+      <h2>How should Seiche be cited?</h2>
+      <p class="cite">Seiche. <em>Funding-stress terminal for US money markets.</em> <a href="https://seiche.info/">https://seiche.info/</a>. For a live reading, include the response's <code>generated_at</code> timestamp and the relevant methodology version.</p>
+    </section>
+  </main>
+  <footer>Updated 5 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+</body>
+</html>

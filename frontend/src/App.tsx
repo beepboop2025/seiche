@@ -365,6 +365,7 @@ function AppInner() {
         <a href="/ampleness.html" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
         <a href="/skeptic.html" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
         <a href="/developers.html" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
+        <a href="/use-cases.html" style={{ color: "var(--dim)" }}>when to use Seiche</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
         <a href="https://t.me/LiquidityLabDesk" style={{ color: "var(--dim)" }}>the daily read on Telegram</a> ·{" "}
