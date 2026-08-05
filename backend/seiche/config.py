@@ -1009,12 +1009,25 @@ FEDTEXT_TTL_MIN = 24 * 60          # re-check for a new statement daily
 # GDELT DOC 2.0 timeline API: keyless, free, CC — the same class of source as
 # everything else on the board. Queries are FROZEN here (a query that changes
 # under your feet cannot sit under a comparison with its own history).
-GDELT_TTL_MIN = 11 * 60 + 30       # two sweeps a day is plenty for topic news.
-                                   # Just under 12h ON PURPOSE: the prod box
-                                   # prewarms the API at 05:00/17:00 UTC, so
-                                   # sweeps land in that slot — staggered away
-                                   # from the other GDELT consumer on the same
-                                   # IP (LiquiLens data-refresh, 01:45-03:15)
+# GDELT retired the legacy DOC search API as a dependable machine interface
+# while its search backend migrates to Spanner (their 2026-06-30 notice asks
+# researchers to use the downloadable WEB-NGRAM heartbeat instead).  Seiche
+# therefore refreshes from that bulk feed every three hours: one download is
+# scanned for all six topics and normalized by the documents in that same
+# heartbeat.  The older DOC constants remain below for an explicit
+# GDELT_SOURCE_MODE=legacy-doc recovery/debug run, never the production
+# default.
+GDELT_TTL_MIN = 3 * 60             # WEB-NGRAM sample cadence
+GDELT_WEB_LOOKBACK_MIN = 30        # heartbeat is bursty; search backwards
+GDELT_WEB_MAX_COMPRESSED_MB = 48   # reject an anomalous object before loading
+GDELT_WEB_HISTORY_MAX = 480        # ~60 days at the intended 3h cadence
+GDELT_WEB_MIN_BASELINE_N = 20      # one full week after the production backfill
+GDELT_WEB_RECENT_N = 8             # most recent ~2 days at four samples/day
+GDELT_WEB_MAX_STALE_H = 24         # LKG grace; older is a visible source fault
+GDELT_WEB_BASE = (
+    "https://storage.googleapis.com/data.gdeltproject.org/"
+    "gdeltv5/weblegacy/ngrams"
+)
 GDELT_TIMESPAN = "6m"              # baseline window for the surge z
 GDELT_CALL_SPACING_S = 5.0         # GDELT fair-use floor is one call per 5s
 GDELT_FAIL_COOLDOWN_MIN = 30       # a 429-blocked IP must not be re-hammered

@@ -3,7 +3,10 @@ the missing topics over from the stale complete blob instead of clobbering
 it with a fresh near-empty one."""
 
 import asyncio
+from datetime import datetime, timezone
+import gzip
 
+from seiche.engines import scuttlebutt
 from seiche.sources import gdelt
 
 
@@ -33,7 +36,7 @@ def test_partial_sweep_carries_stale_topics(monkeypatch):
     monkeypatch.setattr(gdelt, "_mode", fake_mode)
 
     faults: list[dict] = []
-    out = asyncio.run(gdelt.fetch_all(None, faults))
+    out = asyncio.run(gdelt._fetch_legacy_doc(None, faults))
 
     assert t0 in out["topics"] and out["topics"][t0]["volume"][0]["value"] == 9.0
     assert "stale" not in out["topics"][t0]
@@ -55,3 +58,100 @@ def test_gdelt_base_env_override(monkeypatch):
     monkeypatch.delenv("GDELT_BASE")
     g3 = importlib.reload(g2)
     assert g3.API.startswith("https://api.gdeltproject.org")
+
+
+def test_web_ngram_batch_scans_all_topics_in_one_stream():
+    raw = "\n".join([
+        "1\tMoney market funds face withdrawals\t2",
+        "1\tTreasury bills absorb cash\t1",
+        "2\tStanding repo facility usage rose\t1",
+        "3\tUnrelated global headline words\t1",
+        "bad\tBasis trade line is ignored\t1",
+    ]).encode()
+    sample = gdelt._parse_web_batch(gzip.compress(raw), "20260805173200")
+
+    assert sample["documents"] == 3
+    assert sample["topic_counts"]["mmf"] == 1
+    assert sample["topic_counts"]["bills"] == 1
+    assert sample["topic_counts"]["facilities"] == 1
+    assert sample["topic_counts"]["repo"] == 0
+    assert sample["batch_at"] == "2026-08-05T17:32:00+00:00"
+
+
+def test_web_fetch_persists_zeroes_as_valid_observations(monkeypatch):
+    blobs = {}
+    monkeypatch.setenv("GDELT_SOURCE_MODE", "web-ngrams")
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key) if ttl is None else None)
+    monkeypatch.setattr(gdelt.store, "save_blob",
+                        lambda key, value: blobs.__setitem__(key, value))
+
+    async def sample(_client, asof=None):
+        return {
+            "batch_at": "2026-08-05T17:32:00+00:00",
+            "documents": 1000,
+            "topic_counts": {"mmf": 2},
+            "url": "https://example.test/batch.gz",
+            "compressed_bytes": 123,
+        }
+
+    monkeypatch.setattr(gdelt, "_fetch_web_sample", sample)
+    faults = []
+    out = asyncio.run(gdelt.fetch_all(None, faults))
+
+    assert faults == []
+    assert out["mode"] == "web-ngrams"
+    assert set(out["topics"]) == {t[0] for t in gdelt.SCUTTLEBUTT_TOPICS}
+    assert out["topics"]["mmf"]["current_share_pct"] == 0.2
+    assert out["topics"]["repo"]["current_share_pct"] == 0.0
+    assert blobs[gdelt.WEB_HISTORY_KEY]["samples"][0]["documents"] == 1000
+
+    engine = scuttlebutt.analyze(out)
+    assert engine["ok"] is True
+    assert engine["source_mode"] == "web-ngrams"
+    assert engine["baseline_ready"] is False
+    assert engine["latest"]["n_topics"] == 6
+
+
+def test_web_fetch_uses_recent_lkg_without_claiming_freshness(monkeypatch):
+    now = datetime.now(timezone.utc).isoformat()
+    history = {"schema": "seiche.gdelt-web-history.v1", "samples": [{
+        "batch_at": now,
+        "documents": 250,
+        "topic_counts": {"repo": 1},
+    }]}
+    blobs = {gdelt.WEB_HISTORY_KEY: history}
+    monkeypatch.setenv("GDELT_SOURCE_MODE", "web-ngrams")
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key) if ttl is None else None)
+    monkeypatch.setattr(gdelt.store, "save_blob",
+                        lambda key, value: blobs.__setitem__(key, value))
+
+    async def broken(_client, asof=None):
+        raise RuntimeError("bucket unavailable")
+
+    monkeypatch.setattr(gdelt, "_fetch_web_sample", broken)
+    faults = []
+    out = asyncio.run(gdelt.fetch_all(None, faults))
+
+    assert faults == []
+    assert out["stale"] is True
+    assert "last-known-good" in out["refresh_note"]
+    assert out["topics"]["repo"]["matched_documents"] == 1
+
+
+def test_web_cooldown_without_history_stays_a_visible_fault(monkeypatch):
+    blobs = {gdelt.WEB_COOLDOWN_KEY: {"detail": "previous bucket failure"}}
+    monkeypatch.setenv("GDELT_SOURCE_MODE", "web-ngrams")
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key))
+
+    async def must_not_fetch(_client, asof=None):
+        raise AssertionError("cooldown must prevent another upstream attempt")
+
+    monkeypatch.setattr(gdelt, "_fetch_web_sample", must_not_fetch)
+    faults = []
+    out = asyncio.run(gdelt.fetch_all(None, faults))
+
+    assert out["topics"] == {}
+    assert faults == [{"source": "gdelt", "detail": "previous bucket failure"}]

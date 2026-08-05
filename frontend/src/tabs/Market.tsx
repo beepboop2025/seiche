@@ -93,11 +93,12 @@ function PlaybookCard({ p }: { p: Any }) {
 
 function ScuttlebuttCard({ s }: { s: Any }) {
   if (!s?.ok) return <Fault name="Scuttlebutt" reason={s?.reason} span={12} />;
+  const bulk = s.source_mode === "web-ngrams";
   return (
     <div className="card span12">
       <h2>Scuttlebutt</h2>
       <div className="sub">
-        press attention on the plumbing (GDELT, keyless) · which pipe the PRESS is staring at —
+        press attention on the plumbing ({bulk ? "GDELT downloadable Web NGrams" : "GDELT DOC"}, keyless) · which pipe the PRESS is staring at —
         divergence from The Tell is itself worth a look · asof {s.asof ?? "—"}
       </div>
       <div className="kv">
@@ -105,9 +106,18 @@ function ScuttlebuttCard({ s }: { s: Any }) {
           <div className="item" key={t.key}>
             <div className="k">{t.label}</div>
             <div className="v" style={{ color: (t.attention_z ?? 0) >= 2 ? P.stress : undefined }}>
-              {t.attention === null ? "—" : fmt(t.attention, 0)}
+              {t.attention === null
+                ? (bulk && t.current_share_pct !== null
+                  ? `${fmt(t.current_share_pct, 3)}% share`
+                  : "—")
+                : fmt(t.attention, 0)}
               <span className="dimsmall">
-                {" "}z {t.attention_z === null ? "—" : fmt(t.attention_z, 1)} · tone {t.tone_delta === null ? "—" : (t.tone_delta > 0 ? "+" : "") + fmt(t.tone_delta, 1)}
+                {" "}{s.baseline_ready
+                  ? `z ${t.attention_z === null ? "—" : fmt(t.attention_z, 1)}`
+                  : `${s.baseline_samples}/${s.baseline_required_samples} samples`}
+                {bulk
+                  ? ` · ${t.matched_documents ?? 0}/${t.sample_documents ?? 0} docs`
+                  : ` · tone ${t.tone_delta === null ? "—" : (t.tone_delta > 0 ? "+" : "") + fmt(t.tone_delta, 1)}`}
               </span>
             </div>
           </div>
@@ -120,8 +130,18 @@ function ScuttlebuttCard({ s }: { s: Any }) {
           ))}
         </div>
       )}
-      {(s.flags ?? []).length === 0 && (
+      {(s.flags ?? []).length === 0 && s.baseline_ready && (
         <div style={{ marginTop: 8, fontSize: 12, color: P.calm }}>no topic surging vs its own baseline</div>
+      )}
+      {!s.baseline_ready && (
+        <div style={{ marginTop: 8, fontSize: 12, color: P.faint }}>
+          bulk-feed baseline building · live document shares shown · no surge verdict until {s.baseline_required_samples} samples
+        </div>
+      )}
+      {s.refresh_note && (
+        <div style={{ marginTop: 8, fontSize: 12, color: s.stale ? P.erosion : P.faint }}>
+          {s.refresh_note}
+        </div>
       )}
       <Method>{s.method} · context only — never weighted into the composite</Method>
     </div>

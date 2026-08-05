@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """gdelt-gate: one polite GDELT client per box, shared by every consumer.
 
-WHY. Three products fetch GDELT DOC 2.0 from this box's single IP (Seiche
-scuttlebutt, Undertow world_events, LiquiLens news snapshot) and they have
-been rate limiting EACH OTHER for weeks: Seiche never completed a 6 topic
-sweep on the box and Undertow logged hard 429s even after its own cooldown
-retry. GDELT limits per IP, so per process politeness cannot work. This
-daemon serializes every upstream call behind one global spacing clock,
-caches responses, coalesces identical in flight queries, converts GDELT's
-"HTTP 200 but plaintext rate notice" lie into an honest 429, and refuses to
-hammer upstream during a cooldown.
+WHY. Products historically fetched GDELT DOC 2.0 from this box's single IP
+and rate limited EACH OTHER.  This daemon serializes any remaining legacy
+calls behind one global spacing clock, caches responses, coalesces identical
+in-flight queries, converts GDELT's "HTTP 200 but plaintext rate notice" into
+an honest 429, and refuses to hammer upstream during a cooldown.
+
+Seiche Scuttlebutt no longer uses this route by default.  After GDELT's June
+2026 request that researchers move off the overloaded legacy search API
+during its Spanner migration, Seiche switched to the downloadable WEB-NGRAM
+heartbeat.  The gate remains for Undertow/LiquiLens legacy consumers and for
+an explicit Seiche GDELT_SOURCE_MODE=legacy-doc recovery comparison.
 
 Consumers change ONE thing: point their base URL at
 http://127.0.0.1:8796 instead of https://api.gdeltproject.org (env
