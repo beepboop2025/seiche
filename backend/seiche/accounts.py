@@ -35,22 +35,38 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     Provisioning deliberately supplies its own connection so the paid grant
     and account insert can live in one transaction.  Keeping schema setup here
     avoids a second connection (and therefore a second transaction boundary).
+
+    A standalone caller takes SQLite's writer reservation before inspecting
+    the columns.  Without that reservation, two first-time provisions can both
+    observe a missing migration and race the same ``ALTER TABLE``.  A caller
+    already inside a transaction (the provisioner) owns that reservation and
+    must retain control of its commit boundary.
     """
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS users (
-               username TEXT PRIMARY KEY,
-               salt_hex TEXT NOT NULL,
-               hash_hex TEXT NOT NULL,
-               tier TEXT NOT NULL DEFAULT 'pro',
-               created_utc REAL NOT NULL
-           )"""
-    )
-    # idempotent migration: subscriber alert prefs
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
-    if "email" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
-    if "alerts_on" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN alerts_on INTEGER DEFAULT 0")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                   username TEXT PRIMARY KEY,
+                   salt_hex TEXT NOT NULL,
+                   hash_hex TEXT NOT NULL,
+                   tier TEXT NOT NULL DEFAULT 'pro',
+                   created_utc REAL NOT NULL
+               )"""
+        )
+        # idempotent migration: subscriber alert prefs
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+        if "email" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+        if "alerts_on" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN alerts_on INTEGER DEFAULT 0")
+        if owns_transaction:
+            conn.commit()
+    except Exception:
+        if owns_transaction:
+            conn.rollback()
+        raise
 
 
 def _conn() -> sqlite3.Connection:
