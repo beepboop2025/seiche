@@ -28,6 +28,8 @@ def test_selection_page_is_canonical_and_links_its_evidence():
         assert required in page
     assert "Do not use Seiche for" in page
     assert "not investment advice" in page.lower()
+    assert "Content-Security-Policy" in page
+    assert "static.cloudflareinsights.com/beacon.min.js" in page
 
 
 def test_generated_discovery_indexes_include_the_selection_surface():
