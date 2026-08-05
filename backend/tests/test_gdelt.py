@@ -136,6 +136,53 @@ def test_web_history_sidecar_survives_a_fresh_database(monkeypatch, tmp_path):
     assert gdelt._load_web_history() == expected
 
 
+def test_web_fetch_rejects_an_index_thinner_than_durable_history(monkeypatch):
+    """A fresh derived index must not hide a restored CI baseline."""
+    first = {
+        "batch_at": "2026-08-05T05:47:00+00:00",
+        "documents": 3000,
+        "topic_counts": {"mmf": 1},
+    }
+    second = {
+        "batch_at": "2026-08-05T12:02:00+00:00",
+        "documents": 4000,
+        "topic_counts": {"repo": 1},
+    }
+    history = {
+        "schema": "seiche.gdelt-web-history.v1",
+        "samples": [first, second],
+    }
+    blobs = {
+        gdelt.WEB_HISTORY_KEY: history,
+        gdelt.WEB_INDEX_KEY: gdelt._web_blob({"samples": [first]}),
+    }
+    calls = {"n": 0}
+    monkeypatch.setenv("GDELT_SOURCE_MODE", "web-ngrams")
+    monkeypatch.setattr(gdelt, "_web_refresh_task", None)
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key))
+    monkeypatch.setattr(gdelt.store, "save_blob",
+                        lambda key, value: blobs.__setitem__(key, value))
+
+    async def current_sample(_client, asof=None):
+        calls["n"] += 1
+        return {
+            "batch_at": "2026-08-05T17:46:00+00:00",
+            "documents": 5000,
+            "topic_counts": {"bills": 1},
+        }
+
+    monkeypatch.setattr(gdelt, "_fetch_web_sample", current_sample)
+    faults = []
+    out = asyncio.run(gdelt.fetch_all(None, faults))
+
+    assert faults == []
+    assert calls["n"] == 1
+    assert out["samples"] == 3
+    assert out["asof"] == "2026-08-05T17:46:00+00:00"
+    assert blobs[gdelt.WEB_INDEX_KEY]["samples"] == 3
+
+
 def test_web_refresh_survives_caller_cancellation_and_runs_once(monkeypatch):
     blobs = {}
     calls = {"n": 0}

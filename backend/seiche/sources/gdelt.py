@@ -331,11 +331,26 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     if os.environ.get("GDELT_SOURCE_MODE", WEB_MODE).lower() == "legacy-doc":
         return await _fetch_legacy_doc(client, faults)
 
+    history = _load_web_history()
     cached = store.load_blob(WEB_INDEX_KEY, GDELT_TTL_MIN)
     if isinstance(cached, dict):
-        return cached
+        rows = history.get("samples") or []
+        history_asof = rows[-1].get("batch_at") if rows else None
+        cached_asof = cached.get("asof")
+        try:
+            cached_samples = int(cached.get("samples") or 0)
+        except (TypeError, ValueError):
+            cached_samples = 0
+        # The index is derived and disposable; it must never outrank a richer
+        # durable history merely because its SQLite timestamp is newer.  This
+        # matters on clean CI runners, where a test or early probe can create a
+        # one-sample index before the sidecar baseline is restored.
+        if cached.get("mode") == WEB_MODE \
+                and cached_samples >= len(rows) \
+                and (history_asof is None
+                     or str(cached_asof or "") >= str(history_asof)):
+            return cached
 
-    history = _load_web_history()
     cooldown = store.load_blob(WEB_COOLDOWN_KEY, GDELT_FAIL_COOLDOWN_MIN)
     if cooldown is not None:
         age_h = _history_age_hours(history)
