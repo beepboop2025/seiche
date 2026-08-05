@@ -27,6 +27,7 @@ import gzip
 from io import BytesIO
 import json
 import os
+from pathlib import Path
 import re
 
 import httpx
@@ -58,6 +59,7 @@ WEB_HISTORY_KEY = "gdelt:web-ngrams:history:v1"
 WEB_INDEX_KEY = "gdelt:web-ngrams:index:v1"
 WEB_COOLDOWN_KEY = "gdelt:web-ngrams:cooldown:v1"
 WEB_MODE = "web-ngrams"
+WEB_HISTORY_FILE = os.environ.get("GDELT_WEB_HISTORY_FILE")
 
 _DIGITS = re.compile(r"\D")
 _NON_WORD = re.compile(r"[^a-z0-9]+")
@@ -206,6 +208,12 @@ async def _fetch_web_sample(client: httpx.AsyncClient,
 
 def _load_web_history() -> dict:
     raw = store.load_blob(WEB_HISTORY_KEY)
+    if (not isinstance(raw, dict) or not isinstance(raw.get("samples"), list)) \
+            and WEB_HISTORY_FILE:
+        try:
+            raw = json.loads(Path(WEB_HISTORY_FILE).read_text())
+        except (OSError, ValueError, TypeError):
+            raw = None
     if not isinstance(raw, dict) or not isinstance(raw.get("samples"), list):
         return {"schema": "seiche.gdelt-web-history.v1", "samples": []}
     return raw
@@ -221,6 +229,12 @@ def _merge_web_sample(history: dict, sample: dict) -> dict:
     rows = [by_stamp[key] for key in sorted(by_stamp)][-GDELT_WEB_HISTORY_MAX:]
     out = {"schema": "seiche.gdelt-web-history.v1", "samples": rows}
     store.save_blob(WEB_HISTORY_KEY, out)
+    if WEB_HISTORY_FILE:
+        path = Path(WEB_HISTORY_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(json.dumps(out, separators=(",", ":")) + "\n")
+        temporary.replace(path)
     return out
 
 

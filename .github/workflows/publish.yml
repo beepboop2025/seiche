@@ -40,7 +40,22 @@ jobs:
       - name: Engine tests (publish gates on green)
         run: python -m pytest backend/tests -q --memray --pystack-threshold=300
 
+      - name: Restore GDELT WEB-NGRAM baseline
+        uses: actions/cache@v4
+        with:
+          path: .cache/gdelt-web-history.json
+          key: gdelt-web-history-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            gdelt-web-history-${{ runner.os }}-
+
+      - name: Seed GDELT WEB-NGRAM baseline when cache is cold
+        env:
+          GDELT_WEB_HISTORY_FILE: ${{ github.workspace }}/.cache/gdelt-web-history.json
+        run: python backend/scripts/backfill_gdelt_web.py
+
       - name: Run engines, export snapshot
+        env:
+          GDELT_WEB_HISTORY_FILE: ${{ github.workspace }}/.cache/gdelt-web-history.json
         run: python backend/scripts/export_public.py frontend/public/data/public.json frontend/public/data/overview.json
 
       # The Book's ledger: pull the previously published hash-chained history

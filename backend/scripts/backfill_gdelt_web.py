@@ -21,6 +21,7 @@ import sys
 import httpx
 
 from seiche.sources import gdelt
+from seiche.config import GDELT_WEB_MIN_BASELINE_N, GDELT_WEB_RECENT_N
 
 
 def _targets(days: int, cadence_hours: int) -> list[datetime]:
@@ -43,6 +44,11 @@ async def _run(days: int, cadence_hours: int) -> int:
         print("no historical targets in requested window", file=sys.stderr)
         return 2
     history = gdelt._load_web_history()
+    required = GDELT_WEB_MIN_BASELINE_N + GDELT_WEB_RECENT_N
+    if len(history.get("samples") or []) >= required:
+        print(f"history already has {len(history['samples'])} samples "
+              f"(required {required}); no historical downloads needed")
+        return 0
     succeeded = 0
     async with httpx.AsyncClient(follow_redirects=True) as client:
         for number, target in enumerate(targets, 1):
@@ -60,17 +66,12 @@ async def _run(days: int, cadence_hours: int) -> int:
                   flush=True)
     print(f"backfill complete: added/refreshed {succeeded} batches; "
           f"history now has {len(history.get('samples') or [])} samples")
-    if succeeded:
-        # Replace the short-lived presentation cache too.  Otherwise a backfill
-        # that correctly updates durable history can remain invisible to a
-        # freshly restarted API until the previous three-hour index expires.
-        gdelt.store.save_blob(gdelt.WEB_INDEX_KEY, gdelt._web_blob(history))
     return 0 if succeeded else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--days", type=int, default=8)
     parser.add_argument("--cadence-hours", type=int, default=6)
     args = parser.parse_args()
     if not 1 <= args.days <= 60:

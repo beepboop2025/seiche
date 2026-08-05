@@ -113,6 +113,29 @@ def test_web_fetch_persists_zeroes_as_valid_observations(monkeypatch):
     assert engine["latest"]["n_topics"] == 6
 
 
+def test_web_history_sidecar_survives_a_fresh_database(monkeypatch, tmp_path):
+    """The static publisher can recover history on a disposable CI runner."""
+    blobs = {}
+    history_file = tmp_path / "gdelt" / "history.json"
+    monkeypatch.setattr(gdelt, "WEB_HISTORY_FILE", str(history_file))
+    monkeypatch.setattr(gdelt.store, "load_blob",
+                        lambda key, ttl=None: blobs.get(key))
+    monkeypatch.setattr(gdelt.store, "save_blob",
+                        lambda key, value: blobs.__setitem__(key, value))
+    sample = {
+        "batch_at": "2026-08-05T17:32:00+00:00",
+        "documents": 4479,
+        "topic_counts": {"mmf": 1},
+    }
+
+    expected = gdelt._merge_web_sample({"samples": []}, sample)
+    assert history_file.is_file()
+    assert not history_file.with_name("history.json.tmp").exists()
+
+    blobs.clear()  # simulate the next publish runner's empty SQLite database
+    assert gdelt._load_web_history() == expected
+
+
 def test_web_fetch_uses_recent_lkg_without_claiming_freshness(monkeypatch):
     now = datetime.now(timezone.utc).isoformat()
     history = {"schema": "seiche.gdelt-web-history.v1", "samples": [{
