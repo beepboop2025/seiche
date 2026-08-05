@@ -5,6 +5,7 @@ it with a fresh near-empty one."""
 import asyncio
 from datetime import datetime, timezone
 import gzip
+import json
 
 from seiche.engines import scuttlebutt
 from seiche.sources import gdelt
@@ -134,6 +135,26 @@ def test_web_history_sidecar_survives_a_fresh_database(monkeypatch, tmp_path):
 
     blobs.clear()  # simulate the next publish runner's empty SQLite database
     assert gdelt._load_web_history() == expected
+
+
+def test_web_history_sidecar_is_merged_with_thin_database(monkeypatch, tmp_path):
+    """A one-sample test DB must not mask the restored CI baseline."""
+    samples = [{
+        "batch_at": f"2026-08-05T{hour:02d}:00:00+00:00",
+        "documents": 1000 + hour,
+        "topic_counts": {"repo": hour},
+    } for hour in (6, 12, 18)]
+    history_file = tmp_path / "gdelt-web-history.json"
+    history_file.write_text(json.dumps({"samples": samples[:2]}))
+    monkeypatch.setattr(gdelt, "WEB_HISTORY_FILE", str(history_file))
+    monkeypatch.setattr(
+        gdelt.store, "load_blob",
+        lambda key, ttl=None: {"samples": samples[2:]} if key == gdelt.WEB_HISTORY_KEY else None,
+    )
+
+    loaded = gdelt._load_web_history()
+
+    assert loaded["samples"] == samples
 
 
 def test_web_fetch_rejects_an_index_thinner_than_durable_history(monkeypatch):

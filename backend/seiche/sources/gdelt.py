@@ -208,16 +208,26 @@ async def _fetch_web_sample(client: httpx.AsyncClient,
 
 
 def _load_web_history() -> dict:
-    raw = store.load_blob(WEB_HISTORY_KEY)
-    if (not isinstance(raw, dict) or not isinstance(raw.get("samples"), list)) \
-            and WEB_HISTORY_FILE:
+    candidates = [store.load_blob(WEB_HISTORY_KEY)]
+    if WEB_HISTORY_FILE:
         try:
-            raw = json.loads(Path(WEB_HISTORY_FILE).read_text())
+            candidates.append(json.loads(Path(WEB_HISTORY_FILE).read_text()))
         except (OSError, ValueError, TypeError):
-            raw = None
-    if not isinstance(raw, dict) or not isinstance(raw.get("samples"), list):
-        return {"schema": "seiche.gdelt-web-history.v1", "samples": []}
-    return raw
+            pass
+
+    # SQLite is process-local on disposable CI runners while the sidecar is
+    # restored from Actions cache.  A valid but thin SQLite history must not
+    # mask the deeper durable baseline.  Union both stores by upstream batch
+    # timestamp; a later candidate wins only for the same observation.
+    by_stamp = {}
+    for raw in candidates:
+        if not isinstance(raw, dict) or not isinstance(raw.get("samples"), list):
+            continue
+        for row in raw["samples"]:
+            if isinstance(row, dict) and row.get("batch_at"):
+                by_stamp[row["batch_at"]] = row
+    rows = [by_stamp[key] for key in sorted(by_stamp)][-GDELT_WEB_HISTORY_MAX:]
+    return {"schema": "seiche.gdelt-web-history.v1", "samples": rows}
 
 
 def _merge_web_sample(history: dict, sample: dict) -> dict:
