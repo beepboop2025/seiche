@@ -58,6 +58,7 @@ app = FastAPI(title="Seiche", version=assemble.VERSION,
               docs_url=None if _PROD else "/docs",
               redoc_url=None if _PROD else "/redoc",
               openapi_url=None if _PROD else "/openapi.json")
+_mcp_activation_log = logging.getLogger("seiche.mcp.activation")
 
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
 # here produced duplicate Access-Control-Allow-Origin headers that browsers
@@ -201,6 +202,38 @@ def _overview_wire(payload: dict) -> dict[str, Any]:
             etag='"' + hashlib.sha256(body).hexdigest()[:20] + '"',
         )
     return _OVERVIEW_WIRE
+
+
+@app.get("/api")
+def api_index() -> dict[str, Any]:
+    """Curated public discovery document.
+
+    Production OpenAPI stays disabled because it would enumerate private
+    routes. This small document exposes only the stable, public contracts an
+    integration should start from.
+    """
+    return {
+        "product": "Seiche",
+        "job": "system-level US dollar funding-stress early warning",
+        "developer_guide": "https://seiche.info/developers.html",
+        "mcp": {
+            "url": "https://api.seiche.info/mcp",
+            "transport": "streamable-http",
+            "authentication": "none for the six public tools",
+            "first_tool": "funding_stress_now",
+        },
+        "rest": {
+            "public_snapshot": "/api/public",
+            "small_gauge": "/api/gauge",
+            "health": "/api/health",
+            "series_catalog": "/api/series/index.json",
+        },
+        "conventions": {
+            "as_of": "Every reading carries its source or publication time.",
+            "absence": "Missing or stale evidence is stated, never rendered as calm.",
+            "disclaimer": "Research data, not investment advice.",
+        },
+    }
 
 
 @app.head("/api/overview")
@@ -806,6 +839,25 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
             "result": {"content": [{"type": "text", "text": text}], "isError": True}}
 
 
+def _log_mcp_activation(message: Any, response: Any, public: bool) -> None:
+    """Record the conversion event without caller data or tool arguments."""
+    if not (isinstance(message, dict)
+            and message.get("method") == "tools/call"):
+        return
+    params = message.get("params")
+    requested = params.get("name") if isinstance(params, dict) else None
+    tool = (requested if isinstance(requested, str)
+            and requested in mcp_server.TOOLS else "unknown")
+    result = response.get("result") if isinstance(response, dict) else None
+    failed = (not isinstance(response, dict) or "error" in response
+              or (isinstance(result, dict) and result.get("isError") is True))
+    _mcp_activation_log.info(
+        "mcp_activation product=seiche surface=%s tool=%s outcome=%s",
+        "public" if public else "subscriber", tool,
+        "error" if failed else "success",
+    )
+
+
 @app.get("/mcp")
 def mcp_http_get() -> Response:
     """Streamable-HTTP GET channel (SSE). The transport is stateless
@@ -937,6 +989,7 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             # dispatch is defensive, but never let one bad message 500 the batch.
             mid = m.get("id") if isinstance(m, dict) else None
             resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
+        _log_mcp_activation(m, resp, public)
         if (resp is not None and x402.enabled() and public
                 and isinstance(m, dict) and m.get("method") == "tools/list"):
             # advertise the payable tools to wallet-holding agents

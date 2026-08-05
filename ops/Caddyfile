@@ -52,6 +52,7 @@ api.seiche.info {
     # the mirror and never fires for this path, so answer it here.
     handle /undertow/mcp* {
         header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE"
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
         header Access-Control-Expose-Headers "X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
         header X-Content-Type-Options "nosniff"
@@ -85,6 +86,18 @@ api.seiche.info {
         header X-Content-Type-Options "nosniff"
         root * /var/lib/undertow-relay
         file_server
+    }
+
+    # Curated Undertow API discovery. The static mirror has no index file, so
+    # the otherwise useful public pack surface answered 404 at its own root.
+    # Keep this exact-path document above the wildcard mirror.
+    @undertow_index path /undertow /undertow/
+    handle @undertow_index {
+        header Access-Control-Allow-Origin "*"
+        header Cache-Control "public, max-age=300"
+        header Content-Type "application/json"
+        header X-Content-Type-Options "nosniff"
+        respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for eight public tools","first_tool":"exit_cost"},"rest":{"free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
     }
 
     # Undertow published packs — static public mirror (board + retail
@@ -152,7 +165,7 @@ api.seiche.info {
     # the app, where it deploys through the normal chain.)
     @public {
         method GET HEAD
-        path /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
+        path /api /api/health /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
     # The Week Ahead list. GET is in @public above (the front door asks whether
     # the list is wired up before it draws a form); POST needs its own name here
@@ -180,7 +193,7 @@ api.seiche.info {
     handle @preflight {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
         respond 204
     }
     @mcp {
@@ -188,7 +201,7 @@ api.seiche.info {
     }
     handle @mcp {
         header Access-Control-Allow-Origin "*"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, X-Seiche-Signature, X-PAYMENT"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
         header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE"
         header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787

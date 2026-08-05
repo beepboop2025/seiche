@@ -282,6 +282,12 @@ function AppInner() {
 
       <Tape snap={snap} />
 
+      <aside className="agent-launch" aria-label="Seiche API and MCP access">
+        <span className="agent-launch__eyebrow">BUILD WITH THE LIVE BOARD</span>
+        <span className="agent-launch__copy">Give an AI agent the current funding-stress regime, analogs and published track record.</span>
+        <a href="/developers.html">Connect the free MCP or API →</a>
+      </aside>
+
       <nav className="tabs">
         {TABS.map((t) => (
           <a
@@ -358,6 +364,7 @@ function AppInner() {
         <a href="/methodology.html" style={{ color: "var(--dim)" }}>methodology</a> ·{" "}
         <a href="/ampleness.html" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
         <a href="/skeptic.html" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
+        <a href="/developers.html" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
         <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
         <a href="https://t.me/LiquidityLabDesk" style={{ color: "var(--dim)" }}>the daily read on Telegram</a> ·{" "}

@@ -195,6 +195,14 @@ Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
 (`https://api.seiche.info/mcp`). Add the URL and start calling. Six tools
 answer anonymously, no token, no sign-up, no email:
 
+```bash
+claude mcp add --transport http seiche https://api.seiche.info/mcp
+curl https://api.seiche.info/api/gauge
+```
+
+The copy-paste quickstart and live tool runner are at
+**[seiche.info/developers.html](https://seiche.info/developers.html)**.
+
 | tool | what it answers |
 |---|---|
 | `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |

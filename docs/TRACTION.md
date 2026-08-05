@@ -1,0 +1,98 @@
+# API + MCP traction runbook
+
+This is the operating loop for the Liquidity Lab's three public machine
+surfaces. It treats traction as repeated useful answers, not endpoint traffic.
+
+| Product | Job | Developer page | First activation tool |
+|---|---|---|---|
+| Seiche | systemic dollar-funding stress | `https://seiche.info/developers.html` | `funding_stress_now` |
+| LiquiLens | institution failure risk | `https://liquilens.in/developers/` | `failure_radar_board` |
+| Undertow | market liquidity and exit cost | `https://liquilens-undertow.com/developers/` | `exit_cost` |
+
+## The funnel
+
+1. **Discovery:** a developer-page view in Cloudflare Web Analytics.
+2. **Intent:** an API-catalog or source-code outbound click. Use aggregate
+   Cloudflare referrers; do not add fingerprinting.
+3. **Activation:** a successful MCP `tools/call`. This is the primary metric.
+4. **Depth:** a second distinct tool called in the same product. Add this only
+   if the logs can derive it without retaining prompts, arguments, tokens or
+   user identifiers.
+5. **Commercial intent:** Undertow `agent_access_status` or an authenticated
+   subscriber-tool call; Seiche provisioning/upgrade traffic; LiquiLens demo
+   access. Keep these separate from free-product success.
+
+Every backend emits a privacy-safe line with the same shape:
+
+```text
+mcp_activation product=<product> surface=<public|subscriber> tool=<tool> outcome=<success|error>
+```
+
+No prompt, argument, IP, bearer token, institution name or caller key belongs
+in this event.
+
+## Weekly scorecard
+
+Report, per product and in total:
+
+- developer-page views;
+- successful public tool calls;
+- activation success rate: success / (success + error);
+- first-tool share and the top five tools;
+- API 4xx/5xx and MCP error outcomes;
+- subscriber-surface calls, reported separately;
+- week-over-week change for each figure.
+
+The first 14 live days establish the baseline. After that, optimize for more
+successful calls without lowering success rate. A pageview increase with flat
+successful calls is an onboarding problem; calls rising with errors is a
+contract or reliability problem; both rising is actual traction.
+
+Example server-side checks:
+
+```bash
+journalctl -u seiche-api --since today | rg 'mcp_activation'
+journalctl -u undertow-mcp --since today | rg 'mcp: activation'
+```
+
+LiquiLens runs on Railway; filter its service logs for
+`mcp_activation product=liquilens`. Aggregate counts only. Do not export raw
+request logs into a marketing tool.
+
+## Release order
+
+1. Deploy the three backends and verify each `initialize`, `tools/list` and
+   first activation tool from a clean client.
+2. Deploy the three public sites and verify the live runners from a browser,
+   including CORS preflight.
+3. Confirm the curated catalogs at `/api`, `/api`, and `/undertow/`.
+4. Publish the new `server.json` versions through each repository's
+   `registry-publish.yml` workflow only after its live server reports that
+   version.
+5. Check the official MCP Registry record, then the downstream directory
+   listings that ingest it.
+
+## Distribution loop
+
+Every launch item should demonstrate one answer, not announce infrastructure:
+
+- **Seiche:** “Ask your agent whether dollar funding stress is building now,
+  and make it show the historical analog and the misses.”
+- **LiquiLens:** “Ask for one lender's evidence packet; an uncovered name is
+  returned as uncovered instead of scored from memory.”
+- **Undertow:** “Ask what selling $100k of BTC costs venue by venue right now,
+  then inspect how concentrated the depth is.”
+
+Use the live result, its as-of time and its caveat in every post or example.
+Cross-link the relevant developer page. One concrete answer per post is more
+credible and more reusable than a generic “we now have an API” announcement.
+
+Each week:
+
+1. publish one reproducible example per product;
+2. turn the best support question into a copy-paste example on the developer
+   page or README;
+3. inspect the error tools before adding new tools;
+4. compare successful calls with pageviews and change only the weakest stage;
+5. keep the registry manifests, READMEs, `llms.txt` files and live tool lists in
+   sync.

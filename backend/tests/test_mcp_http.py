@@ -5,6 +5,7 @@ Exercises the /mcp endpoint through FastAPI's TestClient with a canned snapshot
 """
 
 import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,6 +49,26 @@ def test_initialize_returns_session_header(client):
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "seiche"
     assert r.headers.get("Mcp-Session-Id")
+
+
+def test_public_api_discovery_is_curated(client):
+    r = client.get("/api")
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["mcp"]["first_tool"] == "funding_stress_now"
+    assert payload["rest"]["small_gauge"] == "/api/gauge"
+    assert "openapi" not in payload
+
+
+def test_successful_tool_call_emits_privacy_safe_activation_log(client, caplog):
+    with caplog.at_level(logging.INFO, logger="seiche.mcp.activation"):
+        r = client.post("/mcp", json=_rpc(
+            "tools/call", {"name": "data_health", "arguments": {}}))
+    assert r.status_code == 200
+    line = next(record.getMessage() for record in caplog.records
+                if "mcp_activation" in record.getMessage())
+    assert "product=seiche surface=public tool=data_health outcome=success" in line
+    assert "arguments" not in line and "ip:" not in line
 
 
 def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):

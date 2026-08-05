@@ -45,6 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Base site URLs that always belong in the sitemap, with their cadence.
 BASE_URLS = [
     ("/", "daily", "1.0"),
+    ("/developers.html", "monthly", "0.9"),
     ("/guide.html", "monthly", "0.8"),
     ("/methodology.html", "monthly", "0.8"),
     ("/skeptic.html", "monthly", "0.8"),
@@ -453,6 +454,7 @@ from outside it cannot.
 ## Docs
 
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
+- [API + MCP quickstart]({SITE}/developers.html): connect an agent or make the first public API call in under a minute
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
 - [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict

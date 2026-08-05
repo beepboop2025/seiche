@@ -48,10 +48,15 @@ import threading
 import time
 from typing import Any
 
-# The MCP protocol revision this server implements. If a client asks for a
-# different one we echo back what it requested (servers negotiate down); this is
-# only the default we advertise when the client sends nothing usable.
-PROTOCOL_VERSION = "2025-06-18"
+# Keep the current stable revision first and retain the two revisions used by
+# installed clients. MCP negotiation does not permit echoing an arbitrary
+# future version: an unsupported request must receive a version we implement.
+PROTOCOL_VERSION = "2025-11-25"
+SUPPORTED_PROTOCOL_VERSIONS = (
+    PROTOCOL_VERSION,
+    "2025-06-18",
+    "2025-03-26",
+)
 SERVER_NAME = "seiche"
 
 # Default surface for the stdio transport. HTTP overrides this per request.
@@ -781,7 +786,8 @@ def _server_version() -> str:
 
 def _handle_initialize(msg_id: Any, params: dict) -> dict:
     client_ver = (params or {}).get("protocolVersion")
-    version = client_ver if isinstance(client_ver, str) and client_ver else PROTOCOL_VERSION
+    version = (client_ver if client_ver in SUPPORTED_PROTOCOL_VERSIONS
+               else PROTOCOL_VERSION)
     return _result(
         msg_id,
         {
@@ -872,7 +878,14 @@ def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
             },
         )
     text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, default=str)
-    return _result(msg_id, {"content": [{"type": "text", "text": text}]})
+    result: dict[str, Any] = {
+        "content": [{"type": "text", "text": text}],
+    }
+    # Modern clients can consume the object without reparsing a text blob;
+    # text remains the compatibility representation for older clients.
+    if isinstance(payload, dict):
+        result["structuredContent"] = payload
+    return _result(msg_id, result)
 
 
 def dispatch(msg: dict, public: bool | None = None) -> dict | None:

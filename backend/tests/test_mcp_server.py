@@ -42,7 +42,7 @@ def test_initialize_negotiates_version_and_advertises_tools():
     resp = mcp.dispatch({"jsonrpc": "2.0", "id": 0, "method": "initialize",
                          "params": {"protocolVersion": "2025-03-26"}})
     r = resp["result"]
-    assert r["protocolVersion"] == "2025-03-26"        # echoes the client's version
+    assert r["protocolVersion"] == "2025-03-26"
     assert r["capabilities"]["tools"] == {"listChanged": False}
     assert r["serverInfo"]["name"] == "seiche"
     assert "instructions" in r and "funding" in r["instructions"].lower()
@@ -50,6 +50,12 @@ def test_initialize_negotiates_version_and_advertises_tools():
 
 def test_initialize_defaults_version_when_client_omits_it():
     resp = mcp.dispatch({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}})
+    assert resp["result"]["protocolVersion"] == mcp.PROTOCOL_VERSION
+
+
+def test_initialize_never_echoes_an_unsupported_version():
+    resp = mcp.dispatch({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                         "params": {"protocolVersion": "2099-01-01"}})
     assert resp["result"]["protocolVersion"] == mcp.PROTOCOL_VERSION
 
 
@@ -185,9 +191,11 @@ def test_public_mode_exposes_exactly_the_free_tools(monkeypatch):
 # ---- tools/call -------------------------------------------------------------
 
 def test_stress_now(stubbed):
-    p = _payload(_call("funding_stress_now"))
+    response = _call("funding_stress_now")
+    p = _payload(response)
     assert p["composite"]["regime"] == "EROSION"
     assert p["headline"].startswith("SEICHE 41.0 EROSION")
+    assert response["result"]["structuredContent"] == p
 
 
 def test_forecast_merges_all_sources(stubbed):
