@@ -456,6 +456,7 @@ from outside it cannot.
 
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
 - [API + MCP quickstart]({SITE}/developers.html): connect an agent or make the first public API call in under a minute
+- [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases.html): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block

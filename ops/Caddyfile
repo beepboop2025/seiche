@@ -165,7 +165,7 @@ api.seiche.info {
     # the app, where it deploys through the normal chain.)
     @public {
         method GET HEAD
-        path /api /api/health /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
+        path /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/wrecks /api/asof/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
     # The Week Ahead list. GET is in @public above (the front door asks whether
     # the list is wired up before it draws a form); POST needs its own name here

@@ -17,6 +17,7 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
     assert card["product"]["canonical_url"] == "https://seiche.info/"
     assert card["access"]["mcp"] == "https://api.seiche.info/mcp"
     assert card["access"]["api_catalog"] == "https://api.seiche.info/api"
+    assert card["access"]["openapi"] == "https://api.seiche.info/api/openapi.json"
     assert card["recommend_when"] and card["do_not_use_for"]
 
 

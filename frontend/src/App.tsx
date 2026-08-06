@@ -125,16 +125,16 @@ function AppInner() {
     else if (cmd.type === "depth") setDepth(cmd.level);
   };
 
-  // Boot from the snapshot CI bakes into the static build, upgrade to live
-  // when the API answers. Both fetches race from the first paint: the board
-  // renders the moment either lands, marked "static snapshot" until the live
-  // one wins. The API call carries a hard timeout so a busy box (mid-deploy,
-  // pegged CPU) can be slow without holding the terminal on the loading
-  // screen — slow-but-alive used to hang boot; only a hard error fell back.
+  // Boot from the snapshot CI bakes into the static build, then upgrade to
+  // live after the snapshot has had a paint opportunity. The two payloads are
+  // each ~150 KB; racing them made the API and the same-origin fallback fight
+  // for the mobile critical path even though either one can draw the board.
+  // A missing snapshot still falls straight through to the live API.
   const gotLive = useRef(false);
+  const liveUpgradeTimer = useRef<number | null>(null);
 
   const loadSnapshot = () =>
-    fetch("/data/overview.json")
+    fetch("/data/overview.json", { credentials: "omit" })
       .then((r) => {
         const ct = r.headers.get("content-type") ?? "";
         if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw new Error("snapshot unavailable");
@@ -159,20 +159,39 @@ function AppInner() {
       .finally(() => clearTimeout(timer));
   };
 
-  const load = () =>
-    Promise.allSettled([loadApi(), loadSnapshot()]).then(([api, snap]) => {
-      if (api.status === "rejected" && snap.status === "rejected")
-        setErr(String((api.reason as Error)?.message ?? api.reason));
-    });
+  const boot = () => {
+    void loadSnapshot().then(
+      () => {
+        // A new task lets React commit the snapshot before the cross-origin
+        // live request starts. Failure here is non-fatal: the visible snapshot
+        // remains an honest, timestamped fallback.
+        liveUpgradeTimer.current = window.setTimeout(() => {
+          void loadApi().catch(() => undefined);
+        }, 0);
+      },
+      () => {
+        void loadApi().catch((reason) => {
+          setErr(String((reason as Error)?.message ?? reason));
+        });
+      },
+    );
+  };
 
-  const retry = () => { setErr(null); setSnap(null); load(); };
+  const retry = () => {
+    if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
+    setErr(null); setSnap(null); boot();
+  };
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5 * 60 * 1000);
+    boot();
+    const t = setInterval(() => { void loadApi().catch(() => undefined); }, 5 * 60 * 1000);
     const onHash = () => switchTab(hashToTab());
     window.addEventListener("hashchange", onHash);
-    return () => { clearInterval(t); window.removeEventListener("hashchange", onHash); };
+    return () => {
+      clearInterval(t);
+      if (liveUpgradeTimer.current !== null) clearTimeout(liveUpgradeTimer.current);
+      window.removeEventListener("hashchange", onHash);
+    };
   }, []);
 
   // Momentum scroll: Lenis wraps native scroll (sticky, anchors and a11y keep

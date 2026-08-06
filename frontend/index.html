@@ -11,14 +11,8 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="alternate" type="application/atom+xml" href="/dispatches/feed.xml" title="Seiche dispatches" />
     <link rel="alternate" type="application/json" href="/product-card.json" title="Seiche product card" />
+    <link rel="preload" as="fetch" href="/data/overview.json" crossorigin="anonymous" />
     <meta name="theme-color" content="#000000" />
-
-    <!-- Fonts as head links (not CSS @import, which serializes behind the
-         stylesheet) + early connections to the font CDN and the live API. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="preconnect" href="https://api.seiche.info" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" />
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Seiche" />

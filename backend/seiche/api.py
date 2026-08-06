@@ -223,6 +223,7 @@ def api_index() -> dict[str, Any]:
             "first_tool": "funding_stress_now",
         },
         "rest": {
+            "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",
             "small_gauge": "/api/gauge",
             "health": "/api/health",
@@ -234,6 +235,97 @@ def api_index() -> dict[str, Any]:
             "disclaimer": "Research data, not investment advice.",
         },
     }
+
+
+def _public_openapi_document() -> dict[str, Any]:
+    """Small, stable contract for anonymous integrations only.
+
+    ``app.openapi()`` is intentionally not used: the application also owns
+    subscriber and operator routes, and production must not enumerate those.
+    """
+    object_response = {
+        "description": "Successful JSON response",
+        "content": {
+            "application/json": {
+                "schema": {"type": "object", "additionalProperties": True},
+            },
+        },
+    }
+    paths: dict[str, Any] = {
+        "/api": {
+            "get": {
+                "operationId": "discoverSeicheApi",
+                "summary": "Discover the public Seiche integration surface",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/health": {
+            "get": {
+                "operationId": "getSeicheHealth",
+                "summary": "Check service and data-source health",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/gauge": {
+            "get": {
+                "operationId": "getFundingStressGauge",
+                "summary": "Read the compact current funding-stress gauge",
+                "description": "The smallest stable contract for dashboards, alerts and risk pipelines.",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/public": {
+            "get": {
+                "operationId": "getPublicFundingStressRecord",
+                "summary": "Read the public stress conclusion and PROOF scoreboard",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/series/index.json": {
+            "get": {
+                "operationId": "listPublicSeries",
+                "summary": "List downloadable public time series",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/asof/{date}": {
+            "get": {
+                "operationId": "getFundingStressAsOf",
+                "summary": "Replay the public board as of a UTC date",
+                "parameters": [{
+                    "name": "date",
+                    "in": "path",
+                    "required": True,
+                    "description": "UTC date in YYYY-MM-DD form",
+                    "schema": {"type": "string", "format": "date"},
+                }],
+                "responses": {"200": object_response, "404": {"description": "No record for that date"}},
+            },
+        },
+    }
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Seiche Public API",
+            "version": assemble.VERSION,
+            "description": (
+                "Curated, anonymous US dollar funding-stress data. "
+                "Research data, not investment advice."
+            ),
+        },
+        "servers": [{"url": "https://api.seiche.info"}],
+        "externalDocs": {
+            "description": "MCP and API quickstart",
+            "url": "https://seiche.info/developers.html",
+        },
+        "paths": paths,
+    }
+
+
+@app.get("/api/openapi.json", include_in_schema=False)
+def public_openapi(response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return _public_openapi_document()
 
 
 @app.head("/api/overview")

@@ -1,6 +1,6 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-08-05",
+  "updated": "2026-08-06",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
@@ -42,6 +42,7 @@
     "selection_guide": "https://seiche.info/use-cases.html",
     "quickstart": "https://seiche.info/developers.html",
     "api_catalog": "https://api.seiche.info/api",
+    "openapi": "https://api.seiche.info/api/openapi.json",
     "rest_example": "https://api.seiche.info/api/gauge",
     "mcp": "https://api.seiche.info/mcp",
     "authentication": "Six public MCP tools require no token; additional subscriber tools require a bearer token."

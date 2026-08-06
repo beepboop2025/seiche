@@ -57,7 +57,20 @@ def test_public_api_discovery_is_curated(client):
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "funding_stress_now"
     assert payload["rest"]["small_gauge"] == "/api/gauge"
-    assert "openapi" not in payload
+    assert payload["rest"]["openapi"] == "/api/openapi.json"
+
+
+def test_public_openapi_is_curated_and_importable(client):
+    r = client.get("/api/openapi.json")
+    assert r.status_code == 200
+    spec = r.json()
+    assert spec["openapi"] == "3.1.0"
+    assert spec["servers"] == [{"url": "https://api.seiche.info"}]
+    assert "/api/gauge" in spec["paths"]
+    assert "/api/public" in spec["paths"]
+    assert "/api/auth/login" not in spec["paths"]
+    assert "/api/deep" not in spec["paths"]
+    assert "public" in r.headers["cache-control"]
 
 
 def test_successful_tool_call_emits_privacy_safe_activation_log(client, caplog):
