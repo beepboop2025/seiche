@@ -1,0 +1,114 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "Seiche",
+    "documentationUrl": "https://seiche.info/developers.html",
+    "logoUrl": "https://seiche.info/og.png"
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:seiche.info:mcp:funding-stress",
+      "displayName": "Seiche Funding-Stress MCP Server",
+      "type": "application/mcp-server-card+json",
+      "data": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.beepboop2025/seiche",
+        "title": "Seiche — funding-stress terminal",
+        "description": "Funding stress early warning for US money markets from free public data, with an honest backtest.",
+        "version": "0.8.0",
+        "repository": {
+          "url": "https://github.com/beepboop2025/seiche",
+          "source": "github"
+        },
+        "websiteUrl": "https://seiche.info",
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://api.seiche.info/mcp"
+          }
+        ],
+        "packages": [
+          {
+            "registryType": "pypi",
+            "identifier": "seiche",
+            "version": "0.8.0",
+            "transport": {
+              "type": "stdio"
+            },
+            "environmentVariables": [
+              {
+                "name": "SEICHE_MCP_PUBLIC",
+                "description": "Set to 1 to expose only the six free public tools over stdio: funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows. The hosted endpoint gives an anonymous caller the same six with no token.",
+                "isRequired": false
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Six anonymous tools for the current US dollar funding regime, historical analogs, data health, institutional positioning, crypto transmission, and the full backtest record.",
+      "tags": [
+        "US dollar funding",
+        "repo",
+        "Federal Reserve reserves",
+        "Treasury cash",
+        "money markets",
+        "basis trade"
+      ],
+      "capabilities": [
+        "funding_stress_now",
+        "historical_analogs",
+        "proof_backtest",
+        "data_health",
+        "crypto_stress_record",
+        "institutional_flows"
+      ],
+      "representativeQueries": [
+        "What is the current US dollar funding stress regime?",
+        "Are reserves, repo, reverse repo or Treasury cash signaling strain?",
+        "What historical episodes most resemble today?",
+        "How accurate has this funding stress model been?",
+        "How are hedge funds positioned in the Treasury basis trade?"
+      ],
+      "version": "0.8.0",
+      "updatedAt": "2026-08-06T13:08:34Z",
+      "metadata": {
+        "authentication": "none",
+        "access": "public-read-only",
+        "publicToolCount": 6,
+        "telegramBot": "https://t.me/seiche_desk_bot",
+        "telegramChannel": "https://t.me/LiquidityLabDesk"
+      }
+    },
+    {
+      "identifier": "urn:air:seiche.info:openapi:funding-stress",
+      "displayName": "Seiche Public REST API",
+      "type": "application/vnd.oai.openapi+json",
+      "url": "https://api.seiche.info/api/openapi.json",
+      "description": "Curated OpenAPI contract for current funding conditions, series provenance, public methodology, and health endpoints.",
+      "tags": [
+        "OpenAPI",
+        "funding stress API",
+        "repo data",
+        "Federal Reserve data"
+      ],
+      "capabilities": [
+        "funding stress overview",
+        "series catalog",
+        "data provenance",
+        "health status"
+      ],
+      "representativeQueries": [
+        "Give me an API for the current dollar funding regime.",
+        "Retrieve repo, reserves and Treasury cash conditions with provenance.",
+        "Check whether the Seiche data feeds are fresh."
+      ],
+      "version": "0.8.0",
+      "updatedAt": "2026-08-06T13:08:34Z",
+      "metadata": {
+        "authentication": "none",
+        "access": "public-read-only",
+        "documentation": "https://seiche.info/developers.html"
+      }
+    }
+  ]
+}

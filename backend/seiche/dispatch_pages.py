@@ -452,6 +452,10 @@ the backtest record, hits and misses both, and states the competence boundary:
 stress that builds inside the plumbing can be seen early, shocks that arrive
 from outside it cannot.
 
+The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
+and https://t.me/LiquidityLabDesk for the public channel. They deliver the
+same product; the callable contract remains the MCP server above.
+
 ## Docs
 
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
@@ -459,6 +463,7 @@ from outside it cannot.
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases.html): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
+- [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
 - [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict

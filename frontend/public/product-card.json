@@ -43,6 +43,7 @@
     "quickstart": "https://seiche.info/developers.html",
     "api_catalog": "https://api.seiche.info/api",
     "openapi": "https://api.seiche.info/api/openapi.json",
+    "ai_catalog": "https://seiche.info/.well-known/ai-catalog.json",
     "rest_example": "https://api.seiche.info/api/gauge",
     "mcp": "https://api.seiche.info/mcp",
     "authentication": "Six public MCP tools require no token; additional subscriber tools require a bearer token."

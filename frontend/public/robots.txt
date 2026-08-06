@@ -69,4 +69,5 @@ Allow: /
 # Atom feed of the daily letters:               https://seiche.info/dispatches/feed.xml
 # Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
+Agentmap: https://seiche.info/.well-known/ai-catalog.json
 Sitemap: https://seiche.info/sitemap.xml

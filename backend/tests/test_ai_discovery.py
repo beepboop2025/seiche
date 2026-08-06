@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+from urllib.parse import urlparse
 
 from seiche import dispatch_pages
 
@@ -18,7 +19,47 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
     assert card["access"]["mcp"] == "https://api.seiche.info/mcp"
     assert card["access"]["api_catalog"] == "https://api.seiche.info/api"
     assert card["access"]["openapi"] == "https://api.seiche.info/api/openapi.json"
+    assert card["access"]["ai_catalog"] == (
+        "https://seiche.info/.well-known/ai-catalog.json")
     assert card["recommend_when"] and card["do_not_use_for"]
+
+
+def test_ard_catalog_matches_the_registered_mcp_card():
+    catalog = json.loads(
+        (PUBLIC / ".well-known" / "ai-catalog.json").read_text())
+    assert catalog["specVersion"] == "1.0"
+    assert catalog["host"]["displayName"] == "Seiche"
+    assert len(catalog["entries"]) == 2
+
+    identifiers = set()
+    for entry in catalog["entries"]:
+        assert entry["identifier"].startswith("urn:air:seiche.info:")
+        assert entry["identifier"] not in identifiers
+        identifiers.add(entry["identifier"])
+        assert bool(entry.get("url")) != bool(entry.get("data"))
+        if "url" in entry:
+            parsed = urlparse(entry["url"])
+            assert parsed.scheme == "https" and parsed.netloc
+        assert 2 <= len(entry["representativeQueries"]) <= 5
+        assert all(isinstance(value, (str, int, float, bool)) or value is None
+                   for value in entry.get("metadata", {}).values())
+
+    mcp = next(entry for entry in catalog["entries"]
+               if entry["type"] == "application/mcp-server-card+json")
+    registered = json.loads((ROOT / "server.json").read_text())
+    assert mcp["data"] == registered
+    assert mcp["version"] == registered["version"]
+    assert len(mcp["capabilities"]) == 6
+
+
+def test_ard_catalog_is_advertised_on_every_discovery_surface():
+    canonical = "https://seiche.info/.well-known/ai-catalog.json"
+    assert f"Agentmap: {canonical}" in (PUBLIC / "robots.txt").read_text()
+    assert 'rel="ai-catalog"' in (ROOT / "frontend" / "index.html").read_text()
+    assert canonical in dispatch_pages._LLMS_PREAMBLE
+    headers = (PUBLIC / "_headers").read_text()
+    assert "/.well-known/ai-catalog.json" in headers
+    assert "Access-Control-Allow-Origin: *" in headers
 
 
 def test_selection_page_is_canonical_and_links_its_evidence():
