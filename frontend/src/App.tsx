@@ -1,26 +1,37 @@
 import { Fragment, useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
-import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
 import { authHeaders } from "./auth";
 import { Any } from "./lib";
 import { AppSkeleton, TabSkeleton } from "./Skeleton";
-import { Command } from "./commands";
+import type { Command } from "./commands";
 import { useDepth, DepthDial } from "./depth";
 import { useAttentionMarks } from "./attention";
-import Basin from "./Basin";
 import Tape from "./Tape";
 import DepthRail from "./DepthRail";
-import Descent, { shouldDescend } from "./Descent";
+import { shouldDescend } from "./descentGate";
 import { MotionProvider, MotionToggle } from "./motion/motionMode";
-import WaveTank from "./motion/WaveTank";
 import Gauge from "./motion/Gauge";
 import Odo from "./motion/Odo";
 import LivePulse from "./motion/LivePulse";
 import { useChangeFlash } from "./motion/useLive";
-import { mountCardShare } from "./cardShare";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
+const Basin = lazy(() => import("./Basin"));
+const Descent = lazy(() => import("./Descent"));
+const WaveTank = lazy(() => import("./motion/WaveTank"));
+
+const COMPACT_DEVICE_QUERY = "(max-width: 800px), (pointer: coarse)";
+
+const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
+  const requestIdle = window.requestIdleCallback?.bind(window);
+  if (typeof requestIdle === "function") {
+    const idleId = requestIdle(task, { timeout });
+    return () => window.cancelIdleCallback(idleId);
+  }
+  const timer = globalThis.setTimeout(task, Math.min(timeout, 1200));
+  return () => globalThis.clearTimeout(timer);
+};
 
 // Tabs are code-split: only the one you open ships its JS. This keeps the
 // first paint small and fast; each chunk streams in behind a skeleton.
@@ -91,6 +102,7 @@ function AppInner() {
   const [palette, setPalette] = useState(false);
   const [help, setHelp] = useState(false);
   const [descending, setDescending] = useState(shouldDescend);
+  const [compactDevice] = useState(() => window.matchMedia(COMPACT_DEVICE_QUERY).matches);
   const { setDepth, stepDepth } = useDepth();
   // direction-flash for the masthead composite (up = amber, down = blue)
   const flash = useChangeFlash(snap?.engines?.composite?.value);
@@ -98,8 +110,27 @@ function AppInner() {
   // unseen-panel marks re-arm on every tab visit
   useAttentionMarks(tab);
 
-  // every card grows a share chip as tabs render; no per-tab wiring
-  useEffect(() => mountCardShare(), []);
+  // Sharing is useful after the board is readable, not while it is becoming
+  // readable. Keep its canvas/composition code out of the entry bundle and
+  // mount the card observer only after the browser has an idle window.
+  useEffect(() => {
+    let disposed = false;
+    let unmount: (() => void) | undefined;
+    let cancelIdle: () => void = () => undefined;
+    const delay = window.setTimeout(() => {
+      cancelIdle = runWhenIdle(() => {
+        void import("./cardShare").then(({ mountCardShare }) => {
+          if (!disposed) unmount = mountCardShare();
+        });
+      }, 2000);
+    }, compactDevice ? 10_000 : 800);
+    return () => {
+      disposed = true;
+      window.clearTimeout(delay);
+      cancelIdle();
+      unmount?.();
+    };
+  }, [compactDevice]);
 
   // Tab switches ride the View Transitions API where it exists: the old view
   // cross-dissolves into the new one on the compositor. Falls back to the
@@ -195,15 +226,29 @@ function AppInner() {
   }, []);
 
   // Momentum scroll: Lenis wraps native scroll (sticky, anchors and a11y keep
-  // working) and gives the page its water weight. Reduced motion opts out.
+  // working) and gives the page its water weight. Native scrolling is faster
+  // and more predictable on compact/coarse-pointer devices; desktop loads the
+  // enhancement after the core terminal has yielded once.
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 0.9 });
-    let raf = 0;
-    const loop = (time: number) => { lenis.raf(time); raf = requestAnimationFrame(loop); };
-    raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); lenis.destroy(); };
-  }, []);
+    if (compactDevice || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const cancelIdle = runWhenIdle(() => {
+      void import("lenis").then(({ default: Lenis }) => {
+        if (disposed) return;
+        const lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 0.9 });
+        let raf = 0;
+        const loop = (time: number) => { lenis.raf(time); raf = requestAnimationFrame(loop); };
+        raf = requestAnimationFrame(loop);
+        stop = () => { cancelAnimationFrame(raf); lenis.destroy(); };
+      });
+    }, 1800);
+    return () => {
+      disposed = true;
+      cancelIdle();
+      stop?.();
+    };
+  }, [compactDevice]);
 
   // The command line: ⌘K / Ctrl+K anywhere, `/` outside inputs, Ctrl+1..9 tabs,
   // `[` / `]` step the sounding shallower / deeper, `?` the shortcut overlay.
@@ -237,7 +282,7 @@ function AppInner() {
   // Accounts exist only for optional email alerts (ACCOUNT tab).
   if (err) {
     return (
-      <div className="app">
+      <main className="app">
         <div className="masthead">
           <div className="wordmark">SEI<span>CHE</span></div>
           <div className="tagline">funding-stress &amp; leveraged-positioning early warning</div>
@@ -249,28 +294,34 @@ function AppInner() {
             <button className="btn-accent" onClick={retry}>Retry</button>
           </div>
         </div>
-      </div>
+      </main>
     );
   }
-  if (!snap) return <div className="app"><AppSkeleton /></div>;
+  if (!snap) return <main className="app"><AppSkeleton /></main>;
 
   const c = snap.engines?.composite ?? {};
 
   if (descending) {
     return (
       <>
-        <Basin value={c.value ?? null} regime={c.regime ?? null} />
-        <Descent snap={snap} onDone={() => setDescending(false)} />
+        {!compactDevice && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
+        <Suspense fallback={<div className="app"><AppSkeleton /></div>}>
+          <Descent snap={snap} onDone={() => setDescending(false)} />
+        </Suspense>
       </>
     );
   }
 
   return (
-    <div className="app">
-      <Basin value={c.value ?? null} regime={c.regime ?? null} />
+    <main className="app">
+      {!compactDevice && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
       <DepthRail />
       <div className="masthero">
-        <WaveTank value={c.value ?? null} regime={c.regime ?? null} />
+        {compactDevice
+          ? <div className="wavetank" aria-hidden="true" />
+          : <Suspense fallback={<div className="wavetank" aria-hidden="true" />}>
+              <WaveTank value={c.value ?? null} regime={c.regime ?? null} />
+            </Suspense>}
         <div className="masthead">
           <div className="wordmark">SEI<span>CHE</span></div>
           <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
@@ -403,6 +454,6 @@ function AppInner() {
         <br />
         Sibling project: <a href="https://palimpsest.info" style={{ color: "var(--dim)" }}>Palimpsest</a>, which works the opposite problem. Seiche exists because the Fed publishes its plumbing every week; Palimpsest measures what happens when a state stops publishing, watching China's information controls and the money-market series that go quiet under stress. The CHINA row on this board already reads its keyless CFETS feed.
       </div>
-    </div>
+    </main>
   );
 }

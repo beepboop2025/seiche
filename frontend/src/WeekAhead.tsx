@@ -93,7 +93,22 @@ export default function WeekAhead() {
     return () => { live = false; };
   }, []);
 
-  if (!done) return null;
+  if (!done) return (
+    <div className="weekahead weekahead-loading" aria-busy="true" aria-label="Loading The Week Ahead">
+      <div className="wa-card" aria-hidden="true">
+        <div className="skel wa-loading-kicker" />
+        <div className="skel wa-loading-title" />
+        <div className="skel wa-loading-line" />
+        <div className="skel wa-loading-line short" />
+        <div className="skel wa-loading-line" />
+      </div>
+      <div className="subscribe compact" aria-hidden="true">
+        <div className="skel wa-loading-line" />
+        <div className="skel wa-loading-line short" />
+        <div className="skel wa-loading-line" />
+      </div>
+    </div>
+  );
 
   // Every call in an issue resolves on the same Monday in practice, but the
   // ledger allows carried calls with their own dates, so only claim a single

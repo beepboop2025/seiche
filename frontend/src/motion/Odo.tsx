@@ -21,7 +21,7 @@ export default function Odo({ v, d = 0 }: { v: number | null | undefined; d?: nu
   const chars = fmt(v, d).split("");
   const n = chars.length;
   return (
-    <span className="odo" aria-label={fmt(v, d)}>
+    <span className="odo" role="img" aria-label={fmt(v, d)}>
       {chars.map((ch, i) => {
         const key = n - i; // stable from the right
         if (!/[0-9]/.test(ch)) {

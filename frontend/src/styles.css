@@ -31,7 +31,7 @@
   --text: #edeef4;
   --dim: #9aa0b6;
   --faint: #787f95;
-  --ghost: #5a5f70;
+  --ghost: #747b90;
 
   /* status — never colour alone; markup carries the word. Brightened a step
      for the black ground: bioluminescent, not floodlit. */
@@ -439,7 +439,12 @@ table.mini tr:hover td { background: rgba(237, 238, 244, 0.03); }
 /* The Monday issue, surfaced on the default view. Deliberately quieter than
    .paywall above: it borrows that block's shape and none of its urgency,
    because this asks for nothing and withholds nothing. */
-.weekahead { max-width: 1180px; margin: 14px auto 4px; }
+.weekahead { max-width: 1180px; min-height: 430px; margin: 14px auto 4px; }
+.weekahead-loading { display: grid; grid-template-rows: minmax(220px, 1fr) 150px; gap: 10px; }
+.wa-loading-kicker { width: 34%; height: 10px; margin-bottom: 28px; }
+.wa-loading-title { width: 82%; height: 22px; margin-bottom: 30px; }
+.wa-loading-line { width: 100%; height: 9px; margin-top: 12px; }
+.wa-loading-line.short { width: 72%; }
 .wa-card {
   border: 1px solid var(--panel-edge); border-radius: var(--r-lg);
   background: linear-gradient(180deg, rgba(156, 143, 232, 0.05), transparent 62%), var(--panel);
@@ -651,6 +656,8 @@ table.mini tr:hover td { background: rgba(237, 238, 244, 0.03); }
 /* Small screens: nav scrolls in one row instead of stacking into many. */
 @media (max-width: 640px) {
   .app { padding: 14px 14px 48px; }
+  .weekahead { min-height: 650px; }
+  .weekahead-loading { grid-template-rows: minmax(380px, 1fr) 190px; }
   .wordmark { font-size: 17px; letter-spacing: 0.26em; }
   .masthead { gap: 12px; }
   .masthead .right { font-size: 10px; }

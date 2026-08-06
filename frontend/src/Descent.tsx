@@ -1,32 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Any, fmt } from "./lib";
+import { markDescended } from "./descentGate";
 
 // The Descent: a first-visit scroll scene that lowers a new reader from the
 // surface (what markets price) past the plumbing (what the floor knows) down
 // to the record (why to believe it), then releases them into the terminal.
 // Scrubbed with a damped follow so the visuals trail the wheel like water,
 // not like a scrollbar. Shown once; any deep link or reduced-motion skips it.
-
-const SEEN_KEY = "seiche_descended";
-
-export const shouldDescend = (): boolean => {
-  try {
-    if (localStorage.getItem(SEEN_KEY)) return false;
-  } catch {
-    return false;
-  }
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
-  const h = window.location.hash.replace("#", "");
-  return h === "" || h === "global"; // never intercept a deep link
-};
-
-export const markDescended = () => {
-  try {
-    localStorage.setItem(SEEN_KEY, "1");
-  } catch {
-    /* private mode: the descent just plays again next time */
-  }
-};
 
 type Scene = { at: number; depth: string; kicker: string };
 const SCENES: Scene[] = [
