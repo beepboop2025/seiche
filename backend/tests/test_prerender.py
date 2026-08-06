@@ -66,7 +66,12 @@ def site(tmp_path, fake_snap):
     out = tmp_path / "dist"
     (out / "data").mkdir(parents=True)
     shutil.copytree(disp, out / "dispatches")
-    shutil.copy(SHELL, out / "index.html")
+    # Vite injects the hashed application stylesheet into dist/index.html.
+    # The source shell intentionally has no external font stylesheet anymore,
+    # so model the post-build artifact this module actually consumes.
+    built_shell = SHELL.read_text().replace(
+        "</head>", '<link rel="stylesheet" href="/assets/index-test.css" />\n</head>', 1)
+    (out / "index.html").write_text(built_shell)
     (out / "data" / "overview.json").write_text(json.dumps(fake_snap))
     return out, d, week_slug
 
