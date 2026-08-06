@@ -23,6 +23,7 @@ const WaveTank = lazy(() => import("./motion/WaveTank"));
 
 const COMPACT_DEVICE_QUERY = "(max-width: 800px), (pointer: coarse)";
 const LIVE_UPGRADE_DELAY_MS = 1500;
+const BOARD_REFRESH_MS = 60_000;
 
 const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
   const requestIdle = window.requestIdleCallback?.bind(window);
@@ -37,6 +38,7 @@ const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
 // Tabs are code-split: only the one you open ships its JS. This keeps the
 // first paint small and fast; each chunk streams in behind a skeleton.
 const Dispatches = lazy(() => import("./tabs/Dispatches"));
+const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
 const Physics = lazy(() => import("./tabs/Physics"));
@@ -54,15 +56,13 @@ const Referee = lazy(() => import("./tabs/Referee"));
 const System = lazy(() => import("./tabs/System"));
 const Account = lazy(() => import("./tabs/Account"));
 
-// BOARD leads: the instrument itself is the front door — the index, the
-// regime, the dive. Hash routing stays authoritative: any #tab in the URL
-// wins, and GLOBAL is one keystroke away for arrivals who want their own
-// water line first.
-// DISPATCHES sits third. It was last of seventeen, which put The Week Ahead at
-// the far end of a tab strip most readers never scroll, and that letter is the
-// only artifact here that carries a dated, pre-registered call and grades
-// itself in public a week later. The letters are also the one thing a reader
-// forwards, so burying them cost the board its cheapest introduction.
+// TODAY leads with the argument, its evidence and its countercase. The full
+// terminal remains one click away in BOARD, but a reader no longer has to
+// reverse-engineer the desk's view from seventeen instruments before learning
+// what matters. Hash routing stays authoritative, so every existing deep link
+// continues to resolve by name.
+// DISPATCHES sits second because the frozen letters are the public record of
+// what the desk said before outcomes arrived.
 // SCARCITY and SUPPLY follow: the reserve demand curve against the Fed's own
 // elasticity print, and the forward net-new-cash table, are the two analyses
 // nobody else publishes free, and a first-time reader should meet them without
@@ -70,7 +70,7 @@ const Account = lazy(() => import("./tabs/Account"));
 // costs CALENDAR, POSITIONING and RESONANCE their number keys; prominence for
 // the differentiating work is worth three power-user shortcuts.
 const TABS = [
-  "GLOBAL", "BOARD", "DISPATCHES", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "GLOBAL", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -79,7 +79,7 @@ type Tab = (typeof TABS)[number];
 // hashToTab resolves by NAME, so reordering above moves nothing. Changing this
 // would silently redirect every bare seiche.info/ bookmark that expects the
 // board, which is a different decision from promoting a tab.
-const DEFAULT_TAB: Tab = "BOARD";
+const DEFAULT_TAB: Tab = "TODAY";
 
 const hashToTab = (): Tab => {
   const raw = decodeURIComponent(window.location.hash.replace("#", ""));
@@ -216,7 +216,12 @@ function AppInner() {
 
   useEffect(() => {
     boot();
-    const t = setInterval(() => { void loadApi().catch(() => undefined); }, 5 * 60 * 1000);
+    // The server's ETag + 60-second public cache make unchanged checks cheap.
+    // Visible tabs learn about a newly assembled official-data snapshot within
+    // a minute; hidden tabs skip the request entirely.
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void loadApi().catch(() => undefined);
+    }, BOARD_REFRESH_MS);
     const onHash = () => switchTab(hashToTab());
     window.addEventListener("hashchange", onHash);
     return () => {
@@ -315,10 +320,10 @@ function AppInner() {
 
   return (
     <main className="app">
-      {!compactDevice && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
+      {!compactDevice && tab !== "TODAY" && <Suspense fallback={null}><Basin value={c.value ?? null} regime={c.regime ?? null} /></Suspense>}
       <DepthRail />
-      <div className="masthero">
-        {compactDevice
+      <div className={`masthero${tab === "TODAY" ? " masteditorial" : ""}`}>
+        {tab === "TODAY" ? null : compactDevice
           ? <div className="wavetank" aria-hidden="true" />
           : <Suspense fallback={<div className="wavetank" aria-hidden="true" />}>
               <WaveTank value={c.value ?? null} regime={c.regime ?? null} />
@@ -351,13 +356,13 @@ function AppInner() {
         </div>
       </div>
 
-      <Tape snap={snap} />
+      {tab !== "TODAY" && <Tape snap={snap} />}
 
-      <aside className="agent-launch" aria-label="Seiche API and MCP access">
+      {tab !== "TODAY" && <aside className="agent-launch" aria-label="Seiche API and MCP access">
         <span className="agent-launch__eyebrow">BUILD WITH THE LIVE BOARD</span>
         <span className="agent-launch__copy">Give an AI agent the current funding-stress regime, analogs and published track record.</span>
         <a href="/developers.html">Connect the free MCP or API →</a>
-      </aside>
+      </aside>}
 
       <nav className="tabs">
         {TABS.map((t) => (
@@ -411,6 +416,7 @@ function AppInner() {
 
       <Suspense fallback={<TabSkeleton />}>
         <div className="tabview" key={tab}>
+          {tab === "TODAY" && <Today snap={snap} live={live} />}
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}

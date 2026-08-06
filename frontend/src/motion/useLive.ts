@@ -1,14 +1,14 @@
 /**
  * Live-data hooks — the countdown, the clock and the change-flash.
  *
- * The terminal reloads the overview every five minutes (see App.tsx); these
+ * The terminal checks the cached overview every minute (see App.tsx); these
  * hooks make that rhythm visible. The countdown anchors on the last moment
  * the snapshot IDENTITY changed (a load actually landed), so it stays honest
  * even if a fetch fails and the old data keeps showing.
  */
 import { useEffect, useRef, useState } from "react";
 
-export const REFRESH_MS = 5 * 60 * 1000;
+export const REFRESH_MS = 60 * 1000;
 
 /** Ticking clock. stepMs=1000 gives a once-a-second "now". */
 export const useNow = (stepMs = 1000): number => {
@@ -29,7 +29,7 @@ export const utcHMS = (ms: number): string => {
 };
 
 /**
- * Seconds until the next 5-minute refresh, anchored on the last snap change.
+ * Seconds until the next one-minute cache check, anchored on the last snap change.
  * Returns the last-landed timestamp too, for the "data as of" line.
  */
 export const useRefreshCountdown = (snap: unknown, now: number): { lastLanding: number; secondsLeft: number } => {

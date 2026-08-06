@@ -220,8 +220,11 @@ def reading_block(snap: dict) -> tuple[str, dict]:
     # Tell gets its own paragraph here anyway.
     cov_txt = f", on {_num(cov, 0)}% coverage" if cov is not None else ""
     reading = f"The composite reads {_num(value, 0)} out of 100, {regime}{cov_txt}."
-    headline = f"The board reads {regime}, {_num(value, 0)} out of 100"
-    gloss = _REGIME_FRAME.get(regime, "The board publishes what it sees and nothing else.")
+    editorial = snap.get("editorial") or {}
+    headline = editorial.get("thesis") or f"The board reads {regime}, {_num(value, 0)} out of 100"
+    gloss = editorial.get("standfirst") or _REGIME_FRAME.get(
+        regime, "The board publishes what it sees and nothing else."
+    )
 
     parts = [f"<p>{_esc(reading)} {_esc(gloss)}</p>"]
 
@@ -268,8 +271,62 @@ def reading_block(snap: dict) -> tuple[str, dict]:
         "gloss": gloss,
         "generated_at": snap.get("generated_at") or "",
         "proof": pub["proof"],
+        "editorial": editorial,
     }
     return "".join(parts), facts
+
+
+def editorial_block(snap: dict) -> str:
+    """Render the argument as a claim, an evidence ledger and a countercase.
+
+    This is intentionally a view over ``snap.editorial`` rather than a second
+    prose generator.  The dispatch, React front page, public API and raw-HTML
+    page therefore quote one point-in-time editorial object.
+    """
+    editorial = snap.get("editorial") or {}
+    thesis = editorial.get("thesis")
+    if not thesis:
+        return ""
+
+    parts = [f'<p class="lede"><strong>{_esc(_clean(str(thesis)))}</strong></p>']
+    if editorial.get("standfirst"):
+        parts.append(f"<p>{_esc(_clean(str(editorial['standfirst'])))}</p>")
+
+    confidence = editorial.get("confidence")
+    if confidence:
+        note = _clean(str(editorial.get("confidence_note") or ""))
+        suffix = f": {_esc(note)}" if note else ""
+        parts.append(
+            f"<p><strong>Conviction: {_esc(str(confidence).upper())}</strong>{suffix}</p>"
+        )
+
+    evidence = [row for row in (editorial.get("evidence") or []) if row.get("claim")]
+    if evidence:
+        parts.append("<h3>Evidence ledger</h3><ol>")
+        for row in evidence:
+            label = _clean(str(row.get("label") or "Evidence"))
+            claim = _clean(str(row["claim"]))
+            source = _clean(str(row.get("source") or "source not recorded"))
+            asof = _clean(str(row.get("asof") or "as-of date not recorded"))
+            parts.append(
+                f"<li><strong>{_esc(label)}.</strong> {_esc(claim)} "
+                f"<small>Source: {_esc(source)}; as of {_esc(asof)}.</small></li>"
+            )
+        parts.append("</ol>")
+
+    countercase = [row for row in (editorial.get("countercase") or []) if row.get("claim")]
+    if countercase:
+        parts.append("<h3>The countercase</h3><ul>")
+        for row in countercase:
+            claim = _clean(str(row["claim"]))
+            source = _clean(str(row.get("source") or "source not recorded"))
+            asof = _clean(str(row.get("asof") or "as-of date not recorded"))
+            parts.append(
+                f"<li>{_esc(claim)} <small>Source: {_esc(source)}; as of {_esc(asof)}.</small></li>"
+            )
+        parts.append("</ul>")
+
+    return "".join(parts)
 
 
 def headline_block(snap: dict) -> str:
@@ -364,8 +421,13 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
         'engine set, the charts and the Time Machine, is the same URL with scripting on.</p>'
     )
 
-    body = ['<div class="body">', md_to_html(llms_intro_md()), "<h2>Today's reading</h2>",
-            reading_html]
+    body = ['<div class="body">', md_to_html(llms_intro_md())]
+
+    argument = editorial_block(snap)
+    if argument:
+        body += ["<h2>The argument</h2>", argument]
+
+    body += ["<h2>Today's reading</h2>", reading_html]
 
     hb = headline_block(snap)
     if hb:
@@ -430,14 +492,22 @@ def build_meta(facts: dict, snap: dict) -> dict[str, str]:
     def v(key: str, nd: int) -> str:
         return _num((hl.get(key) or {}).get("value"), nd)
 
-    head = facts["headline"]
+    head = _clean(str(facts["headline"]))
+    editorial = facts.get("editorial") or {}
     title = f"Seiche · {head[0].lower() + head[1:]}" if head else "Seiche"
-    desc = (
-        f"{facts['reading']} {facts['gloss']} "
-        f"Reserves ${v('reserves_b', 0)}B, ON RRP ${v('rrp_b', 1)}B, "
-        f"TGA ${v('tga_b', 0)}B, SOFR {v('sofr_pct', 2)}%. "
-        "Free public data, no sign-in, backtest and misses published."
-    )
+    if editorial.get("thesis"):
+        conviction = str(editorial.get("confidence") or "unrated").upper()
+        desc = (
+            f"{_clean(str(editorial.get('standfirst') or facts['reading']))} "
+            f"Conviction: {conviction}. Evidence, countercase and dated source clocks published."
+        )
+    else:
+        desc = (
+            f"{facts['reading']} {facts['gloss']} "
+            f"Reserves ${v('reserves_b', 0)}B, ON RRP ${v('rrp_b', 1)}B, "
+            f"TGA ${v('tga_b', 0)}B, SOFR {v('sofr_pct', 2)}%. "
+            "Free public data, no sign-in, backtest and misses published."
+        )
     return {
         "og:title": title,
         "og:description": desc,

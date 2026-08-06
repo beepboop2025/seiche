@@ -4,6 +4,7 @@ import { API_BASE } from "../apiBase";
 import ShareBar from "../ShareBar";
 import Subscribe from "../Subscribe";
 import { composeTextCard } from "../share";
+import "../styles-editorial.css";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
 
@@ -55,8 +56,12 @@ export default function Dispatches() {
     );
     const hasDesk = DESK_MARKERS.some((m) => body.includes(m));
     const free = DESK_MARKERS.reduce((md, m) => md.replace(m, ""), body).trim();
+    const complete = `${free}\n${deskRead ?? ""}`;
+    const readMinutes = Math.max(1, Math.ceil(complete.trim().split(/\s+/).length / 220));
+    const sourceClocks = (complete.match(/\bas of\b/gi) ?? []).length;
+    const sections = (complete.match(/^#{2,3}\s+/gm) ?? []).length;
     return (
-      <div className="dispatch" style={{ marginTop: 18 }}>
+      <div className="dispatch dispatch--editorial" style={{ marginTop: 18 }}>
         <a className="dispatch-back" href="#dispatches">← all dispatches</a>
         {meta && (
           <div className="dispatch-head">
@@ -72,13 +77,28 @@ export default function Dispatches() {
             />
           </div>
         )}
-        <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
-        {hasDesk && deskRead && (
-          <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(deskRead) }} />
-        )}
-        {hasDesk && !deskRead && (
-          <div className="dimsmall" style={{ marginTop: 12 }}>loading the desk's forward read…</div>
-        )}
+        <div className="dispatch-layout">
+          <aside className="dispatch-dossier" aria-label="Dispatch evidence contract">
+            <div className="dispatch-dossier__kicker">ISSUE CONTRACT</div>
+            <dl>
+              <div><dt>status</dt><dd>frozen point-in-time</dd></div>
+              <div><dt>reading time</dt><dd>{readMinutes} min</dd></div>
+              <div><dt>sections</dt><dd>{sections || "—"}</dd></div>
+              <div><dt>dated source clocks</dt><dd>{sourceClocks}</dd></div>
+            </dl>
+            <p>The live board can change. This letter cannot. Its argument, countercase and misses stay attached to the date.</p>
+            <a href="/methodology.html">methods + source register →</a>
+          </aside>
+          <article className="dispatch-copy">
+            <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
+            {hasDesk && deskRead && (
+              <div className="dispatch-body dispatch-body--desk" dangerouslySetInnerHTML={{ __html: renderMarkdown(deskRead) }} />
+            )}
+            {hasDesk && !deskRead && (
+              <div className="dimsmall" style={{ marginTop: 12 }}>loading the desk's forward read…</div>
+            )}
+          </article>
+        </div>
       </div>
     );
   }
@@ -99,14 +119,24 @@ export default function Dispatches() {
       ) : index.length === 0 ? (
         <div className="card span12"><div className="sub">no dispatches yet.</div></div>
       ) : (
-        index.map((d) => (
-          <a className="dispatch-card" key={d.slug} href={`#dispatches/${d.slug}`}>
+        <>
+          <a className="dispatch-card dispatch-card--lead" href={`#dispatches/${index[0].slug}`}>
+            <div className="dispatch-card__eyebrow">LATEST DISPATCH</div>
+            <div className="dispatch-date">{index[0].date}{index[0].tag ? ` · ${index[0].tag}` : ""}</div>
+            <div className="dispatch-card-title">{index[0].title}</div>
+            <div className="dispatch-card-sum">{index[0].summary}</div>
+            <div className="dispatch-read">read the point-in-time issue →</div>
+          </a>
+          <div className="dispatch-archive-label">THE RECORD · NEWEST FIRST</div>
+          {index.slice(1).map((d) => (
+          <a className="dispatch-card dispatch-card--archive" key={d.slug} href={`#dispatches/${d.slug}`}>
             <div className="dispatch-date">{d.date}{d.tag ? ` · ${d.tag}` : ""}</div>
             <div className="dispatch-card-title">{d.title}</div>
             <div className="dispatch-card-sum">{d.summary}</div>
             <div className="dispatch-read">read →</div>
           </a>
-        ))
+          ))}
+        </>
       )}
     </div>
   );

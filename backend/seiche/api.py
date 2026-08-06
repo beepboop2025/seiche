@@ -228,10 +228,16 @@ def api_index() -> dict[str, Any]:
             "small_gauge": "/api/gauge",
             "health": "/api/health",
             "series_catalog": "/api/series/index.json",
+            "realtime_venue": "/undertow/live/quotes.json",
         },
         "conventions": {
             "as_of": "Every reading carries its source or publication time.",
             "absence": "Missing or stale evidence is stated, never rendered as calm.",
+            "editorial": "The thesis, evidence, countercase and confidence travel together.",
+            "clocks": (
+                "Venue microstructure is real time; official macro series keep their native "
+                "daily or weekly publication clocks."
+            ),
             "disclaimer": "Research data, not investment advice.",
         },
     }
@@ -277,7 +283,7 @@ def _public_openapi_document() -> dict[str, Any]:
         "/api/public": {
             "get": {
                 "operationId": "getPublicFundingStressRecord",
-                "summary": "Read the public stress conclusion and PROOF scoreboard",
+                "summary": "Read the argument, countercase, data quality and PROOF scoreboard",
                 "responses": {"200": object_response},
             },
         },
@@ -285,6 +291,17 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "listPublicSeries",
                 "summary": "List downloadable public time series",
+                "responses": {"200": object_response},
+            },
+        },
+        "/undertow/live/quotes.json": {
+            "get": {
+                "operationId": "getRealtimeVenueMicrostructure",
+                "summary": "Read the relayed crypto venue microstructure packet",
+                "description": (
+                    "Binance spot and USD-M futures data relayed by Undertow. "
+                    "This clock is separate from the official macro publication clocks."
+                ),
                 "responses": {"200": object_response},
             },
         },
@@ -364,8 +381,9 @@ async def overview(request: Request, force: bool = False,
 @app.get("/api/public")
 async def public(response: Response, force: bool = False,
                  authorization: str | None = Header(default=None)):
-    """Free surface: the conclusion + PROOF scoreboard only. Never the board.
-    `force` is ignored for unauthenticated callers — no anonymous recompute."""
+    """Free derived surface: argument, countercase, data quality, conclusion
+    and PROOF. Never the underlying engine payloads. `force` is ignored for
+    unauthenticated callers — no anonymous recompute."""
     ident = _bearer_identity(authorization)
     snap = await assemble.snapshot(force=force and ident is not None)
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"

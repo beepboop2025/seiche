@@ -1,12 +1,14 @@
-"""Export the FREE public surface (conclusion + PROOF) as static JSON.
+"""Export the FREE public surface (argument + quality + conclusion + PROOF).
 
 Usage: python backend/scripts/export_public.py <public-path> [<overview-path>]
 
-The slim public slice (conclusion + PROOF) is always written. When a second
-path is given, the FULL board snapshot is baked next to it too — the terminal
-is fully open (no gate) and the static site uses that file as its offline
-fallback: if api.seiche.info is unreachable, the board still renders from the
-last CI-baked snapshot instead of dying on an error screen.
+The slim derived slice is always written. It includes the thesis, evidence,
+countercase and data-quality contract, but never the underlying engine
+payloads. When a second path is given, the FULL board snapshot is baked next
+to it too — the terminal is fully open (no gate) and the static site uses that
+file as its offline fallback: if api.seiche.info is unreachable, the board
+still renders from the last CI-baked snapshot instead of dying on an error
+screen.
 """
 from __future__ import annotations
 

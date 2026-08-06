@@ -1,7 +1,7 @@
 """The free public payload is copy too, and it obeys the same house rules."""
 
 from seiche.dispatch_daily import lint_letter
-from seiche.public_view import _regime_line
+from seiche.public_view import _regime_line, public_payload
 
 
 def _line(**kw):
@@ -29,3 +29,16 @@ def test_regime_line_sentences_start_capitalised():
 
 def test_regime_line_survives_a_missing_tell():
     assert _line(tell=None).endswith(".")
+
+
+def test_public_payload_carries_editorial_and_quality_contracts(fake_snap):
+    from copy import deepcopy
+
+    snap = deepcopy(fake_snap)
+    snap["editorial"] = {"schema": "seiche.editorial.v1", "thesis": "A testable claim."}
+    snap["data_quality"] = {"schema": "seiche.data_quality.v1", "source_count": 73}
+    payload = public_payload(snap)
+    assert payload["schema"] == "seiche.public.v2"
+    assert payload["editorial"]["thesis"] == "A testable claim."
+    assert payload["data_quality"]["source_count"] == 73
+    assert "engines" not in payload and "deep" not in payload

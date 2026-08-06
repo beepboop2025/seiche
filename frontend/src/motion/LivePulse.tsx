@@ -3,7 +3,7 @@
  *
  * A soft pulse dot (the rhythm tightens with stress, like the sonar ping),
  * a ticking "data as of HH:MM:SS UTC" clock so staleness is always one
- * glance away, and the visible countdown to the next 5-minute refresh.
+ * glance away, and the visible countdown to the next one-minute cache check.
  * The pulse animation is CSS-only; DESK mode and reduced motion still it.
  */
 import { useNow, useRefreshCountdown, utcHMS } from "./useLive";
@@ -18,7 +18,7 @@ export default function LivePulse({ snap }: { snap: Record<string, any> }) {
   const ss = String(secondsLeft % 60).padStart(2, "0");
 
   return (
-    <span className="livepulse" title="the board reloads every five minutes; the as-of time is when the snapshot was generated">
+    <span className="livepulse" title="the board checks for a newly assembled snapshot every minute; the as-of time is when this snapshot was generated">
       <span
         className="livepulse-dot"
         style={{ ["--pulse-t" as string]: `${(3.4 - 2.2 * stress).toFixed(2)}s` }}

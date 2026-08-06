@@ -124,6 +124,43 @@ def test_prerender_carries_the_board_and_the_letter(site):
     assert "Last week's calls, graded" not in text   # section 5 only, not the whole issue
 
 
+def test_prerender_carries_the_same_argument_evidence_and_countercase(site):
+    out, _, _ = site
+    snap_path = out / "data" / "overview.json"
+    snap = json.loads(snap_path.read_text())
+    snap["editorial"] = {
+        "thesis": "The balance sheet is tightening, but the tape has not confirmed it.",
+        "standfirst": "The board reads 41 out of 100, EROSION; the calendar contributes 11 points.",
+        "confidence": "guarded",
+        "confidence_note": "One slow-moving structural signal is doing most of the work.",
+        "evidence": [{
+            "label": "Balance-sheet identity",
+            "claim": "The Treasury General Account absorbed $80B.",
+            "source": "Federal Reserve H.4.1",
+            "asof": "2026-07-09",
+        }],
+        "countercase": [{
+            "claim": "SOFR remains below IORB.",
+            "source": "New York Fed",
+            "asof": "2026-07-10",
+        }],
+    }
+    snap_path.write_text(json.dumps(snap))
+
+    prerender.build(out)
+    page = (out / "index.html").read_text()
+    text = prerender.body_text(page)
+    assert "The argument" in text
+    assert snap["editorial"]["thesis"] in text
+    assert "Evidence ledger" in text and "Federal Reserve H.4.1" in text
+    assert "The countercase" in text and "SOFR remains below IORB" in text
+    assert "Conviction: GUARDED" in text
+    assert (
+        '<meta property="og:title" content="Seiche · the balance sheet is tightening, '
+        'but the tape has not confirmed it." />'
+    ) in page
+
+
 def test_headline_numbers_carry_their_own_asof(site):
     """A funding desk reads the level and the lag together. The table must not
     print one without the other."""

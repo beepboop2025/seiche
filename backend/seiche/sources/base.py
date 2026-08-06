@@ -7,8 +7,8 @@ relative to its own expected cadence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -48,6 +48,13 @@ class Series:
         return "dead"
 
     def provenance(self) -> dict:
+        grace = STALENESS_GRACE_DAYS.get(self.freq, 7)
+        age_days = None
+        if self.asof is not None:
+            age_days = max(
+                0,
+                (datetime.now(timezone.utc).date() - self.points.index[-1].date()).days,
+            )
         return {
             "mnemonic": self.mnemonic,
             "source": self.source,
@@ -58,6 +65,9 @@ class Series:
             "asof": self.asof,
             "fetched_at": self.fetched_at,
             "staleness": self.staleness,
+            "age_days": age_days,
+            "freshness_grace_days": grace,
+            "freshness_basis": "age of latest observation versus this series' native publication cadence",
             "n_obs": int(len(self.points)),
         }
 

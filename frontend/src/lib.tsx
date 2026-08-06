@@ -10,7 +10,7 @@ export const fmt = (v: number | null | undefined, d = 1, unit = "") =>
     : `${v.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d })}${unit}`;
 
 /**
- * A number that moves instead of swapping. On the five-minute refresh (or a
+ * A number that moves instead of swapping. On the one-minute cache check (or a
  * Time-Machine jump) the displayed value tweens to the new reading, so the
  * eye sees the direction of the change, not a flicker. Tabular numerals in
  * the base styles keep the width from jittering mid-tween.

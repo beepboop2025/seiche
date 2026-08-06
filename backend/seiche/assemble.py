@@ -117,6 +117,7 @@ from seiche.engines import turn as eng_turn
 from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
+from seiche import editorial
 from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
@@ -1269,8 +1270,24 @@ def _provenance(src: dict) -> list[dict]:
     ):
         blk = src.get(key)
         if blk:
-            prov.append({"mnemonic": key, "source": key.split("_")[0], "label": label,
-                         "fetched_at": blk.get("fetched_at"), "staleness": "fresh"})
+            # These envelopes contain heterogeneous tables rather than one
+            # cadence-bearing Series.  A recent HTTP fetch proves transport
+            # health, not that every observation in the table is current.
+            # Keep the fetch clock, but do not manufacture an observation-
+            # freshness claim that the envelope cannot support.
+            prov.append({
+                "mnemonic": key,
+                "source": key.split("_")[0],
+                "label": label,
+                "asof": None,
+                "fetched_at": blk.get("fetched_at"),
+                "staleness": "unknown",
+                "age_days": None,
+                "freshness_grace_days": None,
+                "freshness_basis": (
+                    "fetch clock only; this table contains heterogeneous observation dates"
+                ),
+            })
     return prov
 
 
@@ -1414,15 +1431,32 @@ async def _build_snapshot() -> dict:
     # git-tracked JSONL the dispatch CI appends to, which makes the court's
     # record auditable in history rather than a box-local file.
     deep["modelcourt"] = eng_modelcourt.convene(deep, odds_ledger=_odds_ledger())
+    generated_at = utcnow_iso()
+    headline = _headline(src, drv)
+    calendar = _calendar(src, engines, deep, drv)
+    provenance = _provenance(src)
     payload = {
-        "generated_at": utcnow_iso(),
+        "generated_at": generated_at,
         "version": VERSION_LABEL,
-        "headline": _headline(src, drv),
+        "headline": headline,
         "engines": _strip_private(engines),
         "deep": _strip_private(deep),
-        "calendar": _calendar(src, engines, deep, drv),
+        "calendar": calendar,
         "faults": faults,
-        "provenance": _provenance(src),
+        "provenance": provenance,
+        "editorial": editorial.build_editorial(
+            generated_at=generated_at,
+            engines=engines,
+            deep=deep,
+            headline=headline,
+            calendar=calendar,
+            faults=faults,
+        ),
+        "data_quality": editorial.build_data_quality(
+            generated_at=generated_at,
+            provenance=provenance,
+            headline=headline,
+        ),
     }
     # The Navigator commits AFTER the board is assembled (its whole world
     # is the context pack of this payload), once per data-day, cached —

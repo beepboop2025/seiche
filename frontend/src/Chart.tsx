@@ -1,9 +1,11 @@
 import { P } from "./palette";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import ShareBar from "./ShareBar";
 import { CHART_EXPORT_W, cardTitle, composeChartCard } from "./share";
+import { CopyCSV, fmt } from "./lib";
+import "./styles-editorial.css";
 
 export interface ChartSeries {
   label: string;
@@ -24,7 +26,15 @@ interface Props {
   refLine?: { value: number; color: string; label: string } | null;
   /** vertical event markers (e.g. episode dates) */
   vlines?: { dates: string[]; color: string } | null;
+  /** exact source line carried into the visible chart evidence bar */
+  source?: string;
+  /** publication date/time for the plotted series */
+  asOf?: string | null;
+  /** precision/caveat note specific to this chart */
+  note?: string;
 }
+
+type RangeKey = "1Y" | "3Y" | "ALL";
 
 /**
  * Gesture layer: ctrl/⌘+scroll zooms the time axis around the cursor (browsers
@@ -92,9 +102,10 @@ function gesturePlugin(): uPlot.Plugin {
   };
 }
 
-export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines }: Props) {
+export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines, source, asOf, note }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const [range, setRange] = useState<RangeKey>("ALL");
 
   const buildData = (): uPlot.AlignedData => {
     const xs = rows.map((r) => new Date(r[0] as string).getTime() / 1000);
@@ -102,6 +113,27 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       xs,
       ...series.map((_, i) => rows.map((r) => (r[i + 1] == null ? null : Number(r[i + 1])))),
     ] as uPlot.AlignedData;
+  };
+
+  const rangeBounds = (key: RangeKey): { min: number; max: number } | null => {
+    if (key === "ALL" || rows.length < 2) return null;
+    const max = new Date(rows[rows.length - 1][0] as string).getTime() / 1000;
+    const years = key === "1Y" ? 1 : 3;
+    const min = new Date(new Date(max * 1000).setUTCFullYear(new Date(max * 1000).getUTCFullYear() - years)).getTime() / 1000;
+    const floor = new Date(rows[0][0] as string).getTime() / 1000;
+    return { min: Math.max(min, floor), max };
+  };
+
+  const chooseRange = (key: RangeKey) => {
+    setRange(key);
+    const plot = plotRef.current;
+    if (!plot || rows.length < 2) return;
+    const bounds = rangeBounds(key);
+    if (bounds) plot.setScale("x", bounds);
+    else {
+      const xs = plot.data[0];
+      plot.setScale("x", { min: xs[0] as number, max: xs[xs.length - 1] as number });
+    }
   };
 
   // One options builder serves the live plot and the export render; the export
@@ -273,6 +305,8 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
     plotRef.current = new uPlot(
       makeOpts(ref.current.clientWidth, height, false), buildData(), ref.current,
     );
+    const bounds = rangeBounds(range);
+    if (bounds) plotRef.current.setScale("x", bounds);
 
     const onResize = () => {
       if (ref.current && plotRef.current)
@@ -284,20 +318,55 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [rows, series, height, yLabel, refLine, vlines]);
+  }, [rows, series, height, yLabel, refLine, vlines, range]);
 
   // "reveal" wipes the plot in on first paint (a clip-path animation the
   // compositor can run); data refreshes redraw in place without replaying it.
+  const firstDate = rows.length ? String(rows[0][0]) : null;
+  const lastDate = rows.length ? String(rows[rows.length - 1][0]) : null;
+  const spanDays = firstDate && lastDate
+    ? (Date.parse(lastDate) - Date.parse(firstDate)) / 86400000
+    : 0;
+  const latest = rows.length ? rows[rows.length - 1] : null;
+
   return (
-    <div className="chartbox">
-      <div className="uplot-wrap reveal" ref={ref} />
+    <figure className="chartbox">
+      <div className="chart-evidence">
+        <div className="chart-evidence__facts">
+          <span>{source ?? "Seiche point-in-time series"}</span>
+          <span>{rows.length.toLocaleString()} observations</span>
+          <span>through {asOf ?? lastDate ?? "unavailable"}</span>
+          {latest && series.slice(0, 3).map((item, index) => (
+            <span key={item.label} className="chart-evidence__latest">
+              {item.label} {latest[index + 1] == null ? "—" : fmt(Number(latest[index + 1]), 2)}
+            </span>
+          ))}
+        </div>
+        <div className="chart-ranges" aria-label="Chart time range">
+          {spanDays > 400 && (["1Y", "3Y", "ALL"] as RangeKey[]).map((key) => (
+            <button key={key} type="button" className={range === key ? "on" : ""} onClick={() => chooseRange(key)}>
+              {key}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div
+        className="uplot-wrap reveal"
+        ref={ref}
+        role="img"
+        aria-label={`${yLabel ?? series.map((item) => item.label).join(", ")} chart, ${rows.length} observations through ${asOf ?? lastDate ?? "an unavailable date"}`}
+      />
+      {note && <figcaption className="chart-note">{note}</figcaption>}
       <div className="chartfoot">
-        <ShareBar
-          compose={composeExport}
-          title={() => cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche")}
-        />
+        <div className="chart-actions">
+          <ShareBar
+            compose={composeExport}
+            title={() => cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche")}
+          />
+          <CopyCSV rows={[["date", ...series.map((item) => item.label)], ...rows]} label="copy data" />
+        </div>
         <div className="zoomhint">drag to zoom · ⌘/ctrl+scroll or pinch to zoom · double-click resets</div>
       </div>
-    </div>
+    </figure>
   );
 }

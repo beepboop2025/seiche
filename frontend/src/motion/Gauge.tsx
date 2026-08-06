@@ -3,7 +3,7 @@
  *
  * On mount the needle sits at zero and sweeps to the reading on a slightly
  * underdamped spring: it arrives like water finding its level, one soft
- * overshoot, no cartoon bounce. When fresh data lands (the 5-minute refresh)
+ * overshoot, no cartoon bounce. When fresh data lands (the one-minute cache check)
  * the retarget plus a small impulse makes the needle twitch — direction and
  * magnitude of the change read straight off the dial. The arc and needle tint
  * ride the same continuous stress ramp as the wave tank (tint.ts), so colour

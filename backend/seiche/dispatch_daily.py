@@ -508,6 +508,17 @@ def _title_candidates(snap: dict, date: str, prev_value, baseline: dict,
     p_pctl, m_pctl = _f(tell.get("plumbing_pctl")), _f(tell.get("market_pctl"))
     cands: list[str] = []
 
+    # The argument outranks the tape. A notable print is evidence; it is not
+    # automatically the story. The recent-title guard below prevents a stable
+    # thesis from becoming the same headline every morning, after which the
+    # existing change-led ladder takes over.
+    # ``_clean(None)`` deliberately renders a visible "?" elsewhere in the
+    # letter.  Here, however, a missing editorial object means an older
+    # snapshot and must fall through to the established headline ladder.
+    raw_editorial_thesis = (snap.get("editorial") or {}).get("thesis")
+    if raw_editorial_thesis:
+        cands.append(_clean(raw_editorial_thesis).rstrip("."))
+
     # 1. The board itself moved. Name the component that did the work.
     if delta is not None and abs(delta) >= 5:
         direction = "climbs" if delta > 0 else "eases"
@@ -635,16 +646,62 @@ def _title_summary_tag(snap: dict, date: str, prev_value, baseline: dict,
     if bad:
         raise SystemExit("title failed the cadence guard: " + "; ".join(bad))
 
-    hook = ""
-    if tell_v is not None:
-        hook = f" The Tell reads {_signed(tell_v)}."
-    summary = (
-        f"The composite reads {_fmt(v)}, regime {regime}."
-        + (f" That is {_signed(delta, 1)} on the day." if delta is not None else "")
-        + hook
-        + " Every number below is checkable on the board."
-    )
+    editorial = snap.get("editorial") or {}
+    if editorial.get("standfirst"):
+        summary = _clean(editorial["standfirst"])
+        if delta is not None:
+            summary += f" The index is {_signed(delta, 1)} against the last published letter."
+    else:
+        hook = ""
+        if tell_v is not None:
+            hook = f" The Tell reads {_signed(tell_v)}."
+        summary = (
+            f"The composite reads {_fmt(v)}, regime {regime}."
+            + (f" That is {_signed(delta, 1)} on the day." if delta is not None else "")
+            + hook
+            + " Every number below is checkable on the board."
+        )
     return title, summary, regime
+
+
+def _editorial_argument(snap: dict) -> list[str]:
+    """The letter's argument before its fixed diagnostic skeleton.
+
+    The section consumes the same versioned editorial object as the website's
+    TODAY page.  That keeps the front page and the frozen letter from making
+    subtly different claims from identical numbers.
+    """
+    editorial = snap.get("editorial") or {}
+    thesis = editorial.get("thesis")
+    if not thesis:
+        return []
+
+    out = [f"**{_clean(thesis)}**"]
+    if editorial.get("standfirst"):
+        out.append(_clean(editorial["standfirst"]))
+
+    evidence = editorial.get("evidence") or []
+    if evidence:
+        lines = []
+        for row in evidence[:3]:
+            stamp = f", as of {row.get('asof')}" if row.get("asof") else ""
+            source = f" Source: {row.get('source')}." if row.get("source") else ""
+            lines.append(
+                f"- **{_clean(row.get('label') or 'Evidence')}**{stamp}: "
+                f"{_clean(row.get('claim') or '')}{source}"
+            )
+        out.append("\n".join(lines))
+
+    counter = editorial.get("countercase") or []
+    if counter:
+        facts = " ".join(_clean(row.get("claim") or "") for row in counter[:2])
+        out.append(f"**The countercase:** {facts}")
+
+    confidence = editorial.get("confidence")
+    note = editorial.get("confidence_note")
+    if confidence and note:
+        out.append(f"**Conviction: {str(confidence).upper()}.** {_clean(note)}")
+    return out
 
 
 def _opening(snap: dict, date: str, prev_value) -> list[str]:
@@ -1814,6 +1871,9 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
     if issue_no is not None:
         paras.append(f"*Issue {issue_no} · {date} · the sections run in the same order every day, "
                      "so the delta takes a minute to extract.*")
+    argument = _editorial_argument(snap)
+    if argument:
+        paras += ["## The argument"] + argument
     paras += ["## 1 · The reading"] + s1
     paras += ["## 2 · What moved"] + s2
     paras += ["## 3 · The Tell"] + s3

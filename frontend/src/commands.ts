@@ -19,6 +19,7 @@ export interface Entry {
 }
 
 export const ENTRIES: Entry[] = [
+  { code: "TOD", title: "TODAY", hint: "the argument · evidence · countercase · live relay", keywords: "today thesis editorial front page live current", run: { type: "tab", tab: "TODAY" } },
   { code: "DIS", title: "DISPATCHES", hint: "the daily letter", keywords: "letter desk note daily", run: { type: "tab", tab: "DISPATCHES" } },
   { code: "BRD", title: "BOARD", hint: "composite index · decomposition · ask", keywords: "dive index regime composite ask kink weather", run: { type: "tab", tab: "BOARD" } },
   { code: "FCT", title: "FORECAST", hint: "swell curve · stack ensemble · analogs", keywords: "swell stack tide tables analogs ml lab odds", run: { type: "tab", tab: "FORECAST" } },
@@ -44,6 +45,7 @@ export const ENTRIES: Entry[] = [
 
 // Engine-name codes: typing the engine gets you to the tab that owns it.
 const ALIAS_CODES: Record<string, string> = {
+  HOME: "TOD", NOW: "TOD", THESIS: "TOD",
   DIVE: "BRD", KINK: "BRD", WEATHER: "BRD", ASK: "BRD",
   SWELL: "FCT", TIDE: "FCT", STACK: "FCT", ANALOGS: "FCT",
   BATHY: "PHY", GYRE: "PHY", ROGUE: "PHY", MERIAN: "PHY",
