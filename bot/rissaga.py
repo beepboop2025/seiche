@@ -3,14 +3,14 @@
 
 A rissaga is a seiche set off by a travelling atmospheric pressure jump:
 weather arrives from outside and the basin swings. This service watches the
-outside weather (news) and marks, every six hours, the few items that matter
+outside weather (news) and marks, every hour, the few items that matter
 to the lab's desks, from funding and institutions through market depth, risk
 timing and information controls. Each item is paired with the relevant live
 board or authority line.
 
 WHAT IT IS NOT. It runs no generative model and changes no product score,
 tier or regime. It emits linked facts, grounded board lines and bounded
-fallback commentary for seven desk routes. The shared channel receives at
+fallback commentary for eight desk routes. The shared channel receives at
 most two selected primary routes per sweep, ref tagged lab_rissaga.
 
 SOURCES, all quota free: 23 live verified RSS feeds (official regulators
@@ -31,7 +31,7 @@ re-entry.
 
 Deploy (fleet convention): copy this file to /opt/rissaga/, env from
 /etc/seiche-bot.env (token) plus /etc/rissaga.env, systemd rissaga.timer at
-02,08,14,20:50 UTC. Modes: --run (fetch, route, append outbox, DM owner and
+minute 50 of every UTC hour. Modes: --run (fetch, route, append outbox, DM owner and
 publish selected channel items), --print (fetch and compose to stdout without
 mutating seen, board or outbox delivery state).
 
@@ -167,7 +167,7 @@ BEATS: dict[str, dict] = {
         "gnews": '"basis trade" OR "margin calls" OR "forced selling" OR "market liquidity"',
     },
     "stablecoin_rails": {
-        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "rails",
+        "desk": "CRYPTO", "emoji": "\U0001f4a7", "label": "stablecoin rails",
         "terms": [
             (r"stablecoins?", 3), (r"depeg\w*", 6), (r"\bUSDC\b", 3),
             (r"\bUSDT\b", 3), (r"tether", 3), (r"attestation", 4),
@@ -178,7 +178,7 @@ BEATS: dict[str, dict] = {
         "gnews": 'stablecoin depeg OR tether reserves OR USDC OR "tokenized treasury"',
     },
     "crypto_stress": {
-        "desk": "LIQUILENS", "emoji": "\U0001f3e6", "label": "crypto leverage",
+        "desk": "CRYPTO", "emoji": "\U0001f4a7", "label": "crypto leverage",
         "terms": [
             (r"liquidation cascade", 6), (r"liquidations?", 3),
             (r"withdrawals? (?:halted|paused|suspended)", 6),
@@ -302,7 +302,7 @@ ANGLES = {
 DESK_NICE = {"SEICHE": "Seiche", "LIQUILENS": "LiquiLens",
              "UNDERTOW": "Undertow", "CORPORATE": "Corporate",
              "REALECON": "Real economy", "PALIMPSEST": "Palimpsest",
-             "RIPTIDE": "Riptide"}
+             "RIPTIDE": "Riptide", "CRYPTO": "Crypto liquidity"}
 
 # These are editorial boundaries, not ornamental names. Consumers may write
 # their own commentary, but each route's deterministic fallback must remain in
@@ -315,6 +315,7 @@ DESK_PERSONAS = {
     "REALECON": "households, employment, prices and downstream demand",
     "PALIMPSEST": "network blocking, content deletion and model refusal as distinct measurements",
     "RIPTIDE": "risk persistence across volatility, spreads and trend",
+    "CRYPTO": "stablecoin rails, crypto regime and balance sheet transmission",
 }
 
 FALLBACK_COMMENTARY = {
@@ -1320,7 +1321,9 @@ def compose_channel(cl: dict, boards: dict) -> str:
     line3 = (f"{src} plus {extra} more outlets, {_age_txt(rep)}"
              if extra > 0 else f"{src}, {_age_txt(rep)}")
     line4 = f"{desk} desk: {esc(board_line(rep['beat'], boards))}"
-    return "\n".join([line1, line2, line3, line4])
+    line5 = ("<b>Discussion:</b> Which next public print would confirm or "
+             "falsify this read?")
+    return "\n".join([line1, line2, line3, line4, line5])
 
 
 def _route_payloads(cl: dict, boards: dict) -> list[dict]:
@@ -1582,6 +1585,8 @@ def post_channel(text: str, ref: str) -> bool:
           "url": f"https://t.me/corporate_stress_bot?start={ref}"},
          {"text": "\U0001f6d2 Real economy",
           "url": f"https://t.me/real_economy_desk_bot?start={ref}"}],
+        [{"text": "\U0001f4a7 Crypto rails and regime",
+          "url": f"https://t.me/liquilens_crypto_bot?start={ref}"}],
     ]
     try:
         res = send(int(LAB_CHANNEL), body, keyboard)

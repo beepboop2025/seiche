@@ -302,8 +302,8 @@ def test_units_schedule_hardening_and_prose_rules():
     assert "/var/lib/rissaga/latest.json" in service
     assert "/usr/local/bin/lab-channel-post" in service
     assert "EnvironmentFile" not in service
-    for hour in ("03", "09", "15", "21"):
-        assert f"OnCalendar=*-*-* {hour}:15:00 UTC" in timer
+    assert "OnCalendar=*-*-* *:15:00 UTC" in timer
+    assert timer.count("OnCalendar=") == 1
     assert "Persistent=true" in timer
     assert "RandomizedDelaySec=0" in timer
     assert "one logical channel owner" in script

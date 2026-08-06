@@ -1,8 +1,8 @@
 [Unit]
-Description=Rissaga news radar every 6h (02,08,14,20:50 UTC = 08:20,14:20,20:20,02:20 IST)
+Description=Rissaga news radar hourly at minute 50
 
 [Timer]
-OnCalendar=*-*-* 02,08,14,20:50:00 UTC
+OnCalendar=*-*-* *:50:00 UTC
 RandomizedDelaySec=90
 Persistent=true
 

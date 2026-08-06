@@ -120,7 +120,7 @@ def test_multi_desk_routes_keep_best_beat_per_desk():
     assert len(by_desk) == len(routes)
     assert by_desk["SEICHE"]["beat"] == "plumbing"
     assert by_desk["UNDERTOW"]["beat"] == "market_liquidity"
-    assert by_desk["LIQUILENS"]["beat"] == "crypto_stress"
+    assert by_desk["CRYPTO"]["beat"] == "crypto_stress"
     assert by_desk["RIPTIDE"]["beat"] == "risk_timing"
     weak_secondary = rz.route_beats(
         "Great Firewall censorship expands after a routine downgrade")
@@ -367,22 +367,35 @@ def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
     for handle in ("seiche_desk_bot", "LiquiLens_bot",
                    "undertow_LiquiLens_bot", "riptide_anake_bot",
                    "palimpsest_watch_bot", "corporate_stress_bot",
-                   "real_economy_desk_bot"):
+                   "real_economy_desk_bot", "liquilens_crypto_bot"):
         assert handle in markup
     with open(os.path.join(rz.STATE_DIR, "history.jsonl"), encoding="utf-8") as fh:
         hist = fh.read()
     assert '"channel_posted": 1' in hist
 
 
-def test_lab_channel_helper_exposes_all_seven_desks():
+def test_lab_channel_helper_exposes_all_eight_desks():
     helper = runpy.run_path(os.path.join(
         _ROOT, "bot", "deploy", "lab-channel-post"))
     urls = json.dumps(helper["KEYBOARD"])
     for handle in ("seiche_desk_bot", "LiquiLens_bot",
                    "undertow_LiquiLens_bot", "riptide_anake_bot",
                    "palimpsest_watch_bot", "corporate_stress_bot",
-                   "real_economy_desk_bot"):
+                   "real_economy_desk_bot", "liquilens_crypto_bot"):
         assert handle in urls
+
+
+def test_rissaga_scans_hourly_and_fallback_follows_each_scan():
+    deploy = os.path.join(_ROOT, "bot", "deploy")
+    with open(os.path.join(deploy, "rissaga.timer"), encoding="utf-8") as fh:
+        timer = fh.read()
+    with open(os.path.join(deploy, "rissaga-channel-fallback.timer"),
+              encoding="utf-8") as fh:
+        fallback = fh.read()
+    assert "OnCalendar=*-*-* *:50:00 UTC" in timer
+    assert "OnCalendar=*-*-* *:15:00 UTC" in fallback
+    assert timer.count("OnCalendar=") == 1
+    assert fallback.count("OnCalendar=") == 1
 
 
 def test_run_channel_off_when_env_empty(monkeypatch, sent):
@@ -429,12 +442,12 @@ def test_config_shape():
     for beat, spec in rz.BEATS.items():
         assert spec["desk"] in ("SEICHE", "LIQUILENS", "UNDERTOW",
                                 "CORPORATE", "REALECON", "PALIMPSEST",
-                                "RIPTIDE")
+                                "RIPTIDE", "CRYPTO")
         desks.add(spec["desk"])
         for pat, w in spec["terms"]:
             assert 1 <= w <= 6, (beat, pat)
     assert desks == {"SEICHE", "LIQUILENS", "UNDERTOW", "CORPORATE",
-                     "REALECON", "PALIMPSEST", "RIPTIDE"}
+                     "REALECON", "PALIMPSEST", "RIPTIDE", "CRYPTO"}
     assert set(rz.DESK_NICE) == desks
     assert set(rz.DESK_PERSONAS) == desks
     assert set(rz.FALLBACK_COMMENTARY) == set(rz.BEATS)

@@ -5,7 +5,7 @@ Built for the Hermes rissaga-desk-reads lane. The bot token is read by THIS
 script (from the gateway's own .env), never passed via argv or a URL: the
 fleet already paid for that lesson when a logged sendMessage URL leaked a
 token. Message text arrives via --text-file PATH or stdin (HTML). The
-standard Rissaga footer and the seven desk deep link buttons (ref
+standard Rissaga footer and the eight desk deep link buttons (ref
 lab_rissaga) are appended here so the caller cannot get them wrong.
 
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
@@ -38,6 +38,8 @@ KEYBOARD = [
       "url": f"https://t.me/corporate_stress_bot?start={REF}"},
      {"text": "\U0001f6d2 Real economy",
       "url": f"https://t.me/real_economy_desk_bot?start={REF}"}],
+    [{"text": "\U0001f4a7 Crypto rails and regime",
+      "url": f"https://t.me/liquilens_crypto_bot?start={REF}"}],
 ]
 
 
