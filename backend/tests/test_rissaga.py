@@ -141,6 +141,50 @@ def test_palimpsest_and_riptide_beats_and_source_coverage():
     assert {"gnews_information_controls", "gnews_risk_timing"} <= keys
 
 
+@pytest.mark.parametrize(("headline", "expected"), [
+    ("Bitcoin rallies to a fresh high as spot volume surges", "crypto_market_moves"),
+    ("Bitcoin ETF inflows accelerate after a new SEC filing", "crypto_policy_flows"),
+    ("Coinbase crypto exchange adds a token listing", "crypto_exchange_custody"),
+    ("DeFi bridge exploit drains a protocol after a smart contract vulnerability",
+     "crypto_defi_security"),
+    ("Ethereum upgrade activates on mainnet", "crypto_chain_ecosystems"),
+    ("Pump.fun memecoin reaches its bonding curve graduation",
+     "crypto_launches_memes"),
+    ("Stablecoin payments drive crypto adoption for a new merchant platform",
+     "crypto_adoption_business"),
+    ("Crypto phishing scam triggers a wallet drain", "crypto_defi_security"),
+])
+def test_comprehensive_crypto_beats_score(headline, expected):
+    beat, base = rz.beat_score(headline)
+    assert beat == expected
+    assert base >= 5
+
+
+def test_crypto_sources_and_queries_cover_primary_and_trade_reporting():
+    keys = {key for key, _, _ in rz.all_feeds()}
+    assert {
+        "cftc_press", "cftc_enforcement", "cointelegraph", "decrypt",
+        "blockworks", "the_defiant", "ethereum_blog", "solana_news",
+        "kraken_blog", "chainalysis",
+    } <= keys
+    assert {
+        "gnews_crypto_market_moves", "gnews_crypto_policy_flows",
+        "gnews_crypto_exchange_custody", "gnews_crypto_defi_security",
+        "gnews_crypto_chain_ecosystems", "gnews_crypto_launches_memes",
+        "gnews_crypto_adoption_business",
+    } <= keys
+
+
+def test_bare_exchange_brand_does_not_promote_its_own_blog_copy():
+    marked = rz.rank([
+        mk("Kraken publishes its weekly company update", key="kraken_blog",
+           tier=0.85, source="Kraken"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+
+    assert payload["desk_channel_candidates"]["CRYPTO"] == []
+
+
 def test_rank_keeps_above_bar_palimpsest_item_outside_global_digest_cap():
     headlines = (
         "FDIC declares Alpha bank failure and begins receivership",
@@ -513,6 +557,31 @@ def test_v2_latest_preserves_primary_and_caps_route_channel_flags():
         flagged.extend((index, route) for route in selected)
     assert len(flagged) == rz.MAX_CHANNEL_POSTS
     assert {index for index, _ in flagged} == set(payload["channel_candidates"])
+
+
+def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
+    marked = rz.rank([
+        mk("Bitcoin rallies to a fresh high as spot volume surges", tier=1.0),
+        mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
+        mk("Coinbase crypto exchange adds a token listing", tier=1.0),
+        mk("DeFi bridge exploit drains a protocol", tier=1.0),
+        mk("Pump.fun memecoin reaches its bonding curve graduation", tier=1.0),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+
+    selected = payload["desk_channel_candidates"]["CRYPTO"]
+    assert len(selected) == rz.DESK_CHANNEL_CAPS["CRYPTO"]
+    assert all(
+        any(route["desk"] == "CRYPTO" and route["desk_channel_candidate"]
+            for route in payload["items"][index]["routes"])
+        for index in selected
+    )
+    assert sum(
+        route["desk_channel_candidate"]
+        for item in payload["items"]
+        for route in item["routes"]
+        if route["desk"] == "CRYPTO"
+    ) == rz.DESK_CHANNEL_CAPS["CRYPTO"]
 
 
 def test_outbox_is_durable_world_readable_and_idempotent():

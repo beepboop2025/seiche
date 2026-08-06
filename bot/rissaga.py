@@ -13,9 +13,9 @@ tier or regime. It emits linked facts, grounded board lines and bounded
 fallback commentary for eight desk routes. The shared channel receives at
 most two selected primary routes per sweep, ref tagged lab_rissaga.
 
-SOURCES, all quota free: 23 live verified RSS feeds (official regulators
-tier 1.0 down to market blogs 0.35) plus 11 Google News query feeds across
-12 beats. Zero GDELT calls: attention context is read from the lab's own
+SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
+protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
+query feeds across 19 beats. Zero GDELT calls: attention context is read from the lab's own
 already published packs. Board context comes from the product APIs, with an
 explicit authority boundary where Riptide has no public board.
 
@@ -94,6 +94,9 @@ CHANNEL_BAR = float(os.environ.get("RISSAGA_CHANNEL_BAR", "4.5"))
 ROUTE_BAR = float(os.environ.get("RISSAGA_ROUTE_BAR", "3.0"))
 MAX_MARKED = 5
 MAX_DESK_COVERAGE = 2
+DESK_COVERAGE_CAPS = {"CRYPTO": 5}
+DESK_CHANNEL_CAPS = {"CRYPTO": 3}
+DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
 SEEN_TTL_H = 48.0     # a marked story stays suppressed this long
@@ -188,6 +191,147 @@ BEATS: dict[str, dict] = {
             (r"leverage flush", 4), (r"crypto exchange", 2),
         ],
         "gnews": 'crypto liquidations OR "withdrawals halted" exchange OR "crypto lender"',
+    },
+    "crypto_market_moves": {
+        "desk": "CRYPTO", "emoji": "\U0001f4c8", "label": "market moves",
+        "terms": [
+            (r"\b(?:bitcoin|btc|ether|ethereum|eth|solana|sol|xrp|dogecoin|doge|"
+             r"cardano|ada|bnb|tron|trx|avalanche|avax|chainlink|link|"
+             r"hyperliquid|hype|sui|litecoin|ltc|toncoin|ton)\b.{0,40}"
+             r"\b(?:rall\w*|surg\w*|jump\w*|breakout|fall\w*|drop\w*|slump\w*|"
+             r"selloff|crash\w*|rebound\w*|recover\w*)\b", 5),
+            (r"\b(?:rall\w*|surg\w*|jump\w*|breakout|fall\w*|drop\w*|slump\w*|"
+             r"selloff|crash\w*|rebound\w*|recover\w*)\b.{0,40}"
+             r"\b(?:bitcoin|btc|ether|ethereum|eth|solana|sol|xrp|dogecoin|doge|"
+             r"cardano|ada|bnb|tron|trx|avalanche|avax|chainlink|link|"
+             r"hyperliquid|hype|sui|litecoin|ltc|toncoin|ton)\b", 5),
+            (r"\bcrypto (?:market|prices?)\b.{0,35}"
+             r"\b(?:rall\w*|surg\w*|selloff|fall\w*|drop\w*|slump\w*)\b", 5),
+            (r"\bcrypto market cap(?:italization)?\b", 4),
+            (r"\baltcoin(?:s| season)?\b", 3),
+            (r"\btoken unlocks?\b", 4),
+            (r"\bcrypto open interest\b", 4),
+            (r"\bcrypto funding rates?\b", 4),
+            (r"\b(?:bitcoin|ethereum|crypto) whale\b", 3),
+        ],
+        "gnews": ('bitcoin OR ethereum OR solana crypto market moves '
+                  'OR altcoins OR "token unlock"'),
+    },
+    "crypto_policy_flows": {
+        "desk": "CRYPTO", "emoji": "\U0001f3db", "label": "policy and flows",
+        "terms": [
+            (r"\b(?:spot )?(?:bitcoin|btc|ether|ethereum|crypto) ETFs?\b", 5),
+            (r"\b(?:bitcoin|ether|crypto) ETF (?:inflows?|outflows?|flows?|"
+             r"approval|filing|redemptions?)\b", 6),
+            (r"\b(?:SEC|CFTC)\b.{0,50}\b(?:crypto|digital assets?|bitcoin|"
+             r"ethereum|ether|tokens?)\b", 6),
+            (r"\b(?:crypto|digital assets?|bitcoin|ethereum|ether|tokens?)\b"
+             r".{0,50}\b(?:SEC|CFTC)\b", 6),
+            (r"\bMiCA\b", 5),
+            (r"\bcrypto (?:bill|law|regulation|rules?|policy|legislation)\b", 5),
+            (r"\bdigital asset (?:bill|law|regulation|rules?|policy|legislation)\b", 5),
+            (r"\b(?:bitcoin|crypto) treasur(?:y|ies)\b", 4),
+            (r"\binstitutional (?:crypto|bitcoin|ethereum)\b", 3),
+            (r"\btokenized securit\w+\b", 4),
+        ],
+        "gnews": ('bitcoin ETF OR ether ETF OR crypto regulation OR MiCA '
+                  'OR "digital asset" SEC CFTC'),
+    },
+    "crypto_exchange_custody": {
+        "desk": "CRYPTO", "emoji": "\U0001f3e6", "label": "exchanges and custody",
+        "terms": [
+            (r"\b(?:binance|coinbase|kraken|bybit|okx|bitget|gemini|upbit|"
+             r"bithumb)\b", 2),
+            (r"\bcrypto\.com\b", 2),
+            (r"\b(?:binance|coinbase|kraken|bybit|okx|bitget|gemini|upbit|"
+             r"bithumb|crypto\.com)\b.{0,40}\b(?:listing|delisting|outage|"
+             r"reserves?|withdrawals?|license|acquisition|merger|settlement|"
+             r"hack\w*|sued|lawsuit)\b", 5),
+            (r"\b(?:listing|delisting|outage|reserves?|withdrawals?|license|"
+             r"acquisition|merger|settlement|hack\w*|sued|lawsuit)\b.{0,40}"
+             r"\b(?:binance|coinbase|kraken|bybit|okx|bitget|gemini|upbit|"
+             r"bithumb|crypto\.com)\b", 5),
+            (r"\bcrypto exchanges?\b", 3),
+            (r"\b(?:exchange|token) (?:listing|delisting)\b", 3),
+            (r"\bproof of reserves?\b", 5),
+            (r"\bcrypto custod(?:y|ian)\b", 4),
+            (r"\bexchange outage\b", 6),
+            (r"\bexchange reserves?\b", 4),
+            (r"\bcrypto exchange (?:acquisition|merger|license|settlement)\b", 4),
+        ],
+        "gnews": ('Binance OR Coinbase OR Kraken OR Bybit OR OKX '
+                  'crypto exchange custody listing'),
+    },
+    "crypto_defi_security": {
+        "desk": "CRYPTO", "emoji": "\U0001f6e1", "label": "DeFi and security",
+        "terms": [
+            (r"\bDeFi\b", 3), (r"\bdecentralized (?:finance|exchange)\b", 4),
+            (r"\bDEX\b", 3), (r"\bTVL\b", 3),
+            (r"\b(?:DeFi|crypto|bridge|protocol|smart contract) exploit\w*\b", 6),
+            (r"\b(?:DeFi|crypto|bridge|protocol) hack\w*\b", 5),
+            (r"\bbridge (?:drain\w*|attack\w*|vulnerabilit\w*)\b", 6),
+            (r"\bsmart contract vulnerabilit\w*\b", 5),
+            (r"\brug pull\b", 5),
+            (r"\b(?:Aave|Uniswap|Lido|MakerDAO|Sky Protocol|Curve|Hyperliquid)\b", 3),
+            (r"\bDAO governance\b", 4), (r"\brestaking\b", 3),
+            (r"\byield protocol\b", 4),
+            (r"\bcrypto (?:scam|fraud|phishing|theft|laundering|crime)\b", 5),
+            (r"\bwallet drain\w*\b", 5),
+            (r"\bprivate key compromi\w*\b", 5),
+            (r"\bcrypto ransomware\b", 4),
+        ],
+        "gnews": ('DeFi OR DEX crypto exploit hack bridge Aave Uniswap '
+                  'OR Hyperliquid'),
+    },
+    "crypto_chain_ecosystems": {
+        "desk": "CRYPTO", "emoji": "\u26d3", "label": "chains and protocols",
+        "terms": [
+            (r"\bEthereum (?:upgrade|hard fork|testnet|mainnet|roadmap)\b", 6),
+            (r"\bSolana (?:outage|upgrade|testnet|mainnet|validator|network)\b", 6),
+            (r"\bBitcoin (?:halving|mining difficulty|hash ?rate|mempool|"
+             r"Lightning Network)\b", 5),
+            (r"\b(?:layer ?2|L2|rollups?)\b", 3),
+            (r"\b(?:Arbitrum|Optimism|Base|Polygon|Avalanche|Sui|Aptos|"
+             r"Celestia)\b.{0,35}\b(?:upgrade|mainnet|testnet|outage|fork)\b", 5),
+            (r"\bblockchain (?:upgrade|outage|mainnet|testnet)\b", 4),
+            (r"\bvalidator (?:client|network|set)\b", 3),
+            (r"\bprotocol upgrade\b", 4),
+        ],
+        "gnews": ('Ethereum upgrade OR Solana network OR Bitcoin mining '
+                  'OR layer 2 rollup blockchain'),
+    },
+    "crypto_launches_memes": {
+        "desk": "CRYPTO", "emoji": "\U0001f680", "label": "launches and memes",
+        "terms": [
+            (r"\bpump\.fun\b", 6), (r"\bpumpfun\b", 6),
+            (r"\b(?:letsbonk|bonk\.fun|believe\.app|moonshot)\b", 5),
+            (r"\bcrypto launchpads?\b", 4), (r"\btoken launchpads?\b", 4),
+            (r"\bmemecoins?\b", 4), (r"\bmeme coins?\b", 4),
+            (r"\bbonding curves?\b", 5), (r"\btoken launches?\b", 4),
+            (r"\btoken generation event\b", 4), (r"\bTGE\b", 4),
+            (r"\bfair launch\b", 3), (r"\bsniper bots?\b", 4),
+            (r"\b(?:launchpad|pump\.fun|pumpfun).{0,35}"
+             r"(?:graduat\w*|migrat\w*)\b", 5),
+        ],
+        "gnews": ('pump.fun OR pumpfun OR memecoin OR "meme coin" '
+                  'OR "crypto launchpad" OR "token launch"'),
+    },
+    "crypto_adoption_business": {
+        "desk": "CRYPTO", "emoji": "\U0001f310", "label": "adoption and business",
+        "terms": [
+            (r"\bcrypto (?:payments?|adoption|startup|venture|funding|"
+             r"partnership|merger|acquisition)\b", 5),
+            (r"\b(?:bitcoin|stablecoin) payments?\b", 4),
+            (r"\bblockchain (?:payments?|adoption|pilot|partnership)\b", 4),
+            (r"\bdigital asset (?:adoption|payments?|platform|business)\b", 4),
+            (r"\btokenization\b", 3), (r"\breal world assets?\b", 4),
+            (r"\bRWA tokenization\b", 5), (r"\bcrypto wallets?\b", 3),
+            (r"\bWeb3 (?:gaming|startup|funding|venture|adoption)\b", 4),
+            (r"\bNFT (?:market|sales?|gaming|platform|collection)\b", 4),
+            (r"\bCBDCs?\b", 5), (r"\bcentral bank digital currenc\w+\b", 6),
+        ],
+        "gnews": ('"crypto adoption" OR "crypto payments" OR tokenization RWA '
+                  'OR "Web3 funding" OR NFT market OR CBDC'),
     },
     "policy_shock": {
         "desk": "SEICHE", "emoji": "\U0001f30a", "label": "policy shock",
@@ -291,6 +435,13 @@ ANGLES = {
     "market_liquidity": "exit cost and depth, the backbone map says who carries it",
     "stablecoin_rails": "rails watch has issuer thresholds on record, cite the state",
     "crypto_stress": "the exposure register and regime lens are on record, cite them",
+    "crypto_market_moves": "pair the headline with live breadth, liquid movers and derivatives before reading direction",
+    "crypto_policy_flows": "separate the filing or rule from flows, positioning and the live regime",
+    "crypto_exchange_custody": "test the venue event against reserves, withdrawals and market-wide liquidity",
+    "crypto_defi_security": "separate protocol mechanics, affected value and contagion paths before reading the headline",
+    "crypto_chain_ecosystems": "distinguish a protocol change from an asset-price move, then watch adoption and execution",
+    "crypto_launches_memes": "use the Pump.fun monitor for visible launches, graduations, concentration and DEX liquidity",
+    "crypto_adoption_business": "separate product adoption and settlement use from funding announcements and token-price reaction",
     "policy_shock": "what the facility does to the gauge inputs, mechanics over drama",
     "india_watch": "supervisory tape context, actions run ahead of ratings",
     "corporate_stress": "read it through the transmission board, channel by channel",
@@ -315,7 +466,7 @@ DESK_PERSONAS = {
     "REALECON": "households, employment, prices and downstream demand",
     "PALIMPSEST": "network blocking, content deletion and model refusal as distinct measurements",
     "RIPTIDE": "risk persistence across volatility, spreads and trend",
-    "CRYPTO": "stablecoin rails, crypto regime and balance sheet transmission",
+    "CRYPTO": "market structure, policy, exchanges, protocols, launches, adoption, stablecoin rails and balance sheet transmission",
 }
 
 FALLBACK_COMMENTARY = {
@@ -325,6 +476,13 @@ FALLBACK_COMMENTARY = {
     "market_liquidity": "Quoted depth and exit cost decide whether the headline has become an execution problem.",
     "stablecoin_rails": "Reserve quality and redemption rails separate plumbing stress from token noise.",
     "crypto_stress": "Leverage and withdrawal conditions separate a positioning flush from balance sheet stress.",
+    "crypto_market_moves": "Breadth, spot volume and derivatives decide whether a price move is broad, liquid and persistent.",
+    "crypto_policy_flows": "The filing or rule matters only after separating legal scope, actual flows and market positioning.",
+    "crypto_exchange_custody": "Venue news becomes systemic when reserves, withdrawals or cross-market liquidity confirm it.",
+    "crypto_defi_security": "Affected contracts, recoverable value and bridge or oracle dependencies define the contagion path.",
+    "crypto_chain_ecosystems": "Protocol delivery and network health matter before token-price reaction is treated as adoption.",
+    "crypto_launches_memes": "Launch count is not quality, concentration, migration and live DEX liquidity are the useful checks.",
+    "crypto_adoption_business": "Usage, settlement volume and retained users separate adoption from partnership or funding headlines.",
     "policy_shock": "Facility mechanics matter before the policy label.",
     "india_watch": "Supervisory action is the signal, ratings and market reaction arrive later.",
     "corporate_stress": "Trace the shock from funding access into investment, payrolls and supplier terms.",
@@ -343,6 +501,8 @@ FEEDS: list[tuple[str, str, float]] = [
     ("rbi_press", "https://rbi.org.in/pressreleases_rss.xml", 1.0),
     ("ecb", "https://www.ecb.europa.eu/rss/press.html", 1.0),
     ("sec", "https://www.sec.gov/news/pressreleases.rss", 0.95),
+    ("cftc_press", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", 1.0),
+    ("cftc_enforcement", "https://www.cftc.gov/RSS/RSSENF/rssenf.xml", 1.0),
     ("fsb", "https://www.fsb.org/feed/", 0.9),
     ("bbg_markets", "https://feeds.bloomberg.com/markets/news.rss", 0.8),
     ("bbg_econ", "https://feeds.bloomberg.com/economics/news.rss", 0.8),
@@ -356,6 +516,14 @@ FEEDS: list[tuple[str, str, float]] = [
     ("mw_top", "https://feeds.content.dowjones.io/public/rss/mw_topstories", 0.5),
     ("coindesk", "https://www.coindesk.com/arc/outboundfeeds/rss/", 0.6),
     ("theblock", "https://www.theblock.co/rss.xml", 0.6),
+    ("cointelegraph", "https://cointelegraph.com/rss", 0.55),
+    ("decrypt", "https://decrypt.co/feed", 0.55),
+    ("blockworks", "https://blockworks.co/feed", 0.6),
+    ("the_defiant", "https://thedefiant.io/feed", 0.6),
+    ("ethereum_blog", "https://blog.ethereum.org/feed.xml", 0.95),
+    ("solana_news", "https://solana.com/rss.xml", 0.9),
+    ("kraken_blog", "https://blog.kraken.com/feed", 0.85),
+    ("chainalysis", "https://www.chainalysis.com/blog/feed/", 0.8),
     ("ooni", "https://ooni.org/index.xml", 0.9),
     ("citizen_lab", "https://citizenlab.ca/feed/", 0.9),
     ("china_digital_times", "https://chinadigitaltimes.net/feed/", 0.85),
@@ -370,11 +538,16 @@ GNEWS_TIER = 0.65
 SOURCE_NICE = {
     "fed_press": "Federal Reserve", "fdic": "FDIC", "occ": "OCC",
     "rbi_press": "Reserve Bank of India", "ecb": "ECB", "sec": "SEC",
+    "cftc_press": "CFTC", "cftc_enforcement": "CFTC Enforcement",
     "fsb": "FSB", "bbg_markets": "Bloomberg",
     "bbg_econ": "Bloomberg Econ", "wsj_markets": "WSJ", "ft_home": "FT",
     "ft_markets": "FT Markets", "cnbc_markets": "CNBC",
     "yahoo_fin": "Yahoo Finance", "mw_top": "MarketWatch",
-    "coindesk": "CoinDesk", "theblock": "The Block", "ooni": "OONI",
+    "coindesk": "CoinDesk", "theblock": "The Block",
+    "cointelegraph": "Cointelegraph", "decrypt": "Decrypt",
+    "blockworks": "Blockworks", "the_defiant": "The Defiant",
+    "ethereum_blog": "Ethereum Foundation", "solana_news": "Solana",
+    "kraken_blog": "Kraken", "chainalysis": "Chainalysis", "ooni": "OONI",
     "citizen_lab": "Citizen Lab", "china_digital_times": "China Digital Times",
     "et_markets": "Economic Times", "mint_markets": "Mint",
     "zerohedge": "ZeroHedge",
@@ -922,7 +1095,10 @@ def board_line(beat: str, boards: dict) -> str:
             if r.get("why"):
                 line += f", {str(r['why'])[:70]}"
             return line
-    if beat == "crypto_stress":
+    if beat in ("crypto_stress", "crypto_market_moves", "crypto_policy_flows",
+                "crypto_exchange_custody", "crypto_defi_security",
+                "crypto_chain_ecosystems", "crypto_launches_memes",
+                "crypto_adoption_business"):
         c = boards.get("crypto")
         if c and c.get("state"):
             if c.get("btc") and c.get("eth"):
@@ -968,6 +1144,12 @@ def board_line(beat: str, boards: dict) -> str:
     return "board read unavailable this run"
 
 
+def _crypto_board_stressed(boards: dict) -> bool:
+    return str((boards.get("crypto") or {}).get("state") or "").upper() in (
+        "WATCH", "ALARM",
+    )
+
+
 _BEAT_STRESSED = {
     "plumbing": lambda b: (b.get("seiche") or {}).get("regime") in ("EROSION", "STRAIN"),
     "policy_shock": lambda b: (b.get("seiche") or {}).get("regime") == "STRAIN",
@@ -978,8 +1160,14 @@ _BEAT_STRESSED = {
     "market_liquidity": lambda b: ((b.get("ut") or {}).get("off") or 0) > 0,
     "stablecoin_rails": lambda b: str((b.get("rails") or {}).get("state") or "")
                                   .upper() in ("WATCH", "ALARM"),
-    "crypto_stress": lambda b: str((b.get("crypto") or {}).get("state") or "")
-                               .upper() in ("WATCH", "ALARM"),
+    "crypto_stress": _crypto_board_stressed,
+    "crypto_market_moves": _crypto_board_stressed,
+    "crypto_policy_flows": _crypto_board_stressed,
+    "crypto_exchange_custody": _crypto_board_stressed,
+    "crypto_defi_security": _crypto_board_stressed,
+    "crypto_chain_ecosystems": _crypto_board_stressed,
+    "crypto_launches_memes": _crypto_board_stressed,
+    "crypto_adoption_business": _crypto_board_stressed,
     "corporate_stress": lambda b: str((b.get("corp") or {}).get("verdict") or "")
                                   == "TRANSMITTING",
     "real_economy": lambda b: (str((b.get("india") or {}).get("regime") or "")
@@ -1209,8 +1397,8 @@ def rank(items: list[dict], boards: dict, now_ts: float,
                     and not cl["rep"].get("board_event")
                     and any(route["desk"] == desk
                             for route in cl.get("route_beats") or [])]
-        selected_ids.update(
-            cl["story_id"] for cl in coverage[:MAX_DESK_COVERAGE])
+        cap = DESK_COVERAGE_CAPS.get(desk, MAX_DESK_COVERAGE)
+        selected_ids.update(cl["story_id"] for cl in coverage[:cap])
     top = [cl for cl in marked if cl["story_id"] in selected_ids]
     if persist_seen:
         commit_seen(top, now_ts)
@@ -1341,6 +1529,7 @@ def _route_payloads(cl: dict, boards: dict) -> list[dict]:
             "angle": ANGLES.get(beat, ""),
             "fallback_commentary": FALLBACK_COMMENTARY.get(beat, ""),
             "channel_candidate": False,
+            "desk_channel_candidate": False,
         })
     return routes
 
@@ -1389,10 +1578,30 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
             # _best_route_beats places the primary desk first. Only that route
             # owns the shared-channel slot; every route still reaches its bot.
             routes[0]["channel_candidate"] = True
+    desk_candidates: dict[str, list[int]] = {}
+    for desk, cap in DESK_CHANNEL_CAPS.items():
+        selected = []
+        bar = DESK_CHANNEL_BARS.get(desk, CHANNEL_BAR)
+        for index, cl in enumerate(marked):
+            if cl["rep"].get("board_event") or cl["final"] < bar:
+                continue
+            route = next(
+                (candidate for candidate in items[index]["routes"]
+                 if candidate["desk"] == desk),
+                None,
+            )
+            if route is None:
+                continue
+            route["desk_channel_candidate"] = True
+            selected.append(index)
+            if len(selected) >= cap:
+                break
+        desk_candidates[desk] = selected
     return {"schema": "rissaga.news.v2",
             "generated": generated,
             "lexicon": lexicon_version(), "channel_mode": CHANNEL_MODE,
-            "items": items, "channel_candidates": candidates}
+            "items": items, "channel_candidates": candidates,
+            "desk_channel_candidates": desk_candidates}
 
 
 def export_latest(marked: list[dict], boards: dict, now: datetime,
