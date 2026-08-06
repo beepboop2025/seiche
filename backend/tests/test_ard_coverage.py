@@ -45,6 +45,19 @@ def test_json_and_sse_responses_share_one_decoder():
     assert ard._decode_json_or_sse(b"event: message\ndata: " + encoded) == payload
 
 
+def test_registry_result_matches_any_canonical_product_signal():
+    product = next(product for product in ard.PRODUCTS
+                   if product.slug == "seiche")
+    results = [
+        {"identifier": "urn:air:example.com:mcp:unrelated"},
+        {"data": {"name": product.mcp_name}},
+    ]
+    assert ard._matching_ard_result(results, product) == (2, "mcpName")
+    assert ard._matching_ard_result(
+        [{"url": product.mcp_endpoint}], product) == (1, "endpoint")
+    assert ard._matching_ard_result([], product) == (None, None)
+
+
 def test_markdown_keeps_indexing_separate_from_hard_health():
     report = {
         "generatedAt": "2026-08-06T00:00:00+00:00",
@@ -64,8 +77,17 @@ def test_markdown_keeps_indexing_separate_from_hard_health():
                 "errors": []},
             "openapi": {"ok": True, "pathCount": 10, "errors": []},
             "ardSearch": {
-                "ok": True, "indexed": False, "rank": None, "errors": []},
+                name: {
+                    "ok": True, "indexed": False, "rank": None,
+                    "errors": [],
+                }
+                for name in ard.ARD_REGISTRIES
+            },
         }
     rendered = ard.render_markdown(report)
-    assert rendered.count("not indexed") == len(ard.PRODUCTS)
+    assert rendered.count("not indexed") == (
+        len(ard.PRODUCTS) * len(ard.ARD_REGISTRIES))
+    assert "GitHub" in rendered
+    assert "Ora" in rendered
+    assert "HF" in rendered
     assert "coverage gaps, not hard failures" in rendered
