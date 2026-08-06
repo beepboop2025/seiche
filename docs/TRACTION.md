@@ -53,16 +53,20 @@ Machine discovery has its own leading indicators:
   tool; this probe deliberately does not call a tool and inflate activation;
 - every catalog's OpenAPI reference resolves to a 3.x contract with at least
   one path;
-- rank, or absence, for one representative intent query per product in the
-  Hugging Face ARD reference registry.
+- rank, or absence, for one representative intent query per product in three
+  ARD reference implementations: GitHub Agent Finder, Ora, and Hugging Face
+  Discover. A product counts as indexed if any registry returns a canonical
+  identifier, MCP name, endpoint, or catalog domain for that intent.
 
 Run `python backend/scripts/ard_coverage.py` for the live scorecard. The
 `agent-discovery-coverage` workflow preserves a JSON report every Monday and
 Thursday; use `--strict-indexing` only after registries have had time to ingest
 the catalogs. The pre-launch baseline on 2026-08-06 was 0/3 live ARD catalogs
-and 0/3 semantic-search results, while all three products were already current
-in the official MCP Registry. That separates the distribution gap from the
-execution layer.
+and 0/3 products returned by any tested intent-search registry, while all three
+products were already current in the official MCP Registry. That separates the
+distribution gap from the execution layer. Registry operators choose what they
+index, so publishing a valid catalog creates eligibility rather than promising
+inclusion.
 
 The first 14 live days establish the baseline. After that, optimize for more
 successful calls without lowering success rate. A pageview increase with flat

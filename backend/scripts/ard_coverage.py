@@ -32,7 +32,16 @@ from urllib.request import Request, urlopen
 
 
 MCP_REGISTRY = "https://registry.modelcontextprotocol.io/v0.1/servers"
-ARD_SEARCH = "https://huggingface-hf-discover.hf.space/search"
+ARD_REGISTRIES = {
+    "github": "https://agentfinder.github.com/api/v1/search",
+    "ora": "https://ora.ai/api/ard/search",
+    "huggingFace": "https://huggingface-hf-discover.hf.space/search",
+}
+ARD_REGISTRY_LABELS = {
+    "github": "GitHub",
+    "ora": "Ora",
+    "huggingFace": "HF",
+}
 USER_AGENT = "LiquidityLab-ARD-Coverage/1.0 (+https://seiche.info/developers.html)"
 URN = re.compile(r"^urn:air:[a-zA-Z0-9.-]+(:[a-zA-Z0-9._-]+)+$")
 SCALAR = (str, int, float, bool, type(None))
@@ -365,7 +374,28 @@ def probe_openapi(product: Product, timeout: float) -> dict[str, Any]:
         return {"ok": False, "errors": [str(exc)]}
 
 
-def probe_ard_search(product: Product, timeout: float) -> dict[str, Any]:
+def _matching_ard_result(
+        results: list[Any], product: Product) -> tuple[int | None, str | None]:
+    """Return the first rank and canonical product signal in ARD results."""
+    signals = (
+        ("identifier", product.mcp_identifier),
+        ("mcpName", product.mcp_name),
+        ("endpoint", product.mcp_endpoint),
+        ("catalogHost", urlparse(product.catalog_url).hostname or ""),
+    )
+    for index, row in enumerate(results, start=1):
+        if not isinstance(row, dict):
+            continue
+        serialized = json.dumps(row, sort_keys=True).casefold()
+        for label, signal in signals:
+            if signal and signal.casefold() in serialized:
+                return index, label
+    return None, None
+
+
+def probe_ard_search(
+        product: Product, registry: str, url: str,
+        timeout: float) -> dict[str, Any]:
     request = {
         "query": {
             "text": product.intent_query,
@@ -374,20 +404,20 @@ def probe_ard_search(product: Product, timeout: float) -> dict[str, Any]:
         "pageSize": 10,
     }
     try:
-        payload, _ = _request_json(ARD_SEARCH, timeout=timeout, payload=request)
+        payload, _ = _request_json(url, timeout=timeout, payload=request)
         results = payload.get("results", [])
-        rank = None
-        for index, row in enumerate(results, start=1):
-            if isinstance(row, dict) and row.get("identifier") == (
-                    product.mcp_identifier):
-                rank = index
-                break
+        if not isinstance(results, list):
+            raise ProbeError(f"{registry} response has no results array")
+        rank, matched_by = _matching_ard_result(results, product)
         return {
             "ok": True,
             "indexed": rank is not None,
             "rank": rank,
+            "matchedBy": matched_by,
             "resultCount": len(results),
             "query": product.intent_query,
+            "registry": registry,
+            "url": url,
             "errors": [],
         }
     except ProbeError as exc:
@@ -396,6 +426,8 @@ def probe_ard_search(product: Product, timeout: float) -> dict[str, Any]:
             "indexed": False,
             "rank": None,
             "query": product.intent_query,
+            "registry": registry,
+            "url": url,
             "errors": [str(exc)],
         }
 
@@ -410,7 +442,15 @@ def _run_product(product: Product, source: str, timeout: float,
         report["mcpRegistry"] = probe_registry(product, timeout)
         report["mcpInventory"] = probe_mcp(product, timeout)
         report["openapi"] = probe_openapi(product, timeout)
-        report["ardSearch"] = probe_ard_search(product, timeout)
+        with ThreadPoolExecutor(max_workers=len(ARD_REGISTRIES)) as pool:
+            searches = {
+                name: pool.submit(
+                    probe_ard_search, product, name, url, timeout)
+                for name, url in ARD_REGISTRIES.items()
+            }
+            report["ardSearch"] = {
+                name: future.result() for name, future in searches.items()
+            }
     return product.slug, report
 
 
@@ -433,10 +473,12 @@ def run(*, catalog_sources: dict[str, str], timeout: float,
         for key in ("catalog", "mcpRegistry", "mcpInventory", "openapi"):
             if key in row and not row[key]["ok"]:
                 hard_failures.append(f"{product.slug}.{key}")
-        search = row.get("ardSearch")
-        if search and search.get("indexed"):
+        searches = row.get("ardSearch", {})
+        product_indexed = any(
+            search.get("indexed") for search in searches.values())
+        if product_indexed:
             indexed += 1
-        elif strict_indexing and search:
+        elif strict_indexing and searches:
             hard_failures.append(f"{product.slug}.ardSearch")
 
     return {
@@ -449,6 +491,11 @@ def run(*, catalog_sources: dict[str, str], timeout: float,
             "catalogsHealthy": sum(
                 bool(products[p.slug]["catalog"]["ok"]) for p in PRODUCTS),
             "productsIndexed": indexed if not local_only else None,
+            "registryCoverage": ({
+                name: sum(bool(products[p.slug]["ardSearch"][name]["indexed"])
+                          for p in PRODUCTS)
+                for name in ARD_REGISTRIES
+            } if not local_only else None),
             "productCount": len(PRODUCTS),
         },
         "products": {p.slug: products[p.slug] for p in PRODUCTS},
@@ -474,15 +521,23 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"| {product.slug} | {_status(row['ok'])} | "
                 f"{row.get('entryCount', '—')} |")
     else:
+        registry_headers = " | ".join(ARD_REGISTRY_LABELS.values())
+        registry_rules = "|".join("---:" for _ in ARD_REGISTRIES)
         lines += [
-            "| Product | ARD catalog | MCP Registry | Live tools | OpenAPI | ARD search |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| Product | ARD catalog | MCP Registry | Live tools | OpenAPI | "
+            f"{registry_headers} |",
+            f"|---|---:|---:|---:|---:|{registry_rules}|",
         ]
         for product in PRODUCTS:
             row = report["products"][product.slug]
-            search = row["ardSearch"]
-            search_state = (f"rank {search['rank']}" if search.get("indexed")
-                            else "not indexed")
+            search_states = {}
+            for name, search in row["ardSearch"].items():
+                if not search["ok"]:
+                    search_states[name] = "probe failed"
+                elif search.get("indexed"):
+                    search_states[name] = f"rank {search['rank']}"
+                else:
+                    search_states[name] = "not indexed"
             lines.append(
                 f"| {product.slug} | {_status(row['catalog']['ok'])} | "
                 f"{_status(row['mcpRegistry']['ok'])} "
@@ -491,7 +546,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"({row['mcpInventory'].get('toolCount', '—')}) | "
                 f"{_status(row['openapi']['ok'])} "
                 f"({row['openapi'].get('pathCount', '—')} paths) | "
-                f"{search_state} |")
+                + " | ".join(search_states[name] for name in ARD_REGISTRIES)
+                + " |")
 
     details = []
     for product in PRODUCTS:
@@ -501,6 +557,11 @@ def render_markdown(report: dict[str, Any]) -> str:
                 continue
             for error in result.get("errors", []):
                 details.append(f"- `{product.slug}.{surface}`: {error}")
+            if surface == "ardSearch":
+                for registry, search in result.items():
+                    for error in search.get("errors", []):
+                        details.append(
+                            f"- `{product.slug}.ardSearch.{registry}`: {error}")
     if details:
         lines += ["", "## Findings", "", *details]
     if not report["localOnly"] and not report["strictIndexing"]:
