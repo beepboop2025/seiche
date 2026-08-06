@@ -11,7 +11,8 @@ surfaces. It treats traction as repeated useful answers, not endpoint traffic.
 
 ## The funnel
 
-1. **Discovery:** a developer-page view in Cloudflare Web Analytics.
+1. **Discovery:** a developer-page view in Cloudflare Web Analytics, or the
+   product appearing for a representative intent query in an ARD registry.
 2. **Intent:** an API-catalog or source-code outbound click. Use aggregate
    Cloudflare referrers; do not add fingerprinting.
 3. **Activation:** a successful MCP `tools/call`. This is the primary metric.
@@ -43,6 +44,26 @@ Report, per product and in total:
 - subscriber-surface calls, reported separately;
 - week-over-week change for each figure.
 
+Machine discovery has its own leading indicators:
+
+- all three `/.well-known/ai-catalog.json` endpoints return a valid ARD 1.0
+  envelope with cross-origin access;
+- the official MCP Registry carries the same current version as each catalog;
+- anonymous `tools/list` returns the advertised inventory and first activation
+  tool; this probe deliberately does not call a tool and inflate activation;
+- every catalog's OpenAPI reference resolves to a 3.x contract with at least
+  one path;
+- rank, or absence, for one representative intent query per product in the
+  Hugging Face ARD reference registry.
+
+Run `python backend/scripts/ard_coverage.py` for the live scorecard. The
+`agent-discovery-coverage` workflow preserves a JSON report every Monday and
+Thursday; use `--strict-indexing` only after registries have had time to ingest
+the catalogs. The pre-launch baseline on 2026-08-06 was 0/3 live ARD catalogs
+and 0/3 semantic-search results, while all three products were already current
+in the official MCP Registry. That separates the distribution gap from the
+execution layer.
+
 The first 14 live days establish the baseline. After that, optimize for more
 successful calls without lowering success rate. A pageview increase with flat
 successful calls is an onboarding problem; calls rising with errors is a
@@ -65,7 +86,11 @@ request logs into a marketing tool.
    first activation tool from a clean client.
 2. Deploy the three public sites and verify the live runners from a browser,
    including CORS preflight.
-3. Confirm the curated catalogs at `/api`, `/api`, and `/undertow/`.
+3. Confirm the curated API catalogs at `/api`, `/api`, and `/undertow/`, plus
+   the ARD catalogs at:
+   - `https://liquilens.in/.well-known/ai-catalog.json`
+   - `https://seiche.info/.well-known/ai-catalog.json`
+   - `https://liquilens-undertow.com/.well-known/ai-catalog.json`
 4. Publish the new `server.json` versions through each repository's
    `registry-publish.yml` workflow only after its live server reports that
    version.

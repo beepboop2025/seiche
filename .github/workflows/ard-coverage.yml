@@ -1,0 +1,45 @@
+name: agent-discovery-coverage
+
+on:
+  schedule:
+    - cron: "23 6 * * 1,4"
+  workflow_dispatch:
+    inputs:
+      strict_indexing:
+        description: Fail when a product is absent from ARD semantic search
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Probe catalogs, the official MCP Registry, and ARD search
+        env:
+          STRICT_INDEXING: ${{ inputs.strict_indexing || 'false' }}
+        run: |
+          args=()
+          if [[ "$STRICT_INDEXING" == "true" ]]; then
+            args+=(--strict-indexing)
+          fi
+          python backend/scripts/ard_coverage.py \
+            --json-out ard-coverage.json "${args[@]}" | tee ard-coverage.md
+          cat ard-coverage.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve the machine-readable scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ard-coverage-${{ github.run_id }}
+          path: |
+            ard-coverage.json
+            ard-coverage.md
+          retention-days: 30
