@@ -35,6 +35,7 @@ interface Props {
 }
 
 type RangeKey = "1Y" | "3Y" | "ALL";
+type CursorReadout = { date: string; values: (number | null)[] };
 
 /**
  * Gesture layer: ctrl/⌘+scroll zooms the time axis around the cursor (browsers
@@ -105,7 +106,17 @@ function gesturePlugin(): uPlot.Plugin {
 export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines, source, asOf, note }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const cursorIndexRef = useRef<number | null>(null);
+  const animationRef = useRef<number | null>(null);
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const viewRef = useRef<{ min: number; max: number } | null>(null);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const [range, setRange] = useState<RangeKey>("ALL");
+  const [expanded, setExpanded] = useState(false);
+  const [readout, setReadout] = useState<CursorReadout | null>(null);
 
   const buildData = (): uPlot.AlignedData => {
     const xs = rows.map((r) => new Date(r[0] as string).getTime() / 1000);
@@ -124,17 +135,152 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
     return { min: Math.max(min, floor), max };
   };
 
+  const dataBounds = (): { min: number; max: number } | null => {
+    const activeRows = rowsRef.current;
+    if (activeRows.length < 2) return null;
+    return {
+      min: new Date(activeRows[0][0] as string).getTime() / 1000,
+      max: new Date(activeRows[activeRows.length - 1][0] as string).getTime() / 1000,
+    };
+  };
+
+  const animateScale = (targetMin: number, targetMax: number) => {
+    const plot = plotRef.current;
+    const bounds = dataBounds();
+    if (!plot || !bounds || targetMax <= targetMin) return;
+
+    const width = Math.min(targetMax - targetMin, bounds.max - bounds.min);
+    let endMin = Math.max(bounds.min, targetMin);
+    let endMax = endMin + width;
+    if (endMax > bounds.max) {
+      endMax = bounds.max;
+      endMin = endMax - width;
+    }
+    const startMin = plot.scales.x.min ?? bounds.min;
+    const startMax = plot.scales.x.max ?? bounds.max;
+    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      plot.setScale("x", { min: endMin, max: endMax });
+      return;
+    }
+    const started = performance.now();
+    const duration = 180;
+    const frame = (now: number) => {
+      const t = Math.min(1, (now - started) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      plot.setScale("x", {
+        min: startMin + (endMin - startMin) * eased,
+        max: startMax + (endMax - startMax) * eased,
+      });
+      if (t < 1) animationRef.current = requestAnimationFrame(frame);
+      else animationRef.current = null;
+    };
+    animationRef.current = requestAnimationFrame(frame);
+  };
+
   const chooseRange = (key: RangeKey) => {
     setRange(key);
+    const full = dataBounds();
+    if (!full) return;
+    const selected = rangeBounds(key);
+    animateScale(selected?.min ?? full.min, selected?.max ?? full.max);
+  };
+
+  const zoomBy = (factor: number) => {
     const plot = plotRef.current;
-    if (!plot || rows.length < 2) return;
-    const bounds = rangeBounds(key);
-    if (bounds) plot.setScale("x", bounds);
-    else {
-      const xs = plot.data[0];
-      plot.setScale("x", { min: xs[0] as number, max: xs[xs.length - 1] as number });
+    const bounds = dataBounds();
+    if (!plot || !bounds) return;
+    const min = plot.scales.x.min ?? bounds.min;
+    const max = plot.scales.x.max ?? bounds.max;
+    const center = (min + max) / 2;
+    const half = Math.max(
+      (max - min) * factor / 2,
+      (bounds.max - bounds.min) / Math.max(rowsRef.current.length, 2),
+    );
+    animateScale(center - half, center + half);
+  };
+
+  const panBy = (direction: -1 | 1) => {
+    const plot = plotRef.current;
+    const bounds = dataBounds();
+    if (!plot || !bounds) return;
+    const min = plot.scales.x.min ?? bounds.min;
+    const max = plot.scales.x.max ?? bounds.max;
+    const distance = (max - min) * 0.22 * direction;
+    animateScale(min + distance, max + distance);
+  };
+
+  const resetZoom = () => {
+    const bounds = dataBounds();
+    if (!bounds) return;
+    setRange("ALL");
+    animateScale(bounds.min, bounds.max);
+  };
+
+  const openExplorer = () => {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : ref.current;
+    setExpanded(true);
+  };
+  const closeExplorer = () => setExpanded(false);
+
+  const handlePlotKey = (event: React.KeyboardEvent) => {
+    const key = event.key;
+    if ((key === "Enter" || key === " ") && !expanded) {
+      event.preventDefault();
+      openExplorer();
+    } else if (key === "Escape") {
+      event.preventDefault();
+      expanded ? closeExplorer() : resetZoom();
+    } else if (key === "ArrowLeft" || key === "ArrowRight") {
+      event.preventDefault();
+      panBy(key === "ArrowLeft" ? -1 : 1);
+    } else if (key === "+" || key === "=") {
+      event.preventDefault();
+      zoomBy(0.72);
+    } else if (key === "-" || key === "_") {
+      event.preventDefault();
+      zoomBy(1.38);
+    } else if (key === "0") {
+      event.preventDefault();
+      resetZoom();
     }
   };
+
+  useEffect(() => {
+    if (!expanded) return;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeExplorer();
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        panBy(event.key === "ArrowLeft" ? -1 : 1);
+      } else if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoomBy(0.72);
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomBy(1.38);
+      } else if (event.key === "0") {
+        event.preventDefault();
+        resetZoom();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => closeRef.current?.focus());
+    return () => {
+      document.body.style.overflow = oldOverflow;
+      window.removeEventListener("keydown", onKey);
+      const returnTo = returnFocusRef.current;
+      requestAnimationFrame(() => { if (returnTo?.isConnected) returnTo.focus(); });
+    };
+  }, [expanded]);
 
   // One options builder serves the live plot and the export render; the export
   // draws its own legend and cursor-free frame at card width, with fonts sized
@@ -180,6 +326,32 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
       });
     }
 
+    const hooks: uPlot.Hooks.Arrays = {};
+    if (drawHooks.length) hooks.draw = drawHooks;
+    if (!forExport) {
+      hooks.setCursor = [(u) => {
+        const idx = u.cursor.idx ?? null;
+        if (idx === cursorIndexRef.current) return;
+        cursorIndexRef.current = idx;
+        if (idx == null || !rows[idx]) {
+          setReadout(null);
+          return;
+        }
+        setReadout({
+          date: String(rows[idx][0]),
+          values: series.map((_, seriesIndex) => {
+            const value = rows[idx][seriesIndex + 1];
+            return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+          }),
+        });
+      }];
+      hooks.setScale = [(u, key) => {
+        if (key === "x" && u.scales.x.min != null && u.scales.x.max != null) {
+          viewRef.current = { min: u.scales.x.min, max: u.scales.x.max };
+        }
+      }];
+    }
+
     return {
       width,
       height: h,
@@ -215,7 +387,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
             : { show: false },
         })),
       ],
-      hooks: drawHooks.length ? { draw: drawHooks } : undefined,
+      hooks,
       plugins: forExport ? [] : [gesturePlugin()],
     };
   };
@@ -302,23 +474,34 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
   useEffect(() => {
     if (!ref.current || rows.length === 0) return;
     plotRef.current?.destroy();
+    cursorIndexRef.current = null;
+    const plotHeight = () => expanded ? Math.max(260, window.innerHeight - 300) : height;
     plotRef.current = new uPlot(
-      makeOpts(ref.current.clientWidth, height, false), buildData(), ref.current,
+      makeOpts(ref.current.clientWidth, plotHeight(), false), buildData(), ref.current,
     );
-    const bounds = rangeBounds(range);
-    if (bounds) plotRef.current.setScale("x", bounds);
+    const full = dataBounds();
+    const remembered = viewRef.current;
+    if (full && remembered) {
+      const width = Math.min(remembered.max - remembered.min, full.max - full.min);
+      const min = Math.max(full.min, Math.min(remembered.min, full.max - width));
+      plotRef.current.setScale("x", { min, max: min + width });
+    } else {
+      const bounds = rangeBounds(range);
+      if (bounds) plotRef.current.setScale("x", bounds);
+    }
 
     const onResize = () => {
       if (ref.current && plotRef.current)
-        plotRef.current.setSize({ width: ref.current.clientWidth, height });
+        plotRef.current.setSize({ width: ref.current.clientWidth, height: plotHeight() });
     };
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
+      if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [rows, series, height, yLabel, refLine, vlines, range]);
+  }, [rows, series, height, yLabel, refLine, vlines, expanded]);
 
   // "reveal" wipes the plot in on first paint (a clip-path animation the
   // compositor can run); data refreshes redraw in place without replaying it.
@@ -329,8 +512,25 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
     : 0;
   const latest = rows.length ? rows[rows.length - 1] : null;
 
+  const chartTitle = yLabel ?? (series.map((item) => item.label).join(", ") || "Seiche chart");
+
   return (
-    <figure className="chartbox">
+    <div
+      className={`chart-shell${expanded ? " chart-shell--expanded" : ""}`}
+      role={expanded ? "dialog" : undefined}
+      aria-modal={expanded ? true : undefined}
+      aria-label={expanded ? `${chartTitle} explorer` : undefined}
+      onMouseDown={(event) => {
+        if (expanded && event.target === event.currentTarget) closeExplorer();
+      }}
+    >
+    <figure className={`chartbox${expanded ? " chartbox--expanded" : ""}`}>
+      {expanded && (
+        <div className="chart-explorer-head">
+          <div><span>INTERACTIVE CHART</span><h2>{chartTitle}</h2></div>
+          <button ref={closeRef} type="button" onClick={closeExplorer}>Close <kbd>Esc</kbd></button>
+        </div>
+      )}
       <div className="chart-evidence">
         <div className="chart-evidence__facts">
           <span>{source ?? "Seiche point-in-time series"}</span>
@@ -342,20 +542,55 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
             </span>
           ))}
         </div>
-        <div className="chart-ranges" aria-label="Chart time range">
-          {spanDays > 400 && (["1Y", "3Y", "ALL"] as RangeKey[]).map((key) => (
-            <button key={key} type="button" className={range === key ? "on" : ""} onClick={() => chooseRange(key)}>
-              {key}
+        <div className="chart-controls">
+          <div className="chart-ranges" aria-label="Chart time range">
+            {spanDays > 400 && (["1Y", "3Y", "ALL"] as RangeKey[]).map((key) => (
+              <button key={key} type="button" className={range === key ? "on" : ""} onClick={() => chooseRange(key)}>
+                {key}
+              </button>
+            ))}
+          </div>
+          <div className="chart-nav" aria-label="Chart navigation controls">
+            <button type="button" onClick={() => panBy(-1)} aria-label="Pan earlier" title="Pan earlier · Left arrow">←</button>
+            <button type="button" onClick={() => zoomBy(1.38)} aria-label="Zoom out" title="Zoom out · minus">−</button>
+            <button type="button" onClick={() => zoomBy(0.72)} aria-label="Zoom in" title="Zoom in · plus">+</button>
+            <button type="button" onClick={() => panBy(1)} aria-label="Pan later" title="Pan later · Right arrow">→</button>
+            <button type="button" onClick={resetZoom} aria-label="Reset chart zoom" title="Reset zoom · 0">RESET</button>
+            <button type="button" className="chart-expand" onClick={expanded ? closeExplorer : openExplorer} aria-label={expanded ? "Close chart explorer" : "Open chart explorer"}>
+              {expanded ? "CLOSE" : "EXPLORE ↗"}
             </button>
-          ))}
+          </div>
         </div>
       </div>
       <div
         className="uplot-wrap reveal"
         ref={ref}
-        role="img"
-        aria-label={`${yLabel ?? series.map((item) => item.label).join(", ")} chart, ${rows.length} observations through ${asOf ?? lastDate ?? "an unavailable date"}`}
+        role="group"
+        tabIndex={0}
+        aria-label={`${chartTitle}, ${rows.length} observations through ${asOf ?? lastDate ?? "an unavailable date"}. Press Enter to expand; plus and minus zoom; arrow keys pan; zero resets; Escape closes.`}
+        onKeyDown={handlePlotKey}
+        onPointerDown={(event) => { pointerStartRef.current = { x: event.clientX, y: event.clientY }; }}
+        onPointerCancel={() => { pointerStartRef.current = null; }}
+        onPointerUp={(event) => {
+          const start = pointerStartRef.current;
+          pointerStartRef.current = null;
+          if (!expanded && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) {
+            openExplorer();
+          }
+        }}
       />
+      <div className="chart-readout" aria-label="Selected chart observation">
+        {readout ? (
+          <>
+            <time>{readout.date}</time>
+            {series.map((item, index) => (
+              <span key={item.label}><i style={{ background: item.color }} />{item.label} <b>{readout.values[index] == null ? "—" : fmt(readout.values[index], 3)}</b></span>
+            ))}
+          </>
+        ) : (
+          <span>Move across the plot for an exact dated reading · click to explore</span>
+        )}
+      </div>
       {note && <figcaption className="chart-note">{note}</figcaption>}
       <div className="chartfoot">
         <div className="chart-actions">
@@ -365,8 +600,9 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
           />
           <CopyCSV rows={[["date", ...series.map((item) => item.label)], ...rows]} label="copy data" />
         </div>
-        <div className="zoomhint">drag to zoom · ⌘/ctrl+scroll or pinch to zoom · double-click resets</div>
+        <div className="zoomhint">drag to zoom · scroll/pinch · arrows pan · +/− zoom · 0 reset · Esc closes</div>
       </div>
     </figure>
+    </div>
   );
 }

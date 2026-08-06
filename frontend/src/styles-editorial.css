@@ -102,16 +102,39 @@
 .dispatch-body--desk { margin-top: 42px; padding-top: 6px; background: var(--rule) no-repeat top / 100% 1px; }
 .dispatch-body h2:first-child { margin-top: 0; font-size: 23px; }
 
+.chart-shell { min-width: 0; width: 100%; }
+.chart-shell--expanded { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: clamp(10px, 2.2vw, 32px); background: rgba(4, 5, 9, .82); backdrop-filter: blur(18px) saturate(.8); animation: chart-backdrop-in .2s var(--ease) both; }
+.chartbox--expanded { width: min(1500px, 100%); max-height: calc(100vh - clamp(20px, 4.4vw, 64px)); overflow: auto; overscroll-behavior: contain; padding: clamp(14px, 2vw, 28px); border: 1px solid var(--panel-edge-2); border-radius: 16px; background: linear-gradient(145deg, rgba(156,143,232,.045), transparent 45%), var(--bg); box-shadow: 0 30px 100px rgba(0,0,0,.55); animation: chart-explorer-in .24s var(--rise) both; }
+@keyframes chart-backdrop-in { from { opacity: 0; } }
+@keyframes chart-explorer-in { from { opacity: 0; transform: translateY(10px) scale(.992); } to { opacity: 1; transform: none; } }
+.chart-explorer-head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--panel-edge); }
+.chart-explorer-head span { color: var(--accent); font: 8.5px var(--mono); letter-spacing: .12em; }
+.chart-explorer-head h2 { margin-top: 4px; color: var(--chart-ink-bright); font-size: clamp(18px, 2.4vw, 30px); font-weight: 500; letter-spacing: -.025em; }
+.chart-explorer-head button { flex: 0 0 auto; border: 1px solid var(--panel-edge-2); border-radius: 7px; padding: 7px 10px; color: var(--dim); background: var(--panel); font: 9px var(--mono); cursor: pointer; }
+.chart-explorer-head button:hover, .chart-explorer-head button:focus-visible { color: var(--accent-bright); border-color: var(--accent-deep); outline: none; }
+.chart-explorer-head kbd { margin-left: 5px; color: var(--ghost); font: inherit; }
 .chart-evidence { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 7px 0 5px; }
 .chart-evidence__facts { display: flex; flex-wrap: wrap; gap: 5px 14px; color: var(--ghost); font: 8.5px var(--mono); }
 .chart-evidence__latest { color: var(--dim); }
-.chart-ranges { display: flex; gap: 2px; }
-.chart-ranges button { border: 1px solid transparent; border-radius: 4px; padding: 2px 5px; color: var(--ghost); background: transparent; font: 8.5px var(--mono); cursor: pointer; }
-.chart-ranges button:hover, .chart-ranges button.on { color: var(--accent-bright); border-color: var(--accent-deep); background: rgba(156,143,232,.08); }
+.chart-controls { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px 10px; }
+.chart-ranges, .chart-nav { display: flex; gap: 2px; }
+.chart-ranges button, .chart-nav button { border: 1px solid transparent; border-radius: 4px; min-width: 23px; padding: 3px 5px; color: var(--ghost); background: transparent; font: 8.5px var(--mono); cursor: pointer; transition: color .16s var(--ease), border-color .16s var(--ease), background .16s var(--ease), transform .16s var(--ease); }
+.chart-ranges button:hover, .chart-ranges button.on, .chart-nav button:hover, .chart-nav button:focus-visible { color: var(--accent-bright); border-color: var(--accent-deep); background: rgba(156,143,232,.08); outline: none; }
+.chart-nav button:active { transform: scale(.93); }
+.chart-nav .chart-expand { min-width: 68px; margin-left: 3px; color: var(--accent-soft); border-color: var(--accent-deep); }
+.uplot-wrap[tabindex] { cursor: zoom-in; border-radius: 5px; outline: 1px solid transparent; outline-offset: 3px; }
+.uplot-wrap[tabindex]:focus-visible { outline-color: var(--accent-deep); }
+.chartbox--expanded .uplot-wrap[tabindex] { cursor: crosshair; }
+.chart-readout { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 16px; min-height: 27px; padding: 6px 8px; border-top: 1px solid var(--panel-edge); border-bottom: 1px solid var(--panel-edge); color: var(--ghost); font: 8.5px var(--mono); }
+.chart-readout time { color: var(--accent-soft); }
+.chart-readout span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-readout i { width: 6px; height: 6px; border-radius: 50%; }
+.chart-readout b { color: var(--chart-ink-bright); font-weight: 500; }
 .chart-note { margin: 7px 0 3px; color: var(--ghost); font-size: 9.5px; line-height: 1.5; }
 .chart-actions { display: flex; gap: 12px; align-items: baseline; }
 .chart-actions .copycsv { opacity: 0; }
 .chartbox:hover .chart-actions .copycsv, .chartbox:focus-within .chart-actions .copycsv { opacity: 1; }
+.chartbox--expanded .chart-actions .copycsv, .chartbox--expanded .sharebar, .chartbox--expanded .zoomhint { opacity: 1; }
 
 @media (max-width: 900px) {
   .today-hero__grid { grid-template-columns: 1fr; gap: 24px; }
@@ -129,6 +152,8 @@
   .today-method { grid-template-columns: 1fr; gap: 10px; }
   .dispatch-layout { grid-template-columns: 1fr; }
   .dispatch-dossier { position: static; display: none; }
+  .chart-evidence { display: block; }
+  .chart-controls { justify-content: flex-start; margin-top: 8px; }
 }
 
 @media (max-width: 600px) {
@@ -141,8 +166,12 @@
   .relay-grid { grid-template-columns: 1fr; }
   .relay-quote { border-right: 0; }
   .today-watch__row { grid-template-columns: 84px 1fr; }
-  .chart-evidence { display: block; }
+  .chart-controls { display: block; }
   .chart-ranges { margin-top: 7px; }
+  .chart-nav { margin-top: 5px; }
+  .chart-shell--expanded { padding: 0; }
+  .chartbox--expanded { width: 100%; max-height: 100vh; min-height: 100vh; border: 0; border-radius: 0; padding: 14px 10px 20px; }
+  .chart-explorer-head { position: sticky; top: -14px; z-index: 2; padding-top: 12px; background: var(--bg); }
   .dispatch-card--archive { grid-template-columns: 1fr auto; gap: 7px 12px; }
   .dispatch-card--archive .dispatch-date { grid-column: 1; grid-row: auto; }
   .dispatch-card--archive .dispatch-card-title { grid-column: 1 / -1; }
@@ -152,4 +181,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .relay-state--live i { animation: none; }
+  .chart-shell--expanded, .chartbox--expanded { animation: none; }
+  .chart-ranges button, .chart-nav button { transition: none; }
 }
