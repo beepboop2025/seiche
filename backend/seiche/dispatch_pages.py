@@ -419,58 +419,69 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
 
 _LLMS_PREAMBLE = f"""# Seiche
 
-> Seiche is free open source software (AGPL-3.0): a funding stress terminal for
-> US money markets built from free public data (Fed H.4.1, NY Fed operations,
-> OFR repo, Treasury cash, plus other public sources, each shown with its
-> native publication lag). It publishes a live stress regime, forward event
-> odds, historical analogs and a point-in-time backtest with the misses kept
-> next to the hits. The board recomputes through the day; the daily letter
-> freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
-> on this site may be read, quoted, indexed and used as AI input or training material.
+Seiche is free, open-source software (AGPL-3.0) for monitoring stress in US
+dollar funding markets. It combines public data on Federal Reserve balances,
+repo rates and operations, Treasury cash and settlement, dealer balance sheets,
+positioning, market liquidity and stablecoins. Each input carries its source,
+observation date and freshness state.
 
-Liquidity intelligence sits on two shelves. Official dashboards give you raw
-series and no view. A terminal that has a view runs about $32k a seat each
-year. Between them, nothing free that holds an opinion and grades itself.
-That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
-standing on it, Undertow prices the exits. All of it runs on free public
-data. The misses are published beside the hits. Read those first. The
-sibling boards: LiquiLens at https://liquilens.in and Undertow at
-https://t.me/undertow_LiquiLens_bot.
+Canonical site: {SITE}
+Source: https://github.com/beepboop2025/seiche
+API: https://api.seiche.info
+MCP: https://api.seiche.info/mcp
 
-Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
-at {SITE}/guide.html; the versioned methodology page, with citations, a
-changelog and a cite-as block, is at {SITE}/methodology.html. The source code
-is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Six tools answer with no auth at all:
-funding_stress_now, historical_analogs, proof_backtest, data_health,
-crypto_stress_record and institutional_flows, metered per IP per day. Five more
-read the derived engines and want a bearer token: funding_stress_forecast,
-replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
-holds can be downloaded as CSV with provenance headers; the catalog is at
-https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
-the backtest record, hits and misses both, and states the competence boundary:
-stress that builds inside the plumbing can be seen early, shocks that arrive
-from outside it cannot.
+## Outputs and evidence
 
-The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
-and https://t.me/LiquidityLabDesk for the public channel. They deliver the
-same product; the callable contract remains the MCP server above.
+The public board reports a 0-100 Seiche Index, a regime label, component values,
+historical analogs and forward event probabilities. Its PROOF page reports
+walk-forward backtests with base-rate comparisons, confidence intervals and
+missed episodes. A point-in-time replay reconstructs prior boards, and an
+append-only record makes later changes to published forecasts detectable.
+
+Core calculations do not depend on a language model. The optional desk assistant
+explains a deterministic context pack. The optional Navigator records forward-only
+model forecasts and has zero weight in the main ensemble until its public record
+provides enough evidence for inclusion. No model-generated value is used as source
+data.
+
+The main limitations are daily rather than intraday cadence, revisions in some
+public macroeconomic series, a small set of historical stress episodes and no
+private supervisory data. A stale or failed feed reduces published coverage instead
+of being replaced with a synthetic value. Outputs are research and monitoring tools,
+not investment advice.
+
+Everything on this site may be read, quoted, indexed and used as AI input or training material.
+
+## API and MCP access
+
+Six MCP tools are available without a token: funding_stress_now,
+historical_analogs, proof_backtest, data_health, crypto_stress_record and
+institutional_flows. Five derived tools require a bearer token:
+funding_stress_forecast, replay_asof, positioning_book, desk_brief and ask_desk.
+The API series catalogue is at https://api.seiche.info/api/series/index.json.
+
+Telegram delivery is available through https://t.me/seiche_desk_bot and
+https://t.me/LiquidityLabDesk. The MCP endpoint remains the callable contract.
+
+Related products: LiquiLens at https://liquilens.in monitors institution-level
+bank and lender distress. Undertow at https://liquilens-undertow.com measures
+market liquidity, depth concentration and estimated exit cost.
 
 ## Docs
 
-- [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
-- [API + MCP quickstart]({SITE}/developers.html): connect an agent or make the first public API call in under a minute
-- [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
+- [Guide]({SITE}/guide.html): definitions for the index, engines and regime labels
+- [API + MCP quickstart]({SITE}/developers.html): client setup and a live public tool runner
+- [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): public REST routes
 - [Selection guide]({SITE}/use-cases.html): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
-- [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
+- [Discovery catalog]({SITE}/.well-known/ai-catalog.json): MCP and OpenAPI contracts
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
-- [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
-- [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
+- [Verification guide]({SITE}/skeptic.html): leakage checks, point-in-time replay and record verification
+- [Reserve ampleness]({SITE}/ampleness.html): indicator-by-indicator reserve conditions and thresholds
 - [Live board]({SITE}/): the current funding stress reading
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
-- [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
+- [Full dispatch corpus]({SITE}/llms-full.txt): every letter's complete text in one file
 
 ## Daily dispatches (markdown)
 """
