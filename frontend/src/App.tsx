@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
+import { Fragment, useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from "react";
 import { flushSync } from "react-dom";
 import Lenis from "lenis";
 import { API_BASE } from "./apiBase";
@@ -290,14 +290,20 @@ function AppInner() {
 
       <nav className="tabs">
         {TABS.map((t) => (
-          <a
-            key={t}
-            href={`#${t.toLowerCase()}`}
-            className={t === tab ? "active" : ""}
-            onClick={(e) => { e.preventDefault(); goTab(t); }}
-          >
-            {t}
-          </a>
+          <Fragment key={t}>
+            <a
+              href={`#${t.toLowerCase()}`}
+              className={t === tab ? "active" : ""}
+              onClick={(e) => { e.preventDefault(); goTab(t); }}
+            >
+              {t}
+            </a>
+            {t === "BOARD" && (
+              <a href="/use-cases.html" aria-label="Seiche use cases and selection guide">
+                USE CASES
+              </a>
+            )}
+          </Fragment>
         ))}
         <button className="cmdk" onClick={() => setPalette(true)} title="command line — function codes or search">⌘K</button>
         <button className="cmdk" onClick={() => setHelp(true)} title="keyboard shortcuts">?</button>

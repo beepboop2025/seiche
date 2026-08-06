@@ -39,6 +39,13 @@ def test_generated_discovery_indexes_include_the_selection_surface():
         assert url in dispatch_pages._LLMS_PREAMBLE
 
 
+def test_terminal_navigation_exposes_the_selection_surface():
+    app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
+    nav = app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
+    assert 'href="/use-cases.html"' in nav
+    assert "USE CASES" in nav
+
+
 def test_search_and_answer_crawlers_are_explicitly_welcome():
     robots = (PUBLIC / "robots.txt").read_text()
     for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
