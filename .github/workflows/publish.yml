@@ -135,7 +135,9 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site || \
             (mkdir /tmp/site && cd /tmp/site && git init -b main && git remote add origin git@github.com:beepboop2025/seiche-site.git)
-          rsync -a --delete --exclude .git frontend/dist/ /tmp/site/
+          # Keep the deployment repository's explanatory README. Everything else
+          # remains an exact mirror of the generated frontend artifact.
+          rsync -a --delete --exclude .git --exclude README.md frontend/dist/ /tmp/site/
           touch /tmp/site/.nojekyll
           cd /tmp/site
           git config user.name "seiche-publish"
