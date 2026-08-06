@@ -22,6 +22,7 @@ const Descent = lazy(() => import("./Descent"));
 const WaveTank = lazy(() => import("./motion/WaveTank"));
 
 const COMPACT_DEVICE_QUERY = "(max-width: 800px), (pointer: coarse)";
+const LIVE_UPGRADE_DELAY_MS = 1500;
 
 const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
   const requestIdle = window.requestIdleCallback?.bind(window);
@@ -193,12 +194,12 @@ function AppInner() {
   const boot = () => {
     void loadSnapshot().then(
       () => {
-        // A new task lets React commit the snapshot before the cross-origin
-        // live request starts. Failure here is non-fatal: the visible snapshot
-        // remains an honest, timestamped fallback.
+        // Give the snapshot and Week Ahead the first-paint window before the
+        // cross-origin refresh competes for mobile bandwidth and parse time.
+        // Failure remains non-fatal: the visible snapshot is timestamped.
         liveUpgradeTimer.current = window.setTimeout(() => {
           void loadApi().catch(() => undefined);
-        }, 0);
+        }, LIVE_UPGRADE_DELAY_MS);
       },
       () => {
         void loadApi().catch((reason) => {
