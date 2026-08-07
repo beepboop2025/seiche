@@ -1,45 +1,15 @@
 {
-  "date": "2026-08-06",
+  "date": "2026-08-07",
   "reported_prev": {
-    "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
-    "3-month T-bill secondary market rate": "2026-08-03",
-    "Treasury General Account": "2026-08-03",
-    "Discount window primary credit (Wed level)": "2026-07-29",
-    "2y Treasury constant maturity yield": "2026-08-03",
-    "Tri-party repo total volume (preliminary)": "2026-07-31",
-    "S&P 500 index": "2026-08-04",
-    "Nasdaq Composite index": "2026-08-04",
-    "10y Treasury constant maturity yield": "2026-08-03"
-  },
-  "reported": {
     "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
     "Discount window primary credit (Wed level)": "2026-07-29",
     "2y Treasury constant maturity yield": "2026-08-04"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.5,
-    "decomp": {
-      "weather": 11.0,
-      "resonance": 6.7,
-      "rvxray": 6.3,
-      "kink": 5.9,
-      "confession": 3.8,
-      "buffers": 3.0,
-      "undertow": 2.9,
-      "warehouse": 2.4,
-      "tails": 2.3,
-      "auctions": 1.1,
-      "hydrophone": 0.1
-    },
-    "crunch": {
-      "date": "2026-08-11",
-      "worst_case_b": 2965.7,
-      "settlement_b": 282.0
-    },
-    "tell": 39.0
+  "reported": {
+    "2y Treasury constant maturity yield": "2026-08-05",
+    "Discount window primary credit (Wed level)": "2026-08-05"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "STRAIN",
     "value": 45.1,
     "decomp": {
@@ -61,5 +31,28 @@
       "settlement_b": 210.0
     },
     "tell": 33.9
+  },
+  "letter": {
+    "regime": "EROSION",
+    "value": 45.0,
+    "decomp": {
+      "weather": 11.0,
+      "resonance": 6.7,
+      "kink": 6.6,
+      "rvxray": 6.3,
+      "buffers": 3.0,
+      "confession": 2.9,
+      "undertow": 2.9,
+      "warehouse": 2.4,
+      "tails": 2.1,
+      "auctions": 1.2,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-13",
+      "worst_case_b": 2954.6,
+      "settlement_b": 266.0
+    },
+    "tell": 31.2
   }
 }
