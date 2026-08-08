@@ -220,7 +220,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the six public tools",
+            "authentication": "none for the eight public tools",
             "first_tool": "funding_stress_now",
         },
         "rest": {
@@ -311,10 +311,13 @@ def _public_openapi_document() -> dict[str, Any]:
         "/api/oil-funding": {
             "get": {
                 "operationId": "getOilFundingContext",
-                "summary": "Read observed oil and dollar-funding cash pressure",
+                "summary": "Read oil, energy-futures and dollar-funding cash pressure",
                 "description": (
-                    "Compact observed WTI, commercial-paper and SOFR evidence "
-                    "kept separate from scenario-only cargo and margin arithmetic."
+                    "Chartless observed spot/funding evidence, Ballast's bounded "
+                    "WTI/Henry Hub gross cash-displacement ledger, live Cushing "
+                    "and Brent−WTI observations separated from dated capacity, "
+                    "benchmark and chokepoint references, and explicitly "
+                    "scenario-only cargo, margin and India arithmetic."
                 ),
                 "responses": {
                     "200": context_response("seiche.oil-funding.v1")
@@ -324,10 +327,10 @@ def _public_openapi_document() -> dict[str, Any]:
         "/api/estuary": {
             "get": {
                 "operationId": "getFxMaterialsPassage",
-                "summary": "Read FX/material pressure and tested Passage links",
+                "summary": "Read FX/material pressure and holdout-tested Passage links",
                 "description": (
-                    "Compares upstream FX and physical-material cash pressure "
-                    "with funding already priced; context only."
+                    "Compares upstream FX and physical-material cash pressure with "
+                    "funding already priced; context only, never a composite input."
                 ),
                 "responses": {"200": context_response("seiche.estuary.v1")},
             },

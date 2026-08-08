@@ -293,6 +293,128 @@ function TransmissionLoop({ s, out, live }: { s: Scenario; out: ScenarioOutputs;
   );
 }
 
+function BallastSection({ ballast }: { ballast: Any }) {
+  if (!ballast?.ok) {
+    return (
+      <section className="oil-ballast" aria-labelledby="oil-ballast-title">
+        <div className="oil-section-head">
+          <div>
+            <span className="oil-kicker oil-kicker--scenario">BALLAST · FUTURES CASH PRESSURE</span>
+            <h2 id="oil-ballast-title">The futures-cash ledger is temporarily dark.</h2>
+          </div>
+          <p>{ballast?.reason ?? "CFTC positioning and benchmark history are not aligned yet."}</p>
+        </div>
+        <div className="oil-ballast__unavailable">
+          Oil × Funding remains available. Ballast refuses to infer futures cash pressure without enough public history.
+        </div>
+      </section>
+    );
+  }
+
+  const headline = ballast.headline ?? {};
+  const dominant = headline.dominant_channel ?? {};
+  const fundingOverlay = headline.funding_overlay ?? {};
+  const inventory = ballast.inventory ?? {};
+  const funding = ballast.funding ?? {};
+  const state = String(headline.state ?? "CANNOT_ASSESS");
+  const stateClass = state.toLowerCase().replaceAll("_", "-");
+  const boundaries = ballast.coverage?.boundaries ?? [];
+
+  return (
+    <section className="oil-ballast" aria-labelledby="oil-ballast-title">
+      <div className="oil-section-head">
+        <div>
+          <span className="oil-kicker oil-kicker--scenario">BALLAST · OBSERVED + BOUNDED DERIVATION</span>
+          <h2 id="oil-ballast-title">How much cash can the futures tape displace?</h2>
+        </div>
+        <p>Weekly gross scale, paying-side concentration and physical stock set the state. The price of cash remains a separate amplifier, so funding cannot manufacture a commodity alert.</p>
+      </div>
+
+      <div className="oil-ballast__headline">
+        <div className={`oil-ballast__state oil-ballast__state--${stateClass}`}>
+          <span>PRESSURE STATE</span><strong>{state.replaceAll("_", " ")}</strong>
+          <small>context only · never composite</small>
+        </div>
+        <div><span>WORST COMMODITY CHANNEL</span><strong>p{fmt(headline.worst_channel_percentile, 1)}</strong><small>{dominant.label ?? "insufficient history"}</small></div>
+        <div><span>DOMINANT PATH</span><strong>{String(dominant.channel ?? "—").replaceAll("_", " ")}</strong><small>own-history rank · no blended score</small></div>
+        <div><span>OBSERVED COVERAGE</span><strong>{fmt(headline.coverage_pct, 1)}%</strong><small>dark fields remain explicit</small></div>
+      </div>
+
+      <div className="oil-ballast__contracts">
+        {(ballast.contracts ?? []).map((contract: Any) => {
+          const cash = contract.cash_transfer_scale ?? {};
+          const price = contract.price_proxy ?? {};
+          const oi = contract.open_interest ?? {};
+          const positioning = contract.positioning ?? {};
+          const priceUnit = contract.key === "HENRY_HUB" ? "$/MMBtu" : "$/bbl";
+          const proxyMove = price.change_since_prior_report == null
+            ? null
+            : Math.abs(Number(price.change_since_prior_report));
+          return (
+            <article key={contract.key}>
+              <div className="oil-ballast__contract-head">
+                <div><span>{contract.key}</span><h3>{contract.label}</h3></div>
+                <time>
+                  <span>positions {contract.report_asof ?? "date unavailable"}</span>
+                  <span>available {contract.available_asof ?? "date unavailable"}</span>
+                </time>
+              </div>
+              <div className="oil-ballast__identity" aria-label={`${contract.label} gross mark displacement identity`}>
+                <div><strong>{fmt(proxyMove, 2)}</strong><small>|Δ spot proxy| · {priceUnit}</small></div>
+                <i aria-hidden="true">×</i>
+                <div><strong>{fmt(oi.contracts, 0)}</strong><small>open contracts</small></div>
+                <i aria-hidden="true">×</i>
+                <div><strong>{fmt(oi.contract_multiplier, 0)}</strong><small>{oi.multiplier_unit}</small></div>
+              </div>
+              <div className="oil-ballast__cash">
+                <strong>{compactUsdMaybe(cash.gross_mark_displacement_usd)}</strong>
+                <span>gross weekly mark-displacement proxy</span>
+                <small>p{fmt(cash.gross_displacement_percentile_5y, 1)} of trailing 5y</small>
+              </div>
+              <dl>
+                <div><dt>proxy move</dt><dd>{Number(price.change_since_prior_report) > 0 ? "+" : ""}{fmt(price.change_since_prior_report, 2)} {priceUnit}</dd></div>
+                <div><dt>open interest</dt><dd>{fmt(oi.contracts, 0)} contracts</dd></div>
+                <div><dt>top-four paying side</dt><dd>{fmt(positioning.top4_paying_side_pct, 1)}%</dd></div>
+                <div><dt>reported-side coverage</dt><dd>{fmt(cash.reported_paying_side_coverage_pct, 1)}%</dd></div>
+              </dl>
+              <div className="oil-ballast__guard">SPOT PROXY · GROSS SCALE · NOT AN OBSERVED MARGIN CALL</div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="oil-ballast__plumbing">
+        <article>
+          <span>PHYSICAL COLLATERAL</span>
+          <h3>Commercial crude inventory</h3>
+          <strong>{fmt(inventory.stocks_million_bbl, 1)}m bbl</strong>
+          <p>{Number(inventory.change_1w_million_bbl) > 0 ? "+" : ""}{fmt(inventory.change_1w_million_bbl, 2)}m bbl in one week · p{fmt(inventory.absolute_weekly_change_percentile_5y, 1)} absolute move</p>
+          <small>EIA period ending {inventory.asof ?? "date unavailable"} · normally available {inventory.available_asof ?? "date unavailable"} · {compactUsdMaybe(inventory.annual_sofr_carry_benchmark_usd)} annual SOFR carry benchmark—not a financed-book estimate.</small>
+        </article>
+        <article>
+          <span>PRICE OF CASH</span>
+          <h3>Funding landing zone</h3>
+          <div className="oil-ballast__overlay">{String(fundingOverlay.status ?? "UNAVAILABLE").replaceAll("_", " ")} · AMPLIFIER, NOT TRIGGER</div>
+          <div className="oil-ballast__funding-row"><b>{fmt(funding.sofr_iorb?.spread_bp, 1)} bp</b><small>SOFR − IORB · p{fmt(funding.sofr_iorb?.percentile_3y, 1)} · {funding.sofr_iorb?.asof ?? "date unavailable"}</small></div>
+          <div className="oil-ballast__funding-row"><b>{fmt(funding.cp_nonfinancial?.spread_bp, 1)} bp</b><small>nonfinancial CP − bill · p{fmt(funding.cp_nonfinancial?.percentile_3y, 1)} · {funding.cp_nonfinancial?.asof ?? "date unavailable"}</small></div>
+        </article>
+        <article className="oil-ballast__coverage">
+          <span>COVERAGE BOUNDARY</span>
+          <h3>What is lit—and what stays dark</h3>
+          <ul>{boundaries.map((row: Any) => (
+            <li key={row.layer}><span>{row.layer}</span><b>{String(row.status).replaceAll("_", " ")}</b></li>
+          ))}</ul>
+        </article>
+      </div>
+
+      <div className="oil-ballast__handoffs">
+        <div><span>→ UNDERTOW</span><strong>What will this position cost to exit?</strong><small>{ballast.handoffs?.undertow?.boundary}</small></div>
+        <div><span>→ LIQUILENS</span><strong>Who has qualifying exposure—and through which funding channel?</strong><small>{ballast.handoffs?.liquilens?.boundary}</small></div>
+      </div>
+    </section>
+  );
+}
+
 function ScatterPlot({ scatter }: { scatter: Any }) {
   const points = (scatter?.points ?? []) as [string, number, number][];
   const fit = scatter?.fit ?? {};
@@ -787,6 +909,7 @@ export default function OilFunding({ snap }: { snap: Any }) {
       </section>
 
       <TransmissionLoop s={scenario} out={outputs} live={live} />
+      <BallastSection ballast={snap.engines?.ballast} />
       <ObservedEvidence engine={engine} />
       <OilStructure engine={engine} />
       <ScenarioLab engine={engine} s={scenario} setS={setScenario} base={base} />

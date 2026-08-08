@@ -26,6 +26,8 @@ Commands
   /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
   /turns           the next calendar turn + crunch windows + auction desk
+  /oil             Oil × Funding: spot, cash spreads, coupling, scenarios
+  /estuary         FX/material pressure + holdout-tested Passage links
   /analogs         historical analogs from the wreck ledger
   /proof           the backtest scoreboard, misses included
   /letter          today's dispatch: title, summary, link
@@ -332,7 +334,8 @@ def fmt_ask_throttled(retry_after: int) -> str:
             "This is a per-user pace limit, not an outage: the desk is up and "
             "the board is live. It exists so one chat cannot take the "
             "assistant away from everyone else.\n\n"
-            "/now, /odds, /turns, /analogs and /proof are not rate limited and "
+            "/now, /odds, /turns, /oil, /estuary, /analogs and /proof are not "
+            "rate limited and "
             "answer straight from the board." + FOOT)
 
 
@@ -345,6 +348,17 @@ def pct(x, digits: int = 0) -> str:
         return f"{float(x) * 100:.{digits}f}%"
     except (TypeError, ValueError):
         return "n/a"
+
+
+def num(x, digits: int = 1, *, signed: bool = False,
+        prefix: str = "", suffix: str = "") -> str:
+    """Format a served number without ever leaking ``None`` into a reply."""
+    try:
+        value = float(x)
+    except (TypeError, ValueError):
+        return "n/a"
+    body = f"{value:+.{digits}f}" if signed else f"{value:.{digits}f}"
+    return f"{prefix}{body}{suffix}"
 
 
 # ------------------------------------------------------- history + sparks ---
@@ -684,6 +698,209 @@ def fmt_turns(gauge: dict | None, overview: dict | None) -> str:
     return "\n".join(lines) + FOOT
 
 
+def fmt_oil(payload: dict | None) -> str:
+    """Oil × Funding, with observations and scenario claims kept separate."""
+    if not payload:
+        return "The Oil × Funding desk did not answer — absence is not calm."
+    if payload.get("ok") is False:
+        return ("The Oil × Funding desk has no current reading: "
+                f"{esc(payload.get('reason', 'unknown reason'))}.")
+
+    oil = payload.get("oil") or {}
+    wti = oil.get("wti") or {}
+    brent = oil.get("brent") or {}
+    funding = payload.get("funding") or {}
+    cp_nf = funding.get("cp_nonfinancial") or {}
+    cp_fin = funding.get("cp_financial") or {}
+    sofr = funding.get("sofr_iorb") or {}
+    lines = [f"🛢 <b>Oil × Funding</b> — as of {esc(payload.get('as_of', '?'))}", ""]
+
+    if wti.get("price_usd_per_bbl") is not None:
+        lines.append(
+            f"WTI <b>{num(wti.get('price_usd_per_bbl'), 2, prefix='$')}</b>/bbl"
+            f" · 5d {num(wti.get('change_5d_usd'), 2, signed=True, prefix='$')}"
+            f" · 20d {num(wti.get('change_20d_pct'), 1, signed=True, suffix='%')}"
+        )
+    if brent.get("price_usd_per_bbl") is not None:
+        lines.append(
+            f"Brent <b>{num(brent.get('price_usd_per_bbl'), 2, prefix='$')}</b>/bbl"
+            f" · 5d {num(brent.get('change_5d_usd'), 2, signed=True, prefix='$')}"
+        )
+
+    lines.extend([
+        "\n<b>Funding already priced</b>",
+        f"Nonfinancial CP−bill: <b>{num(cp_nf.get('spread_bp'), 1, suffix='bp')}</b>"
+        f" · 20d {num(cp_nf.get('change_20d_bp'), 1, signed=True, suffix='bp')}",
+        f"Financial CP−bill: {num(cp_fin.get('spread_bp'), 1, suffix='bp')}"
+        f" · 20d {num(cp_fin.get('change_20d_bp'), 1, signed=True, suffix='bp')}",
+        f"SOFR−IORB: {num(sofr.get('spread_bp'), 1, suffix='bp')}"
+        f" · 20d {num(sofr.get('change_20d_bp'), 1, signed=True, suffix='bp')}",
+    ])
+
+    fit = ((payload.get("coupling") or {}).get("fit") or {})
+    if fit.get("n"):
+        lines.append(
+            "\n5d WTI Δ vs nonfinancial CP-spread Δ: "
+            f"r <b>{num(fit.get('correlation'), 2, signed=True)}</b> · "
+            f"slope {num(fit.get('slope_bp_per_usd'), 2, signed=True, suffix='bp/$')} "
+            f"(n={fit.get('n')})."
+        )
+    inr = ((payload.get("india") or {}).get("inr") or {})
+    if inr.get("per_usd") is not None:
+        lines.append(
+            f"USD/INR {num(inr.get('per_usd'), 2)} · "
+            f"20d {num(inr.get('change_20d_pct'), 1, signed=True, suffix='%')}."
+        )
+
+    ballast = payload.get("ballast") or {}
+    if ballast.get("ok"):
+        headline = ballast.get("headline") or {}
+        dominant = headline.get("dominant_channel") or {}
+        lines.append(
+            "\n⚓ <b>Ballast futures-cash ledger</b> · "
+            f"{esc(headline.get('state', 'CANNOT ASSESS'))} · "
+            f"worst commodity p{num(headline.get('worst_channel_percentile'), 1)}"
+        )
+        if dominant.get("label"):
+            lines.append(f"Dominant: {esc(dominant.get('label'))}.")
+        for contract in (ballast.get("contracts") or [])[:2]:
+            cash = contract.get("cash_transfer_scale") or {}
+            gross = cash.get("gross_mark_displacement_usd")
+            gross_b = float(gross) / 1e9 if gross is not None else None
+            pos = contract.get("positioning") or {}
+            lines.append(
+                f"{esc(contract.get('key', '?'))}: "
+                f"<b>{num(gross_b, 2, prefix='$', suffix='bn')}</b> gross proxy"
+                f" · top-4 paying side {num(pos.get('top4_paying_side_pct'), 1, suffix='%')}"
+            )
+    elif ballast:
+        lines.append(
+            "\n⚓ Ballast unavailable: "
+            f"{esc(ballast.get('reason', 'insufficient aligned public history'))}."
+        )
+
+    structure = payload.get("market_structure") or {}
+    if structure.get("ok"):
+        cushing = structure.get("cushing") or {}
+        cushing_live = cushing.get("live") or {}
+        lines.append("\n🏗 <b>Oil market structure</b>")
+        if cushing_live.get("stocks_m_bbl") is not None:
+            lines.append(
+                f"Cushing <b>{num(cushing_live.get('stocks_m_bbl'), 1, suffix='m bbl')}</b>"
+                f" · {num(cushing_live.get('fill_of_last_working_capacity_pct'), 1, suffix='%')} "
+                f"of last working capacity ({esc(cushing.get('capacity_asof', '?'))})"
+                f" · {num(cushing_live.get('buffer_to_20m_reference_m_bbl'), 1, signed=True, suffix='m')} "
+                "vs 20m reference."
+            )
+        spread = structure.get("brent_wti_spread") or {}
+        if spread.get("brent_minus_wti_usd_per_bbl") is not None:
+            lines.append(
+                "Brent−WTI "
+                f"<b>{num(spread.get('brent_minus_wti_usd_per_bbl'), 2, signed=True)} "
+                "USD/bbl</b>"
+                f" · 5-observation average "
+                f"{num(spread.get('average_5d_usd_per_bbl'), 2, signed=True)}."
+            )
+        benchmarks = structure.get("benchmark_architecture") or []
+        benchmark_bits = [
+            f"{esc(row.get('benchmark', '?'))}: {esc(row.get('settlement', '?'))}"
+            for row in benchmarks[:2]
+            if isinstance(row, dict)
+        ]
+        if benchmark_bits:
+            lines.append(" · ".join(benchmark_bits) + ".")
+        chokepoints = structure.get("chokepoints") or {}
+        hormuz = next(
+            (
+                row for row in (chokepoints.get("rows") or [])
+                if isinstance(row, dict) and row.get("name") == "Strait of Hormuz"
+            ),
+            None,
+        )
+        if hormuz and hormuz.get("q1_2026_mbd") is not None:
+            lines.append(
+                f"Strait of Hormuz {num(hormuz.get('q1_2026_mbd'), 1, suffix='mbd')} "
+                f"(EIA {esc(chokepoints.get('latest_period', 'dated'))} reference; not live)."
+            )
+        india_structure = structure.get("india") or {}
+        if india_structure.get("crude_import_dependence_pct") is not None:
+            lines.append(
+                "India crude import dependence "
+                f"{num(india_structure.get('crude_import_dependence_pct'), 1, suffix='%')}."
+            )
+    elif structure:
+        lines.append(
+            "\n🏗 Oil market structure unavailable: "
+            f"{esc(structure.get('reason', 'not present in this snapshot'))}."
+        )
+
+    lines.append(
+        "\n<i>Context only: the correlation is associational; Ballast is a gross "
+        "spot-proxy scale, not an observed margin call; Cushing capacity and "
+        "chokepoint flows are dated references, not live constraints; cargo, "
+        "margin and India outputs are editable scenarios. Nothing here enters "
+        "the Seiche stress composite.</i>"
+    )
+    return "\n".join(lines) + FOOT
+
+
+def fmt_estuary(payload: dict | None) -> str:
+    """The Estuary headline plus the Passage's untouched-holdout verdict."""
+    if not payload:
+        return "The Estuary did not answer — absence is not calm."
+    if payload.get("ok") is False:
+        return ("The Estuary has no current reading: "
+                f"{esc(payload.get('reason', 'unknown reason'))}.")
+
+    head = payload.get("headline") or {}
+    lines = [f"🌐 <b>The Estuary · FX × materials</b> — "
+             f"as of {esc(payload.get('as_of', '?'))}", "",
+             f"Regime: <b>{esc(head.get('regime', '?'))}</b>",
+             f"Upstream pressure <b>{num(head.get('upstream_pressure'), 1)}</b>/100 "
+             f"vs funding priced <b>{num(head.get('funding_priced'), 1)}</b>/100 "
+             f"→ Passage gap <b>{num(head.get('transmission_gap'), 1, signed=True)}</b>",
+             f"FX {num(head.get('fx_pressure'), 1)} · materials "
+             f"{num(head.get('materials_pressure'), 1)} · coverage "
+             f"{num(head.get('coverage_pct'), 1, suffix='%')}"]
+    if head.get("verdict"):
+        lines.append(f"\n{esc(head['verdict'])}")
+
+    leaders = payload.get("leaders") or {}
+    fx = next(iter(leaders.get("fx") or []), {})
+    material = next(iter(leaders.get("materials") or []), {})
+    if fx or material:
+        bits = []
+        if fx:
+            bits.append(f"FX: {esc(fx.get('label') or fx.get('key') or '?')} "
+                        f"({num(fx.get('pressure'), 0)})")
+        if material:
+            bits.append(f"physical: {esc(material.get('label') or material.get('key') or '?')} "
+                        f"({num(material.get('pressure'), 0)})")
+        lines.append("Loudest upstream rows · " + " · ".join(bits))
+
+    passage = payload.get("passage") or {}
+    lines.append(
+        "\n<b>The Passage holdout ledger</b>: "
+        f"{passage.get('earned', 0)} earned · "
+        f"{passage.get('tentative', 0)} tentative · "
+        f"{passage.get('not_earned', 0)} not earned"
+    )
+    earned = next((edge for edge in (passage.get("edges") or [])
+                   if edge.get("status") == "earned"), None)
+    if earned:
+        lines.append(
+            f"Earned: {esc(earned.get('source'))} → {esc(earned.get('target'))} "
+            f"at {earned.get('lag_bd', '?')}bd · holdout r "
+            f"{num(earned.get('corr_holdout'), 2, signed=True)}."
+        )
+    lines.append(
+        "\n<i>Context only: targets and lags are selected on the first 60% "
+        "of history and must survive the untouched final 40%. Earned does not "
+        "mean causal; the gap never enters the Seiche composite.</i>"
+    )
+    return "\n".join(lines) + FOOT
+
+
 def fmt_analogs(wrecks: dict | None) -> str:
     eps = (wrecks or {}).get("episodes") or []
     if not eps:
@@ -864,6 +1081,8 @@ HELP = (
     "/snap — the forwardable card (meter, trend, next turn)\n"
     "/odds — forward event odds (Navigator)\n"
     "/turns — next calendar turn + crunch windows\n"
+    "/oil — Oil × Funding: spot, cash spreads, coupling, scenarios\n"
+    "/estuary — FX/material pressure + holdout-tested Passage\n"
     "/analogs — the wreck ledger: past storms on this board\n"
     "/proof — the backtest scoreboard, misses included\n"
     "/letter — today's dispatch\n"
@@ -976,6 +1195,8 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd in ("/start", "/now"):
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
+                [_btn("🛢 Oil × Funding", "/oil"),
+                 _btn("🌐 FX × Materials", "/estuary")],
                 [_btn("\U0001f5bc Card", "/snap"),
                  _btn("\U0001f4e8 Letter", "/letter"),
                  _btn("\U0001f4e4 Share", "/share")],
@@ -988,6 +1209,11 @@ def keyboard_for(cmd: str) -> list | None:
         return [[_btn("\U0001f321 Gauge now", "/now"),
                  _btn("\U0001f5bc Card", "/snap"),
                  _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
+    if cmd in ("/oil", "/estuary"):
+        other = ("\U0001f30d FX × Materials", "/estuary") \
+            if cmd == "/oil" else ("\U0001f6e2 Oil × Funding", "/oil")
+        return [[_btn(other[0], other[1]), _btn("\U0001f321 Gauge now", "/now")],
+                [_btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
     if cmd == "/share":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}],
                 LAB_ROW, FLEET_ROW]
@@ -1077,6 +1303,11 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/turns":
         send(chat_id, fmt_turns(api_get("/api/gauge"), api_get("/api/overview")),
              keyboard_for("/turns"))
+    elif cmd == "/oil":
+        send(chat_id, fmt_oil(api_get("/api/oil-funding")), keyboard_for("/oil"))
+    elif cmd == "/estuary":
+        send(chat_id, fmt_estuary(api_get("/api/estuary")),
+             keyboard_for("/estuary"))
     elif cmd == "/analogs":
         send(chat_id, fmt_analogs(api_get("/api/wrecks")), keyboard_for("/analogs"))
     elif cmd == "/proof":
@@ -1349,6 +1580,8 @@ def run_setup() -> None:
         {"command": "snap", "description": "The forwardable gauge card"},
         {"command": "odds", "description": "Forward event odds (Navigator)"},
         {"command": "turns", "description": "Next turn + crunch windows"},
+        {"command": "oil", "description": "Oil × Funding transmission context"},
+        {"command": "estuary", "description": "FX/material pressure + Passage"},
         {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
         {"command": "institutions", "description": "The LiquiLens Failure Radar"},
         {"command": "analogs", "description": "The wreck ledger: past storms"},
@@ -1366,7 +1599,8 @@ def run_setup() -> None:
         "description": "The Seiche desk bot: dollar funding stress read from the "
                        "Fed's own public data (H.4.1, NY Fed ops, OFR repo, "
                        "Treasury cash) with a regime gauge, forward event odds, "
-                       "calendar crunch windows and an honest backtest. Type any "
+                       "calendar crunch windows, Oil × Funding, the FX/material "
+                       "Estuary and an honest backtest. Type any "
                        "question and the desk answers, grounded in the live "
                        "board; type @seiche_desk_bot in any chat to drop the "
                        "live gauge card there. Free public good — no paywall, "

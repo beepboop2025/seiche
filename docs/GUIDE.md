@@ -58,8 +58,12 @@ That is enough to use Seiche well. The rest is depth for when you want it.
 - **OIL×FUNDING** — how oil and money markets transmit stress in both directions:
   rates into the futures-curve carry hurdle, and oil into cargo credit, margin
   cash, rupee liquidity and OMC commercial-paper demand, with slower inflation,
-  policy and foreign-official dollar-parking panels. The upper half is observed
-  public data; the lower lab is editable scenario arithmetic.
+  policy and foreign-official dollar-parking panels. **Ballast** adds the public
+  energy-futures cash ledger: WTI and Henry Hub gross mark-displacement scale,
+  paying-side concentration, EIA crude stocks and the funding landing zone. The
+  upper half separates observed inputs from bounded derivations and keeps
+  funding as an amplifier rather than a commodity-state trigger; the lower lab
+  is editable scenario arithmetic.
 - **CALENDAR** — the upcoming dates that historically strain funding: tax days,
   quarter ends, big auction settlements.
 - **POSITIONING** — where large leveraged traders are crowded, from public
@@ -91,7 +95,8 @@ Seiche names its parts after the sea. Here is what each one really does.
 | **Hydrophone Array** | How tightly connected the plumbing is right now, and which pipe moves first. |
 | **Global Basin** | Are the world's funding systems moving as one tide. |
 | **The Estuary / Passage** | Are FX settlement and physical-market cash demands running ahead of the funding stress already priced—and did the historical route survive an untouched holdout sample. |
-| **Oil × Funding** | How a barrel's price, time in transit, hedge and financing rate become cash demand—and how the money-market rate runs backward into the oil curve. |
+| **Oil × Funding** | How a barrel's price, Cushing deliverability, benchmark basis, time in transit, hedge and financing rate become cash demand—and how the money-market rate runs backward into the oil curve. Live observations remain separate from dated capacity and chokepoint references. |
+| **Ballast** | Whether an observed WTI or Henry Hub move creates an unusually large gross cash-transfer scale, who is reported on the paying side, and whether physical inventory and dollar funding are also under pressure. It cannot see net margin calls or named holders. |
 | **Stablecoin Moorings** | The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed. |
 | **ML Lab** | A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses. |
 | **Station-Keeping** | Watches for moves in the system's cash that the normal seasonal model cannot explain, and flags them early. |

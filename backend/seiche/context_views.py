@@ -154,11 +154,13 @@ def oil_funding(snapshot: dict) -> dict[str, Any]:
         "sources": engine.get("sources") or [],
         "caveats": engine.get("caveats") or [],
         "reading": (
-            "Oil x Funding is bidirectional context: observed spot and funding "
-            "rows stay separate from editable cargo, margin and India scenario "
-            "arithmetic. Market structure keeps live Cushing stocks separate "
-            "from dated capacity and chokepoint references. The combined "
-            "context never enters the Seiche funding-stress composite."
+            "Oil x Funding is bidirectional context: observed spot, CFTC "
+            "futures positioning, EIA inventory and funding rows stay separate "
+            "from editable cargo, margin and India scenario arithmetic. Ballast "
+            "estimates gross cash-transfer scale, not observed margin calls. "
+            "Market structure keeps live Cushing stocks separate from dated "
+            "capacity and chokepoint references. The combined context never "
+            "enters the Seiche funding-stress composite."
         ),
     }
 

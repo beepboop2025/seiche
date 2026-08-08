@@ -35,6 +35,18 @@ api.seiche.info {
     import accesslog
     import security_headers
 
+    # Riptide's paper-only public record. The origin binds loopback on 8797;
+    # stripping /riptide keeps its REST, OpenAPI and stateless MCP paths rooted
+    # at / while the public discovery documents retain the product namespace.
+    @riptide_root path /riptide
+    handle @riptide_root {
+        rewrite * /
+        reverse_proxy 127.0.0.1:8797
+    }
+    handle_path /riptide/* {
+        reverse_proxy 127.0.0.1:8797
+    }
+
     # AnakE-Nyx external-factor feeds — static public-data mirror,
     # pulled hourly from the private repo; consumed by LiquiLens/DragonScope.
     handle_path /anake-nyx/feeds/* {

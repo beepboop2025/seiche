@@ -17,6 +17,11 @@ from seiche import api, mcp_server, usage
 def client(tmp_path, monkeypatch, fake_snap):
     # no network: every tool reads the canned board (fake_snap from conftest)
     monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: fake_snap)
+
+    async def fake_snapshot(force=False):
+        return fake_snap
+
+    monkeypatch.setattr(api.assemble, "snapshot", fake_snapshot)
     # isolated meter
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     # deterministic auth
@@ -82,6 +87,9 @@ def test_public_openapi_is_curated_and_importable(client):
     assert oil_schema["properties"]["schema"]["const"] == "seiche.oil-funding.v1"
     assert estuary_schema["required"] == ["schema"]
     assert estuary_schema["properties"]["schema"]["const"] == "seiche.estuary.v1"
+    oil_description = spec["paths"]["/api/oil-funding"]["get"]["description"]
+    assert "live Cushing" in oil_description
+    assert "dated capacity" in oil_description
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]
@@ -115,7 +123,8 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
     engines = ("positioning_book", "desk_brief", "replay_asof",
                "funding_stress_forecast", "ask_desk")
     public_good = ("funding_stress_now", "historical_analogs",
-                   "proof_backtest", "data_health")
+                   "proof_backtest", "data_health", "oil_funding_context",
+                   "fx_materials_passage")
 
     for gate in ("1", None):
         if gate is None:
@@ -176,7 +185,8 @@ def test_anonymous_sees_only_public_tools(client):
     names = {t["name"] for t in r.json()["result"]["tools"]}
     assert names == {"funding_stress_now", "historical_analogs",
                      "proof_backtest", "data_health", "crypto_stress_record",
-                     "institutional_flows"}
+                     "institutional_flows", "oil_funding_context",
+                     "fx_materials_passage"}
     # the Time Machine, forward forecast, brief, book, assistant stay paid
     for paid in ("replay_asof", "funding_stress_forecast", "desk_brief",
                  "positioning_book", "ask_desk"):
@@ -222,6 +232,19 @@ def test_tool_call_returns_content_and_meters(client):
     # the billable call was metered
     assert r.headers["X-MCP-Usage-Used"] == "1"
     assert r.headers["X-MCP-Usage-Limit"] == str(usage.MCP_ANON_DAILY)
+
+
+def test_public_context_routes_share_the_mcp_contract(client):
+    oil = client.get("/api/oil-funding")
+    estuary = client.get("/api/estuary")
+
+    assert oil.status_code == 200
+    assert oil.json()["schema"] == "seiche.oil-funding.v1"
+    assert oil.json()["scenario"]["status"] == "scenario_only"
+    assert estuary.status_code == 200
+    assert estuary.json()["schema"] == "seiche.estuary.v1"
+    assert estuary.json()["passage"]["earned"] == 1
+    assert "public" in oil.headers["cache-control"]
 
 
 def test_non_billable_methods_are_not_metered(client):

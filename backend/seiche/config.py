@@ -134,6 +134,16 @@ OIL_FUNDING_FRED_SERIES = [
         start="2015-01-01",
     ),
     SeriesSpec(
+        "HENRY_HUB_SPOT",
+        "fred",
+        "DHHNGSP",
+        "Henry Hub natural gas spot",
+        "$/MMBtu",
+        "D",
+        360,
+        start="2015-01-01",
+    ),
+    SeriesSpec(
         "ENERGY_CPI",
         "fred",
         "CPIENGSL",
@@ -173,6 +183,52 @@ OIL_FUNDING_EIA_SERIES = [
         start="2019-01-01",
     ),
 ]
+
+# Ballast inventory leg.  EIA's dnav history page is official, keyless, and
+# carries the complete weekly vintage in a stable table. It reuses the same
+# structural keyless collector as the Cushing series above.
+EIA_INVENTORY_SERIES = [
+    SeriesSpec(
+        "CRUDE_STOCKS_EX_SPR",
+        "eia",
+        "WCESTUS1",
+        "US commercial crude stocks excluding SPR",
+        "thousand barrels",
+        "W",
+        1440,
+        start="2015-01-01",
+    ),
+]
+
+# Ballast's first contract set is intentionally small.  These are the canonical
+# physically anchored US benchmarks, identified by stable CFTC contract-market
+# codes rather than brittle display-name matching.  Price legs are public spot
+# proxies, not exchange settlements; the engine states that boundary on every
+# reading.
+BALLAST_CONTRACTS = {
+    "WTI": {
+        "label": "WTI physical crude",
+        "cftc_code": "067651",
+        "price_mnemonic": "WTI_SPOT",
+        "multiplier": 1000.0,
+        "multiplier_unit": "barrels per contract",
+    },
+    "HENRY_HUB": {
+        "label": "Henry Hub natural gas",
+        "cftc_code": "023651",
+        "price_mnemonic": "HENRY_HUB_SPOT",
+        "multiplier": 10_000.0,
+        "multiplier_unit": "MMBtu per contract",
+    },
+}
+
+# Worst-channel percentile gates.  Ballast is context-only and never enters
+# the Seiche composite; the labels make a tail observation readable without
+# manufacturing a weighted cross-commodity score.
+BALLAST_TIGHT_PCTL = 80.0
+BALLAST_ACUTE_PCTL = 95.0
+BALLAST_CFTC_RELEASE_LAG_DAYS = 3  # Tuesday report -> normal Friday release
+BALLAST_EIA_RELEASE_LAG_DAYS = 5   # Friday period end -> normal Wednesday WPSR
 
 # Starting assumptions for the interactive Oil × Funding lab. They are
 # published in the payload and editable in the browser; none enters Seiche's
@@ -539,6 +595,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
     + OIL_FUNDING_FRED_SERIES
     + OIL_FUNDING_EIA_SERIES
+    + EIA_INVENTORY_SERIES
     + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
@@ -648,6 +705,7 @@ X402_PRICES_USD = {
 # ---------------------------------------------------------------------------
 
 TFF_DATASET = "gpe5-46if"  # Traders in Financial Futures, futures-only (Socrata)
+DISAGG_FUTURES_DATASET = "72hh-3qpy"  # Physical commodities, futures-only
 
 UST_CONTRACTS = {
     "UST 2Y NOTE":     {"face": 200_000, "dv01": 38.0},

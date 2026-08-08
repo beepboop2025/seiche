@@ -33,6 +33,8 @@ import pandas as pd
 from seiche import rubric, store
 from seiche.config import (
     ALL_SERIES,
+    BALLAST_CFTC_RELEASE_LAG_DAYS,
+    BALLAST_EIA_RELEASE_LAG_DAYS,
     BIS_SERIES,
     BOJ_SERIES,
     CHINAMONEY_SERIES,
@@ -40,6 +42,7 @@ from seiche.config import (
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
     ECB_SERIES,
+    EIA_INVENTORY_SERIES,
     ESTUARY_FRED_SERIES,
     FOMC_DECISION_DATES,
     FRED_CP_SERIES,
@@ -103,6 +106,7 @@ from seiche.engines import roguewave as eng_roguewave
 from seiche.engines import ledger as eng_ledger
 from seiche.engines import modelcourt as eng_modelcourt
 from seiche.engines import officialbid as eng_officialbid
+from seiche.engines import ballast as eng_ballast
 from seiche.engines import oilfunding as eng_oilfunding
 from seiche.engines import estuary as eng_estuary
 from seiche.engines import rdenowcast as eng_rdenowcast
@@ -136,10 +140,10 @@ _refreshing = False  # one background rebuild at a time; readers never wait on i
 # stay bare semver matching server.json and the MCP registry listing — it is
 # what the MCP handshake hands an agent. RELEASE is the human-facing codename
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
-# scenarios, microseism, tier1) and rides along on the citation footers, where
+# scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.8.0"
-RELEASE = "tier1"
+VERSION = "0.9.0"
+RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
 
@@ -192,6 +196,10 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("upcoming", fiscaldata.fetch_upcoming_auctions(client)),
             guard("mspd", td_auctions.fetch_mspd_maturities(client)),
             guard("tff", cftc.fetch_tff_ust(client)),
+            guard("commodity_cot", cftc.fetch_disaggregated_commodities(client)),
+            guard("eia_inventory", eia_petroleum.fetch_many(
+                client, [s.mnemonic for s in EIA_INVENTORY_SERIES], faults
+            )),
             guard("palimpsest", palimpsest.fetch_all(client, faults)),
             guard("fedtext", fedtext.fetch_all(client, faults)),
             guard("gdelt", gdelt.fetch_all(client, faults)),
@@ -204,10 +212,16 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     cached live sources are never mutated."""
     out: dict = {}
     for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
-                  "ofr_pd_financing", "ecb", "eia_petroleum", "bis", "chinamoney", "boj"):
+                  "ofr_pd_financing", "ecb", "eia_petroleum", "eia_inventory",
+                  "bis", "chinamoney", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
-            pts = s.points[s.points.index <= asof]
+            cutoff = (
+                asof - pd.Timedelta(days=BALLAST_EIA_RELEASE_LAG_DAYS)
+                if group == "eia_inventory"
+                else asof
+            )
+            pts = s.points[s.points.index <= cutoff]
             cut[m] = Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at, pts)
         out[group] = cut
     out["llama_hacks"] = llamahacks.truncate(src.get("llama_hacks") or {}, asof)
@@ -249,7 +263,9 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
         "fetched_at": npd.get("fetched_at"),
         "positions": {k: s[s.index <= asof] for k, s in (npd.get("positions") or {}).items()},
     }
-    tga = (src.get("tga") or {}).get("tga", pd.Series(dtype=float))
+    tga = (src.get("tga") or {}).get(
+        "tga", pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+    )
     out["tga"] = {"fetched_at": (src.get("tga") or {}).get("fetched_at"), "tga": tga[tga.index <= asof]}
     au = (src.get("auctions") or {}).get("auctions", pd.DataFrame())
     if not au.empty:
@@ -267,6 +283,23 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     if not tff.empty:
         tff = tff[tff["date"] <= asof]
     out["tff"] = {"fetched_at": (src.get("tff") or {}).get("fetched_at"), "tff": tff}
+    commodity_cot = (src.get("commodity_cot") or {}).get(
+        "positions", pd.DataFrame()
+    )
+    if not commodity_cot.empty:
+        if "available_date" in commodity_cot.columns:
+            available = pd.to_datetime(
+                commodity_cot["available_date"], errors="coerce"
+            )
+        else:
+            available = pd.to_datetime(
+                commodity_cot["date"], errors="coerce"
+            ) + pd.Timedelta(days=BALLAST_CFTC_RELEASE_LAG_DAYS)
+        commodity_cot = commodity_cot[available <= asof]
+    out["commodity_cot"] = {
+        "fetched_at": (src.get("commodity_cot") or {}).get("fetched_at"),
+        "positions": commodity_cot,
+    }
     pal = src.get("palimpsest") or {}
     out["palimpsest"] = {
         "fetched_at": pal.get("fetched_at"),
@@ -703,6 +736,25 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
         foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
         cushing_stocks=_pts(src.get("eia_petroleum", {}), "CUSHING_STOCKS"),
+    ))
+
+    # --- Ballast (energy-futures cash displacement and physical inventory;
+    #     a context-only child of Oil × Funding, never a composite input) ---
+    run("ballast", lambda: eng_ballast.analyze(
+        commodity_positions=(src.get("commodity_cot") or {}).get(
+            "positions", pd.DataFrame()
+        ),
+        prices={
+            "WTI_SPOT": _pts(fred_s, "WTI_SPOT"),
+            "HENRY_HUB_SPOT": _pts(fred_s, "HENRY_HUB_SPOT"),
+        },
+        crude_stocks_ex_spr=_pts(
+            src.get("eia_inventory", {}), "CRUDE_STOCKS_EX_SPR"
+        ),
+        sofr=_pts(fred_s, "SOFR"),
+        iorb=iorb if iorb is not None else pd.Series(dtype=float),
+        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+        treasury_3m=_pts(cp_s, "DGS3M"),
     ))
 
     # --- The Estuary (FX + materials -> price of cash).  The daily Passage
@@ -1392,7 +1444,7 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
 
 def _provenance(src: dict) -> list[dict]:
     prov = []
-    for group in ("fred", "ofr", "ecb", "eia_petroleum"):
+    for group in ("fred", "ofr", "ecb", "eia_petroleum", "eia_inventory"):
         for s in (src.get(group) or {}).values():
             prov.append(s.provenance())
     for s in ((src.get("crypto") or {}).get("candles") or {}).values():
@@ -1411,6 +1463,7 @@ def _provenance(src: dict) -> list[dict]:
         ("auctions", "Treasury auctions"),
         ("upcoming", "Treasury upcoming auctions"),
         ("tff", "CFTC TFF"),
+        ("commodity_cot", "CFTC commodity futures positioning"),
     ):
         blk = src.get(key)
         if blk:
