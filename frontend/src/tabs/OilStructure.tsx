@@ -39,6 +39,12 @@ function signed(value: unknown, digits = 1, suffix = ""): string {
   return `${number > 0 ? "+" : ""}${fmt(number, digits)}${suffix}`;
 }
 
+function finiteNumber(value: unknown): number | null {
+  if (value == null || (typeof value === "string" && value.trim() === "")) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function Evidence({ children, tone = "observed" }: { children: React.ReactNode; tone?: string }) {
   return <span className={`os-evidence os-evidence--${tone}`}>{children}</span>;
 }
@@ -47,21 +53,20 @@ function SourceLink({ href, children }: { href: string; children: React.ReactNod
   return <a className="os-source-link" href={href} target="_blank" rel="noreferrer">{children}<span aria-hidden="true">↗</span></a>;
 }
 
-function TankGeometry({ structure, live }: { structure: Any; live: Any }) {
-  const working = Number(structure?.working_capacity_m_bbl);
-  const stocks = Number(live?.stocks_m_bbl);
-  const reference = Number(structure?.stress_reference_m_bbl);
-  const reportedFill = Number(live?.fill_of_last_working_capacity_pct);
-  const fill = Number.isFinite(reportedFill)
+function TankGeometry({ structure, live, stressReference }: { structure: Any; live: Any; stressReference: number }) {
+  const working = finiteNumber(structure?.working_capacity_m_bbl);
+  const stocks = finiteNumber(live?.stocks_m_bbl);
+  const reportedFill = finiteNumber(live?.fill_of_last_working_capacity_pct);
+  const fill = reportedFill !== null
     ? Math.max(0, Math.min(100, reportedFill))
-    : Number.isFinite(stocks) && Number.isFinite(working) && working > 0
+    : stocks !== null && working !== null && working > 0
       ? Math.max(0, Math.min(100, stocks / working * 100))
       : 0;
-  const stress = Number.isFinite(reference) && Number.isFinite(working) && working > 0
-    ? Math.max(0, Math.min(100, reference / working * 100))
+  const stress = working !== null && working > 0
+    ? Math.max(0, Math.min(100, stressReference / working * 100))
     : 0;
   const tankStyle = { "--tank-fill": `${fill}%`, "--tank-stress": `${stress}%` } as CSSProperties;
-  const referenceLabel = Number.isFinite(reference) ? `${fmt(reference, 0)}m reference` : "stress reference";
+  const referenceLabel = `${fmt(stressReference, 0)}m reference`;
 
   return (
     <div className="os-tank-scene">
@@ -75,7 +80,7 @@ function TankGeometry({ structure, live }: { structure: Any; live: Any }) {
       </div>
       <div className="os-tank-reading">
         <strong>{fmt(stocks, 3)}m</strong>
-        <span>barrels · {fmt(live?.fill_of_last_working_capacity_pct, 1)}% of last working capacity</span>
+        <span>barrels · {fmt(fill, 1)}% of last working capacity</span>
         <small>weekly observation through {live?.asof ?? "—"}</small>
       </div>
     </div>
@@ -100,7 +105,7 @@ function FleetGeometry() {
   );
 }
 
-function DeliveryGeometry({ structure, live }: { structure: Any; live: Any }) {
+function DeliveryGeometry({ structure, live, stressReference }: { structure: Any; live: Any; stressReference: number }) {
   const architecture = structure?.benchmark_architecture ?? [];
   const wti = architecture.find((item: Any) => item.benchmark === "WTI") ?? {};
   const brent = architecture.find((item: Any) => item.benchmark === "Brent") ?? {};
@@ -111,7 +116,7 @@ function DeliveryGeometry({ structure, live }: { structure: Any; live: Any }) {
           <div><span>WTI / INLAND DELIVERY</span><h3>A claim on a place</h3></div>
           <Evidence>WEEKLY OBSERVED</Evidence>
         </div>
-        <TankGeometry structure={structure?.cushing} live={live?.cushing} />
+        <TankGeometry structure={structure?.cushing} live={live?.cushing} stressReference={stressReference} />
         <dl>
           <div><dt>contract</dt><dd>{wti.settlement}</dd></div>
           <div><dt>release valve</dt><dd>{wti.release_valve}</dd></div>
@@ -243,8 +248,8 @@ export default function OilStructure({ engine }: { engine: Any }) {
   const live = engine?.live ?? {};
   const cushing = live.cushing ?? {};
   const spread = live.brent_wti_spread ?? {};
-  const stressReference = Number(structure.cushing?.stress_reference_m_bbl);
-  const stressReferenceValue = Number.isFinite(stressReference) ? stressReference : 20;
+  const stressReference = finiteNumber(structure.cushing?.stress_reference_m_bbl);
+  const stressReferenceValue = stressReference ?? 20;
   const stressReferenceLabel = `${fmt(stressReferenceValue, 0)}m reference`;
 
   return (
@@ -254,7 +259,7 @@ export default function OilStructure({ engine }: { engine: Any }) {
         <p>Cushing explains WTI deliverability. Chokepoints, freight and cargo programmes explain how a physical disruption reaches the world price—and then the money market.</p>
       </header>
 
-      <DeliveryGeometry structure={structure} live={live} />
+      <DeliveryGeometry structure={structure} live={live} stressReference={stressReferenceValue} />
 
       <div className="os-chart-grid">
         <article className="os-chart-panel">
@@ -281,7 +286,7 @@ export default function OilStructure({ engine }: { engine: Any }) {
       <div className="os-capacity-ledger">
         <div><Evidence tone="reference">LAST OFFICIAL</Evidence><strong>{fmt(structure.cushing?.working_capacity_m_bbl, 3)}m bbl</strong><span>Cushing working capacity · {structure.cushing?.capacity_asof}</span></div>
         <div><Evidence tone="reference">LAST OFFICIAL</Evidence><strong>{fmt(structure.cushing?.net_available_shell_capacity_m_bbl, 3)}m bbl</strong><span>net available shell capacity · report discontinued</span></div>
-        <div><Evidence tone="warning">REFERENCE</Evidence><strong>{fmt(structure.cushing?.stress_reference_m_bbl, 0)}m bbl</strong><span>visible stress line · not a universal tank bottom</span></div>
+        <div><Evidence tone="warning">REFERENCE</Evidence><strong>{fmt(stressReferenceValue, 0)}m bbl</strong><span>visible stress line · not a universal tank bottom</span></div>
         <SourceLink href={SOURCES.capacity}>EIA capacity workbook</SourceLink>
       </div>
 
