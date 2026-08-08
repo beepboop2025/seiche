@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import Chart, { type ChartSeries } from "../Chart";
 import { Any, AsOf, Fault, Method, fmt } from "../lib";
+import OilStructure from "./OilStructure";
 import "../styles-oil.css";
 
 const C = {
@@ -695,7 +696,7 @@ function SourcesAndLimits({ engine }: { engine: Any }) {
         <ul>{(engine.sources ?? []).map((source: Any) => (
           <li key={`${source.series}-${source.id}`}>
             <span>{source.series}</span>
-            <a href={links[source.id] ?? "https://fred.stlouisfed.org/"} target="_blank" rel="noreferrer">{source.source} · {source.id} ↗</a>
+            <a href={source.url ?? links[source.id] ?? "https://fred.stlouisfed.org/"} target="_blank" rel="noreferrer">{source.source} · {source.id} ↗</a>
           </li>
         ))}</ul>
       </div>
@@ -787,6 +788,7 @@ export default function OilFunding({ snap }: { snap: Any }) {
 
       <TransmissionLoop s={scenario} out={outputs} live={live} />
       <ObservedEvidence engine={engine} />
+      <OilStructure engine={engine} />
       <ScenarioLab engine={engine} s={scenario} setS={setScenario} base={base} />
       <SourcesAndLimits engine={engine} />
     </div>

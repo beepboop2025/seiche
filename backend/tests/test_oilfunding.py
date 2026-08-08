@@ -8,7 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from seiche.config import ALL_SERIES, OIL_FUNDING_FRED_SERIES
+from seiche.config import (
+    ALL_SERIES,
+    OIL_FUNDING_EIA_SERIES,
+    OIL_FUNDING_FRED_SERIES,
+)
 from seiche.engines import oilfunding
 
 
@@ -28,6 +32,7 @@ def _constant_world(n: int = 800) -> dict[str, pd.Series]:
         "core_cpi": pd.Series(np.linspace(290.0, 320.0, n), index=index),
         "foreign_treasury_custody": pd.Series(np.linspace(3_000_000.0, 3_200_000.0, n), index=index),
         "foreign_official_rrp": pd.Series(np.linspace(200_000.0, 240_000.0, n), index=index),
+        "cushing_stocks": pd.Series(np.linspace(32_000.0, 21_000.0, n), index=index),
     }
 
 
@@ -58,6 +63,7 @@ def _varying_world(n: int = 1200) -> dict[str, pd.Series]:
         "core_cpi": pd.Series(270.0 + np.cumsum(rng.normal(0.07, 0.05, n)), index=index),
         "foreign_treasury_custody": pd.Series(3_000_000.0 + np.cumsum(rng.normal(120.0, 900.0, n)), index=index),
         "foreign_official_rrp": pd.Series(220_000.0 + np.cumsum(rng.normal(20.0, 180.0, n)), index=index),
+        "cushing_stocks": pd.Series(35_000.0 + np.cumsum(rng.normal(-3.0, 140.0, n)), index=index),
     }
 
 
@@ -70,6 +76,13 @@ def test_public_oil_series_are_keyless_fred_contracts() -> None:
     assert by_name["CORE_CPI"].remote_id == "CPILFESL"
     assert all(spec.source == "fred" for spec in by_name.values())
     assert set(by_name) <= set(ALL_SERIES)
+
+    assert len(OIL_FUNDING_EIA_SERIES) == 1
+    cushing = OIL_FUNDING_EIA_SERIES[0]
+    assert cushing.mnemonic == "CUSHING_STOCKS"
+    assert cushing.remote_id == "W_EPC0_SAX_YCUOK_MBBL"
+    assert cushing.source == "eia" and cushing.freq == "W"
+    assert cushing.mnemonic in ALL_SERIES
 
 
 def test_scenario_reproduces_the_channel_identities() -> None:
@@ -103,6 +116,25 @@ def test_live_spreads_keep_units_and_signs_separate() -> None:
     assert live["sofr_iorb"]["spread_bp"] == pytest.approx(2.0)
     assert live["wti"]["price_usd_per_bbl"] == 80.0
     assert live["inr"]["per_usd"] == 84.0
+    assert live["brent_wti_spread"]["brent_minus_wti_usd_per_bbl"] == 4.0
+
+
+def test_market_structure_keeps_live_reference_and_interpretive_data_separate() -> None:
+    out = oilfunding.analyze(**_constant_world())
+    live = out["live"]["cushing"]
+    structure = out["market_structure"]
+
+    assert live["stocks_m_bbl"] == 21.0
+    assert live["fill_of_last_working_capacity_pct"] == pytest.approx(26.8)
+    assert live["buffer_to_20m_reference_m_bbl"] == 1.0
+    assert structure["cushing"]["working_capacity_m_bbl"] == 78.410
+    assert structure["cushing"]["capacity_asof"] == "2024-03-31"
+    assert "not a universal" in structure["cushing"]["stress_reference_status"]
+    assert structure["chokepoints"]["latest_period"] == "1Q26"
+    assert structure["chokepoints"]["live_status"].startswith("not asserted")
+    assert structure["india"]["non_hormuz_crude_routing_pct"] == 70.0
+    assert out["charts"]["cushing_inventory"]["rows"]
+    assert out["charts"]["brent_wti_spread"]["rows"]
 
 
 def test_coupling_uses_changes_and_recovers_planted_association() -> None:
