@@ -180,6 +180,93 @@ OIL_FUNDING_SCENARIO_DEFAULTS = {
     "cp_funding_share_pct": 40.0,
 }
 
+# The Estuary: FX + materials as upstream cash demands on money markets.
+#
+# The existing Global board answers "which national funding basins are moving
+# together?" and Oil × Funding gives the barrel its own balance sheet.  This
+# panel answers a different question: are currency and physical-market cash
+# demands building before SOFR / commercial paper have repriced?  H.10 gives
+# us a broad, internally consistent daily FX tape; EIA supplies the daily
+# energy legs; IMF commodity benchmarks supply the slower industrial / food
+# breadth.  Monthly IMF observations NEVER get promoted to daily evidence.
+#
+# Gold is intentionally absent.  The old LBMA/FRED public spot series stopped
+# in 2022 and the current institutional feeds carry licensing/API contracts
+# that do not meet Seiche's free, keyless, reproducible-data rule.  The page
+# states that boundary rather than serving a stale "live" precious-metal box.
+ESTUARY_FRED_SERIES = [
+    # H.10 pair panel.  Starred H.10 quotes (GBP, AUD, EUR) are USD per local
+    # currency and are inverted inside the engine so every row means local
+    # currency per USD; positive change then always means local depreciation.
+    SeriesSpec("GBP", "fred", "DEXUSUK", "US dollars per pound sterling (H.10)", "$ per GBP", "D", 360),
+    SeriesSpec("AUD", "fred", "DEXUSAL", "US dollars per Australian dollar (H.10)", "$ per AUD", "D", 360),
+    SeriesSpec("CAD", "fred", "DEXCAUS", "Canadian dollars per USD (H.10)", "CAD", "D", 360),
+    SeriesSpec("CHF", "fred", "DEXSZUS", "Swiss francs per USD (H.10)", "CHF", "D", 360),
+    SeriesSpec("MXN", "fred", "DEXMXUS", "Mexican pesos per USD (H.10)", "MXN", "D", 360),
+    SeriesSpec("BRL", "fred", "DEXBZUS", "Brazilian reais per USD (H.10)", "BRL", "D", 360),
+    SeriesSpec("ZAR", "fred", "DEXSFUS", "South African rand per USD (H.10)", "ZAR", "D", 360),
+    SeriesSpec("DXY_AFE", "fred", "DTWEXAFEGS", "Nominal advanced-economy US dollar index", "Jan 2006=100", "D", 360),
+    SeriesSpec("DXY_EME", "fred", "DTWEXEMEGS", "Nominal emerging-market US dollar index", "Jan 2006=100", "D", 360),
+    # Daily physical energy plus monthly IMF benchmark breadth.  Monthly
+    # series start in 2015 here: enough history for self-percentiles without
+    # handing the rest of the board three extra decades of duplicate state.
+    SeriesSpec("NATGAS_SPOT", "fred", "DHHNGSP", "Henry Hub natural gas spot", "$/MMBtu", "D", 360, start="2015-01-01"),
+    SeriesSpec("COMMODITY_ALL", "fred", "PALLFNFINDEXM", "IMF global all-commodities price index", "2016=100", "M", 1440, start="2015-01-01"),
+    SeriesSpec("COPPER", "fred", "PCOPPUSDM", "IMF global copper benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+    SeriesSpec("ALUMINUM", "fred", "PALUMUSDM", "IMF global aluminum benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+    SeriesSpec("NICKEL", "fred", "PNICKUSDM", "IMF global nickel benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+    SeriesSpec("COAL", "fred", "PCOALAUUSDM", "IMF Australian coal benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+    SeriesSpec("WHEAT", "fred", "PWHEAMTUSDM", "IMF global wheat benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+    SeriesSpec("CORN", "fred", "PMAIZMTUSDM", "IMF global corn benchmark", "$/metric ton", "M", 1440, start="2015-01-01"),
+]
+
+# Explicit editorial weights for the Estuary gap.  This score is CONTEXT and
+# never joins Seiche's funding composite.  Keeping the weights here lets a
+# reviewer distinguish judgment from mechanics without reading engine code.
+ESTUARY_UPSTREAM_WEIGHTS = {"fx": 0.55, "materials": 0.45}
+ESTUARY_FX_WEIGHTS = {
+    "broad_dollar": 0.35,
+    "eme_dollar": 0.25,
+    "pair_depreciation": 0.25,
+    "pair_volatility": 0.15,
+}
+ESTUARY_MATERIAL_WEIGHTS = {
+    "energy": 0.35,
+    "industrial": 0.30,
+    "agriculture": 0.20,
+    "broad": 0.15,
+}
+ESTUARY_GAP_BUILDING = 10.0
+ESTUARY_GAP_OPEN = 25.0
+
+# Structural benchmark, not a live feed.  The as-of and source travel with
+# every number in the payload.  The 2025 BIS Triennial Survey is the first to
+# publish the new settlement-method breakdown; it is the right denominator
+# for the scenario lab but cannot be mistaken for today's flow.
+ESTUARY_BIS_FX_STRUCTURE = {
+    "survey_asof": "2025-04",
+    "fx_turnover_usd_t_per_day": 9.6,
+    "gross_obligations_usd_t_per_day": 14.0,
+    "pvp_share_pct": 36.0,
+    "pre_settlement_netting_share_pct": 15.0,
+    "gross_bilateral_share_pct": 10.0,
+    "gross_bilateral_usd_t_per_day": 1.4,
+    "source": "BIS 2025 Triennial Survey / June 2026 settlement-risk analysis",
+    "url": "https://www.bis.org/publ/qtrpdf/r_qt2606c.htm",
+}
+
+ESTUARY_SCENARIO_DEFAULTS = {
+    "daily_fx_obligations_usd_b": 5.0,
+    "gross_bilateral_share_pct": 10.0,
+    "adverse_fx_move_pct": 2.0,
+    "commodity_inventory_usd_b": 0.50,
+    "commodity_price_move_pct": 10.0,
+    "commodity_hedge_ratio_pct": 70.0,
+    "haircut_increase_pct": 3.0,
+    "receivable_days": 45.0,
+    "funding_rate_pct": 5.0,
+}
+
 # Referee series: the publicly reconstructible layer of the "global
 # liquidity" story — G3 central bank balance sheets in dollar terms plus the
 # outcome series their headline claims are tested against. G3 only BY
@@ -432,6 +519,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
     + OIL_FUNDING_FRED_SERIES
+    + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES

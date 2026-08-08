@@ -49,6 +49,12 @@ That is enough to use Seiche well. The rest is depth for when you want it.
 - **MARKET** — the raw rates and spreads, if you want the source numbers.
 - **GLOBAL** — whether the US, Europe, the UK, India and the crypto dollar are
   all moving together, which is what makes a local problem a global one.
+- **FX×MATERIALS** — The Estuary: whether currency weakness, settlement risk and
+  physical inventory are asking for cash before SOFR and commercial paper show it.
+  The Passage map only calls a lead/lag relationship “earned” when it survives a
+  later block of history that was not used to choose it. Daily and monthly clocks
+  stay separate, and the lower cash-conversion lab is scenario arithmetic rather
+  than a claim about anyone's real book.
 - **OIL×FUNDING** — how oil and money markets transmit stress in both directions:
   rates into the futures-curve carry hurdle, and oil into cargo credit, margin
   cash, rupee liquidity and OMC commercial-paper demand, with slower inflation,
@@ -84,6 +90,7 @@ Seiche names its parts after the sea. Here is what each one really does.
 | **Swell Forecast** | The odds of a funding stress spike on each of the next 42 business days. |
 | **Hydrophone Array** | How tightly connected the plumbing is right now, and which pipe moves first. |
 | **Global Basin** | Are the world's funding systems moving as one tide. |
+| **The Estuary / Passage** | Are FX settlement and physical-market cash demands running ahead of the funding stress already priced—and did the historical route survive an untouched holdout sample. |
 | **Oil × Funding** | How a barrel's price, time in transit, hedge and financing rate become cash demand—and how the money-market rate runs backward into the oil curve. |
 | **Stablecoin Moorings** | The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed. |
 | **ML Lab** | A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses. |

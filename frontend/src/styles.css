@@ -660,6 +660,7 @@ table.mini tr:hover td { background: rgba(237, 238, 244, 0.03); }
   .weekahead-loading { grid-template-rows: minmax(380px, 1fr) 190px; }
   .wordmark { font-size: 17px; letter-spacing: 0.26em; }
   .masthead { gap: 12px; }
+  .mastindex { width: 100%; min-width: 0; flex-wrap: wrap; }
   .masthead .right { font-size: 10px; }
   .agent-launch { grid-template-columns: 1fr; gap: 6px; }
   .tabs {

@@ -40,6 +40,7 @@ from seiche.config import (
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
     ECB_SERIES,
+    ESTUARY_FRED_SERIES,
     FOMC_DECISION_DATES,
     FRED_CP_SERIES,
     FRED_CUSTODY_SERIES,
@@ -102,6 +103,7 @@ from seiche.engines import ledger as eng_ledger
 from seiche.engines import modelcourt as eng_modelcourt
 from seiche.engines import officialbid as eng_officialbid
 from seiche.engines import oilfunding as eng_oilfunding
+from seiche.engines import estuary as eng_estuary
 from seiche.engines import rdenowcast as eng_rdenowcast
 from seiche.engines import refereegli as eng_refereegli
 from seiche.engines import reportcard as eng_reportcard
@@ -161,6 +163,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             s.mnemonic
             for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
             + GLOBAL_MM_FRED_SERIES + OIL_FUNDING_FRED_SERIES
+            + ESTUARY_FRED_SERIES
             + PRETRAIN_FRED_SERIES + REFEREE_SERIES
         ]
         await asyncio.gather(
@@ -697,6 +700,123 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         core_cpi=_pts(fred_s, "CORE_CPI"),
         foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
         foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
+    ))
+
+    # --- The Estuary (FX + materials -> price of cash).  The daily Passage
+    #     and monthly breadth are explicitly separate; context only, never a
+    #     composite component. ---
+    run("estuary", lambda: eng_estuary.analyze(
+        fx={
+            "EUR": {
+                "label": "Euro", "bucket": "AFE", "series": _pts(fred_s, "EURUSD"),
+                "quote": "usd_per_local", "source_id": "DEXUSEU",
+                "rate": _pts(ecb_s, "ESTR"), "rate_label": "€STR", "rate_cadence": "daily",
+            },
+            "GBP": {
+                "label": "Sterling", "bucket": "AFE", "series": _pts(fred_s, "GBP"),
+                "quote": "usd_per_local", "source_id": "DEXUSUK",
+                "rate": _pts(fred_s, "SONIA"), "rate_label": "SONIA", "rate_cadence": "daily",
+            },
+            "JPY": {
+                "label": "Japanese yen", "bucket": "AFE", "series": _pts(fred_s, "JPY"),
+                "quote": "local_per_usd", "source_id": "DEXJPUS",
+                "rate": _pts(boj_s, "TONA"), "rate_label": "TONA", "rate_cadence": "daily",
+            },
+            "AUD": {
+                "label": "Australian dollar", "bucket": "AFE", "series": _pts(fred_s, "AUD"),
+                "quote": "usd_per_local", "source_id": "DEXUSAL",
+            },
+            "CAD": {
+                "label": "Canadian dollar", "bucket": "AFE", "series": _pts(fred_s, "CAD"),
+                "quote": "local_per_usd", "source_id": "DEXCAUS",
+            },
+            "CHF": {
+                "label": "Swiss franc", "bucket": "AFE", "series": _pts(fred_s, "CHF"),
+                "quote": "local_per_usd", "source_id": "DEXSZUS",
+            },
+            "CNY": {
+                "label": "Chinese yuan", "bucket": "EM", "series": _pts(fred_s, "CNY"),
+                "quote": "local_per_usd", "source_id": "DEXCHUS",
+                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N", "rate_cadence": "daily",
+            },
+            "INR": {
+                "label": "Indian rupee", "bucket": "EM", "series": _pts(fred_s, "INR"),
+                "quote": "local_per_usd", "source_id": "DEXINUS",
+                "rate": _pts(fred_s, "CALL_IN"), "rate_label": "call money", "rate_cadence": "monthly ~2mo lag",
+            },
+            "KRW": {
+                "label": "Korean won", "bucket": "EM", "series": _pts(fred_s, "KRW"),
+                "quote": "local_per_usd", "source_id": "DEXKOUS",
+                "rate": _pts(fred_s, "CALL_KR"), "rate_label": "o/n call", "rate_cadence": "monthly ~2mo lag",
+            },
+            "MXN": {
+                "label": "Mexican peso", "bucket": "EM", "series": _pts(fred_s, "MXN"),
+                "quote": "local_per_usd", "source_id": "DEXMXUS",
+            },
+            "BRL": {
+                "label": "Brazilian real", "bucket": "EM", "series": _pts(fred_s, "BRL"),
+                "quote": "local_per_usd", "source_id": "DEXBZUS",
+            },
+            "ZAR": {
+                "label": "South African rand", "bucket": "EM", "series": _pts(fred_s, "ZAR"),
+                "quote": "local_per_usd", "source_id": "DEXSFUS",
+            },
+        },
+        broad_dollar=_pts(fred_s, "DXY_BROAD"),
+        afe_dollar=_pts(fred_s, "DXY_AFE"),
+        eme_dollar=_pts(fred_s, "DXY_EME"),
+        commodities={
+            "WTI": {
+                "label": "WTI crude", "category": "energy", "series": _pts(fred_s, "WTI_SPOT"),
+                "cadence": "D", "change_kind": "diff", "unit": "$/bbl", "source_id": "DCOILWTICO",
+            },
+            "BRENT": {
+                "label": "Brent crude", "category": "energy", "series": _pts(fred_s, "BRENT_SPOT"),
+                "cadence": "D", "change_kind": "diff", "unit": "$/bbl", "source_id": "DCOILBRENTEU",
+            },
+            "NATGAS": {
+                "label": "Henry Hub gas", "category": "energy", "series": _pts(fred_s, "NATGAS_SPOT"),
+                "cadence": "D", "unit": "$/MMBtu", "source_id": "DHHNGSP",
+            },
+            "COAL": {
+                "label": "Australian coal", "category": "energy", "series": _pts(fred_s, "COAL"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PCOALAUUSDM",
+            },
+            "ALL": {
+                "label": "All commodities", "category": "broad", "series": _pts(fred_s, "COMMODITY_ALL"),
+                "cadence": "M", "unit": "2016=100", "source_id": "PALLFNFINDEXM",
+            },
+            "COPPER": {
+                "label": "Copper", "category": "industrial", "series": _pts(fred_s, "COPPER"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PCOPPUSDM",
+            },
+            "ALUMINUM": {
+                "label": "Aluminum", "category": "industrial", "series": _pts(fred_s, "ALUMINUM"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PALUMUSDM",
+            },
+            "NICKEL": {
+                "label": "Nickel", "category": "industrial", "series": _pts(fred_s, "NICKEL"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PNICKUSDM",
+            },
+            "WHEAT": {
+                "label": "Wheat", "category": "agriculture", "series": _pts(fred_s, "WHEAT"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PWHEAMTUSDM",
+            },
+            "CORN": {
+                "label": "Corn", "category": "agriculture", "series": _pts(fred_s, "CORN"),
+                "cadence": "M", "unit": "$/metric ton", "source_id": "PMAIZMTUSDM",
+            },
+        },
+        sofr=_pts(fred_s, "SOFR"),
+        iorb=iorb if iorb is not None else pd.Series(dtype=float),
+        effr=_pts(fred_s, "EFFR"),
+        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+        treasury_3m=_pts(cp_s, "DGS3M"),
+        swap_lines_m=_pts(fred_s, "SWAP_LINES"),
+        foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
+        fima_repo_m=_pts(src.get("fred_custody", {}), "FIMA_REPO"),
+        offshore_usd_credit_m=_pts(src.get("bis", {}), "GLI_OFFSHORE_USD"),
     ))
 
     # --- Windfetch (the lab's current-affairs wind read back from the

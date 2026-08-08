@@ -33,7 +33,7 @@ built in the Undertow repo back into this board. On names: the internal
 composite engine called "undertow" (critical slowing down,
 `engines/undertow.py`) is unrelated to the Undertow sister product.
 
-## v2 "Deep Water" — twenty-two engines, eight analytics layers, twelve tabs
+## v2 "Deep Water" — an accountable engine fleet, layered analytics, one terminal
 
 > **v2.3 "Letters of Marque"** (built in tandem across two sessions) adds the
 > forecast layer and the layer that makes every other layer accountable:
@@ -67,6 +67,7 @@ composite engine called "undertow" (critical slowing down,
 | **Swell Forecast** ★ | The funding-stress **forward curve** — a term structure nobody publishes, not even the $32k terminals: P(SOFR−IORB pop ≥ 2/5/10/20bp) for each of the next 42 business days, built from the PUBLIC forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops — small severities lend the rare big ones statistical mass), lifted by the live damping state and announced coupon settlements. Compounds to P(event by horizon), walk-forward validated vs climatology with the reliability table printed, and the verdict self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
+| **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twelve H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
 | **Oil × Funding** ★ | The barrel's balance sheet, in both directions: WTI/Brent, CP−bill and SOFR−IORB evidence; a rolling change-on-change coupling diagnostic; the observed mechanical carry hurdle; energy/core CPI into IORB; broad foreign-official dollar-parking proxies for the recycling channel; and an editable, explicitly scenario-only lab for cargo credit, margin calls, RBI liquidity absorption and OMC commercial-paper demand. Context only, never a composite input. |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
 | **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
@@ -95,6 +96,12 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 - **The Tell** — plumbing percentile minus market-priced-stress percentile (VIX, HY/IG
   OAS, rates vol). Positive = the basin is sloshing and the screens haven't noticed.
   The whole thesis in one tradeable number.
+- **The Estuary** — upstream FX/material pressure minus the funding pressure already
+  priced in SOFR and commercial paper. A positive Passage gap says the cash burden is
+  running ahead of its usual landing zones; the discovery/holdout map then shows which
+  links actually survived unseen history. Monthly physical breadth is never filled
+  forward into the daily evidence, and the cash lab never pretends user assumptions
+  are observed exposures.
 - **The Navigator** — an LLM forecaster made accountable: one committed
   P(funding event, 5bd) per data-day, grounded strictly in the live board,
   written into the hash-chained record. An LLM cannot be honestly backtested
