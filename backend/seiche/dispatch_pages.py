@@ -423,7 +423,7 @@ _LLMS_PREAMBLE = f"""# Seiche
 > US money markets built from free public data (Fed H.4.1, NY Fed operations,
 > OFR repo, Treasury cash, plus other public sources, each shown with its
 > native publication lag). It publishes a live stress regime, forward event
-> odds, historical analogs and a point-in-time backtest with the misses kept
+> odds, historical analogs and a final-vintage construction-PIT diagnostic with the misses kept
 > next to the hits. The board recomputes through the day; the daily letter
 > freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
 > on this site may be read, quoted, indexed and used as AI input or training material.
@@ -466,7 +466,7 @@ same product; the callable contract remains the MCP server above.
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
 - [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
 - [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
-- [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the point-in-time replay and the notary, with the commands to check each one
+- [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
 - [Live board]({SITE}/): the current funding stress reading
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page

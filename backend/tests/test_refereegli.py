@@ -5,12 +5,14 @@ only, no network."""
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from seiche.engines import refereegli
+from seiche.vintage import VintageEvidenceStore
 
 pytestmark = pytest.mark.limit_memory("256 MB")
 
@@ -74,6 +76,40 @@ def test_g3_sum_and_units():
         c["fed"] + c["ecb"] + c["boj"], abs=0.02)
     assert r["n_months"] == 264
     assert len(r["series"]) == 264
+    assert not r["historical_evidence"]["validated_backtest_eligible"]
+    assert r["historical_evidence"]["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
+
+
+def test_validated_claim_requires_complete_vintage_manifest():
+    with pytest.raises(ValueError, match="signed content-bound"):
+        refereegli.analyze(**_inputs(), claim_mode="validated_backtest")
+
+    manifest = {
+        name: "as_published_capture"
+        for name in refereegli.REFEREE_HISTORICAL_INPUTS
+    }
+    with pytest.raises(ValueError, match="signed content-bound"):
+        refereegli.analyze(
+            **_inputs(),
+            vintage_manifest=manifest,
+            claim_mode="validated_backtest",
+        )
+
+    inputs = _inputs()
+    captured = datetime(2026, 1, 1, tzinfo=UTC)
+    store = VintageEvidenceStore(
+        inputs,
+        knowledge_times={name: captured for name in inputs},
+        vintage_statuses={name: "as_published_capture" for name in inputs},
+        signing_key=b"seiche-referee-test-key" * 2,
+    )
+    cut = store.verify_cut(store.issue_cut(datetime(2026, 1, 2, tzinfo=UTC)))
+    result = refereegli.analyze(
+        **inputs,
+        verified_vintage_cut=cut,
+        claim_mode="validated_backtest",
+    )
+    assert result["historical_evidence"]["validated_backtest_eligible"]
 
 
 def test_result_is_json_able_and_dash_free():

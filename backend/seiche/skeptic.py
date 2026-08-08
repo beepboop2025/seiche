@@ -387,7 +387,7 @@ def _orthogonal_section(deep: dict) -> tuple[str, bool]:
 
 
 # ---------------------------------------------------------------------------
-# 3. the point-in-time replay
+# 3. the construction-PIT replay
 # ---------------------------------------------------------------------------
 _REPLAY_CMD = """# 1. from the hosted board: rebuild it as it stood on a past date
 # (a date nobody has replayed lately is rebuilt from scratch, so give it room)
@@ -684,7 +684,7 @@ def render_skeptic_html(snap: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Seiche skeptic pack</title>
-<meta name="description" content="The two questions a skeptical economist asks first, answered with the board's own numbers: the leak audit that prices what look-ahead would have bought, the orthogonal test that reruns event capture with the target's own variables removed, the point-in-time replay, the hash-chained notary, and what would falsify the whole board.">
+<meta name="description" content="The two questions a skeptical economist asks first, answered with the board's own numbers: the leak audit that prices what look-ahead would have bought, the orthogonal test that reruns event capture with the target's own variables removed, the final-vintage construction-PIT replay, the hash-chained notary, and what would falsify the whole board.">
 <link rel="canonical" href="{SKEPTIC_URL}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>{_CSS}{_EXTRA_CSS}</style>

@@ -31,10 +31,21 @@ from seiche.config import (
     REFEREE_OOS_BURN_M,
     REFEREE_START,
 )
+from seiche.engines.history import vintage_evidence
+from seiche.vintage import VerifiedVintageDataCut, assert_cut_binds_series
 
 _CORR_SEED = 42
 _SPREAD_SEED = 7
 _MIN_MONTHS = 120  # a lead-lag verdict on less than a decade is noise
+REFEREE_HISTORICAL_INPUTS = (
+    "fed_assets",
+    "ecb_assets",
+    "boj_assets",
+    "usd_per_eur",
+    "jpy_per_usd",
+    "equity",
+    "indpro",
+)
 
 CLAIMS = {
     "claim1": "liquidity leads asset prices by 3 to 6 months",
@@ -257,7 +268,40 @@ def _claim3(liq_yoy: pd.Series) -> dict:
 def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
             usd_per_eur: pd.Series, jpy_per_usd: pd.Series,
             equity: pd.Series, indpro: pd.Series,
-            tga: pd.Series | None = None, rrp: pd.Series | None = None) -> dict:
+            tga: pd.Series | None = None, rrp: pd.Series | None = None,
+            vintage_manifest: dict[str, str] | None = None,
+            verified_vintage_cut: VerifiedVintageDataCut | None = None,
+            claim_mode: str = "research") -> dict:
+    if claim_mode not in ("research", "validated_backtest"):
+        raise ValueError(f"unknown claim_mode: {claim_mode!r}")
+    consumed = {
+        "fed_assets": fed_assets,
+        "ecb_assets": ecb_assets,
+        "boj_assets": boj_assets,
+        "usd_per_eur": usd_per_eur,
+        "jpy_per_usd": jpy_per_usd,
+        "equity": equity,
+        "indpro": indpro,
+    }
+    if tga is not None:
+        consumed["tga"] = tga
+    if rrp is not None:
+        consumed["rrp"] = rrp
+    required_inputs = tuple(consumed)
+    if verified_vintage_cut is not None:
+        assert_cut_binds_series(verified_vintage_cut, consumed)
+    evidence = vintage_evidence(
+        vintage_manifest,
+        required_inputs=required_inputs,
+        verified_data_cut=verified_vintage_cut,
+    )
+    if claim_mode == "validated_backtest" and not evidence[
+        "validated_backtest_eligible"
+    ]:
+        raise ValueError(
+            "validated_backtest requires a signed content-bound ALFRED/as-published cut for "
+            f"every Referee input; unsafe={evidence['unsafe']}"
+        )
     for name, s in (("fed", fed_assets), ("ecb", ecb_assets), ("boj", boj_assets),
                     ("eur", usd_per_eur), ("jpy", jpy_per_usd),
                     ("equity", equity), ("indpro", indpro)):
@@ -286,6 +330,7 @@ def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
 
     return {
         "ok": True,
+        "historical_evidence": evidence,
         "asof": g3.index[-1].date().isoformat(),
         "window": [g3.index[0].date().isoformat(), g3.index[-1].date().isoformat()],
         "n_months": int(len(g3)),
@@ -323,6 +368,8 @@ def analyze(fed_assets: pd.Series, ecb_assets: pd.Series, boj_assets: pd.Series,
             "strongest known variant of the claim, net liquidity defined as "
             "central bank assets minus the Treasury cash balance minus reverse "
             "repo take up, gets the same forward correlations and the same "
-            "walk forward test."
+            "walk forward test. Historical inputs are final/current-vintage "
+            "unless the attached historical_evidence manifest proves otherwise; "
+            "chronological alignment alone is not a validated-backtest claim."
         ),
     }

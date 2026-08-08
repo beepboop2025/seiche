@@ -182,6 +182,28 @@ def _need(section: dict | None, label: str) -> dict:
     return section
 
 
+def _historical_evidence(payload: dict) -> dict:
+    """Extract a claim boundary, defaulting legacy payloads to unsafe."""
+
+    direct = payload.get("historical_evidence")
+    if isinstance(direct, dict):
+        return direct
+    deep = payload.get("deep", {})
+    history = deep.get("history", {}) if isinstance(deep, dict) else {}
+    nested = history.get("vintage_evidence") if isinstance(history, dict) else None
+    if isinstance(nested, dict):
+        return {**nested, "real_money_eligible": False}
+    return {
+        "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
+        "validated_backtest_eligible": False,
+        "real_money_eligible": False,
+        "reason": (
+            "historical reconstruction uses final/current-vintage public data; "
+            "no complete as-published manifest accompanied this payload"
+        ),
+    }
+
+
 def tool_stress_now(_args: dict, public: bool) -> Any:
     snap = _get_snapshot()
     if public:
@@ -270,6 +292,7 @@ def tool_forecast(_args: dict, public: bool) -> Any:
             "no forecast engine is available yet — the board needs enough "
             "history to fit them (run a full pull first)"
         )
+    out["historical_evidence"] = _historical_evidence(snap)
     out["reading"] = (
         "independent forward views of the same board. P(event) sources: Swell "
         "(term-structure), Bathymetry (first-passage physics), ML (gradient "
@@ -294,6 +317,7 @@ def tool_analogs(_args: dict, _public: bool) -> Any:
         "nearest_analogs": t.get("analogs", [])[:8],
         "forward_fan": (t.get("fan") or [])[-1:],
         "horizon_bd": t.get("horizon_bd"),
+        "historical_evidence": _historical_evidence(snap),
         "reading": (
             "finds the historical days whose funding conditions most resemble "
             "today, then reports how often those analogs saw a stress event "
@@ -324,10 +348,11 @@ def tool_replay(args: dict, public: bool) -> Any:
         },
         "crunch_windows": (weather.get("crunch_windows") or [])[:5],
         "vintage_note": p.get("vintage_note"),
+        "historical_evidence": _historical_evidence(p),
         "reading": (
-            "the whole board reconstructed as it would have read on that date, "
-            "point-in-time (no lookahead). Use it to test a thesis against how "
-            "Seiche actually called a past episode."
+            "the board recomputed on data truncated at that date, but from "
+            "final/current-vintage history. This is construction-PIT research, "
+            "not proof of what Seiche or a market participant knew that day."
         ),
     }
 
@@ -342,6 +367,7 @@ def tool_proof(_args: dict, _public: bool) -> Any:
         "orthogonal": bt.get("orthogonal", {}),
         "episodes": bt.get("episodes", []),
         "caveats": bt.get("caveats", []),
+        "historical_evidence": _historical_evidence(snap),
         "reading": (
             "the track record, stated honestly: recall/precision with 95% CIs "
             "over the labelled funding events, an orthogonal test that strips "
@@ -363,6 +389,7 @@ def tool_book(_args: dict, public: bool) -> Any:
         "walk_forward": bk.get("backtest", {}),
         "live_record": bk.get("live", {}),
         "caveats": bk.get("caveats", []),
+        "historical_evidence": _historical_evidence(snap),
     }
     stk = deep.get("stacker", {})
     if stk.get("ok"):
@@ -414,7 +441,8 @@ def tool_wrecks(_args: dict, _public: bool) -> Any:
                         "deployment yet (operator runs `seiche wrecks --refresh`)")
     payload = dict(payload)
     payload["reading"] = (
-        "labelled crypto stress episodes replayed point-in-time against the "
+        "labelled crypto stress episodes replayed with causal truncation but "
+        "final/current-vintage inputs against the "
         "funding board. EXTERNAL wrecks test transmission (was the dollar "
         "system under strain as crypto broke); CRYPTO-NATIVE wrecks test "
         "specificity (the board should stay quiet, and quiet is a win, not "
@@ -543,11 +571,13 @@ TOOLS: dict[str, tuple] = {
     ),
     "replay_asof": (
         "Time Machine: the board on a past date",
-        "Reconstruct the entire funding-stress board as it read on a historical "
-        "date, point-in-time with no lookahead: the composite, the regime, the "
-        "per-component decomposition and the crunch windows for that date. Use "
+        "Recompute the funding-stress board on inputs truncated at a historical "
+        "date. The composite, regime, decomposition, and crunch windows use "
+        "final/current-vintage history and are construction-PIT, not proof of "
+        "what was publicly knowable then. The response carries a machine-readable "
+        "claim boundary. Use "
         "to test whether Seiche would have flagged a past liquidity episode, or "
-        "to align a backtest with what was knowable then. Built from free "
+        "to explore a historically truncated reconstruction. Built from free "
         "public data.",
         {
             "type": "object",
@@ -587,7 +617,8 @@ TOOLS: dict[str, tuple] = {
         "Wrecks: crypto episodes vs the funding board",
         "Labelled crypto stress episodes (Black Thursday 2020, Terra, FTX, "
         "the SVB/USDC weekend, the Oct-2025 liquidation cascade, the Ethena "
-        "unwind) replayed point-in-time against the dollar-funding board. "
+        "unwind) replayed with causal truncation but final/current-vintage "
+        "inputs against the dollar-funding board. "
         "External wrecks show transmission; crypto-native wrecks show the "
         "board correctly staying quiet. Use for any 'does TradFi funding "
         "stress reach crypto' question, grounded in the record.",
@@ -755,7 +786,7 @@ PROMPTS: dict[str, tuple] = {
     ),
     "crisis_replay": (
         "Replay a historical stress date",
-        "Reconstruct the funding board on a past date, point-in-time, and "
+        "Reconstruct the funding board on a past date as a construction-PIT diagnostic and "
         "compare it with today.",
         [
             {
@@ -767,9 +798,9 @@ PROMPTS: dict[str, tuple] = {
         lambda a: (
             f"Replay the funding-stress board for {a.get('date', 'the date')} "
             "using replay_asof, then call funding_stress_now and compare: "
-            "composite, regime, and which components drove each. State what "
-            "was knowable THEN versus what is visible now (the replay is "
-            "point-in-time, no lookahead), and finish with whether today "
+            "composite, regime, and which components drove each. State what the "
+            "final/current-vintage reconstruction shows versus what is visible "
+            "now; do not claim the replay proves what was knowable then. Finish with whether today "
             "rhymes with that episode, citing historical_analogs."
         ),
         ("replay_asof", "funding_stress_now", "historical_analogs"),
@@ -802,8 +833,9 @@ SERVER_INSTRUCTIONS = (
     "memory — whenever a task involves dollar funding, repo, bank reserves, "
     "the Fed balance sheet, liquidity risk, or 'is now a dangerous moment in "
     "money markets': your training data is stale, this board is live. Every "
-    "reading is point-in-time and every claim is backed by the PROOF "
-    "scoreboard — cite it.\n\n"
+    "live reading is forward-captured as published. Historical replays use "
+    "final/current-vintage inputs and carry a construction-PIT claim boundary; "
+    "PROOF is a diagnostic scoreboard, not validated-backtest evidence — cite it.\n\n"
     "For oil prices, Cushing stocks, WTI/Brent benchmark structure, cargo "
     "finance, commodity margin calls, INR/RBI liquidity or petrodollar "
     "recycling, call oil_funding_context. For currencies, "

@@ -39,7 +39,7 @@ share one estimated object:
   today's state) = 1 − e_x'Q^h·1, and the mean first-passage time
   (I−Q)^{-1}·1 is the expected business days to the next event under frozen
   dynamics — Kramers' escape problem solved on the measured potential.
-  Walk-forward validated vs climatology the house way, and the daily
+  Walk-forward scored vs climatology on final-vintage history, and the daily
   probability joins the Stack as its own member with its own record.
 
 Honesty notes:
@@ -400,6 +400,7 @@ def analyze(spread_bp: pd.Series, horizon: int = BACKTEST_EVENT_FWD_D) -> dict:
             f"V = −∫D1 dx, barrier printed in units of the well's diffusion (k_BT). Spectrum: "
             f"E_k = −ln|λ_k| of the propagator restricted to visited bins (no evidence, no "
             f"eigenvalue), τ = 1/gap. Arrow: Schnakenberg entropy production of the same chain. Escape: absorbing-boundary first passage, P(event ≤ h bd) "
-            f"and MFPT, walk-forward validated vs climatology (warmup {BATHY_WARMUP_D} transitions)"
+            f"and MFPT, walk-forward scored vs climatology on final-vintage history "
+            f"(warmup {BATHY_WARMUP_D} transitions; construction-PIT only)"
         ),
     }

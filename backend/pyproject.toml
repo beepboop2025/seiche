@@ -25,6 +25,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "httpx2>=2.0.0",  # supported transport for Starlette's TestClient
     "pytest-memray>=1.7; sys_platform != 'win32'",
     "pytest-pystack>=1.0; sys_platform == 'linux'",
 ]

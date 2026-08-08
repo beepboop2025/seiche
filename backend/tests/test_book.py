@@ -148,6 +148,10 @@ def test_verdict_confesses_on_noise(rng):
     tell = pd.Series(rng.normal(0, 30, len(idx)), index=idx)
     r = book.run(p, members, disp, tell, rets, pit_records=[])
     assert r["ok"]
+    assert r["historical_evidence"]["validated_backtest_eligible"] is False
+    assert r["validated_backtest"] is False
+    assert r["real_money_eligible"] is False
+    assert r["mode"] == "paper_research_only"
     assert "does NOT beat" in r["backtest"]["verdict"], \
         f"a coin-flip book must confess: {r['backtest']['verdict']}"
 

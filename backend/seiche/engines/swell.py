@@ -368,7 +368,7 @@ def analyze(
         "validation": validation,
         "caveats": [
             "forward days condition on TODAY'S damping state held constant — state drift over the horizon is not modeled (stated, not hidden)",
-            "multi-week horizons compound daily rates as if pop-days were independent; pops CLUSTER, so h≥10 cumulative numbers are upper bounds — only the 5bd integral is walk-forward validated",
+            "multi-week horizons compound daily rates as if pop-days were independent; pops CLUSTER, so h≥10 cumulative numbers are upper bounds — only the 5bd integral is walk-forward scored, on final-vintage history",
             "year turns see ~2 obs/year by construction — their rates borrow strength from quarter-turn evidence via shrinkage (low-n flagged), Wilson CIs printed on the raw counts",
             "check the reliability table before reading any probability as literal odds; the verdict self-demotes on levels",
             "replay note: the announced-settlement overlay has no historical vintage — Time Machine replays run calendar-only",

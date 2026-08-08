@@ -12,22 +12,80 @@ auctions (digestion index — already trailing by construction), buffers (RRP).
 Weather, resonance, hydrophone and warehouse are live-only; their composite
 weights are renormalized away here and that exclusion is printed, not hidden.
 
-Vintage caveat (stated on the PROOF page): daily market prints (SOFR, RRP,
-TGA, percentile tails) are effectively unrevised; weekly H.4.1 aggregates are
-lightly revised. We use final vintage — the honest reading is "as good as a
-point-in-time backtest can be on free data, minus small H.4.1 revisions".
+Vintage boundary: trailing transforms prevent ordinary look-ahead, but they do
+not turn today's revised source history into the values published at the time.
+Final/current-vintage inputs are construction-PIT and are ineligible for a
+validated-backtest claim.  A caller must supply a complete ALFRED/as-published
+manifest to cross that gate; otherwise this module is monitoring/reconstruction
+evidence only.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
 
 from seiche.config import COMPOSITE_WEIGHTS, LEAKAUDIT_TEMP_CENTER_W, REGIMES
+from seiche.vintage import (
+    VINTAGE_SAFE_STATUSES,
+    VerifiedVintageDataCut,
+    assert_cut_binds_series,
+    verified_cut_evidence,
+)
 
 LITE_COMPONENTS = ["tails", "kink", "confession", "rvxray", "auctions", "buffers"]
 MIN_Z_PERIODS = 120
 MIN_PCTL_PERIODS = 250
+HISTORICAL_INPUTS = (
+    "spread_bp",
+    "tail_bp",
+    "srf_accepted",
+    "dw_b",
+    "rrp_b",
+    "res_gdp",
+    "pair_b",
+    "digestion",
+)
+def vintage_evidence(
+    manifest: Mapping[str, str] | None,
+    required_inputs: Iterable[str] = HISTORICAL_INPUTS,
+    *,
+    verified_data_cut: VerifiedVintageDataCut | None = None,
+) -> dict:
+    required = tuple(required_inputs)
+    if verified_data_cut is not None:
+        return verified_cut_evidence(verified_data_cut, required)
+    declared = dict(manifest or {})
+    missing = [name for name in required if name not in declared]
+    unsafe = {
+        name: declared.get(name, "undeclared")
+        for name in required
+        if declared.get(name) not in VINTAGE_SAFE_STATUSES
+    }
+    eligible = False
+    return {
+        "status": (
+            "UNVERIFIED_VINTAGE_ASSERTION"
+            if declared and not missing and not unsafe
+            else "FINAL_VINTAGE_CONSTRUCTION_PIT"
+        ),
+        "validated_backtest_eligible": eligible,
+        "real_money_eligible": False,
+        "reason": (
+            "caller-authored vintage strings are disclosure only, not proof; a "
+            "signed content-bound data cut is required"
+            if declared and not missing and not unsafe else
+            "chronological transforms use final/current-vintage history and do "
+            "not reconstruct what was publicly knowable on each historical date"
+        ),
+        "required_inputs": list(required),
+        "manifest": declared,
+        "missing": missing,
+        "unsafe": unsafe,
+        "accepted_statuses": sorted(VINTAGE_SAFE_STATUSES),
+    }
 
 
 def _ez(s: pd.Series, min_periods: int = MIN_Z_PERIODS) -> pd.Series:
@@ -57,6 +115,9 @@ def build(
     digestion: pd.Series,        # auction digestion index, per-auction dates
     exclude: tuple[str, ...] = (),   # components to leave out (orthogonal tests)
     leak: str = "none",          # LEAK AUDIT ONLY — deliberately broken variants
+    vintage_manifest: Mapping[str, str] | None = None,
+    verified_vintage_cut: VerifiedVintageDataCut | None = None,
+    claim_mode: str = "monitoring",
 ) -> dict:
     """`leak` exists solely for the Leak Audit engine (one-switch protocol,
     arXiv:2605.23959): "norm_global" swaps every expanding z/percentile for
@@ -66,6 +127,31 @@ def build(
     buy. Publishing code must always call with leak="none"."""
     if leak not in ("none", "norm_global", "temp_center"):
         raise ValueError(f"unknown leak mode: {leak!r}")
+    if claim_mode not in ("monitoring", "validated_backtest"):
+        raise ValueError(f"unknown claim_mode: {claim_mode!r}")
+    consumed = {
+        "spread_bp": spread_bp,
+        "tail_bp": tail_bp,
+        "srf_accepted": srf_accepted,
+        "dw_b": dw_b,
+        "rrp_b": rrp_b,
+        "res_gdp": res_gdp,
+        "pair_b": pair_b,
+        "digestion": digestion,
+    }
+    if verified_vintage_cut is not None:
+        assert_cut_binds_series(verified_vintage_cut, consumed)
+    evidence = vintage_evidence(
+        vintage_manifest,
+        verified_data_cut=verified_vintage_cut,
+    )
+    if claim_mode == "validated_backtest" and not evidence[
+        "validated_backtest_eligible"
+    ]:
+        raise ValueError(
+            "validated_backtest requires a signed content-bound ALFRED/as-published cut; "
+            f"unsafe={evidence['unsafe']}"
+        )
     idx = pd.bdate_range(spread_bp.dropna().index.min(), spread_bp.dropna().index.max())
     f = lambda s: s.reindex(idx).ffill(limit=10) if not s.dropna().empty else pd.Series(index=idx, dtype=float)
 
@@ -137,10 +223,12 @@ def build(
         "weights": {k: round(v / wsum, 3) for k, v in w.items()},
         "excluded": [k for k in COMPOSITE_WEIGHTS if k not in active],
         "regime_series": index.map(regime_of),
+        "vintage_evidence": evidence,
         "method": (
             "Seiche-lite: expanding-window standardization only (no look-ahead); "
             "components tails/kink-proxy/confession/rvxray/auctions/buffers with live "
             "composite weights renormalized; weather/resonance/hydrophone/warehouse are "
-            "live-only and excluded (stated, not hidden); final-vintage data"
+            "live-only and excluded (stated, not hidden); historical evidence status: "
+            f"{evidence['status']}"
         ),
     }

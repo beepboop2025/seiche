@@ -950,10 +950,29 @@ def _odds_ledger() -> list | None:
     return rows or None
 
 
+def _bind_deep_history_boundary(deep: dict, evidence: dict | None = None) -> dict:
+    """Make every extractable deep block retain the parent evidence boundary.
+
+    This also upgrades legacy day-cache blobs in memory, so `/api/book` and a
+    consumer extracting one nested block cannot lose the final-vintage warning.
+    Eligibility is never inferred here: engine-level validation remains false
+    unless a separate, explicit gate proves it.
+    """
+    boundary = dict(evidence or eng_history.vintage_evidence(None))
+    deep["historical_evidence"] = boundary
+    for name, block in deep.items():
+        if name == "historical_evidence" or not isinstance(block, dict):
+            continue
+        block.setdefault("historical_evidence", dict(boundary))
+        block.setdefault("validated_backtest", False)
+        block.setdefault("real_money_eligible", False)
+    return deep
+
+
 def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict:
     spread = drv["spread_bp"]
     if spread.empty:
-        return {"ok": False, "reason": "no spread history"}
+        return _bind_deep_history_boundary({"ok": False, "reason": "no spread history"})
     # VERSION in the key: a release that adds deep blocks (tidetables/swell/
     # stacker/book in v2.3) must not serve a pre-upgrade blob for up to 12h.
     cache_key = f"deep:{VERSION}:{spread.index[-1].date().isoformat()}"
@@ -973,7 +992,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         except (TypeError, ValueError):
             fresh = False
         if fresh:
-            return cached
+            nested = cached.get("history", {})
+            evidence = cached.get("historical_evidence") or (
+                nested.get("vintage_evidence") if isinstance(nested, dict) else None
+            )
+            return _bind_deep_history_boundary(cached, evidence)
 
     fred_s = src.get("fred", {})
     out: dict = {"ok": True}
@@ -1001,6 +1024,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             },
             "weights": hist["weights"],
             "excluded": hist["excluded"],
+            "vintage_evidence": hist["vintage_evidence"],
             "series": [
                 [d.date().isoformat(), round(float(v), 1),
                  round(float(pctl.loc[d]), 0) if pd.notna(pctl.loc[d]) else None]
@@ -1011,6 +1035,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     except Exception as e:
         faults.append({"source": "deep:history", "detail": f"{type(e).__name__}: {e}"})
         out["history"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        _bind_deep_history_boundary(out)
         store.save_blob(cache_key, out)
         return out
 
@@ -1057,7 +1082,18 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     run("playbook", _playbook)
 
     run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
-    run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
+    if hist["vintage_evidence"]["validated_backtest_eligible"]:
+        run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
+    else:
+        out["backtest"] = {
+            "ok": False,
+            "status": "UNVERIFIED",
+            "reason": (
+                "historical inputs are construction-PIT/current-vintage; "
+                "a validated replay requires ALFRED or as-published captures"
+            ),
+            "vintage_evidence": hist["vintage_evidence"],
+        }
 
     # Microseism — calendar-gated Hawkes on the shared pop statistic. Lives in
     # the deep layer for the same reason Bathymetry does: its state variable
@@ -1336,10 +1372,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             for k in [k for k in blk if str(k).startswith("_")]:
                 blk.pop(k)
 
+    _bind_deep_history_boundary(out, hist["vintage_evidence"])
     out["_all_ok"] = all(
         isinstance(v, dict) and v.get("ok")
         for k, v in out.items()
-        if k not in ("ok",) and not str(k).startswith("_")
+        if k not in ("ok", "historical_evidence") and not str(k).startswith("_")
     )
     out["_computed_at"] = utcnow_iso()
     store.save_blob(cache_key, out)
@@ -1635,6 +1672,9 @@ async def _build_snapshot() -> dict:
     payload = {
         "generated_at": generated_at,
         "version": VERSION_LABEL,
+        "historical_evidence": deep.get(
+            "historical_evidence", eng_history.vintage_evidence(None)
+        ),
         "headline": headline,
         "engines": _strip_private(engines),
         "deep": _strip_private(deep),
@@ -1689,6 +1729,11 @@ async def snapshot_asof(date: str) -> dict:
     key = f"asof:{asof.date().isoformat()}"
     cached = store.load_blob(key)
     if cached is not None:
+        if "historical_evidence" not in cached:
+            cached = {
+                **cached,
+                "historical_evidence": eng_history.vintage_evidence(None),
+            }
         return cached
 
     async with _lock:
@@ -1708,6 +1753,7 @@ async def snapshot_asof(date: str) -> dict:
         "replay": True,
         "asof": asof.date().isoformat(),
         "vintage_note": "replayed on final-vintage data; weekly H.4.1 aggregates are lightly revised vs what was on screens that day",
+        "historical_evidence": eng_history.vintage_evidence(None),
         "headline": _headline(tsrc, drv),
         "engines": _strip_private(engines),
         "faults": faults,

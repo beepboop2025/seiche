@@ -42,6 +42,7 @@ from seiche.config import (
     REGATTA_REPS,
     REGATTA_SEED,
 )
+from seiche.engines.history import vintage_evidence
 
 MEMBER_LABELS = {
     "rule": "rule index (calibrated)",
@@ -55,6 +56,15 @@ MEMBER_LABELS = {
 }
 
 
+def _bounded_research_result(payload: dict) -> dict:
+    return {
+        **payload,
+        "historical_evidence": vintage_evidence(None),
+        "validated_backtest": False,
+        "real_money_eligible": False,
+    }
+
+
 def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
     """Inputs are the Stack's own OOS streams: `cal` = calibrated member
     probabilities (walk-forward), `p_pub` = the published fleet probability,
@@ -62,10 +72,12 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
     try:
         from arch.bootstrap import MCS
     except ImportError:
-        return {"ok": False, "reason": "arch not installed (pip install arch)"}
+        return _bounded_research_result(
+            {"ok": False, "reason": "arch not installed (pip install arch)"}
+        )
 
     if cal is None or cal.dropna(how="all").empty:
-        return {"ok": False, "reason": "no member OOS streams"}
+        return _bounded_research_result({"ok": False, "reason": "no member OOS streams"})
 
     probs = cal.copy()
     if p_pub is not None and not p_pub.dropna().empty:
@@ -83,13 +95,15 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
     panel = panel.dropna()
     models = [c for c in panel.columns if c != "y"]
     if len(panel) < REGATTA_MIN_ROWS:
-        return {
+        return _bounded_research_result({
             "ok": False,
             "reason": f"only {len(panel)} common scored days across all entrants "
                       f"(< {REGATTA_MIN_ROWS}) — the balanced panel is too short to race",
-        }
+        })
     if len(models) < 3:
-        return {"ok": False, "reason": f"only {len(models)} entrants — no race"}
+        return _bounded_research_result(
+            {"ok": False, "reason": f"only {len(models)} entrants — no race"}
+        )
 
     yv = panel["y"].to_numpy(dtype=float)
     losses = pd.DataFrame(
@@ -111,10 +125,10 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
     losses = losses[keep]
     models = keep
     if len(models) < 3:
-        return {"ok": False, "reason": (
+        return _bounded_research_result({"ok": False, "reason": (
             f"only {len(models)} distinct entrants after deduplication "
             f"({', '.join(f'{a}≡{b}' for a, b in duplicates.items()) or 'none merged'}) — no race"
-        )}
+        )})
 
     try:
         mcs = MCS(
@@ -124,7 +138,9 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
         )
         mcs.compute()
     except Exception as exc:  # noqa: BLE001 — a broken race must print, not crash the board
-        return {"ok": False, "reason": f"MCS failed: {type(exc).__name__}: {exc}"}
+        return _bounded_research_result(
+            {"ok": False, "reason": f"MCS failed: {type(exc).__name__}: {exc}"}
+        )
     pvals = mcs.pvalues["Pvalue"]
     included = set(mcs.included)
 
@@ -151,7 +167,8 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
         verdict = (
             f"{n_in} of {len(models)} entrants survive at {int((1 - REGATTA_MCS_SIZE) * 100)}% "
             f"confidence and climatology is ELIMINATED — the surviving fleet "
-            f"({', '.join(sorted(included))}) has snoop-corrected skill; best point Brier: {leader}"
+            f"({', '.join(sorted(included))}) has snoop-corrected discrimination within this "
+            f"final-vintage construction-PIT sample; best point Brier: {leader}"
         )
     else:
         verdict = (
@@ -161,7 +178,7 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
         )
 
     coverage = float(len(panel)) / float(max(1, int(probs.notna().any(axis=1).sum())))
-    return {
+    return _bounded_research_result({
         "ok": True,
         "asof": panel.index[-1].date().isoformat(),
         "n_days": int(len(panel)),
@@ -183,6 +200,8 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
             "overlapping 5bd labels are serially correlated — the stationary block bootstrap "
             f"(block {REGATTA_BLOCK_BD}bd) is the mitigation, not a cure",
             "context/honesty layer: nothing here feeds the composite or the Stack (doctrine)",
+            "all historical entrants use final/current-vintage source history; multiple-testing "
+            "correction does not create as-published vintage evidence",
         ],
         "method": (
             f"Model Confidence Set (Hansen–Lunde–Nason 2011) over daily Brier losses vs the "
@@ -192,4 +211,4 @@ def analyze(cal: pd.DataFrame, p_pub: pd.Series, y: pd.Series) -> dict:
             f"{REGATTA_MCS_SIZE:g}. Survivors are indistinguishable from the best at "
             f"{int((1 - REGATTA_MCS_SIZE) * 100)}% confidence."
         ),
-    }
+    })

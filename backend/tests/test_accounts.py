@@ -97,8 +97,14 @@ def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
     assert client.get("/api/dispatch/absent-slug").status_code == 404
 
 
-def test_board_gated_public_free(accounts, monkeypatch):
+def test_board_gated_public_free(accounts, monkeypatch, fake_snap):
+    from seiche import api as api_mod
     from seiche.api import app
+
+    async def cached_snapshot(force=False):
+        return fake_snap
+
+    monkeypatch.setattr(api_mod.assemble, "snapshot", cached_snapshot)
     client = TestClient(app)
     accounts.add_user("desk_01", "correct horse battery")
 

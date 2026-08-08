@@ -94,6 +94,9 @@ def test_regatta_keeps_skill_drops_noise():
     cal, p_pub, y = _race_inputs()
     out = regatta.analyze(cal, p_pub, y)
     assert out["ok"]
+    assert out["historical_evidence"]["validated_backtest_eligible"] is False
+    assert out["validated_backtest"] is False
+    assert out["real_money_eligible"] is False
     by = {r["model"]: r for r in out["rows"]}
     assert by["rule"]["in_set"]
     assert not by["tide"]["in_set"]

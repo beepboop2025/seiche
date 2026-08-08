@@ -1,8 +1,9 @@
 """Wrecks — the crypto shipwrecks, read against the funding board.
 
-Six labelled crypto stress episodes, each replayed point-in-time at T-21,
+Six labelled crypto stress episodes, each replayed with causal truncation at T-21,
 T-10, T-5, T-1 and T-0 business days before the anchor date, using the same
-Time Machine as everything else (no lookahead). The honest question splits
+final-vintage Time Machine as everything else (construction-PIT, not proof of
+historical knowability). The honest question splits
 two ways:
 
 * EXTERNAL wrecks (COVID's Black Thursday, the SVB weekend, the 2025 tariff

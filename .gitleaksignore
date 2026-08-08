@@ -1,0 +1,7 @@
+# Reviewed legacy findings: the ARD OpenAPI identifier and IndexNow ownership
+# proof are public protocol identifiers, not authentication credentials.
+eced330a8addadb76898872695a584de10e2f4ae:backend/scripts/ard_coverage.py:generic-api-key:93
+e70ae32f519e635ba9d8fe3088ca19776c276774:backend/scripts/ard_coverage.py:generic-api-key:93
+c68e5a6a74e3d222f7a8e0c6fef2624e1108bce6:backend/scripts/ping_indexnow.py:generic-api-key:24
+backend/scripts/ard_coverage.py:generic-api-key:102
+backend/scripts/ping_indexnow.py:generic-api-key:24

@@ -20,7 +20,8 @@ the shared PROOF statistic — ~independent trials). Two targets per pop, from
 data strictly after it: STICKY (the spread has not given back half the pop
 after FUNDING_POP_STICKY_MIN_BD) and ESCALATES (a full ≥10bp PROOF event lands
 within FUNDING_POP_ESCALATE_BD). Tiny walk-forward logistic (4 features against
-a few hundred pops), validated pop-by-pop against the base rate; verdicts
+a few hundred pops), walk-forward scored pop-by-pop against the base rate on
+final-vintage history; verdicts
 self-demote. The engine SPEAKS only when there is a live pop — exactly when
 the operator is staring at the screen — and otherwise shows flat water plus
 the receipts of the last pops.
@@ -250,6 +251,7 @@ def analyze(
             f"half-give-back time ≥ {FUNDING_POP_STICKY_MIN_BD}bd (window {FUNDING_POP_WINDOW_BD}bd), "
             f"ESCALATES = ≥{BACKTEST_SPIKE_BP:g}bp event within {FUNDING_POP_ESCALATE_BD}bd; features "
             f"as-of pop-day close ({', '.join(FEATURES)}); expanding walk-forward logistic across "
-            f"pops after {FUNDING_POP_MIN_POPS} warmup; validated pop-by-pop vs the base rate"
+            f"pops after {FUNDING_POP_MIN_POPS} warmup; scored pop-by-pop vs the base rate "
+            f"on final-vintage history (construction-PIT only)"
         ),
     }
