@@ -70,7 +70,7 @@
   align-items: center;
   color: var(--oil-muted);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: .055em;
   text-decoration: none;
   text-transform: uppercase;
@@ -248,8 +248,8 @@
 .os-choke-row__bars i.current { background: linear-gradient(90deg, rgba(215, 168, 94, .48), var(--oil-crude)); }
 .os-choke-row__bars span { position: absolute; top: -1px; right: 4px; color: #aeb3c3; font-family: var(--mono); font-size: 7px; }
 .os-uncertainty { display: grid; grid-template-columns: auto 1fr; gap: 13px; align-items: start; margin: 24px 0 15px; padding: 15px; border: 1px solid rgba(215, 168, 94, .18); background: rgba(215, 168, 94, .025); }
-.os-uncertainty p,
-.os-panel-note { color: var(--oil-muted); font-size: 8.5px; line-height: 1.6; }
+.os-uncertainty p { color: var(--oil-muted); font-size: 12px; line-height: 1.6; }
+.os-panel-note { color: var(--oil-muted); font-size: 9.5px; line-height: 1.6; }
 .os-data-table { margin: 0 0 17px; color: var(--oil-muted); font-family: var(--mono); font-size: 8px; }
 .os-data-table summary { cursor: pointer; padding: 8px 0; }
 .os-data-table table { width: 100%; margin-top: 8px; }

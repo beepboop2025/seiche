@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from seiche.sources.eia_petroleum import parse_history
+from unittest.mock import AsyncMock
+
+import pandas as pd
+import pytest
+
+from seiche import store
+from seiche.config import OIL_FUNDING_EIA_SERIES
+from seiche.sources.base import Series
+from seiche.sources.eia_petroleum import fetch_series, parse_history
 
 
 def test_parse_history_reads_weekly_pairs_and_ignores_missing_values() -> None:
@@ -42,3 +50,35 @@ def test_parse_history_reads_weekly_pairs_and_ignores_missing_values() -> None:
     assert series.index[-1].date().isoformat() == "2026-12-14"
     assert series.iloc[0] == 20_001.0
     assert series.iloc[-1] == 20_112.0
+
+
+@pytest.mark.asyncio
+async def test_cached_fallback_records_the_live_source_fault(monkeypatch) -> None:
+    spec = OIL_FUNDING_EIA_SERIES[0]
+    cached = Series(
+        spec.mnemonic,
+        "eia",
+        spec.remote_id,
+        spec.label,
+        spec.unit,
+        spec.freq,
+        "2026-08-01T00:00:00+00:00",
+        pd.Series([20_955.0], index=pd.DatetimeIndex(["2026-07-31"])),
+    )
+    monkeypatch.setattr(store, "is_fresh", lambda *_: False)
+    monkeypatch.setattr(store, "load_series", lambda *_: cached)
+    client = AsyncMock()
+    client.get.side_effect = RuntimeError("upstream table unavailable")
+    faults: list[dict] = []
+
+    result = await fetch_series(client, spec, faults)
+
+    assert result is cached
+    assert faults == [
+        {
+            "source": "eia",
+            "detail": (
+                "W_EPC0_SAX_YCUOK_MBBL: RuntimeError: upstream table unavailable"
+            ),
+        }
+    ]

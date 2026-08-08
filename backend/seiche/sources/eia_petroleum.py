@@ -96,7 +96,11 @@ def parse_history(html: str) -> pd.Series:
     return points[~points.index.duplicated(keep="last")].sort_index()
 
 
-async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec) -> Series:
+async def fetch_series(
+    client: httpx.AsyncClient,
+    spec: SeriesSpec,
+    faults: list[dict] | None = None,
+) -> Series:
     if store.is_fresh(spec.mnemonic, spec.ttl_minutes):
         cached = store.load_series(spec.mnemonic)
         if cached is not None:
@@ -124,12 +128,13 @@ async def fetch_series(client: httpx.AsyncClient, spec: SeriesSpec) -> Series:
         store.save_series(series)
         return series
     except Exception as exc:
+        detail = f"{spec.remote_id}: {type(exc).__name__}: {exc}"
         cached = store.load_series(spec.mnemonic)
         if cached is not None:
+            if faults is not None:
+                faults.append({"source": "eia", "detail": detail})
             return cached
-        raise SourceFault(
-            "eia", f"{spec.remote_id}: {type(exc).__name__}: {exc}"
-        ) from exc
+        raise SourceFault("eia", detail) from exc
 
 
 async def fetch_many(
@@ -138,7 +143,7 @@ async def fetch_many(
     out: dict[str, Series] = {}
     for mnemonic in mnemonics:
         try:
-            out[mnemonic] = await fetch_series(client, ALL_SERIES[mnemonic])
+            out[mnemonic] = await fetch_series(client, ALL_SERIES[mnemonic], faults)
         except SourceFault as exc:
             if faults is not None:
                 faults.append({"source": exc.source, "detail": exc.detail})

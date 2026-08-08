@@ -51,20 +51,24 @@ function TankGeometry({ structure, live }: { structure: Any; live: Any }) {
   const working = Number(structure?.working_capacity_m_bbl);
   const stocks = Number(live?.stocks_m_bbl);
   const reference = Number(structure?.stress_reference_m_bbl);
-  const fill = Number.isFinite(stocks) && Number.isFinite(working) && working > 0
-    ? Math.max(0, Math.min(100, stocks / working * 100))
-    : 0;
+  const reportedFill = Number(live?.fill_of_last_working_capacity_pct);
+  const fill = Number.isFinite(reportedFill)
+    ? Math.max(0, Math.min(100, reportedFill))
+    : Number.isFinite(stocks) && Number.isFinite(working) && working > 0
+      ? Math.max(0, Math.min(100, stocks / working * 100))
+      : 0;
   const stress = Number.isFinite(reference) && Number.isFinite(working) && working > 0
     ? Math.max(0, Math.min(100, reference / working * 100))
     : 0;
   const tankStyle = { "--tank-fill": `${fill}%`, "--tank-stress": `${stress}%` } as CSSProperties;
+  const referenceLabel = Number.isFinite(reference) ? `${fmt(reference, 0)}m reference` : "stress reference";
 
   return (
     <div className="os-tank-scene">
       <div className="os-tank" style={tankStyle} aria-label={`Cushing stocks fill ${fmt(fill, 1)} percent of the last official working-capacity reference`}>
         <div className="os-tank__ribs" aria-hidden="true" />
         <div className="os-tank__liquid" aria-hidden="true" />
-        <div className="os-tank__stress"><span>20m reference</span></div>
+        <div className="os-tank__stress"><span>{referenceLabel}</span></div>
       </div>
       <div className="os-tank-scale" aria-hidden="true">
         <span>{fmt(working, 1)}m</span><i /><i /><i /><span>0</span>
@@ -239,6 +243,9 @@ export default function OilStructure({ engine }: { engine: Any }) {
   const live = engine?.live ?? {};
   const cushing = live.cushing ?? {};
   const spread = live.brent_wti_spread ?? {};
+  const stressReference = Number(structure.cushing?.stress_reference_m_bbl);
+  const stressReferenceValue = Number.isFinite(stressReference) ? stressReference : 20;
+  const stressReferenceLabel = `${fmt(stressReferenceValue, 0)}m reference`;
 
   return (
     <section className="oil-structure" aria-labelledby="oil-structure-title">
@@ -252,7 +259,7 @@ export default function OilStructure({ engine }: { engine: Any }) {
       <div className="os-chart-grid">
         <article className="os-chart-panel">
           <div className="os-panel-head"><div><span>CUSHING / WEEKLY</span><h3>Stocks against a stress reference</h3></div><div className="os-panel-head__metric"><strong>{fmt(cushing.stocks_m_bbl, 3)}m bbl</strong><small>{signed(cushing.change_8w_m_bbl, 3, "m")} over 8 weeks</small></div></div>
-          <Chart rows={charts.cushing_inventory?.rows ?? []} series={CUSHING_SERIES} height={250} yLabel="commercial crude stocks · million barrels" refLine={{ value: structure.cushing?.stress_reference_m_bbl ?? 20, color: C.refinery, label: "20m reference" }} source="U.S. EIA · W_EPC0_SAX_YCUOK_MBBL" asOf={cushing.asof} note="20m is a stress reference, not a universal pumpability floor. EIA says tank-bottom operability varies by facility and pipeline system." />
+          <Chart rows={charts.cushing_inventory?.rows ?? []} series={CUSHING_SERIES} height={250} yLabel="commercial crude stocks · million barrels" refLine={{ value: stressReferenceValue, color: C.refinery, label: stressReferenceLabel }} source="U.S. EIA · W_EPC0_SAX_YCUOK_MBBL" asOf={cushing.asof} note={`${fmt(stressReferenceValue, 0)}m is a stress reference, not a universal pumpability floor. EIA says tank-bottom operability varies by facility and pipeline system.`} />
           <div className="os-chart-foot"><Evidence>OBSERVED</Evidence><Evidence tone="reference">CAPACITY AS OF 2024-03-31</Evidence><SourceLink href={SOURCES.tankBottoms}>EIA tank-bottom note</SourceLink></div>
         </article>
         <article className="os-chart-panel">
