@@ -57,6 +57,8 @@ def test_public_api_discovery_is_curated(client):
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "funding_stress_now"
     assert payload["rest"]["small_gauge"] == "/api/gauge"
+    assert payload["rest"]["oil_funding"] == "/api/oil-funding"
+    assert payload["rest"]["fx_materials"] == "/api/estuary"
     assert payload["rest"]["openapi"] == "/api/openapi.json"
     assert payload["rest"]["realtime_venue"] == "/undertow/live/quotes.json"
     assert "official macro" in payload["conventions"]["clocks"]
@@ -70,6 +72,8 @@ def test_public_openapi_is_curated_and_importable(client):
     assert spec["servers"] == [{"url": "https://api.seiche.info"}]
     assert "/api/gauge" in spec["paths"]
     assert "/api/public" in spec["paths"]
+    assert "/api/oil-funding" in spec["paths"]
+    assert "/api/estuary" in spec["paths"]
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]
