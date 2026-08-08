@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Seiche API + MCP — live funding stress for agents</title>
-<meta name="description" content="Connect Seiche's free MCP or public API. Give an AI agent the current US dollar funding-stress regime, historical analogs, data health and honest backtest.">
+<meta name="description" content="Connect Seiche's free MCP or public API. Give an AI agent the current US dollar funding-stress regime, historical analogs, data health and a historical diagnostic with explicit eligibility flags.">
 <link rel="canonical" href="https://seiche.info/developers.html">
 <link rel="service-desc" type="application/vnd.oai.openapi+json" href="https://api.seiche.info/api/openapi.json">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -20,7 +20,7 @@
   <section class="hero">
     <div class="eyebrow">Free public data · no key for eight MCP tools</div>
     <h1>Put the live funding-stress regime inside your agent.</h1>
-    <p>One hosted MCP URL gives an agent the conclusion, the precedent, the freshness of the evidence, the track record, and compact oil/FX/material transmission context. Or use the small REST surface when you only need JSON.</p>
+    <p>One hosted MCP URL gives an agent the conclusion, the precedent, the freshness of the evidence, and compact oil/FX/material transmission context. The historical diagnostic always carries its served status plus validated-backtest and real-money eligibility flags. Or use the small REST surface when you only need JSON.</p>
     <div class="actions"><button class="btn" data-copy="https://api.seiche.info/mcp">Copy MCP endpoint</button><a class="btn alt" href="https://api.seiche.info/api/openapi.json">Import OpenAPI</a><a class="btn alt" href="https://api.seiche.info/api">Open API catalog</a><a class="btn alt" href="https://github.com/beepboop2025/seiche">View source</a></div>
     <div class="status"><span class="dot" id="healthDot"></span><span id="healthText">checking the public API…</span></div>
   </section>
@@ -45,7 +45,7 @@ curl https://api.seiche.info/api/estuary<button class="copy" data-copy="curl htt
     <article class="card"><div class="label">ChatGPT · custom MCP app</div><h2>Add the remote endpoint</h2><p>On an eligible ChatGPT workspace, enable Developer mode, open <strong>Settings → Apps → Create</strong>, paste the MCP URL, then scan and review the eight public tools before creating the app.</p><button class="btn" data-copy="https://api.seiche.info/mcp">Copy endpoint for ChatGPT</button></article>
   </section>
 
-  <section class="proof" aria-label="Contract guarantees"><div><b>8 public tools</b><span>no authentication required</span></div><div><b>Point in time</b><span>native publication lags stay visible</span></div><div><b>Hits + misses</b><span>the published record travels with the claim</span></div></section>
+  <section class="proof" aria-label="Contract guarantees"><div><b>8 public tools</b><span>no authentication required</span></div><div><b>Construction-PIT</b><span>current-vintage history; not validated-backtest eligible</span></div><div><b>Hits + misses + flags</b><span>status travels with every historical claim</span></div></section>
 
   <section class="route"><div class="label">Choose the right altitude</div><h2>One lab, three different questions.</h2><div class="route-grid"><a href="/developers.html"><b>Seiche · systemic</b>Is dollar funding stress building?</a><a href="https://liquilens.in/developers/"><b>LiquiLens · institutions</b>Which bank or lender is drifting toward failure?</a><a href="https://liquilens-undertow.com/developers/"><b>Undertow · markets</b>What will a position-sized exit cost?</a></div></section>
   <p class="foot">Every surface is research data, not investment advice. Missing evidence is stated rather than converted into a calm reading. <a href="/methodology.html">Methodology</a> · <a href="/skeptic.html">Skeptic pack</a> · <a href="mailto:desk@seiche.info">Integration help</a></p>

@@ -249,6 +249,9 @@ def test_proof(stubbed):
     p = _payload(_call("proof_backtest"))
     assert p["event_capture"]["recall"] == 0.79
     assert p["caveats"]
+    assert p["historical_evidence"]["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
+    assert p["historical_evidence"]["validated_backtest_eligible"] is False
+    assert p["historical_evidence"]["real_money_eligible"] is False
 
 
 def test_book(stubbed):

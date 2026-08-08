@@ -1,7 +1,7 @@
 {
   "name": "Seiche · funding-stress terminal",
   "short_name": "Seiche",
-  "description": "A free, open-source funding-stress terminal for US money markets: reserves, RRP, repo, Treasury cash. One stress board, honest backtests, updated twice a day.",
+  "description": "A free, open-source funding-stress terminal for US money markets: reserves, RRP, repo, Treasury cash. One live board plus a construction-PIT historical diagnostic with explicit eligibility flags.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

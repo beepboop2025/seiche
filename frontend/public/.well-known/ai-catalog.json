@@ -14,8 +14,8 @@
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
         "title": "Seiche — funding-stress terminal",
-        "description": "Funding stress early warning for US money markets from free public data, with an honest backtest and bounded oil/FX/material cash-pressure context.",
-        "version": "0.9.0",
+        "description": "Funding stress early warning for US money markets from free public data, with a construction-PIT historical diagnostic, explicit eligibility flags, and bounded oil/FX/material cash-pressure context.",
+        "version": "0.9.1",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
           "source": "github"
@@ -31,7 +31,7 @@
           {
             "registryType": "pypi",
             "identifier": "seiche",
-            "version": "0.9.0",
+            "version": "0.9.1",
             "transport": {
               "type": "stdio"
             },
@@ -45,7 +45,7 @@
           }
         ]
       },
-      "description": "Eight anonymous tools for the current US dollar funding regime, historical analogs, data health, institutional positioning, crypto transmission, oil/FX/material context, and the full backtest record.",
+      "description": "Eight anonymous tools for the current US dollar funding regime, historical analogs, data health, institutional positioning, crypto transmission, oil/FX/material context, and a historical diagnostic with misses and eligibility flags.",
       "tags": [
         "US dollar funding",
         "repo",
@@ -71,7 +71,7 @@
         "How are hedge funds positioned in the Treasury basis trade?",
         "Are oil, FX or material cash demands—including current Cushing stocks and Brent−WTI basis—reaching dollar funding markets, and which structure figures are dated references?"
       ],
-      "version": "0.9.0",
+      "version": "0.9.1",
       "updatedAt": "2026-08-08T04:20:00Z",
       "metadata": {
         "authentication": "none",
@@ -107,7 +107,7 @@
         "Check whether the Seiche data feeds are fresh.",
         "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context."
       ],
-      "version": "0.9.0",
+      "version": "0.9.1",
       "updatedAt": "2026-08-08T04:20:00Z",
       "metadata": {
         "authentication": "none",

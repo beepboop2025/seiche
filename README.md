@@ -192,8 +192,9 @@ seiche mcp                # serve the board to AI agents over MCP (stdio)
 Seiche is also a [Model Context Protocol](https://modelcontextprotocol.io)
 server — any MCP-capable agent (Claude Code, Codex, your own) can read the live
 board as tools. Where a data feed hands an agent raw macro numbers, Seiche hands
-it the conclusion: a regime read, forward event odds, historical analogs, and an
-honest backtest. Stdlib-only, no new dependencies.
+it the conclusion: a regime read, forward event odds, historical analogs, and a
+historical diagnostic whose status, misses, and eligibility flags stay attached.
+Stdlib-only, no new dependencies.
 
 ```bash
 claude mcp add seiche -- seiche-mcp          # Claude Code, local (stdio)
