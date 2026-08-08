@@ -14,7 +14,7 @@
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
         "title": "Seiche — funding-stress terminal",
-        "description": "Funding stress early warning for US money markets from free public data, with a construction-PIT historical diagnostic, explicit eligibility flags, and bounded oil/FX/material cash-pressure context.",
+        "description": "US funding-stress warning with construction-PIT evidence limits and explicit eligibility flags.",
         "version": "0.9.1",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
