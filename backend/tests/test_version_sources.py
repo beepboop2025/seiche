@@ -43,3 +43,10 @@ def test_version_is_bare_semver():
     assert re.fullmatch(r"\d+\.\d+\.\d+", assemble.VERSION), assemble.VERSION
     assert assemble.RELEASE and assemble.RELEASE not in assemble.VERSION
     assert assemble.VERSION_LABEL == f"{assemble.VERSION} {assemble.RELEASE}"
+
+
+def test_registry_description_fits_official_limit():
+    """The official MCP Registry rejects descriptions over 100 characters."""
+    description = _server_json()["description"]
+    assert description
+    assert len(description) <= 100, len(description)
