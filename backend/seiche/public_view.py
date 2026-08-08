@@ -1,4 +1,4 @@
-"""The free public surface: today's argument + the honest scoreboard.
+"""The free public surface: today's argument + the historical diagnostic.
 
 Everything else — the live board, the physics, positioning, the Time Machine,
 the desk's forward read — is subscriber-gated. But two things stay free
@@ -6,13 +6,16 @@ forever, because the whole business is a derivative of trust in the record:
   * the argument (thesis, evidence, countercase and confidence),
   * the conclusion (what the plumbing is doing today, one reading),
   * the data-quality contract (which clock each layer really runs on), and
-  * PROOF (the backtest scoreboard WITH its published misses).
+  * PROOF (the construction-PIT diagnostic WITH its published misses and
+    explicit claim-eligibility flags).
 
 `public_payload` slices a full snapshot down to exactly that surface, so a
 non-subscriber can never pull the gated data through this path.
 """
 
 from __future__ import annotations
+
+from seiche.evidence_boundary import historical_evidence
 
 
 def _regime_line(composite: dict, tell: dict) -> str:
@@ -35,6 +38,7 @@ def public_payload(snap: dict) -> dict:
     tell = deep.get("tell", {})
     bt = deep.get("backtest", {})
     ec = bt.get("event_capture", {})
+    evidence = historical_evidence(snap)
 
     return {
         "schema": "seiche.public.v2",
@@ -47,7 +51,8 @@ def public_payload(snap: dict) -> dict:
             "tell_reading": tell.get("reading"),
             "line": _regime_line(composite, tell),
         },
-        # PROOF stays free: the scoreboard AND the misses.
+        # PROOF stays free: the diagnostic, misses, and claim boundary travel
+        # together so a client cannot accidentally detach a rate from status.
         "proof": {
             "recall": ec.get("recall"),
             "recall_ci95": ec.get("recall_ci95"),
@@ -61,6 +66,7 @@ def public_payload(snap: dict) -> dict:
                 for e in bt.get("episodes", [])
             ],
             "caveats": bt.get("caveats", []),
+            "historical_evidence": evidence,
         },
         # The argument, evidence and countercase travel together. These are
         # derived slices, not the underlying engine payloads.

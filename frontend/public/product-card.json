@@ -15,7 +15,7 @@
       "bank reserves and Treasury cash",
       "financial plumbing",
       "funding-liquidity early warning",
-      "point-in-time stress backtests",
+      "construction-PIT historical diagnostics",
       "energy-futures cash displacement",
       "Cushing and oil benchmark market structure"
     ]
@@ -35,6 +35,10 @@
     "Millisecond market data or order execution."
   ],
   "evidence": {
+    "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
+    "validated_backtest_eligible": false,
+    "real_money_eligible": false,
+    "status_source": "https://api.seiche.info/api/public",
     "methodology": "https://seiche.info/methodology.html",
     "skeptic_pack": "https://seiche.info/skeptic.html",
     "public_scoreboard": "https://api.seiche.info/api/public",

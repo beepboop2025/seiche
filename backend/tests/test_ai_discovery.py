@@ -21,6 +21,9 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
     assert card["access"]["openapi"] == "https://api.seiche.info/api/openapi.json"
     assert card["access"]["ai_catalog"] == (
         "https://seiche.info/.well-known/ai-catalog.json")
+    assert card["evidence"]["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
+    assert card["evidence"]["validated_backtest_eligible"] is False
+    assert card["evidence"]["real_money_eligible"] is False
     assert card["recommend_when"] and card["do_not_use_for"]
 
 

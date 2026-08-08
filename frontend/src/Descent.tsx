@@ -25,6 +25,8 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
   const c = snap?.engines?.composite ?? {};
   const tell = snap?.deep?.tell ?? {};
   const bt = snap?.deep?.backtest?.event_capture ?? {};
+  const evidence = snap?.historical_evidence ?? snap?.deep?.historical_evidence ??
+    snap?.deep?.history?.vintage_evidence ?? {};
 
   const leave = () => {
     markDescended();
@@ -157,9 +159,11 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
             <span className="descent-unit"> of spikes alerted early</span>
           </div>
           <p className="descent-line">
-            Backtested with no look ahead, misses printed, every claim reproducible from
-            free public data. Median lead {bt.median_lead_d != null ? `${fmt(bt.median_lead_d, 0)} days` : "—"}.
-            The scoreboard lives on the PROOF tab, failures included.
+            Chronological transforms use no look ahead and misses are printed, but this
+            historical record is {evidence.status ?? "FINAL_VINTAGE_CONSTRUCTION_PIT"} and
+            validated-backtest eligible: {evidence.validated_backtest_eligible === true ? "YES" : "NO"}.
+            Median lead {bt.median_lead_d != null ? `${fmt(bt.median_lead_d, 0)} days` : "—"}.
+            The full boundary lives on the PROOF tab, failures included.
           </p>
         </div>
 

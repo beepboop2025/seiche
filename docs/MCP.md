@@ -6,7 +6,8 @@ funding-stress board the same way a human reads the terminal.
 
 Where a raw data feed hands an agent macro numbers, Seiche hands it the
 **conclusion**: a regime read, a forward probability, the nearest historical
-analogs, and an honest backtest. It is the judgment layer, exposed as tools.
+analogs, and a historical diagnostic whose status, misses, and eligibility
+flags stay attached. It is the judgment layer, exposed as tools.
 
 The server is **stdlib-only** (JSON-RPC 2.0 over stdio) — no new dependencies
 beyond what Seiche already installs, and nothing to run but the command you

@@ -202,6 +202,7 @@ function RegattaCard({ r }: { r: Any }) {
 export default function Proof({ snap }: { snap: Any }) {
   const bt = snap.deep?.backtest ?? {};
   const hist = snap.deep?.history ?? {};
+  const evidence = snap.historical_evidence ?? snap.deep?.historical_evidence ?? hist.vintage_evidence ?? {};
   if (!bt.ok) return <div className="grid"><Fault name="PROOF" reason={bt.reason} span={12} /></div>;
   const cap = bt.event_capture ?? {};
   const s = bt.sample ?? {};
@@ -212,10 +213,16 @@ export default function Proof({ snap }: { snap: Any }) {
           instead of believing. It belongs on this page, not a footnote. */}
       <Notary snap={snap} />
       <div className="card span12">
-        <h2>PROOF — the page that earns the right to be believed</h2>
+        <h2>PROOF — the historical diagnostic and its claim boundary</h2>
         <div className="sub">
           Seiche-lite index rebuilt with expanding-window statistics only (no look-ahead), tested against
-          {" "}{s.n_events} funding events over {s.start} → {s.end}. If the numbers were unimpressive, they'd publish anyway.
+          {" "}{s.n_events} funding events over {s.start} → {s.end}. Hits and misses publish, but the served
+          evidence status decides what the result is eligible to claim.
+        </div>
+        <div className="kv" aria-label="Historical evidence claim boundary">
+          <div className="item"><div className="k">evidence status</div><div className="v">{evidence.status ?? "FINAL_VINTAGE_CONSTRUCTION_PIT"}</div></div>
+          <div className="item"><div className="k">validated-backtest eligible</div><div className="v">{evidence.validated_backtest_eligible === true ? "YES" : "NO"}</div></div>
+          <div className="item"><div className="k">real-money eligible</div><div className="v">{evidence.real_money_eligible === true ? "YES" : "NO"}</div></div>
         </div>
         <div className="kv">
           <div className="item"><div className="k">recall (95% CI)</div>
@@ -270,7 +277,7 @@ export default function Proof({ snap }: { snap: Any }) {
 
       <div className="card span5">
         <h2>Reconstruction contract</h2>
-        <div className="sub">what the backtest index is — and is not</div>
+        <div className="sub">what the construction-PIT index is — and is not</div>
         <div className="kv" style={{ marginBottom: 8 }}>
           <div className="item"><div className="k">live index now</div><div className="v">{fmt(snap.engines?.composite?.value, 1)}</div></div>
           <div className="item"><div className="k">lite index now</div><div className="v">{fmt(hist.current?.value, 1)}</div></div>

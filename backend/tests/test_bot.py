@@ -48,7 +48,13 @@ def _pub():
     return {"conclusion": {"line": "Erosion continues; the Tell is positive."},
             "proof": {"n_events": 13, "recall": 0.62,
                       "recall_ci95": [0.36, 0.82], "precision_runs": 0.2,
-                      "base_rate": 0.05, "median_lead_d": 42.0}}
+                      "base_rate": 0.05, "median_lead_d": 42.0,
+                      "historical_evidence": {
+                          "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
+                          "validated_backtest_eligible": False,
+                          "real_money_eligible": False,
+                          "reason": "final/current-vintage public history",
+                      }}}
 
 
 def _ll_board(tier="orange"):
@@ -184,6 +190,8 @@ def test_fmt_snap_absent_and_degraded():
     assert "absence is not calm" in bot.fmt_snap(None, None)
     txt = bot.fmt_snap(_gauge(), _pub())
     assert "<pre>" in txt and "EROSION" in txt and "recall" in txt
+    assert "FINAL_VINTAGE_CONSTRUCTION_PIT" in txt
+    assert "validated eligible NO" in txt
     g = _gauge(idx=None)
     g["next_turn"] = {"date": "2026-07-31"}
     degraded = bot.fmt_snap(g, None)
@@ -197,6 +205,17 @@ def test_fmt_proof_survives_missing_median_lead():
     txt = bot.fmt_proof(pub)          # regression: this used to TypeError
     assert "Recall" in txt and "n/a" in txt
     assert "62%" in txt
+    assert "FINAL_VINTAGE_CONSTRUCTION_PIT" in txt
+    assert "Validated-backtest eligible: <b>NO</b>" in txt
+    assert "real-money eligible: <b>NO</b>" in txt
+
+
+def test_fmt_proof_fails_closed_when_api_omits_evidence_boundary():
+    pub = _pub()
+    del pub["proof"]["historical_evidence"]
+    txt = bot.fmt_proof(pub)
+    assert "FINAL_VINTAGE_CONSTRUCTION_PIT" in txt
+    assert "Validated-backtest eligible: <b>NO</b>" in txt
 
 
 def test_fmt_odds_ok_and_down():

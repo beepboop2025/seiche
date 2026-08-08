@@ -29,7 +29,7 @@ Commands
   /oil             Oil × Funding: spot, cash spreads, coupling, scenarios
   /estuary         FX/material pressure + holdout-tested Passage links
   /analogs         historical analogs from the wreck ledger
-  /proof           the backtest scoreboard, misses included
+  /proof           historical evidence status, misses included
   /letter          today's dispatch: title, summary, link
   /institutions    the other desk: LiquiLens Failure Radar summary
   /tandem          the cross-desk read: plumbing × institutions quadrant
@@ -89,7 +89,8 @@ ASK_PER_CHAT_WINDOW_S = 60
 ASK_BUSY = object()
 
 FOOT = ("\n<i>Free public good: no paywall, no sign-in. Every number is on "
-        "the board at seiche.info with sources and an honest backtest.</i>")
+        "the board at seiche.info with sources, served evidence status, and "
+        "eligibility flags.</i>")
 
 
 # ---------------------------------------------------------------- plumbing --
@@ -183,7 +184,7 @@ def post_channel(text: str, ref: str) -> bool:
         return False
     body = text + (
         f"\n\n<i>Seiche is the lab's free plumbing desk. Open it for the live "
-        f"gauge, forward odds and the backtest: {LAB_LINK}</i>"
+        f"gauge, forward odds and historical diagnostic: {LAB_LINK}</i>"
     )
     keyboard = [
         [{"text": "📈 Open the Seiche desk",
@@ -534,7 +535,7 @@ def render_snap_card(gauge: dict | None) -> bytes | None:
 
     d.text((60, CARD_H - 52), "free public good · seiche.info",
            font=f_s, fill=faint)
-    d.text((CARD_W - 60, CARD_H - 52), "honest backtest, misses included",
+    d.text((CARD_W - 60, CARD_H - 52), "construction-PIT diagnostic · misses included",
            font=f_s, fill=faint, anchor="ra")
 
     buf = io.BytesIO()
@@ -643,8 +644,11 @@ def fmt_snap(gauge: dict | None, pub: dict | None) -> str:
         rows.append(f"crunch {esc(w.get('date'))}")
     proof = (pub or {}).get("proof") or {}
     if proof.get("n_events"):
-        rows.append(f"backtest recall {pct(proof.get('recall'))} over "
+        evidence = _proof_evidence(pub)
+        rows.append(f"historical recall {pct(proof.get('recall'))} over "
                     f"{proof.get('n_events')} events")
+        rows.append(f"status {evidence.get('status')} · "
+                    f"validated eligible {_eligibility(evidence.get('validated_backtest_eligible'))}")
     body = "<pre>" + "\n".join(rows) + "</pre>"
     return (f"{_regime_icon(regime)} {body}\n"
             f"Free public good — {SITE} · forward this card to a desk that "
@@ -916,21 +920,49 @@ def fmt_analogs(wrecks: dict | None) -> str:
     return "\n".join(lines) + FOOT
 
 
+def _proof_evidence(pub: dict | None) -> dict:
+    proof = (pub or {}).get("proof") or {}
+    evidence = proof.get("historical_evidence") or (
+        (pub or {}).get("historical_evidence")
+    )
+    if isinstance(evidence, dict):
+        return evidence
+    return {
+        "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
+        "validated_backtest_eligible": False,
+        "real_money_eligible": False,
+        "reason": "the public API did not serve a verified as-published data cut",
+    }
+
+
+def _eligibility(value) -> str:
+    return "YES" if value is True else "NO"
+
+
 def fmt_proof(pub: dict | None) -> str:
     proof = (pub or {}).get("proof") or {}
     if not proof.get("n_events"):
         return "The proof scoreboard did not answer — try again shortly."
+    evidence = _proof_evidence(pub)
     ci = proof.get("recall_ci95") or [None, None]
     ml = proof.get("median_lead_d")
-    lines = ["📜 <b>The PROOF scoreboard</b> — the backtest, misses included", "",
+    lines = ["📜 <b>The PROOF historical diagnostic</b> — misses included", "",
+             f"Status: <code>{esc(evidence.get('status'))}</code>",
+             "Validated-backtest eligible: "
+             f"<b>{_eligibility(evidence.get('validated_backtest_eligible'))}</b> · "
+             "real-money eligible: "
+             f"<b>{_eligibility(evidence.get('real_money_eligible'))}</b>", "",
              f"Recall: <b>{pct(proof.get('recall'))}</b> "
              f"(95% CI {pct(ci[0])}–{pct(ci[1])}) over {proof.get('n_events')} events",
              f"Precision (runs): {pct(proof.get('precision_runs'))} · "
              f"base rate {pct(proof.get('base_rate'), 1)}",
              (f"Median lead: {ml:.0f} days" if isinstance(ml, (int, float))
               else "Median lead: n/a (no hit leads on record)")]
+    if evidence.get("reason"):
+        lines.append(f"\n<i>Boundary: {esc(evidence.get('reason'))}</i>")
     lines.append("\nEvery episode with its verdict — hits AND misses — is on "
-                 f"the board: {SITE}/#proof")
+                 f"the board: {SITE}/#proof. The served status and flags are "
+                 "authoritative for what this record can support.")
     return "\n".join(lines) + FOOT
 
 
@@ -1084,7 +1116,7 @@ HELP = (
     "/oil — Oil × Funding: spot, cash spreads, coupling, scenarios\n"
     "/estuary — FX/material pressure + holdout-tested Passage\n"
     "/analogs — the wreck ledger: past storms on this board\n"
-    "/proof — the backtest scoreboard, misses included\n"
+    "/proof — historical evidence status, flags and misses\n"
     "/letter — today's dispatch\n"
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
@@ -1172,8 +1204,9 @@ def fmt_daily_letter() -> str:
 
 BOT_URL = "https://t.me/seiche_desk_bot"
 SHARE_TEXT = ("Free US funding stress early warning, straight from the Fed's "
-              "own public data. Regime gauge, forward odds, and a backtest "
-              "that publishes its misses. No paywall, no sign in.")
+              "own public data. Regime gauge, forward odds, and a historical "
+              "diagnostic that publishes misses and eligibility flags. No "
+              "paywall, no sign in.")
 SHARE_URL = ("https://t.me/share/url?url=" + BOT_URL + "?start=ref_shared"
              + "&text=" + urllib.parse.quote(SHARE_TEXT))
 
@@ -1227,8 +1260,8 @@ def fmt_share(gauge: dict | None) -> str:
                 f"at {gauge.get('index', '?')}/100.")
     return ("<b>Know someone who watches money markets?</b>\n\n"
             "Forward this desk to them. Free early warning on dollar funding "
-            "stress, built from the Fed's own published data, with the "
-            f"backtest misses on the record.{line}\n\nTap Share below, or "
+            "stress, built from the Fed's own published data, with diagnostic "
+            f"misses and eligibility flags on the record.{line}\n\nTap Share below, or "
             f"send them {BOT_URL}")
 
 
@@ -1585,7 +1618,7 @@ def run_setup() -> None:
         {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
         {"command": "institutions", "description": "The LiquiLens Failure Radar"},
         {"command": "analogs", "description": "The wreck ledger: past storms"},
-        {"command": "proof", "description": "The backtest scoreboard, misses included"},
+        {"command": "proof", "description": "Evidence status, flags and misses"},
         {"command": "letter", "description": "Today's dispatch"},
         {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
         {"command": "share", "description": "Send this free desk to someone"},
@@ -1600,7 +1633,8 @@ def run_setup() -> None:
                        "Fed's own public data (H.4.1, NY Fed ops, OFR repo, "
                        "Treasury cash) with a regime gauge, forward event odds, "
                        "calendar crunch windows, Oil × Funding, the FX/material "
-                       "Estuary and an honest backtest. Type any "
+                       "Estuary and a construction-PIT historical diagnostic "
+                       "with explicit eligibility flags. Type any "
                        "question and the desk answers, grounded in the live "
                        "board; type @seiche_desk_bot in any chat to drop the "
                        "live gauge card there. Free public good — no paywall, "

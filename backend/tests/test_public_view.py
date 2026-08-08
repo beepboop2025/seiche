@@ -42,3 +42,26 @@ def test_public_payload_carries_editorial_and_quality_contracts(fake_snap):
     assert payload["editorial"]["thesis"] == "A testable claim."
     assert payload["data_quality"]["source_count"] == 73
     assert "engines" not in payload and "deep" not in payload
+
+
+def test_public_proof_carries_fail_closed_historical_evidence(fake_snap):
+    evidence = public_payload(fake_snap)["proof"]["historical_evidence"]
+    assert evidence["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
+    assert evidence["validated_backtest_eligible"] is False
+    assert evidence["real_money_eligible"] is False
+
+
+def test_public_proof_preserves_a_served_verified_boundary(fake_snap):
+    from copy import deepcopy
+
+    snap = deepcopy(fake_snap)
+    snap["historical_evidence"] = {
+        "status": "VERIFIED_AS_PUBLISHED_DATA_CUT",
+        "validated_backtest_eligible": True,
+        "real_money_eligible": False,
+        "cut_id": "vintagecut_test",
+    }
+    evidence = public_payload(snap)["proof"]["historical_evidence"]
+    assert evidence["status"] == "VERIFIED_AS_PUBLISHED_DATA_CUT"
+    assert evidence["validated_backtest_eligible"] is True
+    assert evidence["real_money_eligible"] is False
