@@ -1629,17 +1629,16 @@ def run_setup() -> None:
         "short_description": "US funding-stress early warning from free public "
                              "data. Free public good — seiche.info"})
     tg_call("setMyDescription", {
-        "description": "The Seiche desk bot: dollar funding stress read from the "
-                       "Fed's own public data (H.4.1, NY Fed ops, OFR repo, "
-                       "Treasury cash) with a regime gauge, forward event odds, "
-                       "calendar crunch windows, Oil × Funding, the FX/material "
-                       "Estuary and a construction-PIT historical diagnostic "
-                       "with explicit eligibility flags. Type any "
-                       "question and the desk answers, grounded in the live "
-                       "board; type @seiche_desk_bot in any chat to drop the "
-                       "live gauge card there. Free public good — no paywall, "
-                       "no sign-in. Institutions are LiquiLens's desk "
-                       "(@LiquiLens_bot). seiche.info"})
+        "description": "The Seiche desk bot reads dollar funding stress from "
+                       "public Fed, NY Fed, OFR and Treasury data. It combines "
+                       "a regime gauge, forward event odds, calendar crunch "
+                       "windows, Oil × Funding, the FX/material Estuary, and a "
+                       "construction-PIT historical diagnostic with explicit "
+                       "eligibility flags. Ask any question for a grounded "
+                       "answer over the live board, or type @seiche_desk_bot "
+                       "in any chat for a live gauge card. Free public good, "
+                       "no paywall or sign-in. Institutions are tracked by "
+                       "@LiquiLens_bot. seiche.info"})
     me = tg_call("getMe", {})
     print("setup done:", json.dumps((me or {}).get("result", {})))
 

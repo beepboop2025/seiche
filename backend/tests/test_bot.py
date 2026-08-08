@@ -621,6 +621,17 @@ def test_setup_registers_cross_market_commands(sent):
     assert {"oil", "estuary"} <= commands
 
 
+def test_setup_discovery_metadata_respects_telegram_limits(sent):
+    """Keep setup payloads inside Bot API profile-field boundaries."""
+    bot.run_setup()
+    short = next(payload["short_description"] for method, payload in sent
+                 if method == "setMyShortDescription")
+    description = next(payload["description"] for method, payload in sent
+                       if method == "setMyDescription")
+    assert len(short) <= 120
+    assert len(description) <= 512
+
+
 # ------------------------------------------- Liquidity Lab channel publishing
 
 
