@@ -1,0 +1,794 @@
+import { memo, useMemo, useState } from "react";
+import Chart, { type ChartSeries } from "../Chart";
+import { Any, AsOf, Fault, Method, fmt } from "../lib";
+import "../styles-oil.css";
+
+const C = {
+  crude: "#d7a85e",
+  dollar: "#879ed8",
+  refinery: "#6fb7ac",
+  inr: "#c2a5f4",
+  bright: "#edeef4",
+  muted: "#787f95",
+  grid: "rgba(237,238,244,.10)",
+};
+
+const SPOT_SERIES: ChartSeries[] = [
+  { label: "WTI spot", color: C.crude },
+  { label: "Brent spot", color: C.dollar },
+];
+const FUNDING_SERIES: ChartSeries[] = [
+  { label: "3m nonfinancial CP − bill", color: C.crude },
+  { label: "3m financial CP − bill", color: C.dollar },
+  { label: "SOFR − IORB", color: C.refinery, dash: [5, 4] },
+];
+const COUPLING_SERIES: ChartSeries[] = [
+  { label: "WTI Δ vs CP-spread Δ", color: C.crude },
+  { label: "WTI Δ vs SOFR−IORB Δ", color: C.dollar },
+  { label: "WTI Δ vs INR return", color: C.inr },
+];
+const CARRY_SERIES: ChartSeries[] = [
+  { label: "funding component", color: C.dollar },
+  { label: "storage + insurance", color: C.refinery, dash: [5, 4] },
+  { label: "required contango", color: C.crude },
+];
+const INFLATION_POLICY_SERIES: ChartSeries[] = [
+  { label: "energy CPI · YoY", color: C.crude },
+  { label: "core CPI · YoY", color: C.refinery },
+  { label: "IORB", color: C.dollar, dash: [5, 4] },
+];
+const DOLLAR_PARKING_SERIES: ChartSeries[] = [
+  { label: "Treasury custody · 52w Δ", color: C.dollar },
+  { label: "foreign-official RRP · 52w Δ", color: C.inr },
+];
+const ZERO_LINE = { value: 0, color: C.muted, label: "zero" };
+
+interface Scenario {
+  oilPrice: number;
+  fundingRate: number;
+  usdInr: number;
+  tenorDays: number;
+  storagePerDay: number;
+  insuranceRate: number;
+  forwardSpread: number;
+  cargoBarrelsM: number;
+  dailyThroughputMbd: number;
+  voyageDays: number;
+  baselineVoyageDays: number;
+  hedgeBarrelsM: number;
+  oilPriceChange: number;
+  initialMarginRateChange: number;
+  indiaImportMbd: number;
+  indiaOilShock: number;
+  rbiUsdSalesB: number;
+  liquidityReplenishment: number;
+  underRecoveryCroreDay: number;
+  compensationLagDays: number;
+  cpFundingShare: number;
+}
+
+interface ScenarioOutputs {
+  carry: {
+    storage: number;
+    financing: number;
+    insurance: number;
+    required: number;
+    headroom: number;
+  };
+  trade: {
+    cargoCredit: number;
+    financingCost: number;
+    inTransit: number;
+    incremental: number;
+    multiple: number;
+  };
+  margin: { variation: number; initial: number; sameDay: number };
+  india: {
+    annualImportUsd: number;
+    annualImportInr: number;
+    rbiGross: number;
+    rbiUnreplenished: number;
+    omcStock: number;
+    omcCp: number;
+  };
+}
+
+const finite = (value: unknown, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+function initialScenario(engine: Any): Scenario {
+  const a = engine?.scenario?.assumptions ?? {};
+  const live = engine?.live ?? {};
+  return {
+    oilPrice: finite(a.oil_price_usd_per_bbl ?? live.wti?.price_usd_per_bbl, 80),
+    fundingRate: finite(a.funding_rate_pct, 5),
+    usdInr: finite(a.usd_inr ?? live.inr?.per_usd, 84),
+    tenorDays: finite(a.tenor_days, 90),
+    storagePerDay: finite(a.storage_usd_per_bbl_day, 0.03),
+    insuranceRate: finite(a.insurance_rate_pct, 0.5),
+    forwardSpread: finite(a.forward_spread_usd_per_bbl, 0),
+    cargoBarrelsM: finite(a.barrels_per_cargo_m, 2),
+    dailyThroughputMbd: finite(a.daily_throughput_mbd, 0.2),
+    voyageDays: finite(a.voyage_days, 45),
+    baselineVoyageDays: finite(a.baseline_voyage_days, 15),
+    hedgeBarrelsM: finite(a.net_short_hedge_m_bbl, 1),
+    oilPriceChange: finite(a.oil_price_change_usd_per_bbl, 8),
+    initialMarginRateChange: finite(a.initial_margin_rate_change_pct, 5),
+    indiaImportMbd: finite(a.india_import_mbd, 5),
+    indiaOilShock: finite(a.india_oil_shock_usd_per_bbl, 10),
+    rbiUsdSalesB: finite(a.rbi_usd_sales_b, 2),
+    liquidityReplenishment: finite(a.liquidity_replenishment_pct, 25),
+    underRecoveryCroreDay: finite(a.under_recovery_inr_crore_day, 1000),
+    compensationLagDays: finite(a.compensation_lag_days, 30),
+    cpFundingShare: finite(a.cp_funding_share_pct, 40),
+  };
+}
+
+function calculateScenario(s: Scenario): ScenarioOutputs {
+  const yearFraction = s.tenorDays / 365;
+  const storage = s.storagePerDay * s.tenorDays;
+  const financing = s.oilPrice * (s.fundingRate / 100) * yearFraction;
+  const insurance = s.oilPrice * (s.insuranceRate / 100) * yearFraction;
+  const required = storage + financing + insurance;
+  const cargoCredit = s.oilPrice * s.cargoBarrelsM * 1_000_000;
+  const inTransit = s.oilPrice * s.dailyThroughputMbd * 1_000_000 * s.voyageDays;
+  const baselineInTransit = s.oilPrice * s.dailyThroughputMbd * 1_000_000 * s.baselineVoyageDays;
+  const variation = Math.max(0, s.hedgeBarrelsM * 1_000_000 * s.oilPriceChange);
+  const initial = Math.abs(s.hedgeBarrelsM) * 1_000_000 * s.oilPrice * s.initialMarginRateChange / 100;
+  const annualImportUsd = s.indiaImportMbd * 1_000_000 * s.indiaOilShock * 365;
+  const rbiGross = s.rbiUsdSalesB * 1_000_000_000 * s.usdInr;
+  const rbiUnreplenished = rbiGross * (1 - s.liquidityReplenishment / 100);
+  const omcStock = s.underRecoveryCroreDay * 10_000_000 * s.compensationLagDays;
+
+  return {
+    carry: {
+      storage,
+      financing,
+      insurance,
+      required,
+      headroom: s.forwardSpread - required,
+    },
+    trade: {
+      cargoCredit,
+      financingCost: cargoCredit * (s.fundingRate / 100) * s.voyageDays / 365,
+      inTransit,
+      incremental: inTransit - baselineInTransit,
+      multiple: s.baselineVoyageDays > 0 ? s.voyageDays / s.baselineVoyageDays : 0,
+    },
+    margin: { variation, initial, sameDay: variation + initial },
+    india: {
+      annualImportUsd,
+      annualImportInr: annualImportUsd * s.usdInr,
+      rbiGross,
+      rbiUnreplenished,
+      omcStock,
+      omcCp: omcStock * s.cpFundingShare / 100,
+    },
+  };
+}
+
+const compactUsd = (value: number): string => {
+  const sign = value < 0 ? "−" : "";
+  const v = Math.abs(value);
+  if (v >= 1e12) return `${sign}$${fmt(v / 1e12, 2)}tn`;
+  if (v >= 1e9) return `${sign}$${fmt(v / 1e9, 2)}bn`;
+  if (v >= 1e6) return `${sign}$${fmt(v / 1e6, 1)}mn`;
+  return `${sign}$${fmt(v, 0)}`;
+};
+
+const compactUsdMaybe = (value: unknown, scale = 1): string => {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return compactUsd(Number(value) * scale);
+};
+
+const compactInr = (value: number): string => {
+  const sign = value < 0 ? "−" : "";
+  const crore = Math.abs(value) / 10_000_000;
+  if (crore >= 100_000) return `${sign}₹${fmt(crore / 100_000, 2)} lakh cr`;
+  return `${sign}₹${fmt(crore, 0)} cr`;
+};
+
+function LiveTile({ label, value, detail, asof, tone }: {
+  label: string; value: string; detail: string; asof?: string | null; tone: string;
+}) {
+  return (
+    <div className="oil-live__item" style={{ "--oil-tone": tone } as React.CSSProperties}>
+      <div className="oil-live__label">{label}</div>
+      <div className="oil-live__value">{value}</div>
+      <div className="oil-live__detail">{detail}</div>
+      <time>{asof ?? "date unavailable"}</time>
+    </div>
+  );
+}
+
+function TransmissionLoop({ s, out, live }: { s: Scenario; out: ScenarioOutputs; live: Any }) {
+  const parking = live.official_dollar_parking ?? {};
+  const inflation = live.inflation_policy ?? {};
+  return (
+    <section className="oil-loop" aria-labelledby="oil-loop-title">
+      <div className="oil-section-head">
+        <div>
+          <span className="oil-kicker">BIDIRECTIONAL TRANSMISSION</span>
+          <h2 id="oil-loop-title">The barrel has a balance sheet.</h2>
+        </div>
+        <p>Follow the arrows. The upper lane is the link most dashboards omit.</p>
+      </div>
+      <div className="oil-loop__frame">
+        <div className="oil-loop__lane oil-loop__lane--reverse">
+          <span className="oil-loop__lane-label">RATES → OIL</span>
+          <div className="oil-node oil-node--crude">
+            <span>OIL CURVE</span>
+            <strong>${fmt(out.carry.required, 2)}/bbl</strong>
+            <small>{fmt(s.tenorDays, 0)}d contango hurdle</small>
+          </div>
+          <i aria-hidden="true">←</i>
+          <div className="oil-node">
+            <span>COST OF CARRY</span>
+            <strong>${fmt(out.carry.financing, 2)}</strong>
+            <small>funding component</small>
+          </div>
+          <i aria-hidden="true">←</i>
+          <div className="oil-node oil-node--dollar">
+            <span>MONEY MARKET</span>
+            <strong>{fmt(s.fundingRate, 2)}%</strong>
+            <small>funding rate</small>
+          </div>
+        </div>
+        <div className="oil-loop__turn oil-loop__turn--right" aria-hidden="true" />
+        <div className="oil-loop__lane oil-loop__lane--forward">
+          <span className="oil-loop__lane-label">OIL → FUNDING</span>
+          <div className="oil-node oil-node--crude">
+            <span>OIL PRICE</span>
+            <strong>${fmt(s.oilPrice, 2)}</strong>
+            <small>per barrel</small>
+          </div>
+          <i aria-hidden="true">→</i>
+          <div className="oil-node">
+            <span>CARGO + MARGIN</span>
+            <strong>{compactUsd(out.margin.sameDay)}</strong>
+            <small>same-day cash</small>
+          </div>
+          <i aria-hidden="true">→</i>
+          <div className="oil-node oil-node--inr">
+            <span>RBI + OMC</span>
+            <strong>{compactInr(out.india.omcCp)}</strong>
+            <small>scenario CP demand</small>
+          </div>
+          <i aria-hidden="true">→</i>
+          <div className="oil-node oil-node--dollar">
+            <span>MONEY MARKET</span>
+            <strong>CP · REPO · CALL</strong>
+            <small>liquidity landing zone</small>
+          </div>
+        </div>
+        <div className="oil-loop__turn oil-loop__turn--left" aria-hidden="true" />
+      </div>
+      <div className="oil-slow-channels">
+        <article>
+          <span>05 · SLOW BALANCE-SHEET CHANNEL</span>
+          <h3>Petrodollar recycling</h3>
+          <p>Oil receipts redistribute dollars toward exporters. Free public data cannot tag those dollars by barrel, so Seiche watches broad foreign-official parking without pretending it is oil-specific.</p>
+          <div>
+            <strong>{compactUsdMaybe(parking.treasury_custody_change_52w_b, 1e9)}</strong>
+            <small>Treasury custody · 52w Δ</small>
+            <strong>{compactUsdMaybe(parking.foreign_rrp_change_52w_b, 1e9)}</strong>
+            <small>foreign-official RRP · 52w Δ</small>
+          </div>
+        </article>
+        <article>
+          <span>06 · SLOW POLICY CHANNEL</span>
+          <h3>Inflation → policy rate</h3>
+          <p>Energy reaches headline inflation first; persistence can reach core and the reaction function later. The chart below is descriptive—there is no estimated policy coefficient hiding behind it.</p>
+          <div>
+            <strong>{fmt(inflation.energy_cpi_yoy_pct, 1)}%</strong><small>energy CPI YoY</small>
+            <strong>{fmt(inflation.core_cpi_yoy_pct, 1)}%</strong><small>core CPI YoY</small>
+            <strong>{fmt(inflation.iorb_pct, 2)}%</strong><small>IORB</small>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function ScatterPlot({ scatter }: { scatter: Any }) {
+  const points = (scatter?.points ?? []) as [string, number, number][];
+  const fit = scatter?.fit ?? {};
+  const geometry = useMemo(() => {
+    if (points.length < 2) return null;
+    const width = 760, height = 330;
+    const pad = { left: 66, right: 24, top: 22, bottom: 54 };
+    const xs = points.map((p) => p[1]);
+    const ys = points.map((p) => p[2]);
+    let xMin = Math.min(...xs, 0), xMax = Math.max(...xs, 0);
+    let yMin = Math.min(...ys, 0), yMax = Math.max(...ys, 0);
+    const xPad = Math.max((xMax - xMin) * 0.08, 0.5);
+    const yPad = Math.max((yMax - yMin) * 0.08, 0.5);
+    xMin -= xPad; xMax += xPad; yMin -= yPad; yMax += yPad;
+    const x = (value: number) => pad.left + (value - xMin) / (xMax - xMin) * (width - pad.left - pad.right);
+    const y = (value: number) => height - pad.bottom - (value - yMin) / (yMax - yMin) * (height - pad.top - pad.bottom);
+    const xTicks = Array.from({ length: 5 }, (_, i) => xMin + (xMax - xMin) * i / 4);
+    const yTicks = Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * i / 4);
+    const slope = Number(fit.slope_bp_per_usd);
+    const intercept = Number(fit.intercept_bp);
+    return { width, height, pad, x, y, xMin, xMax, xTicks, yTicks, slope, intercept };
+  }, [points, fit.slope_bp_per_usd, fit.intercept_bp]);
+
+  if (!geometry) return <div className="oil-empty">Scatter needs at least two aligned observations.</div>;
+  const g = geometry;
+  const hasFit = Number.isFinite(g.slope) && Number.isFinite(g.intercept);
+
+  return (
+    <>
+      <div className="oil-scatter__stats" aria-label="Scatter fit statistics">
+        <div><span>ρ</span><strong>{fmt(fit.correlation, 2)}</strong></div>
+        <div><span>slope</span><strong>{fmt(fit.slope_bp_per_usd, 2)} bp / $</strong></div>
+        <div><span>R²</span><strong>{fmt(fit.r_squared, 2)}</strong></div>
+        <div><span>n</span><strong>{fit.n ?? "—"}</strong></div>
+      </div>
+      <div className="oil-svg-wrap">
+        <svg
+          className="oil-scatter"
+          viewBox={`0 0 ${g.width} ${g.height}`}
+          role="img"
+          aria-label={`${fit.n ?? points.length} non-overlapping five-business-day observations of WTI changes against nonfinancial commercial-paper spread changes`}
+        >
+          <defs>
+            <radialGradient id="oil-dot-glow">
+              <stop offset="0" stopColor={C.crude} stopOpacity=".92" />
+              <stop offset="1" stopColor={C.crude} stopOpacity=".22" />
+            </radialGradient>
+          </defs>
+          {g.xTicks.map((tick) => (
+            <g key={`x-${tick}`}>
+              <line x1={g.x(tick)} x2={g.x(tick)} y1={g.pad.top} y2={g.height - g.pad.bottom} stroke={C.grid} />
+              <text x={g.x(tick)} y={g.height - 28} textAnchor="middle">{fmt(tick, 1)}</text>
+            </g>
+          ))}
+          {g.yTicks.map((tick) => (
+            <g key={`y-${tick}`}>
+              <line x1={g.pad.left} x2={g.width - g.pad.right} y1={g.y(tick)} y2={g.y(tick)} stroke={C.grid} />
+              <text x={g.pad.left - 12} y={g.y(tick) + 3} textAnchor="end">{fmt(tick, 1)}</text>
+            </g>
+          ))}
+          {g.xMin <= 0 && g.xMax >= 0 && <line className="oil-zero" x1={g.x(0)} x2={g.x(0)} y1={g.pad.top} y2={g.height - g.pad.bottom} />}
+          {hasFit && (
+            <line
+              className="oil-fit"
+              x1={g.x(g.xMin)} y1={g.y(g.slope * g.xMin + g.intercept)}
+              x2={g.x(g.xMax)} y2={g.y(g.slope * g.xMax + g.intercept)}
+            />
+          )}
+          {points.map(([date, xValue, yValue]) => (
+            <circle key={date} cx={g.x(xValue)} cy={g.y(yValue)} r="3.4" fill="url(#oil-dot-glow)" aria-hidden="true">
+              <title>{date}: WTI {xValue > 0 ? "+" : ""}{fmt(xValue, 2)} USD/bbl; CP spread {yValue > 0 ? "+" : ""}{fmt(yValue, 2)} bp</title>
+            </circle>
+          ))}
+          <text className="oil-axis-label" x={(g.pad.left + g.width - g.pad.right) / 2} y={g.height - 5} textAnchor="middle">
+            5bd WTI change · USD per barrel
+          </text>
+          <text className="oil-axis-label" transform={`translate(15 ${(g.pad.top + g.height - g.pad.bottom) / 2}) rotate(-90)`} textAnchor="middle">
+            5bd nonfinancial CP−bill change · bp
+          </text>
+        </svg>
+      </div>
+      <details className="oil-data-details">
+        <summary>Inspect the latest 12 observations</summary>
+        <table className="mini">
+          <thead><tr><th>period ending</th><th>WTI Δ $/bbl</th><th>CP−bill Δ bp</th></tr></thead>
+          <tbody>{points.slice(-12).reverse().map((row) => (
+            <tr key={row[0]}><td>{row[0]}</td><td className="num">{fmt(row[1], 2)}</td><td className="num">{fmt(row[2], 2)}</td></tr>
+          ))}</tbody>
+        </table>
+      </details>
+    </>
+  );
+}
+
+const ObservedEvidence = memo(function ObservedEvidence({ engine }: { engine: Any }) {
+  const charts = engine.charts ?? {};
+  const scatterAsOf = charts.scatter?.points?.at(-1)?.[0] ?? engine.asof;
+  return (
+    <section className="oil-observed" aria-labelledby="oil-observed-title">
+      <div className="oil-section-head">
+        <div>
+          <span className="oil-kicker oil-kicker--observed">OBSERVED · PUBLIC DATA</span>
+          <h2 id="oil-observed-title">The tape, the plumbing, and their coupling</h2>
+        </div>
+        <p>Same-unit panels only. Correlations use changes, carry uses explicit assumptions.</p>
+      </div>
+      <div className="oil-chart-grid">
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Barrel benchmarks</h3><span>PRICE</span></div>
+          <Chart
+            rows={charts.spot?.rows ?? []}
+            series={SPOT_SERIES}
+            height={230}
+            yLabel="spot price · USD per barrel"
+            source="EIA via FRED · DCOILWTICO / DCOILBRENTEU"
+            note="Spot benchmarks, not a futures strip. Negative WTI in April 2020 is retained."
+          />
+        </article>
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Dollar funding spreads</h3><span>PRICE OF CASH</span></div>
+          <Chart
+            rows={charts.funding?.rows ?? []}
+            series={FUNDING_SERIES}
+            height={230}
+            yLabel="spread · basis points"
+            refLine={ZERO_LINE}
+            source="Federal Reserve + NY Fed via FRED · CP, DGS3MO, SOFR, IORB"
+            note="CP spreads use the 3m Treasury on actual CP print dates; SOFR−IORB is a secured-policy spread."
+          />
+        </article>
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Rolling coupling</h3><span>63 OBSERVATIONS</span></div>
+          <Chart
+            rows={charts.coupling?.rows ?? []}
+            series={COUPLING_SERIES}
+            height={230}
+            yLabel="rolling correlation · −1 to +1"
+            refLine={ZERO_LINE}
+            source="Seiche calculation from EIA / Fed / NY Fed / H.10"
+            note="Associational, not causal. WTI dollar changes are used so the April 2020 negative print remains defined."
+          />
+        </article>
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Mechanical carry hurdle</h3><span>RATES → CURVE</span></div>
+          <Chart
+            rows={charts.carry_hurdle?.rows ?? []}
+            series={CARRY_SERIES}
+            height={230}
+            yLabel="required contango · USD per barrel"
+            source="Seiche identity using WTI + SOFR"
+            note={charts.carry_hurdle?.assumption}
+          />
+        </article>
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Inflation → policy</h3><span>MONTHLY / DAILY</span></div>
+          <Chart
+            rows={charts.inflation_policy?.rows ?? []}
+            series={INFLATION_POLICY_SERIES}
+            height={230}
+            yLabel="annual inflation / policy rate · percent"
+            source="BLS + Federal Reserve via FRED · CPIENGSL, CPILFESL, IORB"
+            note="Energy CPI is broader than crude oil. This is a descriptive transmission panel, not an estimated central-bank reaction function."
+          />
+        </article>
+        <article className="oil-panel">
+          <div className="oil-panel__head"><h3>Foreign-official dollar parking</h3><span>RECYCLING PROXY</span></div>
+          <Chart
+            rows={charts.official_dollar_parking?.rows ?? []}
+            series={DOLLAR_PARKING_SERIES}
+            height={230}
+            yLabel="52-week balance change · USD billions"
+            refLine={ZERO_LINE}
+            source="Federal Reserve H.4.1 via FRED · WMTSECL1 / WLRRAFOIAL"
+            note="Broad foreign-official balances only: this cannot identify oil exporters or prove petrodollar recycling."
+          />
+        </article>
+        <article className="oil-panel oil-panel--wide">
+          <div className="oil-panel__head">
+            <div><h3>Does an oil move arrive in CP?</h3><p>Non-overlapping five-business-day changes</p></div>
+            <span>ASSOCIATION</span>
+          </div>
+          <ScatterPlot scatter={charts.scatter} />
+          <div className="oil-evidence-line">
+            <span>Federal Reserve / EIA via FRED</span>
+            <span>through {scatterAsOf}</span>
+            <span>hover a point for its date</span>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+});
+
+function Slider({ id, label, value, min, max, step, display, onChange }: {
+  id: string; label: string; value: number; min: number; max: number; step: number;
+  display: string; onChange: (value: number) => void;
+}) {
+  return (
+    <label className="oil-control" htmlFor={id}>
+      <span>{label}</span><output htmlFor={id}>{display}</output>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </label>
+  );
+}
+
+function CarryCurve({ s, out }: { s: Scenario; out: ScenarioOutputs }) {
+  const width = 690, height = 250;
+  const pad = { left: 58, right: 24, top: 24, bottom: 48 };
+  const maxRate = 12;
+  const rates = Array.from({ length: 49 }, (_, index) => index / 4);
+  const hurdle = (rate: number) =>
+    s.storagePerDay * s.tenorDays
+    + s.oilPrice * ((rate + s.insuranceRate) / 100) * s.tenorDays / 365;
+  const values = rates.map(hurdle);
+  const yMax = Math.max(...values, s.forwardSpread, 1) * 1.12;
+  const x = (rate: number) => pad.left + rate / maxRate * (width - pad.left - pad.right);
+  const y = (value: number) => height - pad.bottom - Math.max(0, value) / yMax * (height - pad.top - pad.bottom);
+  const path = rates.map((rate, index) => `${index ? "L" : "M"}${x(rate).toFixed(1)},${y(values[index]).toFixed(1)}`).join(" ");
+  const yTicks = Array.from({ length: 4 }, (_, index) => yMax * index / 3);
+
+  return (
+    <svg
+      className="oil-carry-curve"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`Required ${s.tenorDays}-day contango across funding rates; at ${s.fundingRate}% the hurdle is ${out.carry.required.toFixed(2)} dollars per barrel`}
+    >
+      <defs>
+        <linearGradient id="oil-carry-fill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor={C.crude} stopOpacity=".28" />
+          <stop offset="1" stopColor={C.crude} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {yTicks.map((tick) => <g key={tick}>
+        <line x1={pad.left} x2={width - pad.right} y1={y(tick)} y2={y(tick)} stroke={C.grid} />
+        <text x={pad.left - 10} y={y(tick) + 3} textAnchor="end">${fmt(tick, 1)}</text>
+      </g>)}
+      {[0, 2, 4, 6, 8, 10, 12].map((tick) => <g key={tick}>
+        <line x1={x(tick)} x2={x(tick)} y1={pad.top} y2={height - pad.bottom} stroke={C.grid} />
+        <text x={x(tick)} y={height - 24} textAnchor="middle">{tick}%</text>
+      </g>)}
+      {s.forwardSpread >= 0 && <>
+        <line className="oil-forward-line" x1={pad.left} x2={width - pad.right} y1={y(s.forwardSpread)} y2={y(s.forwardSpread)} />
+        <text className="oil-forward-label" x={width - pad.right - 4} y={y(s.forwardSpread) - 7} textAnchor="end">entered spread ${fmt(s.forwardSpread, 1)}</text>
+      </>}
+      <path d={`${path} L${x(maxRate)},${height - pad.bottom} L${x(0)},${height - pad.bottom} Z`} fill="url(#oil-carry-fill)" />
+      <path className="oil-carry-path" d={path} />
+      <line className="oil-current-guide" x1={x(s.fundingRate)} x2={x(s.fundingRate)} y1={y(out.carry.required)} y2={height - pad.bottom} />
+      <circle className="oil-current-dot" cx={x(s.fundingRate)} cy={y(out.carry.required)} r="5" />
+      <text className="oil-current-label" x={Math.min(x(s.fundingRate) + 9, width - 150)} y={Math.max(y(out.carry.required) - 10, 16)}>
+        now ${fmt(out.carry.required, 2)}/bbl
+      </text>
+      <text className="oil-axis-label" x={(pad.left + width - pad.right) / 2} y={height - 3} textAnchor="middle">annual funding rate</text>
+    </svg>
+  );
+}
+
+function OutputMetric({ label, value, detail, tone = "" }: {
+  label: string; value: string; detail: string; tone?: string;
+}) {
+  return <div className={`oil-output ${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
+}
+
+function ScenarioLab({ engine, s, setS, base }: {
+  engine: Any;
+  s: Scenario;
+  setS: React.Dispatch<React.SetStateAction<Scenario>>;
+  base: Scenario;
+}) {
+  const out = calculateScenario(s);
+  const field = (key: keyof Scenario) => (value: number) => setS((current) => ({ ...current, [key]: value }));
+  const maxMargin = Math.max(out.margin.variation, out.margin.initial, 1);
+  const maxVoyage = Math.max(s.voyageDays, s.baselineVoyageDays, 1);
+
+  return (
+    <section className="oil-lab" aria-labelledby="oil-lab-title">
+      <div className="oil-section-head">
+        <div>
+          <span className="oil-kicker oil-kicker--scenario">SCENARIO · NOT A LIVE FORECAST</span>
+          <h2 id="oil-lab-title">Turn the barrel into a funding event</h2>
+        </div>
+        <p>Every output is an identity. Move one assumption and watch the cash timing change.</p>
+      </div>
+      <div className="oil-lab__layout">
+        <aside className="oil-controls">
+          <div className="oil-controls__head">
+            <div><span>ASSUMPTIONS</span><strong>Transmission controls</strong></div>
+            <button type="button" onClick={() => setS(base)}>RESET TO OBSERVED</button>
+          </div>
+          <Slider id="oil-price" label="Oil price" value={s.oilPrice} min={20} max={200} step={1} display={`$${fmt(s.oilPrice, 0)}/bbl`} onChange={field("oilPrice")} />
+          <Slider id="oil-funding" label="Funding rate" value={s.fundingRate} min={0} max={12} step={0.05} display={`${fmt(s.fundingRate, 2)}%`} onChange={field("fundingRate")} />
+          <Slider id="oil-forward" label="Forward spread" value={s.forwardSpread} min={-10} max={15} step={0.1} display={`${s.forwardSpread > 0 ? "+" : ""}$${fmt(s.forwardSpread, 1)}/bbl`} onChange={field("forwardSpread")} />
+          <Slider id="oil-voyage" label="Voyage length" value={s.voyageDays} min={5} max={90} step={1} display={`${fmt(s.voyageDays, 0)} days`} onChange={field("voyageDays")} />
+          <Slider id="oil-jump" label="Oil price jump" value={s.oilPriceChange} min={0} max={40} step={0.5} display={`+$${fmt(s.oilPriceChange, 1)}/bbl`} onChange={field("oilPriceChange")} />
+          <Slider id="oil-rbi" label="RBI dollar sales" value={s.rbiUsdSalesB} min={0} max={20} step={0.25} display={`$${fmt(s.rbiUsdSalesB, 2)}bn`} onChange={field("rbiUsdSalesB")} />
+          <details className="oil-advanced">
+            <summary>Advanced assumptions <span>15 controls</span></summary>
+            <div className="oil-advanced__grid">
+              <Slider id="oil-tenor" label="Carry tenor" value={s.tenorDays} min={30} max={365} step={5} display={`${fmt(s.tenorDays, 0)}d`} onChange={field("tenorDays")} />
+              <Slider id="oil-storage" label="Storage / day" value={s.storagePerDay} min={0} max={0.1} step={0.005} display={`$${fmt(s.storagePerDay, 3)}`} onChange={field("storagePerDay")} />
+              <Slider id="oil-insurance" label="Insurance rate" value={s.insuranceRate} min={0} max={2} step={0.05} display={`${fmt(s.insuranceRate, 2)}%`} onChange={field("insuranceRate")} />
+              <Slider id="oil-cargo" label="Cargo size" value={s.cargoBarrelsM} min={0.5} max={4} step={0.1} display={`${fmt(s.cargoBarrelsM, 1)}m bbl`} onChange={field("cargoBarrelsM")} />
+              <Slider id="oil-throughput" label="Daily throughput" value={s.dailyThroughputMbd} min={0.05} max={1} step={0.05} display={`${fmt(s.dailyThroughputMbd, 2)}mb/d`} onChange={field("dailyThroughputMbd")} />
+              <Slider id="oil-baseline" label="Baseline voyage" value={s.baselineVoyageDays} min={5} max={60} step={1} display={`${fmt(s.baselineVoyageDays, 0)}d`} onChange={field("baselineVoyageDays")} />
+              <Slider id="oil-hedge" label="Net short hedge" value={s.hedgeBarrelsM} min={0.1} max={10} step={0.1} display={`${fmt(s.hedgeBarrelsM, 1)}m bbl`} onChange={field("hedgeBarrelsM")} />
+              <Slider id="oil-im" label="Initial margin rise" value={s.initialMarginRateChange} min={0} max={30} step={0.5} display={`${fmt(s.initialMarginRateChange, 1)}%`} onChange={field("initialMarginRateChange")} />
+              <Slider id="oil-import" label="India oil imports" value={s.indiaImportMbd} min={1} max={8} step={0.1} display={`${fmt(s.indiaImportMbd, 1)}mb/d`} onChange={field("indiaImportMbd")} />
+              <Slider id="oil-shock" label="India oil shock" value={s.indiaOilShock} min={0} max={50} step={1} display={`$${fmt(s.indiaOilShock, 0)}/bbl`} onChange={field("indiaOilShock")} />
+              <Slider id="oil-usdinr" label="USD/INR" value={s.usdInr} min={60} max={120} step={0.1} display={`₹${fmt(s.usdInr, 1)}`} onChange={field("usdInr")} />
+              <Slider id="oil-replenish" label="Liquidity replenished" value={s.liquidityReplenishment} min={0} max={100} step={5} display={`${fmt(s.liquidityReplenishment, 0)}%`} onChange={field("liquidityReplenishment")} />
+              <Slider id="oil-underrecovery" label="OMC under-recovery" value={s.underRecoveryCroreDay} min={0} max={2000} step={50} display={`₹${fmt(s.underRecoveryCroreDay, 0)}cr/d`} onChange={field("underRecoveryCroreDay")} />
+              <Slider id="oil-lag" label="Compensation lag" value={s.compensationLagDays} min={1} max={180} step={1} display={`${fmt(s.compensationLagDays, 0)}d`} onChange={field("compensationLagDays")} />
+              <Slider id="oil-cpshare" label="CP funding share" value={s.cpFundingShare} min={0} max={100} step={5} display={`${fmt(s.cpFundingShare, 0)}%`} onChange={field("cpFundingShare")} />
+            </div>
+          </details>
+          <div className="oil-controls__note">Initialized from WTI, SOFR and USD/INR through {engine.asof}. All other values are explicit defaults.</div>
+        </aside>
+
+        <div className="oil-lab__results" aria-live="polite">
+          <article className="oil-result oil-result--carry">
+            <div className="oil-result__head"><span>01</span><div><h3>Cost of carry</h3><p>the reverse channel · rates price the curve</p></div></div>
+            <div className="oil-output-grid">
+              <OutputMetric label="required contango" value={`$${fmt(out.carry.required, 2)}/bbl`} detail={`${fmt(s.tenorDays, 0)}-day hurdle`} tone="crude" />
+              <OutputMetric label="forward headroom" value={`${out.carry.headroom >= 0 ? "+" : "−"}$${fmt(Math.abs(out.carry.headroom), 2)}/bbl`} detail={out.carry.headroom >= 0 ? "mechanically covers carry" : "below mechanical carry"} tone={out.carry.headroom >= 0 ? "calm" : "stress"} />
+            </div>
+            <CarryCurve s={s} out={out} />
+            <div className="oil-equation">contango = <b>${fmt(out.carry.storage, 2)}</b> storage + <b>${fmt(out.carry.financing, 2)}</b> funding + <b>${fmt(out.carry.insurance, 2)}</b> insurance</div>
+          </article>
+
+          <div className="oil-result-pair">
+            <article className="oil-result">
+              <div className="oil-result__head"><span>02</span><div><h3>Trade finance</h3><p>price × barrels × time</p></div></div>
+              <OutputMetric label="credit per cargo" value={compactUsd(out.trade.cargoCredit)} detail={`${fmt(s.cargoBarrelsM, 1)}m barrels × $${fmt(s.oilPrice, 0)}`} tone="crude" />
+              <div className="oil-waterfall">
+                <div><span>baseline voyage · {fmt(s.baselineVoyageDays, 0)}d</span><i style={{ width: `${s.baselineVoyageDays / maxVoyage * 100}%` }} /></div>
+                <div><span>scenario voyage · {fmt(s.voyageDays, 0)}d</span><i className="hot" style={{ width: `${s.voyageDays / maxVoyage * 100}%` }} /></div>
+              </div>
+              <div className="oil-output-grid oil-output-grid--compact">
+                <OutputMetric label="capital in transit" value={compactUsd(out.trade.inTransit)} detail={`${fmt(out.trade.multiple, 1)}× baseline`} />
+                <OutputMetric label="incremental tie-up" value={compactUsd(out.trade.incremental)} detail="vs baseline voyage" />
+                <OutputMetric label="voyage interest" value={compactUsd(out.trade.financingCost)} detail="per cargo" />
+              </div>
+            </article>
+
+            <article className="oil-result">
+              <div className="oil-result__head"><span>03</span><div><h3>Margin calls</h3><p>today's cash against tomorrow's barrel</p></div></div>
+              <OutputMetric label="same-day liquidity" value={compactUsd(out.margin.sameDay)} detail="variation + initial margin" tone="crude" />
+              <div className="oil-margin-bars">
+                <div><span>variation margin <b>{compactUsd(out.margin.variation)}</b></span><i style={{ width: `${out.margin.variation / maxMargin * 100}%` }} /></div>
+                <div><span>initial margin <b>{compactUsd(out.margin.initial)}</b></span><i className="dollar" style={{ width: `${out.margin.initial / maxMargin * 100}%` }} /></div>
+              </div>
+              <div className="oil-timing">
+                <span>PRICE SHOCK</span><i>same day →</i><strong>REPO · CP · CREDIT LINE</strong><i>months →</i><span>PHYSICAL GAIN</span>
+              </div>
+            </article>
+          </div>
+
+          <article className="oil-result oil-result--india">
+            <div className="oil-result__head"><span>04</span><div><h3>India transmission</h3><p>external oil bill → rupee liquidity → OMC commercial paper</p></div></div>
+            <div className="oil-india-chain">
+              <OutputMetric label="annual import-bill change" value={compactUsd(out.india.annualImportUsd)} detail={`$${fmt(s.indiaOilShock, 0)}/bbl shock at ${fmt(s.indiaImportMbd, 1)}mb/d`} tone="crude" />
+              <i aria-hidden="true">→</i>
+              <OutputMetric label="RBI gross absorption" value={compactInr(out.india.rbiGross)} detail={`$${fmt(s.rbiUsdSalesB, 2)}bn sold at ₹${fmt(s.usdInr, 1)}`} tone="inr" />
+              <i aria-hidden="true">→</i>
+              <OutputMetric label="unreplenished drain" value={compactInr(out.india.rbiUnreplenished)} detail={`${fmt(100 - s.liquidityReplenishment, 0)}% left unsterilised`} tone="inr" />
+              <i aria-hidden="true">→</i>
+              <OutputMetric label="OMC CP demand" value={compactInr(out.india.omcCp)} detail={`${fmt(s.cpFundingShare, 0)}% of ${compactInr(out.india.omcStock)} stock`} tone="dollar" />
+            </div>
+            <div className="oil-india-note">The import bill, intervention and OMC channels are separate conditional paths. They are shown in sequence for stress testing, not asserted to occur one-for-one.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SourcesAndLimits({ engine }: { engine: Any }) {
+  const links: Record<string, string> = {
+    DCOILWTICO: "https://fred.stlouisfed.org/series/DCOILWTICO",
+    DCOILBRENTEU: "https://fred.stlouisfed.org/series/DCOILBRENTEU",
+    "DCPN3M / DCPF3M": "https://fred.stlouisfed.org/series/DCPN3M",
+    DGS3MO: "https://fred.stlouisfed.org/series/DGS3MO",
+    "SOFR / IORB": "https://fred.stlouisfed.org/series/SOFR",
+    DEXINUS: "https://fred.stlouisfed.org/series/DEXINUS",
+    "CPIENGSL / CPILFESL": "https://fred.stlouisfed.org/series/CPIENGSL",
+    "WMTSECL1 / WLRRAFOIAL": "https://fred.stlouisfed.org/series/WMTSECL1",
+  };
+  return (
+    <section className="oil-sources" aria-labelledby="oil-sources-title">
+      <div>
+        <span className="oil-kicker">DATA LEDGER</span>
+        <h2 id="oil-sources-title">What is measured</h2>
+        <ul>{(engine.sources ?? []).map((source: Any) => (
+          <li key={`${source.series}-${source.id}`}>
+            <span>{source.series}</span>
+            <a href={links[source.id] ?? "https://fred.stlouisfed.org/"} target="_blank" rel="noreferrer">{source.source} · {source.id} ↗</a>
+          </li>
+        ))}</ul>
+      </div>
+      <div>
+        <span className="oil-kicker oil-kicker--scenario">HONESTY LAYER</span>
+        <h2>What this cannot claim</h2>
+        <ol>{(engine.caveats ?? []).map((caveat: string) => <li key={caveat}>{caveat}</li>)}</ol>
+      </div>
+      <Method>{engine.method}</Method>
+    </section>
+  );
+}
+
+export default function OilFunding({ snap }: { snap: Any }) {
+  const engine = snap.engines?.oilfunding;
+  if (!engine?.ok) {
+    return <div className="grid"><Fault name="Oil × Funding" reason={engine?.reason ?? "not yet present in this snapshot"} span={12} /></div>;
+  }
+  const base = initialScenario(engine);
+  const [scenario, setScenario] = useState<Scenario>(() => base);
+  const outputs = calculateScenario(scenario);
+  const live = engine.live ?? {};
+
+  return (
+    <div className="oil-page">
+      <header className="oil-hero">
+        <div className="oil-hero__copy">
+          <span className="oil-kicker">SEICHE CONTEXT ENGINE · NEVER IN THE COMPOSITE</span>
+          <h1>Oil is short-term<br /><em>dollar funding</em> in motion.</h1>
+          <p>
+            A barrel is financed while it is stored, shipped and hedged. Higher rates reshape the
+            curve; higher prices enlarge the same cargo's credit need; volatility converts future
+            physical gains into cash calls today.
+          </p>
+          <div className="oil-hero__tags">
+            <span><i className="crude" /> oil → cash demand</span>
+            <span><i className="dollar" /> rates → oil curve</span>
+            <span><i className="inr" /> India → rupee liquidity</span>
+          </div>
+          <AsOf asof={engine.asof} generatedAt={snap.generated_at} />
+        </div>
+        <div className="oil-hero__formula" aria-label="Cash and carry identity">
+          <span>THE MECHANICAL LINK</span>
+          <div><b>required contango</b><i>=</i></div>
+          <div><strong>storage</strong><i>+</i></div>
+          <div><strong>insurance</strong><i>+</i></div>
+          <div className="oil-hero__rate"><strong>interest rate</strong><i>← money market</i></div>
+          <small>Convenience yield, capacity and basis sit outside this mechanical hurdle.</small>
+        </div>
+      </header>
+
+      <section className="oil-live" aria-label="Latest observed oil and funding readings">
+        <LiveTile
+          label="WTI spot"
+          value={`$${fmt(live.wti?.price_usd_per_bbl, 2)}`}
+          detail={`5d ${live.wti?.change_5d_usd > 0 ? "+" : ""}${fmt(live.wti?.change_5d_usd, 2)} · 20d ${live.wti?.change_20d_pct > 0 ? "+" : ""}${fmt(live.wti?.change_20d_pct, 1)}%`}
+          asof={live.wti?.asof}
+          tone={C.crude}
+        />
+        <LiveTile
+          label="Brent spot"
+          value={`$${fmt(live.brent?.price_usd_per_bbl, 2)}`}
+          detail={`5d ${live.brent?.change_5d_usd > 0 ? "+" : ""}${fmt(live.brent?.change_5d_usd, 2)} · 20d ${live.brent?.change_20d_pct > 0 ? "+" : ""}${fmt(live.brent?.change_20d_pct, 1)}%`}
+          asof={live.brent?.asof}
+          tone={C.dollar}
+        />
+        <LiveTile
+          label="Nonfinancial CP − bill"
+          value={`${fmt(live.cp_nonfinancial?.spread_bp, 1)} bp`}
+          detail={`20d ${live.cp_nonfinancial?.change_20d_bp > 0 ? "+" : ""}${fmt(live.cp_nonfinancial?.change_20d_bp, 1)} · ${fmt(live.cp_nonfinancial?.percentile_3y, 0)}th pctl`}
+          asof={live.cp_nonfinancial?.asof}
+          tone={C.crude}
+        />
+        <LiveTile
+          label="SOFR − IORB"
+          value={`${fmt(live.sofr_iorb?.spread_bp, 1)} bp`}
+          detail={`20d ${live.sofr_iorb?.change_20d_bp > 0 ? "+" : ""}${fmt(live.sofr_iorb?.change_20d_bp, 1)} · ${fmt(live.sofr_iorb?.percentile_3y, 0)}th pctl`}
+          asof={live.sofr_iorb?.asof}
+          tone={C.refinery}
+        />
+        <LiveTile
+          label="USD / INR"
+          value={`₹${fmt(live.inr?.per_usd, 2)}`}
+          detail={`20d ${live.inr?.change_20d_pct > 0 ? "+" : ""}${fmt(live.inr?.change_20d_pct, 1)}% · 60d ${live.inr?.change_60d_pct > 0 ? "+" : ""}${fmt(live.inr?.change_60d_pct, 1)}%`}
+          asof={live.inr?.asof}
+          tone={C.inr}
+        />
+      </section>
+
+      <TransmissionLoop s={scenario} out={outputs} live={live} />
+      <ObservedEvidence engine={engine} />
+      <ScenarioLab engine={engine} s={scenario} setS={setScenario} base={base} />
+      <SourcesAndLimits engine={engine} />
+    </div>
+  );
+}
