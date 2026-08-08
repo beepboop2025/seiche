@@ -92,9 +92,12 @@ def _varying_world(n: int = 1200) -> dict[str, pd.Series]:
 
 def test_public_oil_series_are_keyless_fred_contracts() -> None:
     by_name = {spec.mnemonic: spec for spec in OIL_FUNDING_FRED_SERIES}
-    assert set(by_name) == {"WTI_SPOT", "BRENT_SPOT", "ENERGY_CPI", "CORE_CPI"}
+    assert set(by_name) == {
+        "WTI_SPOT", "BRENT_SPOT", "HENRY_HUB_SPOT", "ENERGY_CPI", "CORE_CPI"
+    }
     assert by_name["WTI_SPOT"].remote_id == "DCOILWTICO"
     assert by_name["BRENT_SPOT"].remote_id == "DCOILBRENTEU"
+    assert by_name["HENRY_HUB_SPOT"].remote_id == "DHHNGSP"
     assert by_name["ENERGY_CPI"].remote_id == "CPIENGSL"
     assert by_name["CORE_CPI"].remote_id == "CPILFESL"
     assert all(spec.source == "fred" for spec in by_name.values())

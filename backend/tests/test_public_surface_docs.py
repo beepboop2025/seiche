@@ -2,7 +2,8 @@
 
 README.md claimed `/mcp` served "the full tool surface, free for everyone, no
 token needed" for the whole life of that sentence. It was true once and stopped
-being true at 82d5700, which correctly cut anonymous callers to six tools. The
+being true at 82d5700, which correctly cut anonymous callers to a curated
+surface. The
 code was already tested; the prose was not, so nothing failed and the README
 went on telling agent-builders they could call `replay_asof` without a token.
 
@@ -33,14 +34,15 @@ DOCS = [
 ]
 
 
-def test_the_surface_is_six_tools():
+def test_the_surface_is_eight_tools():
     """A guard on the guard: if this number moves, every sentence below moves
     with it, and someone has to decide that deliberately."""
-    assert len(PUBLIC) == 6, sorted(PUBLIC)
+    assert len(PUBLIC) == 8, sorted(PUBLIC)
     assert len(GATED) == 5, sorted(GATED)
     assert PUBLIC == {
         "funding_stress_now", "historical_analogs", "proof_backtest",
         "data_health", "crypto_stress_record", "institutional_flows",
+        "oil_funding_context", "fx_materials_passage",
     }
 
 

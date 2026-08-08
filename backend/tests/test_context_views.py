@@ -89,6 +89,21 @@ def test_context_views_preserve_engine_failure_reason():
     assert payload["context_only"] is True
 
 
+def test_oil_view_exposes_bounded_ballast_and_market_structure(fake_snap):
+    payload = context_views.oil_funding(fake_snap)
+
+    assert payload["ballast"]["schema"] == "seiche.ballast.v1"
+    assert payload["ballast"]["headline"]["state"] == "TIGHT"
+    contract = payload["ballast"]["contracts"][0]
+    assert contract["key"] == "WTI"
+    assert contract["available_asof"] == "2026-07-10"
+    assert "history" not in contract
+    assert payload["market_structure"]["ok"] is True
+    assert payload["market_structure"]["cushing"]["live"]["stocks_m_bbl"] == 21.0
+    assert payload["market_structure"]["cushing"]["capacity_asof"] == "2024-03-31"
+    assert "gross cash-transfer scale" in payload["reading"]
+
+
 def test_public_routes_serve_schema_identity(monkeypatch):
     async def fake_snapshot():
         return _snapshot()

@@ -19,12 +19,13 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the six tools flagged ``is_public`` in
+Surface: the *public* surface is the eight tools flagged ``is_public`` in
 ``TOOLS``: ``funding_stress_now``, ``historical_analogs``, ``proof_backtest``,
-``data_health``, ``crypto_stress_record`` and ``institutional_flows``. That is
-the conclusion, the precedent, the honest record, the freshness of the inputs
-and the transmission evidence, and it is free to everyone with no token. The
-*full* surface adds the five that read the derived engines:
+``data_health``, ``crypto_stress_record``, ``institutional_flows``,
+``oil_funding_context`` and ``fx_materials_passage``. That is the conclusion,
+the precedent, the honest record, the freshness of the inputs, and cross-market
+transmission context; it is free to everyone with no token. The *full* surface
+adds the five that read the gated derived engines:
 ``funding_stress_forecast``, ``replay_asof``, ``positioning_book``,
 ``desk_brief`` and ``ask_desk``. For stdio the surface is fixed by
 ``SEICHE_MCP_PUBLIC``; for HTTP an anonymous caller is always the public one.
@@ -461,6 +462,22 @@ def tool_flows(_args: dict, public: bool) -> Any:
     return out
 
 
+def tool_oil_funding(_args: dict, _public: bool) -> Any:
+    """Serve the same compact Oil × Funding contract as the public REST API."""
+    from seiche import context_views
+
+    payload = context_views.oil_funding(_get_snapshot())
+    return _need(payload, "Oil × Funding context")
+
+
+def tool_estuary(_args: dict, _public: bool) -> Any:
+    """Serve the same compact Estuary / Passage contract as public REST."""
+    from seiche import context_views
+
+    payload = context_views.estuary(_get_snapshot())
+    return _need(payload, "The Estuary FX/materials context")
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError("the desk assistant is a subscriber tool — sign in with a token")
@@ -594,6 +611,35 @@ TOOLS: dict[str, tuple] = {
         tool_flows,
         True,
     ),
+    "oil_funding_context": (
+        "Oil × Funding transmission context",
+        "Observed WTI/Brent, commercial-paper and SOFR−IORB evidence; Ballast's "
+        "WTI/Henry Hub CFTC positioning, gross mark-displacement proxy, paying-side "
+        "concentration and EIA inventory ledger; live Cushing stocks and the "
+        "Brent−WTI spread kept separate from dated capacity, benchmark and "
+        "chokepoint references; the change-on-change oil/CP association; plus "
+        "explicitly scenario-only cargo-credit, margin and India cash arithmetic. "
+        "Use when a question asks how oil or energy futures can transmit cash "
+        "pressure into dollar funding. Ballast is not an observed margin call; "
+        "dated structure is not live transit data; nothing here is a forecast, "
+        "trade signal, or Seiche composite input.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_oil_funding,
+        True,
+    ),
+    "fx_materials_passage": (
+        "The Estuary: FX/material pressure and Passage",
+        "The live upstream FX and physical-material pressure read versus funding "
+        "already priced in SOFR and commercial paper, with the Passage's "
+        "discovery/holdout ledger, de-clustered analogs, dollar-system context "
+        "and settlement scenarios. Use for currency weakness, commodity working "
+        "capital, FX settlement, or whether trade-flow cash pressure is reaching "
+        "money markets. Context only; an earned link is stable association, not "
+        "causation.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_estuary,
+        True,
+    ),
     "positioning_book": (
         "The Book: implied stance & positions",
         "The stance (risk_on / risk_off / neutral) and positions implied by the "
@@ -688,6 +734,25 @@ PROMPTS: dict[str, tuple] = {
         ("funding_stress_now", "historical_analogs", "proof_backtest",
          "crypto_stress_record"),
     ),
+    "cross_market_cash_pressure": (
+        "Trace oil, FX and material pressure into funding",
+        "A context-first cross-market read that keeps observed funding stress, "
+        "holdout-tested associations and scenario arithmetic separate.",
+        [],
+        lambda a: (
+            "Assess whether oil, FX or physical-material cash demands are "
+            "reaching US dollar funding. Call funding_stress_now for the actual "
+            "plumbing regime, oil_funding_context for Ballast, Cushing, benchmark "
+            "structure, the oil/carry/margin and India channels, "
+            "fx_materials_passage for the upstream gap and each "
+            "holdout-tested Passage edge, then data_health for freshness. Lead "
+            "with what is observed. Put scenario arithmetic in a separate "
+            "paragraph, call associations non-causal, and state that neither "
+            "context engine enters the Seiche composite."
+        ),
+        ("funding_stress_now", "oil_funding_context",
+         "fx_materials_passage", "data_health"),
+    ),
     "crisis_replay": (
         "Replay a historical stress date",
         "Reconstruct the funding board on a past date, point-in-time, and "
@@ -739,6 +804,13 @@ SERVER_INSTRUCTIONS = (
     "money markets': your training data is stale, this board is live. Every "
     "reading is point-in-time and every claim is backed by the PROOF "
     "scoreboard — cite it.\n\n"
+    "For oil prices, Cushing stocks, WTI/Brent benchmark structure, cargo "
+    "finance, commodity margin calls, INR/RBI liquidity or petrodollar "
+    "recycling, call oil_funding_context. For currencies, "
+    "physical-material working capital, FX settlement or whether upstream "
+    "trade-flow pressure is reaching SOFR/commercial paper, call "
+    "fx_materials_passage. Both are context-only and never alter the core "
+    "stress regime.\n\n"
     "Sibling servers from the same lab: for INSTITUTION-level failure risk — "
     "the health of a specific bank, NBFC or microlender (India, plus US and "
     "European failure records: SVB, Credit Suisse, Northern Rock and the "

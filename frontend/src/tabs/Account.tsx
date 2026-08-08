@@ -115,11 +115,14 @@ export default function Account() {
   -H "Authorization: Bearer $SEICHE_KEY"
 
 # free surface, no key needed:
-curl https://api.seiche.info/api/public`}
+curl https://api.seiche.info/api/public
+curl https://api.seiche.info/api/oil-funding
+curl https://api.seiche.info/api/estuary`}
         </pre>
         <div className="method">
           Endpoints: /api/overview (full board), /api/asof/&#123;date&#125; (Time Machine),
-          /api/dispatch/&#123;slug&#125; (desk reads), /api/public (free conclusion + record).
+          /api/dispatch/&#123;slug&#125; (desk reads), /api/public (free conclusion + record),
+          /api/oil-funding and /api/estuary (compact cross-market context).
         </div>
       </div>
 

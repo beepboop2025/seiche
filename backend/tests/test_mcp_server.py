@@ -86,7 +86,12 @@ def test_empty_lists_for_unoffered_capabilities():
 def test_prompts_list_names_titles_and_arguments():
     prompts = mcp.dispatch({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})["result"]["prompts"]
     by_name = {p["name"]: p for p in prompts}
-    assert set(by_name) == {"funding_stress_briefing", "is_now_dangerous", "crisis_replay"}
+    assert set(by_name) == {
+        "funding_stress_briefing",
+        "is_now_dangerous",
+        "cross_market_cash_pressure",
+        "crisis_replay",
+    }
     for p in prompts:
         assert p["title"] and p["description"]
     # crisis_replay is the only one taking an argument, and it is required
@@ -123,7 +128,7 @@ def test_public_surface_hides_prompts_whose_tools_are_hidden():
     names = {p["name"] for p in mcp.dispatch(
         {"jsonrpc": "2.0", "id": 1, "method": "prompts/list"},
         public=True)["result"]["prompts"]}
-    assert names == {"is_now_dangerous"}
+    assert names == {"is_now_dangerous", "cross_market_cash_pressure"}
     for name in names:
         tools_used = set(mcp.PROMPTS[name][4])
         assert tools_used <= set(mcp._visible_tools(True))
@@ -175,7 +180,8 @@ def test_tools_list_has_valid_schemas():
 
 
 PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest",
-                "data_health", "crypto_stress_record", "institutional_flows"}
+                "data_health", "crypto_stress_record", "institutional_flows",
+                "oil_funding_context", "fx_materials_passage"}
 PAID_TOOLS = {"funding_stress_forecast", "replay_asof", "desk_brief",
               "positioning_book", "ask_desk"}
 
@@ -245,6 +251,39 @@ def test_health(stubbed):
     p = _payload(_call("data_health"))
     assert p["version"] == "0.2.0-test"
     assert p["faults"] == []
+
+
+def test_oil_funding_context_uses_the_shared_chartless_contract(stubbed):
+    p = _payload(_call("oil_funding_context"))
+    assert p["schema"] == "seiche.oil-funding.v1"
+    assert p["oil"]["wti"]["price_usd_per_bbl"] == 81.5
+    assert p["coupling"]["fit"]["correlation"] == 0.42
+    assert p["market_structure"]["cushing"]["live"]["stocks_m_bbl"] == 21.0
+    assert p["market_structure"]["brent_wti_spread"]["brent_minus_wti_usd_per_bbl"] == 3.6
+    assert p["scenario"]["status"] == "scenario_only"
+    assert "charts" not in p
+
+
+def test_fx_materials_passage_keeps_the_holdout_ledger(stubbed):
+    p = _payload(_call("fx_materials_passage"))
+    assert p["schema"] == "seiche.estuary.v1"
+    assert p["headline"]["regime"] == "PRESSURE HELD UPSTREAM"
+    assert p["passage"]["earned"] == 1
+    assert p["passage"]["edges"][0]["status"] == "earned"
+
+
+def test_context_tool_fails_loud_when_engine_is_down(monkeypatch, stubbed, fake_snap):
+    broken = {
+        **fake_snap,
+        "engines": {
+            **fake_snap["engines"],
+            "estuary": {"ok": False, "reason": "FX tape unavailable"},
+        },
+    }
+    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: broken)
+    response = _call("fx_materials_passage")
+    assert response["result"]["isError"] is True
+    assert "FX tape unavailable" in response["result"]["content"][0]["text"]
 
 
 def test_brief_returns_markdown(stubbed, monkeypatch):

@@ -68,7 +68,8 @@ composite engine called "undertow" (critical slowing down,
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twelve H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
-| **Oil × Funding** ★ | The barrel's balance sheet, in both directions: WTI/Brent, CP−bill and SOFR−IORB evidence; a rolling change-on-change coupling diagnostic; the observed mechanical carry hurdle; energy/core CPI into IORB; broad foreign-official dollar-parking proxies for the recycling channel; and an editable, explicitly scenario-only lab for cargo credit, margin calls, RBI liquidity absorption and OMC commercial-paper demand. Context only, never a composite input. |
+| **Oil × Funding** ★ | The barrel's balance sheet, in both directions: WTI/Brent, CP−bill and SOFR−IORB evidence; live Cushing stocks and Brent−WTI basis kept separate from dated capacity, benchmark and chokepoint references; a rolling change-on-change coupling diagnostic; the observed mechanical carry hurdle; energy/core CPI into IORB; broad foreign-official dollar-parking proxies for the recycling channel; and an editable, explicitly scenario-only lab for cargo credit, margin calls, RBI liquidity absorption and OMC commercial-paper demand. Context only, never a composite input. |
+| **[Ballast](docs/BALLAST.md)** ★ | The energy-futures cash ledger inside Oil × Funding. Exact CFTC contract codes for WTI and Henry Hub join weekly open interest, trader classes and paying-side concentration to public benchmark moves and contract multipliers; EIA commercial crude stocks supply the physical-collateral leg; SOFR−IORB and CP−bill show a separate funding-amplifier overlay. The output is a bounded gross mark-displacement proxy—not an observed margin call—and the headline takes the worst own-history commodity/physical percentile without blending or letting funding alone manufacture a commodity alert. Typed handoffs route exit cost to Undertow and named-institution exposure to LiquiLens. Context only, never a composite input. |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
 | **ML Lab** | Learned P(funding event within 5bd): walk-forward with a 5bd boundary embargo, benchmarked against climatology AND the rule-based index, reliability table + decision-utility scoring published. Verdict at build: ranks better than the rule (OOS AUROC 0.826 vs 0.806; 0.812 on the orthogonal feature set) but probability levels don't beat climatology — use for ranking/alerting, not literal odds. The verdict self-updates. |
 | **Station-Keeping** ★ | Orbit-determination transfer: propagate the reserve system's expected state (fiscal seasonal, calendar buckets, trailing drift), CUSUM the innovation residuals, flag unmodeled "burns" — debt-ceiling cash games, RMP pace changes — often before they're narrated. Doubles as the Weather model's health monitor. |
@@ -200,7 +201,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Six tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Eight tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -219,10 +220,13 @@ The copy-paste quickstart and live tool runner are at
 | `data_health` | freshness and provenance for every input, before you trust a reading |
 | `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
 | `institutional_flows` | who is positioned where, from public prints |
+| `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
+| `fx_materials_passage` | upstream FX/material pressure and the Passage's holdout-tested links |
 
 That is the conclusion, the precedent, the honest record, the freshness and the
-transmission evidence, and it stays free. Five tools want a bearer token, because
-they read the derived engines rather than the published conclusion:
+cross-market transmission context, and it stays free. Five tools want a bearer
+token because they read gated forecasting, replay, positioning, prose, or LLM
+engines rather than a published contextual conclusion:
 `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief` and
 `ask_desk`. `institutional_flows` answers anonymously but keeps its
 `method_versions` back for the same reason.

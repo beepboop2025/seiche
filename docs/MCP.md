@@ -80,13 +80,15 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
 }
 ```
 
-- **Anonymous** (no token) → six tools, named so you can check this against the
+- **Anonymous** (no token) → eight tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
-  `institutional_flows`. The conclusion, the precedent, the track record with
-  its misses, the freshness of every input, the crypto transmission record, and
-  who is positioned where. Capped per IP per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same six plus the five that read the
+  `institutional_flows`, plus `oil_funding_context` and
+  `fx_materials_passage`. The conclusion, precedent, track record with its
+  misses, freshness, crypto transmission record, positioning read, and
+  cross-market oil/FX/material context. Capped per IP per day. Zero setup, and
+  it stays free.
+- **Subscriber** (bearer token) → the same eight plus the five that read the
   derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
   `desk_brief`, `ask_desk`. At your tier's quota.
 
@@ -97,6 +99,21 @@ that flag is the boundary, and this page is downstream of it.
 
 The endpoint lives on the existing FastAPI app behind the same Caddy reverse
 proxy as the rest of the API — no separate service to run or deploy.
+
+The two cross-market contracts are also available as compact anonymous REST
+reads when an integration does not speak MCP:
+
+```bash
+curl https://api.seiche.info/api/oil-funding
+curl https://api.seiche.info/api/estuary
+```
+
+Those payloads are the same chartless contracts returned by
+`oil_funding_context` and `fx_materials_passage`; the oil contract also carries
+Ballast plus a chartless market-structure block (live Cushing stocks and
+Brent−WTI spread separated from dated capacity and chokepoint references).
+Telegram and MCP therefore do
+not maintain separate interpretations of the engines.
 
 ### Getting a token
 
@@ -171,14 +188,18 @@ recorded in the `provisions` table for audit.
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
 | `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | public |
+| `institutional_flows` | Hedge-fund, pension and sovereign positioning from public prints; implementation version tags withheld anonymously | public |
+| `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | public |
+| `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | public |
 | `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
 | `replay_asof` | The Time Machine: the whole board reconstructed point-in-time on a past date (`date: YYYY-MM-DD`) | subscriber |
 | `desk_brief` | Today's full desk note as markdown | subscriber |
 | `positioning_book` | Implied stance + positions, walk-forward Sharpe, live record | subscriber |
 | `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | subscriber |
 
-The free tier gives the **conclusion and the credibility** (regime, analogs, the
-PROOF scoreboard, data health) — enough to be genuinely useful and to spread.
+The free tier gives the **conclusion, credibility, and contextual transmission
+read** (regime, analogs, PROOF, data health, positioning, oil, FX and materials)
+— enough to be genuinely useful and to spread.
 The **edge** (forward odds, the Time Machine, positioning, the assistant) is the
 subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
 
@@ -207,7 +228,7 @@ returned in `X-PAYMENT-RESPONSE`.
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same six the hosted endpoint gives an anonymous caller, so a local run and a
+the same eight the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -222,6 +243,8 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `data_health` | yes | you should be able to check freshness before trusting a number |
 | `crypto_stress_record` | yes | labelled episodes replayed against the board |
 | `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
+| `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
+| `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
 | `funding_stress_forecast` | no | six modelled views of forward event odds |
 | `replay_asof` | no | full point-in-time board reconstruction |
 | `positioning_book` | no | sleeves, weights, `p_ensemble`, tcost |
@@ -229,9 +252,10 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `ask_desk` | no | runs the operator's LLM budget |
 
 The rule behind the column: what Seiche gives away is the **conclusion**; what
-it keeps is the **engine that produced it**. That is why `institutional_flows`
-is public but drops its `method_versions`, and why the literature-level method
-disclosure stays in the reading either way.
+it keeps is the **gated engine that produced a forecast, replay, position or
+LLM answer**. That is why `institutional_flows` is public but drops its
+`method_versions`, while the two cross-market tools return chartless contextual
+views and keep scenario arithmetic visibly separate from observations.
 
 `is_public` on each `TOOLS` entry in `backend/seiche/mcp_server.py` is the one
 place this is decided. Before commit `82d5700` the HTTP layer disagreed with it

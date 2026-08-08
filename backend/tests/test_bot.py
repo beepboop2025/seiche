@@ -57,7 +57,97 @@ def _ll_board(tier="orange"):
             "rows": [{"slug": "esaf", "name": "ESAF SFB", "tier": tier,
                       "hazard": {"pd_12m": 0.021}},
                      {"slug": "ujjivan", "name": "Ujjivan SFB", "tier": "green",
-                      "hazard": {"pd_12m": 0.004}}]}
+                     "hazard": {"pd_12m": 0.004}}]}
+
+
+def _oil_context():
+    return {
+        "ok": True,
+        "as_of": "2026-07-18",
+        "oil": {
+            "wti": {"price_usd_per_bbl": 81.5, "change_5d_usd": 2.4,
+                    "change_20d_pct": 6.2},
+            "brent": {"price_usd_per_bbl": 85.1, "change_5d_usd": 2.0},
+        },
+        "funding": {
+            "cp_nonfinancial": {"spread_bp": 24.0, "change_20d_bp": 3.0},
+            "cp_financial": {"spread_bp": 31.0, "change_20d_bp": 2.0},
+            "sofr_iorb": {"spread_bp": 2.0, "change_20d_bp": 1.0},
+        },
+        "india": {"inr": {"per_usd": 84.2, "change_20d_pct": 0.7}},
+        "coupling": {"fit": {"n": 120, "correlation": 0.42,
+                              "slope_bp_per_usd": 0.31}},
+        "ballast": {
+            "ok": True,
+            "headline": {
+                "state": "TIGHT",
+                "worst_channel_percentile": 91.0,
+                "dominant_channel": {"label": "WTI gross mark displacement"},
+            },
+            "contracts": [{
+                "key": "WTI",
+                "cash_transfer_scale": {
+                    "gross_mark_displacement_usd": 5_400_000_000,
+                },
+                "positioning": {"top4_paying_side_pct": 23.0},
+            }],
+        },
+        "market_structure": {
+            "ok": True,
+            "cushing": {
+                "working_capacity_m_bbl": 78.410,
+                "capacity_asof": "2024-03-31",
+                "stress_reference_m_bbl": 20.0,
+                "live": {
+                    "stocks_m_bbl": 21.0,
+                    "fill_of_last_working_capacity_pct": 26.8,
+                    "buffer_to_20m_reference_m_bbl": 1.0,
+                    "asof": "2026-07-04",
+                },
+            },
+            "brent_wti_spread": {
+                "brent_minus_wti_usd_per_bbl": 3.6,
+                "average_5d_usd_per_bbl": 3.3,
+            },
+            "benchmark_architecture": [
+                {"benchmark": "WTI", "settlement": "physical delivery at Cushing"},
+                {"benchmark": "Brent", "settlement": "cargo-based benchmark complex"},
+            ],
+            "chokepoints": {
+                "rows": [{"name": "Strait of Hormuz", "q1_2026_mbd": 14.6}],
+                "latest_period": "1Q26",
+            },
+            "india": {"crude_import_dependence_pct": 88.5},
+        },
+    }
+
+
+def _estuary_context():
+    return {
+        "ok": True,
+        "as_of": "2026-07-18",
+        "headline": {
+            "regime": "PRESSURE HELD UPSTREAM",
+            "upstream_pressure": 72.0,
+            "funding_priced": 43.0,
+            "transmission_gap": 29.0,
+            "fx_pressure": 75.0,
+            "materials_pressure": 68.0,
+            "coverage_pct": 96.0,
+            "verdict": "Upstream cash pressure leads funding pricing.",
+        },
+        "leaders": {
+            "fx": [{"key": "INR", "label": "Indian rupee", "pressure": 89.0}],
+            "materials": [{"key": "WTI", "label": "WTI crude", "pressure": 88.0}],
+        },
+        "passage": {
+            "earned": 1,
+            "tentative": 1,
+            "not_earned": 4,
+            "edges": [{"source": "EM dollar", "target": "SOFR−IORB",
+                       "lag_bd": 3, "status": "earned", "corr_holdout": 0.31}],
+        },
+    }
 
 
 # ------------------------------------------------------------ pure helpers --
@@ -117,6 +207,38 @@ def test_fmt_odds_ok_and_down():
                                       "caveats": ["few events"],
                                       "method": "analog"}})
     assert "7%" in txt and "few events" in txt
+
+
+def test_fmt_oil_keeps_observation_and_scenario_boundaries_visible():
+    txt = bot.fmt_oil(_oil_context())
+    assert "WTI" in txt and "$81.50" in txt
+    assert "24.0bp" in txt and "r <b>+0.42</b>" in txt
+    assert "Ballast futures-cash ledger" in txt and "$5.40bn" in txt
+    assert "Oil market structure" in txt and "Cushing <b>21.0m bbl" in txt
+    assert "Brent−WTI <b>+3.60 USD/bbl" in txt
+    assert "Strait of Hormuz 14.6mbd" in txt
+    assert "not an observed margin call" in txt
+    assert "associational" in txt and "editable scenarios" in txt
+    assert "absence is not calm" in bot.fmt_oil(None)
+    assert "tape stale" in bot.fmt_oil({"ok": False, "reason": "tape stale"})
+
+
+def test_fmt_estuary_carries_gap_and_holdout_verdict():
+    txt = bot.fmt_estuary(_estuary_context())
+    assert "PRESSURE HELD UPSTREAM" in txt
+    assert "Passage gap <b>+29.0</b>" in txt
+    assert "1 earned" in txt and "holdout r +0.31" in txt
+    assert "never enters" in txt
+    assert "absence is not calm" in bot.fmt_estuary(None)
+
+
+def test_context_formatters_escape_served_labels_and_verdicts():
+    estuary = _estuary_context()
+    estuary["headline"]["verdict"] = "<script>bad</script>"
+    estuary["leaders"]["fx"][0]["label"] = "<b>fake</b>"
+    txt = bot.fmt_estuary(estuary)
+    assert "<script>" not in txt and "&lt;script&gt;" in txt
+    assert "<b>fake</b>" not in txt and "&lt;b&gt;fake&lt;/b&gt;" in txt
 
 
 def test_fmt_institutions_defensive_rows():
@@ -358,6 +480,29 @@ def test_own_suffix_command_answered(monkeypatch, sent):
     assert any("funding stress" in t for t in msgs)
 
 
+@pytest.mark.parametrize(
+    ("command", "path", "needle", "payload"),
+    (
+        ("/oil", "/api/oil-funding", "Oil × Funding", _oil_context()),
+        ("/estuary", "/api/estuary", "PRESSURE HELD UPSTREAM", _estuary_context()),
+    ),
+)
+def test_context_commands_use_the_compact_public_routes(
+    monkeypatch, sent, command, path, needle, payload
+):
+    requested = []
+
+    def fake_api(candidate):
+        requested.append(candidate)
+        return payload
+
+    monkeypatch.setattr(bot, "api_get", fake_api)
+    bot.handle(7, command, "private")
+    assert requested == [path]
+    msgs = [p["text"] for method, p in sent if method == "sendMessage"]
+    assert any(needle in text for text in msgs)
+
+
 def test_start_subscribes_and_records_ref(monkeypatch, sent):
     monkeypatch.setattr(bot, "api_get",
                         lambda p: _gauge() if "gauge" in p else _pub())
@@ -374,7 +519,7 @@ def test_stop_unsubscribes(sent):
 
 
 def test_keyboard_shapes():
-    for cmd in ("/start", "/now", "/snap", "/odds", "/share"):
+    for cmd in ("/start", "/now", "/snap", "/odds", "/oil", "/estuary", "/share"):
         kb = bot.keyboard_for(cmd)
         assert kb and all(("callback_data" in b) or ("url" in b)
                           for row in kb for b in row)
@@ -446,6 +591,15 @@ def test_answer_inline_serves_filters_and_caches(monkeypatch):
     bot.answer_inline({"id": "iq2", "query": "proof"})
     assert len(fetches) == n_first          # served from the 60s cache
     assert [r["id"] for r in calls[-1][1]["results"]] == ["proof"]
+
+
+def test_setup_registers_cross_market_commands(sent):
+    bot.run_setup()
+
+    command_call = next(payload for method, payload in sent
+                        if method == "setMyCommands")
+    commands = {item["command"] for item in command_call["commands"]}
+    assert {"oil", "estuary"} <= commands
 
 
 # ------------------------------------------- Liquidity Lab channel publishing

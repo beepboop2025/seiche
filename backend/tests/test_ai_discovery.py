@@ -49,7 +49,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 6
+    assert len(mcp["capabilities"]) == 8
 
 
 def test_ard_catalog_is_advertised_on_every_discovery_surface():

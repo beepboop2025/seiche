@@ -144,6 +144,10 @@ case "$url" in
         type=application/json; body='{{"schema":"seiche.estuary.v1"}}' ;;
     */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
+    */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
+    */riptide/openapi.json)
+        type=application/json; body='{{"title": "Riptide Public API"}}'
+        ;;
     */palimpsest/osint/osint-china.json)
         type=application/json
         body='{{"schema": "palimpsest-nemesis.public-snapshot"}}'
@@ -182,6 +186,13 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     ) in definitions
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
     assert (
+        'GET|/riptide/|200|application/json|"name": "riptide"'
+    ) in definitions
+    assert (
+        'GET|/riptide/openapi.json|200|application/json|'
+        '"title": "Riptide Public API"'
+    ) in definitions
+    assert (
         'GET|/palimpsest/osint/osint-china.json|200|application/json|'
         '"schema": "palimpsest-nemesis.public-snapshot"'
     ) in definitions
@@ -192,6 +203,15 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
+
+
+def test_riptide_edge_strips_only_its_product_prefix_and_proxies_all_transports():
+    caddy = CADDYFILE.read_text()
+    assert "@riptide_root path /riptide" in caddy
+    assert "handle_path /riptide/*" in caddy
+    block = caddy[caddy.index("@riptide_root path") : caddy.index("# AnakE-Nyx")]
+    assert block.count("reverse_proxy 127.0.0.1:8797") == 2
+    assert "rewrite * /" in block
 
 
 def test_external_smoke_rejects_redirect(tmp_path):
