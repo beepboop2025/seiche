@@ -67,6 +67,19 @@ DURATION_NOTE = (
 )
 
 
+def _bounded_research_result(payload: dict) -> dict:
+    """Attach the non-upgradeable claim boundary to every public Book result."""
+    from seiche.engines.history import vintage_evidence
+
+    return {
+        **payload,
+        "historical_evidence": vintage_evidence(None),
+        "validated_backtest": False,
+        "real_money_eligible": False,
+        "mode": "paper_research_only",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Returns
 # ---------------------------------------------------------------------------
@@ -328,14 +341,18 @@ def run(
     pit_records: list[dict] | None = None,
 ) -> dict:
     if returns.empty or p.dropna().empty:
-        return {"ok": False, "reason": "no returns or no ensemble signal"}
+        return _bounded_research_result(
+            {"ok": False, "reason": "no returns or no ensemble signal"}
+        )
 
     stance = stance_series(p, dispersion, tell)
     weights = size_positions(stance, returns)
     res = pnl(weights, returns)
     net, cash = res["net"].reindex(stance.index).dropna(), returns["cash"]
     if len(net) < 300:
-        return {"ok": False, "reason": f"insufficient overlap ({len(net)}d)"}
+        return _bounded_research_result(
+            {"ok": False, "reason": f"insufficient overlap ({len(net)}d)"}
+        )
 
     strat = _metrics(net, cash, with_ci=True)
     strat["turnover_ann"] = round(res["turnover_ann"], 2)
@@ -411,7 +428,7 @@ def run(
     eq_static = (1.0 + static_net.reindex(net.index).fillna(0)).cumprod()
     eq_cash = (1.0 + cash_net).cumprod()
 
-    return {
+    return _bounded_research_result({
         "ok": True,
         "asof": today_idx.date().isoformat(),
         "today": {
@@ -460,4 +477,4 @@ def run(
             f"|w|≤{BOOK_MAX_WEIGHT}, gross≤{BOOK_MAX_GROSS}; signal t → returns t+{BOOK_SIGNAL_LAG_BD}; "
             "costs per config; benchmarks through the identical pipeline"
         ),
-    }
+    })

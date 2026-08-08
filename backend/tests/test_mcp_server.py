@@ -225,6 +225,16 @@ def test_replay_valid_date(stubbed):
     assert p["as_of"] == "2019-09-17"
 
 
+def test_replay_carries_final_vintage_claim_boundary(stubbed):
+    p = _payload(_call("replay_asof", {"date": "2019-09-17"}))
+
+    evidence = p["historical_evidence"]
+    assert evidence["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
+    assert evidence["validated_backtest_eligible"] is False
+    assert evidence["real_money_eligible"] is False
+    assert "point-in-time (no lookahead)" not in p["reading"].lower()
+
+
 def test_replay_bad_date_is_tool_error(stubbed):
     resp = _call("replay_asof", {"date": "not-a-date"})
     assert resp["result"]["isError"] is True

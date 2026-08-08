@@ -14,6 +14,8 @@ import secrets
 import sqlite3
 import time
 from collections import defaultdict, deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from threading import Lock
 from typing import Any
 
@@ -54,11 +56,54 @@ from seiche.config import (
 # them on.
 _PROD = os.getenv("SEICHE_ENV", "").lower() == "production"
 
+
+# ---- keep the board warm 24/7 ------------------------------------------------
+# In production the snapshot is rebuilt by a background loop, not by whichever
+# visitor happens to arrive after the cache expires: no reader ever pays the
+# assembly bill (sources → 22 engines → deep layer → the Navigator's LLM
+# commit), and the Navigator files its reading every day even on a day with
+# zero visitors. Off in dev/tests (SEICHE_ENV!=production) unless forced with
+# SEICHE_BG_REFRESH=1.
+
+_REFRESH_EVERY_S = max(60, int(assemble.CACHE_MIN * 60 * 0.9))
+
+
+async def _keep_warm() -> None:
+    log = logging.getLogger("seiche.api")
+    while True:
+        try:
+            await assemble.snapshot()
+        except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
+            log.exception("background board refresh failed; retrying next cycle")
+        await asyncio.sleep(_REFRESH_EVERY_S)
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Hand the MCP bridge THIS loop before any tool call can arrive: the tool
+    # handlers run in worker threads and must run assemble coroutines on the
+    # same loop the REST routes and keep-warm task use, or assemble's
+    # module-level asyncio.Lock ends up shared across loops and wedges
+    # (mcp_server._run has the full story).
+    mcp_server.set_main_loop(asyncio.get_running_loop())
+    refresh_task: asyncio.Task[None] | None = None
+    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+        refresh_task = asyncio.create_task(_keep_warm(), name="seiche-keep-warm")
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
+
+
 app = FastAPI(title="Seiche", version=assemble.VERSION,
               description="Funding-stress & leveraged-positioning early-warning terminal",
               docs_url=None if _PROD else "/docs",
               redoc_url=None if _PROD else "/redoc",
-              openapi_url=None if _PROD else "/openapi.json")
+              openapi_url=None if _PROD else "/openapi.json",
+              lifespan=_lifespan)
 _mcp_activation_log = logging.getLogger("seiche.mcp.activation")
 
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
@@ -1242,39 +1287,6 @@ def mcp_usage_report(request: Request, authorization: str | None = Header(defaul
         "remaining": None if limit is None else max(0, limit - used),
         "upgrade_url": MCP_UPGRADE_URL,
     }
-
-
-# ---- keep the board warm 24/7 ------------------------------------------------
-# In production the snapshot is rebuilt by a background loop, not by whichever
-# visitor happens to arrive after the cache expires: no reader ever pays the
-# assembly bill (sources → 22 engines → deep layer → the Navigator's LLM
-# commit), and the Navigator files its reading every day even on a day with
-# zero visitors. Off in dev/tests (SEICHE_ENV!=production) unless forced with
-# SEICHE_BG_REFRESH=1.
-
-_REFRESH_EVERY_S = max(60, int(assemble.CACHE_MIN * 60 * 0.9))
-
-
-async def _keep_warm() -> None:
-    log = logging.getLogger("seiche.api")
-    while True:
-        try:
-            await assemble.snapshot()
-        except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
-            log.exception("background board refresh failed; retrying next cycle")
-        await asyncio.sleep(_REFRESH_EVERY_S)
-
-
-@app.on_event("startup")
-async def _start_keep_warm() -> None:
-    # Hand the MCP bridge THIS loop before any tool call can arrive: the tool
-    # handlers run in worker threads and must run assemble coroutines on the
-    # same loop the REST routes and keep-warm task use, or assemble's
-    # module-level asyncio.Lock ends up shared across loops and wedges
-    # (mcp_server._run has the full story).
-    mcp_server.set_main_loop(asyncio.get_running_loop())
-    if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
-        asyncio.get_running_loop().create_task(_keep_warm())
 
 
 # Serve the built frontend when present (single-process deploy).

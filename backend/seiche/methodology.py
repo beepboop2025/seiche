@@ -388,10 +388,11 @@ labels it that way instead of calling it news.</li>
 </ul>
 
 <h2>The PROOF scoreboard</h2>
-<p>PROOF is the board's own report card: a point-in-time backtest of the
+<p>PROOF is the board's own report card: a construction-PIT diagnostic of the
 composite against dated funding-stress events, with recall, false-alarm
 runs, lead times, and the misses printed next to the hits. The evaluation
-follows the early-warning-system tradition of Kaminsky and Reinhart: signals
+uses final/current-vintage history, so it is not validated-backtest evidence.
+It follows the early-warning-system tradition of Kaminsky and Reinhart: signals
 are judged on hits, false alarms and lead time against a dated event list,
 not on in-sample fit.</p>
 <p>The competence boundary is stated, not implied. Endogenous events build

@@ -21,12 +21,15 @@ git fetch origin main && git checkout main && git pull --ff-only origin main
 # backend
 cd "$APP_DIR/backend"
 python3 -m venv .venv
+.venv/bin/python -m pip install -q --upgrade "pip>=26.1.2"
 .venv/bin/pip install -q -e ".[dev,notary]"
 .venv/bin/python -m pytest tests -q   # the same gate CI uses: no green, no serve
 
 # frontend (built once; uvicorn serves dist/)
 cd "$APP_DIR/frontend"
+node -e 'if (Number(process.versions.node.split(".")[0]) < 18) { throw new Error("Seiche frontend requires Node.js >=18") }'
 npm ci --silent
+npm audit --audit-level=moderate
 npm run build
 
 chown -R seiche:seiche "$APP_DIR"

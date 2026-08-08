@@ -254,7 +254,7 @@ _ASOF_SNAP = {
                       "decomposition": [{"component": "repo", "score": 99.0, "status": "OK"}]},
         "weather": {"crunch_windows": []},
     },
-    "vintage_note": "reconstructed point-in-time",
+    "vintage_note": "final-vintage construction-PIT reconstruction",
 }
 
 

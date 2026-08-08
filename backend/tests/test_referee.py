@@ -18,6 +18,12 @@ def _blk() -> dict:
         "asof": "2026-06-30",
         "window": ["2003-01-31", "2026-06-30"],
         "n_months": 282,
+        "historical_evidence": {
+            "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
+            "validated_backtest_eligible": False,
+            "real_money_eligible": False,
+            "reason": "current-vintage public series do not reconstruct old releases",
+        },
         "latest": {
             "g3_usd_tn": 17.76,
             "components_usd_tn": {"fed": 6.74, "ecb": 7.04, "boj": 3.98},
@@ -151,6 +157,8 @@ def test_page_renders_lint_clean_with_scope_and_verdicts():
     assert "17.76" in page
     # honesty about the moat stays in
     assert "irreplaceable" in page
+    assert "CONSTRUCTION PIT ONLY" in page
+    assert "not validated-backtest evidence" in page
     for ch in ("—", "–"):
         assert ch not in page
 
@@ -183,6 +191,14 @@ def test_dark_snapshot_renders_the_notice():
 def test_missing_block_renders_the_notice():
     page = referee.render_referee_html({"deep": {}})
     assert "not available today" in page
+
+
+def test_missing_historical_evidence_fails_closed_on_the_page():
+    blk = _blk()
+    del blk["historical_evidence"]
+    page = referee.render_referee_html({"deep": {"refereegli": blk}})
+    assert "CONSTRUCTION PIT ONLY" in page
+    assert "no machine-verifiable historical evidence record" in page
 
 
 def test_write_referee(tmp_path):

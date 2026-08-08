@@ -244,6 +244,24 @@ def render_referee_html(snap: dict) -> str:
         return page
 
     latest = blk["latest"]
+    evidence = blk.get("historical_evidence") or {}
+    vintage_safe = evidence.get("validated_backtest_eligible") is True
+    if vintage_safe:
+        evidence_html = (
+            '<p><span class="tok tok-part">VINTAGE INPUT CONTRACT PASSED</span> '
+            "The supplied as-published manifest passed the vintage gate. A "
+            "forward live record is still required before capital use.</p>"
+        )
+    else:
+        reason = evidence.get(
+            "reason",
+            "the snapshot contains no machine-verifiable historical evidence record",
+        )
+        evidence_html = (
+            '<p><span class="tok tok-fail">CONSTRUCTION PIT ONLY</span> '
+            "These retrospective statistics are not validated-backtest evidence. "
+            f"{e(_no_dashes(str(reason)))}.</p>"
+        )
     comp = latest["components_usd_tn"]
     c1, c2, c3 = blk["claim1"], blk["claim2"], blk["claim3"]
     v1, v2, v3 = claim1_verdict(c1), claim2_verdict(c2), claim3_verdict(c3)
@@ -348,6 +366,7 @@ same way:</p>
 <h1>The Referee</h1>
 <p class="faint">Version {e(REFEREE_VERSION)}. Data through {e(blk["asof"])}.
 Window {e(blk["window"][0])} to {e(blk["window"][1])}, {blk["n_months"]} months.</p>
+{evidence_html}
 
 <p>The firm that coined "global liquidity" as a macro category publishes
 three quantitative claims for its index family: liquidity leads asset prices
