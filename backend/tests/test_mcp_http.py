@@ -74,6 +74,14 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "/api/public" in spec["paths"]
     assert "/api/oil-funding" in spec["paths"]
     assert "/api/estuary" in spec["paths"]
+    oil_schema = spec["paths"]["/api/oil-funding"]["get"]["responses"]["200"]
+    oil_schema = oil_schema["content"]["application/json"]["schema"]
+    estuary_schema = spec["paths"]["/api/estuary"]["get"]["responses"]["200"]
+    estuary_schema = estuary_schema["content"]["application/json"]["schema"]
+    assert oil_schema["required"] == ["schema"]
+    assert oil_schema["properties"]["schema"]["const"] == "seiche.oil-funding.v1"
+    assert estuary_schema["required"] == ["schema"]
+    assert estuary_schema["properties"]["schema"]["const"] == "seiche.estuary.v1"
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]

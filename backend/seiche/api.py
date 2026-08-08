@@ -260,6 +260,24 @@ def _public_openapi_document() -> dict[str, Any]:
             },
         },
     }
+
+    def context_response(schema_name: str) -> dict[str, Any]:
+        return {
+            "description": "Successful versioned context response",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["schema"],
+                        "properties": {
+                            "schema": {"type": "string", "const": schema_name},
+                        },
+                        "additionalProperties": True,
+                    },
+                },
+            },
+        }
+
     paths: dict[str, Any] = {
         "/api": {
             "get": {
@@ -298,7 +316,9 @@ def _public_openapi_document() -> dict[str, Any]:
                     "Compact observed WTI, commercial-paper and SOFR evidence "
                     "kept separate from scenario-only cargo and margin arithmetic."
                 ),
-                "responses": {"200": object_response},
+                "responses": {
+                    "200": context_response("seiche.oil-funding.v1")
+                },
             },
         },
         "/api/estuary": {
@@ -309,7 +329,7 @@ def _public_openapi_document() -> dict[str, Any]:
                     "Compares upstream FX and physical-material cash pressure "
                     "with funding already priced; context only."
                 ),
-                "responses": {"200": object_response},
+                "responses": {"200": context_response("seiche.estuary.v1")},
             },
         },
         "/api/series/index.json": {
