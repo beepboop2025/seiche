@@ -138,6 +138,10 @@ echo "$url $*" >> "{calls}"
 status=200
 case "$url" in
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
+    */api/oil-funding)
+        type=application/json; body='{{"schema":"seiche.oil-funding.v1"}}' ;;
+    */api/estuary)
+        type=application/json; body='{{"schema":"seiche.estuary.v1"}}' ;;
     */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
     */palimpsest/osint/osint-china.json)
@@ -168,6 +172,14 @@ printf '%s|%s' "$status" "$type"
 
 def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
     definitions = EXTERNAL_ROUTES.read_text()
+    assert (
+        'GET|/api/oil-funding|200|application/json|'
+        '"schema":"seiche.oil-funding.v1"'
+    ) in definitions
+    assert (
+        'GET|/api/estuary|200|application/json|'
+        '"schema":"seiche.estuary.v1"'
+    ) in definitions
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
     assert (
         'GET|/palimpsest/osint/osint-china.json|200|application/json|'

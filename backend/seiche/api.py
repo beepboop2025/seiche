@@ -25,6 +25,7 @@ from pathlib import Path
 from seiche import (
     accounts,
     assemble,
+    context_views,
     mcp_server,
     methodology,
     provisioning,
@@ -226,6 +227,8 @@ def api_index() -> dict[str, Any]:
             "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",
             "small_gauge": "/api/gauge",
+            "oil_funding": "/api/oil-funding",
+            "fx_materials": "/api/estuary",
             "health": "/api/health",
             "series_catalog": "/api/series/index.json",
             "realtime_venue": "/undertow/live/quotes.json",
@@ -257,6 +260,24 @@ def _public_openapi_document() -> dict[str, Any]:
             },
         },
     }
+
+    def context_response(schema_name: str) -> dict[str, Any]:
+        return {
+            "description": "Successful versioned context response",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["schema"],
+                        "properties": {
+                            "schema": {"type": "string", "const": schema_name},
+                        },
+                        "additionalProperties": True,
+                    },
+                },
+            },
+        }
+
     paths: dict[str, Any] = {
         "/api": {
             "get": {
@@ -285,6 +306,30 @@ def _public_openapi_document() -> dict[str, Any]:
                 "operationId": "getPublicFundingStressRecord",
                 "summary": "Read the argument, countercase, data quality and PROOF scoreboard",
                 "responses": {"200": object_response},
+            },
+        },
+        "/api/oil-funding": {
+            "get": {
+                "operationId": "getOilFundingContext",
+                "summary": "Read observed oil and dollar-funding cash pressure",
+                "description": (
+                    "Compact observed WTI, commercial-paper and SOFR evidence "
+                    "kept separate from scenario-only cargo and margin arithmetic."
+                ),
+                "responses": {
+                    "200": context_response("seiche.oil-funding.v1")
+                },
+            },
+        },
+        "/api/estuary": {
+            "get": {
+                "operationId": "getFxMaterialsPassage",
+                "summary": "Read FX/material pressure and tested Passage links",
+                "description": (
+                    "Compares upstream FX and physical-material cash pressure "
+                    "with funding already priced; context only."
+                ),
+                "responses": {"200": context_response("seiche.estuary.v1")},
             },
         },
         "/api/series/index.json": {
@@ -433,6 +478,26 @@ async def gauge(response: Response):
         "faults": len(snap.get("faults") or []),
         "notes": "point-in-time as-published; PROOF scoreboard at /api/public; not investment advice",
     }
+
+
+@app.get("/api/oil-funding")
+async def oil_funding_context(response: Response):
+    """Compact Oil x Funding evidence for bots, agents, and integrations."""
+    snapshot = await assemble.snapshot()
+    response.headers["Cache-Control"] = (
+        "public, max-age=60, stale-while-revalidate=240"
+    )
+    return context_views.oil_funding(snapshot)
+
+
+@app.get("/api/estuary")
+async def estuary_context(response: Response):
+    """Compact Estuary/Passage evidence with its context-only boundary."""
+    snapshot = await assemble.snapshot()
+    response.headers["Cache-Control"] = (
+        "public, max-age=60, stale-while-revalidate=240"
+    )
+    return context_views.estuary(snapshot)
 
 
 @app.get("/api/wrecks")
