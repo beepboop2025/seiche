@@ -26,6 +26,29 @@ CORR_MIN = 40
 CHART_YEARS = 5
 CHART_RECENT_DAYS = 180
 
+# Last official EIA capacity observation (March 31, 2024). EIA discontinued
+# the capacity report after this release, so these are reference denominators,
+# never labelled current capacity in the payload or interface.
+CUSHING_WORKING_CAPACITY_MBBL = 78.410
+CUSHING_SHELL_CAPACITY_MBBL = 97.742
+CUSHING_CAPACITY_ASOF = "2024-03-31"
+CUSHING_STRESS_REFERENCE_MBBL = 20.0
+
+# EIA Global Energy Security Data, released 2026-05-13. These are observed
+# quarterly flow estimates, not a live vessel counter. The distinction is
+# important because EIA says Hormuz AIS data became especially unreliable
+# after February 2026.
+CHOKEPOINT_FLOWS = [
+    {"name": "Strait of Malacca", "q4_2025_mbd": 24.0, "q1_2026_mbd": 20.9, "kind": "chokepoint"},
+    {"name": "Strait of Hormuz", "q4_2025_mbd": 20.7, "q1_2026_mbd": 14.6, "kind": "chokepoint"},
+    {"name": "Cape of Good Hope", "q4_2025_mbd": 9.6, "q1_2026_mbd": 8.0, "kind": "alternate route"},
+    {"name": "Bab el-Mandeb", "q4_2025_mbd": 5.2, "q1_2026_mbd": 5.4, "kind": "chokepoint"},
+    {"name": "Suez + SUMED", "q4_2025_mbd": 5.1, "q1_2026_mbd": 4.9, "kind": "route + pipeline"},
+    {"name": "Danish Straits", "q4_2025_mbd": 4.9, "q1_2026_mbd": 4.8, "kind": "chokepoint"},
+    {"name": "Turkish Straits", "q4_2025_mbd": 3.6, "q1_2026_mbd": 3.3, "kind": "chokepoint"},
+    {"name": "Panama Canal", "q4_2025_mbd": 2.8, "q1_2026_mbd": 2.9, "kind": "canal"},
+]
+
 
 def _clean(series: pd.Series | None) -> pd.Series:
     if series is None or not isinstance(series, pd.Series):
@@ -271,6 +294,7 @@ def analyze(
     core_cpi: pd.Series,
     foreign_treasury_custody: pd.Series,
     foreign_official_rrp: pd.Series,
+    cushing_stocks: pd.Series,
     assumptions: Mapping[str, float] | None = None,
 ) -> dict:
     wti = _clean(wti)
@@ -285,6 +309,9 @@ def analyze(
     core_cpi = _clean(core_cpi)
     foreign_treasury_custody = _clean(foreign_treasury_custody)
     foreign_official_rrp = _clean(foreign_official_rrp)
+    # EIA publishes Cushing stocks in thousand barrels; every public market-
+    # structure field uses million barrels so capacity arithmetic is explicit.
+    cushing_m_bbl = _clean(cushing_stocks).div(1000.0)
 
     if len(wti) < MIN_HISTORY:
         return {"ok": False, "reason": f"insufficient WTI history ({len(wti)} observations)"}
@@ -310,6 +337,19 @@ def analyze(
     core_last, core_asof = _latest(core_yoy)
     custody_last, custody_asof = _latest(custody_change_b)
     foreign_rrp_last, foreign_rrp_asof = _latest(foreign_rrp_change_b)
+    cushing_last, cushing_asof = _latest(cushing_m_bbl)
+
+    benchmark_pair = pd.concat(
+        {"WTI": wti, "BRENT": brent}, axis=1, sort=True
+    ).dropna()
+    brent_wti_spread = (
+        benchmark_pair["BRENT"] - benchmark_pair["WTI"]
+        if not benchmark_pair.empty
+        else pd.Series(dtype=float)
+    )
+    brent_wti_average_5d = brent_wti_spread.rolling(5, min_periods=3).mean().dropna()
+    spread_last, spread_asof = _latest(brent_wti_spread)
+    spread_average_last, spread_average_asof = _latest(brent_wti_average_5d)
 
     # Some administered-rate series are pre-filled over weekends or a known
     # next business day. Keep this context engine bounded by the latest date
@@ -327,6 +367,8 @@ def analyze(
             core_asof,
             custody_asof,
             foreign_rrp_asof,
+            cushing_asof,
+            spread_asof,
         )
         if value is not None
     ]
@@ -434,6 +476,18 @@ def analyze(
         sort=True,
     ).sort_index().ffill(limit=5)
 
+    cushing_fill_pct = (
+        round(cushing_last / CUSHING_WORKING_CAPACITY_MBBL * 100.0, 1)
+        if cushing_last is not None
+        else None
+    )
+    cushing_buffer = (
+        round(cushing_last - CUSHING_STRESS_REFERENCE_MBBL, 3)
+        if cushing_last is not None
+        else None
+    )
+    recent_spread = brent_wti_spread.tail(60)
+
     return {
         "ok": True,
         "asof": max(asof_values),
@@ -487,6 +541,21 @@ def analyze(
                 "foreign_rrp_change_52w_b": foreign_rrp_last,
                 "custody_asof": custody_asof,
                 "foreign_rrp_asof": foreign_rrp_asof,
+            },
+            "cushing": {
+                "stocks_m_bbl": cushing_last,
+                "change_1w_m_bbl": _change(cushing_m_bbl, 1),
+                "change_8w_m_bbl": _change(cushing_m_bbl, 8),
+                "fill_of_last_working_capacity_pct": cushing_fill_pct,
+                "buffer_to_20m_reference_m_bbl": cushing_buffer,
+                "asof": cushing_asof,
+            },
+            "brent_wti_spread": {
+                "brent_minus_wti_usd_per_bbl": spread_last,
+                "average_5d_usd_per_bbl": spread_average_last,
+                "negative_days_last_60_observations": int((recent_spread < 0).sum()),
+                "asof": spread_asof,
+                "average_asof": spread_average_asof,
             },
         },
         "charts": {
@@ -568,6 +637,130 @@ def analyze(
                 "x_label": "5bd WTI change, USD per barrel",
                 "y_label": "5bd nonfinancial CP−bill change, bp",
             },
+            "cushing_inventory": {
+                "rows": _adaptive_rows({"STOCKS": cushing_m_bbl}),
+                "labels": ["Cushing commercial crude stocks"],
+                "unit": "million barrels",
+                "stress_reference_m_bbl": CUSHING_STRESS_REFERENCE_MBBL,
+            },
+            "brent_wti_spread": {
+                "rows": _adaptive_rows(
+                    {
+                        "SPREAD": brent_wti_spread,
+                        "AVERAGE_5D": brent_wti_average_5d,
+                    }
+                ),
+                "labels": ["Brent − WTI", "5-observation average"],
+                "unit": "USD per barrel",
+            },
+        },
+        "market_structure": {
+            "evidence_mode": "observed_where_available_reference_where_dated",
+            "cushing": {
+                "working_capacity_m_bbl": CUSHING_WORKING_CAPACITY_MBBL,
+                "net_available_shell_capacity_m_bbl": CUSHING_SHELL_CAPACITY_MBBL,
+                "capacity_asof": CUSHING_CAPACITY_ASOF,
+                "capacity_status": "last official observation; publication discontinued",
+                "stress_reference_m_bbl": CUSHING_STRESS_REFERENCE_MBBL,
+                "stress_reference_status": (
+                    "analytical reference, not a universal tank-bottom floor; "
+                    "operability varies by facility and pipeline system"
+                ),
+                "delivery_role": "physical delivery hub for NYMEX WTI futures",
+            },
+            "benchmark_architecture": [
+                {
+                    "benchmark": "WTI",
+                    "claim": "a deliverable contract tied to a specified inland hub",
+                    "settlement": "physical delivery at Cushing, Oklahoma",
+                    "release_valve": "pipeline flows and finite local tank capacity",
+                    "inventory_print": "weekly EIA Cushing stocks",
+                },
+                {
+                    "benchmark": "Brent",
+                    "claim": "a cargo-based benchmark complex tied to a seaborne market",
+                    "settlement": (
+                        "ICE EFP delivery with an option to cash settle against the ICE Brent Index"
+                    ),
+                    "release_valve": "a broader waterborne cargo pool and rerouting",
+                    "inventory_print": "no single equivalent weekly hub-stock print",
+                    "basket": "BFOET grades plus WTI Midland cargoes since 2023",
+                },
+            ],
+            "hub_taxonomy": [
+                {
+                    "type": "inland deliverability",
+                    "examples": ["Cushing", "Hardisty", "Midland"],
+                    "mechanism": "local inventory, pipeline constraints and delivery obligations can dominate basis",
+                },
+                {
+                    "type": "storage and blending",
+                    "examples": ["ARA / Rotterdam", "Singapore", "Fujairah", "Zhoushan"],
+                    "mechanism": "tank availability, grade blending and regional flows shape differentials",
+                },
+                {
+                    "type": "waterborne price formation",
+                    "examples": ["North Sea / Brent", "Dubai / Oman"],
+                    "mechanism": "cargo programmes, quality differentials and freight connect a wider deliverable pool",
+                },
+                {
+                    "type": "export gateways",
+                    "examples": ["Houston", "Corpus Christi"],
+                    "mechanism": "dock, channel and freight economics transmit inland basis into the seaborne market",
+                },
+                {
+                    "type": "cross-commodity analogues",
+                    "examples": ["Henry Hub", "LME warehouses", "Illinois River"],
+                    "mechanism": "delivery geography turns local inventory and transport constraints into benchmark basis",
+                },
+            ],
+            "control_stack": [
+                {"layer": "physical flow", "nodes": "Hormuz · Malacca", "status": "observed structural exposure"},
+                {"layer": "freight and insurance", "nodes": "voyage availability · war-risk premium", "status": "transmission layer"},
+                {"layer": "global price formation", "nodes": "Brent complex · Dubai/Oman", "status": "benchmark layer"},
+                {"layer": "supply response", "nodes": "OPEC+ capacity · Permian", "status": "months, not hours"},
+                {"layer": "local deliverability", "nodes": "Cushing · WTI basis", "status": "weekly physical constraint"},
+            ],
+            "transmission_order": [
+                "chokepoint risk",
+                "insurance and freight",
+                "export economics",
+                "physical differentials",
+                "benchmark spreads",
+                "flat price",
+            ],
+            "chokepoints": {
+                "rows": CHOKEPOINT_FLOWS,
+                "unit": "million barrels per day",
+                "release_date": "2026-05-13",
+                "latest_period": "1Q26",
+                "world_supply_q1_2026_mbd": 95.4,
+                "quality_note": (
+                    "quarterly EIA estimates, not live traffic; Hormuz AIS data since late "
+                    "February 2026 are especially unreliable and revised frequently"
+                ),
+                "live_status": "not asserted by Seiche without a reliable live transit feed",
+            },
+            "india": {
+                "crude_import_dependence_pct": 88.5,
+                "non_hormuz_crude_routing_pct": 70.0,
+                "prior_non_hormuz_crude_routing_pct": 55.0,
+                "lpg_imports_via_hormuz_pct": 90.0,
+                "strategic_inventory_m_bbl": 21.0,
+                "strategic_inventory_period": "1Q26 or latest available",
+                "excise_cut_inr_per_litre": 10.0,
+                "mangaluru_expansion_mmt": 1.75,
+                "mangaluru_expansion_status": "planned Phase II capacity in ISPRL annual report",
+                "verdict": (
+                    "diversification reduced immediate route concentration; import dependence "
+                    "and the small strategic barrel buffer remain structural exposures"
+                ),
+            },
+            "principles": [
+                "Places that publish data get attention; places that control physical flow get the outcome.",
+                "WTI is a claim on a specified delivery hub; Brent is a claim on a broader cargo-based benchmark complex.",
+                "If inventory matters to the model, the financing rate is a driver—not a background assumption.",
+            ],
         },
         "scenario": {
             "assumptions": scenario_assumptions,
@@ -597,6 +790,14 @@ def analyze(
             {"series": "USD/INR", "source": "Federal Reserve H.10 via FRED", "id": "DEXINUS"},
             {"series": "Energy / core CPI", "source": "BLS via FRED", "id": "CPIENGSL / CPILFESL"},
             {"series": "Foreign-official dollar parking", "source": "Federal Reserve H.4.1 via FRED", "id": "WMTSECL1 / WLRRAFOIAL"},
+            {"series": "Cushing commercial crude stocks", "source": "U.S. EIA", "id": "W_EPC0_SAX_YCUOK_MBBL", "url": "https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=PET&s=W_EPC0_SAX_YCUOK_MBBL&f=W"},
+            {"series": "Cushing storage capacity", "source": "U.S. EIA, March 2024 (discontinued)", "id": "crudeoilstorage.xlsx", "url": "https://www.eia.gov/petroleum/storagecapacity/"},
+            {"series": "Global chokepoint flows / strategic inventories", "source": "U.S. EIA Global Energy Security Data", "id": "May 2026", "url": "https://www.eia.gov/outlooks/steo/report/energysecurity/article.php"},
+            {"series": "WTI delivery mechanics", "source": "CME Group", "id": "WTI delivery at Cushing", "url": "https://www.cmegroup.com/education/courses/introduction-to-crude-oil/crude-oil-fundamentals/delivery-of-wti-futures"},
+            {"series": "Brent contract mechanics", "source": "ICE", "id": "Brent Crude Futures", "url": "https://www.ice.com/products/219"},
+            {"series": "India route diversification", "source": "Government of India PIB", "id": "2026-03-11", "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2238525&lang=1&reg=3"},
+            {"series": "India crude import dependence", "source": "Government of India PIB", "id": "July 2026", "url": "https://static.pib.gov.in/WriteReadData/specificdocs/documents/2026/jul/doc202675912001.pdf"},
+            {"series": "Mangaluru strategic-storage expansion", "source": "Indian Strategic Petroleum Reserves Limited", "id": "FY2024-25 annual report", "url": "https://www.isprlindia.com/downloads/annual-reports/Annual_Report_Final_2025_Revised_English.pdf"},
         ],
         "caveats": [
             "WTI and Brent are spot benchmarks, not a current futures strip; forward spread is scenario-only because EIA's public NYMEX table stops after 2024-04-05",
@@ -606,11 +807,15 @@ def analyze(
             "foreign-official Treasury custody and RRP are broad dollar-parking proxies; they do not identify oil exporters or prove petrodollar recycling",
             "energy CPI includes more than crude oil and the inflation-policy chart is descriptive; no central-bank reaction coefficient is estimated",
             "positive carry headroom ignores capacity, quality/location basis, transaction costs, and convenience yield; it is not an executable arbitrage signal",
+            "20m barrels is a visible stress reference, not a universal Cushing tank-bottom floor; EIA says operability differs across facilities and pipeline systems",
+            "Cushing fill uses the last official March 2024 working-capacity denominator because EIA discontinued the capacity report; it is not a current-capacity claim",
+            "chokepoint bars are EIA quarterly estimates through 1Q26, not a current closure or transit-count claim; Hormuz AIS observations are unusually uncertain",
+            "India structural values combine official observations published on different dates; they are an exposure ledger, not a synchronized live snapshot",
         ],
         "method": (
             "spot and funding charts retain actual observation dates (weekly samples before the trailing 180 days, daily thereafter); "
             "CP spreads = 3m AA CP minus 3m Treasury on CP print dates; SOFR−IORB in bp; coupling = trailing 63-observation correlation of daily WTI dollar changes with daily funding-spread changes or INR returns; "
             "official-dollar parking = 52-week change in Fed custody / foreign-official RRP balances, converted from $M to $B; energy/core CPI = 12-month percent change; "
-            "carry = spot × (funding + insurance) × ACT/365 tenor + daily storage × tenor; scenario arithmetic is deterministic context and never enters the Seiche composite"
+            "carry = spot × (funding + insurance) × ACT/365 tenor + daily storage × tenor; Cushing stocks are EIA weekly thousand barrels converted to million barrels; Brent−WTI uses same-date spot observations; scenario arithmetic is deterministic context and never enters the Seiche composite"
         ),
     }

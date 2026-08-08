@@ -52,6 +52,7 @@ from seiche.config import (
     OFR_GCF_SERIES,
     OFR_PD_SERIES,
     OFR_SERIES,
+    OIL_FUNDING_EIA_SERIES,
     OIL_FUNDING_FRED_SERIES,
     PLAYBOOK_OUTCOMES,
     PRETRAIN_FRED_SERIES,
@@ -122,7 +123,7 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -170,6 +171,7 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
             guard("fred_cp_rates", fred.fetch_many(client, [s.mnemonic for s in FRED_CP_SERIES], faults)),
             guard("fred_custody", fred.fetch_many(client, [s.mnemonic for s in FRED_CUSTODY_SERIES], faults)),
+            guard("eia_petroleum", eia_petroleum.fetch_many(client, [s.mnemonic for s in OIL_FUNDING_EIA_SERIES], faults)),
             guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
             guard("ofr_gcf", ofr.fetch_many(client, [s.mnemonic for s in OFR_GCF_SERIES], faults)),
             guard("ofr_pd_financing", ofr.fetch_many(client, [s.mnemonic for s in OFR_PD_SERIES], faults)),
@@ -202,7 +204,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     cached live sources are never mutated."""
     out: dict = {}
     for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
-                  "ofr_pd_financing", "ecb", "bis", "chinamoney", "boj"):
+                  "ofr_pd_financing", "ecb", "eia_petroleum", "bis", "chinamoney", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             pts = s.points[s.points.index <= asof]
@@ -700,6 +702,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         core_cpi=_pts(fred_s, "CORE_CPI"),
         foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
         foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
+        cushing_stocks=_pts(src.get("eia_petroleum", {}), "CUSHING_STOCKS"),
     ))
 
     # --- The Estuary (FX + materials -> price of cash).  The daily Passage
@@ -1389,7 +1392,7 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
 
 def _provenance(src: dict) -> list[dict]:
     prov = []
-    for group in ("fred", "ofr", "ecb"):
+    for group in ("fred", "ofr", "ecb", "eia_petroleum"):
         for s in (src.get(group) or {}).values():
             prov.append(s.provenance())
     for s in ((src.get("crypto") or {}).get("candles") or {}).values():

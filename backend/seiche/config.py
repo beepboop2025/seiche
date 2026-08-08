@@ -155,6 +155,25 @@ OIL_FUNDING_FRED_SERIES = [
     ),
 ]
 
+# EIA's legacy petroleum history table remains a keyless, first-party weekly
+# feed.  It is collected separately from FRED because no FRED mirror exposes
+# Cushing stocks with the same current weekly cadence.  Capacity is not a
+# series here: EIA discontinued that annual report after March 2024, so the
+# last official 78.410m-bbl working-capacity observation is carried as a
+# clearly dated reference in the engine instead of masquerading as live data.
+OIL_FUNDING_EIA_SERIES = [
+    SeriesSpec(
+        "CUSHING_STOCKS",
+        "eia",
+        "W_EPC0_SAX_YCUOK_MBBL",
+        "Cushing, Oklahoma commercial crude oil stocks",
+        "thousand barrels",
+        "W",
+        720,
+        start="2019-01-01",
+    ),
+]
+
 # Starting assumptions for the interactive Oil × Funding lab. They are
 # published in the payload and editable in the browser; none enters Seiche's
 # composite. Units live in the key names so a scenario cannot silently mix
@@ -519,6 +538,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
     + OIL_FUNDING_FRED_SERIES
+    + OIL_FUNDING_EIA_SERIES
     + ESTUARY_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
