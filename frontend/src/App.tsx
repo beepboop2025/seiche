@@ -45,6 +45,7 @@ const Physics = lazy(() => import("./tabs/Physics"));
 const Helm = lazy(() => import("./tabs/Helm"));
 const Market = lazy(() => import("./tabs/Market"));
 const Global = lazy(() => import("./tabs/Global"));
+const OilFunding = lazy(() => import("./tabs/OilFunding"));
 const Calendar = lazy(() => import("./tabs/Calendar"));
 const Scarcity = lazy(() => import("./tabs/Scarcity"));
 const Supply = lazy(() => import("./tabs/Supply"));
@@ -63,14 +64,13 @@ const Account = lazy(() => import("./tabs/Account"));
 // continues to resolve by name.
 // DISPATCHES sits second because the frozen letters are the public record of
 // what the desk said before outcomes arrived.
-// SCARCITY and SUPPLY follow: the reserve demand curve against the Fed's own
-// elasticity print, and the forward net-new-cash table, are the two analyses
-// nobody else publishes free, and a first-time reader should meet them without
-// hunting. The digit shortcut indexes TABS positionally, so this ordering
-// costs CALENDAR, POSITIONING and RESONANCE their number keys; prominence for
-// the differentiating work is worth three power-user shortcuts.
+// GLOBAL and OIL×FUNDING follow the core board: offshore-dollar coupling and
+// the barrel's bidirectional funding loop are context surfaces, never hidden
+// composite inputs. SCARCITY and SUPPLY then carry the two forward-looking Fed
+// plumbing views. Digit shortcuts index TABS positionally; hash routes remain
+// name-based and therefore stable.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "GLOBAL", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "GLOBAL", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -426,6 +426,7 @@ function AppInner() {
           {tab === "HELM" && <Helm snap={snap} />}
           {tab === "MARKET" && <Market snap={snap} />}
           {tab === "GLOBAL" && <Global snap={snap} />}
+          {tab === "OIL×FUNDING" && <OilFunding snap={snap} />}
           {tab === "CALENDAR" && <Calendar snap={snap} />}
           {tab === "POSITIONING" && <Positioning snap={snap} />}
           {tab === "RESONANCE" && <Resonance snap={snap} />}

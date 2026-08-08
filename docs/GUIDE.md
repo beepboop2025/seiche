@@ -49,6 +49,11 @@ That is enough to use Seiche well. The rest is depth for when you want it.
 - **MARKET** — the raw rates and spreads, if you want the source numbers.
 - **GLOBAL** — whether the US, Europe, the UK, India and the crypto dollar are
   all moving together, which is what makes a local problem a global one.
+- **OIL×FUNDING** — how oil and money markets transmit stress in both directions:
+  rates into the futures-curve carry hurdle, and oil into cargo credit, margin
+  cash, rupee liquidity and OMC commercial-paper demand, with slower inflation,
+  policy and foreign-official dollar-parking panels. The upper half is observed
+  public data; the lower lab is editable scenario arithmetic.
 - **CALENDAR** — the upcoming dates that historically strain funding: tax days,
   quarter ends, big auction settlements.
 - **POSITIONING** — where large leveraged traders are crowded, from public
@@ -79,6 +84,7 @@ Seiche names its parts after the sea. Here is what each one really does.
 | **Swell Forecast** | The odds of a funding stress spike on each of the next 42 business days. |
 | **Hydrophone Array** | How tightly connected the plumbing is right now, and which pipe moves first. |
 | **Global Basin** | Are the world's funding systems moving as one tide. |
+| **Oil × Funding** | How a barrel's price, time in transit, hedge and financing rate become cash demand—and how the money-market rate runs backward into the oil curve. |
 | **Stablecoin Moorings** | The crypto dollar's tie line to the US Treasury bill market, and the 24/7 canary when normal markets are closed. |
 | **ML Lab** | A learned probability of a stress event, kept honest by being scored against a dumb baseline and told when it loses. |
 | **Station-Keeping** | Watches for moves in the system's cash that the normal seasonal model cannot explain, and flags them early. |

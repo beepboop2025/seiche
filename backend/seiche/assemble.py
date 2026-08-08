@@ -51,6 +51,7 @@ from seiche.config import (
     OFR_GCF_SERIES,
     OFR_PD_SERIES,
     OFR_SERIES,
+    OIL_FUNDING_FRED_SERIES,
     PLAYBOOK_OUTCOMES,
     PRETRAIN_FRED_SERIES,
     REFEREE_SERIES,
@@ -100,6 +101,7 @@ from seiche.engines import roguewave as eng_roguewave
 from seiche.engines import ledger as eng_ledger
 from seiche.engines import modelcourt as eng_modelcourt
 from seiche.engines import officialbid as eng_officialbid
+from seiche.engines import oilfunding as eng_oilfunding
 from seiche.engines import rdenowcast as eng_rdenowcast
 from seiche.engines import refereegli as eng_refereegli
 from seiche.engines import reportcard as eng_reportcard
@@ -158,7 +160,8 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
         fred_mnems = [
             s.mnemonic
             for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-            + GLOBAL_MM_FRED_SERIES + PRETRAIN_FRED_SERIES + REFEREE_SERIES
+            + GLOBAL_MM_FRED_SERIES + OIL_FUNDING_FRED_SERIES
+            + PRETRAIN_FRED_SERIES + REFEREE_SERIES
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
@@ -677,6 +680,24 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     #     channel context; a missing leg degrades to an honest ok=False) ---
     run("cpsentinel", lambda: eng_cpsentinel.analyze(
         hacks_usd=drv["hacks_usd"], cp_spread_bp=drv["cp_spread_bp"]))
+
+    # --- Oil × Funding (bidirectional physical-barrel / money-market context;
+    #     rich research surface, deliberately never a composite component) ---
+    cp_s = src.get("fred_cp_rates", {})
+    run("oilfunding", lambda: eng_oilfunding.analyze(
+        wti=_pts(fred_s, "WTI_SPOT"),
+        brent=_pts(fred_s, "BRENT_SPOT"),
+        sofr=_pts(fred_s, "SOFR"),
+        iorb=iorb if iorb is not None else pd.Series(dtype=float),
+        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+        treasury_3m=_pts(cp_s, "DGS3M"),
+        inr_per_usd=_pts(fred_s, "INR"),
+        energy_cpi=_pts(fred_s, "ENERGY_CPI"),
+        core_cpi=_pts(fred_s, "CORE_CPI"),
+        foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
+        foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
+    ))
 
     # --- Windfetch (the lab's current-affairs wind read back from the
     #     Undertow FETCH pack; overlay only — never enters the composite) ---

@@ -11,7 +11,7 @@ hydrophone network, turn barometer, playbook, backtest lab, alert rules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -105,6 +105,80 @@ SWAP_LINE_OPS_N = 90           # NY Fed FX-swap operations to pull
 INDIA_FRED_SERIES = [
     SeriesSpec("INR", "fred", "DEXINUS", "Indian rupee per USD", "INR", "D", 360),
 ]
+
+# Oil × Funding: live spot benchmarks for the cross-market transmission desk.
+# FRED mirrors the EIA daily series and gives this project the same keyless,
+# cached, point-in-time-compatible transport contract as the rest of the board.
+# A live futures strip is intentionally absent: EIA stopped publishing its
+# NYMEX contract table after 2024-04-05, so current contango stays a scenario
+# input instead of being backfilled from stale futures data.
+OIL_FUNDING_FRED_SERIES = [
+    SeriesSpec(
+        "WTI_SPOT",
+        "fred",
+        "DCOILWTICO",
+        "WTI crude oil spot, Cushing",
+        "$/bbl",
+        "D",
+        360,
+        start="2015-01-01",
+    ),
+    SeriesSpec(
+        "BRENT_SPOT",
+        "fred",
+        "DCOILBRENTEU",
+        "Brent crude oil spot, Europe",
+        "$/bbl",
+        "D",
+        360,
+        start="2015-01-01",
+    ),
+    SeriesSpec(
+        "ENERGY_CPI",
+        "fred",
+        "CPIENGSL",
+        "CPI-U energy, seasonally adjusted",
+        "index 1982-84=100",
+        "M",
+        720,
+        start="2015-01-01",
+    ),
+    SeriesSpec(
+        "CORE_CPI",
+        "fred",
+        "CPILFESL",
+        "CPI-U less food and energy, seasonally adjusted",
+        "index 1982-84=100",
+        "M",
+        720,
+        start="2015-01-01",
+    ),
+]
+
+# Starting assumptions for the interactive Oil × Funding lab. They are
+# published in the payload and editable in the browser; none enters Seiche's
+# composite. Units live in the key names so a scenario cannot silently mix
+# barrels, millions of barrels, rupees, and crore.
+OIL_FUNDING_SCENARIO_DEFAULTS = {
+    "tenor_days": 90.0,
+    "storage_usd_per_bbl_day": 0.03,
+    "insurance_rate_pct": 0.50,
+    "forward_spread_usd_per_bbl": 0.0,
+    "barrels_per_cargo_m": 2.0,
+    "daily_throughput_mbd": 0.20,
+    "voyage_days": 45.0,
+    "baseline_voyage_days": 15.0,
+    "net_short_hedge_m_bbl": 1.0,
+    "oil_price_change_usd_per_bbl": 8.0,
+    "initial_margin_rate_change_pct": 5.0,
+    "india_import_mbd": 5.0,
+    "india_oil_shock_usd_per_bbl": 10.0,
+    "rbi_usd_sales_b": 2.0,
+    "liquidity_replenishment_pct": 25.0,
+    "under_recovery_inr_crore_day": 1000.0,
+    "compensation_lag_days": 30.0,
+    "cp_funding_share_pct": 40.0,
+}
 
 # Referee series: the publicly reconstructible layer of the "global
 # liquidity" story — G3 central bank balance sheets in dollar terms plus the
@@ -357,6 +431,7 @@ BIS_SERIES = [
 ALL_SERIES: dict[str, SeriesSpec] = {
     s.mnemonic: s
     for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
+    + OIL_FUNDING_FRED_SERIES
     + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES
