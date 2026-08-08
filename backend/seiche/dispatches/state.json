@@ -1,38 +1,17 @@
 {
-  "date": "2026-08-07",
+  "date": "2026-08-08",
   "reported_prev": {
-    "Central bank liquidity swaps outstanding (H.4.1)": "2026-07-29",
-    "Discount window primary credit (Wed level)": "2026-07-29",
-    "2y Treasury constant maturity yield": "2026-08-04"
-  },
-  "reported": {
     "2y Treasury constant maturity yield": "2026-08-05",
     "Discount window primary credit (Wed level)": "2026-08-05"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.1,
-    "decomp": {
-      "weather": 11.0,
-      "resonance": 6.7,
-      "rvxray": 6.3,
-      "kink": 5.9,
-      "confession": 3.8,
-      "buffers": 3.0,
-      "undertow": 2.9,
-      "warehouse": 2.4,
-      "tails": 2.1,
-      "auctions": 1.1,
-      "hydrophone": 0.0
-    },
-    "crunch": {
-      "date": "2026-08-11",
-      "worst_case_b": 2949.1,
-      "settlement_b": 210.0
-    },
-    "tell": 33.9
+  "reported": {
+    "Brent crude oil spot, Europe": "2026-08-03",
+    "2y Treasury constant maturity yield": "2026-08-06",
+    "WTI crude oil spot, Cushing": "2026-08-03",
+    "Discount window primary credit (Wed level)": "2026-08-05",
+    "S&P 500 index": "2026-08-07"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "EROSION",
     "value": 45.0,
     "decomp": {
@@ -54,5 +33,28 @@
       "settlement_b": 266.0
     },
     "tell": 31.2
+  },
+  "letter": {
+    "regime": "EROSION",
+    "value": 45.0,
+    "decomp": {
+      "weather": 11.0,
+      "resonance": 6.7,
+      "kink": 6.6,
+      "rvxray": 6.2,
+      "buffers": 3.0,
+      "confession": 2.9,
+      "undertow": 2.9,
+      "warehouse": 2.4,
+      "tails": 2.1,
+      "auctions": 1.2,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-13",
+      "worst_case_b": 2962.8,
+      "settlement_b": 266.0
+    },
+    "tell": 35.0
   }
 }
