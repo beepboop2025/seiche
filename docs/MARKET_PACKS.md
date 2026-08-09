@@ -34,6 +34,26 @@ Every canonical row carries three distinct clocks:
 - `source_publication_time`: when the source published that particular row;
 - `knowledge_time`: when the row became knowable to this Seiche record.
 
+A source-native calendar date is a market business-date/session label, not a
+local-midnight instant. Canonical adapters encode such labels as `00:00:00Z` so
+the same labelled session has the same key in Sydney, Mumbai, New York, and
+every other pack. A source-native datetime is different: it remains an actual
+instant, is interpreted in the pack timezone only when naive, and is converted
+to UTC without session coercion. Global Tide consumes only the canonical
+UTC-midnight daily keys. It intersects common level dates before taking changes,
+so a holiday in one market cannot compare a one-session move with another
+market's multi-session move; it never forward-fills or weekday-guesses a
+cross-market session.
+
+Publication and knowledge clocks remain separate. An upstream timestamp is
+retained when supplied. Otherwise the pack's declared business-day lag and
+local publication time are used; when no time is declared, the conservative
+fallback is `23:59:59` in the publication-day timezone. A row whose publication
+clock is later than capture is withheld. Every newly seen row becomes knowable
+at capture time, never retroactively at its reported or inferred publication
+time. An unchanged row preserves its first knowledge time, while a revision
+becomes knowable at the capture that discovered it.
+
 Rows are append-only across revisions. An as-of query first filters by knowledge
 cutoff, then selects the latest knowable revision for each instrument/event pair.
 Legacy `Series.fetched_at` remains for v1 compatibility but is not eligible for

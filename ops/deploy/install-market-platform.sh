@@ -12,6 +12,18 @@ if ! command -v psql >/dev/null 2>&1; then
 fi
 systemctl enable --now postgresql
 
+# Debian assigns the next free port when another local service already owns
+# 5432. The production host has a Docker-published database on 5432, so the
+# native cluster runs on 5433. Ask the cluster selected by pg_wrapper instead
+# of assuming the default socket name.
+POSTGRES_PORT=$(runuser -u postgres -- psql -tAc "SHOW port" | tr -d '[:space:]')
+case "$POSTGRES_PORT" in
+    ''|*[!0-9]*)
+        echo "market platform: could not resolve the PostgreSQL cluster port" >&2
+        exit 1
+        ;;
+esac
+
 if ! runuser -u postgres -- psql -tAc \
         "SELECT 1 FROM pg_roles WHERE rolname='seiche'" | grep -qx 1; then
     runuser -u postgres -- createuser --no-createdb --no-createrole --no-superuser seiche
@@ -29,7 +41,7 @@ ENV_STAGE=$(mktemp "$ENV_DIR/.market.env.XXXXXX")
 cleanup() { rm -f -- "$ENV_STAGE"; }
 trap cleanup EXIT
 cat >"$ENV_STAGE" <<EOF
-SEICHE_DATABASE_URL=postgresql:///seiche?host=/var/run/postgresql
+SEICHE_DATABASE_URL=postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT
 SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw
 SEICHE_NORMALIZED_DIR=$STATE_DIR/normalized
 SEICHE_BACKFILL_STATE_DIR=$STATE_DIR/backfill
@@ -39,6 +51,14 @@ chown root:seiche "$ENV_STAGE"
 chmod 0640 "$ENV_STAGE"
 mv -f "$ENV_STAGE" "$ENV_DIR/market.env"
 ENV_STAGE=""
+
+# Fail before changing service units if the application user cannot reach the
+# exact socket/port written above. pg_wrapper succeeding as postgres is not a
+# substitute for validating the DSN the API and collectors will actually use.
+runuser -u seiche -- env \
+    SEICHE_DATABASE_URL="postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT" \
+    "$APP_DIR/backend/.venv/bin/python" -c \
+    'import os, psycopg; connection = psycopg.connect(os.environ["SEICHE_DATABASE_URL"]); connection.execute("SELECT 1").fetchone(); connection.close()'
 
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-worker.service" \
     /etc/systemd/system/seiche-market-worker.service
@@ -64,4 +84,4 @@ systemctl enable seiche-market-worker.service
 # prevent the persistent worker or other packs from starting afterward.
 systemctl start --no-block seiche-market-backfill.service seiche-market-worker.service
 
-echo "market platform: PostgreSQL, evidence directories and collector units ready"
+echo "market platform: PostgreSQL on socket port $POSTGRES_PORT, evidence directories and collector units ready"

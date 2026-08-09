@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,6 +15,8 @@ CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
+BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
+PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
 def _executable(path: Path, body: str) -> Path:
@@ -282,6 +285,17 @@ printf '\\n' >> "{calls}"
     )
 
 
+def test_box_smoke_installs_its_declared_async_test_plugin():
+    optional = tomllib.loads(PYPROJECT.read_text())["project"][
+        "optional-dependencies"
+    ]
+    deploy_dependencies = optional["deploy-test"]
+    box_update = BOX_UPDATE.read_text()
+
+    assert any(item.startswith("pytest-asyncio") for item in deploy_dependencies)
+    assert "./backend[deploy-test,notary,collectors,postgres]" in box_update
+
+
 def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     wrapper = (ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh").read_text()
     assert wrapper.count("deploy_caddy ||") == 2
@@ -301,7 +315,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
     caddy = CADDYFILE.read_text()
 
-    assert "postgresql:///seiche?host=/var/run/postgresql" in installer
+    assert 'psql -tAc "SHOW port"' in installer
+    assert "host=/var/run/postgresql&port=$POSTGRES_PORT" in installer
+    assert "could not resolve the PostgreSQL cluster port" in installer
+    assert 'connection.execute("SELECT 1")' in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker

@@ -128,8 +128,8 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
             Liquidity intelligence sits on two shelves. Official dashboards give you raw
             series and no view. A terminal that has a view runs about $32k a seat each
             year. Between them, nothing free that holds an opinion and grades itself.
-            That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
-            standing on it, Undertow prices the exits. All of it runs on free public
+            That gap is this lab: Seiche reads the plumbing, LiquiLens ranks financial
+            institutions standing on it, Undertow prices the exits. All of it runs on free public
             data. The misses are published beside the hits. Read those first.
           </p>
           <p className="descent-line">

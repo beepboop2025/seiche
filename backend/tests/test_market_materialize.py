@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import asyncio
 
+import pandas as pd
 import pytest
 
 from seiche import store
@@ -22,6 +23,7 @@ from seiche.domain.observation import (
     evidence_sha256,
 )
 from seiche.markets.materialize import materialize_global_tide, materialize_market
+from seiche.kernel.engines import RoleSeries, cross_basin_coupling
 from seiche.repository import SQLiteMarketRepository
 from seiche.sources.base import ObservationBatch
 
@@ -239,6 +241,95 @@ def test_global_tide_is_sealed_unavailable_then_computes_only_from_fx_basis(
     assert dead["reading"]["value"] is None
 
 
+def test_global_tide_changes_span_the_same_common_business_dates() -> None:
+    first = tuple(
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.MARKET.FX_FORWARD_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=value,
+            event_time=datetime(2026, 1, 5, tzinfo=UTC) + timedelta(days=offset),
+        )
+        for offset, value in zip((0, 1, 2, 3, 4), (0, 10, 30, 50, 90), strict=True)
+    )
+    second = tuple(
+        _rate(
+            market_id="SG-SGD",
+            instrument_id="SG.MARKET.FX_SWAP_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=value,
+            event_time=datetime(2026, 1, 5, tzinfo=UTC) + timedelta(days=offset),
+        )
+        for offset, value in zip((0, 2, 3, 4), (0, 3, 5, 9), strict=True)
+    )
+
+    def role_series(observations: tuple[Observation, ...]) -> RoleSeries:
+        return RoleSeries(
+            SemanticRole.FX_SWAP_BASIS,
+            observations[0].instrument_id,
+            CanonicalUnit.BASIS_POINTS,
+            pd.Series(
+                [float(item.value) for item in observations],
+                index=pd.DatetimeIndex([item.event_time for item in observations]),
+                dtype=float,
+            ),
+            observations,
+        )
+
+    result = cross_basin_coupling(
+        {"IN-INR": role_series(first), "SG-SGD": role_series(second)},
+        minimum_aligned_changes=3,
+    )
+
+    assert result.value == 100.0
+    assert result.event_cutoff == "2026-01-09T00:00:00+00:00"
+
+
+def test_global_tide_payload_cutoff_is_the_last_shared_session(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "tide-cutoff.sqlite")
+    repository = SQLiteMarketRepository()
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = []
+    for offset in range(61):
+        event = start + timedelta(days=offset)
+        for market_id, instrument_id, multiplier in (
+            ("IN-INR", "IN.MARKET.FX_FORWARD_BASIS", 1.0),
+            ("SG-SGD", "SG.MARKET.FX_SWAP_BASIS", 0.7),
+        ):
+            rows.append(
+                _rate(
+                    market_id=market_id,
+                    instrument_id=instrument_id,
+                    role=SemanticRole.FX_SWAP_BASIS,
+                    value=(-20 + offset * 0.2) * multiplier,
+                    event_time=event,
+                )
+            )
+    rows.append(
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.MARKET.FX_FORWARD_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=5,
+            event_time=start + timedelta(days=70),
+        )
+    )
+    store.save_observations(rows)
+    cutoff = start + timedelta(days=80)
+    _save_success_run("IN-INR", "licensed_inr_market", cutoff)
+    _save_success_run("SG-SGD", "licensed_sgd_market", cutoff)
+
+    materialize_global_tide(repository=repository, knowledge_time=cutoff)
+    payload = store.load_latest_market_snapshot("GLOBAL", "tide")["payload"]
+
+    expected = (start + timedelta(days=60)).isoformat()
+    assert payload["status"] == "READY"
+    assert payload["event_cutoff"] == expected
+    assert payload["components"][0]["event_cutoff"] == expected
+
+
 @pytest.mark.asyncio
 async def test_collection_cycle_materializes_after_new_rows_become_knowable(
     tmp_path, monkeypatch
@@ -429,3 +520,73 @@ def test_early_materialization_fault_is_persisted_then_retried(
     assert calls == 2
     assert snapshots["IN-INR"]["gauge"] == "IN-INR-gauge"
     assert snapshots["GLOBAL"]
+
+
+def test_later_same_market_failure_invalidates_the_earlier_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "same-market-retry.sqlite")
+    repository = SQLiteMarketRepository()
+    registry = market_runtime.default_registry()
+    cutoff = datetime(2026, 8, 9, 10, tzinfo=UTC)
+    runs = [
+        CollectorRun(
+            "IN-INR",
+            adapter_id,
+            CollectorRunStatus.SUCCESS,
+            cutoff.isoformat(),
+            cutoff.isoformat(),
+            1,
+            1,
+            (cutoff + timedelta(days=1)).isoformat(),
+        )
+        for adapter_id in ("rbi_official", "licensed_inr_market")
+    ]
+    outcomes = iter(
+        (
+            {"gauge": "first"},
+            RuntimeError("second adapter seal failed"),
+            {"gauge": "cycle-boundary retry"},
+        )
+    )
+
+    def materialize_sequence(_market_id, **_kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    markers = []
+    monkeypatch.setattr(market_runtime, "materialize_market", materialize_sequence)
+    monkeypatch.setattr(
+        market_runtime,
+        "_mark_backfill_complete",
+        lambda market_id, adapter_id: markers.append((market_id, adapter_id)),
+    )
+    published: dict[str, object] = {}
+    handler = market_runtime._completed_run_handler(
+        repository=repository,
+        registry=registry,
+        backfill=True,
+        materialize=True,
+        record_forward=True,
+        published_snapshots=published,
+    )
+
+    handler(runs[0].to_dict())
+    assert published["IN-INR"] == {"gauge": "first"}
+    assert markers == [("IN-INR", "rbi_official")]
+
+    handler(runs[1].to_dict())
+    assert "IN-INR" not in published
+    assert ("IN-INR", "licensed_inr_market") not in markers
+
+    snapshots = market_runtime._materialize_after_runs(
+        runs,
+        repository=repository,
+        registry=registry,
+        cutoff=cutoff,
+        record_forward=True,
+        existing=published,
+    )
+    assert snapshots["IN-INR"] == {"gauge": "cycle-boundary retry"}

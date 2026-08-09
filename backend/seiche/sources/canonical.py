@@ -27,6 +27,7 @@ from seiche.domain.observation import (
 )
 from seiche.markets.base import (
     CalendarUnavailableError,
+    InstrumentSpec,
     MarketPack,
     PublicationClockPrecision,
 )
@@ -70,15 +71,30 @@ def _as_utc(value: datetime, field: str) -> datetime:
 
 
 def _event_datetime(value: date | datetime, pack: MarketPack) -> datetime:
+    """Return the canonical event key for an instant or a business-date label.
+
+    A source-native ``date`` is not an instant at midnight in the market's
+    timezone. It labels that market's business session. Store it at UTC
+    midnight so equal session labels have one cross-market key. A source-native
+    ``datetime`` remains an instant and is converted from its supplied (or
+    pack-local, when naive) timezone.
+    """
+
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
             value = value.replace(tzinfo=ZoneInfo(pack.local_timezone))
         return value.astimezone(UTC).replace(microsecond=0)
-    return datetime.combine(
-        value,
-        time.min,
-        tzinfo=ZoneInfo(pack.local_timezone),
-    ).astimezone(UTC)
+    return datetime.combine(value, time.min, tzinfo=UTC)
+
+
+def _event_business_date(value: date | datetime, pack: MarketPack) -> date:
+    """Resolve the pack-local date used by publication-calendar rules."""
+
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.date()
+    return value.astimezone(ZoneInfo(pack.local_timezone)).date()
 
 
 def _inferred_publication_time(event_day: date, pack: MarketPack, adapter_id: str) -> datetime:
@@ -188,18 +204,12 @@ class FunctionalCanonicalAdapter:
         if not documents:
             raise ValueError("official adapter returned no source documents")
         captured_at = _as_utc(self.clock(), "capture clock")
-        prior = self.repository.load_observations_as_of(
-            self.pack.market_id,
-            captured_at,
-            event_time=captured_at,
-        )
-        prior_by_event = {
-            (item.instrument_id, item.event_time): item
-            for item in prior
-            if item.source == self.source
-        }
-        spec = self.pack.adapter_map[self.adapter_id]
-        observations: list[Observation] = []
+
+        # Parse and validate the emitted scope before asking the repository for
+        # prior vintages. Daily source files can contain years of rows, but a
+        # recent collection must never scan unrelated instruments, adapters,
+        # or history preceding the earliest row actually present in the fetch.
+        prepared: list[tuple[ParsedPoint, InstrumentSpec, date, datetime]] = []
         for document in documents:
             for point in self.parser(document):
                 try:
@@ -213,87 +223,120 @@ class FunctionalCanonicalAdapter:
                         f"{point.instrument_id!r} belongs to "
                         f"{instrument.source_adapter_id!r}, not {self.adapter_id!r}"
                     )
+                event_day = _event_business_date(point.event_time, self.pack)
                 event_time = _event_datetime(point.event_time, self.pack)
-                event_day = event_time.astimezone(
-                    ZoneInfo(self.pack.local_timezone)
-                ).date()
-                try:
-                    publication = (
-                        _as_utc(point.source_publication_time, "source publication time")
-                        if point.source_publication_time is not None
-                        else _inferred_publication_time(
-                            event_day,
-                            self.pack,
-                            self.adapter_id,
-                        )
-                    )
-                except CalendarUnavailableError:
-                    # A bounded calendar is also the bounded backfill contract.
-                    # Rows outside it are withheld rather than weekday-guessed.
-                    continue
-                if publication > captured_at:
-                    # A same-day source can expose an effective date before the
-                    # declared publication clock. It is not knowable yet.
-                    continue
-                row_hash = evidence_sha256(point.row_evidence)
-                existing = prior_by_event.get((instrument.instrument_id, event_time))
-                if existing is not None and existing.evidence_hash == row_hash:
-                    observations.append(existing)
-                    continue
-                if existing is not None:
-                    publication = captured_at
-                    knowledge = captured_at
-                    quality = QualityState.REVISED
-                elif self.historical_backfill:
-                    # A current historical file is not a historical vintage.
-                    # Preserve the row's source publication clock, but make it
-                    # knowable only when this capture actually entered Seiche.
-                    # This imports useful history without leaking a final
-                    # vintage into a synthetic past backtest.
-                    knowledge = captured_at
-                    quality = QualityState.PROVISIONAL
-                else:
-                    knowledge = publication
-                    quality = point.quality or (
-                        QualityState.VERIFIED
-                        if (
-                            point.source_publication_time is not None
-                            or spec.publication_clock.precision
-                            in {
-                                PublicationClockPrecision.EXACT,
-                                PublicationClockPrecision.SCHEDULED,
-                            }
-                        )
-                        else QualityState.ESTIMATED
-                    )
-                revision_id = point.revision_id or f"sha256:{row_hash[:20]}"
-                observations.append(
-                    Observation(
-                        market_id=self.pack.market_id,
-                        monetary_area_id=self.pack.monetary_area_id,
-                        jurisdiction_codes=self.pack.jurisdiction_codes,
-                        currency=self.pack.currency,
-                        instrument_id=instrument.instrument_id,
-                        semantic_role=instrument.semantic_role,
-                        value=instrument.normalize(point.raw_value),
-                        canonical_unit=instrument.canonical_unit,
-                        rate_compounding=instrument.rate_compounding,
-                        day_count=instrument.day_count,
-                        event_time=event_time,
-                        knowledge_time=knowledge,
-                        source_publication_time=publication,
-                        revision_id=revision_id,
-                        source=self.source,
-                        evidence_hash=row_hash,
-                        connector_classification=spec.classification,
-                        redistribution_status=spec.redistribution_status,
-                        quality=quality,
-                        # Successful retrieval proves the adapter is live.
-                        # Product materialization computes current age from the
-                        # event/knowledge cutoff rather than aging old history.
-                        staleness=StalenessState.FRESH,
+                prepared.append((point, instrument, event_day, event_time))
+
+        prior = (
+            self.repository.load_observations_as_of(
+                self.pack.market_id,
+                captured_at,
+                event_time=captured_at,
+                event_time_from=min(item[3] for item in prepared),
+                instrument_ids=tuple(
+                    sorted({item[1].instrument_id for item in prepared})
+                ),
+                sources=(self.source,),
+            )
+            if prepared
+            else []
+        )
+        prior_by_event = {
+            (item.instrument_id, item.event_time): item
+            for item in prior
+            if item.source == self.source
+        }
+        spec = self.pack.adapter_map[self.adapter_id]
+        observations: list[Observation] = []
+        for point, instrument, event_day, event_time in prepared:
+            if event_time > captured_at:
+                # A future session/instant is not part of this capture's
+                # point-in-time state, regardless of an upstream clock.
+                continue
+            try:
+                publication = (
+                    _as_utc(point.source_publication_time, "source publication time")
+                    if point.source_publication_time is not None
+                    else _inferred_publication_time(
+                        event_day,
+                        self.pack,
+                        self.adapter_id,
                     )
                 )
+            except CalendarUnavailableError:
+                # A bounded calendar is also the bounded backfill contract.
+                # Rows outside it are withheld rather than weekday-guessed.
+                continue
+            if publication > captured_at:
+                # A same-day source can expose an effective date before the
+                # declared publication clock. It is not knowable yet.
+                continue
+            row_hash = evidence_sha256(point.row_evidence)
+            existing = prior_by_event.get((instrument.instrument_id, event_time))
+            if existing is not None and existing.evidence_hash == row_hash:
+                observations.append(existing)
+                continue
+            if existing is not None:
+                # Preserve an upstream revision timestamp when it is explicit;
+                # otherwise capture is the only defensible publication bound.
+                if point.source_publication_time is None:
+                    publication = captured_at
+                knowledge = captured_at
+                quality = QualityState.REVISED
+            elif self.historical_backfill:
+                # A current historical file is not a historical vintage.
+                # Preserve the row's source publication clock, but make it
+                # knowable only when this capture actually entered Seiche.
+                # This imports useful history without leaking a final
+                # vintage into a synthetic past backtest.
+                knowledge = captured_at
+                quality = QualityState.PROVISIONAL
+            else:
+                # Publication time says when the upstream row could have
+                # existed. Knowledge time says when this Seiche record
+                # actually observed it. Never backdate a newly seen row to
+                # an inferred or reported upstream clock.
+                knowledge = captured_at
+                quality = point.quality or (
+                    QualityState.VERIFIED
+                    if (
+                        point.source_publication_time is not None
+                        or spec.publication_clock.precision
+                        in {
+                            PublicationClockPrecision.EXACT,
+                            PublicationClockPrecision.SCHEDULED,
+                        }
+                    )
+                    else QualityState.ESTIMATED
+                )
+            revision_id = point.revision_id or f"sha256:{row_hash[:20]}"
+            observations.append(
+                Observation(
+                    market_id=self.pack.market_id,
+                    monetary_area_id=self.pack.monetary_area_id,
+                    jurisdiction_codes=self.pack.jurisdiction_codes,
+                    currency=self.pack.currency,
+                    instrument_id=instrument.instrument_id,
+                    semantic_role=instrument.semantic_role,
+                    value=instrument.normalize(point.raw_value),
+                    canonical_unit=instrument.canonical_unit,
+                    rate_compounding=instrument.rate_compounding,
+                    day_count=instrument.day_count,
+                    event_time=event_time,
+                    knowledge_time=knowledge,
+                    source_publication_time=publication,
+                    revision_id=revision_id,
+                    source=self.source,
+                    evidence_hash=row_hash,
+                    connector_classification=spec.classification,
+                    redistribution_status=spec.redistribution_status,
+                    quality=quality,
+                    # Successful retrieval proves the adapter is live.
+                    # Product materialization computes current age from the
+                    # event/knowledge cutoff rather than aging old history.
+                    staleness=StalenessState.FRESH,
+                )
+            )
         return ObservationBatch(
             market_id=self.pack.market_id,
             adapter_id=self.adapter_id,

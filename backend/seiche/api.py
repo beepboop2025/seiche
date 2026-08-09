@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import gzip
 import hashlib
 import json
@@ -50,7 +52,9 @@ from seiche.config import (
     REGIMES,
     WRECKS_BLOB_KEY,
 )
-from seiche.markets.base import CapabilityStatus
+from seiche.domain.observation import QualityState, RedistributionStatus
+from seiche.markets.base import CapabilityStatus, PackSupportStatus
+from seiche.markets.calibration import get_local_calibration
 from seiche.markets.registry import UnknownMarketError, default_registry
 from seiche.repository import get_repository
 
@@ -222,6 +226,105 @@ def _parse_v2_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise HTTPException(422, "timestamp must include an explicit timezone")
     return parsed.astimezone(UTC)
+
+
+def _decode_series_cursor(value: str | None) -> tuple[datetime, str] | None:
+    if value is None:
+        return None
+    if not value or len(value) > 512:
+        raise HTTPException(422, "cursor is invalid")
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.b64decode(
+            (value + padding).encode("ascii"),
+            altchars=b"-_",
+            validate=True,
+        )
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError
+        event_time = _parse_v2_timestamp(payload["event_time"])
+        instrument_id = payload["instrument_id"]
+        if not isinstance(instrument_id, str) or not instrument_id.strip():
+            raise ValueError
+    except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError, KeyError, ValueError):
+        raise HTTPException(422, "cursor is invalid") from None
+    return event_time, instrument_id
+
+
+def _encode_series_cursor(value: tuple[datetime, str] | None) -> str | None:
+    if value is None:
+        return None
+    payload = json.dumps(
+        {
+            "v": 1,
+            "event_time": value[0].astimezone(UTC).isoformat(),
+            "instrument_id": value[1],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+
+
+def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
+    """Fail closed until pack, calibration, and row quality are validated."""
+
+    reasons: list[str] = []
+    if not observations:
+        reasons.append("no canonical observations are available")
+    if pack.support_status is not PackSupportStatus.SUPPORTED:
+        reasons.append("pack validation status is not SUPPORTED")
+    try:
+        calibration = get_local_calibration(pack.market_id)
+    except KeyError:
+        reasons.append("no registered local calibration is available")
+    else:
+        if calibration.calibration_id != pack.calibration_id:
+            reasons.append("registered calibration does not match the market pack")
+        if calibration.maturity != "VALIDATED":
+            reasons.append("calibration is forward-only")
+    ineligible_quality = sorted(
+        {
+            observation.quality.value
+            for observation in observations
+            if observation.quality not in {QualityState.VERIFIED, QualityState.REVISED}
+        }
+    )
+    if ineligible_quality:
+        reasons.append(
+            "observation quality is not evidence-eligible: "
+            + ", ".join(ineligible_quality)
+        )
+    return {
+        "eligible": not reasons,
+        "reasons": reasons,
+        "value_encoding": "decimal_string",
+        "restricted_values": "redacted or omitted",
+    }
+
+
+def _series_page_coverage(observations) -> list[dict[str, Any]]:
+    """Describe only rows that this public page is permitted to disclose."""
+
+    by_role: dict[str, list[Any]] = defaultdict(list)
+    for observation in observations:
+        by_role[observation.semantic_role.value].append(observation)
+    return [
+        {
+            "semantic_role": role,
+            "observations": len(items),
+            "event_start": min(item.event_time for item in items).isoformat(),
+            "event_end": max(item.event_time for item in items).isoformat(),
+            "latest_knowledge_time": max(
+                item.knowledge_time for item in items
+            ).isoformat(),
+            "unavailable_observations": sum(
+                item.quality is QualityState.UNAVAILABLE for item in items
+            ),
+        }
+        for role, items in sorted(by_role.items())
+    ]
 
 
 def _bearer_identity(authorization: str | None) -> dict | None:
@@ -490,10 +593,23 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "getCanonicalMarketSeriesV2",
                 "summary": "Read canonical, licence-aware market observations",
-                "parameters": [{
-                    "name": "market_id", "in": "path", "required": True,
-                    "schema": {"type": "string"},
-                }],
+                "parameters": [
+                    {
+                        "name": "market_id", "in": "path", "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "n", "in": "query", "required": False,
+                        "schema": {
+                            "type": "integer", "minimum": 1, "maximum": 5000,
+                            "default": 1000,
+                        },
+                    },
+                    {
+                        "name": "cursor", "in": "query", "required": False,
+                        "schema": {"type": "string"},
+                    },
+                ],
                 "responses": {"200": object_response},
             },
         },
@@ -796,27 +912,60 @@ def market_asof_v2(market_id: str, timestamp: str, response: Response):
 
 
 @app.get("/api/v2/markets/{market_id}/series")
-def market_series_v2(market_id: str, response: Response, n: int = 1000):
+def market_series_v2(
+    market_id: str,
+    response: Response,
+    n: int = 1000,
+    cursor: str | None = None,
+):
     pack = _market_pack(market_id)
     if not 1 <= n <= 5000:
         raise HTTPException(422, "n must be between 1 and 5000")
+    prohibited_adapters = {
+        adapter.adapter_id
+        for adapter in pack.source_adapters
+        if adapter.redistribution_status is RedistributionStatus.PROHIBITED
+    }
+    prohibited_instruments = {
+        instrument.instrument_id
+        for instrument in pack.instruments
+        if instrument.source_adapter_id in prohibited_adapters
+    }
+    public_instrument_ids = tuple(
+        instrument.instrument_id
+        for instrument in pack.instruments
+        if instrument.instrument_id not in prohibited_instruments
+    )
     now = datetime.now(UTC).replace(microsecond=0)
-    observations = get_repository().load_observations_as_of(
+    repository = get_repository()
+    observations, next_page = repository.load_observation_page(
         pack.market_id,
         now,
+        limit=n,
         event_time=now,
-    )[-n:]
+        instrument_ids=public_instrument_ids,
+        redistribution_statuses=(
+            RedistributionStatus.ALLOWED,
+            RedistributionStatus.DERIVED_ONLY,
+            RedistributionStatus.METADATA_ONLY,
+        ),
+        before=_decode_series_cursor(cursor),
+    )
     available_instruments = {item.instrument_id for item in observations}
     records = []
-    for observation in observations:
+    # The repository pages newest-first so its index and cursor can stop early;
+    # retain the endpoint's established chronological order within each page.
+    for observation in reversed(observations):
         record = observation.to_record()
-        if observation.redistribution_status.value != "allowed":
+        if observation.redistribution_status is not RedistributionStatus.ALLOWED:
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"
         records.append(record)
     instruments = []
     for instrument in pack.instruments:
         adapter = pack.adapter_map[instrument.source_adapter_id]
+        if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
+            continue
         instruments.append(
             {
                 "instrument_id": instrument.instrument_id,
@@ -844,11 +993,19 @@ def market_series_v2(market_id: str, response: Response, n: int = 1000):
         if item.staleness.value not in {"fresh", "aging"}
     ]
     capabilities, missing = _v2_capabilities(pack)
-    latest_gauge = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+    latest_gauge = repository.load_latest_market_snapshot(pack.market_id, "gauge")
     gauge_payload = latest_gauge["payload"] if latest_gauge else {}
+    faults = [
+        item
+        for item in (gauge_payload.get("faults") or _v2_collector_faults(pack))
+        if item.get("source") not in prohibited_adapters
+    ]
+    # A sealed gauge may carry instrument timestamps outside this public page.
+    # Derive staleness only from the already policy-filtered observations.
+    stale_inputs = stale
     event_cutoff = max((item.event_time for item in observations), default=None)
     knowledge_cutoff = max((item.knowledge_time for item in observations), default=None)
-    response.headers["Cache-Control"] = "public, max-age=60"
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return {
         "schema": "seiche.market-series.v2",
         "status": "READY" if observations else "UNAVAILABLE",
@@ -858,21 +1015,19 @@ def market_series_v2(market_id: str, response: Response, n: int = 1000):
         "currency": pack.currency,
         "policy_regime": pack.policy_regime.value,
         "support_status": pack.support_status.value,
-        "data_coverage": get_repository().canonical_coverage(pack.market_id),
+        "data_coverage": _series_page_coverage(observations),
+        "coverage_scope": "returned_page",
         "capabilities": capabilities,
         "missing_capabilities": missing,
         "calibration_id": pack.calibration_id,
-        "evidence_eligibility": {
-            "eligible": bool(observations),
-            "value_encoding": "decimal_string",
-            "restricted_values": "redacted",
-        },
+        "evidence_eligibility": _series_evidence_eligibility(pack, observations),
         "event_cutoff": event_cutoff.isoformat() if event_cutoff else None,
         "knowledge_cutoff": knowledge_cutoff.isoformat() if knowledge_cutoff else None,
-        "faults": gauge_payload.get("faults") or _v2_collector_faults(pack),
-        "stale_inputs": gauge_payload.get("stale_inputs") or stale,
+        "faults": faults,
+        "stale_inputs": stale_inputs,
         "instruments": instruments,
         "observations": records,
+        "next_cursor": _encode_series_cursor(next_page),
     }
 
 

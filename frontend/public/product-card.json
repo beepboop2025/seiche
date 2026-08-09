@@ -1,6 +1,6 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-08-08",
+  "updated": "2026-08-09",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
@@ -45,6 +45,14 @@
     "daily_archive": "https://seiche.info/dispatches/",
     "source_code": "https://github.com/beepboop2025/seiche"
   },
+  "market_pack_v2": {
+    "scope": "10 monetary-area packs",
+    "primary_live_signal": "US dollar funding",
+    "us_usd_status": "VALIDATING",
+    "non_us_status": "9 REFERENCE packs for context only",
+    "global_tide_status": "UNAVAILABLE",
+    "interpretation": "Non-US packs supply reference context. Global Tide is UNAVAILABLE and publishes no reading."
+  },
   "access": {
     "website": "https://seiche.info/",
     "selection_guide": "https://seiche.info/use-cases.html",
@@ -53,6 +61,9 @@
     "openapi": "https://api.seiche.info/api/openapi.json",
     "ai_catalog": "https://seiche.info/.well-known/ai-catalog.json",
     "rest_example": "https://api.seiche.info/api/gauge",
+    "market_pack_catalog": "https://api.seiche.info/api/v2/markets",
+    "market_pack_coverage": "https://api.seiche.info/api/v2/coverage",
+    "global_tide": "https://api.seiche.info/api/v2/global/tide",
     "oil_funding": "https://api.seiche.info/api/oil-funding",
     "fx_materials": "https://api.seiche.info/api/estuary",
     "mcp": "https://api.seiche.info/mcp",

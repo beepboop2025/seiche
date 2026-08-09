@@ -695,9 +695,13 @@ def materialize_global_tide(
     # otherwise a later unavailable seal could permanently sort ahead of a
     # newly computable tide built from older-but-now-ingested history.
     knowledge_cutoff = cutoff
-    event_cutoff = max(
-        (item.event_time for item in all_observations),
-        default=None,
+    # A READY tide is calculated only through its last shared business-date
+    # session. A newer constituent observation from one market was not used
+    # and must not advance the product's published event cutoff.
+    event_cutoff = (
+        datetime.fromisoformat(result.event_cutoff)
+        if result.event_cutoff is not None
+        else max((item.event_time for item in all_observations), default=None)
     )
     unvalidated_markets = sorted(
         market_id

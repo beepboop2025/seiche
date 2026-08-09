@@ -17,7 +17,7 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 from seiche import store
-from seiche.domain.observation import Observation, SemanticRole
+from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 
 
 class MarketRepository(Protocol):
@@ -29,8 +29,38 @@ class MarketRepository(Protocol):
         knowledge_time: str | datetime,
         *,
         event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
         roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
     ) -> list[Observation]: ...
+
+    def load_observation_page(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        limit: int,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
+        redistribution_statuses: Iterable[RedistributionStatus] | None = None,
+        before: tuple[str | datetime, str] | None = None,
+    ) -> tuple[list[Observation], tuple[datetime, str] | None]: ...
+
+    def latest_observation_hashes(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
+    ) -> dict[tuple[str, datetime], str]: ...
 
     def canonical_coverage(self, market_id: str) -> list[dict]: ...
 
@@ -79,6 +109,8 @@ class SQLiteMarketRepository:
 
     save_observations = staticmethod(store.save_observations)
     load_observations_as_of = staticmethod(store.load_observations_as_of)
+    load_observation_page = staticmethod(store.load_observation_page)
+    latest_observation_hashes = staticmethod(store.latest_observation_hashes)
     canonical_coverage = staticmethod(store.canonical_coverage)
     seal_market_snapshot = staticmethod(store.seal_market_snapshot)
     load_latest_market_snapshot = staticmethod(store.load_latest_market_snapshot)
@@ -145,6 +177,16 @@ CREATE TABLE IF NOT EXISTS canonical_observations (
 );
 CREATE INDEX IF NOT EXISTS canonical_observations_asof
   ON canonical_observations (market_id, semantic_role, event_time, knowledge_time);
+CREATE INDEX IF NOT EXISTS canonical_observations_series_page
+  ON canonical_observations (
+    market_id, event_time DESC, instrument_id DESC, knowledge_time DESC,
+    source_publication_time DESC, revision_id DESC, source DESC
+  );
+CREATE INDEX IF NOT EXISTS canonical_observations_adapter_latest
+  ON canonical_observations (
+    market_id, source, instrument_id, event_time DESC, knowledge_time DESC,
+    source_publication_time DESC, revision_id DESC
+  );
 CREATE TABLE IF NOT EXISTS market_snapshots (
   snapshot_id TEXT PRIMARY KEY,
   market_id TEXT NOT NULL,
@@ -309,7 +351,10 @@ class PostgresMarketRepository:
         knowledge_time: str | datetime,
         *,
         event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
         roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
     ) -> list[Observation]:
         self._ensure_schema()
         predicates = ["market_id=%s", "knowledge_time<=%s"]
@@ -317,10 +362,27 @@ class PostgresMarketRepository:
         if event_time is not None:
             predicates.append("event_time<=%s")
             params.append(_utc(event_time))
+        if event_time_from is not None:
+            predicates.append("event_time>=%s")
+            params.append(_utc(event_time_from))
         role_values = tuple(role.value for role in roles) if roles is not None else ()
         if role_values:
             predicates.append(f"semantic_role IN ({','.join(['%s'] * len(role_values))})")
             params.extend(role_values)
+        instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
+        if instrument_ids is not None and not instrument_values:
+            return []
+        if instrument_values:
+            predicates.append(
+                f"instrument_id IN ({','.join(['%s'] * len(instrument_values))})"
+            )
+            params.extend(instrument_values)
+        source_values = tuple(dict.fromkeys(sources or ()))
+        if sources is not None and not source_values:
+            return []
+        if source_values:
+            predicates.append(f"source IN ({','.join(['%s'] * len(source_values))})")
+            params.extend(source_values)
         selected = ",".join(_OBSERVATION_COLUMNS)
         query = f"""
             WITH ranked AS (
@@ -346,6 +408,216 @@ class PostgresMarketRepository:
                 record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
             observations.append(Observation.from_record(record))
         return observations
+
+    def load_observation_page(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        limit: int,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
+        redistribution_statuses: Iterable[RedistributionStatus] | None = None,
+        before: tuple[str | datetime, str] | None = None,
+    ) -> tuple[list[Observation], tuple[datetime, str] | None]:
+        """Return one newest-first page, bounded by ``LIMIT`` in PostgreSQL."""
+
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit must be between 1 and 5000")
+        self._ensure_schema()
+        knowledge_cutoff = _utc(knowledge_time)
+        event_cutoff = _utc(event_time) if event_time is not None else None
+        event_floor = _utc(event_time_from) if event_time_from is not None else None
+        role_values = tuple(role.value for role in roles) if roles is not None else ()
+        instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
+        if instrument_ids is not None and not instrument_values:
+            return [], None
+        source_values = tuple(dict.fromkeys(sources or ()))
+        if sources is not None and not source_values:
+            return [], None
+        before_event: datetime | None = None
+        before_instrument: str | None = None
+        if before is not None:
+            before_event = _utc(before[0])
+            before_instrument = before[1].strip()
+            if not before_instrument:
+                raise ValueError("cursor instrument_id is required")
+
+        def bounded_predicates(alias: str) -> tuple[list[str], list[Any]]:
+            predicates = [
+                f"{alias}.market_id=%s",
+                f"{alias}.knowledge_time<=%s",
+            ]
+            params: list[Any] = [market_id.upper(), knowledge_cutoff]
+            if event_cutoff is not None:
+                predicates.append(f"{alias}.event_time<=%s")
+                params.append(event_cutoff)
+            if event_floor is not None:
+                predicates.append(f"{alias}.event_time>=%s")
+                params.append(event_floor)
+            if role_values:
+                predicates.append(
+                    f"{alias}.semantic_role IN "
+                    f"({','.join(['%s'] * len(role_values))})"
+                )
+                params.extend(role_values)
+            if instrument_values:
+                predicates.append(
+                    f"{alias}.instrument_id IN "
+                    f"({','.join(['%s'] * len(instrument_values))})"
+                )
+                params.extend(instrument_values)
+            if source_values:
+                predicates.append(
+                    f"{alias}.source IN ({','.join(['%s'] * len(source_values))})"
+                )
+                params.extend(source_values)
+            if before_event is not None and before_instrument is not None:
+                predicates.append(
+                    f"({alias}.event_time<%s OR "
+                    f"({alias}.event_time=%s AND {alias}.instrument_id<%s))"
+                )
+                params.extend((before_event, before_event, before_instrument))
+            return predicates, params
+
+        key_predicates, key_params = bounded_predicates("candidate")
+        ranked_predicates, ranked_params = bounded_predicates("observation")
+
+        selected = ",".join(_OBSERVATION_COLUMNS)
+        ranked_selected = ",".join(
+            f"observation.{column} AS {column}" for column in _OBSERVATION_COLUMNS
+        )
+        visible_predicates = ["vintage_rank=1"]
+        redistribution_values = tuple(
+            status.value for status in redistribution_statuses
+        ) if redistribution_statuses is not None else ()
+        if redistribution_statuses is not None:
+            if not redistribution_values:
+                return [], None
+            visible_predicates.append(
+                f"redistribution_status IN ({','.join(['%s'] * len(redistribution_values))})"
+            )
+        params: list[Any] = [
+            *key_params,
+            limit + 1,
+            *ranked_params,
+            *redistribution_values,
+        ]
+        query = f"""
+            WITH candidate_keys AS (
+              SELECT candidate.event_time, candidate.instrument_id
+                FROM canonical_observations AS candidate
+               WHERE {' AND '.join(key_predicates)}
+               GROUP BY candidate.event_time, candidate.instrument_id
+               ORDER BY candidate.event_time DESC, candidate.instrument_id DESC
+               LIMIT %s
+            ), ranked AS (
+              SELECT {ranked_selected},
+                     ROW_NUMBER() OVER (
+                       PARTITION BY observation.market_id,
+                                    observation.instrument_id,
+                                    observation.event_time
+                       ORDER BY observation.knowledge_time DESC,
+                                observation.source_publication_time DESC,
+                                observation.revision_id DESC,
+                                observation.source DESC
+                     ) AS vintage_rank
+                FROM canonical_observations AS observation
+                JOIN candidate_keys AS candidate
+                  ON candidate.event_time=observation.event_time
+                 AND candidate.instrument_id=observation.instrument_id
+               WHERE {' AND '.join(ranked_predicates)}
+            )
+            SELECT {selected},
+                   (SELECT COUNT(*) FROM candidate_keys) AS candidate_count
+              FROM ranked
+             WHERE {' AND '.join(visible_predicates)}
+             ORDER BY event_time DESC, instrument_id DESC
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        observations = []
+        for row in rows:
+            record = dict(
+                zip(_OBSERVATION_COLUMNS, row[: len(_OBSERVATION_COLUMNS)], strict=True)
+            )
+            if isinstance(record["jurisdiction_codes"], str):
+                record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
+            observations.append(Observation.from_record(record))
+        candidate_count = int(rows[0][-1]) if rows else 0
+        has_more = candidate_count > limit
+        observations = observations[:limit]
+        next_cursor = (
+            (observations[-1].event_time, observations[-1].instrument_id)
+            if has_more and observations
+            else None
+        )
+        return observations, next_cursor
+
+    def latest_observation_hashes(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
+        instrument_ids: Iterable[str] | None = None,
+        sources: Iterable[str] | None = None,
+    ) -> dict[tuple[str, datetime], str]:
+        """Return only latest evidence hashes for adapter deduplication."""
+
+        self._ensure_schema()
+        predicates = ["market_id=%s", "knowledge_time<=%s"]
+        params: list[Any] = [market_id.upper(), _utc(knowledge_time)]
+        if event_time is not None:
+            predicates.append("event_time<=%s")
+            params.append(_utc(event_time))
+        if event_time_from is not None:
+            predicates.append("event_time>=%s")
+            params.append(_utc(event_time_from))
+        role_values = tuple(role.value for role in roles) if roles is not None else ()
+        if role_values:
+            predicates.append(f"semantic_role IN ({','.join(['%s'] * len(role_values))})")
+            params.extend(role_values)
+        instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
+        if instrument_ids is not None and not instrument_values:
+            return {}
+        if instrument_values:
+            predicates.append(
+                f"instrument_id IN ({','.join(['%s'] * len(instrument_values))})"
+            )
+            params.extend(instrument_values)
+        source_values = tuple(dict.fromkeys(sources or ()))
+        if sources is not None and not source_values:
+            return {}
+        if source_values:
+            predicates.append(f"source IN ({','.join(['%s'] * len(source_values))})")
+            params.extend(source_values)
+        query = f"""
+            WITH ranked AS (
+              SELECT instrument_id, event_time, evidence_hash,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY market_id, instrument_id, event_time
+                       ORDER BY knowledge_time DESC, source_publication_time DESC,
+                                revision_id DESC, source DESC
+                     ) AS vintage_rank
+                FROM canonical_observations
+               WHERE {' AND '.join(predicates)}
+            )
+            SELECT instrument_id, event_time, evidence_hash FROM ranked
+             WHERE vintage_rank=1
+             ORDER BY event_time, instrument_id
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return {
+            (row[0], _utc(row[1])): row[2]
+            for row in rows
+        }
 
     def canonical_coverage(self, market_id: str) -> list[dict]:
         self._ensure_schema()

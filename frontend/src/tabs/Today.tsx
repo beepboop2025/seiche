@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Chart from "../Chart";
 import LiveMarket from "../LiveMarket";
+import { API_BASE } from "../apiBase";
 import { Any, fmt } from "../lib";
 import { P } from "../palette";
 import "../styles-editorial.css";
@@ -100,6 +101,28 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
         </div>
         <div className="today-conviction"><b>Why that conviction:</b> {editorial.confidence_note}</div>
       </header>
+
+      <section className="today-scope" aria-labelledby="today-scope-title">
+        <div className="today-scope__copy">
+          <span>MARKET PACKS V2 · CURRENT STATUS</span>
+          <h2 id="today-scope-title">Current v2 scope</h2>
+          <p>
+            The primary live Seiche signal remains US dollar funding. The v2 catalog
+            exposes 10 monetary-area packs. US-USD is VALIDATING; the 9 non-US packs
+            are REFERENCE context only. Global Tide is currently UNAVAILABLE.
+          </p>
+          <div className="today-scope__links">
+            <a href={`${API_BASE}/api/v2/markets`}>Open the market catalog →</a>
+            <a href={`${API_BASE}/api/v2/global/tide`}>Inspect Global Tide status →</a>
+          </div>
+        </div>
+        <dl className="today-scope__status">
+          <div><dt>CATALOG</dt><dd><b>10</b><span>monetary-area packs</span></dd></div>
+          <div><dt>US-USD</dt><dd><b>VALIDATING</b><span>primary USD signal</span></dd></div>
+          <div><dt>NON-US</dt><dd><b>9 REFERENCE</b><span>context only</span></dd></div>
+          <div><dt>GLOBAL TIDE</dt><dd><b>UNAVAILABLE</b><span>no reading published</span></dd></div>
+        </dl>
+      </section>
 
       <LiveMarket />
 

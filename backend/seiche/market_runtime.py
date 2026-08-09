@@ -94,6 +94,11 @@ def _completed_run_handler(
         market_id = str(run["market_id"]).upper()
         publication_complete = not materialize or market_id == "US-USD"
         if materialize and market_id != "US-USD":
+            # A later adapter for the same market makes the earlier per-cycle
+            # snapshot stale. Remove it before attempting publication so a
+            # failure cannot suppress the cycle-boundary retry or mark this
+            # adapter's backfill complete against an older snapshot.
+            published_snapshots.pop(market_id, None)
             try:
                 published_snapshots[market_id] = materialize_market(
                     market_id,
