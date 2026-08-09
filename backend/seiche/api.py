@@ -108,7 +108,18 @@ app = FastAPI(title="Seiche", version=assemble.VERSION,
               redoc_url=None if _PROD else "/redoc",
               openapi_url=None if _PROD else "/openapi.json",
               lifespan=_lifespan)
+# Uvicorn's default config gives only its own logger tree an INFO sink. Give
+# this one bounded event stream its own stderr sink instead of raising the root
+# logger (and every application dependency) to INFO. The guard keeps module
+# reloads and embedding applications that already configured this exact logger
+# from adding duplicate handlers.
 _mcp_activation_log = logging.getLogger("seiche.mcp.activation")
+_mcp_activation_log.setLevel(logging.INFO)
+_mcp_activation_log.propagate = False
+if not _mcp_activation_log.handlers:
+    _mcp_activation_handler = logging.StreamHandler()
+    _mcp_activation_handler.setFormatter(logging.Formatter("%(message)s"))
+    _mcp_activation_log.addHandler(_mcp_activation_handler)
 
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
 # here produced duplicate Access-Control-Allow-Origin headers that browsers
@@ -1511,7 +1522,8 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
             "result": {"content": [{"type": "text", "text": text}], "isError": True}}
 
 
-def _log_mcp_activation(message: Any, response: Any, public: bool) -> None:
+def _log_mcp_activation(message: Any, response: Any,
+                        surface: str, origin: str) -> None:
     """Record the conversion event without caller data or tool arguments."""
     if not (isinstance(message, dict)
             and message.get("method") == "tools/call"):
@@ -1524,9 +1536,8 @@ def _log_mcp_activation(message: Any, response: Any, public: bool) -> None:
     failed = (not isinstance(response, dict) or "error" in response
               or (isinstance(result, dict) and result.get("isError") is True))
     _mcp_activation_log.info(
-        "mcp_activation product=seiche surface=%s tool=%s outcome=%s",
-        "public" if public else "subscriber", tool,
-        "error" if failed else "success",
+        "mcp_activation product=seiche surface=%s tool=%s outcome=%s origin=%s",
+        surface, tool, "error" if failed else "success", origin,
     )
 
 
@@ -1564,6 +1575,7 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     # were. What the board gate must never decide is who may read the
     # proprietary derived engines.
     public = ident is None
+    origin = "edge" if request.headers.get("X-Forwarded-For") else "direct"
     ip = _client_ip(request)
 
     burst_key = ident["username"] if ident else ip
@@ -1636,6 +1648,7 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             except Exception:
                 resp = mcp_server._error(single.get("id"),
                                          mcp_server.INTERNAL_ERROR, "internal error")
+            _log_mcp_activation(single, resp, "paid", origin)
             return JSONResponse(resp, headers={
                 "X-PAYMENT-RESPONSE": x402.settle_header(receipt)})
 
@@ -1661,7 +1674,8 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             # dispatch is defensive, but never let one bad message 500 the batch.
             mid = m.get("id") if isinstance(m, dict) else None
             resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
-        _log_mcp_activation(m, resp, public)
+        _log_mcp_activation(
+            m, resp, "public" if public else "subscriber", origin)
         if (resp is not None and x402.enabled() and public
                 and isinstance(m, dict) and m.get("method") == "tools/list"):
             # advertise the payable tools to wallet-holding agents

@@ -26,11 +26,13 @@ surfaces. It treats traction as repeated useful answers, not endpoint traffic.
 Every backend emits a privacy-safe line with the same shape:
 
 ```text
-mcp_activation product=<product> surface=<public|subscriber> tool=<tool> outcome=<success|error>
+mcp_activation product=<product> surface=<public|subscriber|paid> tool=<tool> outcome=<success|error> origin=<edge|direct|unknown>
 ```
 
 No prompt, argument, IP, bearer token, institution name or caller key belongs
-in this event.
+in this event. `origin` separates Caddy-edge demand from loopback product
+integration without retaining a caller identity; SDK transports that cannot
+expose this use `unknown`.
 
 ## Weekly scorecard
 
@@ -77,7 +79,7 @@ Example server-side checks:
 
 ```bash
 journalctl -u seiche-api --since today | rg 'mcp_activation'
-journalctl -u undertow-mcp --since today | rg 'mcp: activation'
+journalctl -u undertow-mcp --since today | rg 'mcp_activation'
 ```
 
 LiquiLens runs on Railway; filter its service logs for

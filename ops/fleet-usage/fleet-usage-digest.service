@@ -1,0 +1,12 @@
+[Unit]
+Description=Send the privacy-safe fleet usage digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/fleet-usage/usage_digest.py
+User=root
+Group=root
+PrivateTmp=true
+NoNewPrivileges=true

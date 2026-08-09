@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily privacy-safe fleet usage digest
+
+[Timer]
+OnCalendar=*-*-* 06:45:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+Unit=fleet-usage-digest.service
+
+[Install]
+WantedBy=timers.target

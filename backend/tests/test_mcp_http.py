@@ -10,7 +10,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from seiche import api, mcp_server, usage
+from seiche import api, mcp_server, usage, x402
 
 
 @pytest.fixture()
@@ -96,15 +96,91 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "public" in r.headers["cache-control"]
 
 
-def test_successful_tool_call_emits_privacy_safe_activation_log(client, caplog):
-    with caplog.at_level(logging.INFO, logger="seiche.mcp.activation"):
+def test_successful_tool_call_emits_privacy_safe_activation_log(
+        client, caplog, monkeypatch):
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
         r = client.post("/mcp", json=_rpc(
-            "tools/call", {"name": "data_health", "arguments": {}}))
+            "tools/call", {"name": "data_health", "arguments": {}}),
+            headers={
+                "Authorization": "Bearer private-token-marker",
+                "X-Forwarded-For": "198.51.100.24",
+            })
     assert r.status_code == 200
-    line = next(record.getMessage() for record in caplog.records
-                if "mcp_activation" in record.getMessage())
-    assert "product=seiche surface=public tool=data_health outcome=success" in line
-    assert "arguments" not in line and "ip:" not in line
+    record = next(record for record in caplog.records
+                  if "mcp_activation" in record.getMessage())
+    assert record.levelno == logging.INFO
+    assert record.getMessage() == (
+        "mcp_activation product=seiche surface=public "
+        "tool=data_health outcome=success origin=edge"
+    )
+
+
+def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
+    """The production event has a local sink; root can stay quiet."""
+    records = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    activation_log = api._mcp_activation_log
+    root_log = logging.getLogger()
+    assert any(isinstance(handler, logging.StreamHandler)
+               for handler in activation_log.handlers)
+    monkeypatch.setattr(root_log, "handlers", [])
+    monkeypatch.setattr(root_log, "level", logging.WARNING)
+    monkeypatch.setattr(activation_log, "handlers", [Capture()])
+
+    api._log_mcp_activation(
+        _rpc("tools/call", {"name": "data_health", "arguments": {}}),
+        {"jsonrpc": "2.0", "id": 1,
+         "result": {"content": [], "isError": False}},
+        "public", "direct",
+    )
+
+    assert activation_log.name == "seiche.mcp.activation"
+    assert activation_log.level == logging.INFO
+    assert activation_log.propagate is False
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
+    assert records[0].getMessage().startswith("mcp_activation product=seiche ")
+
+
+def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
+    monkeypatch.setenv(
+        "SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD")
+    monkeypatch.setattr(x402, "decode_payment", lambda header: {"payment": "safe"})
+    monkeypatch.setattr(x402, "verify", lambda payment, reqs: (True, ""))
+    monkeypatch.setattr(
+        x402, "settle",
+        lambda payment, reqs: (True, {"success": True, "transaction": "0xtx"}),
+    )
+    dispatched = []
+
+    def dispatch(message, public):
+        dispatched.append((message["params"]["name"], public))
+        return {"jsonrpc": "2.0", "id": message["id"],
+                "result": {"content": [], "isError": False}}
+
+    monkeypatch.setattr(mcp_server, "dispatch", dispatch)
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        r = client.post(
+            "/mcp",
+            json=_rpc("tools/call", {
+                "name": "funding_stress_forecast", "arguments": {}}),
+            headers={"X-PAYMENT": "private-payment-marker"},
+        )
+
+    assert r.status_code == 200
+    assert dispatched == [("funding_stress_forecast", False)]
+    events = [record.getMessage() for record in caplog.records
+              if "mcp_activation" in record.getMessage()]
+    assert events == [
+        "mcp_activation product=seiche surface=paid "
+        "tool=funding_stress_forecast outcome=success origin=direct"
+    ]
 
 
 def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
@@ -253,16 +329,21 @@ def test_non_billable_methods_are_not_metered(client):
     assert r.json()["used_today"] == 0        # tools/list is free
 
 
-def test_quota_exceeded_returns_upgrade_prompt(client, monkeypatch):
+def test_quota_exceeded_returns_upgrade_prompt(client, monkeypatch, caplog):
     monkeypatch.setattr(usage, "MCP_ANON_DAILY", 1)
+    monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
     call = _rpc("tools/call", {"name": "data_health", "arguments": {}})
-    first = client.post("/mcp", json=call)
-    assert first.json()["result"].get("isError") is not True
-    second = client.post("/mcp", json=call)
+    with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
+        first = client.post("/mcp", json=call)
+        assert first.json()["result"].get("isError") is not True
+        caplog.clear()
+        second = client.post("/mcp", json=call)
     res = second.json()["result"]
     assert res["isError"] is True
     assert "quota reached" in res["content"][0]["text"]
     assert "seiche.info" in res["content"][0]["text"]
+    assert not any("mcp_activation" in record.getMessage()
+                   for record in caplog.records)
 
 
 def test_unlimited_tier_has_no_remaining_header(client):
