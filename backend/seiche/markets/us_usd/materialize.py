@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from seiche.markets.base import CapabilityStatus
+from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.us_usd.pack import PACK
 from seiche.repository import get_repository
 
@@ -109,6 +110,7 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
         members["modelcourt"] = court_probability
 
     common = {
+        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
         "market_id": PACK.market_id,
         "monetary_area_id": PACK.monetary_area_id,
         "jurisdiction_codes": list(PACK.jurisdiction_codes),
@@ -118,7 +120,6 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
         "calibration_id": PACK.calibration_id,
         "data_coverage": {
             "component_coverage_pct": composite.get("coverage_pct"),
-            "canonical_observations": get_repository().canonical_coverage(PACK.market_id),
         },
         "capabilities": capabilities,
         "missing_capabilities": missing,

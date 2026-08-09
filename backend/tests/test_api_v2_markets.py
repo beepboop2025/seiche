@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
-from fastapi import Response
+import pytest
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from seiche import api, assemble, store
@@ -20,6 +21,23 @@ from seiche.domain.observation import (
     evidence_sha256,
 )
 from seiche.markets.us_usd.materialize import seal_legacy_snapshot
+
+
+def _request(ip: str = "127.0.0.1") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/v2/markets/US-USD/series",
+            "raw_path": b"/api/v2/markets/US-USD/series",
+            "query_string": b"",
+            "headers": [],
+            "client": (ip, 12345),
+            "server": ("testserver", 80),
+        }
+    )
 
 
 def _legacy_snapshot() -> dict:
@@ -131,6 +149,7 @@ def test_market_without_snapshot_is_explicitly_unavailable(tmp_path, monkeypatch
     payload = json.loads(response.body)
     assert payload["status"] == "UNAVAILABLE"
     assert payload.get("reading") is None
+    assert payload["data_coverage"] == {"canonical_observations": []}
     assert payload["faults"]
 
 
@@ -209,12 +228,16 @@ def test_market_series_redacts_licensed_values_but_keeps_evidence_metadata(
         ]
     )
 
-    payload = api.market_series_v2("US-USD", Response())
+    payload = api.market_series_v2("US-USD", _request(), Response())
     record = payload["observations"][0]
 
     assert record["value"] is None
     assert record["value_status"] == "REDACTED_BY_LICENCE"
     assert record["evidence_hash"] == evidence_sha256("licensed row")
+    assert (
+        "no publicly redistributable observation values are available"
+        in payload["evidence_eligibility"]["reasons"]
+    )
 
 
 def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
@@ -233,9 +256,9 @@ def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
         ]
     )
 
-    first = api.market_series_v2("US-USD", Response(), n=2)
+    first = api.market_series_v2("US-USD", _request(), Response(), n=2)
     second = api.market_series_v2(
-        "US-USD", Response(), n=2, cursor=first["next_cursor"]
+        "US-USD", _request(), Response(), n=2, cursor=first["next_cursor"]
     )
 
     assert [item["value"] for item in first["observations"]] == ["501", "502"]
@@ -269,7 +292,7 @@ def test_market_series_omits_pack_prohibited_rows_and_all_row_metadata(
     )
     store.save_observations([secret])
 
-    payload = api.market_series_v2("IN-INR", Response())
+    payload = api.market_series_v2("IN-INR", _request(), Response())
     serialized = json.dumps(payload, sort_keys=True)
 
     assert payload["observations"] == []
@@ -299,7 +322,7 @@ def test_latest_prohibited_revision_cannot_reveal_old_allowed_vintage(
     )
     store.save_observations([old, prohibited])
 
-    payload = api.market_series_v2("US-USD", Response())
+    payload = api.market_series_v2("US-USD", _request(), Response())
     serialized = json.dumps(payload, sort_keys=True)
 
     assert payload["observations"] == []
@@ -320,9 +343,51 @@ def test_market_series_quality_reason_is_explicit(tmp_path, monkeypatch) -> None
         ]
     )
 
-    eligibility = api.market_series_v2("US-USD", Response())["evidence_eligibility"]
+    eligibility = api.market_series_v2(
+        "US-USD", _request(), Response()
+    )["evidence_eligibility"]
 
     assert eligibility["eligible"] is False
     assert "observation quality is not evidence-eligible: provisional" in eligibility[
         "reasons"
     ]
+
+
+def test_market_series_rate_limit_is_per_client_ip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "rate-limit-v2.sqlite")
+    monkeypatch.setattr(api, "_market_series_limiter", api._RateLimiter(1))
+
+    api.market_series_v2("US-USD", _request("203.0.113.8"), Response())
+
+    with pytest.raises(HTTPException) as exc_info:
+        api.market_series_v2("US-USD", _request("203.0.113.8"), Response())
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.headers == {"Retry-After": "60"}
+
+    # A separate client remains within its own allowance.
+    api.market_series_v2("US-USD", _request("203.0.113.9"), Response())
+
+
+def test_unmarked_snapshot_is_not_exposed_as_public_projection(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "unmarked-v2.sqlite")
+    cutoff = datetime(2026, 8, 9, tzinfo=UTC)
+    store.seal_market_snapshot(
+        market_id="IN-INR",
+        product="gauge",
+        event_cutoff=cutoff,
+        knowledge_cutoff=cutoff,
+        calibration_id="test-unmarked",
+        evidence_eligible=False,
+        payload={
+            "schema": "seiche.local-gauge.v2",
+            "status": "READY",
+            "source": "tenant-secret-source",
+        },
+    )
+
+    response = api.market_gauge_v2("IN-INR", Response())
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 503
+    assert "tenant-secret-source" not in response.body.decode()
