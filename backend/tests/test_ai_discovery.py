@@ -103,19 +103,22 @@ def test_public_historical_copy_keeps_the_vintage_boundary_attached():
 
     The forward PIT ledger is genuinely as-published. Time Machine and PROOF
     are a different evidence class: chronological transforms over final/current
-    source vintages. This checks the generated pages and the interactive copy so
-    either deployment path fails if the distinction is lost.
+    source vintages. This checks the canonical page generators and interactive
+    copy before ignored build artifacts exist, so either deployment path fails
+    if the distinction is lost.
     """
     paths = [
         PUBLIC / "guide.html",
-        PUBLIC / "llms.txt",
-        PUBLIC / "methodology.html",
-        PUBLIC / "skeptic.html",
+        ROOT / "backend" / "seiche" / "methodology.py",
+        ROOT / "backend" / "seiche" / "skeptic.py",
         ROOT / "frontend" / "src" / "tabs" / "TimeMachine.tsx",
         ROOT / "frontend" / "src" / "tabs" / "Proof.tsx",
         ROOT / "frontend" / "src" / "Wrecks.tsx",
     ]
-    text = "\n".join(path.read_text() for path in paths)
+    text = "\n".join([
+        *(path.read_text() for path in paths),
+        dispatch_pages._LLMS_PREAMBLE,
+    ])
     lowered = text.lower()
     for stale_claim in (
         "replay the board as it stood",
