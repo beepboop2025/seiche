@@ -186,11 +186,12 @@ def post_channel(text: str, ref: str) -> bool:
         return False
     desk_url = f"{BOT_URL}?start={urllib.parse.quote(ref, safe='')}"
     body = text + (
-        f"\n\n<i>Seiche is the lab's free plumbing desk. Open it for the live "
-        f"gauge, forward odds and historical diagnostic: {desk_url}</i>"
+        f"\n\n<i>Seiche is the lab's free plumbing desk. Open and follow it "
+        f"for the live gauge, forward odds and historical diagnostic: "
+        f"{desk_url}</i>"
     )
     keyboard = [
-        [{"text": "📈 Open the Seiche desk",
+        [{"text": "📈 Open + follow Seiche",
           "url": desk_url}],
         [{"text": "🏦 Bank failure radar",
           "url": f"https://t.me/LiquiLens_bot?start={ref}"},

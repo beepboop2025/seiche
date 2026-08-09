@@ -201,7 +201,16 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
     assert bot.post_channel("A served funding read.", "lab_alert") is True
     _, text, keyboard = sent[0]
     destination = keyboard[0][0]["url"]
+    subscribing_buttons = [
+        button
+        for row in keyboard
+        for button in row
+        if button.get("url", "").startswith(f"{bot.BOT_URL}?start=")
+    ]
 
     assert destination == f"{bot.BOT_URL}?start=lab_alert"
     assert destination in text
     assert destination.startswith(bot.BOT_URL)
+    assert subscribing_buttons
+    assert all("follow" in button["text"].lower()
+               for button in subscribing_buttons)
