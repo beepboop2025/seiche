@@ -315,7 +315,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
     caddy = CADDYFILE.read_text()
 
-    assert "postgresql:///seiche?host=/var/run/postgresql" in installer
+    assert 'psql -tAc "SHOW port"' in installer
+    assert "host=/var/run/postgresql&port=$POSTGRES_PORT" in installer
+    assert "could not resolve the PostgreSQL cluster port" in installer
+    assert 'connection.execute("SELECT 1")' in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
