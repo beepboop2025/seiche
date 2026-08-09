@@ -8,6 +8,7 @@ legacy mnemonic cache remains in ``seiche.store`` during the v1 migration.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import threading
@@ -44,6 +45,15 @@ class MarketRepository(Protocol):
         instrument_ids: Iterable[str] | None = None,
         event_time: str | datetime | None = None,
         event_time_from: str | datetime | None = None,
+    ) -> list[Observation]: ...
+
+    def load_observation_revisions_as_of(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
     ) -> list[Observation]: ...
 
     def load_observation_page(
@@ -87,7 +97,9 @@ class MarketRepository(Protocol):
         payload: object,
     ) -> str: ...
 
-    def load_latest_market_snapshot(self, market_id: str, product: str) -> dict | None: ...
+    def load_latest_market_snapshot(
+        self, market_id: str, product: str
+    ) -> dict | None: ...
 
     def load_market_snapshot_as_of(
         self,
@@ -127,6 +139,9 @@ class SQLiteMarketRepository:
     save_observations = staticmethod(store.save_observations)
     load_observations_as_of = staticmethod(store.load_observations_as_of)
     load_observation_revisions = staticmethod(store.load_observation_revisions)
+    load_observation_revisions_as_of = staticmethod(
+        store.load_observation_revisions_as_of
+    )
     load_observation_page = staticmethod(store.load_observation_page)
     latest_observation_hashes = staticmethod(store.latest_observation_hashes)
     canonical_coverage = staticmethod(store.canonical_coverage)
@@ -254,16 +269,26 @@ CREATE INDEX IF NOT EXISTS forward_records_chain
 
 
 def _utc(value: str | datetime) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
+    parsed = (
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if isinstance(value, str)
+        else value
+    )
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
     return parsed.astimezone(UTC).replace(microsecond=0)
 
 
-def _observation_values(observation: Observation) -> tuple[Any, ...]:
+def _observation_record_hash(observation: Observation) -> str:
     record = observation.to_record()
-    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    record_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    canonical = json.dumps(
+        record, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _observation_values(observation: Observation) -> tuple[Any, ...]:
+    record_hash = _observation_record_hash(observation)
     return (
         observation.market_id,
         observation.monetary_area_id,
@@ -303,9 +328,7 @@ class PostgresMarketRepository:
         try:
             import psycopg
         except ImportError as exc:  # pragma: no cover - deployment dependency
-            raise RuntimeError(
-                "PostgreSQL selected; install seiche[postgres]"
-            ) from exc
+            raise RuntimeError("PostgreSQL selected; install seiche[postgres]") from exc
         return psycopg.connect(self.dsn)
 
     def _ensure_schema(self) -> None:
@@ -386,7 +409,9 @@ class PostgresMarketRepository:
             params.append(_utc(event_time_from))
         role_values = tuple(role.value for role in roles) if roles is not None else ()
         if role_values:
-            predicates.append(f"semantic_role IN ({','.join(['%s'] * len(role_values))})")
+            predicates.append(
+                f"semantic_role IN ({','.join(['%s'] * len(role_values))})"
+            )
             params.extend(role_values)
         instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
         if instrument_ids is not None and not instrument_values:
@@ -412,7 +437,7 @@ class PostgresMarketRepository:
                                 revision_id DESC
                      ) AS vintage_rank
                 FROM canonical_observations
-               WHERE {' AND '.join(predicates)}
+               WHERE {" AND ".join(predicates)}
             )
             SELECT {selected} FROM ranked
              WHERE vintage_rank=1
@@ -473,6 +498,57 @@ class PostgresMarketRepository:
                     record["jurisdiction_codes"]
                 )
             observations.append(Observation.from_record(record))
+        return observations
+
+    def load_observation_revisions_as_of(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        event_time: str | datetime | None = None,
+        roles: Iterable[SemanticRole] | None = None,
+    ) -> list[Observation]:
+        """Return every integrity-checked revision knowable by the cutoff."""
+
+        self._ensure_schema()
+        predicates = ["market_id=%s", "knowledge_time<=%s"]
+        params: list[Any] = [market_id.upper(), _utc(knowledge_time)]
+        if event_time is not None:
+            predicates.append("event_time<=%s")
+            params.append(_utc(event_time))
+        role_values = tuple(role.value for role in roles) if roles is not None else ()
+        if role_values:
+            predicates.append(
+                f"semantic_role IN ({','.join(['%s'] * len(role_values))})"
+            )
+            params.extend(role_values)
+        selected = ",".join(_OBSERVATION_INSERT_COLUMNS)
+        query = f"""
+            SELECT {selected}
+              FROM canonical_observations
+             WHERE {" AND ".join(predicates)}
+             ORDER BY event_time, instrument_id, knowledge_time,
+                      source_publication_time, revision_id, source
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        observations: list[Observation] = []
+        for row in rows:
+            record = dict(
+                zip(_OBSERVATION_COLUMNS, row[: len(_OBSERVATION_COLUMNS)], strict=True)
+            )
+            if isinstance(record["jurisdiction_codes"], str):
+                record["jurisdiction_codes"] = json.loads(
+                    record["jurisdiction_codes"]
+                )
+            observation = Observation.from_record(record)
+            stored_hash = row[len(_OBSERVATION_COLUMNS)]
+            expected_hash = _observation_record_hash(observation)
+            if not isinstance(stored_hash, str) or not hmac.compare_digest(
+                stored_hash, expected_hash
+            ):
+                raise ValueError("canonical observation record_hash mismatch")
+            observations.append(observation)
         return observations
 
     def load_observation_page(
@@ -736,7 +812,14 @@ class PostgresMarketRepository:
         )
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         identity = "|".join(
-            (market, product, event.isoformat(), knowledge.isoformat(), calibration_id, payload_hash)
+            (
+                market,
+                product,
+                event.isoformat(),
+                knowledge.isoformat(),
+                calibration_id,
+                payload_hash,
+            )
         )
         snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         with self._connect() as connection:
@@ -870,8 +953,16 @@ class PostgresMarketRepository:
                 params,
             ).fetchall()
         keys = (
-            "run_id", "market_id", "adapter_id", "status", "started_at",
-            "finished_at", "observations_written", "attempts", "next_due", "fault",
+            "run_id",
+            "market_id",
+            "adapter_id",
+            "status",
+            "started_at",
+            "finished_at",
+            "observations_written",
+            "attempts",
+            "next_due",
+            "fault",
         )
         output = []
         for row in rows:
@@ -912,7 +1003,9 @@ class PostgresMarketRepository:
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         chain_key = f"{market}|{product}"
         with self._connect() as connection:
-            connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (chain_key,))
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))", (chain_key,)
+            )
             existing = connection.execute(
                 "SELECT record_id FROM forward_validation_records WHERE snapshot_id=%s",
                 (snapshot_id,),

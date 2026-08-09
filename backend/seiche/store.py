@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta, timezone
@@ -212,16 +213,20 @@ _CANONICAL_COLUMNS = (
 )
 
 
-def _observation_row(observation: Observation) -> tuple[str | None, ...]:
-    record = observation.to_record()
-    record["jurisdiction_codes"] = ",".join(record["jurisdiction_codes"])
+def _observation_record_hash(observation: Observation) -> str:
     canonical = json.dumps(
         observation.to_record(),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     )
-    record_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _observation_row(observation: Observation) -> tuple[str | None, ...]:
+    record = observation.to_record()
+    record["jurisdiction_codes"] = ",".join(record["jurisdiction_codes"])
+    record_hash = _observation_record_hash(observation)
     return tuple(record[column] for column in _CANONICAL_COLUMNS) + (record_hash,)
 
 
@@ -271,6 +276,17 @@ def save_observations(observations: Iterable[Observation]) -> int:
 def _row_to_observation(row: sqlite3.Row | tuple) -> Observation:
     record = dict(zip(_CANONICAL_COLUMNS, row[: len(_CANONICAL_COLUMNS)], strict=True))
     return Observation.from_record(record)
+
+
+def _verified_row_to_observation(row: sqlite3.Row | tuple) -> Observation:
+    observation = _row_to_observation(row)
+    stored_hash = row[len(_CANONICAL_COLUMNS)]
+    expected_hash = _observation_record_hash(observation)
+    if not isinstance(stored_hash, str) or not hmac.compare_digest(
+        stored_hash, expected_hash
+    ):
+        raise ValueError("canonical observation record_hash mismatch")
+    return observation
 
 
 def load_observations_as_of(
@@ -368,6 +384,37 @@ def load_observation_revisions(
     with _lock, _conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_observation(row) for row in rows]
+
+
+def load_observation_revisions_as_of(
+    market_id: str,
+    knowledge_time: str | datetime,
+    *,
+    event_time: str | datetime | None = None,
+    roles: Iterable[SemanticRole] | None = None,
+) -> list[Observation]:
+    """Return every integrity-checked revision knowable by the cutoff."""
+
+    predicates = ["market_id=?", "knowledge_time<=?"]
+    params: list[str] = [market_id.upper(), _canonical_utc(knowledge_time)]
+    if event_time is not None:
+        predicates.append("event_time<=?")
+        params.append(_canonical_utc(event_time))
+    role_values = tuple(role.value for role in roles) if roles is not None else ()
+    if role_values:
+        predicates.append(f"semantic_role IN ({','.join('?' for _ in role_values)})")
+        params.extend(role_values)
+    selected = ",".join((*_CANONICAL_COLUMNS, "record_hash"))
+    query = f"""
+        SELECT {selected}
+          FROM canonical_observations
+         WHERE {" AND ".join(predicates)}
+         ORDER BY event_time, instrument_id, knowledge_time,
+                  source_publication_time, revision_id, source
+    """
+    with _lock, _conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_verified_row_to_observation(row) for row in rows]
 
 
 def load_observation_page(
@@ -741,8 +788,16 @@ def latest_collector_runs(market_id: str | None = None) -> list[dict]:
             params,
         ).fetchall()
     keys = (
-        "run_id", "market_id", "adapter_id", "status", "started_at",
-        "finished_at", "observations_written", "attempts", "next_due", "fault",
+        "run_id",
+        "market_id",
+        "adapter_id",
+        "status",
+        "started_at",
+        "finished_at",
+        "observations_written",
+        "attempts",
+        "next_due",
+        "fault",
     )
     return [dict(zip(keys, row, strict=True)) for row in rows]
 
@@ -953,7 +1008,11 @@ def save_blob(key: str, payload: object) -> None:
     with _lock, _conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO blobs VALUES (?,?,?)",
-            (key, datetime.now(timezone.utc).isoformat(timespec="seconds"), json.dumps(payload)),
+            (
+                key,
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                json.dumps(payload),
+            ),
         )
 
 

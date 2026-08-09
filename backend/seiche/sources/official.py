@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import calendar as civil_calendar
 import csv
+import hashlib
 import html
 import io
 import json
 import os
 import re
-from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -23,7 +23,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from seiche.domain.observation import QualityState
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.repository import MarketRepository
 from seiche.sources.canonical import (
@@ -32,7 +31,6 @@ from seiche.sources.canonical import (
     ParsedPoint,
     get_documents,
 )
-
 
 USER_AGENT = "Seiche/0.9 (+https://seiche.info; official-data research collector)"
 
@@ -149,7 +147,9 @@ def parse_ecb_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
                 event_day,
                 value,
                 raw_line.encode("utf-8"),
-                revision_id=(f"ecb:{revision}:{event_day.isoformat()}" if revision else None),
+                revision_id=(
+                    f"ecb:{revision}:{event_day.isoformat()}" if revision else None
+                ),
             )
         )
     if not points:
@@ -218,7 +218,12 @@ def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         if value is None:
             continue
         publication = None
-        if monthly is not None and update_day is not None and event_day.year == update_day.year and event_day.month == update_day.month - 1:
+        if (
+            monthly is not None
+            and update_day is not None
+            and event_day.year == update_day.year
+            and event_day.month == update_day.month - 1
+        ):
             publication = datetime.combine(
                 update_day,
                 datetime.min.time(),
@@ -300,7 +305,9 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     if not isinstance(rows, list):
         raise ValueError("NY Fed response has no refRates list")
     mapping = {
-        "percentPercentile25": "US.NYFED.SOFR_MEDIAN",
+        # ``percentRate`` is the published transaction-weighted median.  P25
+        # is a different distribution point and must never stand in for it.
+        "percentRate": "US.NYFED.SOFR_MEDIAN",
         "percentPercentile99": "US.NYFED.SOFR_P99",
         "volumeInBillions": "US.NYFED.SOFR_VOLUME",
     }
@@ -316,13 +323,27 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             value = _number(row.get(field))
             if value is None:
                 continue
+            row_evidence = _row_evidence(field, row)
+            revision_token = re.sub(
+                r"[^A-Za-z0-9._-]+", "-", revision or "unrevised"
+            ).strip("-")
+            content_token = hashlib.sha256(row_evidence).hexdigest()[:16]
             points.append(
                 ParsedPoint(
                     instrument,
                     event_day,
                     value,
-                    _row_evidence(field, row),
-                    revision_id=(f"nyfed:{revision}:{field}" if revision else None),
+                    row_evidence,
+                    # Bind the semantic source field and event explicitly even
+                    # when upstream supplies no revision indicator.  This lets
+                    # downstream profiles prove that corrected median rows came
+                    # from percentRate while retaining the former P25-derived
+                    # rows as ordinary earlier revisions in the append-only
+                    # canonical store.
+                    revision_id=(
+                        f"nyfed:{field}:{event_day.isoformat()}:"
+                        f"{revision_token or 'unrevised'}-{content_token}"
+                    ),
                 )
             )
     if not points:
@@ -408,7 +429,9 @@ def _workbook(document: FetchedDocument):
     try:
         import openpyxl
     except ImportError as exc:  # pragma: no cover - deployment extra
-        raise RuntimeError("official workbook adapter needs seiche[collectors]") from exc
+        raise RuntimeError(
+            "official workbook adapter needs seiche[collectors]"
+        ) from exc
     return openpyxl.load_workbook(
         io.BytesIO(document.payload),
         read_only=True,
@@ -418,13 +441,17 @@ def _workbook(document: FetchedDocument):
 
 def _workbook_series_rows(document: FetchedDocument) -> tuple[list[str], list[tuple]]:
     workbook = _workbook(document)
-    worksheet = workbook["Data"] if "Data" in workbook.sheetnames else workbook.worksheets[0]
+    worksheet = (
+        workbook["Data"] if "Data" in workbook.sheetnames else workbook.worksheets[0]
+    )
     series_ids: list[str] | None = None
     rows: list[tuple] = []
     for values in worksheet.iter_rows(values_only=True):
         row = tuple(values)
         if row and str(row[0]).strip().lower() == "series id":
-            series_ids = [str(value).strip() if value is not None else "" for value in row]
+            series_ids = [
+                str(value).strip() if value is not None else "" for value in row
+            ]
             continue
         if series_ids is not None and row and isinstance(row[0], (date, datetime)):
             rows.append(row)
@@ -690,7 +717,9 @@ def parse_rbi_html(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         return tuple(points)
 
     event_match = re.search(r"Money Market Operations as on\s+([^<]+)</b>", text, re.I)
-    event_day = _date(_html_text(event_match.group(1)), "%B %d, %Y") if event_match else None
+    event_day = (
+        _date(_html_text(event_match.group(1)), "%B %d, %Y") if event_match else None
+    )
     if event_day is None:
         raise ValueError("RBI page has no money-market event date")
 
@@ -714,7 +743,8 @@ def parse_rbi_html(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     add_from_row("GovernmentIndiaSurplusCashBalance", 2, "IN.GOVERNMENT.CASH_BALANCE")
 
     facility_rows = [
-        found for row_id in ("MSF3", "SDF2")
+        found
+        for row_id in ("MSF3", "SDF2")
         if (found := _html_row_by_id(text, row_id)) is not None
     ]
     amounts = [_number(cells[4]) for cells, _ in facility_rows if len(cells) > 4]
@@ -758,7 +788,7 @@ def parse_rbnz(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
             for instrument, (needle, _) in mapping.items():
                 if needle in normalized:
                     columns[index] = instrument
-        for row in rows[header_index + 1:]:
+        for row in rows[header_index + 1 :]:
             if not row:
                 continue
             event_day = _date(row[0])
@@ -871,7 +901,9 @@ def build_official_adapters(
     start = configured_start if backfill else recent_start
     adapters: list[FunctionalCanonicalAdapter] = []
 
-    def add(market_id: str, adapter_id: str, source: str, fetcher, parser, timeout=60.0):
+    def add(
+        market_id: str, adapter_id: str, source: str, fetcher, parser, timeout=60.0
+    ):
         adapters.append(
             FunctionalCanonicalAdapter(
                 pack=markets.get(market_id),
@@ -912,7 +944,13 @@ def build_official_adapters(
     async def fetch_fred_weekly(client):
         return await get_documents(
             client,
-            (("US.FED.RESERVE_BALANCES", fred_base, {"id": "WRESBAL", "cosd": start.isoformat()}),),
+            (
+                (
+                    "US.FED.RESERVE_BALANCES",
+                    fred_base,
+                    {"id": "WRESBAL", "cosd": start.isoformat()},
+                ),
+            ),
         )
 
     add("US-USD", "fred_daily", "fred", fetch_fred_daily, parse_fred_csv)
@@ -922,11 +960,13 @@ def build_official_adapters(
         end = now.date().isoformat()
         return await get_documents(
             client,
-            ((
-                "nyfed_secured_rates",
-                "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
-                {"startDate": start.isoformat(), "endDate": end},
-            ),),
+            (
+                (
+                    "nyfed_secured_rates",
+                    "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+                    {"startDate": start.isoformat(), "endDate": end},
+                ),
+            ),
         )
 
     async def fetch_nyfed_facilities(client):
@@ -937,15 +977,23 @@ def build_official_adapters(
         count = 500 if backfill else 120
         return await get_documents(
             client,
-            ((
-                "nyfed_repo_operations",
-                f"https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json",
-                None,
-            ),),
+            (
+                (
+                    "nyfed_repo_operations",
+                    f"https://markets.newyorkfed.org/api/rp/repo/all/results/last/{count}.json",
+                    None,
+                ),
+            ),
         )
 
     add("US-USD", "nyfed_rates", "nyfed_rates", fetch_nyfed_rates, parse_nyfed_rates)
-    add("US-USD", "nyfed_facilities", "nyfed_facilities", fetch_nyfed_facilities, parse_nyfed_facilities)
+    add(
+        "US-USD",
+        "nyfed_facilities",
+        "nyfed_facilities",
+        fetch_nyfed_facilities,
+        parse_nyfed_facilities,
+    )
 
     async def fetch_fiscaldata(client):
         uri = (
@@ -969,9 +1017,16 @@ def build_official_adapters(
             response = await client.get(uri, params={**common, "page[number]": page})
             response.raise_for_status()
             payload = response.json()
-            total_pages = min(int((payload.get("meta") or {}).get("total-pages", 1)), 20)
+            total_pages = min(
+                int((payload.get("meta") or {}).get("total-pages", 1)), 20
+            )
             documents.append(
-                FetchedDocument(str(response.url), "application/json", response.content, f"tga-page-{page}")
+                FetchedDocument(
+                    str(response.url),
+                    "application/json",
+                    response.content,
+                    f"tga-page-{page}",
+                )
             )
             page += 1
         return tuple(documents)
@@ -993,27 +1048,32 @@ def build_official_adapters(
                     for instrument, remote in series.items()
                 ),
             )
+
         return fetch
 
     add(
         "EA-EUR",
         "ecb_benchmark",
         "ecb_benchmark",
-        ecb_fetcher({
-            "EA.ECB.ESTR": "EST/B.EU000A2X2A25.WT",
-            "EA.ECB.ESTR_VOLUME": "EST/B.EU000A2X2A25.TT",
-        }),
+        ecb_fetcher(
+            {
+                "EA.ECB.ESTR": "EST/B.EU000A2X2A25.WT",
+                "EA.ECB.ESTR_VOLUME": "EST/B.EU000A2X2A25.TT",
+            }
+        ),
         parse_ecb_csv,
     )
     add(
         "EA-EUR",
         "ecb_policy",
         "ecb_policy",
-        ecb_fetcher({
-            "EA.ECB.DFR": "FM/D.U2.EUR.4F.KR.DFR.LEV",
-            "EA.ECB.MRO": "FM/D.U2.EUR.4F.KR.MRR_FR.LEV",
-            "EA.ECB.MLF": "FM/D.U2.EUR.4F.KR.MLFR.LEV",
-        }),
+        ecb_fetcher(
+            {
+                "EA.ECB.DFR": "FM/D.U2.EUR.4F.KR.DFR.LEV",
+                "EA.ECB.MRO": "FM/D.U2.EUR.4F.KR.MRR_FR.LEV",
+                "EA.ECB.MLF": "FM/D.U2.EUR.4F.KR.MLFR.LEV",
+            }
+        ),
         parse_ecb_csv,
     )
     add(
@@ -1024,27 +1084,48 @@ def build_official_adapters(
         parse_ecb_csv,
     )
 
-    boe_base = "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp"
+    boe_base = (
+        "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp"
+    )
 
     def boe_fetcher(instrument: str, code: str):
         async def fetch(client):
             return await get_documents(
                 client,
-                ((instrument, boe_base, {
-                    "csv.x": "yes",
-                    "Datefrom": start.strftime("%d/%b/%Y"),
-                    "Dateto": "now",
-                    "SeriesCodes": code,
-                    "CSVF": "TN",
-                    "UsingCodes": "Y",
-                    "VPD": "Y",
-                    "VFD": "N",
-                }),),
+                (
+                    (
+                        instrument,
+                        boe_base,
+                        {
+                            "csv.x": "yes",
+                            "Datefrom": start.strftime("%d/%b/%Y"),
+                            "Dateto": "now",
+                            "SeriesCodes": code,
+                            "CSVF": "TN",
+                            "UsingCodes": "Y",
+                            "VPD": "Y",
+                            "VFD": "N",
+                        },
+                    ),
+                ),
             )
+
         return fetch
 
-    add("UK-GBP", "boe_sonia", "boe_sonia", boe_fetcher("GB.BOE.SONIA", "IUDSOIA"), parse_boe_csv)
-    add("UK-GBP", "boe_policy", "boe_policy", boe_fetcher("GB.BOE.BANK_RATE", "IUDBEDR"), parse_boe_csv)
+    add(
+        "UK-GBP",
+        "boe_sonia",
+        "boe_sonia",
+        boe_fetcher("GB.BOE.SONIA", "IUDSOIA"),
+        parse_boe_csv,
+    )
+    add(
+        "UK-GBP",
+        "boe_policy",
+        "boe_policy",
+        boe_fetcher("GB.BOE.BANK_RATE", "IUDBEDR"),
+        parse_boe_csv,
+    )
 
     rba_f1 = "https://www.rba.gov.au/statistics/tables/xls/f01d.xlsx"
     rba_a2 = "https://www.rba.gov.au/statistics/tables/xls/a02hist.xlsx"
@@ -1112,12 +1193,10 @@ def build_official_adapters(
                     "startDate": chunk_start.isoformat(),
                     "endDate": chunk_end.isoformat(),
                 },
-                headers={
-                    "Referer": "https://www.chinamoney.com.cn/english/bmkshibor/"
-                },
+                headers={"Referer": "https://www.chinamoney.com.cn/english/bmkshibor/"},
             )
             shibor.raise_for_status()
-            records = (shibor.json().get("records") or [])
+            records = shibor.json().get("records") or []
             if records:
                 documents.append(
                     FetchedDocument(
@@ -1134,12 +1213,14 @@ def build_official_adapters(
     async def fetch_hkma(client):
         return await get_documents(
             client,
-            ((
-                "hkma_liquidity",
-                "https://api.hkma.gov.hk/public/market-data-and-statistics/"
-                "daily-monetary-statistics/daily-figures-interbank-liquidity",
-                {"pagesize": 1000},
-            ),),
+            (
+                (
+                    "hkma_liquidity",
+                    "https://api.hkma.gov.hk/public/market-data-and-statistics/"
+                    "daily-monetary-statistics/daily-figures-interbank-liquidity",
+                    {"pagesize": 1000},
+                ),
+            ),
         )
 
     add("HK-HKD", "hkma_official", "hkma_official", fetch_hkma, parse_hkma_json)
@@ -1148,7 +1229,11 @@ def build_official_adapters(
         return await get_documents(
             client,
             (
-                ("rbi_mmo", "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx/Statistics.aspx", None),
+                (
+                    "rbi_mmo",
+                    "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx/Statistics.aspx",
+                    None,
+                ),
                 ("rbi_home", "https://www.rbi.org.in/", None),
             ),
         )
@@ -1168,14 +1253,43 @@ def build_official_adapters(
         async def fetch(client):
             response = await client.get(rbnz_xlsx)
             if response.is_success:
-                return (FetchedDocument(str(response.url), response.headers.get("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").split(";", 1)[0], response.content, label),)
+                return (
+                    FetchedDocument(
+                        str(response.url),
+                        response.headers.get(
+                            "content-type",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ).split(";", 1)[0],
+                        response.content,
+                        label,
+                    ),
+                )
             fallback = await client.get(rbnz_page)
             fallback.raise_for_status()
-            return (FetchedDocument(str(fallback.url), "text/html", fallback.content, label),)
+            return (
+                FetchedDocument(
+                    str(fallback.url), "text/html", fallback.content, label
+                ),
+            )
+
         return fetch
 
-    add("NZ-NZD", "rbnz_policy", "rbnz_policy", rbnz_fetcher("rbnz_policy"), parse_rbnz, 90)
-    add("NZ-NZD", "rbnz_wholesale", "rbnz_wholesale", rbnz_fetcher("rbnz_wholesale"), parse_rbnz, 90)
+    add(
+        "NZ-NZD",
+        "rbnz_policy",
+        "rbnz_policy",
+        rbnz_fetcher("rbnz_policy"),
+        parse_rbnz,
+        90,
+    )
+    add(
+        "NZ-NZD",
+        "rbnz_wholesale",
+        "rbnz_wholesale",
+        rbnz_fetcher("rbnz_wholesale"),
+        parse_rbnz,
+        90,
+    )
 
     mas_start_year = configured_start.year if backfill else now.year
 

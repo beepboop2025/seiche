@@ -35,7 +35,8 @@ fi
 
 install -d -o seiche -g seiche -m 0750 \
     "$STATE_DIR" "$STATE_DIR/raw" "$STATE_DIR/normalized" "$STATE_DIR/backfill" \
-    "$STATE_DIR/validation"
+    "$STATE_DIR/validation" "$STATE_DIR/exports" \
+    "$STATE_DIR/exports/us-usd-funding-core-v1"
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 
 ENV_STAGE=$(mktemp "$ENV_DIR/.market.env.XXXXXX")
@@ -48,6 +49,7 @@ SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw
 SEICHE_NORMALIZED_DIR=$STATE_DIR/normalized
 SEICHE_BACKFILL_STATE_DIR=$STATE_DIR/backfill
 SEICHE_VALIDATION_DIR=$STATE_DIR/validation
+SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$STATE_DIR/exports/us-usd-funding-core-v1
 SEICHE_CANONICAL_START=2000-01-01
 EOF
 chown root:seiche "$ENV_STAGE"

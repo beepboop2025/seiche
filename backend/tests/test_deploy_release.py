@@ -345,6 +345,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
+    assert (
+        "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$STATE_DIR/exports/"
+        "us-usd-funding-core-v1"
+    ) in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "Restart=always" in worker
