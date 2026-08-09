@@ -117,6 +117,82 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
     assert older == [observation]
     assert end_cursor is None
 
+    pagination_instrument = "US.TEST.POSTGRES.VISIBLE_PAGE"
+    pagination_start = event + timedelta(days=10)
+
+    def pagination_observation(
+        event_offset: int,
+        *,
+        knowledge_offset: int,
+        revision_id: str,
+        redistribution_status: RedistributionStatus,
+    ) -> Observation:
+        row_event = pagination_start + timedelta(days=event_offset)
+        row_knowledge = pagination_start + timedelta(days=knowledge_offset, hours=9)
+        return replace(
+            observation,
+            instrument_id=pagination_instrument,
+            value=str(600 + event_offset),
+            event_time=row_event,
+            source_publication_time=row_knowledge - timedelta(hours=1),
+            knowledge_time=row_knowledge,
+            revision_id=revision_id,
+            evidence_hash=evidence_sha256(
+                f"postgres visible page {event_offset} {revision_id}"
+            ),
+            redistribution_status=redistribution_status,
+        )
+
+    older_allowed = [
+        pagination_observation(
+            offset,
+            knowledge_offset=offset,
+            revision_id=f"allowed-{offset}",
+            redistribution_status=RedistributionStatus.ALLOWED,
+        )
+        for offset in (0, 1)
+    ]
+    newest_prohibited = [
+        pagination_observation(
+            offset,
+            knowledge_offset=offset,
+            revision_id=f"prohibited-{offset}",
+            redistribution_status=RedistributionStatus.PROHIBITED,
+        )
+        for offset in (2, 3)
+    ]
+    newest_old_allowed = pagination_observation(
+        4,
+        knowledge_offset=4,
+        revision_id="allowed-4",
+        redistribution_status=RedistributionStatus.ALLOWED,
+    )
+    newest_revised_prohibited = pagination_observation(
+        4,
+        knowledge_offset=5,
+        revision_id="prohibited-4",
+        redistribution_status=RedistributionStatus.PROHIBITED,
+    )
+    repository.save_observations(
+        [
+            *older_allowed,
+            *newest_prohibited,
+            newest_old_allowed,
+            newest_revised_prohibited,
+        ]
+    )
+
+    visible_page, visible_cursor = repository.load_observation_page(
+        "US-USD",
+        pagination_start + timedelta(days=6),
+        limit=2,
+        instrument_ids=(pagination_instrument,),
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+    )
+    assert visible_page == list(reversed(older_allowed))
+    assert visible_cursor is None
+    assert newest_old_allowed not in visible_page
+
     run = {
         "market_id": "US-USD",
         "adapter_id": "postgres_integration",

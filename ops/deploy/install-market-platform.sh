@@ -82,6 +82,8 @@ systemctl enable seiche-market-worker.service
 # Submit both jobs together so the worker's After= relationship holds on the
 # first rollout. A failed source can make the backfill unit red, but cannot
 # prevent the persistent worker or other packs from starting afterward.
-systemctl start --no-block seiche-market-backfill.service seiche-market-worker.service
+if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then
+    systemctl start --no-block seiche-market-backfill.service seiche-market-worker.service
+fi
 
 echo "market platform: PostgreSQL on socket port $POSTGRES_PORT, evidence directories and collector units ready"

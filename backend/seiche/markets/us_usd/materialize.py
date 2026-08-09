@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from seiche.markets.base import CapabilityStatus
+from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.us_usd.pack import PACK
 from seiche.repository import get_repository
 
@@ -100,15 +101,13 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
     status = "READY" if composite.get("value") is not None else "UNAVAILABLE"
 
     members: dict[str, Any] = dict(stack.get("members_now") or {})
-    navigator = snapshot.get("navigator") or {}
-    if navigator.get("ok") and navigator.get("p_event_5bd") is not None:
-        members["navigator"] = navigator["p_event_5bd"]
-    court = deep.get("modelcourt") or {}
-    court_probability = (court.get("ensemble") or {}).get("p")
-    if court.get("ok") and court_probability is not None:
-        members["modelcourt"] = court_probability
+    # Navigator and ModelCourt consume the wider legacy context, including
+    # upstreams whose v2 policy is metadata-only. The compatibility bridge
+    # publishes only the stack's US funding members; global synthesis remains
+    # available on the legacy board but cannot inherit the filtered marker.
 
     common = {
+        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
         "market_id": PACK.market_id,
         "monetary_area_id": PACK.monetary_area_id,
         "jurisdiction_codes": list(PACK.jurisdiction_codes),
@@ -118,7 +117,6 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
         "calibration_id": PACK.calibration_id,
         "data_coverage": {
             "component_coverage_pct": composite.get("coverage_pct"),
-            "canonical_observations": get_repository().canonical_coverage(PACK.market_id),
         },
         "capabilities": capabilities,
         "missing_capabilities": missing,

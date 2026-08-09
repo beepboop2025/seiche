@@ -55,6 +55,7 @@ from seiche.config import (
 from seiche.domain.observation import QualityState, RedistributionStatus
 from seiche.markets.base import CapabilityStatus, PackSupportStatus
 from seiche.markets.calibration import get_local_calibration
+from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
 from seiche.repository import get_repository
 
@@ -174,6 +175,11 @@ def _v2_capabilities(pack) -> tuple[dict[str, str], list[dict[str, Any]]]:
 
 
 def _v2_collector_faults(pack) -> list[dict[str, Any]]:
+    public_adapters = {
+        adapter.adapter_id
+        for adapter in pack.source_adapters
+        if adapter.redistribution_status is not RedistributionStatus.PROHIBITED
+    }
     return [
         {
             "market_id": pack.market_id,
@@ -184,7 +190,7 @@ def _v2_collector_faults(pack) -> list[dict[str, Any]]:
             "next_due": item["next_due"],
         }
         for item in get_repository().latest_collector_runs(pack.market_id)
-        if item["status"] != "SUCCESS"
+        if item["status"] != "SUCCESS" and item["adapter_id"] in public_adapters
     ]
 
 
@@ -202,9 +208,10 @@ def _v2_unavailable(pack, product: str, reason: str) -> JSONResponse:
             "currency": pack.currency,
             "policy_regime": pack.policy_regime.value,
             "support_status": pack.support_status.value,
-            "data_coverage": {
-                "canonical_observations": get_repository().canonical_coverage(pack.market_id)
-            },
+            # Raw canonical coverage can include tenant-prohibited timestamps
+            # and counts. An unavailable public projection discloses no row
+            # metadata; the next filtered snapshot will carry safe coverage.
+            "data_coverage": {"canonical_observations": []},
             "capabilities": capabilities,
             "missing_capabilities": missing,
             "calibration_id": pack.calibration_id,
@@ -296,6 +303,11 @@ def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
             "observation quality is not evidence-eligible: "
             + ", ".join(ineligible_quality)
         )
+    if observations and not any(
+        _observation_value_is_public(pack, observation)
+        for observation in observations
+    ):
+        reasons.append("no publicly redistributable observation values are available")
     return {
         "eligible": not reasons,
         "reasons": reasons,
@@ -354,6 +366,7 @@ LOGIN_LOCKOUT_AFTER = 5         # consecutive failures before a backoff lockout
 LOGIN_LOCKOUT_SECONDS = 300     # how long that lockout lasts (5 min)
 ASK_RATE_LIMIT_PER_MIN = 20     # max desk-assistant (LLM) calls per IP / minute
 SUBSCRIBE_RATE_LIMIT_PER_MIN = 5  # a human types one address, not five a minute
+MARKET_SERIES_RATE_LIMIT_PER_MIN = 30
 
 
 class _RateLimiter:
@@ -408,6 +421,7 @@ _login_guard = _LoginGuard()
 _ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
 _mcp_limiter = _RateLimiter(MCP_RATE_LIMIT_PER_MIN)
 _subscribe_limiter = _RateLimiter(SUBSCRIBE_RATE_LIMIT_PER_MIN)
+_market_series_limiter = _RateLimiter(MARKET_SERIES_RATE_LIMIT_PER_MIN)
 
 
 def _client_ip(request: Request) -> str:
@@ -814,6 +828,47 @@ async def gauge(response: Response):
 # They never call assemble.snapshot(), so a cold API request cannot fan out to
 # every source or let one monetary area's collector block another area's read.
 
+def _public_adapter_ids(pack) -> frozenset[str]:
+    return frozenset(
+        adapter.adapter_id
+        for adapter in pack.source_adapters
+        if adapter.redistribution_status is not RedistributionStatus.PROHIBITED
+    )
+
+
+def _public_instrument_ids(pack) -> tuple[str, ...]:
+    adapter_ids = _public_adapter_ids(pack)
+    return tuple(
+        instrument.instrument_id
+        for instrument in pack.instruments
+        if instrument.source_adapter_id in adapter_ids
+    )
+
+
+def _observation_value_is_public(pack, observation) -> bool:
+    """Apply the most restrictive declared and per-row value policy."""
+
+    instrument = pack.instrument_map.get(observation.instrument_id)
+    if instrument is None:
+        return False
+    adapter = pack.adapter_map.get(instrument.source_adapter_id)
+    return (
+        adapter is not None
+        and adapter.redistribution_status is RedistributionStatus.ALLOWED
+        and observation.redistribution_status is RedistributionStatus.ALLOWED
+    )
+
+
+def _public_snapshot_payload(record: dict | None) -> dict | None:
+    if record is None:
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("visibility") != PUBLIC_SNAPSHOT_VISIBILITY:
+        return None
+    return payload
+
 
 @app.get("/api/v2/markets")
 def markets_v2(response: Response):
@@ -822,7 +877,8 @@ def markets_v2(response: Response):
     for pack in default_registry().list():
         summary = pack.summary()
         latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
-        payload = latest["payload"] if latest else None
+        payload = _public_snapshot_payload(latest)
+        latest = latest if payload is not None else None
         summary["latest_snapshot"] = (
             {
                 "snapshot_id": latest["snapshot_id"],
@@ -835,13 +891,9 @@ def markets_v2(response: Response):
             else None
         )
         summary["data_coverage"] = (
-            payload.get("data_coverage")
+            payload.get("data_coverage", {"canonical_observations": []})
             if payload
-            else {
-                "canonical_observations": get_repository().canonical_coverage(
-                    pack.market_id
-                )
-            }
+            else {"canonical_observations": []}
         )
         summary["evidence_eligibility"] = (
             payload.get("evidence_eligibility")
@@ -869,28 +921,30 @@ def markets_v2(response: Response):
 def market_overview_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
     record = get_repository().load_latest_market_snapshot(pack.market_id, "overview")
-    if record is None:
+    payload = _public_snapshot_payload(record)
+    if payload is None:
         return _v2_unavailable(
             pack,
             "market-overview",
-            "no sealed overview has been published by this market pack",
+            "no redistribution-filtered overview has been published by this market pack",
         )
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
-    return record["payload"]
+    return payload
 
 
 @app.get("/api/v2/markets/{market_id}/gauge")
 def market_gauge_v2(market_id: str, response: Response):
     pack = _market_pack(market_id)
     record = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
-    if record is None:
+    payload = _public_snapshot_payload(record)
+    if payload is None:
         return _v2_unavailable(
             pack,
             "local-gauge",
-            "no sealed gauge has been published by this market pack",
+            "no redistribution-filtered gauge has been published by this market pack",
         )
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
-    return record["payload"]
+    return payload
 
 
 @app.get("/api/v2/markets/{market_id}/asof/{timestamp}")
@@ -898,14 +952,15 @@ def market_asof_v2(market_id: str, timestamp: str, response: Response):
     pack = _market_pack(market_id)
     cutoff = _parse_v2_timestamp(timestamp)
     record = get_repository().load_market_snapshot_as_of(pack.market_id, "overview", cutoff)
-    if record is None:
+    payload = _public_snapshot_payload(record)
+    if payload is None:
         raise HTTPException(
             404,
-            f"no sealed {pack.market_id} overview known by {cutoff.isoformat()}",
+            f"no redistribution-filtered {pack.market_id} overview known by {cutoff.isoformat()}",
         )
     response.headers["Cache-Control"] = "public, max-age=86400"
     return {
-        **record["payload"],
+        **payload,
         "requested_knowledge_cutoff": cutoff.isoformat(),
         "sealed_snapshot_id": record["snapshot_id"],
     }
@@ -914,28 +969,23 @@ def market_asof_v2(market_id: str, timestamp: str, response: Response):
 @app.get("/api/v2/markets/{market_id}/series")
 def market_series_v2(
     market_id: str,
+    request: Request,
     response: Response,
     n: int = 1000,
     cursor: str | None = None,
 ):
     pack = _market_pack(market_id)
+    if not _market_series_limiter.allow(_client_ip(request)):
+        raise HTTPException(
+            429,
+            "market series request limit exceeded",
+            headers={"Retry-After": "60"},
+        )
     if not 1 <= n <= 5000:
         raise HTTPException(422, "n must be between 1 and 5000")
-    prohibited_adapters = {
-        adapter.adapter_id
-        for adapter in pack.source_adapters
-        if adapter.redistribution_status is RedistributionStatus.PROHIBITED
-    }
-    prohibited_instruments = {
-        instrument.instrument_id
-        for instrument in pack.instruments
-        if instrument.source_adapter_id in prohibited_adapters
-    }
-    public_instrument_ids = tuple(
-        instrument.instrument_id
-        for instrument in pack.instruments
-        if instrument.instrument_id not in prohibited_instruments
-    )
+    public_adapters = _public_adapter_ids(pack)
+    prohibited_adapters = set(pack.adapter_map) - set(public_adapters)
+    public_instrument_ids = _public_instrument_ids(pack)
     now = datetime.now(UTC).replace(microsecond=0)
     repository = get_repository()
     observations, next_page = repository.load_observation_page(
@@ -957,7 +1007,7 @@ def market_series_v2(
     # retain the endpoint's established chronological order within each page.
     for observation in reversed(observations):
         record = observation.to_record()
-        if observation.redistribution_status is not RedistributionStatus.ALLOWED:
+        if not _observation_value_is_public(pack, observation):
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"
         records.append(record)
@@ -994,7 +1044,7 @@ def market_series_v2(
     ]
     capabilities, missing = _v2_capabilities(pack)
     latest_gauge = repository.load_latest_market_snapshot(pack.market_id, "gauge")
-    gauge_payload = latest_gauge["payload"] if latest_gauge else {}
+    gauge_payload = _public_snapshot_payload(latest_gauge) or {}
     faults = [
         item
         for item in (gauge_payload.get("faults") or _v2_collector_faults(pack))
@@ -1035,8 +1085,9 @@ def market_series_v2(
 def global_tide_v2(response: Response):
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     record = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
-    if record is not None:
-        return record["payload"]
+    payload = _public_snapshot_payload(record)
+    if payload is not None:
+        return payload
     return {
         "schema": "seiche.global-tide.v2",
         "product": "GLOBAL_SEICHE_TIDE",
@@ -1072,7 +1123,9 @@ def coverage_v2(response: Response):
     for pack in default_registry().list():
         capabilities, missing = _v2_capabilities(pack)
         latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
-        payload = latest["payload"] if latest else {}
+        payload = _public_snapshot_payload(latest) or {}
+        latest = latest if payload else None
+        public_adapters = _public_adapter_ids(pack)
         markets.append(
             {
                 "market_id": pack.market_id,
@@ -1083,7 +1136,9 @@ def coverage_v2(response: Response):
                 "calibration_id": pack.calibration_id,
                 "capabilities": capabilities,
                 "missing_capabilities": missing,
-                "data_coverage": get_repository().canonical_coverage(pack.market_id),
+                "data_coverage": payload.get(
+                    "data_coverage", {"canonical_observations": []}
+                ),
                 "latest_snapshot": (
                     {
                         "event_cutoff": latest["event_cutoff"],
@@ -1112,31 +1167,34 @@ def coverage_v2(response: Response):
                         "expected_cadence": adapter.expected_cadence,
                     }
                     for adapter in pack.source_adapters
+                    if adapter.adapter_id in public_adapters
                 ],
             }
         )
     global_snapshot = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
+    global_payload = _public_snapshot_payload(global_snapshot)
+    global_snapshot = global_snapshot if global_payload is not None else None
     return {
         "schema": "seiche.coverage.v2",
         "markets": markets,
         "global_tide": (
-            global_snapshot["payload"].get("status", "UNAVAILABLE")
-            if global_snapshot
+            global_payload.get("status", "UNAVAILABLE")
+            if global_payload
             else "UNAVAILABLE"
         ),
         "global_tide_snapshot": (
             {
-                "event_cutoff": global_snapshot["payload"].get("event_cutoff"),
-                "knowledge_cutoff": global_snapshot["payload"].get(
+                "event_cutoff": global_payload.get("event_cutoff"),
+                "knowledge_cutoff": global_payload.get(
                     "knowledge_cutoff"
                 ),
-                "evidence_eligibility": global_snapshot["payload"].get(
+                "evidence_eligibility": global_payload.get(
                     "evidence_eligibility"
                 ),
-                "faults": global_snapshot["payload"].get("faults", []),
-                "stale_inputs": global_snapshot["payload"].get("stale_inputs", []),
+                "faults": global_payload.get("faults", []),
+                "stale_inputs": global_payload.get("stale_inputs", []),
             }
-            if global_snapshot
+            if global_payload
             else None
         ),
         "forward_validation_records": get_repository().forward_record_count(),

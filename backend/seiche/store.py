@@ -407,7 +407,6 @@ def load_observation_page(
             params.extend((before_event, before_event, before_instrument))
         return predicates, params
 
-    key_predicates, key_params = bounded_predicates("candidate")
     ranked_predicates, ranked_params = bounded_predicates("observation")
 
     selected = ",".join(_CANONICAL_COLUMNS)
@@ -424,21 +423,9 @@ def load_observation_page(
         visible_predicates.append(
             f"redistribution_status IN ({','.join('?' for _ in redistribution_values)})"
         )
-    params: list[str | int] = [
-        *key_params,
-        limit + 1,
-        *ranked_params,
-        *redistribution_values,
-    ]
+    params: list[str | int] = [*ranked_params, *redistribution_values, limit + 1]
     query = f"""
-        WITH candidate_keys AS (
-          SELECT candidate.event_time, candidate.instrument_id
-            FROM canonical_observations AS candidate
-           WHERE {' AND '.join(key_predicates)}
-           GROUP BY candidate.event_time, candidate.instrument_id
-           ORDER BY candidate.event_time DESC, candidate.instrument_id DESC
-           LIMIT ?
-        ), ranked AS (
+        WITH ranked AS (
           SELECT {ranked_selected},
                  ROW_NUMBER() OVER (
                    PARTITION BY observation.market_id,
@@ -450,21 +437,18 @@ def load_observation_page(
                             observation.source DESC
                  ) AS vintage_rank
             FROM canonical_observations AS observation
-            JOIN candidate_keys AS candidate
-              ON candidate.event_time=observation.event_time
-             AND candidate.instrument_id=observation.instrument_id
            WHERE {' AND '.join(ranked_predicates)}
         )
-        SELECT {selected}, (SELECT COUNT(*) FROM candidate_keys) AS candidate_count
+        SELECT {selected}
           FROM ranked
          WHERE {' AND '.join(visible_predicates)}
          ORDER BY event_time DESC, instrument_id DESC
+         LIMIT ?
     """
     with _lock, _conn() as conn:
         rows = conn.execute(query, params).fetchall()
     observations = [_row_to_observation(row) for row in rows]
-    candidate_count = int(rows[0][-1]) if rows else 0
-    has_more = candidate_count > limit
+    has_more = len(observations) > limit
     observations = observations[:limit]
     next_cursor = (
         (observations[-1].event_time, observations[-1].instrument_id)

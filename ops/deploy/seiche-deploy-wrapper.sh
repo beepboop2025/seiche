@@ -42,6 +42,10 @@ restore_market_services() {
     || systemctl start --no-block seiche-market-worker.service 2>/dev/null \
     || true
 }
+start_market_services() {
+  systemctl start --no-block \
+    seiche-market-backfill.service seiche-market-worker.service
+}
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
   2>/dev/null || true
 if ! runuser -u seiche -- bash /home/seiche/update.sh; then
@@ -103,7 +107,9 @@ deploy_market_platform() {
     echo "FAIL: market-platform installer missing: $installer"
     return 1
   fi
-  bash "$installer"
+  # Historical backfill can saturate the box. Install the units now, but keep
+  # ingestion stopped until the candidate API and repository pass health.
+  SEICHE_DEFER_MARKET_START=1 bash "$installer"
 }
 
 deploy_market_platform || {
@@ -114,6 +120,7 @@ deploy_market_platform || {
 
 if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   echo "already running ${AFTER:0:7} — checking edge config"
+  start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
   echo "already deployed ${AFTER:0:7} — application and edge match the repo"
@@ -178,6 +185,7 @@ fi
 
 if [ -n "$HEALTHY" ]; then
   printf '%s\n' "$AFTER" > "$STATE"
+  start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict

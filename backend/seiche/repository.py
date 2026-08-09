@@ -484,13 +484,15 @@ class PostgresMarketRepository:
             return predicates, params
 
         key_predicates, key_params = bounded_predicates("candidate")
-        ranked_predicates, ranked_params = bounded_predicates("observation")
+        latest_predicates, latest_params = bounded_predicates("observation")
 
-        selected = ",".join(_OBSERVATION_COLUMNS)
-        ranked_selected = ",".join(
+        selected = ",".join(
+            f"latest.{column}" for column in _OBSERVATION_COLUMNS
+        )
+        latest_selected = ",".join(
             f"observation.{column} AS {column}" for column in _OBSERVATION_COLUMNS
         )
-        visible_predicates = ["vintage_rank=1"]
+        visible_predicates: list[str] = []
         redistribution_values = tuple(
             status.value for status in redistribution_statuses
         ) if redistribution_statuses is not None else ()
@@ -498,14 +500,18 @@ class PostgresMarketRepository:
             if not redistribution_values:
                 return [], None
             visible_predicates.append(
-                f"redistribution_status IN ({','.join(['%s'] * len(redistribution_values))})"
+                "latest.redistribution_status IN "
+                f"({','.join(['%s'] * len(redistribution_values))})"
             )
         params: list[Any] = [
             *key_params,
-            limit + 1,
-            *ranked_params,
+            *latest_params,
             *redistribution_values,
+            limit + 1,
         ]
+        visible_where = (
+            f"WHERE {' AND '.join(visible_predicates)}" if visible_predicates else ""
+        )
         query = f"""
             WITH candidate_keys AS (
               SELECT candidate.event_time, candidate.instrument_id
@@ -513,29 +519,24 @@ class PostgresMarketRepository:
                WHERE {' AND '.join(key_predicates)}
                GROUP BY candidate.event_time, candidate.instrument_id
                ORDER BY candidate.event_time DESC, candidate.instrument_id DESC
-               LIMIT %s
-            ), ranked AS (
-              SELECT {ranked_selected},
-                     ROW_NUMBER() OVER (
-                       PARTITION BY observation.market_id,
-                                    observation.instrument_id,
-                                    observation.event_time
-                       ORDER BY observation.knowledge_time DESC,
-                                observation.source_publication_time DESC,
-                                observation.revision_id DESC,
-                                observation.source DESC
-                     ) AS vintage_rank
-                FROM canonical_observations AS observation
-                JOIN candidate_keys AS candidate
-                  ON candidate.event_time=observation.event_time
-                 AND candidate.instrument_id=observation.instrument_id
-               WHERE {' AND '.join(ranked_predicates)}
             )
-            SELECT {selected},
-                   (SELECT COUNT(*) FROM candidate_keys) AS candidate_count
-              FROM ranked
-             WHERE {' AND '.join(visible_predicates)}
-             ORDER BY event_time DESC, instrument_id DESC
+            SELECT {selected}
+              FROM candidate_keys AS candidate
+              CROSS JOIN LATERAL (
+                SELECT {latest_selected}
+                  FROM canonical_observations AS observation
+                 WHERE {' AND '.join(latest_predicates)}
+                   AND observation.event_time=candidate.event_time
+                   AND observation.instrument_id=candidate.instrument_id
+                 ORDER BY observation.knowledge_time DESC,
+                          observation.source_publication_time DESC,
+                          observation.revision_id DESC,
+                          observation.source DESC
+                 LIMIT 1
+              ) AS latest
+              {visible_where}
+             ORDER BY candidate.event_time DESC, candidate.instrument_id DESC
+             LIMIT %s
         """
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -547,8 +548,7 @@ class PostgresMarketRepository:
             if isinstance(record["jurisdiction_codes"], str):
                 record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
             observations.append(Observation.from_record(record))
-        candidate_count = int(rows[0][-1]) if rows else 0
-        has_more = candidate_count > limit
+        has_more = len(observations) > limit
         observations = observations[:limit]
         next_cursor = (
             (observations[-1].event_time, observations[-1].instrument_id)

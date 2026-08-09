@@ -20,6 +20,7 @@ from seiche.collectors import cadence_delta
 from seiche.domain.observation import (
     Observation,
     QualityState,
+    RedistributionStatus,
     SemanticRole,
     StalenessState,
 )
@@ -56,6 +57,10 @@ from seiche.repository import MarketRepository, get_repository
 
 GLOBAL_TIDE_CALIBRATION_ID = "global-tide-coupling-forward-v1"
 GLOBAL_TIDE_CALIBRATION_MATURITY = "FORWARD_ONLY"
+PUBLIC_SNAPSHOT_VISIBILITY = "PUBLIC_REDISTRIBUTION_FILTERED"
+DERIVABLE_REDISTRIBUTION = frozenset(
+    {RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY}
+)
 
 
 def _utc(value: datetime | None) -> datetime:
@@ -71,6 +76,83 @@ def _parse_time(value: str) -> datetime:
 
 def _latest_runs(repository: MarketRepository, market_id: str) -> list[dict]:
     return repository.latest_collector_runs(market_id)
+
+
+def _public_instrument_ids(
+    pack: MarketPack,
+    *,
+    role: SemanticRole | None = None,
+) -> tuple[str, ...]:
+    """Return instruments whose pack declarations permit public derivation."""
+
+    visible: list[str] = []
+    for instrument in pack.instruments:
+        if role is not None and instrument.semantic_role is not role:
+            continue
+        adapter = pack.adapter_map.get(instrument.source_adapter_id)
+        instrument_policy = getattr(instrument, "redistribution_status", None)
+        if adapter is None or adapter.redistribution_status not in DERIVABLE_REDISTRIBUTION:
+            continue
+        if (
+            instrument_policy is not None
+            and instrument_policy not in DERIVABLE_REDISTRIBUTION
+        ):
+            continue
+        visible.append(instrument.instrument_id)
+    return tuple(visible)
+
+
+def _public_observations(
+    pack: MarketPack,
+    observations: list[Observation],
+) -> list[Observation]:
+    """Project latest vintages into the public redistribution boundary.
+
+    This intentionally happens after latest-vintage selection. A prohibited
+    revision must suppress that revision, not reveal an older permitted value.
+    """
+
+    public_ids = frozenset(_public_instrument_ids(pack))
+    return [
+        observation
+        for observation in observations
+        if observation.instrument_id in public_ids
+        and observation.redistribution_status in DERIVABLE_REDISTRIBUTION
+    ]
+
+
+def _public_runs(pack: MarketPack, runs: list[dict]) -> list[dict]:
+    """Exclude collector metadata for adapters that cannot be redistributed."""
+
+    public_adapter_ids = {
+        adapter.adapter_id
+        for adapter in pack.source_adapters
+        if adapter.redistribution_status in DERIVABLE_REDISTRIBUTION
+    }
+    return [run for run in runs if run.get("adapter_id") in public_adapter_ids]
+
+
+def _public_coverage(observations: list[Observation]) -> list[dict[str, Any]]:
+    """Summarize only the already filtered latest public vintages."""
+
+    by_role: dict[SemanticRole, list[Observation]] = {}
+    for observation in observations:
+        by_role.setdefault(observation.semantic_role, []).append(observation)
+    return [
+        {
+            "semantic_role": role.value,
+            "observations": len(rows),
+            "event_start": min(item.event_time for item in rows).isoformat(),
+            "event_end": max(item.event_time for item in rows).isoformat(),
+            "latest_knowledge_time": max(
+                item.knowledge_time for item in rows
+            ).isoformat(),
+            "unavailable_observations": sum(
+                item.quality is QualityState.UNAVAILABLE for item in rows
+            ),
+        }
+        for role, rows in sorted(by_role.items(), key=lambda item: item[0].value)
+    ]
 
 
 def _source_state(
@@ -420,6 +502,9 @@ def build_local_products(
     knowledge_limit: datetime,
     repository: MarketRepository,
 ) -> tuple[dict, dict]:
+    public_instrument_ids = frozenset(_public_instrument_ids(pack))
+    observations = _public_observations(pack, observations)
+    runs = _public_runs(pack, runs)
     aged = _age_observations(pack, observations, runs, knowledge_limit)
     panel = _selected_panel(pack, aged)
     results: dict[str, KernelResult] = {}
@@ -492,8 +577,9 @@ def build_local_products(
     if any(item.quality is QualityState.ESTIMATED for item in aged):
         eligibility_reasons.append("one or more publication clocks are estimated")
     eligible = not eligibility_reasons and index is not None
-    coverage = repository.canonical_coverage(pack.market_id)
+    coverage = _public_coverage(observations)
     common = {
+        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
         "market_id": pack.market_id,
         "monetary_area_id": pack.monetary_area_id,
         "jurisdiction_codes": list(pack.jurisdiction_codes),
@@ -503,7 +589,13 @@ def build_local_products(
         "data_coverage": {
             "canonical_observations": coverage,
             "selected_roles": len(panel.series) if panel is not None else 0,
-            "declared_roles": len({item.semantic_role for item in pack.instruments}),
+            "declared_roles": len(
+                {
+                    item.semantic_role
+                    for item in pack.instruments
+                    if item.instrument_id in public_instrument_ids
+                }
+            ),
         },
         "capabilities": capabilities,
         "missing_capabilities": missing,
@@ -576,6 +668,7 @@ def materialize_market(
         pack.market_id,
         cutoff,
         event_time=cutoff,
+        instrument_ids=_public_instrument_ids(pack),
     )
     runs = _latest_runs(repo, pack.market_id)
     overview, gauge = build_local_products(
@@ -647,13 +740,19 @@ def materialize_global_tide(
     all_observations: list[Observation] = []
     faults: list[dict[str, Any]] = []
     for pack in markets.list():
+        public_fx_ids = _public_instrument_ids(
+            pack,
+            role=SemanticRole.FX_SWAP_BASIS,
+        )
         observations = repo.load_observations_as_of(
             pack.market_id,
             cutoff,
             event_time=cutoff,
             roles=(SemanticRole.FX_SWAP_BASIS,),
+            instrument_ids=public_fx_ids,
         )
-        runs = _latest_runs(repo, pack.market_id)
+        observations = _public_observations(pack, observations)
+        runs = _public_runs(pack, _latest_runs(repo, pack.market_id))
         aged = _age_observations(pack, observations, runs, cutoff)
         all_observations.extend(aged)
         series = _fx_series(pack, aged) if aged else None
@@ -663,6 +762,7 @@ def materialize_global_tide(
             instrument.source_adapter_id
             for instrument in pack.instruments
             if instrument.semantic_role is SemanticRole.FX_SWAP_BASIS
+            and instrument.instrument_id in public_fx_ids
         }
         faults.extend(
             _faults(
@@ -732,6 +832,7 @@ def materialize_global_tide(
     payload = {
         "schema": "seiche.global-tide.v2",
         "product": "GLOBAL_SEICHE_TIDE",
+        "visibility": PUBLIC_SNAPSHOT_VISIBILITY,
         "status": status,
         "market_id": "GLOBAL",
         "monetary_area_id": None,

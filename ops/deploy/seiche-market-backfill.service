@@ -11,6 +11,12 @@ WorkingDirectory=/home/seiche/app
 EnvironmentFile=/etc/seiche/market.env
 ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-backfill
 TimeoutStartSec=2h
+# Backfill is throughput work, not request-path work. Keep one CPU available to
+# it while giving the API and deploy health probes priority under contention.
+CPUQuota=100%
+CPUWeight=10
+IOWeight=10
+Nice=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

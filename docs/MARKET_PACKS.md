@@ -133,8 +133,10 @@ publish only as `DEGRADED`.
   and a precise missing-capability reason. It becomes numeric only with at
   least two aligned `FX_SWAP_BASIS` histories.
 
-Licensed and tenant inputs may be used in permitted calculations while v2 series
-responses redact values whose redistribution policy is not `allowed`.
+Only `allowed` and `derived_only` rows may enter public calculations.
+`metadata_only` rows may describe availability in the v2 series contract, but
+their values are redacted and never feed a local gauge or Global Tide.
+`prohibited` rows and source metadata are omitted from public projections.
 
 ## Current adapter coverage
 
