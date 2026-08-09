@@ -58,6 +58,9 @@ from seiche.repository import MarketRepository, get_repository
 GLOBAL_TIDE_CALIBRATION_ID = "global-tide-coupling-forward-v1"
 GLOBAL_TIDE_CALIBRATION_MATURITY = "FORWARD_ONLY"
 PUBLIC_SNAPSHOT_VISIBILITY = "PUBLIC_REDISTRIBUTION_FILTERED"
+DERIVABLE_REDISTRIBUTION = frozenset(
+    {RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY}
+)
 
 
 def _utc(value: datetime | None) -> datetime:
@@ -88,12 +91,12 @@ def _public_instrument_ids(
             continue
         adapter = pack.adapter_map.get(instrument.source_adapter_id)
         instrument_policy = getattr(instrument, "redistribution_status", None)
-        if (
-            adapter is None
-            or adapter.redistribution_status is RedistributionStatus.PROHIBITED
-        ):
+        if adapter is None or adapter.redistribution_status not in DERIVABLE_REDISTRIBUTION:
             continue
-        if instrument_policy is RedistributionStatus.PROHIBITED:
+        if (
+            instrument_policy is not None
+            and instrument_policy not in DERIVABLE_REDISTRIBUTION
+        ):
             continue
         visible.append(instrument.instrument_id)
     return tuple(visible)
@@ -114,7 +117,7 @@ def _public_observations(
         observation
         for observation in observations
         if observation.instrument_id in public_ids
-        and observation.redistribution_status is not RedistributionStatus.PROHIBITED
+        and observation.redistribution_status in DERIVABLE_REDISTRIBUTION
     ]
 
 
@@ -124,7 +127,7 @@ def _public_runs(pack: MarketPack, runs: list[dict]) -> list[dict]:
     public_adapter_ids = {
         adapter.adapter_id
         for adapter in pack.source_adapters
-        if adapter.redistribution_status is not RedistributionStatus.PROHIBITED
+        if adapter.redistribution_status in DERIVABLE_REDISTRIBUTION
     }
     return [run for run in runs if run.get("adapter_id") in public_adapter_ids]
 

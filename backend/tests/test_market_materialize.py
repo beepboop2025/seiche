@@ -23,6 +23,7 @@ from seiche.domain.observation import (
 )
 from seiche.kernel.engines import RoleSeries, cross_basin_coupling
 from seiche.markets.base import MarketPack
+from seiche.markets.china_cny import PACK as CHINA_PACK
 from seiche.markets.india_inr import PACK as INDIA_PACK
 from seiche.markets.materialize import (
     PUBLIC_SNAPSHOT_VISIBILITY,
@@ -91,7 +92,7 @@ def _save_success_run(market_id: str, adapter_id: str, cutoff: datetime) -> None
     )
 
 
-def _registry_with_prohibited_instruments() -> tuple[MarketRegistry, MarketPack]:
+def _registry_with_non_derivable_instruments() -> tuple[MarketRegistry, MarketPack]:
     tenant_call = rate_instrument(
         "IN.TENANT.CALL",
         "TENANT_CALL",
@@ -120,20 +121,40 @@ def _registry_with_prohibited_instruments() -> tuple[MarketRegistry, MarketPack]
         "licensed_inr_market",
         DayCountConvention.ACT_365,
     )
+    metadata_call = rate_instrument(
+        "IN.METADATA.CALL",
+        "METADATA_CALL",
+        SemanticRole.UNSECURED_OVERNIGHT,
+        "cfets_rates",
+        DayCountConvention.ACT_365,
+    )
+    metadata_fx = rate_instrument(
+        "IN.METADATA.FX_BASIS",
+        "METADATA_FX_BASIS",
+        SemanticRole.FX_SWAP_BASIS,
+        "cfets_rates",
+        DayCountConvention.ACT_365,
+    )
     india = replace(
         INDIA_PACK,
+        source_adapters=(
+            *INDIA_PACK.source_adapters,
+            CHINA_PACK.adapter_map["cfets_rates"],
+        ),
         instruments=(
             tenant_call,
             tenant_fx,
             tenant_tail,
             row_prohibited_fx,
+            metadata_call,
+            metadata_fx,
             *INDIA_PACK.instruments,
         ),
     )
     return MarketRegistry((india, SINGAPORE_PACK)), india
 
 
-def _save_prohibited_run(cutoff: datetime) -> None:
+def _save_non_derivable_runs(cutoff: datetime) -> None:
     store.save_collector_run(
         {
             "market_id": "IN-INR",
@@ -147,13 +168,30 @@ def _save_prohibited_run(cutoff: datetime) -> None:
             "fault": "tenant-run-secret",
         }
     )
+    store.save_collector_run(
+        {
+            "market_id": "IN-INR",
+            "adapter_id": "cfets_rates",
+            "status": "FAILED",
+            "started_at": (cutoff - timedelta(minutes=4)).isoformat(),
+            "finished_at": (cutoff - timedelta(minutes=3)).isoformat(),
+            "observations_written": 2,
+            "attempts": 1,
+            "next_due": (cutoff + timedelta(days=1)).isoformat(),
+            "fault": "metadata-run-secret",
+        }
+    )
 
 
-def _assert_prohibited_metadata_absent(payload: dict, rows: list[Observation]) -> None:
+def _assert_non_derivable_metadata_absent(
+    payload: dict, rows: list[Observation]
+) -> None:
     serialized = json.dumps(payload, sort_keys=True)
     forbidden = {
         "tenant_market_data",
         "tenant-run-secret",
+        "cfets_rates",
+        "metadata-run-secret",
         *(item.instrument_id for item in rows),
         *(item.source for item in rows),
         *(item.event_time.isoformat() for item in rows),
@@ -164,12 +202,12 @@ def _assert_prohibited_metadata_absent(payload: dict, rows: list[Observation]) -
     assert not [item for item in forbidden if item in serialized]
 
 
-def test_local_snapshots_filter_prohibited_rows_instruments_and_runs(
+def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "local-public.sqlite")
     repository = SQLiteMarketRepository()
-    registry, india = _registry_with_prohibited_instruments()
+    registry, india = _registry_with_non_derivable_instruments()
     start = datetime(2026, 1, 1, tzinfo=UTC)
     cutoff = start + timedelta(days=100)
     public_rows = [
@@ -216,7 +254,7 @@ def test_local_snapshots_filter_prohibited_rows_instruments_and_runs(
     baseline_gauge = store.load_latest_market_snapshot("IN-INR", "gauge")["payload"]
     assert baseline_gauge["reading"]["index"] is not None
 
-    prohibited_rows = [
+    excluded_rows = [
         _rate(
             market_id="IN-INR",
             instrument_id="IN.TENANT.CALL",
@@ -247,9 +285,19 @@ def test_local_snapshots_filter_prohibited_rows_instruments_and_runs(
             classification=ConnectorClassification.TENANT_PROVIDED,
             redistribution=RedistributionStatus.ALLOWED,
         ),
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.METADATA.CALL",
+            role=SemanticRole.UNSECURED_OVERNIGHT,
+            value=654320.5,
+            event_time=start + timedelta(days=93),
+            source="metadata-only-secret",
+            classification=ConnectorClassification.OFFICIAL_OPEN,
+            redistribution=RedistributionStatus.METADATA_ONLY,
+        ),
     ]
-    store.save_observations(prohibited_rows)
-    _save_prohibited_run(cutoff)
+    store.save_observations(excluded_rows)
+    _save_non_derivable_runs(cutoff)
 
     filtered_ids = materialize_market(
         "IN-INR",
@@ -278,7 +326,7 @@ def test_local_snapshots_filter_prohibited_rows_instruments_and_runs(
         item.semantic_role
         for item in india.instruments
         if india.adapter_map[item.source_adapter_id].redistribution_status
-        is not RedistributionStatus.PROHIBITED
+        in {RedistributionStatus.ALLOWED, RedistributionStatus.DERIVED_ONLY}
     }
     assert filtered_gauge["data_coverage"]["declared_roles"] == len(
         public_declared_roles
@@ -292,15 +340,15 @@ def test_local_snapshots_filter_prohibited_rows_instruments_and_runs(
         "licensed_inr_market",
     }
     for payload in (filtered_overview, filtered_gauge):
-        _assert_prohibited_metadata_absent(payload, prohibited_rows)
+        _assert_non_derivable_metadata_absent(payload, excluded_rows)
 
 
-def test_global_tide_filters_prohibited_inputs_but_keeps_derived_only_aggregation(
+def test_global_tide_filters_non_derivable_inputs_but_keeps_derived_only_aggregation(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "tide-public.sqlite")
     repository = SQLiteMarketRepository()
-    registry, _ = _registry_with_prohibited_instruments()
+    registry, _ = _registry_with_non_derivable_instruments()
     start = datetime(2026, 1, 1, tzinfo=UTC)
     cutoff = start + timedelta(days=100)
     public_rows = []
@@ -336,7 +384,7 @@ def test_global_tide_filters_prohibited_inputs_but_keeps_derived_only_aggregatio
     assert baseline["status"] == "READY"
     assert baseline["reading"]["value"] is not None
 
-    prohibited_rows = [
+    excluded_rows = [
         _rate(
             market_id="IN-INR",
             instrument_id="IN.TENANT.FX_BASIS",
@@ -357,9 +405,19 @@ def test_global_tide_filters_prohibited_inputs_but_keeps_derived_only_aggregatio
             classification=ConnectorClassification.LICENSED,
             redistribution=RedistributionStatus.PROHIBITED,
         ),
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.METADATA.FX_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=543210.25,
+            event_time=start + timedelta(days=92),
+            source="metadata-fx-secret",
+            classification=ConnectorClassification.OFFICIAL_OPEN,
+            redistribution=RedistributionStatus.METADATA_ONLY,
+        ),
     ]
-    store.save_observations(prohibited_rows)
-    _save_prohibited_run(cutoff)
+    store.save_observations(excluded_rows)
+    _save_non_derivable_runs(cutoff)
 
     filtered_id = materialize_global_tide(
         repository=repository,
@@ -376,7 +434,7 @@ def test_global_tide_filters_prohibited_inputs_but_keeps_derived_only_aggregatio
         item["market_id"]: item["fx_swap_basis_observations"]
         for item in filtered["data_coverage"]
     } == {"IN-INR": 80, "SG-SGD": 80}
-    _assert_prohibited_metadata_absent(filtered, prohibited_rows)
+    _assert_non_derivable_metadata_absent(filtered, excluded_rows)
 
 
 def test_local_materializer_uses_policy_asof_alignment_and_is_idempotent(
