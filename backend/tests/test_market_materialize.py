@@ -5,8 +5,6 @@ from datetime import UTC, datetime, timedelta
 import asyncio
 
 import pandas as pd
-import pytest
-
 from seiche import store
 from seiche import market_runtime
 from seiche.collectors import CollectorRun, CollectorRunStatus
@@ -330,8 +328,7 @@ def test_global_tide_payload_cutoff_is_the_last_shared_session(
     assert payload["components"][0]["event_cutoff"] == expected
 
 
-@pytest.mark.asyncio
-async def test_collection_cycle_materializes_after_new_rows_become_knowable(
+def test_collection_cycle_materializes_after_new_rows_become_knowable(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "cycle-cutoff.sqlite")
@@ -376,9 +373,11 @@ async def test_collection_cycle_materializes_after_new_rows_become_knowable(
         "build_supervisor",
         lambda **_kwargs: _CrossSecondSupervisor(),
     )
-    payload = await market_runtime.collect_once(
-        market_ids=frozenset({"IN-INR"}),
-        repository=repository,
+    payload = asyncio.run(
+        market_runtime.collect_once(
+            market_ids=frozenset({"IN-INR"}),
+            repository=repository,
+        )
     )
     gauge = store.load_latest_market_snapshot("IN-INR", "gauge")["payload"]
 
@@ -387,8 +386,7 @@ async def test_collection_cycle_materializes_after_new_rows_become_knowable(
     assert gauge["reading"]["index"] is not None
 
 
-@pytest.mark.asyncio
-async def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
+def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "isolated-publication.sqlite")
@@ -443,26 +441,30 @@ async def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
         return supervisor
 
     monkeypatch.setattr(market_runtime, "build_supervisor", supervisor_factory)
-    cycle = asyncio.create_task(market_runtime.collect_once(repository=repository))
-    await asyncio.wait_for(japan_entered.wait(), timeout=15)
-    try:
-        india = None
-        for _ in range(1500):
-            india = await asyncio.to_thread(
-                repository.load_latest_market_snapshot,
-                "IN-INR",
-                "gauge",
-            )
-            if india is not None:
-                break
-            await asyncio.sleep(0.01)
-        assert india is not None
-        assert india["payload"]["reading"]["index"] is not None
-        assert not cycle.done()
-    finally:
-        release_japan.set()
+    async def exercise() -> dict:
+        cycle = asyncio.create_task(
+            market_runtime.collect_once(repository=repository)
+        )
+        await asyncio.wait_for(japan_entered.wait(), timeout=15)
+        try:
+            india = None
+            for _ in range(1500):
+                india = await asyncio.to_thread(
+                    repository.load_latest_market_snapshot,
+                    "IN-INR",
+                    "gauge",
+                )
+                if india is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert india is not None
+            assert india["payload"]["reading"]["index"] is not None
+            assert not cycle.done()
+        finally:
+            release_japan.set()
+        return await asyncio.wait_for(cycle, timeout=30)
 
-    payload = await asyncio.wait_for(cycle, timeout=30)
+    payload = asyncio.run(exercise())
     statuses = {(run["market_id"], run["status"]) for run in payload["runs"]}
     assert ("IN-INR", "SUCCESS") in statuses
     assert ("JP-JPY", "FAILED") in statuses
