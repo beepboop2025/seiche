@@ -21,7 +21,7 @@ Modes
   --setup       register the bot name, command menu and descriptions with Telegram
 
 Commands
-  /start /stop     follow / unfollow the daily letter, alerts and desk news
+  /start /stop     follow / unfollow the letter, cross-desk alerts and news
   /now             the gauge right now: regime, composite, the Tell
   /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
@@ -1124,7 +1124,7 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/start — daily letter (11:30 UTC) + relevant alerts/news\n"
+    "/start — daily letter (11:30 UTC) + state/cross-desk alerts + news\n"
     "/stop — unsubscribe\n\n"
     "Or just type a question — no slash needed; the desk answers, grounded "
     "in the live board. Type @seiche_desk_bot in any other chat to drop the "
@@ -1232,6 +1232,9 @@ def keyboard_for(cmd: str) -> list | None:
                  _btn("📨 Today's letter", "/letter")],
                 [{"text": "📡 Liquidity Lab channel", "url": LAB_LINK},
                  {"text": "📤 Share Seiche", "url": SHARE_URL}]]
+    if cmd == "/help":
+        return [[_btn("🌡 Full gauge", "/now"),
+                 _btn("📨 Today's letter", "/letter")], LAB_ROW]
     if cmd == "/now":
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
@@ -1285,7 +1288,8 @@ def fmt_welcome(gauge: dict | None, pub: dict | None) -> str:
         "NY Fed, OFR and Treasury records.",
         "",
         "<b>Following this desk:</b> one daily letter at 11:30 UTC, plus "
-        "relevant funding-state alerts and sourced desk news when they occur.",
+        "relevant funding-state alerts, cross-desk change alerts and sourced "
+        "desk news when they occur.",
         "",
     ]
     if gauge:
@@ -1356,7 +1360,11 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         subs = load_state("subscribers.json", {})
         subs.pop(str(chat_id), None)
         save_state("subscribers.json", subs)
-        send(chat_id, "Unsubscribed. /start any time.")
+        send(chat_id, "Unsubscribed. This stops the daily letter, funding-state "
+                      "and cross-desk alerts, and sourced desk news. /start "
+                      "follows the desk again any time.")
+    elif cmd == "/help":
+        send(chat_id, HELP, keyboard_for("/help"))
     elif cmd == "/now":
         gauge = api_get("/api/gauge")
         gauge_history_append(gauge)
@@ -1657,14 +1665,15 @@ def run_alert_scan() -> None:
 
 BOT_DISPLAY_NAME = "Seiche | US Funding Stress"
 BOT_SHORT_DESCRIPTION = (
-    "US funding-stress gauge, daily letter and relevant alerts from public "
-    "data. Research context only."
+    "US funding-stress gauge, daily letter, state/cross-desk alerts and news "
+    "from public data. Research context only."
 )
 BOT_DESCRIPTION = (
     "US dollar-funding stress from public Fed, NY Fed, OFR and Treasury "
-    "records. Live gauge, daily 11:30 UTC letter, relevant state-change alerts "
-    "and sourced desk news. Research context only; not investment advice or "
-    "an execution instruction. Free, no sign-in: seiche.info"
+    "records. Live gauge, daily 11:30 UTC letter, relevant funding-state "
+    "alerts, cross-desk change alerts and sourced desk news. Research context "
+    "only; not investment advice or an execution instruction. Free, no "
+    "sign-in: seiche.info"
 )
 BOT_COMMANDS = [
     {"command": "now", "description": "The gauge: regime, composite, the Tell"},
@@ -1680,7 +1689,8 @@ BOT_COMMANDS = [
     {"command": "letter", "description": "Today's dispatch"},
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "share", "description": "Send this free desk to someone"},
-    {"command": "start", "description": "Follow daily letter + relevant alerts/news"},
+    {"command": "help", "description": "Full command list and desk guide"},
+    {"command": "start", "description": "Follow letter + state/cross-desk alerts/news"},
     {"command": "stop", "description": "Unsubscribe"},
 ]
 

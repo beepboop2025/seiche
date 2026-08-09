@@ -31,6 +31,8 @@ def test_profile_metadata_fits_telegram_limits_and_names_the_audience():
     assert bot._telegram_text_units(bot.BOT_DESCRIPTION) <= 512
     assert "US Funding Stress" in bot.BOT_DISPLAY_NAME
     assert bot.BOT_DISPLAY_NAME != "Seiche"
+    assert "cross-desk" in bot.BOT_DESCRIPTION
+    assert "cross-desk" in bot.HELP
 
 
 def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
@@ -52,6 +54,11 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     ]
     assert calls[0][1] == {"name": bot.BOT_DISPLAY_NAME}
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
+    assert any(
+        command == {"command": "help",
+                    "description": "Full command list and desk guide"}
+        for command in calls[1][1]["commands"]
+    )
     assert "setup done" in capsys.readouterr().out
 
 
@@ -120,6 +127,7 @@ def test_start_is_one_truthful_message_with_live_gauge_and_lab_cta(
     assert "Early warning for strain in dollar funding" in text
     assert "11:30 UTC" in text
     assert "funding-state alerts" in text
+    assert "cross-desk change alerts" in text
     assert "sourced desk news" in text
     assert "Live gauge" in text and "STRAIN" in text and "61/100" in text
     assert "/help" in text and "/stop" in text
@@ -134,6 +142,50 @@ def test_start_is_one_truthful_message_with_live_gauge_and_lab_cta(
 
     subscribers = json.loads((tmp_path / "subscribers.json").read_text())
     assert "4242" in subscribers
+
+
+def test_help_is_explicit_and_keeps_the_liquidity_lab_path(monkeypatch):
+    sent = []
+
+    def fake_send(chat_id, text, keyboard=None):
+        sent.append((chat_id, text, keyboard))
+        return {"ok": True}
+
+    monkeypatch.setattr(bot, "send", fake_send)
+
+    bot.handle(5150, "/help", "private")
+
+    assert len(sent) == 1
+    assert sent[0][1] == bot.HELP
+    keyboard = sent[0][2]
+    assert keyboard is not None
+    assert any(
+        button.get("url") == bot.LAB_LINK
+        for row in keyboard
+        for button in row
+    )
+
+
+def test_stop_names_every_delivery_class_it_disables(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(bot, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        bot,
+        "send",
+        lambda chat_id, text, keyboard=None:
+            sent.append((chat_id, text, keyboard)) or {"ok": True},
+    )
+    bot.save_state("subscribers.json", {"6161": {"since": "now"}})
+
+    bot.handle(6161, "/stop", "private")
+
+    assert len(sent) == 1
+    text = sent[0][1]
+    assert "daily letter" in text
+    assert "funding-state" in text
+    assert "cross-desk alerts" in text
+    assert "sourced desk news" in text
+    assert "6161" not in bot.load_state("subscribers.json", {})
 
 
 def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch):
