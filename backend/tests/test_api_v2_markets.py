@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Response
 from fastapi.responses import JSONResponse
@@ -63,6 +63,50 @@ def _legacy_snapshot() -> dict:
         ],
         "data_quality": {"status": "partial"},
     }
+
+
+def _rate_observation(
+    *,
+    event_time: datetime,
+    knowledge_time: datetime | None = None,
+    market_id: str = "US-USD",
+    monetary_area_id: str = "US",
+    jurisdiction: str = "US",
+    currency: str = "USD",
+    instrument_id: str = "US.NYFED.SOFR",
+    role: SemanticRole = SemanticRole.SECURED_OVERNIGHT,
+    value: str = "531",
+    revision_id: str = "test-v1",
+    source: str = "official-test",
+    connector: ConnectorClassification = ConnectorClassification.OFFICIAL_OPEN,
+    redistribution: RedistributionStatus = RedistributionStatus.ALLOWED,
+    quality: QualityState = QualityState.VERIFIED,
+) -> Observation:
+    known = knowledge_time or event_time
+    return Observation(
+        market_id=market_id,
+        monetary_area_id=monetary_area_id,
+        jurisdiction_codes=(jurisdiction,),
+        currency=currency,
+        instrument_id=instrument_id,
+        semantic_role=role,
+        value=value,
+        canonical_unit=CanonicalUnit.BASIS_POINTS,
+        rate_compounding=RateCompounding.SIMPLE,
+        day_count=DayCountConvention.ACT_360,
+        event_time=event_time,
+        source_publication_time=known,
+        knowledge_time=known,
+        revision_id=revision_id,
+        source=source,
+        evidence_hash=evidence_sha256(
+            f"{market_id}:{instrument_id}:{event_time.isoformat()}:{revision_id}:{source}"
+        ),
+        connector_classification=connector,
+        redistribution_status=redistribution,
+        quality=quality,
+        staleness=StalenessState.FRESH,
+    )
 
 
 def test_v2_catalog_does_not_collect_at_request_time(tmp_path, monkeypatch) -> None:
@@ -171,3 +215,114 @@ def test_market_series_redacts_licensed_values_but_keeps_evidence_metadata(
     assert record["value"] is None
     assert record["value_status"] == "REDACTED_BY_LICENCE"
     assert record["evidence_hash"] == evidence_sha256("licensed row")
+
+
+def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "paged-v2.sqlite")
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=start + timedelta(days=offset),
+                value=str(500 + offset),
+                revision_id=f"page-{offset}",
+            )
+            for offset in range(3)
+        ]
+    )
+
+    first = api.market_series_v2("US-USD", Response(), n=2)
+    second = api.market_series_v2(
+        "US-USD", Response(), n=2, cursor=first["next_cursor"]
+    )
+
+    assert [item["value"] for item in first["observations"]] == ["501", "502"]
+    assert first["next_cursor"]
+    assert [item["value"] for item in second["observations"]] == ["500"]
+    assert second["next_cursor"] is None
+    assert first["evidence_eligibility"]["eligible"] is False
+    assert first["evidence_eligibility"]["reasons"] == [
+        "pack validation status is not SUPPORTED",
+        "calibration is forward-only",
+    ]
+
+
+def test_market_series_omits_pack_prohibited_rows_and_all_row_metadata(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "prohibited-v2.sqlite")
+    secret_time = datetime(2026, 8, 1, 12, 34, 56, tzinfo=UTC)
+    secret = _rate_observation(
+        event_time=secret_time,
+        market_id="IN-INR",
+        monetary_area_id="IN",
+        jurisdiction="IN",
+        currency="INR",
+        instrument_id="IN.FBIL.MIBOR",
+        role=SemanticRole.UNSECURED_OVERNIGHT,
+        revision_id="secret-prohibited-revision",
+        source="tenant-secret-source",
+        connector=ConnectorClassification.LICENSED,
+        redistribution=RedistributionStatus.PROHIBITED,
+    )
+    store.save_observations([secret])
+
+    payload = api.market_series_v2("IN-INR", Response())
+    serialized = json.dumps(payload, sort_keys=True)
+
+    assert payload["observations"] == []
+    assert secret_time.isoformat() not in serialized
+    assert "tenant-secret-source" not in serialized
+    assert "secret-prohibited-revision" not in serialized
+    assert secret.evidence_hash not in serialized
+
+
+def test_latest_prohibited_revision_cannot_reveal_old_allowed_vintage(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "policy-revision-v2.sqlite")
+    event = datetime(2026, 8, 1, tzinfo=UTC)
+    old = _rate_observation(
+        event_time=event,
+        knowledge_time=event + timedelta(hours=1),
+        value="500",
+        revision_id="old-allowed",
+    )
+    prohibited = _rate_observation(
+        event_time=event,
+        knowledge_time=event + timedelta(hours=2),
+        value="999",
+        revision_id="new-prohibited",
+        redistribution=RedistributionStatus.PROHIBITED,
+    )
+    store.save_observations([old, prohibited])
+
+    payload = api.market_series_v2("US-USD", Response())
+    serialized = json.dumps(payload, sort_keys=True)
+
+    assert payload["observations"] == []
+    assert "old-allowed" not in serialized
+    assert "new-prohibited" not in serialized
+    assert old.evidence_hash not in serialized
+    assert prohibited.evidence_hash not in serialized
+
+
+def test_market_series_quality_reason_is_explicit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "quality-v2.sqlite")
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=datetime(2026, 8, 1, tzinfo=UTC),
+                quality=QualityState.PROVISIONAL,
+            )
+        ]
+    )
+
+    eligibility = api.market_series_v2("US-USD", Response())["evidence_eligibility"]
+
+    assert eligibility["eligible"] is False
+    assert "observation quality is not evidence-eligible: provisional" in eligibility[
+        "reasons"
+    ]

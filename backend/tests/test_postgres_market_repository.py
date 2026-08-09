@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -60,6 +61,61 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         row["semantic_role"] == "SECURED_OVERNIGHT"
         for row in repository.canonical_coverage("US-USD")
     )
+
+    later_event = event + timedelta(days=1)
+    later_knowledge = later_event + timedelta(hours=9)
+    later = replace(
+        observation,
+        instrument_id="US.TEST.POSTGRES.LATER",
+        event_time=later_event,
+        source_publication_time=later_knowledge - timedelta(hours=1),
+        knowledge_time=later_knowledge,
+        revision_id="postgres-integration-later-v1",
+        evidence_hash=evidence_sha256("postgres integration later observation"),
+    )
+    other_source = replace(
+        later,
+        instrument_id="US.TEST.POSTGRES.OTHER_SOURCE",
+        source="postgres-other-source",
+        revision_id="postgres-integration-other-source-v1",
+        evidence_hash=evidence_sha256("postgres integration other source"),
+    )
+    assert repository.save_observations([later, other_source]) in {0, 1, 2}
+    filtered = repository.load_observations_as_of(
+        "US-USD",
+        later_knowledge,
+        event_time_from=later_event,
+        instrument_ids=(later.instrument_id, other_source.instrument_id),
+        sources=(observation.source,),
+    )
+    assert filtered == [later]
+    assert repository.latest_observation_hashes(
+        "US-USD",
+        later_knowledge,
+        event_time_from=later_event,
+        instrument_ids=(later.instrument_id, other_source.instrument_id),
+        sources=(observation.source,),
+    ) == {(later.instrument_id, later.event_time): later.evidence_hash}
+
+    page, cursor = repository.load_observation_page(
+        "US-USD",
+        later_knowledge,
+        limit=1,
+        instrument_ids=(observation.instrument_id, later.instrument_id),
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+    )
+    assert page == [later]
+    assert cursor == (later.event_time, later.instrument_id)
+    older, end_cursor = repository.load_observation_page(
+        "US-USD",
+        later_knowledge,
+        limit=1,
+        instrument_ids=(observation.instrument_id, later.instrument_id),
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+        before=cursor,
+    )
+    assert older == [observation]
+    assert end_cursor is None
 
     run = {
         "market_id": "US-USD",

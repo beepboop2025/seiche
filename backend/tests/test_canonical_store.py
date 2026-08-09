@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from seiche import store
@@ -89,6 +90,100 @@ def test_market_identity_prevents_cross_market_collision(tmp_path, monkeypatch) 
 
     assert store.load_observations_as_of("US-USD", usd.knowledge_time) == [usd]
     assert store.load_observations_as_of("IN-INR", inr.knowledge_time) == [inr]
+
+
+def test_canonical_query_filters_are_inclusive_and_hash_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "canonical-filters.sqlite")
+    second = _observation(
+        event_day=2, knowledge_day=3, value="500", revision="second"
+    )
+    third = _observation(
+        event_day=3, knowledge_day=4, value="510", revision="third"
+    )
+    fourth = _observation(
+        event_day=4, knowledge_day=5, value="520", revision="fourth"
+    )
+    other_source = replace(
+        fourth,
+        source="other-source",
+        revision_id="other-source",
+        evidence_hash=evidence_sha256("other source"),
+    )
+    store.save_observations([second, third, fourth, other_source])
+    cutoff = datetime(2026, 1, 6, tzinfo=UTC)
+
+    filtered = store.load_observations_as_of(
+        "US-USD",
+        cutoff,
+        event_time_from=datetime(2026, 1, 3, tzinfo=UTC),
+        instrument_ids=(third.instrument_id,),
+        sources=(third.source,),
+    )
+    hashes = store.latest_observation_hashes(
+        "US-USD",
+        cutoff,
+        event_time_from=datetime(2026, 1, 3, tzinfo=UTC),
+        instrument_ids=(third.instrument_id,),
+        sources=(third.source,),
+    )
+
+    assert filtered == [third, fourth]
+    assert hashes == {
+        (third.instrument_id, third.event_time): third.evidence_hash,
+        (fourth.instrument_id, fourth.event_time): fourth.evidence_hash,
+    }
+    assert store.load_observations_as_of(
+        "US-USD", cutoff, instrument_ids=()
+    ) == []
+
+
+def test_sql_page_bounds_candidate_keys_before_vintage_ranking(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "bounded-page.sqlite")
+    observations = [
+        _observation(
+            event_day=day,
+            knowledge_day=day,
+            value=str(500 + day),
+            revision=f"day-{day}",
+        )
+        for day in (2, 3, 4)
+    ]
+    store.save_observations(observations)
+    traced: list[str] = []
+    original_conn = store._conn
+    with original_conn() as connection:
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list('canonical_observations')"
+            ).fetchall()
+        }
+    assert "canonical_observations_series_page" in indexes
+
+    def traced_conn():
+        connection = original_conn()
+        connection.set_trace_callback(traced.append)
+        return connection
+
+    monkeypatch.setattr(store, "_conn", traced_conn)
+    page, cursor = store.load_observation_page(
+        "US-USD",
+        datetime(2026, 1, 6, tzinfo=UTC),
+        limit=1,
+        instrument_ids=(observations[0].instrument_id,),
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+    )
+
+    query = next(statement for statement in traced if "WITH candidate_keys" in statement)
+    compact = " ".join(query.split())
+    assert "GROUP BY candidate.event_time, candidate.instrument_id" in compact
+    assert "LIMIT 2" in compact
+    assert "JOIN candidate_keys AS candidate" in compact
+    assert compact.index("LIMIT 2") < compact.index("ranked AS")
+    assert page == [observations[-1]]
+    assert cursor == (observations[-1].event_time, observations[-1].instrument_id)
 
 
 def test_sealed_snapshots_are_immutable_and_knowledge_queryable(tmp_path, monkeypatch) -> None:
