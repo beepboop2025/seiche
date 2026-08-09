@@ -101,13 +101,10 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
     status = "READY" if composite.get("value") is not None else "UNAVAILABLE"
 
     members: dict[str, Any] = dict(stack.get("members_now") or {})
-    navigator = snapshot.get("navigator") or {}
-    if navigator.get("ok") and navigator.get("p_event_5bd") is not None:
-        members["navigator"] = navigator["p_event_5bd"]
-    court = deep.get("modelcourt") or {}
-    court_probability = (court.get("ensemble") or {}).get("p")
-    if court.get("ok") and court_probability is not None:
-        members["modelcourt"] = court_probability
+    # Navigator and ModelCourt consume the wider legacy context, including
+    # upstreams whose v2 policy is metadata-only. The compatibility bridge
+    # publishes only the stack's US funding members; global synthesis remains
+    # available on the legacy board but cannot inherit the filtered marker.
 
     common = {
         "visibility": PUBLIC_SNAPSHOT_VISIBILITY,

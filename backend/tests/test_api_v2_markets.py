@@ -62,9 +62,9 @@ def _legacy_snapshot() -> dict:
                 "dispersion_now": 0.03,
                 "members_now": {"model": 0.2},
             },
-            "modelcourt": {"ok": False},
+            "modelcourt": {"ok": True, "ensemble": {"p": 0.98}},
         },
-        "navigator": {"ok": False},
+        "navigator": {"ok": True, "p_event_5bd": 0.99},
         "calendar": {"next_turn": None, "crunch_windows": []},
         "faults": [
             {"source": "fred", "detail": "rate source timeout"},
@@ -160,6 +160,7 @@ def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) 
     gauge = api.market_gauge_v2("US-USD", Response())
     assert gauge["schema"] == "seiche.local-gauge.v2"
     assert gauge["reading"]["index"] == 42.0
+    assert gauge["reading"]["p_event_5bd_members"] == {"model": 0.2}
     assert gauge["evidence_eligibility"]["eligible"] is False
     assert [fault["source"] for fault in gauge["faults"]] == ["fred"]
     assert ids["gauge"] == store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
@@ -234,6 +235,38 @@ def test_market_series_redacts_licensed_values_but_keeps_evidence_metadata(
     assert record["value"] is None
     assert record["value_status"] == "REDACTED_BY_LICENCE"
     assert record["evidence_hash"] == evidence_sha256("licensed row")
+    assert (
+        "no publicly redistributable observation values are available"
+        in payload["evidence_eligibility"]["reasons"]
+    )
+
+
+def test_market_series_applies_adapter_policy_when_row_policy_is_stale(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "effective-policy-v2.sqlite")
+    stale_policy_row = _rate_observation(
+        event_time=datetime(2026, 8, 8, tzinfo=UTC),
+        market_id="CN-CNY",
+        monetary_area_id="CN",
+        jurisdiction="CN",
+        currency="CNY",
+        instrument_id="CN.CFETS.SHIBOR_ON",
+        role=SemanticRole.UNSECURED_OVERNIGHT,
+        value="187",
+        revision_id="stale-row-policy",
+        source="cfets-test",
+        connector=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution=RedistributionStatus.ALLOWED,
+    )
+    store.save_observations([stale_policy_row])
+
+    payload = api.market_series_v2("CN-CNY", _request(), Response())
+    record = payload["observations"][0]
+
+    assert record["value"] is None
+    assert record["value_status"] == "REDACTED_BY_LICENCE"
+    assert record["evidence_hash"] == stale_policy_row.evidence_hash
     assert (
         "no publicly redistributable observation values are available"
         in payload["evidence_eligibility"]["reasons"]

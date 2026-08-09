@@ -304,7 +304,7 @@ def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
             + ", ".join(ineligible_quality)
         )
     if observations and not any(
-        observation.redistribution_status is RedistributionStatus.ALLOWED
+        _observation_value_is_public(pack, observation)
         for observation in observations
     ):
         reasons.append("no publicly redistributable observation values are available")
@@ -845,6 +845,20 @@ def _public_instrument_ids(pack) -> tuple[str, ...]:
     )
 
 
+def _observation_value_is_public(pack, observation) -> bool:
+    """Apply the most restrictive declared and per-row value policy."""
+
+    instrument = pack.instrument_map.get(observation.instrument_id)
+    if instrument is None:
+        return False
+    adapter = pack.adapter_map.get(instrument.source_adapter_id)
+    return (
+        adapter is not None
+        and adapter.redistribution_status is RedistributionStatus.ALLOWED
+        and observation.redistribution_status is RedistributionStatus.ALLOWED
+    )
+
+
 def _public_snapshot_payload(record: dict | None) -> dict | None:
     if record is None:
         return None
@@ -993,7 +1007,7 @@ def market_series_v2(
     # retain the endpoint's established chronological order within each page.
     for observation in reversed(observations):
         record = observation.to_record()
-        if observation.redistribution_status is not RedistributionStatus.ALLOWED:
+        if not _observation_value_is_public(pack, observation):
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"
         records.append(record)
