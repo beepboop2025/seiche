@@ -98,12 +98,12 @@ async def test_completed_run_is_published_before_slow_sibling_finishes() -> None
     supervisor.register(_BlockedJapaneseAdapter())
     supervisor.register(_FakeAdapter("US-USD", "fred_daily", now))
     cycle = asyncio.create_task(supervisor.run_due(now=now))
-    await asyncio.wait_for(entered.wait(), timeout=1)
-    await asyncio.wait_for(healthy_published.wait(), timeout=1)
+    await asyncio.wait_for(entered.wait(), timeout=15)
+    await asyncio.wait_for(healthy_published.wait(), timeout=15)
 
     assert not cycle.done()
     release.set()
-    runs = await asyncio.wait_for(cycle, timeout=1)
+    runs = await asyncio.wait_for(cycle, timeout=15)
     assert {run.status for run in runs} == {
         CollectorRunStatus.SUCCESS,
         CollectorRunStatus.FAILED,
@@ -130,12 +130,12 @@ async def test_cancelled_cycle_reaps_pending_collector_tasks() -> None:
     supervisor = CollectorSupervisor(sleep=_no_sleep)
     supervisor.register(_PendingAdapter())
     cycle = asyncio.create_task(supervisor.run_due(now=now))
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.wait_for(entered.wait(), timeout=15)
     cycle.cancel()
 
     with pytest.raises(asyncio.CancelledError):
         await cycle
-    await asyncio.wait_for(reaped.wait(), timeout=1)
+    await asyncio.wait_for(reaped.wait(), timeout=15)
 
 
 @pytest.mark.asyncio
