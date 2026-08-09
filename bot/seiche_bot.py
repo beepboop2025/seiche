@@ -18,10 +18,10 @@ Modes
                 subscribers when the regime flips or the composite jumps;
                 silence when nothing moved. Also accrues the bot's own daily
                 gauge history (the sparkline record).
-  --setup       register the command menu and bot description with Telegram
+  --setup       register the bot name, command menu and descriptions with Telegram
 
 Commands
-  /start /stop     subscribe / unsubscribe from the daily letter
+  /start /stop     follow / unfollow the letter, cross-desk alerts and news
   /now             the gauge right now: regime, composite, the Tell
   /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
@@ -76,6 +76,8 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # that is only meant to DM subscribers should never accidentally publish.
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
+BOT_USERNAME = "seiche_desk_bot"
+BOT_URL = f"https://t.me/{BOT_USERNAME}"
 
 POLL_TIMEOUT = 50
 
@@ -182,13 +184,15 @@ def post_channel(text: str, ref: str) -> bool:
     """
     if not LAB_CHANNEL:
         return False
+    desk_url = f"{BOT_URL}?start={urllib.parse.quote(ref, safe='')}"
     body = text + (
-        f"\n\n<i>Seiche is the lab's free plumbing desk. Open it for the live "
-        f"gauge, forward odds and historical diagnostic: {LAB_LINK}</i>"
+        f"\n\n<i>Seiche is the lab's free plumbing desk. Open and follow it "
+        f"for the live gauge, forward odds and historical diagnostic: "
+        f"{desk_url}</i>"
     )
     keyboard = [
-        [{"text": "📈 Open the Seiche desk",
-          "url": f"https://t.me/seiche_desk_bot?start={ref}"}],
+        [{"text": "📈 Open + follow Seiche",
+          "url": desk_url}],
         [{"text": "🏦 Bank failure radar",
           "url": f"https://t.me/LiquiLens_bot?start={ref}"},
          {"text": "🌊 Market depth",
@@ -1121,7 +1125,7 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/start — subscribe to the daily letter (11:30 UTC, pre-US-open)\n"
+    "/start — daily letter (11:30 UTC) + state/cross-desk alerts + news\n"
     "/stop — unsubscribe\n\n"
     "Or just type a question — no slash needed; the desk answers, grounded "
     "in the live board. Type @seiche_desk_bot in any other chat to drop the "
@@ -1202,7 +1206,6 @@ def fmt_daily_letter() -> str:
 
 # ------------------------------------------------- share, fleet, keyboards
 
-BOT_URL = "https://t.me/seiche_desk_bot"
 SHARE_TEXT = ("Free US funding stress early warning, straight from the Fed's "
               "own public data. Regime gauge, forward odds, and a historical "
               "diagnostic that publishes misses and eligibility flags. No "
@@ -1225,7 +1228,15 @@ def _btn(text: str, data: str) -> dict:
 
 def keyboard_for(cmd: str) -> list | None:
     """Inline keyboard rows per command. A button tap IS a command."""
-    if cmd in ("/start", "/now"):
+    if cmd == "/start":
+        return [[_btn("🌡 Full gauge", "/now"),
+                 _btn("📨 Today's letter", "/letter")],
+                [{"text": "📡 Liquidity Lab channel", "url": LAB_LINK},
+                 {"text": "📤 Share Seiche", "url": SHARE_URL}]]
+    if cmd == "/help":
+        return [[_btn("🌡 Full gauge", "/now"),
+                 _btn("📨 Today's letter", "/letter")], LAB_ROW]
+    if cmd == "/now":
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
                 [_btn("🛢 Oil × Funding", "/oil"),
@@ -1265,15 +1276,57 @@ def fmt_share(gauge: dict | None) -> str:
             f"send them {BOT_URL}")
 
 
+def fmt_welcome(gauge: dict | None, pub: dict | None) -> str:
+    """One-screen onboarding: promise, delivery contract and served gauge.
+
+    The full command catalogue deliberately stays in HELP. A first response
+    should establish why the desk is useful and what following it will send,
+    while the live artifact proves that the promise is already operational.
+    """
+    lines = [
+        "🌊 <b>Seiche | US funding stress</b>",
+        "Early warning for strain in dollar funding, built from public Fed, "
+        "NY Fed, OFR and Treasury records.",
+        "",
+        "<b>Following this desk:</b> one daily letter at 11:30 UTC, plus "
+        "relevant funding-state alerts, cross-desk change alerts and sourced "
+        "desk news when they occur.",
+        "",
+    ]
+    if gauge:
+        idx = gauge.get("index")
+        current = (f"{_regime_icon(gauge.get('regime'))} <b>Live gauge:</b> "
+                   f"{esc(gauge.get('regime'))} · "
+                   f"{'?' if idx is None else idx}/100")
+        if gauge.get("generated_at"):
+            current += f" · as of {esc(gauge.get('generated_at'))}"
+        lines.append(current)
+        conclusion = ((pub or {}).get("conclusion") or {}).get("line")
+        if conclusion:
+            lines.append(esc(conclusion))
+        else:
+            tell = gauge.get("tell")
+            if isinstance(tell, (int, float)):
+                lines.append(f"The Tell: {tell:+.0f}.")
+    else:
+        lines.append("<b>Live gauge:</b> the board did not answer. Absence is "
+                     f"not calm; check {SITE} directly.")
+    lines.extend([
+        "",
+        "/help opens the full desk · /stop unsubscribes at any time.",
+        "",
+        "<i>Public data, timestamped where available. Research context only — "
+        "not investment advice or an execution instruction.</i>",
+    ])
+    return "\n".join(lines)
+
+
 def record_lead(chat_id: int, ref: str) -> None:
     path = _state_path("leads.jsonl")
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                              "chat_id": chat_id, "ref": ref},
                             sort_keys=True) + "\n")
-
-
-BOT_USERNAME = "seiche_desk_bot"
 
 
 def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
@@ -1301,14 +1354,18 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         # that decides what the desks publish more of. Leads are people.
         if arg.strip() and chat_type == "private":
             record_lead(chat_id, arg.strip()[:64])
-        send(chat_id, "Subscribed to the daily letter (11:30 UTC, pre-US-open).\n\n" + HELP)
-        send(chat_id, fmt_now(api_get("/api/gauge"), api_get("/api/public")),
+        send(chat_id,
+             fmt_welcome(api_get("/api/gauge"), api_get("/api/public")),
              keyboard_for("/start"))
     elif cmd == "/stop":
         subs = load_state("subscribers.json", {})
         subs.pop(str(chat_id), None)
         save_state("subscribers.json", subs)
-        send(chat_id, "Unsubscribed. /start any time.")
+        send(chat_id, "Unsubscribed. This stops the daily letter, funding-state "
+                      "and cross-desk alerts, and sourced desk news. /start "
+                      "follows the desk again any time.")
+    elif cmd == "/help":
+        send(chat_id, HELP, keyboard_for("/help"))
     elif cmd == "/now":
         gauge = api_get("/api/gauge")
         gauge_history_append(gauge)
@@ -1607,40 +1664,109 @@ def run_alert_scan() -> None:
           f"subscriber(s), published to channel={published}")
 
 
+BOT_DISPLAY_NAME = "Seiche | US Funding Stress"
+BOT_SHORT_DESCRIPTION = (
+    "US funding-stress gauge, daily letter, state/cross-desk alerts and news "
+    "from public data. Research context only."
+)
+BOT_DESCRIPTION = (
+    "US dollar-funding stress from public Fed, NY Fed, OFR and Treasury "
+    "records. Live gauge, daily 11:30 UTC letter, relevant funding-state "
+    "alerts, cross-desk change alerts and sourced desk news. Research context "
+    "only; not investment advice or an execution instruction. Free, no "
+    "sign-in: seiche.info"
+)
+BOT_COMMANDS = [
+    {"command": "now", "description": "The gauge: regime, composite, the Tell"},
+    {"command": "snap", "description": "The forwardable gauge card"},
+    {"command": "odds", "description": "Forward event odds (Navigator)"},
+    {"command": "turns", "description": "Next turn + crunch windows"},
+    {"command": "oil", "description": "Oil × Funding transmission context"},
+    {"command": "estuary", "description": "FX/material pressure + Passage"},
+    {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
+    {"command": "institutions", "description": "The LiquiLens Failure Radar"},
+    {"command": "analogs", "description": "The wreck ledger: past storms"},
+    {"command": "proof", "description": "Evidence status, flags and misses"},
+    {"command": "letter", "description": "Today's dispatch"},
+    {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
+    {"command": "share", "description": "Send this free desk to someone"},
+    {"command": "help", "description": "Full command list and desk guide"},
+    {"command": "start", "description": "Follow letter + state/cross-desk alerts/news"},
+    {"command": "stop", "description": "Unsubscribe"},
+]
+
+
+class TelegramSetupError(RuntimeError):
+    """Telegram rejected or failed to acknowledge bot profile setup."""
+
+
+def _telegram_text_units(value: str) -> int:
+    """Bot API text limits are measured in UTF-16 code units."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _validate_setup_metadata() -> None:
+    fields = (
+        ("name", BOT_DISPLAY_NAME, 1, 64),
+        ("short_description", BOT_SHORT_DESCRIPTION, 0, 120),
+        ("description", BOT_DESCRIPTION, 0, 512),
+    )
+    for label, value, minimum, maximum in fields:
+        units = _telegram_text_units(value)
+        if not minimum <= units <= maximum:
+            raise ValueError(
+                f"Telegram {label} must be {minimum}..{maximum} UTF-16 units; "
+                f"got {units}"
+            )
+    if not 1 <= len(BOT_COMMANDS) <= 100:
+        raise ValueError("Telegram command menu must contain 1..100 commands")
+    for entry in BOT_COMMANDS:
+        command = entry["command"]
+        description = entry["description"]
+        if (not 1 <= len(command) <= 32
+                or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789_"
+                       for c in command)):
+            raise ValueError(f"invalid Telegram command: {command!r}")
+        units = _telegram_text_units(description)
+        if not 1 <= units <= 256:
+            raise ValueError(
+                f"Telegram /{command} description must be 1..256 UTF-16 units; "
+                f"got {units}"
+            )
+
+
+def _checked_setup_call(method: str, payload: dict) -> dict:
+    response = tg_call(method, payload)
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        code = response.get("error_code") if isinstance(response, dict) else None
+        detail = response.get("description") if isinstance(response, dict) else None
+        raise TelegramSetupError(
+            f"Telegram {method} failed"
+            f" ({code if code is not None else 'no response'}): "
+            f"{detail or 'no description'}"
+        )
+    result = response.get("result")
+    if method == "getMe":
+        if not isinstance(result, dict):
+            raise TelegramSetupError("Telegram getMe returned no bot profile")
+    elif result is not True:
+        raise TelegramSetupError(
+            f"Telegram {method} returned an unexpected success payload"
+        )
+    return response
+
+
 def run_setup() -> None:
-    tg_call("setMyCommands", {"commands": [
-        {"command": "now", "description": "The gauge: regime, composite, the Tell"},
-        {"command": "snap", "description": "The forwardable gauge card"},
-        {"command": "odds", "description": "Forward event odds (Navigator)"},
-        {"command": "turns", "description": "Next turn + crunch windows"},
-        {"command": "oil", "description": "Oil × Funding transmission context"},
-        {"command": "estuary", "description": "FX/material pressure + Passage"},
-        {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
-        {"command": "institutions", "description": "The LiquiLens Failure Radar"},
-        {"command": "analogs", "description": "The wreck ledger: past storms"},
-        {"command": "proof", "description": "Evidence status, flags and misses"},
-        {"command": "letter", "description": "Today's dispatch"},
-        {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
-        {"command": "share", "description": "Send this free desk to someone"},
-        {"command": "start", "description": "Subscribe to the daily letter"},
-        {"command": "stop", "description": "Unsubscribe"},
-    ]})
-    tg_call("setMyShortDescription", {
-        "short_description": "US funding-stress early warning from free public "
-                             "data. Free public good — seiche.info"})
-    tg_call("setMyDescription", {
-        "description": "The Seiche desk bot reads dollar funding stress from "
-                       "public Fed, NY Fed, OFR and Treasury data. It combines "
-                       "a regime gauge, forward event odds, calendar crunch "
-                       "windows, Oil × Funding, the FX/material Estuary, and a "
-                       "construction-PIT historical diagnostic with explicit "
-                       "eligibility flags. Ask any question for a grounded "
-                       "answer over the live board, or type @seiche_desk_bot "
-                       "in any chat for a live gauge card. Free public good, "
-                       "no paywall or sign-in. Institutions are tracked by "
-                       "@LiquiLens_bot. seiche.info"})
-    me = tg_call("getMe", {})
-    print("setup done:", json.dumps((me or {}).get("result", {})))
+    _validate_setup_metadata()
+    _checked_setup_call("setMyName", {"name": BOT_DISPLAY_NAME})
+    _checked_setup_call("setMyCommands", {"commands": BOT_COMMANDS})
+    _checked_setup_call(
+        "setMyShortDescription",
+        {"short_description": BOT_SHORT_DESCRIPTION},
+    )
+    _checked_setup_call("setMyDescription", {"description": BOT_DESCRIPTION})
+    me = _checked_setup_call("getMe", {})
+    print("setup done:", json.dumps(me["result"]))
 
 
 if __name__ == "__main__":
