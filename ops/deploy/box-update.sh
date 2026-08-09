@@ -1,5 +1,5 @@
 #!/bin/bash
-# Safe auto-update: pull main, install (with the notary extra), test, restart.
+# Safe auto-update: pull main, install production extras, test, restart.
 # Roll back if the install OR the tests fail. Output is logged to
 # /tmp/seiche-update.log and NEVER suppressed — a broken pip install must not
 # pass silently (that is how the editable install rotted before).
@@ -42,7 +42,8 @@ rollback() {
 # nothing is ever orphaned. Budgets sit well inside the GH ceiling so the GH
 # timeout stays an outer backstop that never fires first.
 echo "=== pip install $(date -u +%FT%TZ) ===" >>"$LOG"
-if ! timeout -k 30 600 backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1; then
+if ! timeout -k 30 600 backend/.venv/bin/pip install -q -e \
+        "./backend[notary,collectors,postgres]" >>"$LOG" 2>&1; then
   rollback "pip install failed or timed out"
 fi
 
@@ -73,15 +74,18 @@ fi
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
 export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
-# Six files, collects 175 tests as of this commit. If a commit grows or
+# Nine files, collects 232 tests as of this commit. If a commit grows or
 # shrinks this subset, update this count in the same commit — the number is
 # how a reader of the deploy log knows the gate ran what it claims to run.
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \
 tests/test_citability.py tests/test_mcp_server.py tests/test_notary.py \
-tests/test_attest.py"
+tests/test_attest.py tests/test_api_v2_markets.py \
+tests/test_market_materialize.py tests/test_deploy_release.py"
 
 echo "=== import smoke $(date -u +%FT%TZ) ===" >>"$LOG"
-if ! timeout -k 30 120 backend/.venv/bin/python -c "import seiche.api, seiche.assemble, seiche.dispatch_daily" >>"$LOG" 2>&1; then
+if ! timeout -k 30 120 backend/.venv/bin/python -c \
+        "import seiche.api, seiche.assemble, seiche.dispatch_daily, seiche.market_runtime, seiche.sources.official" \
+        >>"$LOG" 2>&1; then
   rollback "the tree does not import (or the import wedged)"
 fi
 

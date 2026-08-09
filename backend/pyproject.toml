@@ -19,6 +19,8 @@ dependencies = [
     "scipy>=1.11",        # microseism MLE (was transitive via sklearn; now direct)
     "arch>=7",            # regatta: Model Confidence Set bootstrap
     "cryptography>=42",   # attest: Ed25519 signing of the as-published record
+    "tzdata>=2025.2",     # IANA market timezones on hosts without a system zoneinfo database
+    "holidays>=0.76",     # dated national/settlement holidays; never assume Mon-Fri globally
 ]
 
 [project.optional-dependencies]
@@ -30,6 +32,11 @@ dev = [
     "pytest-pystack>=1.0; sys_platform == 'linux'",
 ]
 notary = ["opentimestamps>=0.4"]   # Bitcoin anchoring for the record ledger
+collectors = [
+    "pyarrow>=16",                 # immutable normalized Parquet partitions
+    "openpyxl>=3.1",               # official RBA/RBNZ workbook adapters
+]
+postgres = ["psycopg[binary]>=3.2"]  # canonical observation metadata + sealed snapshots
 
 [project.scripts]
 seiche = "seiche.cli:main"

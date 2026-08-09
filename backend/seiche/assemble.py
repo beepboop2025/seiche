@@ -1713,6 +1713,18 @@ async def _build_snapshot() -> dict:
                 store.load_pit_records(), drv["spread_bp"])}
     payload["navigator"] = nav
     _record_pit(engines, deep, nav)
+    # v2 never collects at request time. The existing US cycle is the first
+    # producer during migration: once its payload is complete, a pack-local
+    # adapter seals independent market products for read-only v2 routes.
+    # Failure is isolated from v1 publication and reported in operator logs.
+    try:
+        from seiche.markets.us_usd.materialize import seal_legacy_snapshot
+
+        seal_legacy_snapshot(payload)
+    except Exception:  # noqa: BLE001 — a v2 materializer cannot block v1
+        logging.getLogger("seiche.assemble").exception(
+            "US-USD v2 snapshot materialization failed"
+        )
     _cache.update(at=time.time(), payload=payload)
     return payload
 

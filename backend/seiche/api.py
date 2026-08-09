@@ -16,6 +16,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
@@ -49,6 +50,9 @@ from seiche.config import (
     REGIMES,
     WRECKS_BLOB_KEY,
 )
+from seiche.markets.base import CapabilityStatus
+from seiche.markets.registry import UnknownMarketError, default_registry
+from seiche.repository import get_repository
 
 # In production (SEICHE_ENV=production, set in the systemd unit) the interactive
 # API docs and the machine-readable schema are turned off — they enumerate every
@@ -127,6 +131,86 @@ def _json_safe(o: Any) -> Any:
     if isinstance(o, list):
         return [_json_safe(v) for v in o]
     return o
+
+
+def _market_pack(market_id: str):
+    try:
+        return default_registry().get(market_id)
+    except UnknownMarketError as exc:
+        known = ", ".join(pack.market_id for pack in default_registry().list())
+        raise HTTPException(404, f"unknown market {market_id!r}; available: {known}") from exc
+
+
+def _v2_capabilities(pack) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    matrix = {
+        capability.capability_id: capability.status.value
+        for capability in pack.capabilities
+    }
+    missing = [
+        {
+            "capability": capability.capability_id,
+            "status": capability.status.value,
+            "reason": capability.reason,
+        }
+        for capability in pack.capabilities
+        if capability.status is not CapabilityStatus.READY
+    ]
+    return matrix, missing
+
+
+def _v2_collector_faults(pack) -> list[dict[str, Any]]:
+    return [
+        {
+            "market_id": pack.market_id,
+            "source": item["adapter_id"],
+            "status": item["status"],
+            "detail": item.get("fault"),
+            "finished_at": item["finished_at"],
+            "next_due": item["next_due"],
+        }
+        for item in get_repository().latest_collector_runs(pack.market_id)
+        if item["status"] != "SUCCESS"
+    ]
+
+
+def _v2_unavailable(pack, product: str, reason: str) -> JSONResponse:
+    capabilities, missing = _v2_capabilities(pack)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "schema": f"seiche.{product}.v2",
+            "product": product.upper(),
+            "status": "UNAVAILABLE",
+            "market_id": pack.market_id,
+            "monetary_area_id": pack.monetary_area_id,
+            "jurisdiction_codes": list(pack.jurisdiction_codes),
+            "currency": pack.currency,
+            "policy_regime": pack.policy_regime.value,
+            "support_status": pack.support_status.value,
+            "data_coverage": {
+                "canonical_observations": get_repository().canonical_coverage(pack.market_id)
+            },
+            "capabilities": capabilities,
+            "missing_capabilities": missing,
+            "calibration_id": pack.calibration_id,
+            "evidence_eligibility": {"eligible": False, "reason": reason},
+            "event_cutoff": None,
+            "knowledge_cutoff": None,
+            "faults": _v2_collector_faults(pack)
+            or [{"market_id": pack.market_id, "detail": reason}],
+            "stale_inputs": [],
+        },
+    )
+
+
+def _parse_v2_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(422, "timestamp must be ISO-8601 with an explicit timezone") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HTTPException(422, "timestamp must include an explicit timezone")
+    return parsed.astimezone(UTC)
 
 
 def _bearer_identity(authorization: str | None) -> dict | None:
@@ -272,6 +356,9 @@ def api_index() -> dict[str, Any]:
             "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",
             "small_gauge": "/api/gauge",
+            "market_catalog_v2": "/api/v2/markets",
+            "market_coverage_v2": "/api/v2/coverage",
+            "global_tide_v2": "/api/v2/global/tide",
             "oil_funding": "/api/oil-funding",
             "fx_materials": "/api/estuary",
             "health": "/api/health",
@@ -343,6 +430,73 @@ def _public_openapi_document() -> dict[str, Any]:
                 "operationId": "getFundingStressGauge",
                 "summary": "Read the compact current funding-stress gauge",
                 "description": "The smallest stable contract for dashboards, alerts and risk pipelines.",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/markets": {
+            "get": {
+                "operationId": "listMonetaryAreaPacks",
+                "summary": "List registered monetary-area packs and capabilities",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/markets/{market_id}/overview": {
+            "get": {
+                "operationId": "getMarketOverviewV2",
+                "summary": "Read the latest sealed local-market overview",
+                "parameters": [{
+                    "name": "market_id", "in": "path", "required": True,
+                    "schema": {"type": "string"},
+                }],
+                "responses": {"200": object_response, "503": object_response},
+            },
+        },
+        "/api/v2/markets/{market_id}/gauge": {
+            "get": {
+                "operationId": "getLocalSeicheGaugeV2",
+                "summary": "Read the latest sealed local Seiche gauge",
+                "parameters": [{
+                    "name": "market_id", "in": "path", "required": True,
+                    "schema": {"type": "string"},
+                }],
+                "responses": {"200": object_response, "503": object_response},
+            },
+        },
+        "/api/v2/markets/{market_id}/asof/{timestamp}": {
+            "get": {
+                "operationId": "getMarketOverviewAsOfV2",
+                "summary": "Read the last sealed market overview knowable by a timestamp",
+                "parameters": [
+                    {"name": "market_id", "in": "path", "required": True,
+                     "schema": {"type": "string"}},
+                    {"name": "timestamp", "in": "path", "required": True,
+                     "schema": {"type": "string", "format": "date-time"}},
+                ],
+                "responses": {"200": object_response, "404": object_response},
+            },
+        },
+        "/api/v2/markets/{market_id}/series": {
+            "get": {
+                "operationId": "getCanonicalMarketSeriesV2",
+                "summary": "Read canonical, licence-aware market observations",
+                "parameters": [{
+                    "name": "market_id", "in": "path", "required": True,
+                    "schema": {"type": "string"},
+                }],
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/global/tide": {
+            "get": {
+                "operationId": "getGlobalSeicheTideV2",
+                "summary": "Read cross-basin synchronization and transmission",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/coverage": {
+            "get": {
+                "operationId": "getMarketCoverageV2",
+                "summary": "Read per-market data, capability and connector coverage",
                 "responses": {"200": object_response},
             },
         },
@@ -419,7 +573,7 @@ def _public_openapi_document() -> dict[str, Any]:
             "title": "Seiche Public API",
             "version": assemble.VERSION,
             "description": (
-                "Curated, anonymous US dollar funding-stress data. "
+                "Curated funding-stress data; v1 remains the US dollar alias. "
                 "Research data, not investment advice."
             ),
         },
@@ -525,6 +679,301 @@ async def gauge(response: Response):
         "crunch_windows": (cal.get("crunch_windows") or [])[:3],
         "faults": len(snap.get("faults") or []),
         "notes": "point-in-time as-published; PROOF scoreboard at /api/public; not investment advice",
+    }
+
+
+# ---- market-pack v2 ---------------------------------------------------------
+# These routes are read-only over sealed snapshots and canonical observations.
+# They never call assemble.snapshot(), so a cold API request cannot fan out to
+# every source or let one monetary area's collector block another area's read.
+
+
+@app.get("/api/v2/markets")
+def markets_v2(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=300"
+    markets = []
+    for pack in default_registry().list():
+        summary = pack.summary()
+        latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        payload = latest["payload"] if latest else None
+        summary["latest_snapshot"] = (
+            {
+                "snapshot_id": latest["snapshot_id"],
+                "event_cutoff": latest["event_cutoff"],
+                "knowledge_cutoff": latest["knowledge_cutoff"],
+                "sealed_at": latest["sealed_at"],
+                "evidence_eligible": latest["evidence_eligible"],
+            }
+            if latest
+            else None
+        )
+        summary["data_coverage"] = (
+            payload.get("data_coverage")
+            if payload
+            else {
+                "canonical_observations": get_repository().canonical_coverage(
+                    pack.market_id
+                )
+            }
+        )
+        summary["evidence_eligibility"] = (
+            payload.get("evidence_eligibility")
+            if payload
+            else {"eligible": False, "reason": "no sealed market snapshot"}
+        )
+        summary["event_cutoff"] = payload.get("event_cutoff") if payload else None
+        summary["knowledge_cutoff"] = (
+            payload.get("knowledge_cutoff") if payload else None
+        )
+        summary["faults"] = (
+            payload.get("faults", []) if payload else _v2_collector_faults(pack)
+        )
+        summary["stale_inputs"] = payload.get("stale_inputs", []) if payload else []
+        markets.append(summary)
+    return {
+        "schema": "seiche.markets.v2",
+        "markets": markets,
+        "count": len(markets),
+        "collection_policy": "independent schedules; API reads sealed snapshots only",
+    }
+
+
+@app.get("/api/v2/markets/{market_id}/overview")
+def market_overview_v2(market_id: str, response: Response):
+    pack = _market_pack(market_id)
+    record = get_repository().load_latest_market_snapshot(pack.market_id, "overview")
+    if record is None:
+        return _v2_unavailable(
+            pack,
+            "market-overview",
+            "no sealed overview has been published by this market pack",
+        )
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    return record["payload"]
+
+
+@app.get("/api/v2/markets/{market_id}/gauge")
+def market_gauge_v2(market_id: str, response: Response):
+    pack = _market_pack(market_id)
+    record = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+    if record is None:
+        return _v2_unavailable(
+            pack,
+            "local-gauge",
+            "no sealed gauge has been published by this market pack",
+        )
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    return record["payload"]
+
+
+@app.get("/api/v2/markets/{market_id}/asof/{timestamp}")
+def market_asof_v2(market_id: str, timestamp: str, response: Response):
+    pack = _market_pack(market_id)
+    cutoff = _parse_v2_timestamp(timestamp)
+    record = get_repository().load_market_snapshot_as_of(pack.market_id, "overview", cutoff)
+    if record is None:
+        raise HTTPException(
+            404,
+            f"no sealed {pack.market_id} overview known by {cutoff.isoformat()}",
+        )
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return {
+        **record["payload"],
+        "requested_knowledge_cutoff": cutoff.isoformat(),
+        "sealed_snapshot_id": record["snapshot_id"],
+    }
+
+
+@app.get("/api/v2/markets/{market_id}/series")
+def market_series_v2(market_id: str, response: Response, n: int = 1000):
+    pack = _market_pack(market_id)
+    if not 1 <= n <= 5000:
+        raise HTTPException(422, "n must be between 1 and 5000")
+    now = datetime.now(UTC).replace(microsecond=0)
+    observations = get_repository().load_observations_as_of(
+        pack.market_id,
+        now,
+        event_time=now,
+    )[-n:]
+    available_instruments = {item.instrument_id for item in observations}
+    records = []
+    for observation in observations:
+        record = observation.to_record()
+        if observation.redistribution_status.value != "allowed":
+            record["value"] = None
+            record["value_status"] = "REDACTED_BY_LICENCE"
+        records.append(record)
+    instruments = []
+    for instrument in pack.instruments:
+        adapter = pack.adapter_map[instrument.source_adapter_id]
+        instruments.append(
+            {
+                "instrument_id": instrument.instrument_id,
+                "mnemonic": instrument.mnemonic,
+                "semantic_role": instrument.semantic_role.value,
+                "canonical_unit": instrument.canonical_unit.value,
+                "source_adapter": adapter.adapter_id,
+                "connector_classification": adapter.classification.value,
+                "redistribution_status": adapter.redistribution_status.value,
+                "expected_cadence": adapter.expected_cadence,
+                "availability": (
+                    "READY"
+                    if instrument.instrument_id in available_instruments
+                    else "UNAVAILABLE"
+                ),
+            }
+        )
+    stale = [
+        {
+            "instrument_id": item.instrument_id,
+            "event_time": item.event_time.isoformat(),
+            "staleness": item.staleness.value,
+        }
+        for item in observations
+        if item.staleness.value not in {"fresh", "aging"}
+    ]
+    capabilities, missing = _v2_capabilities(pack)
+    latest_gauge = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+    gauge_payload = latest_gauge["payload"] if latest_gauge else {}
+    event_cutoff = max((item.event_time for item in observations), default=None)
+    knowledge_cutoff = max((item.knowledge_time for item in observations), default=None)
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return {
+        "schema": "seiche.market-series.v2",
+        "status": "READY" if observations else "UNAVAILABLE",
+        "market_id": pack.market_id,
+        "monetary_area_id": pack.monetary_area_id,
+        "jurisdiction_codes": list(pack.jurisdiction_codes),
+        "currency": pack.currency,
+        "policy_regime": pack.policy_regime.value,
+        "support_status": pack.support_status.value,
+        "data_coverage": get_repository().canonical_coverage(pack.market_id),
+        "capabilities": capabilities,
+        "missing_capabilities": missing,
+        "calibration_id": pack.calibration_id,
+        "evidence_eligibility": {
+            "eligible": bool(observations),
+            "value_encoding": "decimal_string",
+            "restricted_values": "redacted",
+        },
+        "event_cutoff": event_cutoff.isoformat() if event_cutoff else None,
+        "knowledge_cutoff": knowledge_cutoff.isoformat() if knowledge_cutoff else None,
+        "faults": gauge_payload.get("faults") or _v2_collector_faults(pack),
+        "stale_inputs": gauge_payload.get("stale_inputs") or stale,
+        "instruments": instruments,
+        "observations": records,
+    }
+
+
+@app.get("/api/v2/global/tide")
+def global_tide_v2(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    record = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
+    if record is not None:
+        return record["payload"]
+    return {
+        "schema": "seiche.global-tide.v2",
+        "product": "GLOBAL_SEICHE_TIDE",
+        "status": "UNAVAILABLE",
+        "market_id": "GLOBAL",
+        "monetary_area_id": None,
+        "jurisdiction_codes": [],
+        "currency": None,
+        "policy_regime": None,
+        "data_coverage": [],
+        "missing_capabilities": [
+            {
+                "capability": "cross_basin_coupling",
+                "status": "UNAVAILABLE",
+                "reason": "no independently sealed cross-basin snapshot is available",
+            }
+        ],
+        "calibration_id": None,
+        "evidence_eligibility": {"eligible": False},
+        "event_cutoff": None,
+        "knowledge_cutoff": None,
+        "faults": [],
+        "stale_inputs": [],
+        "reading": {"value": None},
+        "notes": "Local gauges are never averaged into this product.",
+    }
+
+
+@app.get("/api/v2/coverage")
+def coverage_v2(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=300"
+    markets = []
+    for pack in default_registry().list():
+        capabilities, missing = _v2_capabilities(pack)
+        latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        payload = latest["payload"] if latest else {}
+        markets.append(
+            {
+                "market_id": pack.market_id,
+                "monetary_area_id": pack.monetary_area_id,
+                "currency": pack.currency,
+                "policy_regime": pack.policy_regime.value,
+                "support_status": pack.support_status.value,
+                "calibration_id": pack.calibration_id,
+                "capabilities": capabilities,
+                "missing_capabilities": missing,
+                "data_coverage": get_repository().canonical_coverage(pack.market_id),
+                "latest_snapshot": (
+                    {
+                        "event_cutoff": latest["event_cutoff"],
+                        "knowledge_cutoff": latest["knowledge_cutoff"],
+                        "evidence_eligible": latest["evidence_eligible"],
+                    }
+                    if latest
+                    else None
+                ),
+                "evidence_eligibility": payload.get(
+                    "evidence_eligibility",
+                    {"eligible": False, "reason": "no sealed market snapshot"},
+                ),
+                "event_cutoff": payload.get("event_cutoff"),
+                "knowledge_cutoff": payload.get("knowledge_cutoff"),
+                "faults": payload.get("faults") or _v2_collector_faults(pack),
+                "stale_inputs": payload.get("stale_inputs") or [],
+                "forward_validation_records": get_repository().forward_record_count(
+                    pack.market_id
+                ),
+                "connectors": [
+                    {
+                        "adapter_id": adapter.adapter_id,
+                        "classification": adapter.classification.value,
+                        "redistribution_status": adapter.redistribution_status.value,
+                        "expected_cadence": adapter.expected_cadence,
+                    }
+                    for adapter in pack.source_adapters
+                ],
+            }
+        )
+    global_snapshot = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
+    return {
+        "schema": "seiche.coverage.v2",
+        "markets": markets,
+        "global_tide": (
+            global_snapshot["payload"].get("status", "UNAVAILABLE")
+            if global_snapshot
+            else "UNAVAILABLE"
+        ),
+        "global_tide_snapshot": (
+            {
+                "event_cutoff": global_snapshot["payload"].get("event_cutoff"),
+                "knowledge_cutoff": global_snapshot["payload"].get(
+                    "knowledge_cutoff"
+                ),
+                "evidence_eligibility": global_snapshot["payload"].get(
+                    "evidence_eligibility"
+                ),
+                "faults": global_snapshot["payload"].get("faults", []),
+                "stale_inputs": global_snapshot["payload"].get("stale_inputs", []),
+            }
+            if global_snapshot
+            else None
+        ),
+        "forward_validation_records": get_repository().forward_record_count(),
     }
 
 

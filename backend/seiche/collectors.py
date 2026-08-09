@@ -1,0 +1,307 @@
+"""Independent canonical collector schedules and failure isolation.
+
+The REST layer never invokes this module. A scheduler process registers one
+adapter per market/source and runs due tasks independently; successful batches
+append raw evidence, normalized partitions, and canonical observations.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import tempfile
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from pathlib import Path
+from typing import Protocol
+
+import pandas as pd
+
+from seiche.markets.base import SourceAdapterSpec
+from seiche.markets.registry import MarketRegistry, default_registry
+from seiche.repository import get_repository
+from seiche.sources.base import CanonicalSourceAdapter, ObservationBatch, RawCapture
+
+
+class CollectorRunStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    CIRCUIT_OPEN = "CIRCUIT_OPEN"
+
+
+@dataclass(frozen=True, slots=True)
+class CollectorRun:
+    market_id: str
+    adapter_id: str
+    status: CollectorRunStatus
+    started_at: str
+    finished_at: str
+    observations_written: int
+    attempts: int
+    next_due: str
+    fault: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "market_id": self.market_id,
+            "adapter_id": self.adapter_id,
+            "status": self.status.value,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "observations_written": self.observations_written,
+            "attempts": self.attempts,
+            "next_due": self.next_due,
+            "fault": self.fault,
+        }
+
+
+@dataclass(slots=True)
+class _CollectorState:
+    next_due: datetime
+    consecutive_failures: int = 0
+    open_until: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CollectorTask:
+    adapter: CanonicalSourceAdapter
+    spec: SourceAdapterSpec
+
+
+class RawCaptureSink(Protocol):
+    def write(self, capture: RawCapture) -> str: ...
+
+
+class NormalizedBatchSink(Protocol):
+    def write(self, batch: ObservationBatch) -> list[str]: ...
+
+
+def cadence_delta(value: str) -> timedelta:
+    if value.startswith("PT"):
+        amount = int(value[2:-1])
+        suffix = value[-1]
+        return {
+            "H": timedelta(hours=amount),
+            "M": timedelta(minutes=amount),
+            "S": timedelta(seconds=amount),
+        }[suffix]
+    amount = int(value[1:-1])
+    suffix = value[-1]
+    return {"D": timedelta(days=amount), "W": timedelta(weeks=amount)}[suffix]
+
+
+class FileRawCaptureSink:
+    """Content-addressed immutable captures under market/source/date paths."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def write(self, capture: RawCapture) -> str:
+        day = capture.captured_at.astimezone(UTC).date()
+        directory = (
+            self.root
+            / f"market={capture.market_id}"
+            / f"source={capture.adapter_id}"
+            / f"date={day.isoformat()}"
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        suffix = {
+            "application/json": ".json",
+            "text/csv": ".csv",
+            "application/xml": ".xml",
+        }.get(capture.media_type, ".bin")
+        target = directory / f"{capture.evidence_hash}{suffix}"
+        try:
+            with target.open("xb") as handle:
+                handle.write(capture.payload)
+        except FileExistsError:
+            if hashlib.sha256(target.read_bytes()).hexdigest() != capture.evidence_hash:
+                raise ValueError(f"raw capture hash collision at {target}")
+        return str(target)
+
+
+class ParquetPartitionSink:
+    """Immutable normalized Parquet parts by market/source/event date.
+
+    Install the ``collectors`` optional dependency to provide a Parquet engine.
+    Each content hash gets its own part file, so a later revision appends rather
+    than rewriting a prior partition.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def write(self, batch: ObservationBatch) -> list[str]:
+        grouped: dict[str, list[dict]] = {}
+        for observation in batch.observations:
+            record = observation.to_record()
+            record["jurisdiction_codes"] = ",".join(record["jurisdiction_codes"])
+            grouped.setdefault(observation.event_time.date().isoformat(), []).append(record)
+        outputs = []
+        for event_date, records in grouped.items():
+            canonical = json.dumps(
+                records,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            directory = (
+                self.root
+                / f"market={batch.market_id}"
+                / f"source={batch.adapter_id}"
+                / f"date={event_date}"
+            )
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / f"part-{digest}.parquet"
+            if target.exists():
+                outputs.append(str(target))
+                continue
+            frame = pd.DataFrame.from_records(records)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=".seiche-parquet-",
+                suffix=".tmp",
+                dir=directory,
+            )
+            os.close(descriptor)
+            try:
+                frame.to_parquet(temporary, index=False)
+                try:
+                    os.link(temporary, target)
+                except FileExistsError:
+                    pass
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+            outputs.append(str(target))
+        return outputs
+
+
+class CollectorSupervisor:
+    def __init__(
+        self,
+        *,
+        registry: MarketRegistry | None = None,
+        raw_sink: RawCaptureSink | None = None,
+        normalized_sink: NormalizedBatchSink | None = None,
+        observation_writer: Callable[[tuple], int] | None = None,
+        run_writer: Callable[[dict], str] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self.registry = registry or default_registry()
+        self.raw_sink = raw_sink
+        self.normalized_sink = normalized_sink
+        self.observation_writer = observation_writer or get_repository().save_observations
+        self.run_writer = run_writer
+        self.sleep = sleep
+        self._tasks: dict[tuple[str, str], _CollectorTask] = {}
+        self._states: dict[tuple[str, str], _CollectorState] = {}
+
+    def register(self, adapter: CanonicalSourceAdapter) -> None:
+        market_id = adapter.market_id.upper()
+        pack = self.registry.get(market_id)
+        try:
+            spec = pack.adapter_map[adapter.adapter_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"adapter {adapter.adapter_id!r} is not declared by {market_id}"
+            ) from exc
+        key = (market_id, adapter.adapter_id)
+        if key in self._tasks:
+            raise ValueError(f"collector {key!r} is already registered")
+        self._tasks[key] = _CollectorTask(adapter, spec)
+        self._states[key] = _CollectorState(next_due=datetime.min.replace(tzinfo=UTC))
+
+    async def run_due(
+        self,
+        *,
+        now: datetime | None = None,
+        force: bool = False,
+    ) -> list[CollectorRun]:
+        current = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+        due = [
+            (key, task)
+            for key, task in self._tasks.items()
+            if force or self._states[key].next_due <= current
+        ]
+        runs = await asyncio.gather(
+            *(self._run_one(key, task, current) for key, task in due)
+        )
+        ordered = sorted(runs, key=lambda item: (item.market_id, item.adapter_id))
+        # Persist only after every due task has completed: a metadata-store
+        # problem can fail the scheduler cycle, but cannot cancel sibling
+        # collectors that are already running.
+        if self.run_writer is not None:
+            for run in ordered:
+                await asyncio.to_thread(self.run_writer, run.to_dict())
+        return ordered
+
+    async def _run_one(
+        self,
+        key: tuple[str, str],
+        task: _CollectorTask,
+        now: datetime,
+    ) -> CollectorRun:
+        state = self._states[key]
+        started = datetime.now(UTC).replace(microsecond=0)
+        cadence = cadence_delta(task.spec.expected_cadence)
+        if state.open_until is not None and state.open_until > now:
+            return CollectorRun(
+                key[0],
+                key[1],
+                CollectorRunStatus.CIRCUIT_OPEN,
+                started.isoformat(),
+                started.isoformat(),
+                0,
+                0,
+                state.open_until.isoformat(),
+                "circuit breaker is open after consecutive source failures",
+            )
+
+        fault: Exception | None = None
+        attempts = 0
+        for attempt in range(task.spec.retry_limit + 1):
+            attempts = attempt + 1
+            try:
+                batch = await task.adapter.collect()
+                if batch.market_id != key[0] or batch.adapter_id != key[1]:
+                    raise ValueError("collector returned a batch outside its registered scope")
+                if self.raw_sink is not None and batch.raw_capture is not None:
+                    await asyncio.to_thread(self.raw_sink.write, batch.raw_capture)
+                if self.normalized_sink is not None:
+                    await asyncio.to_thread(self.normalized_sink.write, batch)
+                written = await asyncio.to_thread(
+                    self.observation_writer,
+                    batch.observations,
+                )
+                state.consecutive_failures = 0
+                state.open_until = None
+                state.next_due = now + cadence
+                finished = datetime.now(UTC).replace(microsecond=0)
+                return CollectorRun(
+                    key[0], key[1], CollectorRunStatus.SUCCESS,
+                    started.isoformat(), finished.isoformat(), written, attempts,
+                    state.next_due.isoformat(),
+                )
+            except Exception as exc:  # noqa: BLE001 — isolation boundary
+                fault = exc
+                if attempt < task.spec.retry_limit:
+                    await self.sleep(task.spec.backoff_seconds * (2 ** attempt))
+
+        state.consecutive_failures += 1
+        state.next_due = now + cadence
+        if state.consecutive_failures >= task.spec.circuit_breaker_failures:
+            state.open_until = now + timedelta(
+                seconds=task.spec.circuit_breaker_cooldown_seconds
+            )
+            state.next_due = state.open_until
+        finished = datetime.now(UTC).replace(microsecond=0)
+        detail = f"{type(fault).__name__}: {fault}" if fault is not None else "unknown fault"
+        return CollectorRun(
+            key[0], key[1], CollectorRunStatus.FAILED,
+            started.isoformat(), finished.isoformat(), 0, attempts,
+            state.next_due.isoformat(), detail,
+        )
