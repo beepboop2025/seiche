@@ -307,6 +307,20 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     )
     assert wrapper.count("restore_market_services") == 4
     assert "previous market services restored" in wrapper
+    market_installer = wrapper[
+        wrapper.index("deploy_market_platform()") : wrapper.index(
+            "deploy_market_platform ||"
+        )
+    ]
+    caddy_installer = wrapper[
+        wrapper.index("deploy_caddy()") : wrapper.index("deploy_market_platform()")
+    ]
+    assert "SEICHE_DEFER_MARKET_START=1 bash" in market_installer
+    assert "SEICHE_DEFER_MARKET_START" not in caddy_installer
+    healthy_release = wrapper[wrapper.index('if [ -n "$HEALTHY" ]'):]
+    assert healthy_release.index("start_market_services") < healthy_release.index(
+        "deploy_caddy ||"
+    )
 
 
 def test_market_platform_units_are_independent_and_postgres_backed():
@@ -320,11 +334,16 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "could not resolve the PostgreSQL cluster port" in installer
     assert 'connection.execute("SELECT 1")' in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
+    assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "Restart=always" in worker
     assert "Type=oneshot" in backfill
     assert "TimeoutStartSec=2h" in backfill
+    assert "CPUQuota=100%" in backfill
+    assert "CPUWeight=10" in backfill
+    assert "IOWeight=10" in backfill
+    assert "Nice=10" in backfill
     assert "/api/v2/*" in caddy
 
 
