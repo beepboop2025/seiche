@@ -65,12 +65,24 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")   # empty = channel off
 # latest.json and the Hermes agent lane posts the desk reads (Mrinal's
 # call 2026-08-03); "direct": this radar posts its deterministic reads
 # itself (fallback lane); "off": no channel activity at all.
-CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "direct").lower()
+# A missing deployment setting must fail quiet. Production explicitly assigns
+# Hermes as the shared-channel owner; direct delivery is an operator opt-in.
+CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "off").lower()
 LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
 OUTBOX_EXPORT = "outbox.jsonl"   # durable multi-desk subscriber handoff
 MAX_CHANNEL_POSTS = 2
 OUTBOX_TTL_H = float(os.environ.get("RISSAGA_OUTBOX_TTL_H", "24"))
 LAB_LINK = "https://t.me/LiquidityLabDesk"
+DESK_OPEN = {
+    "SEICHE": ("Open + follow Seiche", "https://t.me/seiche_desk_bot"),
+    "LIQUILENS": ("Open + follow LiquiLens", "https://t.me/LiquiLens_bot"),
+    "UNDERTOW": ("Open + follow Undertow", "https://t.me/undertow_LiquiLens_bot"),
+    "RIPTIDE": ("Open Riptide", "https://t.me/riptide_anake_bot"),
+    "PALIMPSEST": ("Open + follow Palimpsest", "https://t.me/palimpsest_watch_bot"),
+    "CORPORATE": ("Open + follow Corporate", "https://t.me/corporate_stress_bot"),
+    "REALECON": ("Open + follow Real Economy", "https://t.me/real_economy_desk_bot"),
+    "CRYPTO": ("Open + follow Crypto", "https://t.me/liquilens_crypto_bot"),
+}
 STATE_DIR = os.environ.get("RISSAGA_STATE", "/var/lib/rissaga")
 SEICHE_API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
@@ -1494,24 +1506,57 @@ def compose(marked: list[dict], boards: dict, health: dict,
     return "\n".join(head + [b for b in body if b] + foot)
 
 
-def compose_channel(cl: dict, boards: dict) -> str:
-    """Desk voice, one item, no first person, no advice."""
-    rep = cl["rep"]
-    spec = BEATS[rep["beat"]]
-    title = esc(rep["title"])
-    link = rep.get("link") or ""
-    desk = DESK_NICE.get(spec["desk"], spec["desk"])
-    line1 = (f"\U0001f30a <b>Rissaga marked this</b> "
-             f"[{spec['desk']} · {spec['label']}]")
-    line2 = f'<a href="{esc(link)}">{title}</a>' if link else title
-    src = esc(rep["source_name"])
-    extra = cl["n_sources"] - 1
-    line3 = (f"{src} plus {extra} more outlets, {_age_txt(rep)}"
-             if extra > 0 else f"{src}, {_age_txt(rep)}")
-    line4 = f"{desk} desk: {esc(board_line(rep['beat'], boards))}"
-    line5 = ("<b>Discussion:</b> Which next public print would confirm or "
-             "falsify this read?")
-    return "\n".join([line1, line2, line3, line4, line5])
+def _display(value: object, limit: int) -> str:
+    text = str(value or "").replace("\u2014", ",").replace("\u2013", ",")
+    text = " ".join(text.split())
+    if len(text) > limit:
+        text = text[:limit - 3].rstrip() + "..."
+    return esc(text)
+
+
+def _channel_link(value: object) -> str:
+    raw = str(value or "")
+    if not raw or len(raw) > 768 or any(ch.isspace() for ch in raw):
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        _ = parsed.port
+    except ValueError:
+        return ""
+    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None):
+        return ""
+    return raw
+
+
+def compose_channel(item: dict, route: dict) -> str:
+    """Deterministic parity formatter for the opt-in direct fallback lane."""
+    desk = _display(route["desk"], 24)
+    label = _display(route["label"], 80)
+    title = _display(item["title"], 300)
+    source = _display(item["source"], 120)
+    age = _display(item["age"], 40)
+    link = _channel_link(item.get("link"))
+    linked_title = f'<a href="{esc(link)}">{title}</a>' if link else title
+    extra = int(item["n_sources"]) - 1
+    source_line = (f"{source} plus {extra} more outlets, {age}"
+                   if extra > 0 else f"{source}, {age}")
+    return "\n".join((
+        f"\U0001f30a <b>Rissaga</b> [{desk} · {label}]",
+        "",
+        "<b>WHAT HAPPENED</b>",
+        linked_title,
+        source_line,
+        "",
+        "<b>WHY THIS DESK CARES</b>",
+        _display(route["fallback_commentary"], 400),
+        "",
+        "<b>LIVE DESK CHECK</b>",
+        f"{_display(route['desk_nice'], 80)}: {_display(route['desk_line'], 600)}",
+        "",
+        "<b>WHAT TO WATCH NEXT</b>",
+        _display(route["angle"], 400),
+    ))
 
 
 def _route_payloads(cl: dict, boards: dict) -> list[dict]:
@@ -1569,9 +1614,24 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
             "angle": ANGLES.get(rep["beat"], ""),
             "routes": _route_payloads(cl, boards),
         })
-    candidates = [i for i, cl in enumerate(marked)
-                  if not cl["rep"].get("board_event")
-                  and cl["final"] >= CHANNEL_BAR][:MAX_CHANNEL_POSTS]
+    # The owner digest remains globally ranked, but the public portfolio feed
+    # should not spend both scarce slots on one desk merely because that desk
+    # has more source beats. Private and product-channel fanout is unchanged.
+    candidates = []
+    candidate_desks = set()
+    for index, cl in enumerate(marked):
+        if cl["rep"].get("board_event") or cl["final"] < CHANNEL_BAR:
+            continue
+        routes = items[index]["routes"]
+        if not routes:
+            continue
+        primary_desk = routes[0]["desk"]
+        if primary_desk in candidate_desks:
+            continue
+        candidates.append(index)
+        candidate_desks.add(primary_desk)
+        if len(candidates) >= MAX_CHANNEL_POSTS:
+            break
     for index in candidates:
         routes = items[index]["routes"]
         if routes:
@@ -1770,33 +1830,24 @@ def append_outbox(payload: dict, now: datetime) -> int:
     return len(records)
 
 
-def post_channel(text: str, ref: str) -> bool:
+def post_channel(text: str, ref: str, desk: str) -> bool:
     """Publish the top marked item to the free lab channel. Never raises,
     never blocks the owner DM. Same contract as the desk bots."""
     if not LAB_CHANNEL:
         return False
     body = text + (
-        f"\n\n<i>Rissaga is the Liquidity Lab news radar. Open the matching "
-        f"desk for its own grounded read: {LAB_LINK}</i>"
+        "\n\n<i>Public data, timestamped. Research and market context only, "
+        "not advice or an execution instruction.</i>"
     )
-    keyboard = [
-        [{"text": "\U0001f321 Plumbing desk",
-          "url": f"https://t.me/seiche_desk_bot?start={ref}"}],
-        [{"text": "\U0001f3e6 Failure radar",
-          "url": f"https://t.me/LiquiLens_bot?start={ref}"},
-         {"text": "\U0001f300 Market depth",
-          "url": f"https://t.me/undertow_LiquiLens_bot?start={ref}"}],
-        [{"text": "\U0001f9ed Riptide risk desk",
-          "url": f"https://t.me/riptide_anake_bot?start={ref}"},
-         {"text": "\U0001f9f1 Palimpsest watch",
-          "url": f"https://t.me/palimpsest_watch_bot?start={ref}"}],
-        [{"text": "\U0001f3ed Corporate stress",
-          "url": f"https://t.me/corporate_stress_bot?start={ref}"},
-         {"text": "\U0001f6d2 Real economy",
-          "url": f"https://t.me/real_economy_desk_bot?start={ref}"}],
-        [{"text": "\U0001f4a7 Crypto rails and regime",
-          "url": f"https://t.me/liquilens_crypto_bot?start={ref}"}],
-    ]
+    label, bot_link = DESK_OPEN[desk]
+    share = "https://t.me/share/url?" + urllib.parse.urlencode({
+        "url": LAB_LINK,
+        "text": "A sourced Liquidity Lab desk read with a live check and falsifier.",
+    })
+    keyboard = [[
+        {"text": label, "url": f"{bot_link}?start={ref}"},
+        {"text": "Share Liquidity Lab", "url": share},
+    ]]
     try:
         res = send(int(LAB_CHANNEL), body, keyboard)
     except Exception as exc:                       # noqa: BLE001 - see docstring
@@ -1853,10 +1904,15 @@ def run(dry: bool = False) -> int:
         print(f"owner DM failed: {res}", file=sys.stderr)
     channel_posted = 0
     if CHANNEL_MODE == "direct":
-        posts = [c for c in marked if not c["rep"].get("board_event")
-                 and c["final"] >= CHANNEL_BAR][:MAX_CHANNEL_POSTS]
-        for cl in posts:
-            if post_channel(compose_channel(cl, boards), "lab_rissaga"):
+        for index in payload["channel_candidates"]:
+            item = payload["items"][index]
+            route = next(
+                route for route in item["routes"]
+                if route.get("channel_candidate") is True
+            )
+            desk = route["desk"]
+            ref = f"lab_rissaga_{desk.lower()}"
+            if post_channel(compose_channel(item, route), ref, desk):
                 channel_posted += 1
             time.sleep(0.5)
     hist = {"ts": now.isoformat(timespec="seconds"),

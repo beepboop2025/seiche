@@ -405,14 +405,14 @@ def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
     chats = [p["chat_id"] for m, p in sent if m == "sendMessage"]
     assert 111 in chats and -100999 in chats
     chan = next(p for m, p in sent if p.get("chat_id") == -100999)
-    assert "Rissaga marked this" in chan["text"]
+    assert "WHAT HAPPENED" in chan["text"]
+    assert "WHY THIS DESK CARES" in chan["text"]
+    assert "LIVE DESK CHECK" in chan["text"]
+    assert "WHAT TO WATCH NEXT" in chan["text"]
     markup = json.dumps(chan.get("reply_markup", {}))
-    assert "start=lab_rissaga" in markup
-    for handle in ("seiche_desk_bot", "LiquiLens_bot",
-                   "undertow_LiquiLens_bot", "riptide_anake_bot",
-                   "palimpsest_watch_bot", "corporate_stress_bot",
-                   "real_economy_desk_bot", "liquilens_crypto_bot"):
-        assert handle in markup
+    assert "start=lab_rissaga_liquilens" in markup
+    assert "LiquiLens_bot" in markup
+    assert "Share Liquidity Lab" in markup
     with open(os.path.join(rz.STATE_DIR, "history.jsonl"), encoding="utf-8") as fh:
         hist = fh.read()
     assert '"channel_posted": 1' in hist
@@ -427,9 +427,16 @@ def test_lab_channel_helper_exposes_all_eight_desks():
                    "palimpsest_watch_bot", "corporate_stress_bot",
                    "real_economy_desk_bot", "liquilens_crypto_bot"):
         assert handle in urls
+    contextual = helper["contextual_keyboard"](
+        "\U0001f30a <b>Rissaga</b> [CRYPTO \u00b7 policy and flows]"
+    )
+    buttons = [button for row in contextual for button in row]
+    assert len(buttons) == 2
+    assert any(button["text"] == "Open + follow Crypto" for button in buttons)
+    assert any("t.me/share/url?" in button["url"] for button in buttons)
 
 
-def test_rissaga_scans_hourly_and_fallback_follows_each_scan():
+def test_rissaga_scans_hourly_and_shared_fallback_runs_four_times_daily():
     deploy = os.path.join(_ROOT, "bot", "deploy")
     with open(os.path.join(deploy, "rissaga.timer"), encoding="utf-8") as fh:
         timer = fh.read()
@@ -437,9 +444,10 @@ def test_rissaga_scans_hourly_and_fallback_follows_each_scan():
               encoding="utf-8") as fh:
         fallback = fh.read()
     assert "OnCalendar=*-*-* *:50:00 UTC" in timer
-    assert "OnCalendar=*-*-* *:15:00 UTC" in fallback
+    for hour in ("03", "09", "15", "21"):
+        assert f"OnCalendar=*-*-* {hour}:15:00 UTC" in fallback
     assert timer.count("OnCalendar=") == 1
-    assert fallback.count("OnCalendar=") == 1
+    assert fallback.count("OnCalendar=") == 4
 
 
 def test_run_channel_off_when_env_empty(monkeypatch, sent):
@@ -557,6 +565,25 @@ def test_v2_latest_preserves_primary_and_caps_route_channel_flags():
         flagged.extend((index, route) for route in selected)
     assert len(flagged) == rz.MAX_CHANNEL_POSTS
     assert {index for index, _ in flagged} == set(payload["channel_candidates"])
+
+
+def test_shared_channel_slots_are_globally_ranked_but_desk_diverse():
+    marked = rz.rank([
+        mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
+        mk("DeFi bridge exploit drains a protocol after a smart contract vulnerability",
+           tier=1.0),
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+
+    selected_desks = [
+        next(route["desk"] for route in payload["items"][index]["routes"]
+             if route["channel_candidate"])
+        for index in payload["channel_candidates"]
+    ]
+    assert selected_desks == ["CRYPTO", "LIQUILENS"]
+    assert len(selected_desks) == len(set(selected_desks))
 
 
 def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
@@ -775,18 +802,21 @@ def test_dry_run_does_not_mutate_seen_boards_or_outbox(monkeypatch, capsys):
 
 def test_direct_mode_caps_channel_posts(monkeypatch, sent):
     _stub_world(monkeypatch, [
+        mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
+        mk("DeFi bridge exploit drains a protocol after a smart contract vulnerability",
+           tier=1.0),
         mk("FDIC seizes First Valley Bank as regulators begin receivership",
-           key="fdic", tier=1.0, source="FDIC"),
-        mk("Emergency meeting called as central bank launches liquidity facility",
-           key="fed_press", tier=1.0, source="Federal Reserve"),
-        mk("Treasury market dysfunction forces margin calls and fire sales",
-           key="bbg_markets", tier=0.8, source="Bloomberg")])
+           key="fdic", tier=1.0, source="FDIC")])
     monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
     monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
     assert rz.run(dry=False) == 0
     channel_msgs = [p for m, p in sent if p.get("chat_id") == -100999]
     assert len(channel_msgs) == rz.MAX_CHANNEL_POSTS
-    assert all("desk:" in p["text"] for p in channel_msgs)
+    assert all("WHAT HAPPENED" in p["text"] for p in channel_msgs)
+    assert "[CRYPTO " in channel_msgs[0]["text"]
+    assert "[LIQUILENS " in channel_msgs[1]["text"]
+    assert all(len(p["reply_markup"]["inline_keyboard"]) == 1
+               for p in channel_msgs)
 
 
 def test_no_em_or_en_dashes_in_user_facing_strings():

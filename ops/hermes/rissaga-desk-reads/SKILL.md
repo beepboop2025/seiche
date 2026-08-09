@@ -39,17 +39,18 @@ the shared channel by this skill.
    Skip only keys already present in the marker's `posted` object. Also honor
    the old single `generated` marker when it exactly matches this handoff, so
    an upgrade cannot replay an already completed v1 run.
-4. Handle every unposted work item independently. Compose one Telegram HTML
-   message of exactly four lines:
+4. Handle every unposted work item independently. Compose one scannable
+   Telegram HTML message in this exact section order:
 
-   line 1: `\U0001f30a <b>Rissaga</b> [DESK · LABEL]`
+   * `\U0001f30a <b>Rissaga</b> [DESK · LABEL]`
+   * `<b>WHAT HAPPENED</b>`, then the linked `TITLE` and the source line
+   * `<b>WHY THIS DESK CARES</b>`, then `COMMENTARY`
+   * `<b>LIVE DESK CHECK</b>`, then `DESK_NICE: DESK_LINE`
+   * `<b>WHAT TO WATCH NEXT</b>`, then the route's `ANGLE`
 
-   line 2: `<a href="LINK">TITLE</a>`, with title and link HTML escaped
-
-   line 3: `SOURCE plus N more outlets, AGE` when `n_sources` is above 1,
-   otherwise `SOURCE, AGE`
-
-   line 4: `DESK_NICE desk read: DESK_LINE. COMMENTARY`
+   The source line is `SOURCE plus N more outlets, AGE` when `n_sources` is
+   above 1, otherwise `SOURCE, AGE`. Escape all Telegram HTML. Never combine
+   two routes or two stories in one post.
 
    `DESK`, `LABEL`, `DESK_NICE`, `DESK_LINE`, and the route selection come
    from that same route. Never combine two routes or two stories in one post.
@@ -67,6 +68,8 @@ the shared channel by this skill.
    * RIPTIDE: distinguish a one-session shock from persistence across
      volatility, spreads and trend. News is advisory only, and paper sizing
      changes only from permitted cues.
+   * CRYPTO: separate the headline from live breadth, liquid funding, venue
+     health, protocol mechanics, stablecoin rails and balance-sheet links.
 
    Use only facts and numbers already present in this item's `desk_line`,
    title, source line and angle. Never invent, recompute or round a number.
@@ -74,11 +77,23 @@ the shared channel by this skill.
    Use commas, colons or parentheses, never an em dash or en dash. Keep the
    added sentence to at most 28 words. If a safe original sentence is not
    possible, use this route's `fallback_commentary` verbatim.
-6. For each item, write only its four lines to a temporary file and publish:
+6. Before the first publish, acquire the same delivery lock as the fallback,
+   then re-read the marker while holding it. Keep the lock through every helper
+   call and its corresponding atomic marker write:
+
+   ```sh
+   exec 9>>/home/hermes/.hermes/state/rissaga_posted.json.lock
+   flock -x 9
+   # re-read the marker now; skip keys the fallback posted while commentary ran
+   ```
+
+   This lock is part of the delivery contract, not an optional optimization.
+   Never send first and acquire it later. For each remaining item, write only
+   its structured message to a temporary file and publish:
 
    ```sh
    post_file=$(mktemp /tmp/rissaga-post.XXXXXX)
-   # write the four-line message to "$post_file"
+   # write the structured message to "$post_file"
    lab-channel-post --text-file "$post_file"
    ```
 
