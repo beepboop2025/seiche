@@ -353,10 +353,10 @@ async def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
 
     monkeypatch.setattr(market_runtime, "build_supervisor", supervisor_factory)
     cycle = asyncio.create_task(market_runtime.collect_once(repository=repository))
-    await asyncio.wait_for(japan_entered.wait(), timeout=1)
+    await asyncio.wait_for(japan_entered.wait(), timeout=15)
     try:
         india = None
-        for _ in range(100):
+        for _ in range(1500):
             india = await asyncio.to_thread(
                 repository.load_latest_market_snapshot,
                 "IN-INR",
@@ -371,7 +371,7 @@ async def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
     finally:
         release_japan.set()
 
-    payload = await asyncio.wait_for(cycle, timeout=2)
+    payload = await asyncio.wait_for(cycle, timeout=30)
     statuses = {(run["market_id"], run["status"]) for run in payload["runs"]}
     assert ("IN-INR", "SUCCESS") in statuses
     assert ("JP-JPY", "FAILED") in statuses

@@ -28,6 +28,8 @@ fi
 
 rollback() {
   echo "ROLLING BACK to ${PREV:0:7}: $1 (see $LOG)" >&2
+  echo "=== deploy gate failure: last 200 log lines ===" >&2
+  tail -n 200 "$LOG" >&2 || true
   git reset -q --hard "$PREV"
   timeout -k 30 600 backend/.venv/bin/pip install -q -e "./backend[notary]" >>"$LOG" 2>&1 || true
   exit 1
