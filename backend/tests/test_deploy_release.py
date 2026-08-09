@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,6 +15,8 @@ CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
+BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
+PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
 def _executable(path: Path, body: str) -> Path:
@@ -280,6 +283,17 @@ printf '\\n' >> "{calls}"
     assert workflow.index("trigger-forced-deploy.sh") < workflow.index(
         "external-route-smoke.sh"
     )
+
+
+def test_box_smoke_installs_its_declared_async_test_plugin():
+    optional = tomllib.loads(PYPROJECT.read_text())["project"][
+        "optional-dependencies"
+    ]
+    deploy_dependencies = optional["deploy-test"]
+    box_update = BOX_UPDATE.read_text()
+
+    assert any(item.startswith("pytest-asyncio") for item in deploy_dependencies)
+    assert "./backend[deploy-test,notary,collectors,postgres]" in box_update
 
 
 def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
