@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from statistics import median
 
@@ -199,6 +199,8 @@ def _ready(
     roles: tuple[SemanticRole, ...],
     inputs: tuple[RoleSeries, ...],
     method: str,
+    *,
+    event_cutoff: datetime | pd.Timestamp | None = None,
 ) -> KernelResult:
     if not np.isfinite(value):
         return _missing(engine_id, roles, "calculation produced a non-finite value")
@@ -208,8 +210,10 @@ def _ready(
     # values forward (never backward) and its last row is the true calculation
     # cutoff knowable from the supplied point-in-time observations.
     aligned = _aligned(inputs)
-    cutoff = aligned.index[-1] if not aligned.empty else min(
-        item.latest.event_time for item in inputs
+    cutoff = event_cutoff or (
+        aligned.index[-1]
+        if not aligned.empty
+        else min(item.latest.event_time for item in inputs)
     )
     relevant = [
         observation
@@ -634,19 +638,43 @@ def cross_basin_coupling(
     role = SemanticRole.FX_SWAP_BASIS
     if len(series_by_market) < 2:
         return _missing(engine_id, (role,), "at least two monetary areas are required")
-    panel = pd.concat(
+
+    def business_date_levels(points: pd.Series) -> pd.Series:
+        """Keep canonical daily session keys; exclude instant-valued rows.
+
+        Global Tide is a daily cross-market claim. Date-only source rows are
+        canonically stored at UTC midnight, while genuine datetimes retain
+        their instant semantics and must not be silently assigned to a market
+        session without a pack calendar.
+        """
+
+        ordered = points.dropna().sort_index()
+        index = pd.DatetimeIndex(ordered.index)
+        if index.tz is None:
+            return pd.Series(dtype=float)
+        utc_index = index.tz_convert(UTC)
+        canonical = utc_index == utc_index.normalize()
+        selected = ordered.loc[canonical].copy()
+        selected.index = utc_index[canonical]
+        return selected
+
+    levels = pd.concat(
         {
-            market_id: item.points.sort_index().diff()
+            market_id: business_date_levels(item.points)
             for market_id, item in series_by_market.items()
         },
         axis=1,
         join="inner",
     ).dropna()
+    # Intersect levels first, then difference. If one market is closed on a
+    # date, every market's next change spans the same prior shared session;
+    # differencing native calendars first would correlate unequal intervals.
+    panel = levels.sort_index().diff().dropna()
     if len(panel) < minimum_aligned_changes:
         return _insufficient(
             engine_id,
             (role,),
-            "mean absolute pairwise correlation of same-role changes",
+            "mean absolute pairwise correlation of shared-session changes",
             len(panel),
             minimum_aligned_changes,
         )
@@ -660,5 +688,9 @@ def cross_basin_coupling(
         "mean_absolute_correlation_percent",
         (role,),
         inputs,
-        "mean absolute pairwise correlation of aligned FX-swap-basis changes",
+        (
+            "mean absolute pairwise correlation of FX-swap-basis changes "
+            "between shared UTC business-date sessions"
+        ),
+        event_cutoff=panel.index[-1],
     )

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import asyncio
 
+import pandas as pd
 import pytest
 
 from seiche import store
@@ -22,6 +23,7 @@ from seiche.domain.observation import (
     evidence_sha256,
 )
 from seiche.markets.materialize import materialize_global_tide, materialize_market
+from seiche.kernel.engines import RoleSeries, cross_basin_coupling
 from seiche.repository import SQLiteMarketRepository
 from seiche.sources.base import ObservationBatch
 
@@ -237,6 +239,50 @@ def test_global_tide_is_sealed_unavailable_then_computes_only_from_fx_basis(
     dead = store.load_latest_market_snapshot("GLOBAL", "tide")["payload"]
     assert dead["status"] == "UNAVAILABLE"
     assert dead["reading"]["value"] is None
+
+
+def test_global_tide_changes_span_the_same_common_business_dates() -> None:
+    first = tuple(
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.MARKET.FX_FORWARD_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=value,
+            event_time=datetime(2026, 1, 5, tzinfo=UTC) + timedelta(days=offset),
+        )
+        for offset, value in zip((0, 1, 2, 3, 4), (0, 10, 30, 50, 90), strict=True)
+    )
+    second = tuple(
+        _rate(
+            market_id="SG-SGD",
+            instrument_id="SG.MARKET.FX_SWAP_BASIS",
+            role=SemanticRole.FX_SWAP_BASIS,
+            value=value,
+            event_time=datetime(2026, 1, 5, tzinfo=UTC) + timedelta(days=offset),
+        )
+        for offset, value in zip((0, 2, 3, 4), (0, 3, 5, 9), strict=True)
+    )
+
+    def role_series(observations: tuple[Observation, ...]) -> RoleSeries:
+        return RoleSeries(
+            SemanticRole.FX_SWAP_BASIS,
+            observations[0].instrument_id,
+            CanonicalUnit.BASIS_POINTS,
+            pd.Series(
+                [float(item.value) for item in observations],
+                index=pd.DatetimeIndex([item.event_time for item in observations]),
+                dtype=float,
+            ),
+            observations,
+        )
+
+    result = cross_basin_coupling(
+        {"IN-INR": role_series(first), "SG-SGD": role_series(second)},
+        minimum_aligned_changes=3,
+    )
+
+    assert result.value == 100.0
+    assert result.event_cutoff == "2026-01-09T00:00:00+00:00"
 
 
 @pytest.mark.asyncio
