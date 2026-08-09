@@ -67,6 +67,8 @@ def load_handoff(now: datetime) -> dict:
     payload = _read_json(LATEST_PATH)
     if not isinstance(payload, dict) or payload.get("schema") != "rissaga.news.v2":
         raise HandoffError("v2 handoff required")
+    if payload.get("channel_mode") != "hermes":
+        raise HandoffError("channel mode must be hermes")
     generated = _aware_timestamp(payload.get("generated"))
     age = now - generated.astimezone(now.tzinfo or timezone.utc)
     if age < timedelta(0) or age > MAX_AGE:
@@ -111,6 +113,10 @@ def select_candidates(payload: dict) -> list[dict]:
             if not isinstance(route, dict):
                 raise HandoffError("route must be an object")
             if route.get("channel_candidate") is True:
+                if _required_string(route, "desk").strip().upper() == "CRYPTO":
+                    raise HandoffError(
+                        "crypto route belongs to its dedicated channel"
+                    )
                 flagged.append(route)
         if len(flagged) > 1:
             raise HandoffError("more than one channel route on an item")

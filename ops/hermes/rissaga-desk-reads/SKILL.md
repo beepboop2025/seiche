@@ -1,7 +1,7 @@
 ---
 name: rissaga-desk-reads
-description: Publish the selected Rissaga v2 desk reads to the free Liquidity Lab channel. Use each route's own voice, keep numbers verbatim, and acknowledge each delivery revision.
-version: 2.0.1
+description: Publish selected non-Crypto Rissaga v2 desk reads to the free Liquidity Lab channel. Keep numbers verbatim and acknowledge each delivery revision.
+version: 2.1.0
 ---
 
 # rissaga-desk-reads
@@ -13,29 +13,33 @@ Each route names one desk, its best matching beat, its live `desk_line`, an
 editorial `angle`, deterministic `fallback_commentary`, and a
 `channel_candidate` flag. The shared channel gets at most two selected routes
 per sweep. All other routes are for the desk bots and must not be copied into
-the shared channel by this skill.
+the shared channel by this skill. CRYPTO routes belong exclusively to the
+dedicated Crypto channel and are never valid shared-channel candidates.
 
 ## Steps
 
-1. Read `/var/lib/rissaga/latest.json`. If it is missing, unreadable, or its
-   `generated` timestamp is older than 8 hours, reply exactly
-   `handoff stale or missing, nothing posted` and stop.
+1. Read `/var/lib/rissaga/latest.json`. If it is missing, unreadable, not a
+   `rissaga.news.v2` handoff, or its `generated` timestamp is older than 8
+   hours, reply exactly `handoff stale or missing, nothing posted` and stop.
+   Require `channel_mode` to be exactly `hermes`. For any other or missing
+   value, reply exactly `handoff channel mode invalid, nothing posted` and
+   stop before locking or publishing.
 2. Build the work list per item:
 
    * For a v2 handoff, select only routes with `channel_candidate: true`.
+   * If any selected route's trimmed, case-insensitive `desk` is `CRYPTO`,
+     reply exactly `crypto route belongs to its dedicated channel, nothing posted`
+     and stop the entire run before locking or publishing.
    * Refuse the run if more than two routes are selected globally or more than
      one route is selected on one item. Reply
      `handoff route cap invalid, nothing posted` and stop.
-   * For a legacy handoff without routes, use each index in
-     `channel_candidates` and the item's original primary desk fields.
    * If the work list is empty, reply exactly
      `no channel candidates this run` and stop.
 
 3. Read `/home/hermes/.hermes/state/rissaga_posted.json`; it may not exist.
    Delivery state is per item revision, never per run. The v2 key is
    `DISPATCH_ID:DESK`. If an older v2 item has no `dispatch_id`, fall back to
-   `STORY_ID:DESK`. For a legacy item without either identifier, use
-   `GENERATED:ITEM_INDEX:DESK`.
+   `STORY_ID:DESK`.
    Skip only keys already present in the marker's `posted` object. Also honor
    the old single `generated` marker when it exactly matches this handoff, so
    an upgrade cannot replay an already completed v1 run.
@@ -68,8 +72,6 @@ the shared channel by this skill.
    * RIPTIDE: distinguish a one-session shock from persistence across
      volatility, spreads and trend. News is advisory only, and paper sizing
      changes only from permitted cues.
-   * CRYPTO: separate the headline from live breadth, liquid funding, venue
-     health, protocol mechanics, stablecoin rails and balance-sheet links.
 
    Use only facts and numbers already present in this item's `desk_line`,
    title, source line and angle. Never invent, recompute or round a number.
@@ -110,5 +112,6 @@ the shared channel by this skill.
 ## Refusals
 
 Never improvise a story, route, desk line, number, or channel candidate. An
-absent radar run, malformed route set, stale handoff, or failed helper remains
-visible as an absence or failure.
+absent radar run, wrong delivery mode, Crypto shared candidate, malformed
+route set, stale handoff, or failed helper remains visible as an absence or
+failure.

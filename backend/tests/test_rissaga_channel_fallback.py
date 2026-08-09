@@ -51,6 +51,7 @@ def item(number=1, desk="SEICHE", dispatch=True):
 def payload(items=None, generated=None):
     return {
         "schema": "rissaga.news.v2",
+        "channel_mode": "hermes",
         "generated": generated or NOW.isoformat(timespec="seconds"),
         "items": items if items is not None else [item()],
         "channel_candidates": [0],
@@ -87,6 +88,20 @@ def test_fresh_v2_handoff_required_and_stale_refused(isolated):
         fb.load_handoff(NOW)
 
 
+@pytest.mark.parametrize("mode", [None, "off", "direct", "HERMES"])
+def test_only_exact_hermes_mode_authorizes_fallback(isolated, mode):
+    latest, _ = isolated
+    handoff = payload()
+    if mode is None:
+        handoff.pop("channel_mode")
+    else:
+        handoff["channel_mode"] = mode
+    write_json(latest, handoff)
+
+    with pytest.raises(fb.HandoffError, match="mode must be hermes"):
+        fb.load_handoff(NOW)
+
+
 def test_only_explicit_candidates_and_caps_are_enforced():
     quiet = item(1)
     quiet["routes"][0]["channel_candidate"] = 1
@@ -100,6 +115,19 @@ def test_only_explicit_candidates_and_caps_are_enforced():
     doubled["routes"].append(route("LIQUILENS"))
     with pytest.raises(fb.HandoffError, match="one channel route"):
         fb.select_candidates(payload([doubled]))
+
+
+def test_crypto_shared_candidate_refused_before_first_send(isolated, monkeypatch):
+    latest, marker_path = isolated
+    crypto = item(2, " crypto ")
+    write_json(latest, payload([item(1), crypto]))
+    monkeypatch.setattr(
+        fb, "publish", lambda _message: pytest.fail("partial run published")
+    )
+
+    with pytest.raises(fb.HandoffError, match="dedicated channel"):
+        fb.run(now=NOW)
+    assert not marker_path.exists()
 
 
 def test_compose_is_scannable_escaped_and_uses_only_safe_links():
@@ -288,6 +316,7 @@ def test_helper_receives_0600_temp_file(monkeypatch):
 def test_units_schedule_hardening_and_prose_rules():
     deploy = os.path.join(_ROOT, "bot", "deploy")
     service_path = os.path.join(deploy, "rissaga-channel-fallback.service")
+    producer_path = os.path.join(deploy, "rissaga.service")
     timer_path = os.path.join(deploy, "rissaga-channel-fallback.timer")
     script_path = os.path.join(_ROOT, "bot", "rissaga_channel_fallback.py")
     skill_path = os.path.join(
@@ -295,6 +324,8 @@ def test_units_schedule_hardening_and_prose_rules():
     )
     with open(service_path, encoding="utf-8") as fh:
         service = fh.read()
+    with open(producer_path, encoding="utf-8") as fh:
+        producer = fh.read()
     with open(timer_path, encoding="utf-8") as fh:
         timer = fh.read()
     with open(script_path, encoding="utf-8") as fh:
@@ -317,14 +348,46 @@ def test_units_schedule_hardening_and_prose_rules():
     assert "Persistent=true" in timer
     assert "RandomizedDelaySec=0" in timer
     assert "one logical channel owner" in script
-    assert "* CRYPTO:" in skill
+    assert "CRYPTO routes belong exclusively" in skill
+    assert "crypto route belongs to its dedicated channel, nothing posted" in skill
+    assert "handoff channel mode invalid, nothing posted" in skill
     assert "flock -x 9" in skill
     for heading in (
         "WHAT HAPPENED", "WHY THIS DESK CARES", "LIVE DESK CHECK",
         "WHAT TO WATCH NEXT",
     ):
         assert heading in skill
-    for text in (service, timer, script):
+    assert "User=" not in producer and "Group=" not in producer
+    assert "existing files are root owned" in producer
+    assert "StateDirectoryMode=0755" in producer
+    assert "EnvironmentFile=/etc/seiche-bot.env" in producer
+    assert "EnvironmentFile=-/etc/rissaga.env" in producer
+    assert "Environment=RISSAGA_CHANNEL_MODE=hermes" not in producer
+    assert (
+        "ExecStart=/usr/bin/env RISSAGA_CHANNEL_MODE=hermes "
+        "/usr/bin/python3 /opt/rissaga/rissaga.py --run"
+    ) in producer
+    for name in (
+        "seiche-bot-alert.service",
+        "seiche-bot-letter.service",
+        "seiche-bot-tandem.service",
+    ):
+        with open(os.path.join(deploy, name), encoding="utf-8") as fh:
+            auxiliary = fh.read()
+        assert "User=seiche-bot" in auxiliary
+        assert "Group=seiche-bot" in auxiliary
+        assert "StateDirectory=seiche-bot" in auxiliary
+        assert "StateDirectoryMode=0700" in auxiliary
+        assert "ReadWritePaths=/var/lib/seiche-bot" in auxiliary
+        for setting in (
+            "NoNewPrivileges=yes", "PrivateTmp=yes", "PrivateDevices=yes",
+            "ProtectSystem=strict", "ProtectHome=yes", "ProtectProc=invisible",
+            "CapabilityBoundingSet=",
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+        ):
+            assert setting in auxiliary
+
+    for text in (service, producer, timer, script):
         assert "\u2014" not in text and "\u2013" not in text
 
 

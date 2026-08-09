@@ -11,7 +11,8 @@ board or authority line.
 WHAT IT IS NOT. It runs no generative model and changes no product score,
 tier or regime. It emits linked facts, grounded board lines and bounded
 fallback commentary for eight desk routes. The shared channel receives at
-most two selected primary routes per sweep, ref tagged lab_rissaga.
+most two selected non-Crypto primary routes per sweep, ref tagged lab_rissaga.
+Crypto routes remain eligible only for the dedicated Crypto channel handoff.
 
 SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
 protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
@@ -31,9 +32,9 @@ re-entry.
 
 Deploy (fleet convention): copy this file to /opt/rissaga/, env from
 /etc/seiche-bot.env (token) plus /etc/rissaga.env, systemd rissaga.timer at
-minute 50 of every UTC hour. Modes: --run (fetch, route, append outbox, DM owner and
-publish selected channel items), --print (fetch and compose to stdout without
-mutating seen, board or outbox delivery state).
+minute 50 of every UTC hour. Modes: --run (fetch, route, append outbox, DM owner
+and export selected shared-channel items for Hermes), --print (fetch and
+compose to stdout without mutating seen, board or outbox delivery state).
 
 House prose rule holds in every user facing string here: commas, colons or
 parentheses, never an em or en dash (offline test enforces it).
@@ -60,29 +61,15 @@ from datetime import datetime, timedelta, timezone
 # ------------------------------------------------------------------ env ----
 TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
 OWNER_CHAT = os.environ.get("RISSAGA_OWNER_CHAT", "8727818928")
-LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")   # empty = channel off
-# Who writes the channel post. "hermes": this radar only exports
-# latest.json and the Hermes agent lane posts the desk reads (Mrinal's
-# call 2026-08-03); "direct": this radar posts its deterministic reads
-# itself (fallback lane); "off": no channel activity at all.
-# A missing deployment setting must fail quiet. Production explicitly assigns
-# Hermes as the shared-channel owner; direct delivery is an operator opt-in.
-CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "off").lower()
+# Who owns shared-channel delivery. "hermes" exports selected desk reads for
+# the marker-coordinated Hermes lane; "off" exports no publish authorization.
+# A missing deployment setting fails quiet. Every other value is invalid.
+CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "off").strip().lower()
+ALLOWED_CHANNEL_MODES = frozenset({"hermes", "off"})
 LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
 OUTBOX_EXPORT = "outbox.jsonl"   # durable multi-desk subscriber handoff
 MAX_CHANNEL_POSTS = 2
 OUTBOX_TTL_H = float(os.environ.get("RISSAGA_OUTBOX_TTL_H", "24"))
-LAB_LINK = "https://t.me/LiquidityLabDesk"
-DESK_OPEN = {
-    "SEICHE": ("Open + follow Seiche", "https://t.me/seiche_desk_bot"),
-    "LIQUILENS": ("Open + follow LiquiLens", "https://t.me/LiquiLens_bot"),
-    "UNDERTOW": ("Open + follow Undertow", "https://t.me/undertow_LiquiLens_bot"),
-    "RIPTIDE": ("Open Riptide", "https://t.me/riptide_anake_bot"),
-    "PALIMPSEST": ("Open + follow Palimpsest", "https://t.me/palimpsest_watch_bot"),
-    "CORPORATE": ("Open + follow Corporate", "https://t.me/corporate_stress_bot"),
-    "REALECON": ("Open + follow Real Economy", "https://t.me/real_economy_desk_bot"),
-    "CRYPTO": ("Open + follow Crypto", "https://t.me/liquilens_crypto_bot"),
-}
 STATE_DIR = os.environ.get("RISSAGA_STATE", "/var/lib/rissaga")
 SEICHE_API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
@@ -109,6 +96,7 @@ MAX_DESK_COVERAGE = 2
 DESK_COVERAGE_CAPS = {"CRYPTO": 5}
 DESK_CHANNEL_CAPS = {"CRYPTO": 3}
 DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
+SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({"CRYPTO"})
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
 SEEN_TTL_H = 48.0     # a marked story stays suppressed this long
@@ -1506,59 +1494,6 @@ def compose(marked: list[dict], boards: dict, health: dict,
     return "\n".join(head + [b for b in body if b] + foot)
 
 
-def _display(value: object, limit: int) -> str:
-    text = str(value or "").replace("\u2014", ",").replace("\u2013", ",")
-    text = " ".join(text.split())
-    if len(text) > limit:
-        text = text[:limit - 3].rstrip() + "..."
-    return esc(text)
-
-
-def _channel_link(value: object) -> str:
-    raw = str(value or "")
-    if not raw or len(raw) > 768 or any(ch.isspace() for ch in raw):
-        return ""
-    try:
-        parsed = urllib.parse.urlsplit(raw)
-        _ = parsed.port
-    except ValueError:
-        return ""
-    if (parsed.scheme.lower() not in ("http", "https") or not parsed.hostname
-            or parsed.username is not None or parsed.password is not None):
-        return ""
-    return raw
-
-
-def compose_channel(item: dict, route: dict) -> str:
-    """Deterministic parity formatter for the opt-in direct fallback lane."""
-    desk = _display(route["desk"], 24)
-    label = _display(route["label"], 80)
-    title = _display(item["title"], 300)
-    source = _display(item["source"], 120)
-    age = _display(item["age"], 40)
-    link = _channel_link(item.get("link"))
-    linked_title = f'<a href="{esc(link)}">{title}</a>' if link else title
-    extra = int(item["n_sources"]) - 1
-    source_line = (f"{source} plus {extra} more outlets, {age}"
-                   if extra > 0 else f"{source}, {age}")
-    return "\n".join((
-        f"\U0001f30a <b>Rissaga</b> [{desk} · {label}]",
-        "",
-        "<b>WHAT HAPPENED</b>",
-        linked_title,
-        source_line,
-        "",
-        "<b>WHY THIS DESK CARES</b>",
-        _display(route["fallback_commentary"], 400),
-        "",
-        "<b>LIVE DESK CHECK</b>",
-        f"{_display(route['desk_nice'], 80)}: {_display(route['desk_line'], 600)}",
-        "",
-        "<b>WHAT TO WATCH NEXT</b>",
-        _display(route["angle"], 400),
-    ))
-
-
 def _route_payloads(cl: dict, boards: dict) -> list[dict]:
     routes = []
     for matched in cl.get("route_beats") or []:
@@ -1618,26 +1553,30 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
     # should not spend both scarce slots on one desk merely because that desk
     # has more source beats. Private and product-channel fanout is unchanged.
     candidates = []
-    candidate_desks = set()
-    for index, cl in enumerate(marked):
-        if cl["rep"].get("board_event") or cl["final"] < CHANNEL_BAR:
-            continue
-        routes = items[index]["routes"]
-        if not routes:
-            continue
-        primary_desk = routes[0]["desk"]
-        if primary_desk in candidate_desks:
-            continue
-        candidates.append(index)
-        candidate_desks.add(primary_desk)
-        if len(candidates) >= MAX_CHANNEL_POSTS:
-            break
-    for index in candidates:
-        routes = items[index]["routes"]
-        if routes:
-            # _best_route_beats places the primary desk first. Only that route
-            # owns the shared-channel slot; every route still reaches its bot.
-            routes[0]["channel_candidate"] = True
+    if CHANNEL_MODE == "hermes":
+        candidate_desks = set()
+        for index, cl in enumerate(marked):
+            if cl["rep"].get("board_event") or cl["final"] < CHANNEL_BAR:
+                continue
+            routes = items[index]["routes"]
+            if not routes:
+                continue
+            primary_desk = routes[0]["desk"]
+            if primary_desk in SHARED_CHANNEL_EXCLUDED_DESKS:
+                continue
+            if primary_desk in candidate_desks:
+                continue
+            candidates.append(index)
+            candidate_desks.add(primary_desk)
+            if len(candidates) >= MAX_CHANNEL_POSTS:
+                break
+        for index in candidates:
+            routes = items[index]["routes"]
+            if routes:
+                # _best_route_beats places the primary desk first. Only that
+                # route owns the shared-channel slot; every route still reaches
+                # its bot or dedicated product channel.
+                routes[0]["channel_candidate"] = True
     desk_candidates: dict[str, list[int]] = {}
     for desk, cap in DESK_CHANNEL_CAPS.items():
         selected = []
@@ -1830,35 +1769,6 @@ def append_outbox(payload: dict, now: datetime) -> int:
     return len(records)
 
 
-def post_channel(text: str, ref: str, desk: str) -> bool:
-    """Publish the top marked item to the free lab channel. Never raises,
-    never blocks the owner DM. Same contract as the desk bots."""
-    if not LAB_CHANNEL:
-        return False
-    body = text + (
-        "\n\n<i>Public data, timestamped. Research and market context only, "
-        "not advice or an execution instruction.</i>"
-    )
-    label, bot_link = DESK_OPEN[desk]
-    share = "https://t.me/share/url?" + urllib.parse.urlencode({
-        "url": LAB_LINK,
-        "text": "A sourced Liquidity Lab desk read with a live check and falsifier.",
-    })
-    keyboard = [[
-        {"text": label, "url": f"{bot_link}?start={ref}"},
-        {"text": "Share Liquidity Lab", "url": share},
-    ]]
-    try:
-        res = send(int(LAB_CHANNEL), body, keyboard)
-    except Exception as exc:                       # noqa: BLE001 - see docstring
-        print(f"channel post failed: {exc}", file=sys.stderr)
-        return False
-    ok = isinstance(res, dict) and res.get("ok")
-    if not ok:
-        print(f"channel post rejected: {res}", file=sys.stderr)
-    return bool(ok)
-
-
 # ------------------------------------------------------------------ runs ---
 def gather(now: datetime, mutate: bool = True):
     now_ts = now.timestamp()
@@ -1869,7 +1779,21 @@ def gather(now: datetime, mutate: bool = True):
     return marked, boards, health
 
 
+class ConfigurationError(ValueError):
+    """The requested delivery configuration has no safe owner."""
+
+
+def validate_channel_mode() -> None:
+    if CHANNEL_MODE not in ALLOWED_CHANNEL_MODES:
+        raise ConfigurationError(
+            "RISSAGA_CHANNEL_MODE must be hermes or off"
+        )
+
+
 def run(dry: bool = False) -> int:
+    # Validate before time, network, state-directory or delivery work. In
+    # particular, an old direct setting must never run beside Hermes.
+    validate_channel_mode()
     now = datetime.now(timezone.utc)
     # Production and print both calculate without committing delivery state.
     # A real run commits only after the durable multi-desk outbox append.
@@ -1902,19 +1826,6 @@ def run(dry: bool = False) -> int:
     delivered = isinstance(res, dict) and res.get("ok")
     if not delivered:
         print(f"owner DM failed: {res}", file=sys.stderr)
-    channel_posted = 0
-    if CHANNEL_MODE == "direct":
-        for index in payload["channel_candidates"]:
-            item = payload["items"][index]
-            route = next(
-                route for route in item["routes"]
-                if route.get("channel_candidate") is True
-            )
-            desk = route["desk"]
-            ref = f"lab_rissaga_{desk.lower()}"
-            if post_channel(compose_channel(item, route), ref, desk):
-                channel_posted += 1
-            time.sleep(0.5)
     hist = {"ts": now.isoformat(timespec="seconds"),
             "lexicon": lexicon_version(),
             "marked": [{"title": c["rep"]["title"], "beat": c["rep"]["beat"],
@@ -1923,7 +1834,7 @@ def run(dry: bool = False) -> int:
             "feeds_ok": sum(1 for v in health.values() if v.startswith("ok")),
             "feeds_total": len(health),
             "channel_mode": CHANNEL_MODE,
-            "channel_posted": channel_posted}
+            "channel_posted": 0}
     with open(_state_path("history.jsonl"), "a", encoding="utf-8") as fh:
         fh.write(json.dumps(hist, sort_keys=True) + "\n")
     return 0 if delivered else 1
@@ -1931,15 +1842,18 @@ def run(dry: bool = False) -> int:
 
 def main(argv: list[str]) -> int:
     mode = argv[1] if len(argv) > 1 else "--run"
-    if mode == "--print":
-        return run(dry=True)
-    if mode == "--run":
-        if not TOKEN:
-            print("SEICHE_BOT_TOKEN missing", file=sys.stderr)
-            return 2
-        return run(dry=False)
-    print(f"unknown mode {mode}, use --run or --print", file=sys.stderr)
-    return 2
+    if mode not in ("--print", "--run"):
+        print(f"unknown mode {mode}, use --run or --print", file=sys.stderr)
+        return 2
+    try:
+        validate_channel_mode()
+    except ConfigurationError as exc:
+        print(f"rissaga configuration refused: {exc}", file=sys.stderr)
+        return 2
+    if mode == "--run" and not TOKEN:
+        print("SEICHE_BOT_TOKEN missing", file=sys.stderr)
+        return 2
+    return run(dry=mode == "--print")
 
 
 if __name__ == "__main__":

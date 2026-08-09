@@ -23,6 +23,9 @@ NOW_DT = datetime.fromtimestamp(NOW, timezone.utc)
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(rz, "STATE_DIR", str(tmp_path))
+    # Shared-channel candidate tests model the production Hermes handoff.
+    # Individual fail-quiet tests override this explicitly with ``off``.
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
     monkeypatch.setattr(rz.time, "sleep", lambda s: None)
 
     def _no_net(*a, **k):
@@ -395,27 +398,18 @@ def _stub_world(monkeypatch, items):
     monkeypatch.setattr(rz, "OWNER_CHAT", "111")
 
 
-def test_run_dms_owner_and_channels_top_item(monkeypatch, sent):
-    _stub_world(monkeypatch, [
-        mk("FDIC seizes First Valley Bank as regulators begin receivership",
-           key="fdic", tier=1.0, source="FDIC")])
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
-    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
-    assert rz.run(dry=False) == 0
-    chats = [p["chat_id"] for m, p in sent if m == "sendMessage"]
-    assert 111 in chats and -100999 in chats
-    chan = next(p for m, p in sent if p.get("chat_id") == -100999)
-    assert "WHAT HAPPENED" in chan["text"]
-    assert "WHY THIS DESK CARES" in chan["text"]
-    assert "LIVE DESK CHECK" in chan["text"]
-    assert "WHAT TO WATCH NEXT" in chan["text"]
-    markup = json.dumps(chan.get("reply_markup", {}))
-    assert "start=lab_rissaga_liquilens" in markup
-    assert "LiquiLens_bot" in markup
-    assert "Share Liquidity Lab" in markup
-    with open(os.path.join(rz.STATE_DIR, "history.jsonl"), encoding="utf-8") as fh:
-        hist = fh.read()
-    assert '"channel_posted": 1' in hist
+@pytest.mark.parametrize("bad_mode", ["direct", "unknown", ""])
+def test_invalid_channel_mode_exits_before_fetch_or_state_mutation(
+        monkeypatch, capsys, bad_mode):
+    monkeypatch.setattr(rz, "CHANNEL_MODE", bad_mode)
+    monkeypatch.setattr(rz, "TOKEN", "test-token")
+    monkeypatch.setattr(
+        rz, "gather", lambda *_args, **_kwargs: pytest.fail("fetch attempted")
+    )
+
+    assert rz.main(["rissaga.py", "--run"]) == 2
+    assert "RISSAGA_CHANNEL_MODE must be hermes or off" in capsys.readouterr().err
+    assert os.listdir(rz.STATE_DIR) == []
 
 
 def test_lab_channel_helper_exposes_all_eight_desks():
@@ -450,14 +444,26 @@ def test_rissaga_scans_hourly_and_shared_fallback_runs_four_times_daily():
     assert fallback.count("OnCalendar=") == 4
 
 
-def test_run_channel_off_when_env_empty(monkeypatch, sent):
+def test_off_mode_dms_owner_but_authorizes_no_channel_consumer(monkeypatch, sent):
     _stub_world(monkeypatch, [
         mk("FDIC seizes First Valley Bank as regulators begin receivership",
            key="fdic", tier=1.0, source="FDIC")])
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "")
-    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "off")
     assert rz.run(dry=False) == 0
     assert [p["chat_id"] for m, p in sent] == [111]
+    with open(os.path.join(rz.STATE_DIR, "latest.json"), encoding="utf-8") as fh:
+        latest = json.load(fh)
+    assert latest["channel_mode"] == "off"
+    assert latest["channel_candidates"] == []
+    assert all(
+        route["channel_candidate"] is False
+        for item in latest["items"]
+        for route in item["routes"]
+    )
+    with open(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT), encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert records
+    assert all(record["shared_candidate"] is False for record in records)
 
 
 def test_board_events_never_reach_the_channel(monkeypatch, sent):
@@ -466,8 +472,7 @@ def test_board_events_never_reach_the_channel(monkeypatch, sent):
     monkeypatch.setattr(rz, "read_boards",
                         lambda: {"seiche": {"regime": "STRAIN", "index": 50}})
     monkeypatch.setattr(rz, "OWNER_CHAT", "111")
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
-    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
     assert rz.run(dry=False) == 0
     chats = [p["chat_id"] for m, p in sent]
     assert chats == [111]
@@ -477,7 +482,6 @@ def test_board_events_never_reach_the_channel(monkeypatch, sent):
 
 def test_low_signal_run_still_dms(monkeypatch, sent):
     _stub_world(monkeypatch, [])
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
     assert rz.run(dry=False) == 0
     assert [p["chat_id"] for m, p in sent] == [111]
     assert "Nothing cleared the bar" in sent[0][1]["text"]
@@ -530,7 +534,6 @@ def test_hermes_mode_exports_latest_and_skips_channel(monkeypatch, sent):
     _stub_world(monkeypatch, [
         mk("FDIC seizes First Valley Bank as regulators begin receivership",
            key="fdic", tier=1.0, source="FDIC")])
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
     monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
     assert rz.run(dry=False) == 0
     assert [p["chat_id"] for m, p in sent] == [111]   # DM only, no channel
@@ -582,8 +585,14 @@ def test_shared_channel_slots_are_globally_ranked_but_desk_diverse():
              if route["channel_candidate"])
         for index in payload["channel_candidates"]
     ]
-    assert selected_desks == ["CRYPTO", "LIQUILENS"]
+    assert selected_desks == ["LIQUILENS"]
     assert len(selected_desks) == len(set(selected_desks))
+    assert all(
+        route["desk"] != "CRYPTO"
+        for item in payload["items"]
+        for route in item["routes"]
+        if route["channel_candidate"]
+    )
 
 
 def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
@@ -609,6 +618,29 @@ def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
         for route in item["routes"]
         if route["desk"] == "CRYPTO"
     ) == rz.DESK_CHANNEL_CAPS["CRYPTO"]
+    assert all(
+        not route["channel_candidate"]
+        for item in payload["items"]
+        for route in item["routes"]
+        if route["desk"] == "CRYPTO"
+    )
+
+
+def test_crypto_outbox_keeps_dedicated_flag_without_shared_authorization():
+    marked = rz.rank([
+        mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+
+    assert rz.append_outbox(payload, NOW_DT) == 1
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, encoding="utf-8") as fh:
+        record = json.loads(fh.readline())
+    crypto = next(route for route in record["routes"]
+                  if route["desk"] == "CRYPTO")
+    assert record["shared_candidate"] is False
+    assert crypto["channel_candidate"] is False
+    assert crypto["desk_channel_candidate"] is True
 
 
 def test_outbox_is_durable_world_readable_and_idempotent():
@@ -800,23 +832,10 @@ def test_dry_run_does_not_mutate_seen_boards_or_outbox(monkeypatch, capsys):
     assert after == before
 
 
-def test_direct_mode_caps_channel_posts(monkeypatch, sent):
-    _stub_world(monkeypatch, [
-        mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
-        mk("DeFi bridge exploit drains a protocol after a smart contract vulnerability",
-           tier=1.0),
-        mk("FDIC seizes First Valley Bank as regulators begin receivership",
-           key="fdic", tier=1.0, source="FDIC")])
-    monkeypatch.setattr(rz, "LAB_CHANNEL", "-100999")
-    monkeypatch.setattr(rz, "CHANNEL_MODE", "direct")
-    assert rz.run(dry=False) == 0
-    channel_msgs = [p for m, p in sent if p.get("chat_id") == -100999]
-    assert len(channel_msgs) == rz.MAX_CHANNEL_POSTS
-    assert all("WHAT HAPPENED" in p["text"] for p in channel_msgs)
-    assert "[CRYPTO " in channel_msgs[0]["text"]
-    assert "[LIQUILENS " in channel_msgs[1]["text"]
-    assert all(len(p["reply_markup"]["inline_keyboard"]) == 1
-               for p in channel_msgs)
+def test_rissaga_has_no_direct_channel_publisher_surface():
+    assert rz.ALLOWED_CHANNEL_MODES == {"hermes", "off"}
+    assert not hasattr(rz, "compose_channel")
+    assert not hasattr(rz, "post_channel")
 
 
 def test_no_em_or_en_dashes_in_user_facing_strings():
