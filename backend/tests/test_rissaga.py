@@ -2,6 +2,7 @@
 HTTP seam (_http_get) is blocked by default and every surface that needs it
 is stubbed per test. State is isolated per test."""
 
+import hashlib
 import json
 import os
 import runpy
@@ -48,7 +49,10 @@ def sent(monkeypatch):
 
 
 def mk(title, key="bbg_markets", tier=0.8, ts=None, snippet="",
-       source="Bloomberg", link="https://example.com/a"):
+       source="Bloomberg", link=None):
+    if link is None:
+        slug = hashlib.sha256(title.encode()).hexdigest()[:16]
+        link = f"https://example.com/{slug}"
     return {"key": key, "tier": tier, "title": title, "link": link,
             "snippet": snippet, "source_name": source,
             "ts": NOW - 3600 if ts is None else ts}
@@ -89,6 +93,50 @@ def test_cluster_merges_same_story_and_counts_outlets():
     assert cl["final"] > solo[0]["final"]
 
 
+def test_canonical_story_url_removes_only_presentation_noise():
+    left = rz.canonical_story_url(
+        "https://WWW.Example.com:443/news//stress/?b=2&utm_source=wire&a=1"
+        "&fbclid=tracking#section")
+    right = rz.canonical_story_url(
+        "https://example.com/news/stress?a=1&b=2")
+
+    assert left == right == "https://example.com/news/stress?a=1&b=2"
+    assert rz.canonical_story_url(
+        "https://news.google.com/rss/articles/item?hl=en&gl=US&oc=5&ceid=US:en"
+    ) == "https://news.google.com/rss/articles/item"
+    assert rz.canonical_story_url("javascript:alert(1)") == ""
+    assert rz.canonical_story_url("https://user:secret@example.com/story") == ""
+
+
+def test_canonical_story_url_preserves_semantic_query_values():
+    first = rz.canonical_story_url("https://example.com/live?edition=morning&id=1")
+    second = rz.canonical_story_url("https://example.com/live?edition=morning&id=2")
+
+    assert first != second
+
+
+def test_same_canonical_url_merges_headline_variants_in_one_sweep():
+    link = "https://example.com/private-credit/ares?utm_campaign=daily"
+    items = [
+        mk("Ares private credit fund scales back after investors reject loan valuations",
+           source="Financial Times", link=link, tier=1.0),
+        mk("Investors balk at loan valuations as Ares cuts its private credit vehicle",
+           source="FT Alphaville",
+           link="https://www.example.com:443/private-credit//ares#latest",
+           tier=1.0),
+    ]
+
+    marked = rz.rank(items, {}, NOW, persist_seen=False)
+
+    assert len(marked) == 1
+    assert len(marked[0]["members"]) == 2
+    assert marked[0]["n_sources"] == 2
+    assert marked[0]["canonical_url"] == (
+        "https://example.com/private-credit/ares")
+    assert marked[0]["story_id"] == rz._story_id_for_url(
+        marked[0]["canonical_url"])
+
+
 def test_seen_ledger_suppresses_repeat_and_allows_escalation():
     t = "Repo market seizes as SOFR spikes overnight"
     first = rz.rank([mk(t)], {}, NOW)
@@ -99,6 +147,56 @@ def test_seen_ledger_suppresses_repeat_and_allows_escalation():
                    ("Bloomberg", "FT", "WSJ", "CNBC", "Reuters", "Nikkei")]
     escalated = rz.rank(six_sources, {}, NOW + 7200)
     assert len(escalated) == 1 and escalated[0]["n_sources"] == 6
+
+
+def test_url_identity_suppresses_later_headline_edit_at_equal_score():
+    link = "https://example.com/global-food-prices"
+    first = rz.rank([
+        mk("Global food prices hit a three-year high as supply fears build",
+           link=link, tier=1.0),
+    ], {}, NOW)
+    edited = rz.rank([
+        mk("Global food prices rise to a three-year high as supply fears build",
+           link=link, tier=1.0, ts=NOW),
+    ], {}, NOW + 3600)
+
+    assert first[0]["story_id"] == rz._story_id_for_url(
+        rz.canonical_story_url(link))
+    assert edited == []
+
+
+def test_title_alias_still_suppresses_cross_outlet_source_swap():
+    headline = "Repo market seizes as SOFR spikes overnight"
+    first = rz.rank([
+        mk(headline, link="https://first.example/story", tier=1.0),
+    ], {}, NOW)
+    alternate_outlet = rz.rank([
+        mk(headline, link="https://second.example/report", tier=1.0, ts=NOW),
+    ], {}, NOW + 3600)
+
+    assert first
+    assert alternate_outlet == []
+
+
+def test_rolling_source_url_reuse_observes_the_48_hour_score_gate():
+    link = "https://example.com/live/economy"
+    first = rz.rank([
+        mk("Jobless claims rise as the unemployment rate climbs",
+           link=link, tier=1.0),
+    ], {}, NOW)
+    within_window = rz.rank([
+        mk("Retail sales fall as consumer confidence weakens",
+           link=link, tier=1.0, ts=NOW),
+    ], {}, NOW + 3600)
+    after_window = rz.rank([
+        mk("Retail sales fall as consumer confidence weakens",
+           link=link, tier=1.0, ts=NOW + 49 * 3600 - 60),
+    ], {}, NOW + 49 * 3600)
+
+    assert first
+    assert within_window == []
+    assert len(after_window) == 1
+    assert after_window[0]["story_id"] == first[0]["story_id"]
 
 
 def test_recency_drops_stale_items():
@@ -643,6 +741,112 @@ def test_crypto_outbox_keeps_dedicated_flag_without_shared_authorization():
     assert crypto["desk_channel_candidate"] is True
 
 
+def test_recent_legacy_outbox_suppresses_url_identity_rollout_replay():
+    link = "https://example.com/private-credit/legacy-rollout"
+    headline = "Private credit defaults rise as investors reject loan valuations"
+    marked = rz.rank([
+        mk(headline, link=link, tier=1.0),
+    ], {}, NOW, persist_seen=False)
+    score = marked[0]["final"]
+    legacy_dispatch = "rissaga-dispatch-legacy-title-key"
+    legacy = {
+        "schema": "rissaga.news.v2",
+        "story_id": "rissaga-legacy-title-key",
+        "dispatch_id": legacy_dispatch,
+        "generated": (NOW_DT - rz.timedelta(hours=1)).isoformat(),
+        "expires_at": (NOW_DT + rz.timedelta(hours=23)).isoformat(),
+        "title": headline,
+        "link": link,
+        "score": score,
+    }
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(legacy) + "\n")
+
+    edited = rz.rank([
+        mk("Investors balk as private credit loan valuations face new defaults",
+           link=link, tier=1.0),
+    ], {}, NOW, persist_seen=False)
+    retry_payload = rz.latest_payload(marked, {}, NOW_DT)
+    suppressed_payload = rz.latest_payload(edited, {}, NOW_DT)
+    owner_digest = rz.compose(edited, {}, {"fed_press": "ok"}, NOW_DT)
+
+    assert edited == []
+    assert suppressed_payload["items"] == []
+    assert suppressed_payload["channel_candidates"] == []
+    assert headline not in owner_digest
+    assert rz.append_outbox(retry_payload, NOW_DT) == 0
+    assert retry_payload["items"][0]["dispatch_id"] == legacy_dispatch
+    with open(path, encoding="utf-8") as fh:
+        assert len(fh.readlines()) == 1
+
+
+def test_recent_legacy_outbox_allows_url_identity_escalation():
+    link = "https://example.com/private-credit/legacy-escalation"
+    headline = "Private credit defaults rise after investors reject loan valuations"
+    initial = rz.rank([
+        mk(headline, link=link, tier=1.0),
+    ], {}, NOW, persist_seen=False)
+    legacy = {
+        "schema": "rissaga.news.v2",
+        "story_id": "rissaga-legacy-title-key",
+        "dispatch_id": "rissaga-dispatch-legacy-title-key",
+        "generated": (NOW_DT - rz.timedelta(hours=1)).isoformat(),
+        "expires_at": (NOW_DT + rz.timedelta(hours=23)).isoformat(),
+        "title": headline,
+        "link": link,
+        "score": initial[0]["final"],
+    }
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(legacy) + "\n")
+
+    sources = [
+        mk("Private credit defaults rise after investors reject loan valuations",
+           link=link, tier=1.0, source=source)
+        for source in ("FT", "Bloomberg", "Reuters", "WSJ", "CNBC", "Nikkei")
+    ]
+    escalated = rz.rank(sources, {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(escalated, {}, NOW_DT)
+
+    assert len(escalated) == 1
+    assert escalated[0]["final"] >= legacy["score"] * rz.SEEN_ESCALATE
+    assert escalated[0]["story_id"] == rz._story_id_for_url(
+        rz.canonical_story_url(link))
+    assert payload["items"][0]["dispatch_id"] != legacy["dispatch_id"]
+    assert rz.append_outbox(payload, NOW_DT) == 1
+    with open(path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert len(records) == 2
+    assert records[-1]["canonical_url"] == rz.canonical_story_url(link)
+
+
+def test_legacy_outbox_migration_bridge_expires_after_48_hours():
+    link = "https://example.com/private-credit/old-legacy-record"
+    legacy = {
+        "schema": "rissaga.news.v2",
+        "story_id": "rissaga-legacy-title-key",
+        "dispatch_id": "rissaga-dispatch-legacy-title-key",
+        "generated": (NOW_DT - rz.timedelta(hours=49)).isoformat(),
+        "expires_at": (NOW_DT + rz.timedelta(hours=1)).isoformat(),
+        "title": "Old private credit defaults story",
+        "link": link,
+        "score": 10.0,
+    }
+    path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(legacy) + "\n")
+
+    marked = rz.rank([
+        mk("Private credit defaults rise after investors reject loan valuations",
+           link=link, tier=1.0),
+    ], {}, NOW, persist_seen=False)
+
+    assert len(marked) == 1
+    assert marked[0]["story_id"] == rz._story_id_for_url(
+        rz.canonical_story_url(link))
+
+
 def test_outbox_is_durable_world_readable_and_idempotent():
     marked = rz.rank([
         mk("Repo market margin calls trigger a liquidation cascade and risk-off volatility spike",
@@ -805,6 +1009,35 @@ def test_latest_failure_leaves_seen_uncommitted_and_outbox_durable(
     assert os.path.exists(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT))
     assert not os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
     assert sent == []
+
+
+def test_current_canonical_outbox_still_retries_latest_after_crash(
+        monkeypatch, sent):
+    _stub_world(monkeypatch, [
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC")])
+    original_export = rz.export_latest
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rz, "export_latest", fail)
+    assert rz.run(dry=False) == 1
+    monkeypatch.setattr(rz, "export_latest", original_export)
+
+    assert rz.run(dry=False) == 0
+    outbox_path = os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT)
+    latest_path = os.path.join(rz.STATE_DIR, rz.LATEST_EXPORT)
+    with open(outbox_path, encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    with open(latest_path, encoding="utf-8") as fh:
+        latest = json.load(fh)
+
+    assert len(records) == 1
+    assert records[0]["canonical_url"]
+    assert latest["items"][0]["dispatch_id"] == records[0]["dispatch_id"]
+    assert os.path.exists(os.path.join(rz.STATE_DIR, "seen.json"))
+    assert len(sent) == 1
 
 
 def test_dry_run_does_not_mutate_seen_boards_or_outbox(monkeypatch, capsys):

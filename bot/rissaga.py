@@ -23,12 +23,13 @@ explicit authority boundary where Riptide has no public board.
 RANKING, deterministic and auditable (no LLM in the path, house style per
 ml/mpc_gauge.py): weighted beat lexicon x source tier x recency x cross
 outlet cluster bonus x board corroboration boost, then a seen ledger so a
-story is marked once and resurfaces only on escalation. The lexicon below is
-the tuning surface and it is versioned by content hash. Every relevant
-external story is appended to a durable world readable JSONL subscriber
-outbox before its seen suppression is committed. Stable story identifiers
-group revisions, while dispatch identifiers separate escalations and later
-re-entry.
+story is marked once and resurfaces only on escalation. Canonical source URLs
+anchor story identity across publisher headline edits, with title tokens as a
+fallback for linkless records. The lexicon below is the tuning surface and it
+is versioned by content hash. Every relevant external story is appended to a
+durable world readable JSONL subscriber outbox before its seen suppression is
+committed. Stable story identifiers group revisions, while dispatch
+identifiers separate escalations and later re-entry.
 
 Deploy (fleet convention): copy this file to /opt/rissaga/, env from
 /etc/seiche-bot.env (token) plus /etc/rissaga.env, systemd rissaga.timer at
@@ -1236,6 +1237,10 @@ _STOP = {"the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "as",
          "his", "her", "their", "this", "that", "from", "into", "up", "down",
          "says", "say", "said", "new", "us", "will"}
 _TOKEN = re.compile(r"[a-z0-9]{2,}")
+_TRACKING_QUERY_KEYS = frozenset({
+    "dclid", "fbclid", "gclid", "mc_cid", "mc_eid", "msclkid", "ref_src",
+})
+_GOOGLE_NEWS_QUERY_KEYS = frozenset({"ceid", "gl", "hl", "oc"})
 
 
 def title_tokens(title: str) -> frozenset:
@@ -1245,6 +1250,134 @@ def title_tokens(title: str) -> frozenset:
 def fingerprint(tokens: frozenset) -> str:
     core = sorted(t for t in tokens if len(t) > 3)[:10]
     return hashlib.sha1(" ".join(core).encode()).hexdigest()[:16]
+
+
+def canonical_story_url(value: object) -> str:
+    """Return a bounded source identity without presentation-only URL noise.
+
+    Path and semantic query values remain case-sensitive. Only well-known
+    tracking parameters are removed, and Google News locale parameters are
+    removed only on Google News hosts. An empty result means title identity
+    must remain the authority.
+    """
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip()
+    if (not raw or len(raw) > 4096
+            or any(character.isspace() or ord(character) < 32
+                   for character in raw)):
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+        port = parsed.port
+    except ValueError:
+        return ""
+    scheme = parsed.scheme.lower()
+    if (scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None):
+        return ""
+    try:
+        host = parsed.hostname.rstrip(".").lower().encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    display_host = f"[{host}]" if ":" in host else host
+    if port is not None and not (
+            (scheme == "http" and port == 80)
+            or (scheme == "https" and port == 443)):
+        display_host += f":{port}"
+
+    path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    if path != "/":
+        path = path.rstrip("/")
+    google_news = host == "news.google.com" or host.endswith(".news.google.com")
+    query = []
+    for key, query_value in urllib.parse.parse_qsl(
+            parsed.query, keep_blank_values=True):
+        lowered = key.lower()
+        if (lowered.startswith("utm_") or lowered in _TRACKING_QUERY_KEYS
+                or (google_news and lowered in _GOOGLE_NEWS_QUERY_KEYS)):
+            continue
+        query.append((key, query_value))
+    query.sort(key=lambda pair: (pair[0].lower(), pair[0], pair[1]))
+    return urllib.parse.urlunsplit((
+        scheme,
+        display_host,
+        path,
+        urllib.parse.urlencode(query, doseq=True),
+        "",
+    ))
+
+
+def story_fingerprint(tokens: frozenset, canonical_url: str = "") -> str:
+    if canonical_url:
+        return hashlib.sha256(
+            f"url\x00{canonical_url}".encode("utf-8")
+        ).hexdigest()[:16]
+    return fingerprint(tokens)
+
+
+def _story_id_for_url(canonical_url: str) -> str:
+    return f"rissaga-{story_fingerprint(frozenset(), canonical_url)}"
+
+
+def _record_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _recent_legacy_outbox_by_canonical(
+        path: str, now: datetime) -> dict[str, dict]:
+    """Index recent pre-canonical records without mutating the JSONL outbox."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now - timedelta(hours=SEEN_TTL_H)
+    recent: dict[str, dict] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                generated = _record_time(record.get("generated"))
+                if generated is None or generated <= cutoff or generated > now:
+                    continue
+                canonical_url = canonical_story_url(
+                    record.get("canonical_url") or record.get("link"))
+                story_id = record.get("story_id")
+                if (not canonical_url or not isinstance(story_id, str)
+                        or story_id == _story_id_for_url(canonical_url)):
+                    continue
+                try:
+                    score = float(record.get("score") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(score):
+                    continue
+                candidate = {
+                    "dispatch_id": record.get("dispatch_id") or story_id,
+                    "score": score,
+                    "story_id": story_id,
+                    "ts": generated.timestamp(),
+                }
+                old = recent.get(canonical_url)
+                if (old is None or (candidate["score"], candidate["ts"])
+                        >= (old["score"], old["ts"])):
+                    recent[canonical_url] = candidate
+    except OSError:
+        pass
+    return recent
 
 
 def beat_scores(text: str) -> dict[str, float]:
@@ -1318,6 +1451,8 @@ def rank(items: list[dict], boards: dict, now_ts: float,
                                                             lambda b: False)(boards) else 1.0)
             it["beat_scores"] = {it["beat"]: 6.0}
             it["tokens"] = title_tokens(it["title"])
+            # Board-event links point to product homepages, not unique stories.
+            it["canonical_url"] = ""
             scored.append(it)
             continue
         text = f"{it['title']} {it['snippet']}"
@@ -1339,6 +1474,7 @@ def rank(items: list[dict], boards: dict, now_ts: float,
         it["beat_scores"] = scores
         it["age_h"] = age_h
         it["tokens"] = title_tokens(it["title"])
+        it["canonical_url"] = canonical_story_url(it.get("link"))
         it["score"] = base * it["tier"] * rec
         scored.append(it)
 
@@ -1349,16 +1485,27 @@ def rank(items: list[dict], boards: dict, now_ts: float,
         for cl in clusters:
             inter = len(it["tokens"] & cl["tokens"])
             union = len(it["tokens"] | cl["tokens"]) or 1
-            if inter / union >= 0.5:
+            same_source_story = (
+                bool(it["canonical_url"])
+                and it["canonical_url"] in cl["canonical_urls"]
+            )
+            if same_source_story or inter / union >= 0.5:
                 cl["members"].append(it)
                 cl["sources"].add(it["source_name"])
+                if it["canonical_url"]:
+                    cl["canonical_urls"].add(it["canonical_url"])
                 placed = True
                 break
         if not placed:
             clusters.append({"rep": it, "members": [it], "tokens": it["tokens"],
-                             "sources": {it["source_name"]}})
+                             "sources": {it["source_name"]},
+                             "canonical_urls": ({it["canonical_url"]}
+                                                if it["canonical_url"] else set())})
 
     seen = load_state("seen.json", {})
+    now_dt = datetime.fromtimestamp(now_ts, timezone.utc)
+    legacy_by_url = _recent_legacy_outbox_by_canonical(
+        _state_path(OUTBOX_EXPORT), now_dt)
     marked = []
     for cl in clusters:
         rep = cl["rep"]
@@ -1367,14 +1514,28 @@ def rank(items: list[dict], boards: dict, now_ts: float,
         beat = rep["beat"]
         if _BEAT_STRESSED.get(beat, lambda b: False)(boards) and not rep.get("board_event"):
             score *= 1.25
-        fp = fingerprint(cl["tokens"])
-        old = seen.get(fp)
-        if old and not rep.get("board_event"):
-            age = now_ts - old.get("ts", 0)
-            if age < SEEN_TTL_H * 3600 and score < old.get("score", 0) * SEEN_ESCALATE:
-                continue
+        canonical_url = rep.get("canonical_url") or ""
+        fp = story_fingerprint(cl["tokens"], canonical_url)
+        seen_keys = {fp}
+        seen_keys.update(fingerprint(member["tokens"])
+                         for member in cl["members"])
+        baselines = []
+        if not rep.get("board_event"):
+            for seen_key in seen_keys:
+                old = seen.get(seen_key)
+                if isinstance(old, dict):
+                    age = now_ts - float(old.get("ts", 0))
+                    if age < SEEN_TTL_H * 3600:
+                        baselines.append(float(old.get("score", 0)))
+        legacy = legacy_by_url.get(canonical_url)
+        if legacy is not None and not rep.get("board_event"):
+            baselines.append(float(legacy["score"]))
+        if baselines and score < max(baselines) * SEEN_ESCALATE:
+            continue
         cl["final"] = score
         cl["fp"] = fp
+        cl["seen_keys"] = seen_keys
+        cl["canonical_url"] = canonical_url
         cl["story_id"] = f"rissaga-{fp}"
         cl["n_sources"] = len(cl["sources"])
         cl["route_beats"] = _best_route_beats(
@@ -1418,7 +1579,9 @@ def commit_seen(marked: list[dict], now_ts: float) -> None:
         if cl["final"] >= MARK_BAR:
             score = max(float(cl["final"]),
                         outbox_scores.get(cl.get("story_id"), 0.0))
-            seen[cl["fp"]] = {"ts": now_ts, "score": score, "at": now_iso}
+            record = {"ts": now_ts, "score": score, "at": now_iso}
+            for seen_key in cl.get("seen_keys") or {cl["fp"]}:
+                seen[seen_key] = record
     seen = {fp: rec for fp, rec in seen.items()
             if now_ts - rec.get("ts", 0) < 7 * 24 * 3600}
     save_state("seen.json", seen)
@@ -1539,6 +1702,7 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
             "story_id": cl["story_id"],
             "dispatch_id": dispatch_id(cl["story_id"], generated, score,
                                        cl["n_sources"]),
+            "canonical_url": cl.get("canonical_url") or "",
             "title": rep["title"], "link": rep.get("link") or "",
             "source": rep["source_name"], "n_sources": cl["n_sources"],
             "age": _age_txt(rep), "score": score,
@@ -1721,6 +1885,7 @@ def append_outbox(payload: dict, now: datetime) -> int:
     path = _state_path(OUTBOX_EXPORT)
     _repair_outbox_tail(path)
     active = _outbox_active_records(path, now)
+    legacy_by_url = _recent_legacy_outbox_by_canonical(path, now)
     generated = payload["generated"]
     expires_at = (now + timedelta(hours=OUTBOX_TTL_H)).isoformat(
         timespec="seconds")
@@ -1733,10 +1898,18 @@ def append_outbox(payload: dict, now: datetime) -> int:
             continue
         score = float(item["score"])
         prior = active.get(story_id)
-        if prior is not None and score < prior["score"] * SEEN_ESCALATE:
-            # A retry after append but before seen commit gets the already
-            # durable revision key in latest.json, so Hermes cannot replay it.
-            item["dispatch_id"] = prior["dispatch_id"]
+        canonical_url = canonical_story_url(
+            item.get("canonical_url") or item.get("link"))
+        legacy = legacy_by_url.get(canonical_url)
+        baselines = [record for record in (prior, legacy)
+                     if record is not None]
+        baseline = (max(baselines, key=lambda record: record["score"])
+                    if baselines else None)
+        if (baseline is not None
+                and score < baseline["score"] * SEEN_ESCALATE):
+            # Retry and migration suppression both reuse the durable revision
+            # key in latest.json, so Hermes and bot recipients cannot replay it.
+            item["dispatch_id"] = baseline["dispatch_id"]
             continue
         item_dispatch_id = item.get("dispatch_id") or dispatch_id(
             story_id, generated, score, item["n_sources"])
@@ -1744,6 +1917,7 @@ def append_outbox(payload: dict, now: datetime) -> int:
             "schema": "rissaga.news.v2",
             "story_id": story_id,
             "dispatch_id": item_dispatch_id,
+            "canonical_url": canonical_url,
             "generated": generated,
             "expires_at": expires_at,
             "title": item["title"],
