@@ -12,11 +12,12 @@ import json
 import os
 import threading
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Protocol
 
 from seiche import store
+from seiche.domain.forward_record import forward_record_hash
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 
 
@@ -33,6 +34,16 @@ class MarketRepository(Protocol):
         roles: Iterable[SemanticRole] | None = None,
         instrument_ids: Iterable[str] | None = None,
         sources: Iterable[str] | None = None,
+    ) -> list[Observation]: ...
+
+    def load_observation_revisions(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        instrument_ids: Iterable[str] | None = None,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
     ) -> list[Observation]: ...
 
     def load_observation_page(
@@ -101,6 +112,12 @@ class MarketRepository(Protocol):
         payload: object,
     ) -> str: ...
 
+    def load_forward_records(
+        self,
+        market_id: str | None = None,
+        product: str | None = None,
+    ) -> list[dict]: ...
+
     def forward_record_count(self, market_id: str | None = None) -> int: ...
 
 
@@ -109,6 +126,7 @@ class SQLiteMarketRepository:
 
     save_observations = staticmethod(store.save_observations)
     load_observations_as_of = staticmethod(store.load_observations_as_of)
+    load_observation_revisions = staticmethod(store.load_observation_revisions)
     load_observation_page = staticmethod(store.load_observation_page)
     latest_observation_hashes = staticmethod(store.latest_observation_hashes)
     canonical_coverage = staticmethod(store.canonical_coverage)
@@ -118,6 +136,7 @@ class SQLiteMarketRepository:
     save_collector_run = staticmethod(store.save_collector_run)
     latest_collector_runs = staticmethod(store.latest_collector_runs)
     append_forward_record = staticmethod(store.append_forward_record)
+    load_forward_records = staticmethod(store.load_forward_records)
     forward_record_count = staticmethod(store.forward_record_count)
 
 
@@ -406,6 +425,53 @@ class PostgresMarketRepository:
             record = dict(zip(_OBSERVATION_COLUMNS, row, strict=True))
             if isinstance(record["jurisdiction_codes"], str):
                 record["jurisdiction_codes"] = json.loads(record["jurisdiction_codes"])
+            observations.append(Observation.from_record(record))
+        return observations
+
+    def load_observation_revisions(
+        self,
+        market_id: str,
+        knowledge_time: str | datetime,
+        *,
+        instrument_ids: Iterable[str] | None = None,
+        event_time: str | datetime | None = None,
+        event_time_from: str | datetime | None = None,
+    ) -> list[Observation]:
+        """Return every stored vintage knowable by the requested cutoff."""
+
+        self._ensure_schema()
+        predicates = ["market_id=%s", "knowledge_time<=%s"]
+        params: list[Any] = [market_id.upper(), _utc(knowledge_time)]
+        if event_time is not None:
+            predicates.append("event_time<=%s")
+            params.append(_utc(event_time))
+        if event_time_from is not None:
+            predicates.append("event_time>=%s")
+            params.append(_utc(event_time_from))
+        instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
+        if instrument_ids is not None and not instrument_values:
+            return []
+        if instrument_values:
+            predicates.append(
+                f"instrument_id IN ({','.join(['%s'] * len(instrument_values))})"
+            )
+            params.extend(instrument_values)
+
+        selected = ",".join(_OBSERVATION_COLUMNS)
+        query = f"""SELECT {selected}
+                      FROM canonical_observations
+                     WHERE {' AND '.join(predicates)}
+                     ORDER BY event_time, instrument_id, knowledge_time,
+                              source_publication_time, revision_id, source"""
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        observations: list[Observation] = []
+        for row in rows:
+            record = dict(zip(_OBSERVATION_COLUMNS, row, strict=True))
+            if isinstance(record["jurisdiction_codes"], str):
+                record["jurisdiction_codes"] = json.loads(
+                    record["jurisdiction_codes"]
+                )
             observations.append(Observation.from_record(record))
         return observations
 
@@ -854,25 +920,32 @@ class PostgresMarketRepository:
             if existing is not None:
                 return existing[0]
             previous = connection.execute(
-                """SELECT record_hash FROM forward_validation_records
+                """SELECT record_hash, created_at FROM forward_validation_records
                     WHERE market_id=%s AND product=%s
                     ORDER BY created_at DESC, record_id DESC LIMIT 1""",
                 (market, product),
             ).fetchone()
             previous_hash = previous[0] if previous else "0" * 64
-            identity = "|".join(
-                (
-                    snapshot_id,
-                    market,
-                    product,
-                    event.isoformat(),
-                    knowledge.isoformat(),
-                    calibration_id,
-                    payload_hash,
-                    previous_hash,
-                )
+            created_at = datetime.now(UTC)
+            if previous is not None:
+                previous_created_at = previous[1]
+                if isinstance(previous_created_at, str):
+                    previous_created_at = datetime.fromisoformat(
+                        previous_created_at.replace("Z", "+00:00")
+                    )
+                previous_created_at = previous_created_at.astimezone(UTC)
+                if created_at <= previous_created_at:
+                    created_at = previous_created_at + timedelta(microseconds=1)
+            record_hash = forward_record_hash(
+                snapshot_id=snapshot_id,
+                market_id=market,
+                product=product,
+                event_cutoff=event.isoformat(),
+                knowledge_cutoff=knowledge.isoformat(),
+                calibration_id=calibration_id,
+                payload_hash=payload_hash,
+                previous_record_hash=previous_hash,
             )
-            record_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
             connection.execute(
                 """INSERT INTO forward_validation_records
                      (record_id, snapshot_id, market_id, product, event_cutoff,
@@ -887,7 +960,7 @@ class PostgresMarketRepository:
                     event,
                     knowledge,
                     calibration_id,
-                    datetime.now(UTC).replace(microsecond=0),
+                    created_at,
                     payload_hash,
                     previous_hash,
                     record_hash,
@@ -895,6 +968,60 @@ class PostgresMarketRepository:
                 ),
             )
         return record_hash
+
+    def load_forward_records(
+        self,
+        market_id: str | None = None,
+        product: str | None = None,
+    ) -> list[dict]:
+        """Read complete forward-chain links in deterministic chronological order."""
+
+        self._ensure_schema()
+        predicates: list[str] = []
+        params: list[str] = []
+        if market_id is not None:
+            predicates.append("market_id=%s")
+            params.append(market_id.upper())
+        if product is not None:
+            predicates.append("product=%s")
+            params.append(product)
+        where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
+        columns = (
+            "record_id, snapshot_id, market_id, product, event_cutoff, "
+            "knowledge_cutoff, calibration_id, created_at, payload_hash, "
+            "previous_record_hash, record_hash, payload"
+        )
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT {columns}
+                      FROM forward_validation_records{where}
+                     ORDER BY created_at, record_id""",
+                params,
+            ).fetchall()
+        keys = (
+            "record_id",
+            "snapshot_id",
+            "market_id",
+            "product",
+            "event_cutoff",
+            "knowledge_cutoff",
+            "calibration_id",
+            "created_at",
+            "payload_hash",
+            "previous_record_hash",
+            "record_hash",
+            "payload",
+        )
+        records: list[dict] = []
+        for row in rows:
+            record = dict(zip(keys, row, strict=True))
+            for key in ("event_cutoff", "knowledge_cutoff", "created_at"):
+                if isinstance(record[key], datetime):
+                    record[key] = record[key].isoformat()
+            if isinstance(record["payload"], str):
+                record["payload"] = json.loads(record["payload"])
+            records.append(record)
+        return records
 
     def forward_record_count(self, market_id: str | None = None) -> int:
         self._ensure_schema()

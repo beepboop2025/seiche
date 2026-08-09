@@ -368,8 +368,10 @@ class ValidationResult:
     evidence: str
 
     def __post_init__(self) -> None:
-        if not self.evidence.strip():
-            raise ValueError("validation results require an evidence reference")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.evidence):
+            raise ValueError(
+                "validation evidence must be a content-addressed sha256 reference"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,6 +441,9 @@ class MarketPack:
         validation_checks = [item.check for item in self.validation_results]
         if len(validation_checks) != len(set(validation_checks)):
             raise ValueError("validation checks must be unique within a pack")
+        validation_evidence = [item.evidence for item in self.validation_results]
+        if len(validation_evidence) != len(set(validation_evidence)):
+            raise ValueError("validation evidence references must be unique")
         if self.support_status is PackSupportStatus.SUPPORTED:
             passed = {
                 item.check

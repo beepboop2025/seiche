@@ -34,17 +34,20 @@ if ! runuser -u postgres -- psql -tAc \
 fi
 
 install -d -o seiche -g seiche -m 0750 \
-    "$STATE_DIR" "$STATE_DIR/raw" "$STATE_DIR/normalized" "$STATE_DIR/backfill"
+    "$STATE_DIR" "$STATE_DIR/raw" "$STATE_DIR/normalized" "$STATE_DIR/backfill" \
+    "$STATE_DIR/validation"
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 
 ENV_STAGE=$(mktemp "$ENV_DIR/.market.env.XXXXXX")
-cleanup() { rm -f -- "$ENV_STAGE"; }
+VALIDATION_STAGE=""
+cleanup() { rm -f -- "$ENV_STAGE" "$VALIDATION_STAGE"; }
 trap cleanup EXIT
 cat >"$ENV_STAGE" <<EOF
 SEICHE_DATABASE_URL=postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT
 SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw
 SEICHE_NORMALIZED_DIR=$STATE_DIR/normalized
 SEICHE_BACKFILL_STATE_DIR=$STATE_DIR/backfill
+SEICHE_VALIDATION_DIR=$STATE_DIR/validation
 SEICHE_CANONICAL_START=2000-01-01
 EOF
 chown root:seiche "$ENV_STAGE"
@@ -64,6 +67,26 @@ install -m 0644 "$APP_DIR/ops/deploy/seiche-market-worker.service" \
     /etc/systemd/system/seiche-market-worker.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
     /etc/systemd/system/seiche-market-backfill.service
+install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
+    /etc/systemd/system/seiche-market-validation.service
+install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.timer" \
+    /etc/systemd/system/seiche-market-validation.timer
+
+# The base unit documents the default production path. A drop-in resets the
+# writable sandbox to the configured state root, keeping ProtectSystem=strict
+# compatible with SEICHE_MARKET_STATE_DIR overrides.
+install -d -m 0755 /etc/systemd/system/seiche-market-validation.service.d
+VALIDATION_STAGE=$(mktemp \
+    /etc/systemd/system/seiche-market-validation.service.d/.state-path.XXXXXX)
+cat >"$VALIDATION_STAGE" <<EOF
+[Service]
+ReadWritePaths=
+ReadWritePaths=$STATE_DIR/validation
+EOF
+chmod 0644 "$VALIDATION_STAGE"
+mv -f "$VALIDATION_STAGE" \
+    /etc/systemd/system/seiche-market-validation.service.d/state-path.conf
+VALIDATION_STAGE=""
 
 # The production API unit predates this repository's unit template.  A drop-in
 # adds only the shared repository environment and writable evidence root.
@@ -79,6 +102,9 @@ mv -f "$DROPIN" /etc/systemd/system/seiche-api.service.d/market-platform.conf
 
 systemctl daemon-reload
 systemctl enable seiche-market-worker.service
+# Validation is an independent read/audit schedule. Starting the timer does not
+# wait for a run and must not participate in the API/collector deploy gate.
+systemctl enable --now seiche-market-validation.timer
 # Submit both jobs together so the worker's After= relationship holds on the
 # first rollout. A failed source can make the backfill unit red, but cannot
 # prevent the persistent worker or other packs from starting afterward.

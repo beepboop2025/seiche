@@ -109,6 +109,7 @@ The production commands are also available directly:
 seiche market-collect [--market EA-EUR]
 seiche market-backfill [--market EA-EUR]
 seiche market-worker --poll-seconds 30
+seiche market-validate [--market EA-EUR]
 ```
 
 Backfill completion is marked per adapter. A successful source is not fetched
@@ -116,6 +117,57 @@ again merely because another adapter failed; only incomplete sources retry.
 Collector outcomes and local snapshots publish in completion order, so a slow
 or retrying foreign adapter cannot delay a finished market. The Global Tide is
 sealed at the end of the due cycle because it is inherently cross-market.
+
+## Artifact-backed validation
+
+`market-validate` now executes the gates that can be tested from canonical
+point-in-time data and writes one immutable, content-addressed JSON artifact per
+market/check. Each artifact records its event and knowledge cutoffs, input and
+pack fingerprints, runner policy version, metrics, reasons, and evidence
+references. An exact retry is idempotent; changed bytes cannot overwrite an
+existing artifact. Production provisions these records under
+`/var/lib/seiche/validation` through `SEICHE_VALIDATION_DIR`; local development
+defaults to `backend/data/market_validation`. The production provisioner also
+enables an independent daily `seiche-market-validation.timer`. Its oneshot unit
+treats exit `2` (`PENDING`) as a successful evidence-accrual run, while exit `1`
+(`FAIL`) remains an operational failure; it has no dependency on the API or
+collector worker.
+
+Examples:
+
+```text
+# Run every gate for every registered market.
+seiche market-validate
+
+# Run selected point-in-time gates for India. The timestamp must carry an offset.
+seiche market-validate --market IN-INR \
+  --check schema_and_units --check calendar_and_timezone \
+  --as-of 2026-08-09T12:00:00+05:30
+
+# Record the forward-maturity policy used by the integrity assessment.
+seiche market-validate --market US-USD --check forward_paper_record \
+  --minimum-forward-records 250 --minimum-forward-span-days 365
+
+# Verify the newest artifact for all eleven gates without rerunning or promoting.
+seiche market-validate --market US-USD --promotion-report
+```
+
+The command emits one batch JSON object. Exit `0` means every selected gate for
+every selected market passed, `1` means at least one hard failure, and `2` means
+there were no hard failures but evidence remains pending. In a multi-market
+run, a hard failure outranks a pending result. An exception in one market is
+reported as that market's failure while sibling markets continue.
+
+The executable evaluators cover declared schema/unit coherence, dated calendar
+and timezone bounds, genuine future-suffix truncation perturbation, extra
+reporting-lag perturbation, real revision/vintage pairs, missing-required-source
+injection, and forward-record chain integrity/maturity. They fail closed or
+return `PENDING` when the necessary real observations are absent. Label shuffle,
+local temporal holdout, leave-one-market-out review, forward outcome review,
+and US v1/v2 parity remain explicitly pending until their dated corpora and
+review records exist. The promotion report also rejects stale artifacts when a
+pack contract or runner policy changes. It is a verifier only and never edits a
+registered pack.
 
 The v2 API never invokes collection. It reads only canonical observations and
 sealed snapshots. The US cycle continues to materialize `US-USD` through its
@@ -156,8 +208,9 @@ supplies credentials/data. Their absence is a capability state, never a zero.
   leaves request-time collection on legacy routes temporarily.
 - Dated settlement calendars are bounded and source-labelled. Mainland China
   includes official working-weekend overrides through 2026 and fails closed for
-  2027 until the next annual schedule is reviewed. Other reference calendars
-  are declared through 2035.
+  2027 because the official annual schedule has not yet been published. The
+  calendar gate stays pending until that notice is reviewed. Other reference
+  calendars are declared through 2035.
 - Reference mappings are discoverable before support. Their status and missing
   capabilities prevent discovery from being mistaken for validated coverage.
 - Local scores blend a declared market calibration with point-in-time
@@ -170,10 +223,16 @@ No pack is promoted to `SUPPORTED` by this deployment. Promotion still requires
 all eleven evidence-backed checks: units/schema, calendar/timezone, truncation,
 extra lag, revision leakage, label shuffle, missing-source injection, local
 temporal holdout, leave-one-market-out, forward paper record, and US parity.
+NZ remains explicitly unavailable unless RBNZ access is resolved or an entitled
+licensed/tenant source is supplied. Global Tide remains null until at least two
+aligned, usable `FX_SWAP_BASIS` histories are available; public forward points
+or premia are not silently relabelled as covered-interest-parity basis.
 
-The remaining work is evidence accrual and validation, not another storage or
-serving architecture migration. Promote packs individually only after their
-records pass; only then update the public claim to “market-pack agnostic.”
+The remaining work is real forward evidence accrual, labelled holdout and
+shuffle corpora, leave-one-market-out and calibration review, dated calendar
+maintenance, US parity evidence, RBNZ access, and eligible cross-currency basis
+history. Promote packs individually only after their artifacts pass; only then
+update the public claim to “market-pack agnostic.”
 
 Revisit partition compaction, queueing, and partial pooling only after observed
 collector volume and leave-one-market-out validation justify the complexity.

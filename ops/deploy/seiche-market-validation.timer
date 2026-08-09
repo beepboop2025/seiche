@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Seiche monetary-area validation evidence daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=seiche-market-validation.service
+
+[Install]
+WantedBy=timers.target
