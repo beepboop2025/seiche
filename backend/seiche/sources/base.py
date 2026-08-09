@@ -8,11 +8,13 @@ relative to its own expected cadence.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
+from typing import Protocol
 
 import pandas as pd
 
 from seiche.config import STALENESS_GRACE_DAYS
+from seiche.domain.observation import Observation, evidence_sha256
 
 
 @dataclass
@@ -85,5 +87,67 @@ class SourceFault(Exception):
         super().__init__(f"{source}: {detail}")
 
 
+@dataclass(frozen=True, slots=True)
+class RawCapture:
+    """Exact immutable response bytes retained before parsing."""
+
+    market_id: str
+    adapter_id: str
+    captured_at: datetime
+    source_uri: str
+    media_type: str
+    payload: bytes
+    evidence_hash: str
+
+    def __post_init__(self) -> None:
+        if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
+            raise ValueError("captured_at must be timezone-aware")
+        object.__setattr__(self, "market_id", self.market_id.upper())
+        object.__setattr__(self, "captured_at", self.captured_at.astimezone(UTC))
+        if evidence_sha256(self.payload) != self.evidence_hash:
+            raise ValueError("raw capture evidence_hash does not match payload bytes")
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationBatch:
+    """One collector result; row clocks remain on the observations themselves."""
+
+    market_id: str
+    adapter_id: str
+    captured_at: datetime
+    observations: tuple[Observation, ...]
+    raw_capture: RawCapture | None = None
+
+    def __post_init__(self) -> None:
+        if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
+            raise ValueError("captured_at must be timezone-aware")
+        market_id = self.market_id.upper()
+        captured_at = self.captured_at.astimezone(UTC).replace(microsecond=0)
+        object.__setattr__(self, "market_id", market_id)
+        object.__setattr__(self, "captured_at", captured_at)
+        if any(item.market_id != market_id for item in self.observations):
+            raise ValueError("an observation batch cannot mix markets")
+        if any(item.knowledge_time > captured_at for item in self.observations):
+            raise ValueError("observation knowledge_time cannot follow batch capture time")
+        if self.raw_capture is not None and (
+            self.raw_capture.market_id != market_id
+            or self.raw_capture.adapter_id != self.adapter_id
+        ):
+            raise ValueError("raw capture scope must match its observation batch")
+
+
+class CanonicalSourceAdapter(Protocol):
+    """I/O adapter contract used by the independent collector supervisor."""
+
+    market_id: str
+    adapter_id: str
+
+    async def collect(self) -> ObservationBatch: ...
+
+
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)

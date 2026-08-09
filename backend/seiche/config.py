@@ -11,8 +11,10 @@ hydrophone network, turn barometer, playbook, backtest lab, alert rules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
+
+from seiche.markets.base import SourceSeriesSpec as SeriesSpec
+from seiche.markets.us_usd.legacy import FRED_SERIES, MARKET_SERIES
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DATA_DIR / "seiche.sqlite"
@@ -25,55 +27,10 @@ USER_AGENT = "seiche/0.2 (open-source funding-stress monitor)"
 # FRED collector sends NO custom User-Agent. Do not "fix" this by adding one.
 
 # ---------------------------------------------------------------------------
-# Series registry: everything the collectors pull, with cadence-aware TTLs.
-# freq: D=daily, W=weekly. ttl_minutes: how long a cached fetch stays fresh.
+# Series registry: market-owned core lists are imported above, while the v1
+# assembler continues to consume their historical names unchanged. Remaining
+# contextual lists move into packs incrementally as their engines are split.
 # ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class SeriesSpec:
-    mnemonic: str          # internal name
-    source: str            # fred | nyfed | ofr | fiscaldata | cftc
-    remote_id: str         # upstream identifier
-    label: str
-    unit: str
-    freq: str = "D"
-    ttl_minutes: int = 360
-    start: str = "2017-01-01"   # history start (pretrain series reach back decades)
-
-
-FRED_SERIES = [
-    SeriesSpec("WALCL", "fred", "WALCL", "Fed total assets (H.4.1)", "$M", "W", 720),
-    SeriesSpec("WRESBAL", "fred", "WRESBAL", "Reserve balances with Federal Reserve Banks", "$M", "W", 720),
-    SeriesSpec("WTREGEN", "fred", "WTREGEN", "Treasury General Account (weekly avg)", "$M", "W", 720),
-    SeriesSpec("RRPONTSYD", "fred", "RRPONTSYD", "ON RRP take-up", "$B", "D", 360),
-    SeriesSpec("IORB", "fred", "IORB", "Interest on reserve balances", "%", "D", 720),
-    SeriesSpec("SRF_CEILING", "fred", "DFEDTARU", "Fed funds target range top (equals the SRF offering rate since Jul 2021)", "%", "D", 720),
-    SeriesSpec("WCURCIR", "fred", "WCURCIR", "Currency in circulation (H.4.1)", "$M", "W", 720),
-    SeriesSpec("IOER", "fred", "IOER", "Interest on excess reserves (pre-2021 splice leg)", "%", "D", 100000),
-    SeriesSpec("EFFR", "fred", "EFFR", "Effective federal funds rate", "%", "D", 360),
-    SeriesSpec("SOFR", "fred", "SOFR", "Secured overnight financing rate", "%", "D", 360),
-    SeriesSpec("GDP", "fred", "GDP", "Nominal GDP (SAAR)", "$B", "Q", 10080),
-    # Confession channel #2: banks borrowing at the discount window primary
-    # credit rate — an even stronger admission than the SRF (stigma priced in).
-    SeriesSpec("DISCOUNT_WINDOW", "fred", "WLCFLPCL", "Discount window primary credit (Wed level)", "$M", "W", 720),
-]
-
-# Market-priced stress (The Tell's price leg + Playbook outcomes) — all FRED,
-# all keyless, deliberately official series rather than scraping quote APIs
-# (Yahoo 429s, Stooq blocks bots — verified 2026-07-07; FRED is the honest
-# contract). Outcomes are expressed in native units (Δbp, %, index pts).
-MARKET_SERIES = [
-    SeriesSpec("VIX", "fred", "VIXCLS", "CBOE VIX index", "pts", "D", 360),
-    SeriesSpec("HY_OAS", "fred", "BAMLH0A0HYM2", "ICE BofA US High Yield OAS", "%", "D", 360),
-    SeriesSpec("IG_OAS", "fred", "BAMLC0A0CM", "ICE BofA US Corporate (IG) OAS", "%", "D", 360),
-    SeriesSpec("DGS2", "fred", "DGS2", "2y Treasury constant maturity yield", "%", "D", 360),
-    SeriesSpec("DGS10", "fred", "DGS10", "10y Treasury constant maturity yield", "%", "D", 360),
-    SeriesSpec("DGS30", "fred", "DGS30", "30y Treasury constant maturity yield", "%", "D", 360),
-    SeriesSpec("TB3M", "fred", "DTB3", "3-month T-bill secondary market rate", "%", "D", 360),
-    SeriesSpec("TB4W", "fred", "DTB4WK", "4-week T-bill secondary market rate", "%", "D", 360),
-    SeriesSpec("SP500", "fred", "SP500", "S&P 500 index", "pts", "D", 360),
-    SeriesSpec("NFCI", "fred", "NFCI", "Chicago Fed National Financial Conditions Index", "z", "W", 720),
-]
 
 # Global basins (v2): the dollar system is one connected body of water.
 # EUR basin from the ECB Data Portal (keyless CSV), UK from FRED's SONIA

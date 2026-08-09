@@ -8,13 +8,16 @@ served with its true staleness class (fail-loud, but degrade gracefully).
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Iterable
 
 import pandas as pd
 
 from seiche.config import DATA_DIR, DB_PATH
+from seiche.domain.observation import Observation, SemanticRole
 from seiche.sources.base import Series
 
 _lock = threading.Lock()
@@ -38,6 +41,59 @@ def _conn() -> sqlite3.Connection:
              mnemonic TEXT NOT NULL, obs_date TEXT NOT NULL,
              knowledge_time TEXT NOT NULL, value REAL,
              PRIMARY KEY (mnemonic, obs_date, knowledge_time))"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS canonical_observations (
+             market_id TEXT NOT NULL,
+             monetary_area_id TEXT NOT NULL,
+             jurisdiction_codes TEXT NOT NULL,
+             currency TEXT NOT NULL,
+             instrument_id TEXT NOT NULL,
+             semantic_role TEXT NOT NULL,
+             value TEXT,
+             canonical_unit TEXT NOT NULL,
+             rate_compounding TEXT,
+             day_count TEXT,
+             event_time TEXT NOT NULL,
+             knowledge_time TEXT NOT NULL,
+             source_publication_time TEXT NOT NULL,
+             revision_id TEXT NOT NULL,
+             source TEXT NOT NULL,
+             evidence_hash TEXT NOT NULL,
+             connector_classification TEXT NOT NULL,
+             redistribution_status TEXT NOT NULL,
+             quality TEXT NOT NULL,
+             staleness TEXT NOT NULL,
+             record_hash TEXT NOT NULL,
+             PRIMARY KEY (
+               market_id, instrument_id, event_time, knowledge_time,
+               source, revision_id
+             ))"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS canonical_observations_asof
+             ON canonical_observations (
+               market_id, semantic_role, event_time, knowledge_time
+             )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS market_snapshots (
+             snapshot_id TEXT PRIMARY KEY,
+             market_id TEXT NOT NULL,
+             product TEXT NOT NULL,
+             event_cutoff TEXT NOT NULL,
+             knowledge_cutoff TEXT NOT NULL,
+             sealed_at TEXT NOT NULL,
+             calibration_id TEXT NOT NULL,
+             evidence_eligible INTEGER NOT NULL,
+             payload_hash TEXT NOT NULL,
+             payload TEXT NOT NULL)"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS market_snapshots_latest
+             ON market_snapshots (
+               market_id, product, knowledge_cutoff DESC, sealed_at DESC
+             )"""
     )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS blobs (
@@ -75,6 +131,265 @@ def _canonical_utc(value: str | datetime) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("knowledge_time must be timezone-aware")
     return parsed.astimezone(UTC).isoformat(timespec="seconds")
+
+
+_CANONICAL_COLUMNS = (
+    "market_id",
+    "monetary_area_id",
+    "jurisdiction_codes",
+    "currency",
+    "instrument_id",
+    "semantic_role",
+    "value",
+    "canonical_unit",
+    "rate_compounding",
+    "day_count",
+    "event_time",
+    "knowledge_time",
+    "source_publication_time",
+    "revision_id",
+    "source",
+    "evidence_hash",
+    "connector_classification",
+    "redistribution_status",
+    "quality",
+    "staleness",
+)
+
+
+def _observation_row(observation: Observation) -> tuple[str | None, ...]:
+    record = observation.to_record()
+    record["jurisdiction_codes"] = ",".join(record["jurisdiction_codes"])
+    canonical = json.dumps(
+        observation.to_record(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    record_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return tuple(record[column] for column in _CANONICAL_COLUMNS) + (record_hash,)
+
+
+def save_observations(observations: Iterable[Observation]) -> int:
+    """Append canonical observations without ever replacing a prior vintage.
+
+    Replaying an identical row is idempotent. Reusing an immutable identity
+    for different content raises instead of silently rewriting history.
+    """
+
+    batch = tuple(observations)
+    if not batch:
+        return 0
+    inserted = 0
+    placeholders = ",".join("?" for _ in range(len(_CANONICAL_COLUMNS) + 1))
+    columns = ",".join((*_CANONICAL_COLUMNS, "record_hash"))
+    with _lock, _conn() as conn:
+        for observation in batch:
+            row = _observation_row(observation)
+            try:
+                conn.execute(
+                    f"INSERT INTO canonical_observations ({columns}) VALUES ({placeholders})",
+                    row,
+                )
+                inserted += 1
+            except sqlite3.IntegrityError as exc:
+                existing = conn.execute(
+                    """SELECT record_hash FROM canonical_observations
+                        WHERE market_id=? AND instrument_id=? AND event_time=?
+                          AND knowledge_time=? AND source=? AND revision_id=?""",
+                    (
+                        observation.market_id,
+                        observation.instrument_id,
+                        observation.event_time.isoformat(),
+                        observation.knowledge_time.isoformat(),
+                        observation.source,
+                        observation.revision_id,
+                    ),
+                ).fetchone()
+                if existing is None or existing[0] != row[-1]:
+                    raise ValueError(
+                        "canonical observation identity collision with different content"
+                    ) from exc
+    return inserted
+
+
+def _row_to_observation(row: sqlite3.Row | tuple) -> Observation:
+    record = dict(zip(_CANONICAL_COLUMNS, row[: len(_CANONICAL_COLUMNS)], strict=True))
+    return Observation.from_record(record)
+
+
+def load_observations_as_of(
+    market_id: str,
+    knowledge_time: str | datetime,
+    *,
+    event_time: str | datetime | None = None,
+    roles: Iterable[SemanticRole] | None = None,
+) -> list[Observation]:
+    """Return the latest knowable vintage for every instrument/event pair."""
+
+    knowledge_cutoff = _canonical_utc(knowledge_time)
+    predicates = ["market_id=?", "knowledge_time<=?"]
+    params: list[str] = [market_id.upper(), knowledge_cutoff]
+    if event_time is not None:
+        predicates.append("event_time<=?")
+        params.append(_canonical_utc(event_time))
+    role_values = tuple(role.value for role in roles) if roles is not None else ()
+    if role_values:
+        predicates.append(f"semantic_role IN ({','.join('?' for _ in role_values)})")
+        params.extend(role_values)
+    selected = ",".join(_CANONICAL_COLUMNS)
+    where = " AND ".join(predicates)
+    query = f"""
+        WITH ranked AS (
+          SELECT {selected},
+                 ROW_NUMBER() OVER (
+                   PARTITION BY market_id, instrument_id, event_time
+                   ORDER BY knowledge_time DESC, source_publication_time DESC,
+                            revision_id DESC
+                 ) AS vintage_rank
+            FROM canonical_observations
+           WHERE {where}
+        )
+        SELECT {selected}
+          FROM ranked
+         WHERE vintage_rank=1
+         ORDER BY event_time, instrument_id
+    """
+    with _lock, _conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_row_to_observation(row) for row in rows]
+
+
+def canonical_coverage(market_id: str) -> list[dict]:
+    """Coverage by semantic role, based only on captured canonical rows."""
+
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            """SELECT semantic_role, COUNT(*), MIN(event_time), MAX(event_time),
+                      MAX(knowledge_time),
+                      SUM(CASE WHEN quality='unavailable' THEN 1 ELSE 0 END)
+                 FROM canonical_observations
+                WHERE market_id=?
+                GROUP BY semantic_role
+                ORDER BY semantic_role""",
+            (market_id.upper(),),
+        ).fetchall()
+    return [
+        {
+            "semantic_role": row[0],
+            "observations": row[1],
+            "event_start": row[2],
+            "event_end": row[3],
+            "latest_knowledge_time": row[4],
+            "unavailable_observations": row[5],
+        }
+        for row in rows
+    ]
+
+
+def seal_market_snapshot(
+    *,
+    market_id: str,
+    product: str,
+    event_cutoff: str | datetime,
+    knowledge_cutoff: str | datetime,
+    calibration_id: str,
+    evidence_eligible: bool,
+    payload: object,
+) -> str:
+    """Append an immutable API snapshot and return its content-derived ID."""
+
+    normalized_market = market_id.upper()
+    event = _canonical_utc(event_cutoff)
+    knowledge = _canonical_utc(knowledge_cutoff)
+    if event > knowledge:
+        raise ValueError("event_cutoff cannot follow knowledge_cutoff")
+    payload_json = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    identity = "|".join(
+        (normalized_market, product, event, knowledge, calibration_id, payload_hash)
+    )
+    snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    sealed_at = datetime.now(UTC).isoformat(timespec="seconds")
+    with _lock, _conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO market_snapshots
+                 (snapshot_id, market_id, product, event_cutoff,
+                  knowledge_cutoff, sealed_at, calibration_id,
+                  evidence_eligible, payload_hash, payload)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                snapshot_id,
+                normalized_market,
+                product,
+                event,
+                knowledge,
+                sealed_at,
+                calibration_id,
+                int(evidence_eligible),
+                payload_hash,
+                payload_json,
+            ),
+        )
+    return snapshot_id
+
+
+def _snapshot_record(row: tuple | None) -> dict | None:
+    if row is None:
+        return None
+    return {
+        "snapshot_id": row[0],
+        "market_id": row[1],
+        "product": row[2],
+        "event_cutoff": row[3],
+        "knowledge_cutoff": row[4],
+        "sealed_at": row[5],
+        "calibration_id": row[6],
+        "evidence_eligible": bool(row[7]),
+        "payload_hash": row[8],
+        "payload": json.loads(row[9]),
+    }
+
+
+def load_latest_market_snapshot(market_id: str, product: str) -> dict | None:
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT snapshot_id, market_id, product, event_cutoff,
+                      knowledge_cutoff, sealed_at, calibration_id,
+                      evidence_eligible, payload_hash, payload
+                 FROM market_snapshots
+                WHERE market_id=? AND product=?
+                ORDER BY knowledge_cutoff DESC, sealed_at DESC
+                LIMIT 1""",
+            (market_id.upper(), product),
+        ).fetchone()
+    return _snapshot_record(row)
+
+
+def load_market_snapshot_as_of(
+    market_id: str,
+    product: str,
+    knowledge_time: str | datetime,
+) -> dict | None:
+    cutoff = _canonical_utc(knowledge_time)
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT snapshot_id, market_id, product, event_cutoff,
+                      knowledge_cutoff, sealed_at, calibration_id,
+                      evidence_eligible, payload_hash, payload
+                 FROM market_snapshots
+                WHERE market_id=? AND product=? AND knowledge_cutoff<=?
+                ORDER BY knowledge_cutoff DESC, sealed_at DESC
+                LIMIT 1""",
+            (market_id.upper(), product, cutoff),
+        ).fetchone()
+    return _snapshot_record(row)
 
 
 def load_series_as_of(
@@ -123,6 +438,8 @@ def load_series_as_of(
         fetched_at,
         points,
     )
+
+
 def load_series(mnemonic: str) -> Series | None:
     with _lock, _conn() as conn:
         meta = conn.execute(
