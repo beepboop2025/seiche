@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
@@ -310,6 +310,12 @@ class FunctionalCanonicalAdapter:
                     else QualityState.ESTIMATED
                 )
             revision_id = point.revision_id or f"sha256:{row_hash[:20]}"
+            if existing is not None:
+                # Upstreams sometimes reuse or omit revision indicators. A
+                # content reversion (A -> B -> A) would otherwise repeat A's
+                # revision ID and make the append-only slot ambiguous.
+                capture_token = captured_at.strftime("%Y%m%dT%H%M%SZ")
+                revision_id = f"{revision_id}@capture-{capture_token}"
             observations.append(
                 Observation(
                     market_id=self.pack.market_id,

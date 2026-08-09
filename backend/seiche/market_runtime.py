@@ -17,11 +17,23 @@ from seiche.collectors import (
 )
 from seiche.markets.materialize import materialize_global_tide, materialize_market
 from seiche.markets.registry import MarketRegistry, default_registry
+from seiche.markets.us_usd.funding_core import (
+    EXPORT_DIRECTORY_ENV,
+    FUNDING_CORE_PROFILE_ID,
+    export_funding_core_input_pack,
+)
 from seiche.repository import MarketRepository, get_repository
 from seiche.sources.official import build_official_adapters
 
-
 LOGGER = logging.getLogger(__name__)
+
+# Backfill markers are normally stable per adapter.  This one generation bump
+# is intentionally narrower: the NY Fed median field correction must recollect
+# full history once even on hosts carrying the pre-fix adapter marker.  After a
+# successful corrected import the versioned marker restores normal idempotency.
+_BACKFILL_MARKER_GENERATIONS = {
+    ("US-USD", "nyfed_rates"): "percent-rate-v2",
+}
 
 
 def _storage_root(variable: str, fallback: str) -> Path:
@@ -32,7 +44,13 @@ def _backfill_marker(market_id: str, adapter_id: str) -> Path | None:
     root = os.getenv("SEICHE_BACKFILL_STATE_DIR", "").strip()
     if not root:
         return None
-    return Path(root).expanduser().resolve() / f"{market_id}--{adapter_id}.done"
+    normalized_market = market_id.upper()
+    generation = _BACKFILL_MARKER_GENERATIONS.get((normalized_market, adapter_id))
+    suffix = f"--{generation}" if generation is not None else ""
+    return (
+        Path(root).expanduser().resolve()
+        / f"{normalized_market}--{adapter_id}{suffix}.done"
+    )
 
 
 def _mark_backfill_complete(market_id: str, adapter_id: str) -> None:
@@ -40,6 +58,10 @@ def _mark_backfill_complete(market_id: str, adapter_id: str) -> None:
     if marker is not None:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.touch(exist_ok=True)
+
+
+def _marker_requires_funding_core_export(market_id: str, adapter_id: str) -> bool:
+    return (market_id.upper(), adapter_id) in _BACKFILL_MARKER_GENERATIONS
 
 
 def build_supervisor(
@@ -110,7 +132,14 @@ def _completed_run_handler(
                 publication_complete = True
             except Exception:  # noqa: BLE001 — retry at the cycle boundary
                 LOGGER.exception("early materialization failed for %s", market_id)
-        if backfill and run["status"] == "SUCCESS" and publication_complete:
+        if (
+            backfill
+            and run["status"] == "SUCCESS"
+            and publication_complete
+            and not _marker_requires_funding_core_export(
+                market_id, str(run["adapter_id"])
+            )
+        ):
             _mark_backfill_complete(market_id, str(run["adapter_id"]))
         return run_id
 
@@ -149,6 +178,45 @@ def _materialize_after_runs(
         record_forward=record_forward,
     )
     return snapshots
+
+
+def _export_usd_funding_core_after_runs(
+    runs: list[CollectorRun],
+    *,
+    repository: MarketRepository,
+    cutoff: datetime,
+) -> dict[str, object]:
+    """Attempt one research export at a completed US cycle boundary.
+
+    Profile readiness is deliberately independent from collector health.  An
+    insufficient/corrected-lineage failure is logged and returned to the
+    operator, but it never changes a sibling collector's completed outcome.
+    """
+
+    if not any(item.market_id == "US-USD" for item in runs):
+        return {"status": "SKIPPED", "reason": "cycle had no US-USD collector"}
+    directory = os.getenv(EXPORT_DIRECTORY_ENV, "").strip()
+    if not directory:
+        return {
+            "status": "DISABLED",
+            "reason": f"{EXPORT_DIRECTORY_ENV} is not configured",
+        }
+    try:
+        target = export_funding_core_input_pack(
+            repository,
+            as_of=cutoff,
+            directory=directory,
+        )
+    except Exception as exc:  # noqa: BLE001 — non-fatal research export boundary
+        LOGGER.exception(
+            "USD funding-core export failed after completed collector cycle"
+        )
+        return {
+            "status": "FAILED",
+            "fault": f"{type(exc).__name__}: {exc}",
+        }
+    LOGGER.info("USD funding-core research input exported to %s", target)
+    return {"status": "SUCCESS", "path": str(target)}
 
 
 async def collect_once(
@@ -192,10 +260,25 @@ async def collect_once(
         if materialize
         else {}
     )
+    exports: dict[str, object] = {}
+    if any(item.market_id == "US-USD" for item in runs):
+        exports[FUNDING_CORE_PROFILE_ID] = await asyncio.to_thread(
+            _export_usd_funding_core_after_runs,
+            runs,
+            repository=repo,
+            cutoff=cutoff,
+        )
     if backfill:
         for run in runs:
             if run.status.value != "SUCCESS":
                 continue
+            if _marker_requires_funding_core_export(run.market_id, run.adapter_id):
+                funding_export = exports.get(FUNDING_CORE_PROFILE_ID)
+                if (
+                    not isinstance(funding_export, dict)
+                    or funding_export.get("status") != "SUCCESS"
+                ):
+                    continue
             if (
                 not materialize
                 or run.market_id == "US-USD"
@@ -207,6 +290,7 @@ async def collect_once(
         "cutoff": cutoff.isoformat(),
         "runs": [item.to_dict() for item in runs],
         "snapshots": snapshots,
+        "exports": exports,
     }
 
 
@@ -248,4 +332,11 @@ async def run_worker(
                 record_forward=True,
                 existing=published_snapshots,
             )
+            if any(item.market_id == "US-USD" for item in runs):
+                await asyncio.to_thread(
+                    _export_usd_funding_core_after_runs,
+                    runs,
+                    repository=repo,
+                    cutoff=cutoff,
+                )
         await asyncio.sleep(poll_seconds)

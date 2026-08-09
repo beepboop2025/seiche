@@ -57,6 +57,9 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
     assert repository.save_observations([observation]) in {0, 1}
     loaded = repository.load_observations_as_of("US-USD", knowledge)
     assert observation in loaded
+    assert observation in repository.load_observation_revisions_as_of(
+        "US-USD", knowledge
+    )
     assert any(
         row["semantic_role"] == "SECURED_OVERNIGHT"
         for row in repository.canonical_coverage("US-USD")
@@ -241,12 +244,18 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         evidence_eligible=True,
         payload=payload,
     )
-    assert repository.load_latest_market_snapshot(
-        "US-USD", "postgres-integration"
-    )["payload"] == payload
-    assert repository.load_market_snapshot_as_of(
-        "US-USD", "postgres-integration", knowledge
-    )["snapshot_id"] == snapshot_id
+    assert (
+        repository.load_latest_market_snapshot("US-USD", "postgres-integration")[
+            "payload"
+        ]
+        == payload
+    )
+    assert (
+        repository.load_market_snapshot_as_of(
+            "US-USD", "postgres-integration", knowledge
+        )["snapshot_id"]
+        == snapshot_id
+    )
 
     record_id = repository.append_forward_record(
         snapshot_id=snapshot_id,
@@ -258,15 +267,18 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         payload=payload,
     )
     assert record_id
-    assert repository.append_forward_record(
-        snapshot_id=snapshot_id,
-        market_id="US-USD",
-        product="postgres-integration",
-        event_cutoff=event,
-        knowledge_cutoff=knowledge,
-        calibration_id="postgres-integration-v1",
-        payload=payload,
-    ) == record_id
+    assert (
+        repository.append_forward_record(
+            snapshot_id=snapshot_id,
+            market_id="US-USD",
+            product="postgres-integration",
+            event_cutoff=event,
+            knowledge_cutoff=knowledge,
+            calibration_id="postgres-integration-v1",
+            payload=payload,
+        )
+        == record_id
+    )
     assert repository.forward_record_count("US-USD") >= 1
 
     forward_records = repository.load_forward_records(

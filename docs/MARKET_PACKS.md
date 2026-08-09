@@ -98,6 +98,11 @@ backfill units, and injects the repository environment into `seiche-api`.
 Normalized evidence is immutable Parquet; canonical observation metadata,
 collector outcomes, snapshots, and forward records live in PostgreSQL.
 
+The worker also emits the private, training-only
+[`us-usd-funding-core-v1`](US_USD_FUNDING_CORE_V1.md) input pack after completed
+US collection cycles. It is a pinned three-instrument research export with an
+exact no-imputation event intersection, not another API or a fitted model.
+
 Local development retains the same repository protocol over SQLite. Setting
 `SEICHE_DATABASE_URL` selects PostgreSQL without changing an adapter, engine, or
 API contract. The dedicated `market-platform-ci` workflow executes the complete
