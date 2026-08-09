@@ -308,6 +308,17 @@ function AppInner() {
   if (!snap) return <main className="app"><AppSkeleton /></main>;
 
   const c = snap.engines?.composite ?? {};
+  const compositeCoverage = typeof c.coverage_pct === "number" ? c.coverage_pct : null;
+  const compositeUnavailable = c.ok === false;
+  const compositeFaulted = compositeUnavailable || (c.dead_inputs?.length ?? 0) > 0
+    || (compositeCoverage !== null && compositeCoverage < 100);
+  const faultImpact = compositeUnavailable
+    ? `composite unavailable${c.reason ? `: ${c.reason}` : ""}`
+    : compositeFaulted
+    ? `affected composite inputs degraded or dead; composite coverage${compositeCoverage === null ? " reduced" : ` reduced to ${compositeCoverage.toFixed(1)}%`}`
+    : compositeCoverage === null
+      ? "dependent views may be degraded"
+      : `dependent views may be degraded; composite coverage remains ${compositeCoverage.toFixed(1)}%`;
 
   if (descending) {
     return (
@@ -411,8 +422,8 @@ function AppInner() {
 
       {snap.faults?.length > 0 && tab !== "SYSTEM" && (
         <div className="faults">
-          {snap.faults.length} source fault(s): {snap.faults.map((f: Any) => f.source).join(", ")} —
-          affected inputs degraded or dead, composite coverage reduced accordingly (details in SYSTEM)
+          {snap.faults.length} source fault(s): {snap.faults.map((f: Any) => f.source).join(", ")}{" — "}
+          {faultImpact} (details in SYSTEM)
         </div>
       )}
 

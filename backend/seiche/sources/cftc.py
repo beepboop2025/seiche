@@ -7,6 +7,8 @@ Weekly (Tuesday positions, published Friday) — honest T+3 provenance.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pandas as pd
 
@@ -28,6 +30,13 @@ BASE = f"https://publicreporting.cftc.gov/resource/{TFF_DATASET}.json"
 DISAGG_BASE = (
     f"https://publicreporting.cftc.gov/resource/{DISAGG_FUTURES_DATASET}.json"
 )
+
+# Socrata occasionally drops or times out an otherwise valid cold-CI query.
+# Keep the two CFTC datasets from competing with each other, and retry only
+# transport failures, throttling, and server errors. Query/schema errors stay
+# fail-loud on the first attempt.
+_RETRY_DELAYS_S = (1.0, 3.0)
+_CLIENT_SEMAPHORE_ATTR = "_seiche_cftc_request_semaphore"
 
 # NB: the TFF dataset drops the "_all" suffix on positioning fields.
 FIELDS = [
@@ -68,6 +77,58 @@ _BALLAST_BY_CODE = {
 }
 
 
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+
+def _exception_detail(exc: Exception) -> str:
+    """Never let exceptions with an empty ``str()`` erase the diagnosis."""
+
+    message = str(exc).strip()
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+def _request_semaphore(client: httpx.AsyncClient) -> asyncio.Semaphore:
+    """Return a limiter whose lifetime cannot outlive the client's event loop."""
+
+    semaphore = getattr(client, _CLIENT_SEMAPHORE_ATTR, None)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(1)
+        setattr(client, _CLIENT_SEMAPHORE_ATTR, semaphore)
+    return semaphore
+
+
+async def _fetch_rows(
+    client: httpx.AsyncClient, url: str, params: dict[str, object]
+) -> list[dict]:
+    last_exc: Exception | None = None
+    async with _request_semaphore(client):
+        for attempt in range(len(_RETRY_DELAYS_S) + 1):
+            try:
+                response = await client.get(
+                    url,
+                    params=params,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                rows = response.json()
+                if not isinstance(rows, list):
+                    raise ValueError("CFTC response must be a JSON array")
+                return rows
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= len(_RETRY_DELAYS_S) or not _retryable(exc):
+                    raise
+                await asyncio.sleep(_RETRY_DELAYS_S[attempt])
+    raise last_exc or RuntimeError("CFTC request failed without an exception")
+
+
 def _match_contract(name: str) -> str | None:
     up = (name or "").upper()
     for key in UST_CONTRACTS:
@@ -98,14 +159,13 @@ async def fetch_tff_ust(client: httpx.AsyncClient, start: str = CFTC_START) -> d
                 ),
                 "$limit": 50000,
             }
-            r = await client.get(BASE, params=params, headers={"User-Agent": USER_AGENT}, timeout=60)
-            r.raise_for_status()
-            cached = {"fetched_at": utcnow_iso(), "rows": r.json()}
+            rows = await _fetch_rows(client, BASE, params)
+            cached = {"fetched_at": utcnow_iso(), "rows": rows}
             store.save_blob(key, cached)
         except Exception as exc:
             cached = store.load_blob(key)
             if cached is None:
-                raise SourceFault("cftc", f"TFF: {exc}") from exc
+                raise SourceFault("cftc", f"TFF: {_exception_detail(exc)}") from exc
     df = pd.DataFrame(cached["rows"])
     if df.empty:
         return {"fetched_at": cached["fetched_at"], "tff": df}
@@ -158,19 +218,16 @@ async def fetch_disaggregated_commodities(
                 ),
                 "$limit": 50000,
             }
-            response = await client.get(
-                DISAGG_BASE,
-                params=params,
-                headers={"User-Agent": USER_AGENT},
-                timeout=60,
-            )
-            response.raise_for_status()
-            cached = {"fetched_at": utcnow_iso(), "rows": response.json()}
+            rows = await _fetch_rows(client, DISAGG_BASE, params)
+            cached = {"fetched_at": utcnow_iso(), "rows": rows}
             store.save_blob(key, cached)
         except Exception as exc:
             cached = store.load_blob(key)
             if cached is None:
-                raise SourceFault("cftc", f"Disaggregated commodities: {exc}") from exc
+                raise SourceFault(
+                    "cftc",
+                    f"Disaggregated commodities: {_exception_detail(exc)}",
+                ) from exc
 
     frame = pd.DataFrame(cached["rows"])
     if frame.empty:
