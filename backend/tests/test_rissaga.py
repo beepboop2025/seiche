@@ -23,6 +23,9 @@ NOW_DT = datetime.fromtimestamp(NOW, timezone.utc)
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(rz, "STATE_DIR", str(tmp_path))
+    # Shared-channel candidate tests model the production Hermes handoff.
+    # Individual fail-quiet tests override this explicitly with ``off``.
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
     monkeypatch.setattr(rz.time, "sleep", lambda s: None)
 
     def _no_net(*a, **k):
@@ -451,6 +454,16 @@ def test_off_mode_dms_owner_but_authorizes_no_channel_consumer(monkeypatch, sent
     with open(os.path.join(rz.STATE_DIR, "latest.json"), encoding="utf-8") as fh:
         latest = json.load(fh)
     assert latest["channel_mode"] == "off"
+    assert latest["channel_candidates"] == []
+    assert all(
+        route["channel_candidate"] is False
+        for item in latest["items"]
+        for route in item["routes"]
+    )
+    with open(os.path.join(rz.STATE_DIR, rz.OUTBOX_EXPORT), encoding="utf-8") as fh:
+        records = [json.loads(line) for line in fh]
+    assert records
+    assert all(record["shared_candidate"] is False for record in records)
 
 
 def test_board_events_never_reach_the_channel(monkeypatch, sent):

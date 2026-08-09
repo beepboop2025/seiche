@@ -1553,28 +1553,30 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
     # should not spend both scarce slots on one desk merely because that desk
     # has more source beats. Private and product-channel fanout is unchanged.
     candidates = []
-    candidate_desks = set()
-    for index, cl in enumerate(marked):
-        if cl["rep"].get("board_event") or cl["final"] < CHANNEL_BAR:
-            continue
-        routes = items[index]["routes"]
-        if not routes:
-            continue
-        primary_desk = routes[0]["desk"]
-        if primary_desk in SHARED_CHANNEL_EXCLUDED_DESKS:
-            continue
-        if primary_desk in candidate_desks:
-            continue
-        candidates.append(index)
-        candidate_desks.add(primary_desk)
-        if len(candidates) >= MAX_CHANNEL_POSTS:
-            break
-    for index in candidates:
-        routes = items[index]["routes"]
-        if routes:
-            # _best_route_beats places the primary desk first. Only that route
-            # owns the shared-channel slot; every route still reaches its bot.
-            routes[0]["channel_candidate"] = True
+    if CHANNEL_MODE == "hermes":
+        candidate_desks = set()
+        for index, cl in enumerate(marked):
+            if cl["rep"].get("board_event") or cl["final"] < CHANNEL_BAR:
+                continue
+            routes = items[index]["routes"]
+            if not routes:
+                continue
+            primary_desk = routes[0]["desk"]
+            if primary_desk in SHARED_CHANNEL_EXCLUDED_DESKS:
+                continue
+            if primary_desk in candidate_desks:
+                continue
+            candidates.append(index)
+            candidate_desks.add(primary_desk)
+            if len(candidates) >= MAX_CHANNEL_POSTS:
+                break
+        for index in candidates:
+            routes = items[index]["routes"]
+            if routes:
+                # _best_route_beats places the primary desk first. Only that
+                # route owns the shared-channel slot; every route still reaches
+                # its bot or dedicated product channel.
+                routes[0]["channel_candidate"] = True
     desk_candidates: dict[str, list[int]] = {}
     for desk, cap in DESK_CHANNEL_CAPS.items():
         selected = []
