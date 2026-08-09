@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -69,6 +70,72 @@ async def test_collector_failure_is_isolated_by_market_and_source() -> None:
         ("US-USD", "SUCCESS"),
         ("JP-JPY", "FAILED"),
     }
+
+
+@pytest.mark.asyncio
+async def test_completed_run_is_published_before_slow_sibling_finishes() -> None:
+    now = datetime(2026, 8, 9, 10, tzinfo=UTC)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    healthy_published = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    class _BlockedJapaneseAdapter:
+        market_id = "JP-JPY"
+        adapter_id = "boj_rates"
+
+        async def collect(self) -> ObservationBatch:
+            entered.set()
+            await release.wait()
+            raise RuntimeError("upstream remains down")
+
+    def publish(run: dict) -> str:
+        if run["market_id"] == "US-USD":
+            loop.call_soon_threadsafe(healthy_published.set)
+        return "run-id"
+
+    supervisor = CollectorSupervisor(run_writer=publish, sleep=_no_sleep)
+    supervisor.register(_BlockedJapaneseAdapter())
+    supervisor.register(_FakeAdapter("US-USD", "fred_daily", now))
+    cycle = asyncio.create_task(supervisor.run_due(now=now))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.wait_for(healthy_published.wait(), timeout=1)
+
+    assert not cycle.done()
+    release.set()
+    runs = await asyncio.wait_for(cycle, timeout=1)
+    assert {run.status for run in runs} == {
+        CollectorRunStatus.SUCCESS,
+        CollectorRunStatus.FAILED,
+    }
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cycle_reaps_pending_collector_tasks() -> None:
+    now = datetime(2026, 8, 9, 10, tzinfo=UTC)
+    entered = asyncio.Event()
+    reaped = asyncio.Event()
+
+    class _PendingAdapter:
+        market_id = "JP-JPY"
+        adapter_id = "boj_rates"
+
+        async def collect(self) -> ObservationBatch:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                reaped.set()
+
+    supervisor = CollectorSupervisor(sleep=_no_sleep)
+    supervisor.register(_PendingAdapter())
+    cycle = asyncio.create_task(supervisor.run_due(now=now))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    cycle.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await cycle
+    await asyncio.wait_for(reaped.wait(), timeout=1)
 
 
 @pytest.mark.asyncio

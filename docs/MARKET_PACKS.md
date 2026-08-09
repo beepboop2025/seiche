@@ -93,6 +93,9 @@ seiche market-worker --poll-seconds 30
 
 Backfill completion is marked per adapter. A successful source is not fetched
 again merely because another adapter failed; only incomplete sources retry.
+Collector outcomes and local snapshots publish in completion order, so a slow
+or retrying foreign adapter cannot delay a finished market. The Global Tide is
+sealed at the end of the due cycle because it is inherently cross-market.
 
 The v2 API never invokes collection. It reads only canonical observations and
 sealed snapshots. The US cycle continues to materialize `US-USD` through its

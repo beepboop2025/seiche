@@ -23,6 +23,7 @@ from seiche.domain.observation import (
 )
 from seiche.markets.materialize import materialize_global_tide, materialize_market
 from seiche.repository import SQLiteMarketRepository
+from seiche.sources.base import ObservationBatch
 
 
 def _rate(
@@ -293,3 +294,138 @@ async def test_collection_cycle_materializes_after_new_rows_become_knowable(
     assert payload["runs"][0]["status"] == "SUCCESS"
     assert gauge["status"] == "DEGRADED"
     assert gauge["reading"]["index"] is not None
+
+
+@pytest.mark.asyncio
+async def test_slow_foreign_collector_cannot_delay_completed_local_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "isolated-publication.sqlite")
+    repository = SQLiteMarketRepository()
+    capture = datetime.now(UTC).replace(microsecond=0)
+    japan_entered = asyncio.Event()
+    release_japan = asyncio.Event()
+
+    class _HealthyIndiaAdapter:
+        market_id = "IN-INR"
+        adapter_id = "rbi_official"
+
+        async def collect(self) -> ObservationBatch:
+            rows = tuple(
+                _rate(
+                    market_id="IN-INR",
+                    instrument_id=instrument,
+                    role=role,
+                    value=value,
+                    event_time=capture,
+                )
+                for instrument, role, value in (
+                    ("IN.RBI.SDF", SemanticRole.POLICY_FLOOR, 525),
+                    ("IN.RBI.POLICY_REPO", SemanticRole.POLICY_TARGET, 550),
+                    ("IN.RBI.MSF", SemanticRole.POLICY_CEILING, 575),
+                    ("IN.MARKET.CALL_WAR", SemanticRole.UNSECURED_OVERNIGHT, 548),
+                )
+            )
+            return ObservationBatch(self.market_id, self.adapter_id, capture, rows)
+
+    class _BlockedJapanAdapter:
+        market_id = "JP-JPY"
+        adapter_id = "boj_rates"
+
+        async def collect(self) -> ObservationBatch:
+            japan_entered.set()
+            await release_japan.wait()
+            raise RuntimeError("BOJ collector blocked for test")
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    def supervisor_factory(**kwargs):
+        supervisor = market_runtime.CollectorSupervisor(
+            registry=kwargs["registry"],
+            observation_writer=repository.save_observations,
+            run_writer=kwargs["run_writer"],
+            sleep=no_sleep,
+        )
+        supervisor.register(_BlockedJapanAdapter())
+        supervisor.register(_HealthyIndiaAdapter())
+        return supervisor
+
+    monkeypatch.setattr(market_runtime, "build_supervisor", supervisor_factory)
+    cycle = asyncio.create_task(market_runtime.collect_once(repository=repository))
+    await asyncio.wait_for(japan_entered.wait(), timeout=1)
+    try:
+        india = None
+        for _ in range(100):
+            india = await asyncio.to_thread(
+                repository.load_latest_market_snapshot,
+                "IN-INR",
+                "gauge",
+            )
+            if india is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert india is not None
+        assert india["payload"]["reading"]["index"] is not None
+        assert not cycle.done()
+    finally:
+        release_japan.set()
+
+    payload = await asyncio.wait_for(cycle, timeout=2)
+    statuses = {(run["market_id"], run["status"]) for run in payload["runs"]}
+    assert ("IN-INR", "SUCCESS") in statuses
+    assert ("JP-JPY", "FAILED") in statuses
+
+
+def test_early_materialization_fault_is_persisted_then_retried(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "materialization-retry.sqlite")
+    repository = SQLiteMarketRepository()
+    registry = market_runtime.default_registry()
+    cutoff = datetime(2026, 8, 9, 10, tzinfo=UTC)
+    run = CollectorRun(
+        "IN-INR",
+        "rbi_official",
+        CollectorRunStatus.SUCCESS,
+        cutoff.isoformat(),
+        cutoff.isoformat(),
+        1,
+        1,
+        (cutoff + timedelta(days=1)).isoformat(),
+    )
+    calls = 0
+
+    def flaky_materialize(market_id, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient local seal failure")
+        return {"overview": f"{market_id}-overview", "gauge": f"{market_id}-gauge"}
+
+    monkeypatch.setattr(market_runtime, "materialize_market", flaky_materialize)
+    published: dict[str, object] = {}
+    handler = market_runtime._completed_run_handler(
+        repository=repository,
+        registry=registry,
+        backfill=False,
+        materialize=True,
+        record_forward=True,
+        published_snapshots=published,
+    )
+
+    handler(run.to_dict())
+    assert published == {}
+    assert repository.latest_collector_runs("IN-INR")[0]["status"] == "SUCCESS"
+
+    snapshots = market_runtime._materialize_after_runs(
+        [run],
+        repository=repository,
+        registry=registry,
+        cutoff=cutoff,
+        record_forward=True,
+        existing=published,
+    )
+    assert calls == 2
+    assert snapshots["IN-INR"]["gauge"] == "IN-INR-gauge"
+    assert snapshots["GLOBAL"]
