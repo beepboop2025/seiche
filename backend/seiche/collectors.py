@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import tempfile
+from builtins import ExceptionGroup
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -227,16 +228,40 @@ class CollectorSupervisor:
             for key, task in self._tasks.items()
             if force or self._states[key].next_due <= current
         ]
-        runs = await asyncio.gather(
-            *(self._run_one(key, task, current) for key, task in due)
-        )
+        pending = [
+            asyncio.create_task(self._run_one(key, task, current))
+            for key, task in due
+        ]
+        runs: list[CollectorRun] = []
+        writer_errors: list[Exception] = []
+        # Persist in completion order. A slow or retrying source therefore
+        # cannot hold already-finished markets behind the cycle boundary. Run
+        # writers execute off-loop, so every sibling collector keeps moving;
+        # writer failures are reported only after all active tasks are reaped.
+        try:
+            for completed in asyncio.as_completed(pending):
+                run = await completed
+                runs.append(run)
+                if self.run_writer is None:
+                    continue
+                try:
+                    await asyncio.to_thread(self.run_writer, run.to_dict())
+                except Exception as exc:  # noqa: BLE001 — persistence boundary
+                    exc.add_note(
+                        f"while publishing {run.market_id}/{run.adapter_id} collector run"
+                    )
+                    writer_errors.append(exc)
+        finally:
+            # Outer cancellation and unexpected internal exceptions must not
+            # strand collector tasks. Normal adapter failures still complete
+            # as scoped FAILED runs and therefore never enter this path early.
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         ordered = sorted(runs, key=lambda item: (item.market_id, item.adapter_id))
-        # Persist only after every due task has completed: a metadata-store
-        # problem can fail the scheduler cycle, but cannot cancel sibling
-        # collectors that are already running.
-        if self.run_writer is not None:
-            for run in ordered:
-                await asyncio.to_thread(self.run_writer, run.to_dict())
+        if writer_errors:
+            raise ExceptionGroup("one or more collector runs could not be published", writer_errors)
         return ordered
 
     async def _run_one(
