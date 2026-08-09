@@ -13,7 +13,7 @@
   seiche serve [--port]      run the API + UI
   seiche mcp                 serve the board to AI agents over MCP (stdio)
 
-Exit codes: 0 fine, 1 hard failure, 2 = alerts fired (useful in scripts).
+Exit codes: 0 fine, 1 hard failure, 2 = alerts fired or validation pending.
 """
 
 from __future__ import annotations
@@ -21,8 +21,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 
 BOLD, DIM, RED, YEL, GRN, CYA, END = (
     "\033[1m", "\033[2m", "\033[31m", "\033[33m", "\033[32m", "\033[36m", "\033[0m"
@@ -647,6 +650,137 @@ def cmd_market_worker(args) -> int:
     return 0
 
 
+def _aware_iso_timestamp(value: str) -> datetime:
+    """Argparse converter which refuses ambiguous local/naive cutoffs."""
+
+    candidate = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "must be an ISO-8601 timestamp with an explicit UTC offset"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise argparse.ArgumentTypeError(
+            "must include an explicit UTC offset (for example +00:00 or Z)"
+        )
+    return parsed.astimezone(UTC)
+
+
+def _nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a non-negative integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
+
+
+def _default_validation_evidence_dir() -> str:
+    configured = os.getenv("SEICHE_VALIDATION_DIR", "").strip()
+    if configured:
+        return configured
+    return str(Path(__file__).resolve().parents[1] / "data" / "market_validation")
+
+
+def _promotion_exit_code(report: dict[str, object]) -> int:
+    checks = report.get("checks")
+    if isinstance(checks, dict) and any(
+        isinstance(item, dict) and item.get("status") == "FAIL"
+        for item in checks.values()
+    ):
+        return 1
+    return 0 if report.get("eligible") is True else 2
+
+
+def _validation_batch_exit_code(codes: list[int]) -> int:
+    """Combine market results with hard failure outranking incompleteness."""
+
+    if 1 in codes:
+        return 1
+    if 2 in codes:
+        return 2
+    return 0
+
+
+def cmd_market_validate(args) -> int:
+    """Run or inspect artifact-backed pack validation without promoting packs."""
+
+    from seiche.markets.base import ValidationCheck
+    from seiche.markets.registry import default_registry
+    from seiche.markets.validation import promotion_report, validate_market
+    from seiche.markets.validation_evidence import ValidationEvidenceStore
+
+    registry = default_registry()
+    market_ids = sorted(_market_ids(args) or {pack.market_id for pack in registry.list()})
+    selected_checks = (
+        tuple(dict.fromkeys(ValidationCheck(value) for value in args.check))
+        if args.check
+        else None
+    )
+    evidence_store = ValidationEvidenceStore(args.evidence_dir)
+    mode = "promotion_report" if args.promotion_report else "validate"
+    market_reports: list[dict[str, object]] = []
+    exit_codes: list[int] = []
+
+    for market_id in market_ids:
+        try:
+            if args.promotion_report:
+                report = promotion_report(
+                    market_id,
+                    evidence_store=evidence_store,
+                    registry=registry,
+                )
+                code = _promotion_exit_code(report)
+            else:
+                validation = validate_market(
+                    market_id,
+                    registry=registry,
+                    evidence_store=evidence_store,
+                    checks=selected_checks,
+                    as_of=args.as_of,
+                    minimum_forward_records=args.minimum_forward_records,
+                    minimum_forward_span_days=args.minimum_forward_span_days,
+                )
+                report = validation.to_dict()
+                code = validation.exit_code
+        except Exception as exc:  # one invalid pack must not hide sibling reports
+            report = {
+                "schema": "seiche.market-validation-error.v1",
+                "market_id": market_id,
+                # Database/network exceptions may echo a DSN or credential.
+                # The operator gets the stable type without serializing the
+                # exception's potentially sensitive free-form text.
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": "market validation failed; inspect protected service logs",
+                },
+            }
+            code = 1
+        exit_codes.append(code)
+        market_reports.append(
+            {"market_id": market_id, "exit_code": code, "report": report}
+        )
+
+    overall = _validation_batch_exit_code(exit_codes)
+    payload = {
+        "schema": "seiche.market-validation-batch.v1",
+        "mode": mode,
+        "evidence_dir": str(evidence_store.root),
+        "markets": market_reports,
+        "summary": {
+            "market_count": len(market_reports),
+            "passed": sum(code == 0 for code in exit_codes),
+            "failed": sum(code == 1 for code in exit_codes),
+            "pending": sum(code == 2 for code in exit_codes),
+            "exit_code": overall,
+        },
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return overall
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="seiche", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -735,6 +869,38 @@ def main() -> None:
     p = sub.add_parser("market-worker", help="run independent market schedules forever")
     p.add_argument("--poll-seconds", type=int, default=30)
     p.set_defaults(fn=cmd_market_worker)
+
+    from seiche.markets.base import ValidationCheck
+
+    p = sub.add_parser(
+        "market-validate",
+        help="run market-pack validation gates or inspect promotion evidence",
+    )
+    p.add_argument("--market", action="append", help="market ID; repeat to select several")
+    p.add_argument(
+        "--check",
+        action="append",
+        choices=[item.value for item in ValidationCheck],
+        help="validation gate; repeat to select several (default: all)",
+    )
+    p.add_argument(
+        "--as-of",
+        type=_aware_iso_timestamp,
+        help="point-in-time knowledge cutoff with explicit UTC offset",
+    )
+    p.add_argument(
+        "--evidence-dir",
+        default=_default_validation_evidence_dir(),
+        help="append-only validation artifact root",
+    )
+    p.add_argument("--minimum-forward-records", type=_nonnegative_int)
+    p.add_argument("--minimum-forward-span-days", type=_nonnegative_int)
+    p.add_argument(
+        "--promotion-report",
+        action="store_true",
+        help="verify latest evidence for all gates instead of running checks",
+    )
+    p.set_defaults(fn=cmd_market_validate)
 
     args = ap.parse_args()
     sys.exit(args.fn(args))

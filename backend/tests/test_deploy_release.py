@@ -327,6 +327,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
     worker = (ROOT / "ops" / "deploy" / "seiche-market-worker.service").read_text()
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
+    validation = (ROOT / "ops" / "deploy" / "seiche-market-validation.service").read_text()
+    validation_timer = (ROOT / "ops" / "deploy" / "seiche-market-validation.timer").read_text()
     caddy = CADDYFILE.read_text()
 
     assert 'psql -tAc "SHOW port"' in installer
@@ -334,6 +336,12 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "could not resolve the PostgreSQL cluster port" in installer
     assert 'connection.execute("SELECT 1")' in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
+    assert '"$STATE_DIR/validation"' in installer
+    assert "SEICHE_VALIDATION_DIR=$STATE_DIR/validation" in installer
+    assert "seiche-market-validation.service" in installer
+    assert "seiche-market-validation.timer" in installer
+    assert "ReadWritePaths=$STATE_DIR/validation" in installer
+    assert "systemctl enable --now seiche-market-validation.timer" in installer
     assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
@@ -344,6 +352,15 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "CPUWeight=10" in backfill
     assert "IOWeight=10" in backfill
     assert "Nice=10" in backfill
+    assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-validate" in validation
+    assert "--evidence-dir" not in validation
+    assert "SuccessExitStatus=2" in validation
+    assert "After=network-online.target postgresql.service" in validation
+    assert "seiche-market-worker.service" not in validation
+    assert "seiche-api.service" not in validation
+    assert "OnCalendar=*-*-* 03:15:00 UTC" in validation_timer
+    assert "Persistent=true" in validation_timer
+    assert "Unit=seiche-market-validation.service" in validation_timer
     assert "/api/v2/*" in caddy
 
 

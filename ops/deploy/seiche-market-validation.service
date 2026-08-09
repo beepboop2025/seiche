@@ -1,0 +1,26 @@
+[Unit]
+Description=Seiche monetary-area validation evidence run
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app
+EnvironmentFile=/etc/seiche/market.env
+ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-validate
+# PENDING means the audit trail advanced but promotion evidence is incomplete.
+# Only a hard validation failure (exit 1) should make this unit red.
+SuccessExitStatus=2
+TimeoutStartSec=2h
+CPUQuota=100%
+CPUWeight=10
+IOWeight=10
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/seiche/validation
+UMask=0027

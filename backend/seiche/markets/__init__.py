@@ -17,6 +17,11 @@ from seiche.markets.base import (
     ValidationOutcome,
     ValidationResult,
 )
+from seiche.markets.validation_evidence import (
+    ValidationEvidenceArtifact,
+    ValidationEvidenceStore,
+    ValidationStatus,
+)
 
 __all__ = [
     "BusinessCalendar",
@@ -28,6 +33,9 @@ __all__ = [
     "PolicyRegime",
     "SourceAdapterSpec",
     "ValidationCheck",
+    "ValidationEvidenceArtifact",
+    "ValidationEvidenceStore",
     "ValidationOutcome",
     "ValidationResult",
+    "ValidationStatus",
 ]

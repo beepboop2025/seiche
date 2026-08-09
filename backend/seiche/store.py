@@ -17,6 +17,7 @@ from typing import Iterable
 import pandas as pd
 
 from seiche.config import DATA_DIR, DB_PATH
+from seiche.domain.forward_record import forward_record_hash
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 from seiche.sources.base import Series
 
@@ -301,7 +302,8 @@ def load_observations_as_of(
     if instrument_ids is not None and not instrument_values:
         return []
     if instrument_values:
-        predicates.append(f"instrument_id IN ({','.join('?' for _ in instrument_values)})")
+        placeholders = ",".join("?" for _ in instrument_values)
+        predicates.append(f"instrument_id IN ({placeholders})")
         params.extend(instrument_values)
     source_values = tuple(dict.fromkeys(sources or ()))
     if sources is not None and not source_values:
@@ -327,6 +329,42 @@ def load_observations_as_of(
          WHERE vintage_rank=1
          ORDER BY event_time, instrument_id
     """
+    with _lock, _conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_row_to_observation(row) for row in rows]
+
+
+def load_observation_revisions(
+    market_id: str,
+    knowledge_time: str | datetime,
+    *,
+    instrument_ids: Iterable[str] | None = None,
+    event_time: str | datetime | None = None,
+    event_time_from: str | datetime | None = None,
+) -> list[Observation]:
+    """Return every stored vintage knowable by the requested cutoff."""
+
+    predicates = ["market_id=?", "knowledge_time<=?"]
+    params: list[str] = [market_id.upper(), _canonical_utc(knowledge_time)]
+    if event_time is not None:
+        predicates.append("event_time<=?")
+        params.append(_canonical_utc(event_time))
+    if event_time_from is not None:
+        predicates.append("event_time>=?")
+        params.append(_canonical_utc(event_time_from))
+    instrument_values = tuple(dict.fromkeys(instrument_ids or ()))
+    if instrument_ids is not None and not instrument_values:
+        return []
+    if instrument_values:
+        predicates.append(f"instrument_id IN ({','.join('?' for _ in instrument_values)})")
+        params.extend(instrument_values)
+
+    selected = ",".join(_CANONICAL_COLUMNS)
+    query = f"""SELECT {selected}
+                  FROM canonical_observations
+                 WHERE {' AND '.join(predicates)}
+                 ORDER BY event_time, instrument_id, knowledge_time,
+                          source_publication_time, revision_id, source"""
     with _lock, _conn() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_observation(row) for row in rows]
@@ -740,19 +778,27 @@ def append_forward_record(
         if existing is not None:
             return existing[0]
         previous = conn.execute(
-            """SELECT record_hash FROM forward_validation_records
+            """SELECT record_hash, created_at FROM forward_validation_records
                 WHERE market_id=? AND product=?
                 ORDER BY created_at DESC, record_id DESC LIMIT 1""",
             (market, product),
         ).fetchone()
         previous_hash = previous[0] if previous else "0" * 64
-        identity = "|".join(
-            (
-                snapshot_id, market, product, event, knowledge,
-                calibration_id, payload_hash, previous_hash,
-            )
+        created_at = datetime.now(UTC)
+        if previous is not None:
+            previous_created_at = datetime.fromisoformat(previous[1]).astimezone(UTC)
+            if created_at <= previous_created_at:
+                created_at = previous_created_at + timedelta(microseconds=1)
+        record_hash = forward_record_hash(
+            snapshot_id=snapshot_id,
+            market_id=market,
+            product=product,
+            event_cutoff=event,
+            knowledge_cutoff=knowledge,
+            calibration_id=calibration_id,
+            payload_hash=payload_hash,
+            previous_record_hash=previous_hash,
         )
-        record_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         record_id = record_hash
         conn.execute(
             """INSERT INTO forward_validation_records
@@ -762,11 +808,58 @@ def append_forward_record(
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 record_id, snapshot_id, market, product, event, knowledge,
-                calibration_id, datetime.now(UTC).isoformat(timespec="seconds"),
+                calibration_id, created_at.isoformat(timespec="microseconds"),
                 payload_hash, previous_hash, record_hash, payload_json,
             ),
         )
     return record_id
+
+
+_FORWARD_RECORD_COLUMNS = (
+    "record_id",
+    "snapshot_id",
+    "market_id",
+    "product",
+    "event_cutoff",
+    "knowledge_cutoff",
+    "calibration_id",
+    "created_at",
+    "payload_hash",
+    "previous_record_hash",
+    "record_hash",
+    "payload",
+)
+
+
+def load_forward_records(
+    market_id: str | None = None,
+    product: str | None = None,
+) -> list[dict]:
+    """Read complete forward-chain links in deterministic chronological order."""
+
+    predicates: list[str] = []
+    params: list[str] = []
+    if market_id is not None:
+        predicates.append("market_id=?")
+        params.append(market_id.upper())
+    if product is not None:
+        predicates.append("product=?")
+        params.append(product)
+    where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
+    columns = ",".join(_FORWARD_RECORD_COLUMNS)
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            f"""SELECT {columns}
+                  FROM forward_validation_records{where}
+                 ORDER BY created_at, record_id""",
+            params,
+        ).fetchall()
+    records: list[dict] = []
+    for row in rows:
+        record = dict(zip(_FORWARD_RECORD_COLUMNS, row, strict=True))
+        record["payload"] = json.loads(record["payload"])
+        records.append(record)
+    return records
 
 
 def forward_record_count(market_id: str | None = None) -> int:

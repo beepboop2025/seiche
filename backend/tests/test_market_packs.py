@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from seiche import config
-from seiche.markets.base import CalendarUnavailableError, PackSupportStatus
+from seiche.markets.base import (
+    CalendarUnavailableError,
+    PackSupportStatus,
+    ValidationCheck,
+    ValidationOutcome,
+    ValidationResult,
+)
 from seiche.markets.registry import default_registry
 from seiche.markets.us_usd import legacy as us_legacy
 
@@ -108,3 +114,19 @@ def test_pack_cannot_claim_supported_without_every_validation() -> None:
     pack = default_registry().get("US-USD")
     with pytest.raises(ValueError, match="lacks passing validations"):
         replace(pack, support_status=PackSupportStatus.SUPPORTED)
+
+
+def test_validation_results_require_content_addressed_evidence() -> None:
+    with pytest.raises(ValueError, match="content-addressed"):
+        ValidationResult(
+            check=ValidationCheck.SCHEMA_AND_UNITS,
+            outcome=ValidationOutcome.PASS,
+            evidence="validation-report.json",
+        )
+
+    result = ValidationResult(
+        check=ValidationCheck.SCHEMA_AND_UNITS,
+        outcome=ValidationOutcome.PASS,
+        evidence=f"sha256:{'a' * 64}",
+    )
+    assert result.evidence == f"sha256:{'a' * 64}"
