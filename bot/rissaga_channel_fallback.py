@@ -83,6 +83,13 @@ def _required_string(obj: dict, name: str) -> str:
     return value
 
 
+def _bounded(value: str, limit: int) -> str:
+    value = " ".join(value.split())
+    if len(value) > limit:
+        value = value[:limit - 3].rstrip() + "..."
+    return value
+
+
 def _delivery_key(item: dict, route: dict) -> str:
     identity = item.get("dispatch_id")
     if not isinstance(identity, str) or not identity:
@@ -151,6 +158,7 @@ def _escaped(value: str) -> str:
 
 def _safe_link(raw) -> str | None:
     if (not isinstance(raw, str) or not raw
+            or len(raw) > 768
             or any(ch.isspace() or ord(ch) < 32 for ch in raw)):
         return None
     try:
@@ -167,34 +175,48 @@ def _safe_link(raw) -> str | None:
 def compose(candidate: dict) -> str:
     item, route = candidate["item"], candidate["route"]
     desk = _required_string(route, "desk")
-    label = _required_string(route, "label")
-    desk_nice = _required_string(route, "desk_nice")
-    desk_line = _required_string(route, "desk_line")
+    label = _bounded(_required_string(route, "label"), 80)
+    desk_nice = _bounded(_required_string(route, "desk_nice"), 80)
+    desk_line = _bounded(_required_string(route, "desk_line"), 600)
+    angle = _bounded(_required_string(route, "angle"), 400)
     fallback = _required_string(route, "fallback_commentary")
     if ("\u2014" in fallback or "\u2013" in fallback
             or "\n" in fallback or "\r" in fallback):
         raise HandoffError("fallback commentary breaks prose rules")
-    title = _required_string(item, "title")
-    source = _required_string(item, "source")
-    age = _required_string(item, "age")
+    fallback = _bounded(fallback, 400)
+    title = _bounded(_required_string(item, "title"), 300)
+    source = _bounded(_required_string(item, "source"), 120)
+    age = _bounded(_required_string(item, "age"), 40)
     n_sources = item.get("n_sources")
     if isinstance(n_sources, bool) or not isinstance(n_sources, int) or n_sources < 1:
         raise HandoffError("n_sources must be a positive integer")
 
-    line1 = (f"\U0001f30a <b>Rissaga</b> "
-             f"[{_escaped(desk)} \u00b7 {_escaped(label)}]")
+    heading = (f"\U0001f30a <b>Rissaga</b> "
+               f"[{_escaped(desk)} \u00b7 {_escaped(label)}]")
     link = _safe_link(item.get("link"))
     escaped_title = _escaped(title)
-    line2 = (f'<a href="{_escaped(link)}">{escaped_title}</a>'
-             if link else escaped_title)
+    title_line = (f'<a href="{_escaped(link)}">{escaped_title}</a>'
+                  if link else escaped_title)
     extra = n_sources - 1
-    line3 = (f"{_escaped(source)} plus {extra} more outlets, {_escaped(age)}"
-             if extra else f"{_escaped(source)}, {_escaped(age)}")
-    line4 = (f"{_escaped(desk_nice)} desk read: {_escaped(desk_line)}. "
-             f"{html.escape(fallback, quote=True)}")
-    message = "\n".join((line1, line2, line3, line4))
-    if ("\u2014" in message or "\u2013" in message
-            or message.count("\n") != 3):
+    source_line = (f"{_escaped(source)} plus {extra} more outlets, {_escaped(age)}"
+                   if extra else f"{_escaped(source)}, {_escaped(age)}")
+    message = "\n".join((
+        heading,
+        "",
+        "<b>WHAT HAPPENED</b>",
+        title_line,
+        source_line,
+        "",
+        "<b>WHY THIS DESK CARES</b>",
+        html.escape(fallback, quote=True),
+        "",
+        "<b>LIVE DESK CHECK</b>",
+        f"{_escaped(desk_nice)}: {_escaped(desk_line)}",
+        "",
+        "<b>WHAT TO WATCH NEXT</b>",
+        _escaped(angle),
+    ))
+    if "\u2014" in message or "\u2013" in message:
         raise HandoffError("composed message breaks prose rules")
     return message
 

@@ -102,7 +102,7 @@ def test_only_explicit_candidates_and_caps_are_enforced():
         fb.select_candidates(payload([doubled]))
 
 
-def test_compose_is_four_escaped_lines_and_uses_only_safe_links():
+def test_compose_is_scannable_escaped_and_uses_only_safe_links():
     raw = item()
     raw["title"] = "A <tag> & quoted \u2014 second line\njoined"
     raw["link"] = "https://example.com/read?a=1&b=2"
@@ -113,17 +113,21 @@ def test_compose_is_four_escaped_lines_and_uses_only_safe_links():
     selected = fb.select_candidates(payload([raw]))[0]
     message = fb.compose(selected)
     lines = message.splitlines()
-    assert len(lines) == 4
-    assert "&lt;tag&gt; &amp; quoted , second line joined" in lines[1]
-    assert 'href="https://example.com/read?a=1&amp;b=2"' in lines[1]
-    assert "Wire &amp; Co" in lines[2]
-    assert "Gauge &lt;42&gt; &amp; STRAIN" in lines[3]
-    assert "Mechanics &amp; reserves remain the bounded read." in lines[3]
+    assert len(lines) == 14
+    assert "WHAT HAPPENED" in message
+    assert "WHY THIS DESK CARES" in message
+    assert "LIVE DESK CHECK" in message
+    assert "WHAT TO WATCH NEXT" in message
+    assert "&lt;tag&gt; &amp; quoted , second line joined" in message
+    assert 'href="https://example.com/read?a=1&amp;b=2"' in message
+    assert "Wire &amp; Co" in message
+    assert "Gauge &lt;42&gt; &amp; STRAIN" in message
+    assert "Mechanics &amp; reserves remain the bounded read." in message
     assert "\u2014" not in message and "\u2013" not in message
 
     raw["link"] = "javascript:alert(1)"
     message = fb.compose(fb.select_candidates(payload([raw]))[0])
-    assert "href=" not in message.splitlines()[1]
+    assert "href=" not in message
 
 
 def test_success_is_marked_per_item_before_later_failure(isolated, monkeypatch):
@@ -286,12 +290,17 @@ def test_units_schedule_hardening_and_prose_rules():
     service_path = os.path.join(deploy, "rissaga-channel-fallback.service")
     timer_path = os.path.join(deploy, "rissaga-channel-fallback.timer")
     script_path = os.path.join(_ROOT, "bot", "rissaga_channel_fallback.py")
+    skill_path = os.path.join(
+        _ROOT, "ops", "hermes", "rissaga-desk-reads", "SKILL.md"
+    )
     with open(service_path, encoding="utf-8") as fh:
         service = fh.read()
     with open(timer_path, encoding="utf-8") as fh:
         timer = fh.read()
     with open(script_path, encoding="utf-8") as fh:
         script = fh.read()
+    with open(skill_path, encoding="utf-8") as fh:
+        skill = fh.read()
 
     assert "User=hermes" in service and "Group=hermes" in service
     assert "NoNewPrivileges=true" in service
@@ -302,10 +311,28 @@ def test_units_schedule_hardening_and_prose_rules():
     assert "/var/lib/rissaga/latest.json" in service
     assert "/usr/local/bin/lab-channel-post" in service
     assert "EnvironmentFile" not in service
-    assert "OnCalendar=*-*-* *:15:00 UTC" in timer
-    assert timer.count("OnCalendar=") == 1
+    for hour in ("03", "09", "15", "21"):
+        assert f"OnCalendar=*-*-* {hour}:15:00 UTC" in timer
+    assert timer.count("OnCalendar=") == 4
     assert "Persistent=true" in timer
     assert "RandomizedDelaySec=0" in timer
     assert "one logical channel owner" in script
+    assert "* CRYPTO:" in skill
+    assert "flock -x 9" in skill
+    for heading in (
+        "WHAT HAPPENED", "WHY THIS DESK CARES", "LIVE DESK CHECK",
+        "WHAT TO WATCH NEXT",
+    ):
+        assert heading in skill
     for text in (service, timer, script):
         assert "\u2014" not in text and "\u2013" not in text
+
+
+def test_helper_refuses_overlong_html_instead_of_slicing_entities():
+    helper = __import__("runpy").run_path(os.path.join(
+        _ROOT, "bot", "deploy", "lab-channel-post"
+    ))
+    assert helper["message_with_footer"]("safe <b>read</b>").startswith("safe")
+    with pytest.raises(ValueError, match="Telegram limit"):
+        helper["message_with_footer"]("<b>" + "x" * 5000 + "</b>")
+    assert helper["plain_text"]("<b>A &amp; B</b>") == "A & B"

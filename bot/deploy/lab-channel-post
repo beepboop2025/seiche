@@ -11,18 +11,33 @@ lab_rissaga) are appended here so the caller cannot get them wrong.
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
 """
 
+import html
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ENV_FILE = os.environ.get("LAB_POST_ENV", "/home/hermes/.hermes/.env")
 CHANNEL = os.environ.get("LAB_CHANNEL_ID", "-1004297805949")
 REF = "lab_rissaga"
-FOOT = ("\n\n<i>Rissaga is the Liquidity Lab news radar. Open the matching "
-        "desk for its own grounded read: https://t.me/LiquidityLabDesk</i>")
+CHANNEL_LINK = "https://t.me/LiquidityLabDesk"
+FOOT = ("\n\n<i>Public data, timestamped. Research and market context only, "
+        "not advice or an execution instruction.</i>")
+DESK_BOTS = {
+    "SEICHE": ("Seiche", "https://t.me/seiche_desk_bot"),
+    "LIQUILENS": ("LiquiLens", "https://t.me/LiquiLens_bot"),
+    "UNDERTOW": ("Undertow", "https://t.me/undertow_LiquiLens_bot"),
+    "RIPTIDE": ("Riptide", "https://t.me/riptide_anake_bot"),
+    "PALIMPSEST": ("Palimpsest", "https://t.me/palimpsest_watch_bot"),
+    "CORPORATE": ("Corporate Stress", "https://t.me/corporate_stress_bot"),
+    "REALECON": ("Real Economy", "https://t.me/real_economy_desk_bot"),
+    "CRYPTO": ("Crypto", "https://t.me/liquilens_crypto_bot"),
+}
+TAG_RE = re.compile(r"<[^>]+>")
 KEYBOARD = [
     [{"text": "\U0001f321 Plumbing desk",
       "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
@@ -41,6 +56,35 @@ KEYBOARD = [
     [{"text": "\U0001f4a7 Crypto rails and regime",
       "url": f"https://t.me/liquilens_crypto_bot?start={REF}"}],
 ]
+
+
+def contextual_keyboard(text: str) -> list:
+    """Offer one relevant desk action instead of eight competing choices."""
+    match = re.search(r"\[([A-Z]+)\s*\u00b7", text)
+    desk = match.group(1) if match else ""
+    if desk not in DESK_BOTS:
+        return KEYBOARD
+    label, bot_link = DESK_BOTS[desk]
+    ref = f"lab_rissaga_{desk.lower()}"
+    share = "https://t.me/share/url?" + urllib.parse.urlencode({
+        "url": CHANNEL_LINK,
+        "text": "A sourced Liquidity Lab desk read with a live check and falsifier.",
+    })
+    return [[
+        {"text": f"Open + follow {label}", "url": f"{bot_link}?start={ref}"},
+        {"text": "Share Liquidity Lab", "url": share},
+    ]]
+
+
+def message_with_footer(text: str) -> str:
+    message = text + FOOT
+    if len(message.encode("utf-16-le")) // 2 > 4096:
+        raise ValueError("message exceeds Telegram limit")
+    return message
+
+
+def plain_text(value: str) -> str:
+    return html.unescape(TAG_RE.sub("", value))
 
 
 def _token() -> str:
@@ -86,9 +130,14 @@ def main() -> int:
     if not text:
         print("empty text", file=sys.stderr)
         return 2
-    payload = {"chat_id": int(CHANNEL), "text": (text + FOOT)[:4090],
+    try:
+        message = message_with_footer(text)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    payload = {"chat_id": int(CHANNEL), "text": message,
                "parse_mode": "HTML", "disable_web_page_preview": True,
-               "reply_markup": {"inline_keyboard": KEYBOARD}}
+               "reply_markup": {"inline_keyboard": contextual_keyboard(text)}}
     res = _post(payload)
     if not res.get("ok") and res.get("error_code") == 429:
         wait = (res.get("parameters") or {}).get("retry_after") or 3
@@ -96,6 +145,7 @@ def main() -> int:
         res = _post(payload)
     if not res.get("ok") and res.get("error_code") == 400:
         plain = {k: v for k, v in payload.items() if k != "parse_mode"}
+        plain["text"] = plain_text(message)
         res = _post(plain)
     if res.get("ok"):
         print(json.dumps({"ok": True,
