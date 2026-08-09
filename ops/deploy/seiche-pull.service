@@ -1,0 +1,20 @@
+[Unit]
+Description=Seiche cached canonical snapshot alert evaluation
+Requires=seiche-api.service
+After=network-online.target seiche-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app/backend
+EnvironmentFile=-/home/seiche/seiche.env
+# seiche-api is the sole snapshot builder. This process only validates the
+# cached localhost payload and evaluates the existing alert rules against it.
+ExecStart=/home/seiche/app/backend/.venv/bin/seiche alert --api-url http://127.0.0.1:8787/api/overview --max-snapshot-age-seconds 3600
+# Exit 2 means alerts fired; it is a successful evaluation.
+SuccessExitStatus=0 2
+# Alert state is committed before best-effort webhook, Telegram, and subscriber
+# delivery. Preserve the live ceiling until delivery has durable outbox semantics.
+TimeoutStartSec=1200

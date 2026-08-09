@@ -112,6 +112,64 @@ deploy_market_platform() {
   SEICHE_DEFER_MARKET_START=1 bash "$installer"
 }
 
+deploy_pull_unit() {
+  local source="$APP/ops/deploy/seiche-pull.service"
+  local destination=/etc/systemd/system/seiche-pull.service
+  local stage candidate previous had_previous=""
+  if [ ! -f "$source" ]; then
+    echo "FAIL: canonical pull unit missing: $source"
+    return 1
+  fi
+  stage=$(mktemp -d /etc/systemd/system/.seiche-pull-stage.XXXXXX) || return 1
+  candidate="$stage/seiche-pull.service"
+  previous="$stage/previous.service"
+  if ! install -m 0644 "$source" "$candidate"; then
+    rmdir "$stage" 2>/dev/null || true
+    return 1
+  fi
+  if ! systemd-analyze verify "$candidate"; then
+    rm -f -- "$candidate"
+    rmdir "$stage" 2>/dev/null || true
+    echo "FAIL: canonical pull unit did not pass systemd verification"
+    return 1
+  fi
+  if [ -e "$destination" ]; then
+    cp -p "$destination" "$previous" || {
+      rm -f -- "$candidate"
+      rmdir "$stage" 2>/dev/null || true
+      return 1
+    }
+    had_previous=1
+  fi
+  if ! mv -f "$candidate" "$destination"; then
+    rm -f -- "$previous" "$candidate"
+    rmdir "$stage" 2>/dev/null || true
+    return 1
+  fi
+  if systemctl daemon-reload; then
+    rm -f -- "$previous"
+    rmdir "$stage" 2>/dev/null || true
+    echo "pull unit: installed cached localhost alert evaluator"
+    return 0
+  fi
+
+  echo "FAIL: daemon-reload rejected the pull unit; restoring the previous unit"
+  if [ -n "$had_previous" ]; then
+    mv -f "$previous" "$destination" || {
+      echo "FAIL: could not restore $destination"
+      rm -f -- "$candidate"
+      rmdir "$stage" 2>/dev/null || true
+      return 1
+    }
+  else
+    rm -f -- "$destination"
+  fi
+  systemctl daemon-reload || echo "FAIL: daemon-reload also failed after pull-unit rollback"
+  rm -f -- "$candidate" "$previous"
+  rmdir "$stage" 2>/dev/null || true
+  return 1
+}
+
 deploy_market_platform || {
   restore_market_services
   echo "FAIL: application checkout is intact but market-platform provisioning failed"
@@ -120,6 +178,11 @@ deploy_market_platform || {
 
 if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   echo "already running ${AFTER:0:7} — checking edge config"
+  deploy_pull_unit || {
+    restore_market_services
+    echo "FAIL: canonical pull unit could not be converged"
+    exit 1
+  }
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
@@ -176,7 +239,9 @@ HEALTHY=""
 if systemctl is-active --quiet seiche-api; then
   if health_wait 900; then
     if market_health; then
-      HEALTHY=1
+      if deploy_pull_unit; then
+        HEALTHY=1
+      fi
     fi
   fi
 else
