@@ -137,9 +137,7 @@ def test_canonical_query_filters_are_inclusive_and_hash_only(tmp_path, monkeypat
     ) == []
 
 
-def test_sql_page_bounds_candidate_keys_before_vintage_ranking(
-    tmp_path, monkeypatch
-) -> None:
+def test_sql_page_limits_visible_latest_vintages(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "bounded-page.sqlite")
     observations = [
         _observation(
@@ -176,14 +174,70 @@ def test_sql_page_bounds_candidate_keys_before_vintage_ranking(
         redistribution_statuses=(RedistributionStatus.ALLOWED,),
     )
 
-    query = next(statement for statement in traced if "WITH candidate_keys" in statement)
+    query = next(statement for statement in traced if "WITH ranked AS" in statement)
     compact = " ".join(query.split())
-    assert "GROUP BY candidate.event_time, candidate.instrument_id" in compact
+    assert "ROW_NUMBER() OVER" in compact
+    assert "WHERE vintage_rank=1 AND redistribution_status IN ('allowed')" in compact
     assert "LIMIT 2" in compact
-    assert "JOIN candidate_keys AS candidate" in compact
-    assert compact.index("LIMIT 2") < compact.index("ranked AS")
+    assert compact.index("WHERE vintage_rank=1") < compact.index("LIMIT 2")
     assert page == [observations[-1]]
     assert cursor == (observations[-1].event_time, observations[-1].instrument_id)
+
+
+def test_page_scans_past_prohibited_keys_without_resurrecting_old_revision(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "visible-page.sqlite")
+    older_allowed = [
+        _observation(
+            event_day=day,
+            knowledge_day=day,
+            value=str(500 + day),
+            revision=f"allowed-{day}",
+        )
+        for day in (2, 3)
+    ]
+    newest_prohibited = [
+        replace(
+            _observation(
+                event_day=day,
+                knowledge_day=day,
+                value=str(500 + day),
+                revision=f"prohibited-{day}",
+            ),
+            redistribution_status=RedistributionStatus.PROHIBITED,
+        )
+        for day in (4, 5)
+    ]
+    sixth_allowed = _observation(
+        event_day=6,
+        knowledge_day=6,
+        value="506",
+        revision="allowed-6",
+    )
+    sixth_prohibited = replace(
+        sixth_allowed,
+        value="606",
+        source_publication_time=datetime(2026, 1, 7, 8, tzinfo=UTC),
+        knowledge_time=datetime(2026, 1, 7, 9, tzinfo=UTC),
+        revision_id="prohibited-6",
+        evidence_hash=evidence_sha256("newest prohibited revision"),
+        redistribution_status=RedistributionStatus.PROHIBITED,
+    )
+    store.save_observations(
+        [*older_allowed, *newest_prohibited, sixth_allowed, sixth_prohibited]
+    )
+
+    page, cursor = store.load_observation_page(
+        "US-USD",
+        datetime(2026, 1, 10, tzinfo=UTC),
+        limit=2,
+        redistribution_statuses=(RedistributionStatus.ALLOWED,),
+    )
+
+    assert page == list(reversed(older_allowed))
+    assert cursor is None
+    assert sixth_allowed not in page
 
 
 def test_sealed_snapshots_are_immutable_and_knowledge_queryable(tmp_path, monkeypatch) -> None:
