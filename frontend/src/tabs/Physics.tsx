@@ -1,6 +1,6 @@
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, ordinal } from "../lib";
 
 /** Minimal XY (non-time) SVG chart: the potential landscape, decay curves —
  *  things uPlot's date axis can't draw. Self-contained, theme-matched. */
@@ -96,10 +96,10 @@ function BathymetryCard({ e }: { e: Any }) {
           <div className="v">{e.mfpt_bd != null ? `~${fmt(e.mfpt_bd, 0)}bd` : e.mfpt_capped ? `>${e.mfpt_cap_bd}bd` : "—"}</div></div>
         <div className="item"><div className="k">relaxation τ (gap)</div>
           <div className={`v ${spec.tau_pctl >= 85 ? "bad" : ""}`}>{fmt(spec.tau_bd, 1)}d
-            <span className="dimsmall"> ({fmt(spec.tau_pctl, 0)}th)</span></div></div>
+            <span className="dimsmall"> ({ordinal(spec.tau_pctl)})</span></div></div>
         <div className="item"><div className="k">entropy σ (arrow)</div>
           <div className={`v ${arrow.pctl >= 85 ? "warn" : ""}`}>{fmt(arrow.sigma_nats_bd, 3)}
-            <span className="dimsmall"> nats/bd ({fmt(arrow.pctl, 0)}th)</span></div></div>
+            <span className="dimsmall"> nats/bd ({ordinal(arrow.pctl)})</span></div></div>
         <div className="item"><div className="k">well / barrier</div>
           <div className="v">{fmt(fl.well_bp, 1)}bp · {fmt(fl.barrier_kt, 1)} k<sub>B</sub>T</div></div>
       </div>
@@ -134,7 +134,7 @@ function MerianCard({ e }: { e: Any }) {
       <div className="kv">
         <div className="item"><div className="k">instability g*</div>
           <div className={`v ${hot ? "bad" : ""}`}>{inst.g_now != null ? `${inst.g_now > 0 ? "+" : ""}${fmt(inst.g_now, 4)}/bd` : "—"}
-            <span className="dimsmall"> ({fmt(inst.pctl, 0)}th)</span></div></div>
+            <span className="dimsmall"> ({ordinal(inst.pctl)})</span></div></div>
         <div className="item"><div className="k">panel</div>
           <div className="v">{e.n_series} pipes · rank {e.rank}</div></div>
       </div>
@@ -186,7 +186,7 @@ function GyreCard({ e }: { e: Any }) {
           <div className="v">{fmt(nl.delta_rho, 3)} (θ* {fmt(nl.theta_best, 1)})</div></div>
         <div className="item"><div className="k">local λ</div>
           <div className={`v ${st.lambda_now > 1 ? "bad" : ""}`}>{fmt(st.lambda_now, 2)}
-            <span className="dimsmall"> ({fmt(st.pctl, 0)}th)</span></div></div>
+            <span className="dimsmall"> ({ordinal(st.pctl)})</span></div></div>
       </div>
       <XYChart
         xs={decay.map((d: Any) => d.h)} ys={decay.map((d: Any) => d.rho)}

@@ -9,6 +9,21 @@ export const fmt = (v: number | null | undefined, d = 1, unit = "") =>
     ? "—"
     : `${v.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d })}${unit}`;
 
+/** English ordinal with the 11/12/13 exception handled explicitly. */
+export const ordinal = (n: number | null | undefined) => {
+  if (n == null) return "—";
+  const v = Math.round(n);
+  const abs = Math.abs(v);
+  const mod100 = abs % 100;
+  const ending = mod100 >= 11 && mod100 <= 13
+    ? "th"
+    : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[abs % 10] || "th";
+  return `${v}${ending}`;
+};
+
+export const ordinalSuffix = (n: number | null | undefined) =>
+  n == null ? "" : ordinal(n).replace(/^-?\d+/, "");
+
 /**
  * A number that moves instead of swapping. On the one-minute cache check (or a
  * Time-Machine jump) the displayed value tweens to the new reading, so the

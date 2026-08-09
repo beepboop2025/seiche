@@ -20,8 +20,8 @@ export default function Account() {
       .catch(() => {});
   }, []);
 
-  // The terminal is fully open — an account is optional and exists only for
-  // email alerts (delivery needs an address to send to). No account, no loss.
+  // The terminal is fully open. Accounts are optional: they can hold email
+  // alerts and, when provisioned, authenticate subscriber machine tools.
   // Placed after the hooks so the hook order stays unconditional.
   if (!token) {
     const doLogin = () => {
@@ -37,8 +37,8 @@ export default function Account() {
           <h2>No account needed</h2>
           <div className="sub">
             Everything on this terminal is free and open: the board, the physics, the Time Machine,
-            the dispatches, the record. An account exists for exactly one thing, <b>email alerts</b>,
-            because delivering an alert needs an address to send it to. If you want alerts,
+            the dispatches and the record. Optional accounts can hold <b>email alerts</b> and,
+            when separately provisioned, authenticate five additional hosted MCP tools. If you want alerts,
             email <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> and
             one is set up by hand, free, usually within a day.
           </div>
@@ -48,7 +48,7 @@ export default function Account() {
         </div>
         <div className="card span6">
           <h2>Sign in</h2>
-          <div className="sub">Already have an alerts account? Sign in to manage delivery.</div>
+          <div className="sub">Already have an account? Sign in to manage alerts and any provisioned machine access.</div>
           <div className="tmcontrols" style={{ flexDirection: "column", alignItems: "stretch", gap: 10, maxWidth: 380 }}>
             <input type="text" placeholder="username" value={user} autoComplete="username"
                    onChange={(e) => setUser(e.target.value)} />
@@ -98,9 +98,9 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          The API is free and open — /api/overview, /api/asof and /api/dispatch need no key at all.
-          Your bearer token only identifies you (alert prefs, authenticated force refresh). Keep it
-          private; it lasts 30 days.
+          The public API and eight public MCP tools need no key. Your bearer token identifies you for
+          alert preferences and authenticated refreshes; when subscriber access is provisioned, it also
+          authenticates five additional hosted MCP tools. Keep it private; it lasts 30 days.
         </div>
         <div className="kv" style={{ flexDirection: "column", gap: 8 }}>
           <div className="item"><div className="k">account</div><div className="v">{me.username ?? "—"} · {me.tier ?? ""}</div></div>

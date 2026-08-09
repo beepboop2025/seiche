@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method, Roll } from "../lib";
+import { Any, fmt, Fault, Method, ordinal, Roll } from "../lib";
 import "../styles-fx.css";
 
 /* ---------------------------------------------------------------------------
@@ -148,13 +148,13 @@ function UndertowCard({ e }: { e: Any }) {
       </div>
       <div className="kv">
         <div className="item"><div className="k">spread AC1</div>
-          <div className={`v ${sp.ac1_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.ac1, 2)} <span className="dimsmall">({fmt(sp.ac1_pctl, 0)}th)</span></div></div>
+          <div className={`v ${sp.ac1_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.ac1, 2)} <span className="dimsmall">({ordinal(sp.ac1_pctl)})</span></div></div>
         <div className="item"><div className="k">relaxation τ</div>
           <div className="v">{sp.tau_bd != null ? `${fmt(sp.tau_bd, 1)}d` : "—"}</div></div>
         <div className="item"><div className="k">spread var pctl</div>
-          <div className={`v ${sp.var_pctl >= 85 ? "bad" : ""}`}>{fmt(sp.var_pctl, 0)}th</div></div>
+          <div className={`v ${sp.var_pctl >= 85 ? "bad" : ""}`}>{ordinal(sp.var_pctl)}</div></div>
         <div className="item"><div className="k">tail AC1 pctl</div>
-          <div className={`v ${tl.ac1_pctl >= 85 ? "bad" : ""}`}>{tl.ac1_pctl != null ? `${fmt(tl.ac1_pctl, 0)}th` : "—"}</div></div>
+          <div className={`v ${tl.ac1_pctl >= 85 ? "bad" : ""}`}>{tl.ac1_pctl != null ? `${ordinal(tl.ac1_pctl)}` : "—"}</div></div>
         <div className="item"><div className="k">recovery half-life</div>
           <div className={`v ${rec.stretch >= 1.5 ? "warn" : ""}`}>
             {rec.halflife_prior_d != null ? `${fmt(rec.halflife_prior_d, 1)}d → ${fmt(rec.halflife_recent_d, 1)}d` : "—"}
@@ -165,7 +165,7 @@ function UndertowCard({ e }: { e: Any }) {
           <div className={`v ${sp.mechanism?.startsWith("both") || sp.mechanism?.startsWith("absorbers") ? "bad" : sp.mechanism?.startsWith("louder") ? "warn" : ""}`}
                title="fluctuation-dissipation split: noise power D = Var·(1−AC1²) vs damping — louder shocks or weaker absorbers (diagnostic, not scored)">
             {sp.mechanism ?? "—"}
-            {sp.noise_pctl != null && <span className="dimsmall"> (D {fmt(sp.noise_pctl, 0)}th)</span>}
+            {sp.noise_pctl != null && <span className="dimsmall"> (D {ordinal(sp.noise_pctl)})</span>}
           </div></div>
       </div>
       <Chart
@@ -257,7 +257,7 @@ function HydrophoneCard({ e }: { e: Any }) {
       <div className="kv">
         <div className="item"><div className="k">absorption</div><div className="v">{fmt(e.absorption, 3)}</div></div>
         <div className="item"><div className="k">percentile</div>
-          <div className={`v ${e.absorption_pctl >= 80 ? "bad" : ""}`}>{fmt(e.absorption_pctl, 0)}th</div></div>
+          <div className={`v ${e.absorption_pctl >= 80 ? "bad" : ""}`}>{ordinal(e.absorption_pctl)}</div></div>
         <div className="item"><div className="k">Δ 60d</div><div className={`v ${e.trend_60d > 0.05 ? "warn" : ""}`}>{e.trend_60d > 0 ? "+" : ""}{fmt(e.trend_60d, 3)}</div></div>
         <div className="item"><div className="k">series in panel</div><div className="v">{e.n_series}</div></div>
       </div>

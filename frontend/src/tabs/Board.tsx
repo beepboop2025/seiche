@@ -9,7 +9,7 @@ import { P } from "../palette";
  * gesture.
  */
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Any, AsOf, Decomp, fmt, Num, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
+import { Any, AsOf, Decomp, fmt, Num, ordinal as ord, ordinalSuffix as suffix, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
 import { useDepth } from "../depth";
 import { API_BASE } from "../apiBase";
 import WeekAhead from "../WeekAhead";
@@ -44,15 +44,6 @@ function scalePaths(rows: (string | number | null)[][], nSeries: number, box: Bo
   }
   return { paths, vmin, vmax, X, Y };
 }
-
-const ord = (n: number | null | undefined) => {
-  if (n == null) return "—";
-  const v = Math.round(n);
-  const s = ["th", "st", "nd", "rd"], m = v % 100;
-  return `${v}${s[(m - 20) % 10] ?? s[m] ?? s[0]}`;
-};
-
-const suffix = (n: number | null | undefined) => (n == null ? "" : ord(n).replace(/^-?\d+/, ""));
 
 const signed = (v: number | null | undefined, d = 0) =>
   v == null ? "—" : `${v > 0 ? "+" : ""}${fmt(v, d)}`;

@@ -1,6 +1,6 @@
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, ordinal } from "../lib";
 
 function RvCard({ e }: { e: Any }) {
   if (!e?.ok) return <Fault name="RV X-Ray" reason={e?.reason} span={8} />;
@@ -74,7 +74,7 @@ function WarehouseCard({ e }: { e: Any }) {
       <div className="kv">
         <div className="item"><div className="k">net inventory</div><div className="v">${fmt(e.total_net_b, 0)}B</div></div>
         <div className="item"><div className="k">saturation</div>
-          <div className={`v ${e.total_pctl >= 90 ? "bad" : e.total_pctl >= 70 ? "warn" : ""}`}>{fmt(e.total_pctl, 0)}th pctl</div></div>
+          <div className={`v ${e.total_pctl >= 90 ? "bad" : e.total_pctl >= 70 ? "warn" : ""}`}>{ordinal(e.total_pctl)} pctl</div></div>
         <div className="item"><div className="k">Δ 13w</div><div className="v">{fmt(e.chg_13w_b, 0)}B</div></div>
         <div className="item"><div className="k">long-end share</div><div className="v">{fmt(e.long_end_share_pct, 0)}%</div></div>
       </div>

@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import Chart, { type ChartSeries } from "../Chart";
-import { Any, AsOf, Fault, Method, fmt } from "../lib";
+import { Any, AsOf, Fault, Method, fmt, ordinal } from "../lib";
 import OilStructure from "./OilStructure";
 import "../styles-oil.css";
 
@@ -888,14 +888,14 @@ export default function OilFunding({ snap }: { snap: Any }) {
         <LiveTile
           label="Nonfinancial CP − bill"
           value={`${fmt(live.cp_nonfinancial?.spread_bp, 1)} bp`}
-          detail={`20d ${live.cp_nonfinancial?.change_20d_bp > 0 ? "+" : ""}${fmt(live.cp_nonfinancial?.change_20d_bp, 1)} · ${fmt(live.cp_nonfinancial?.percentile_3y, 0)}th pctl`}
+          detail={`20d ${live.cp_nonfinancial?.change_20d_bp > 0 ? "+" : ""}${fmt(live.cp_nonfinancial?.change_20d_bp, 1)} · ${ordinal(live.cp_nonfinancial?.percentile_3y)} pctl`}
           asof={live.cp_nonfinancial?.asof}
           tone={C.crude}
         />
         <LiveTile
           label="SOFR − IORB"
           value={`${fmt(live.sofr_iorb?.spread_bp, 1)} bp`}
-          detail={`20d ${live.sofr_iorb?.change_20d_bp > 0 ? "+" : ""}${fmt(live.sofr_iorb?.change_20d_bp, 1)} · ${fmt(live.sofr_iorb?.percentile_3y, 0)}th pctl`}
+          detail={`20d ${live.sofr_iorb?.change_20d_bp > 0 ? "+" : ""}${fmt(live.sofr_iorb?.change_20d_bp, 1)} · ${ordinal(live.sofr_iorb?.percentile_3y)} pctl`}
           asof={live.sofr_iorb?.asof}
           tone={C.refinery}
         />

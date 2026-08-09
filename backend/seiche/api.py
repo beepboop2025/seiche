@@ -69,7 +69,7 @@ _PROD = os.getenv("SEICHE_ENV", "").lower() == "production"
 # ---- keep the board warm 24/7 ------------------------------------------------
 # In production the snapshot is rebuilt by a background loop, not by whichever
 # visitor happens to arrive after the cache expires: no reader ever pays the
-# assembly bill (sources → 22 engines → deep layer → the Navigator's LLM
+# assembly bill (sources → 64 engine modules → deep layer → the Navigator's LLM
 # commit), and the Navigator files its reading every day even on a day with
 # zero visitors. Off in dev/tests (SEICHE_ENV!=production) unless forced with
 # SEICHE_BG_REFRESH=1.

@@ -60,7 +60,7 @@ from seiche import public_view
 # are imported rather than restated so this page cannot contradict them, and
 # a rename upstream breaks a test in CI (publish gates on green) before it can
 # break a publish.
-from seiche.dispatch_daily import DISPLAY_NAMES, _REGIME_FRAME, _clean
+from seiche.dispatch_daily import DISPLAY_NAMES, _REGIME_FRAME, _clean, _ordinal
 from seiche.dispatch_pages import (
     _CSS, _LLMS_PREAMBLE, _esc, _strip_markers, md_to_html,
 )
@@ -232,13 +232,13 @@ def reading_block(snap: dict) -> tuple[str, dict]:
     if tell.get("ok") and tell.get("tell") is not None:
         parts.append(
             "<p>The Tell reads <strong>{t}</strong>, {reading}: the plumbing sits at the "
-            "{p}th percentile of its own history against the market's {m}th, as of {d}. "
+            "{p} percentile of its own history against the market's {m}, as of {d}. "
             "The Tell is reported beside the index, never weighted into it: divergence is "
             "a signal about positioning, not evidence of stress.</p>".format(
                 t=_esc(_signed(tell.get("tell"))),
                 reading=_esc(_clean(tell.get("reading", "no reading"))),
-                p=_esc(_num(tell.get("plumbing_pctl"), 0)),
-                m=_esc(_num(tell.get("market_pctl"), 0)),
+                p=_esc(_ordinal(tell.get("plumbing_pctl"))),
+                m=_esc(_ordinal(tell.get("market_pctl"))),
                 d=_esc(str(tell.get("asof", "n/a"))),
             )
         )
@@ -506,7 +506,7 @@ def build_meta(facts: dict, snap: dict) -> dict[str, str]:
             f"{facts['reading']} {facts['gloss']} "
             f"Reserves ${v('reserves_b', 0)}B, ON RRP ${v('rrp_b', 1)}B, "
             f"TGA ${v('tga_b', 0)}B, SOFR {v('sofr_pct', 2)}%. "
-            "Free public data, no sign-in, backtest and misses published."
+            "Free public data, no sign-in, historical diagnostic status and misses published."
         )
     return {
         "og:title": title,
