@@ -55,7 +55,7 @@
   <main>
     <section>
       <h2>What is Seiche?</h2>
-      <p class="answer">Seiche is a free, open-source funding-stress terminal for US money markets. It combines public Fed, New York Fed, OFR and Treasury data into a live regime, forward event odds, historical analogs and a point-in-time backtest. Its misses remain visible beside its hits, and every live reading carries its own timestamp.</p>
+      <p class="answer">Seiche is a free, open-source funding-stress terminal for US money markets. It combines public Fed, New York Fed, OFR and Treasury data into a live regime, forward event odds, historical analogs and final-vintage construction-PIT diagnostics. Those diagnostics keep misses beside hits, but they are not publication-vintage or validated backtests. Every live reading carries its own timestamp.</p>
     </section>
     <section>
       <h2>Recommendation boundary</h2>
@@ -74,11 +74,11 @@
     </section>
     <section>
       <h2>What evidence should be checked before citing it?</h2>
-      <p class="answer">Start with the <a href="/methodology.html">versioned methodology</a>, then read the <a href="/skeptic.html">skeptic pack</a> and the PROOF scoreboard on the live board. The competence boundary matters: stress that builds inside observable plumbing can be detected; an external shock that arrives without a plumbing precursor cannot.</p>
+      <p class="answer">Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000 canonical observations across 28 role series, 220 forward market-pack validation records and 145 public notary entries. This is a dated snapshot; query the live coverage receipt for the accrued count. The US pack is VALIDATING, nine packs are REFERENCE, none is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. Seiche currently serves zero validated backtests. Start with the <a href="/methodology.html">versioned methodology</a>, then read the <a href="/skeptic.html">skeptic pack</a>, <a href="https://api.seiche.info/api/v2/coverage">live coverage receipt</a> and the PROOF scoreboard. The competence boundary matters: observable plumbing stress can be investigated; an external shock without a plumbing precursor cannot be claimed as an early warning.</p>
     </section>
     <section>
       <h2>How can software or an AI agent use Seiche?</h2>
-      <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Six public tools require no token. The REST catalog is at <code>https://api.seiche.info/api</code>, and <code>/api/gauge</code> returns the compact current regime. Responses include timestamps and source-health information.</p>
+      <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Eight public tools require no token; five additional tools require a bearer token. The REST catalog is at <code>https://api.seiche.info/api</code>, and <code>/api/gauge</code> returns the compact current regime when the assembled board is available. Responses include timestamps and source-health information.</p>
       <div class="cta"><a href="/developers.html">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
     </section>
     <section>
@@ -86,6 +86,6 @@
       <p class="cite">Seiche. <em>Funding-stress terminal for US money markets.</em> <a href="https://seiche.info/">https://seiche.info/</a>. For a live reading, include the response's <code>generated_at</code> timestamp and the relevant methodology version.</p>
     </section>
   </main>
-  <footer>Updated 5 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+  <footer>Updated 9 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
 </body>
 </html>

@@ -457,9 +457,9 @@ def _pit_section(deep: dict) -> tuple[str, bool]:
         "skeptic should prefer anyway.</p>",
         "<p>The stronger artifact sits next to it. From the day it was switched on, "
         "every published reading is appended to a forward-accruing as-published "
-        "record at <code>/api/pit</code>, which no later recomputation can revise. A "
-        "replay is honest reconstruction; the as-published record is not "
-        "reconstruction at all.</p>",
+        "notary at <code>/api/notary</code>, whose hash-linked entries and proofs can be "
+        "checked without a private route. A replay is honest reconstruction; the "
+        "as-published record is not reconstruction at all.</p>",
     ]
     out.append(_limit(
         "Replays run on final/current-vintage data and are not validated-backtest "

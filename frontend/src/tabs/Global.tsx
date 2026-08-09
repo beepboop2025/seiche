@@ -1,6 +1,6 @@
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, ordinal } from "../lib";
 
 const HARBOR_COLORS: Record<string, string> = {
   "EURO AREA": P.accentSoft,
@@ -172,7 +172,7 @@ function CpSentinelCard({ e }: { e: Any }) {
         </div>
         <div className="item"><div className="k">3m AA CP−bill spread</div>
           <div className="v">{fmt(lv.cp_spread_bp, 1)}bp
-            <span className="dimsmall"> ({fmt(lv.level_pctl, 0)}th pctl, expanding)</span></div></div>
+            <span className="dimsmall"> ({ordinal(lv.level_pctl)} pctl, expanding)</span></div></div>
         <div className="item"><div className="k">narrowing window</div>
           <div className={`v ${lv.window_active ? "warn" : ""}`}>{lv.window_active ? "ACTIVE" : "closed"}</div>
           {lv.last_event && (
@@ -197,7 +197,7 @@ function CpSentinelCard({ e }: { e: Any }) {
           </div>
           {e.placebo_percentile != null && (
             <div className="dimsmall" style={{ marginTop: 3 }}>
-              real rate at the {fmt(e.placebo_percentile, 0)}th percentile of {plc.n_shuffles ?? 100} shuffled calendars
+              real rate at the {ordinal(e.placebo_percentile)} percentile of {plc.n_shuffles ?? 100} shuffled calendars
             </div>
           )}
         </div>
@@ -282,21 +282,21 @@ function ThermohalineCard({ t }: { t: Any }) {
           <div className="v">${fmt(st.usd_trillions, 2)}T</div></div>
         <div className="item"><div className="k">growth (yoy)</div>
           <div className={`v ${hot ? "warn" : ""}`}>{st.yoy_pct != null ? `${st.yoy_pct > 0 ? "+" : ""}${fmt(st.yoy_pct, 1)}%` : "—"}
-            <span className="dimsmall"> ({fmt(st.yoy_pctl, 0)}th pctl since 2000)</span></div></div>
+            <span className="dimsmall"> ({ordinal(st.yoy_pctl)} pctl since 2000)</span></div></div>
         {t.composition?.loans && (
           <div className="item"><div className="k">bank loans leg</div>
             <div className="v">{t.composition.loans.yoy_pct > 0 ? "+" : ""}{fmt(t.composition.loans.yoy_pct, 1)}%
-              <span className="dimsmall"> yoy ({fmt(t.composition.loans.pctl, 0)}th)</span></div></div>
+              <span className="dimsmall"> yoy ({ordinal(t.composition.loans.pctl)})</span></div></div>
         )}
         {t.composition?.debt_securities && (
           <div className="item"><div className="k">bond-market leg</div>
             <div className="v">{t.composition.debt_securities.yoy_pct > 0 ? "+" : ""}{fmt(t.composition.debt_securities.yoy_pct, 1)}%
-              <span className="dimsmall"> yoy ({fmt(t.composition.debt_securities.pctl, 0)}th)</span></div></div>
+              <span className="dimsmall"> yoy ({ordinal(t.composition.debt_securities.pctl)})</span></div></div>
         )}
         {t.eme && (
           <div className="item"><div className="k">EME slice</div>
             <div className="v">{t.eme.yoy_pct > 0 ? "+" : ""}{fmt(t.eme.yoy_pct, 1)}%
-              <span className="dimsmall"> yoy ({fmt(t.eme.pctl, 0)}th)</span></div></div>
+              <span className="dimsmall"> yoy ({ordinal(t.eme.pctl)})</span></div></div>
         )}
       </div>
       <Chart
@@ -312,7 +312,7 @@ function ThermohalineCard({ t }: { t: Any }) {
               <td>{g.economy}</td>
               <td className="num" style={{ color: g.gap_pp > 0 ? P.strain : undefined }}>
                 {g.gap_pp > 0 ? "+" : ""}{fmt(g.gap_pp, 1)}pp</td>
-              <td className="num">{fmt(g.pctl, 0)}th</td>
+              <td className="num">{ordinal(g.pctl)}</td>
               <td className="dimsmall">{g.reading}</td>
             </tr>
           ))}
@@ -457,7 +457,7 @@ export default function Global({ snap }: { snap: Any }) {
         <h2>The Tide</h2>
         <div className="sub">
           common-component share across basins + channels — high tide = one basin, globally fragile
-          · now {fmt(tide.absorption, 3)} ({fmt(tide.pctl, 0)}th pctl of own history, {tide.n_series} series)
+          · now {fmt(tide.absorption, 3)} ({ordinal(tide.pctl)} pctl of own history, {tide.n_series} series)
         </div>
         {tide.series?.length ? (
           <Chart rows={tide.series} series={[{ label: "tide (top-2 PC share)", color: P.accentSoft }]} />

@@ -22,23 +22,23 @@
 </head>
 <body>
 <h1>Privacy</h1>
-<p class="dim">seiche.info · last updated 9 July 2026 · DRAFT pending review</p>
+<p class="dim">seiche.info · last updated 9 August 2026 · operational draft pending legal review</p>
 
 <h2>The short version</h2>
-<p>This site collects almost nothing. There are no ads, no trackers, and nothing is sold to anyone. The one measurement we run is Cloudflare Web Analytics, which is cookieless, stores no identifier on your device, and shows us aggregate page counts only. It identifies nobody.</p>
+<p>There are no ads and personal information is not sold. The public site uses cookieless Cloudflare Web Analytics for aggregate page counts. The API also keeps limited operational, rate-limit and activation records so it can defend the service and measure whether public tools work.</p>
 
 <h2>What is collected</h2>
-<p><b>Visitors:</b> standard server and network logs (IP address, user agent, requested pages) held briefly by our hosting and network providers (GitHub Pages, Cloudflare, Hetzner) for security and operations. Beyond the cookieless page counts above, we run no analytics of our own.</p>
-<p><b>Supporters:</b> a username you choose and a salted hash of your password. We never store the password itself. A signed session token is kept in your browser's local storage for up to 30 days; signing out removes it. If you email us, we keep the correspondence.</p>
+<p><b>Visitors and API callers:</b> standard server and network logs can include IP address, user agent, requested route and time. Anonymous API quotas are keyed by IP. MCP activation logs record the surface, tool, outcome and declared client origin; they are operational telemetry, not an advertising profile.</p>
+<p><b>Account holders:</b> a username, salted password hash, access tier and any email-alert address or preferences you provide. We never store the password itself. A signed session token may be kept in your browser's local storage for up to 30 days; signing out removes it. If you email us, we keep the correspondence needed to answer you.</p>
 
 <h2>What is not collected</h2>
-<p>No real name is required for an account. No payment details are stored on our servers; when paid plans launch, payments will be handled by a payment processor and we will see only what the processor confirms, never your card or bank details.</p>
+<p>No real name is required for a normal account. We do not store full card or bank credentials. A payment processor or public blockchain handles payment rails; Seiche may retain a processor reference, transaction identifier, entitlement and replay-prevention record needed to provision or verify access.</p>
 
 <h2>Where it lives</h2>
-<p>Account data lives on a server in Germany (Hetzner). The public site is served by GitHub Pages behind Cloudflare. Email is handled by Titan via GoDaddy.</p>
+<p>API and account data lives on a server in Germany (Hetzner). Public static pages may be served through GitHub Pages and Cloudflare. Cloudflare provides network and analytics services. Email is handled by Titan via GoDaddy. Payment providers or public blockchains process their own records under their own policies.</p>
 
 <h2>Your choices</h2>
-<p>Ask <a href="mailto:desk@seiche.info">desk@seiche.info</a> to see or delete what we hold about you and it will be done within a reasonable time. Deleting your account removes your username and password hash.</p>
+<p>Ask <a href="mailto:desk@seiche.info">desk@seiche.info</a> to see or delete account information we control and the request will be handled within a reasonable time. Security, transaction or accounting records may be retained where needed to prevent abuse or meet legal obligations.</p>
 
 <p class="dim"><a href="/">← back to the terminal</a> · <a href="/terms.html">terms</a></p>
 </body>

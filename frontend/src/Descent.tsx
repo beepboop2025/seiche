@@ -165,6 +165,12 @@ export default function Descent({ snap, onDone }: { snap: Any; onDone: () => voi
             Median lead {bt.median_lead_d != null ? `${fmt(bt.median_lead_d, 0)} days` : "—"}.
             The full boundary lives on the PROOF tab, failures included.
           </p>
+          <p className="descent-line">
+            Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000
+            canonical observations, 220 forward market-pack validation records, and 145 public
+            notary entries. The forward count accrues; the live coverage endpoint is current. No pack
+            is yet SUPPORTED or evidence-eligible, and Seiche serves zero validated backtests.
+          </p>
         </div>
 
         <button className="descent-enter" onClick={leave}>

@@ -435,7 +435,7 @@ That gap is this lab: Seiche reads the plumbing, LiquiLens ranks the banks
 standing on it, Undertow prices the exits. All of it runs on free public
 data. The misses are published beside the hits. Read those first. The
 sibling boards: LiquiLens at https://liquilens.in and Undertow at
-https://t.me/undertow_LiquiLens_bot.
+https://liquilens-undertow.com.
 
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide.html; the versioned methodology page, with citations, a
@@ -454,6 +454,27 @@ the eligibility flags beside it. It is not validated-backtest evidence. Its
 stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
+
+Evidence receipt captured 2026-08-09 at 14:36 UTC: the v2 data plane has 10 market packs,
+87,000 canonical observations across 28 role series, and 220 forward market-pack
+validation records. The US pack is VALIDATING, nine packs are REFERENCE, no pack
+is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. The public
+notary has 145 entries. Query the live coverage receipt at
+https://api.seiche.info/api/v2/coverage because forward records continue to accrue.
+
+Seiche currently serves zero validated backtests. Its four historical diagnostic
+windows overlap and stay separate: Bathymetry has 1,537 scored days and 50 events;
+ML has 1,583 out-of-sample days and 63 events, plus 6,930 pretraining rows and 425
+events; Swell has 1,673 scored days and 68 events; Tide Tables has 1,893 scored days
+and 96 events. Every window is FINAL_VINTAGE_CONSTRUCTION_PIT with
+validated_backtest=false and real_money_eligible=false.
+
+The independent LiquiLens Lab receipt has a different unit. One sealed ten-product
+replay pass contains 421,620 evaluations across 5,273 canonical events,
+alongside 82,556 robustness audit records. Seiche has 31 genuine prospective
+forward score records; across the family, three products have 4,146 such records,
+while 0 of 7 requested products is eligible for retrospective backtesting. Do not
+call the 421,620 evaluations backtests.
 
 The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
 and https://t.me/LiquidityLabDesk for the public channel. They deliver the

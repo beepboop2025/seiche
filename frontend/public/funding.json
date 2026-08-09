@@ -15,13 +15,13 @@
         {
             "guid": "seiche",
             "name": "Seiche",
-            "description": "A free public terminal that monitors stress building in the dollar funding system, the repo and money markets that seized in September 2019 and March 2020. Twenty two engines fuse free public data (FRED, NY Fed, OFR, Treasury FiscalData, CFTC, ECB) into a forward looking read published twice a day. Every daily forecast is written into a tamper evident, as published ledger; every engine validates walk forward against naive benchmarks and prints the verdict even when it loses. Replayed point in time to September 12 2019, the board flags September 16, the day the repo market broke, as a crunch window. Around 200 automated tests guard the codebase, including one that mechanically forbids look ahead. The terminal, the twice daily letter and the sealed record are free and stay free.",
+            "description": "A free public terminal that monitors stress building in dollar funding and repo markets. The current 64-module engine suite turns public FRED, New York Fed, OFR, Treasury FiscalData, CFTC, ECB and EIA inputs into a static board snapshot every four hours and one daily letter. Forward publications enter a tamper-evident as-published record. Historical diagnostics publish their verdicts and misses but are final/current-vintage construction-PIT, not validated backtests. The complete backend suite gates publication. The terminal, Time Machine and dispatch archive are free and stay free.",
             "webpageUrl": {
                 "url": "https://seiche.info"
             },
             "repositoryUrl": {
-                "url": "https://github.com/LiquiLensLabs/seiche",
-                "wellKnown": "https://github.com/LiquiLensLabs/seiche/blob/main/.well-known/funding-manifest-urls"
+                "url": "https://github.com/beepboop2025/seiche",
+                "wellKnown": "https://github.com/beepboop2025/seiche/blob/main/.well-known/funding-manifest-urls"
             },
             "licenses": [
                 "spdx:AGPL-3.0-or-later"
@@ -66,7 +66,7 @@
                 "guid": "methods-review",
                 "status": "active",
                 "name": "Independent methods review",
-                "description": "Two quantitative researchers audit the engines and the backtest protocol. Findings published unedited, whatever they say.",
+                "description": "Two quantitative researchers audit the engines, historical-diagnostic boundary and prospective validation protocol. Findings published unedited, whatever they say.",
                 "amount": 3000,
                 "currency": "USD",
                 "frequency": "one-time",

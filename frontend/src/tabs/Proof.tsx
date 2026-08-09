@@ -1,7 +1,7 @@
 import { P } from "../palette";
 import Chart from "../Chart";
 import Wrecks from "../Wrecks";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, ordinal } from "../lib";
 import Notary from "../cards/Notary";
 
 function OrthogonalCard({ o }: { o: Any }) {
@@ -250,7 +250,7 @@ export default function Proof({ snap }: { snap: Any }) {
           <div className="item"><div className="k">day precision</div>
             <div className="v">{fmt((cap.precision ?? 0) * 100, 0)}% <span className="dimsmall">(serially correlated)</span></div></div>
           <div className="item"><div className="k">median alert run-up</div><div className="v">{fmt(cap.median_lead_d, 0)}d</div></div>
-          <div className="item"><div className="k">alert line</div><div className="v">≥{fmt(cap.alert_pctl, 0)}th pctl</div></div>
+          <div className="item"><div className="k">alert line</div><div className="v">≥{ordinal(cap.alert_pctl)} pctl</div></div>
           <div className="item"><div className="k">event def</div><div className="v">+{fmt(cap.spike_def_bp, 0)}bp · n={cap.n_events}</div></div>
         </div>
         <Chart
@@ -294,7 +294,7 @@ export default function Proof({ snap }: { snap: Any }) {
         <div className="kv" style={{ marginBottom: 8 }}>
           <div className="item"><div className="k">live index now</div><div className="v">{fmt(snap.engines?.composite?.value, 1)}</div></div>
           <div className="item"><div className="k">lite index now</div><div className="v">{fmt(hist.current?.value, 1)}</div></div>
-          <div className="item"><div className="k">lite pctl</div><div className="v">{fmt(hist.current?.pctl, 0)}th</div></div>
+          <div className="item"><div className="k">lite pctl</div><div className="v">{ordinal(hist.current?.pctl)}</div></div>
         </div>
         <table className="mini">
           <thead><tr><th>lite component</th><th>weight</th></tr></thead>

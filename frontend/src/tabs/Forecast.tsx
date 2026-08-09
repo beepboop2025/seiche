@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method, Roll } from "../lib";
+import { Any, fmt, Fault, Method, ordinal, Roll } from "../lib";
 import ModelCourt from "../cards/ModelCourt";
 import "../styles-fx.css";
 
@@ -82,8 +82,8 @@ function BreakwaterCard({ b }: { b: Any }) {
         <div className={`tellvalue ${(b.rescue_proximity ?? 0) >= 90 ? "hot" : ""}`}>{fmt(b.rescue_proximity, 0)}%</div>
         <div>
           <div className="tellreading">
-            rescue proximity — board at the {fmt(b.current?.spread_pctl, 0)}th pctl vs revealed threshold
-            median {fmt(t.median_pctl, 0)}th (range {fmt(t.min_pctl, 0)}–{fmt(t.max_pctl, 0)}, n={t.n})
+            rescue proximity — board at the {ordinal(b.current?.spread_pctl)} pctl vs revealed threshold
+            median {ordinal(t.median_pctl)} (range {fmt(t.min_pctl, 0)}–{fmt(t.max_pctl, 0)}, n={t.n})
           </div>
           <div className="coverage">{b.reading} · {b.posture}</div>
         </div>
@@ -95,7 +95,7 @@ function BreakwaterCard({ b }: { b: Any }) {
             <tr key={r.date}>
               <td>{r.date} — {r.label}{r.dating && r.dating !== "public record" && <span className="dimsmall"> †{r.dating}</span>}</td>
               <td>{r.kind}</td>
-              <td className="num">{fmt(r.spread_pctl_before, 0)}th</td>
+              <td className="num">{ordinal(r.spread_pctl_before)}</td>
               <td className="num">{fmt(r.spread_max20_bp, 1)}bp</td>
               <td className="num">{r.srf_max20_b != null ? `$${fmt(r.srf_max20_b, 1)}B` : "—"}</td>
             </tr>
@@ -282,9 +282,9 @@ function BathymetryCard({ b }: { b: Any }) {
             stiffness {fmt(fl.stiffness, 2)}/bd · escape barrier{" "}
             <b style={{ color: (fl.barrier_kt ?? 99) < 2 ? P.stress : undefined }}>{fmt(fl.barrier_kt, 1)} k<sub>B</sub>T</b> ·
             τ (slowest relaxation) {fmt(sp.tau_bd, 1)}bd
-            {sp.tau_pctl != null && <b style={{ color: sp.tau_pctl >= 80 ? P.stress : undefined }}> ({fmt(sp.tau_pctl, 0)}th pctl)</b>} ·
+            {sp.tau_pctl != null && <b style={{ color: sp.tau_pctl >= 80 ? P.stress : undefined }}> ({ordinal(sp.tau_pctl)} pctl)</b>} ·
             entropy production {fmt(ar.sigma_nats_bd, 3)} nats/bd
-            {ar.pctl != null && <b style={{ color: ar.pctl >= 80 ? P.stress : undefined }}> ({fmt(ar.pctl, 0)}th pctl)</b>}
+            {ar.pctl != null && <b style={{ color: ar.pctl >= 80 ? P.stress : undefined }}> ({ordinal(ar.pctl)} pctl)</b>}
           </div>
           <div className="coverage" style={{ color: beats ? P.calm : P.erosion }}>
             {v.ok
@@ -341,7 +341,7 @@ export function TideTablesCard({ t }: { t: Any }) {
           <div className="coverage">
             base rate {fmt(odds.base_rate * 100, 0)}% · lift {fmt(odds.lift, 1)}× ·
             water <b style={{ color: uncharted ? P.stress : undefined }}>{nov.verdict}</b>
-            {nov.pctl != null ? ` (NN-distance ${fmt(nov.pctl, 0)}th pctl)` : ""} · asof {t.asof}
+            {nov.pctl != null ? ` (NN-distance ${ordinal(nov.pctl)} pctl)` : ""} · asof {t.asof}
           </div>
           <div className="coverage" style={{ color: beats ? P.calm : P.stress }}>
             hindcast: {skill.ok

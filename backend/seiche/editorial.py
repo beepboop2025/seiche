@@ -12,6 +12,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
+from seiche.dispatch_daily import _ordinal
+
 
 SCHEMA = "seiche.editorial.v1"
 QUALITY_SCHEMA = "seiche.data_quality.v1"
@@ -230,7 +232,7 @@ def _countercase(engines: dict, deep: dict, headline: dict) -> list[dict]:
     tell = deep.get("tell") or {}
     if tell.get("ok") and _f(tell.get("market_pctl")) is not None:
         rows.append({
-            "claim": f"Market stress sits at only the {_fmt(tell.get('market_pctl'), 0)}th percentile of its own history.",
+            "claim": f"Market stress sits at only the {_ordinal(tell.get('market_pctl'))} percentile of its own history.",
             "asof": _asof(tell),
             "source": "VIX, credit spreads and rates volatility",
         })

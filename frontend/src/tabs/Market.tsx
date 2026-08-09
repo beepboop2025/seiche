@@ -1,6 +1,6 @@
 import { P } from "../palette";
 import Chart from "../Chart";
-import { Any, fmt, Fault, Method } from "../lib";
+import { Any, fmt, Fault, Method, ordinal } from "../lib";
 import UndertowCard from "../UndertowCard";
 
 function TellCard({ t }: { t: Any }) {
@@ -16,13 +16,13 @@ function TellCard({ t }: { t: Any }) {
         </div>
         <div>
           <div className="tellreading">{t.reading}</div>
-          <div className="coverage">plumbing {fmt(t.plumbing_pctl, 0)}th pctl · market {fmt(t.market_pctl, 0)}th pctl · asof {t.asof}</div>
+          <div className="coverage">plumbing {ordinal(t.plumbing_pctl)} pctl · market {ordinal(t.market_pctl)} pctl · asof {t.asof}</div>
         </div>
         <div className="kv" style={{ marginLeft: "auto" }}>
           {Object.entries<Any>(t.components ?? {}).map(([k, c]) => (
             <div className="item" key={k}>
               <div className="k">{c.label}</div>
-              <div className="v">{fmt(c.last, 2)} <span className="dimsmall">({fmt(c.pctl, 0)}th)</span></div>
+              <div className="v">{fmt(c.last, 2)} <span className="dimsmall">({ordinal(c.pctl)})</span></div>
             </div>
           ))}
         </div>

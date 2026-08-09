@@ -15,6 +15,7 @@ the kind of phrase that stays grammatical while going false.
 """
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -90,3 +91,23 @@ def test_server_json_describes_the_public_flag_accurately():
     assert desc, "SEICHE_MCP_PUBLIC is no longer documented in server.json"
     missing = sorted(n for n in PUBLIC if n not in desc)
     assert not missing, f"server.json omits free tools: {missing}"
+
+
+def test_frontend_percentiles_use_the_shared_ordinal_helper():
+    """Prevent live values such as 62 from rendering as the malformed `62th`."""
+    offenders = []
+    for path in (REPO / "frontend" / "src").rglob("*.tsx"):
+        for line_no, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"}\s*th\b", line):
+                offenders.append(f"{path.relative_to(REPO)}:{line_no}: {line.strip()}")
+    assert not offenders, "frontend hard-codes an ordinal suffix:\n" + "\n".join(offenders)
+
+
+def test_account_copy_matches_the_authenticated_mcp_surface():
+    """Accounts may hold alerts, but bearer identity also gates MCP tools."""
+    account = (REPO / "frontend" / "src" / "tabs" / "Account.tsx").read_text()
+    support = (REPO / "frontend" / "public" / "support.html").read_text()
+    assert "exists for exactly one thing" not in account
+    assert len(GATED) == 5
+    assert "five additional hosted MCP tools" in account
+    assert "five bearer-token MCP tools" in support

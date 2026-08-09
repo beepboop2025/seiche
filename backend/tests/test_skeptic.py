@@ -227,7 +227,9 @@ def test_replay_section_carries_both_exact_commands():
     # and the route that needs nothing from the operator but the source
     assert "git clone https://github.com/beepboop2025/seiche" in text
     assert 'assemble.snapshot_asof(&quot;2025-12-31&quot;)' in text
-    assert "/api/pit" in text
+    # The public allow-list exposes the hash-linked notary, not the private
+    # publication-vintage PIT route.
+    assert "/api/notary" in text
     assert "final-vintage data" in text
 
 
