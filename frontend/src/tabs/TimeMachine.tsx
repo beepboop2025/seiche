@@ -61,8 +61,10 @@ export default function TimeMachine({ live }: { live: boolean }) {
       <div className="card span12" style={{ marginTop: 18 }}>
         <h2>Time Machine</h2>
         <div className="sub">
-          every engine is a pure function of its inputs — truncate the inputs, replay the board.
-          Pick any date (coverage ≈ 2018-06 onward; full fidelity 2019+):
+          construction-PIT reconstruction: each engine receives observations dated on or before the
+          selected date. Inputs are final/current-vintage, not the publication vintage visible then,
+          so this is not validated-backtest evidence. Pick any date (coverage ≈ 2018-06 onward;
+          full fidelity 2019+):
         </div>
         <div className="tmcontrols">
           <input
@@ -88,7 +90,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
               <div>
                 <div className={`regime ${c.regime}`}>{c.regime ?? "?"}</div>
                 <div className="coverage" style={{ marginTop: 6 }}>
-                  board as of <b>{replay.asof}</b> · coverage {fmt(c.coverage_pct, 0)}%
+                  reconstruction date <b>{replay.asof}</b> · coverage {fmt(c.coverage_pct, 0)}%
                 </div>
               </div>
             </div>
@@ -104,7 +106,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
           </div>
           <div className="grid">
             <div className="card span6">
-              <h2>Crunch calls made that day</h2>
+              <h2>Reconstructed crunch windows</h2>
               {(replay.engines.weather?.crunch_windows ?? []).length === 0 ? (
                 <div className="allclear">▮ no crunch windows were flagged</div>
               ) : (
@@ -115,7 +117,7 @@ export default function TimeMachine({ live }: { live: boolean }) {
               <div className="method">{replay.vintage_note}</div>
             </div>
             <div className="card span6">
-              <h2>Echo, as heard then</h2>
+              <h2>Reconstructed analogs</h2>
               {replay.engines.echo?.ok ? (
                 <table className="mini">
                   <thead><tr><th>episode</th><th>window</th><th>similarity</th></tr></thead>

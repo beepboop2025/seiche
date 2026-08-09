@@ -1,9 +1,11 @@
 """Historical index reconstruction — the backtestable core of the Seiche Index.
 
 Rebuilds a daily "Seiche-lite" index over the full sample using EXPANDING-
-window standardization only: the value on any date uses only data available
-on that date (no look-ahead in any z-score or percentile). This is the series
-the PROOF lab, The Tell and the Playbook all run on.
+window standardization only: each transform at date T uses observations dated
+on or before T (no look-ahead in any z-score or percentile). Source values are
+final/current-vintage, not necessarily the publication vintage visible at T,
+so the result is construction-PIT and not validated-backtest evidence. This is
+the series the PROOF lab, The Tell and the Playbook all run on.
 
 Honest scope: only components whose live engines are point-in-time
 reconstructable are included — tails, kink (reserves/GDP percentile proxy),

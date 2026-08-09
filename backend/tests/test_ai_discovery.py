@@ -96,3 +96,42 @@ def test_search_and_answer_crawlers_are_explicitly_welcome():
     for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
                   "Claude-User", "PerplexityBot", "Google-Extended"):
         assert f"User-agent: {agent}\nAllow: /" in robots
+
+
+def test_public_historical_copy_keeps_the_vintage_boundary_attached():
+    """A dated reconstruction must never read like an archived publication.
+
+    The forward PIT ledger is genuinely as-published. Time Machine and PROOF
+    are a different evidence class: chronological transforms over final/current
+    source vintages. This checks the generated pages and the interactive copy so
+    either deployment path fails if the distinction is lost.
+    """
+    paths = [
+        PUBLIC / "guide.html",
+        PUBLIC / "llms.txt",
+        PUBLIC / "methodology.html",
+        PUBLIC / "skeptic.html",
+        ROOT / "frontend" / "src" / "tabs" / "TimeMachine.tsx",
+        ROOT / "frontend" / "src" / "tabs" / "Proof.tsx",
+        ROOT / "frontend" / "src" / "Wrecks.tsx",
+    ]
+    text = "\n".join(path.read_text() for path in paths)
+    lowered = text.lower()
+    for stale_claim in (
+        "replay the board as it stood",
+        "whole board replayed as it stood",
+        "the point-in-time proof",
+        "the backtest record",
+        "the value on any date uses only data available on that date",
+    ):
+        assert stale_claim not in lowered, stale_claim
+    assert "final/current-vintage" in lowered
+    assert "construction-pit" in lowered
+    assert "not validated-backtest evidence" in lowered
+
+
+def test_proof_failure_is_labeled_as_withheld_evidence_not_engine_failure():
+    proof = (ROOT / "frontend" / "src" / "tabs" / "Proof.tsx").read_text()
+    failure_branch = proof[proof.index("if (!bt.ok)"):proof.index("const cap", proof.index("if (!bt.ok)"))]
+    assert "historical diagnostic withheld" in failure_branch
+    assert "ENGINE DOWN" not in failure_branch

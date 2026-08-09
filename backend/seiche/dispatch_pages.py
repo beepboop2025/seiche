@@ -449,9 +449,11 @@ read the derived engines and want a bearer token: funding_stress_forecast,
 replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
 holds can be downloaded as CSV with provenance headers; the catalog is at
 https://api.seiche.info/api/series/index.json. The PROOF scoreboard publishes
-the backtest record, hits and misses both, and states the competence boundary:
-stress that builds inside the plumbing can be seen early, shocks that arrive
-from outside it cannot.
+a final/current-vintage construction-PIT diagnostic, hits and misses both, and
+the eligibility flags beside it. It is not validated-backtest evidence. Its
+stated competence boundary is narrower: stress that builds inside the plumbing
+can be investigated historically; shocks that arrive from outside it cannot be
+claimed as early warnings.
 
 The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
 and https://t.me/LiquidityLabDesk for the public channel. They deliver the

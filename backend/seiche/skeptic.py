@@ -213,7 +213,7 @@ def _leak_section(deep: dict) -> tuple[str, bool]:
                     f"<p>No break on the table buys skill today. The best any leaky variant "
                     f"manages is {b_auroc} event AUROC against the honest {c_auroc} "
                     f"({lg_txt}), which is the pleasant version of this result: the "
-                    f"point-in-time discipline is also the better instrument.</p>")
+                    f"chronological-transform discipline is also the better instrument.</p>")
 
     body = ["<table>",
             "<tr><th>toggle</th><th>what breaks</th><th>AUROC</th><th>recall</th>"
@@ -261,7 +261,7 @@ def _leak_section(deep: dict) -> tuple[str, bool]:
         "pipeline discipline, not vendor revisions. And note the awkward direction: "
         "if the real pipeline were already peeking forward, the forward-peeking "
         "toggle would buy almost nothing, so read this table next to the "
-        "point-in-time record in section 3, not instead of it."))
+        "forward as-published record in section 3, not instead of it."))
 
     return "\n".join(head + body + tail), True
 
@@ -389,7 +389,7 @@ def _orthogonal_section(deep: dict) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 # 3. the construction-PIT replay
 # ---------------------------------------------------------------------------
-_REPLAY_CMD = """# 1. from the hosted board: rebuild it as it stood on a past date
+_REPLAY_CMD = """# 1. from the hosted board: run a construction-PIT reconstruction
 # (a date nobody has replayed lately is rebuilt from scratch, so give it room)
 curl -s --max-time 600 https://api.seiche.info/api/asof/REPLAY_DATE \\
   | python3 -c 'import json,sys; d=json.load(sys.stdin); \\
@@ -439,12 +439,13 @@ def _pit_section(deep: dict) -> tuple[str, bool]:
     out = [
         "<p>Every engine on this board is a pure function of its input series. No "
         "engine fetches, no engine remembers. That is not a style preference, it is "
-        "what makes the next paragraph possible: truncate every series at a past "
-        "date, rerun the same code, and what comes out is the board as it stood on "
-        "that date. Nothing is patched in and nothing is carried back.</p>",
+        "what makes the next paragraph possible: truncate every series to "
+        "observations dated on or before a past date and rerun the same code. What "
+        "comes out is a construction-PIT reconstruction, not the publication vintage "
+        "that was visible on screens that day. Nothing dated later is carried back.</p>",
         f"<p>So do not take the sections above on trust. Rebuild the board yourself "
-        f"for {html.escape(date)}, {html.escape(clause)}, and read the composite it "
-        f"was printing that day:</p>",
+        f"for {html.escape(date)}, {html.escape(clause)}, and read the composite "
+        f"reconstructed for that date:</p>",
         f"<div class='cmd'>{html.escape(cmd)}</div>",
         "<p>The whole payload comes back, every engine, so any claim about any past "
         "day is checkable against the same code that made it. Coverage starts around "
@@ -461,7 +462,8 @@ def _pit_section(deep: dict) -> tuple[str, bool]:
         "reconstruction at all.</p>",
     ]
     out.append(_limit(
-        "Replays run on final-vintage data. Daily market prints are effectively "
+        "Replays run on final/current-vintage data and are not validated-backtest "
+        "evidence. Daily market prints are effectively "
         "unrevised, but weekly H.4.1 aggregates are lightly revised against what "
         "was on screens that day, and the payload says so in its own vintage note. "
         "The deep analytics layer is excluded from replays on purpose, because its "
@@ -607,13 +609,13 @@ def _falsifier_items(deep: dict) -> list[str]:
         "stops buying anything while published skill rises, the honest reading is "
         "not that we got better; it is that the real pipeline started peeking.",
         "<strong>The as-published record diverges from the reconstruction.</strong> "
-        "The forward-accruing record and the backtest cover the same dates from "
+        "The forward-accruing record and historical diagnostic cover the same dates from "
         "different directions. If the reconstruction is systematically kinder to the "
         "board than the record it accrued live, the reconstruction is flattering and "
-        "the backtest number should be retired.",
+        "the diagnostic number should be retired.",
         "<strong>A replay cannot be reproduced.</strong> The code is AGPL and public. "
         "If someone runs it against the same free public series and cannot reproduce "
-        "a published past board within revision noise, the point-in-time claim is "
+        "the same construction-PIT result within revision noise, the reconstruction claim is "
         "false and everything above it is worth less.",
     ]
     return items
@@ -714,7 +716,7 @@ filling the space with confident prose.</p>
 <h2>2. The orthogonal test: the board without its own headline input</h2>
 {orth_html}
 
-<h2>3. The point-in-time proof: rebuild any past board yourself</h2>
+<h2>3. The construction-PIT reconstruction: rerun a past date yourself</h2>
 {pit_html}
 
 <h2>4. The notary: proof a past reading was not edited later</h2>

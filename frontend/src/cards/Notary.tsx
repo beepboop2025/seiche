@@ -439,12 +439,14 @@ export default function Notary({ snap }: { snap: Any }) {
         <a href={`${API_BASE}/api/attest/pubkey`} style={{ color: "var(--dim)" }}>the signing key</a>
       </div>
       <div className="dimsmall" style={{ marginTop: 6 }}>
-        replay: the Time Machine tab rebuilds the entire board as of a past date through{" "}
+        reconstruction: the Time Machine tab reruns the board for a past date through{" "}
         <a href={`${API_BASE}/api/asof/${replayDate}`} style={{ color: "var(--dim)" }}>
           /api/asof/{replayDate}
         </a>
-        . That call re-assembles every engine from final vintage inputs, so it runs on a board session
-        and takes its time; the instant, no login route to a past reading is the numbers file above.
+        . That call re-assembles every engine from final/current-vintage inputs dated on or before the
+        selected date. It is construction-PIT, not the publication vintage visible then, so it runs on
+        a board session and takes its time; the instant, no login route to an actually published past
+        reading is the numbers file above.
       </div>
 
       <Method>

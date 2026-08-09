@@ -79,7 +79,7 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
         </tbody>
       </table>
       <div className="dimsmall" style={{ marginTop: 6 }}>
-        cells = the index, point-in-time, colored by regime · external wrecks with the board off CALM:{" "}
+        cells = the final-vintage construction-PIT index, colored by regime · external wrecks with the board off CALM:{" "}
         <b>{w.summary?.external_with_board_elevated}</b> · crypto-native met by a quiet board:{" "}
         <b>{w.summary?.crypto_native_board_quiet}</b> — the board earns no credit for crypto-native
         failures, and this table says so. Hover a row for its honest reading.
@@ -95,8 +95,9 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
       <div className="free-proof">
         <div className="free-kicker">THE CRYPTO RECORD · what the board read as crypto broke</div>
         <div className="dimsmall" style={{ marginBottom: 8 }}>
-          Six labelled crypto stress episodes, the whole board replayed as it stood at T−21 to T−0
-          business days — no lookahead. When the shock came from outside crypto (a pandemic, a bank
+          Six labelled crypto stress episodes, reconstructed from final/current-vintage inputs dated
+          through T−21 to T−0 business days — no transform lookahead, but not an as-published vintage
+          replay. When the shock came from outside crypto (a pandemic, a bank
           run, a tariff cascade), the dollar-funding board was already off CALM. When crypto broke for
           its own reasons (Terra, FTX, a carry unwind), no lead is claimed.
         </div>
@@ -108,8 +109,8 @@ export default function Wrecks({ variant }: { variant: "card" | "free" }) {
     <div className="card span12">
       <h2>Wrecks — the crypto record</h2>
       <div className="sub">
-        the six crypto shipwrecks replayed point-in-time against the funding board — external wrecks
-        test transmission, crypto-native wrecks test specificity; context, not leads · raw JSON at{" "}
+        the six crypto shipwrecks reconstructed construction-PIT against the funding board — external
+        wrecks test transmission, crypto-native wrecks test specificity; context, not validated leads · raw JSON at{" "}
         <span className="dimsmall">/api/wrecks</span>
       </div>
       {table}

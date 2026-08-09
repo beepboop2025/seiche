@@ -1718,12 +1718,13 @@ async def _build_snapshot() -> dict:
 
 
 async def snapshot_asof(date: str) -> dict:
-    """Time Machine: the whole light board as it would have looked on `date`.
+    """Time Machine: construction-PIT reconstruction for `date`.
 
-    Engines are pure functions of their inputs, so truncated inputs replay the
-    past faithfully (with final-vintage data — stated in the payload). The
-    deep layer is excluded: its percentile bases are defined against the live
-    sample. Replays are blob-cached per date.
+    Engines are pure functions of their inputs, so the reconstruction truncates
+    to observations dated on or before `date`. Inputs are final/current-vintage,
+    not the publication vintage visible then; the payload states that boundary.
+    The deep layer is excluded because its percentile bases are defined against
+    the live sample. Replays are blob-cached per date.
     """
     asof = pd.Timestamp(date).normalize()
     key = f"asof:{asof.date().isoformat()}"

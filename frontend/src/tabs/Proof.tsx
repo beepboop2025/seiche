@@ -203,7 +203,20 @@ export default function Proof({ snap }: { snap: Any }) {
   const bt = snap.deep?.backtest ?? {};
   const hist = snap.deep?.history ?? {};
   const evidence = snap.historical_evidence ?? snap.deep?.historical_evidence ?? hist.vintage_evidence ?? {};
-  if (!bt.ok) return <div className="grid"><Fault name="PROOF" reason={bt.reason} span={12} /></div>;
+  if (!bt.ok) {
+    return (
+      <div className="grid">
+        <div className="card span12">
+          <h2>PROOF — historical diagnostic withheld</h2>
+          <div className="faults">{bt.reason ?? "the required evidence contract was not satisfied"}</div>
+          <div className="sub">
+            Seiche fails closed here: final/current-vintage construction-PIT inputs do not qualify as
+            validated-backtest evidence without a complete ALFRED or as-published capture manifest.
+          </div>
+        </div>
+      </div>
+    );
+  }
   const cap = bt.event_capture ?? {};
   const s = bt.sample ?? {};
 

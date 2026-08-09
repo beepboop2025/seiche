@@ -71,10 +71,11 @@ That is enough to use Seiche well. The rest is depth for when you want it.
 - **RESONANCE** — whether the same routine calendar pressure is producing a
   bigger wave than it used to. A bigger wave from the same push means the system
   is more fragile than it looks.
-- **TIME MACHINE** — replay the board as it stood on any past date, so you can
-  check for yourself what it was saying before a known event.
-- **PROOF** — the honest scorecard: how often the signal fired before real
-  events, measured fairly, with the misses shown next to the hits.
+- **TIME MACHINE** — run a construction-PIT reconstruction for a past date
+  using final/current-vintage observations dated on or before it. This is not
+  the publication vintage that was visible then.
+- **PROOF** — the historical diagnostic: hits, misses and eligibility flags
+  shown together. It is not currently validated-backtest evidence.
 - **SYSTEM** — data health. Which feeds are fresh, stale or down right now.
 
 ## The engine names, translated
@@ -110,7 +111,8 @@ Seiche names its parts after the sea. Here is what each one really does.
 ## Why you can trust it
 
 - **It shows its work.** Every signal comes with the method and the source, and
-  you can replay the whole board for any past date in TIME MACHINE.
+  TIME MACHINE lets you rerun a dated construction-PIT reconstruction with its
+  vintage limit attached.
 - **It cannot quietly rewrite history.** Every daily reading is sealed the day it
   is made into a tamper proof record. A bad call stays on the record.
 - **It forbids cheating.** A test in the code mechanically blocks the common

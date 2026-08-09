@@ -91,7 +91,7 @@ def test_page_carries_every_section_and_the_two_questions():
     text = _page()
     for heading in ("1. The leak audit",
                     "2. The orthogonal test",
-                    "3. The point-in-time proof",
+                    "3. The construction-PIT reconstruction",
                     "4. The notary",
                     "5. What would falsify the whole board"):
         assert heading in text
