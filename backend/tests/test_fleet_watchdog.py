@@ -292,6 +292,27 @@ def test_writable_by_another_account_is_not_trusted(monkeypatch, tmp_path):
     assert "unsafe" in problems[0]
 
 
+def test_heartbeat_owned_by_another_account_is_rejected(monkeypatch, tmp_path):
+    path = _heartbeat(tmp_path, monkeypatch)
+    monkeypatch.setattr(wd.os, "geteuid", lambda: path.stat().st_uid + 1)
+
+    problems = wd.check_mac_heartbeat()
+
+    assert len(problems) == 1
+    assert "not owned by the watchdog account" in problems[0]
+
+
+def test_hard_linked_heartbeat_is_rejected(monkeypatch, tmp_path):
+    path = _heartbeat(tmp_path, monkeypatch)
+    alias = tmp_path / "mac.heartbeat.alias"
+    os.link(path, alias)
+
+    problems = wd.check_mac_heartbeat()
+
+    assert len(problems) == 1
+    assert "has multiple hard links" in problems[0]
+
+
 def test_unreadable_nyx_heartbeat_fails_loud(monkeypatch, tmp_path):
     path = _heartbeat(tmp_path, monkeypatch)
     real_open = wd.os.open

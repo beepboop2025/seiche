@@ -83,9 +83,18 @@ server behind.
   out. So the Mac *checks in* every 5 min via `fleet-mac-heartbeat.sh` (a
   LaunchAgent). The box requires both a fresh mtime and exactly one `nyx=1`
   line. A fresh `nyx=0` therefore alerts instead of disguising a stopped
-  bridge as a healthy host. Missing, unreadable, symlinked, non-regular,
-  multiply linked, wrong-owner, or group/world-writable heartbeat files also
-  fail loud through the same deduplicated `mac-bots` alarm.
+  bridge as a healthy host. The producer emits `nyx=1` only when a successful
+  `launchctl print` reports the bridge's exact state as `running`; a loaded but
+  waiting/exited job and a missing job both emit `nyx=0`. Missing, unreadable,
+  symlinked, non-regular, multiply linked, wrong-owner, or
+  group/world-writable heartbeat files also fail loud through the same
+  deduplicated `mac-bots` alarm.
+- The SSH writer connects as root, keeps its destination directory root-only,
+  creates the heartbeat there as a fresh regular file, sets owner `0:0` and
+  mode `0644`, then
+  atomically renames it over the public path. Readers therefore see either the
+  complete old heartbeat or the complete new one; an old symlink or hard-linked
+  destination is replaced rather than followed or modified in place.
 
 ## Configuration (kept out of git)
 
@@ -111,6 +120,10 @@ and one on the Mac:
 mkdir -p ~/.config/fleet-watchdog
 echo 'root@<box-host>' > ~/.config/fleet-watchdog/box
 ```
+
+The `root@` account is part of the heartbeat contract: the producer refuses to
+publish a replacement if it cannot enforce the root ownership and safe mode
+required by the receiver.
 
 `/etc/fleet-watchdog.json`, worked example (illustrative names, not the live
 fleet):
