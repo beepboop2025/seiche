@@ -27,6 +27,9 @@ from seiche.markets.reference import pre_support_capabilities, rate_instrument
 CALENDAR = BusinessCalendar(
     "JP-BOJ-NET",
     "Asia/Tokyo",
+    valid_from_year=1998,
+    valid_to_year=2035,
+    source_uri="https://www.boj.or.jp/en/about/outline/holi.htm",
     holiday_provider=japan_bank_holidays,
 )
 _CLOCK = PublicationClock(
@@ -74,7 +77,8 @@ PACK = MarketPack(
         rate_instrument("JP.BOJ.TONA", "TONA", SemanticRole.UNSECURED_OVERNIGHT, "boj_rates", DayCountConvention.ACT_365),
         InstrumentSpec(
             "JP.BOJ.CURRENT_ACCOUNTS", "BOJ_CURRENT_ACCOUNTS", SemanticRole.RESERVE_BALANCES,
-            "boj_accounts", "JPY millions", CanonicalUnit.LOCAL_CURRENCY_MILLIONS,
+            "boj_accounts", "JPY 100 millions", CanonicalUnit.LOCAL_CURRENCY_MILLIONS,
+            100,
         ),
     ),
     capabilities=pre_support_capabilities(
@@ -84,7 +88,7 @@ PACK = MarketPack(
         EventSpec("RESERVE_MAINTENANCE_END", "reserve-maintenance period end", frozenset({SemanticRole.RESERVE_BALANCES, SemanticRole.UNSECURED_OVERNIGHT})),
         EventSpec("FISCAL_YEAR_END", "fiscal-year reporting turn", frozenset({SemanticRole.UNSECURED_OVERNIGHT})),
     ),
-    calibration_id="jp-jpy-reference-v0",
+    calibration_id="jp-jpy-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

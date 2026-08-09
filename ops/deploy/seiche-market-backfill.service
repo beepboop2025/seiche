@@ -1,0 +1,19 @@
+[Unit]
+Description=Seiche canonical official-data backfill
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app
+EnvironmentFile=/etc/seiche/market.env
+ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-backfill
+TimeoutStartSec=2h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/seiche
+UMask=0027

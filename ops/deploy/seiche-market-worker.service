@@ -1,0 +1,23 @@
+[Unit]
+Description=Seiche independent monetary-area collectors
+After=network-online.target postgresql.service seiche-market-backfill.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app
+EnvironmentFile=/etc/seiche/market.env
+ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker --poll-seconds 30
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/seiche
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

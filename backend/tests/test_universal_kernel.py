@@ -172,3 +172,20 @@ def test_truncation_does_not_change_an_earlier_point_in_time_result() -> None:
 
     assert at_sixty == replayed_at_sixty
     assert at_sixty.value == 100.0
+
+
+def test_policy_event_series_is_carried_forward_but_never_backward() -> None:
+    observations = [_rate(SemanticRole.POLICY_TARGET, 500, 0)]
+    observations.extend(
+        _rate(SemanticRole.SECURED_OVERNIGHT, 505 + offset, offset)
+        for offset in range(10)
+    )
+
+    result = policy_relative_overnight_pressure(
+        MarketPanel.from_observations(observations),
+        overnight_role=SemanticRole.SECURED_OVERNIGHT,
+        anchor_role=SemanticRole.POLICY_TARGET,
+    )
+
+    assert result.value == 14.0
+    assert result.event_cutoff.startswith("2025-01-10")

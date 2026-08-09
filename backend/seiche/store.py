@@ -96,6 +96,44 @@ def _conn() -> sqlite3.Connection:
              )"""
     )
     conn.execute(
+        """CREATE TABLE IF NOT EXISTS collector_runs (
+             run_id TEXT PRIMARY KEY,
+             market_id TEXT NOT NULL,
+             adapter_id TEXT NOT NULL,
+             status TEXT NOT NULL,
+             started_at TEXT NOT NULL,
+             finished_at TEXT NOT NULL,
+             observations_written INTEGER NOT NULL,
+             attempts INTEGER NOT NULL,
+             next_due TEXT NOT NULL,
+             fault TEXT)"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS collector_runs_latest
+             ON collector_runs (market_id, adapter_id, finished_at DESC)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS forward_validation_records (
+             record_id TEXT PRIMARY KEY,
+             snapshot_id TEXT NOT NULL UNIQUE,
+             market_id TEXT NOT NULL,
+             product TEXT NOT NULL,
+             event_cutoff TEXT NOT NULL,
+             knowledge_cutoff TEXT NOT NULL,
+             calibration_id TEXT NOT NULL,
+             created_at TEXT NOT NULL,
+             payload_hash TEXT NOT NULL,
+             previous_record_hash TEXT NOT NULL,
+             record_hash TEXT NOT NULL UNIQUE,
+             payload TEXT NOT NULL)"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS forward_records_chain
+             ON forward_validation_records (
+               market_id, product, created_at, record_id
+             )"""
+    )
+    conn.execute(
         """CREATE TABLE IF NOT EXISTS blobs (
              key TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)"""
     )
@@ -316,7 +354,10 @@ def seal_market_snapshot(
         (normalized_market, product, event, knowledge, calibration_id, payload_hash)
     )
     snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    sealed_at = datetime.now(UTC).isoformat(timespec="seconds")
+    # Two independent source completions may materialize different payloads at
+    # the same knowledge cutoff. Preserve subsecond insertion order so
+    # ``latest`` cannot nondeterministically return the earlier seal.
+    sealed_at = datetime.now(UTC).isoformat(timespec="microseconds")
     with _lock, _conn() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO market_snapshots
@@ -390,6 +431,132 @@ def load_market_snapshot_as_of(
             (market_id.upper(), product, cutoff),
         ).fetchone()
     return _snapshot_record(row)
+
+
+def save_collector_run(run: dict) -> str:
+    """Append one independently scheduled collector outcome."""
+
+    canonical = json.dumps(run, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    run_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    with _lock, _conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO collector_runs
+                 (run_id, market_id, adapter_id, status, started_at, finished_at,
+                  observations_written, attempts, next_due, fault)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                run_id,
+                str(run["market_id"]).upper(),
+                run["adapter_id"],
+                run["status"],
+                _canonical_utc(run["started_at"]),
+                _canonical_utc(run["finished_at"]),
+                int(run["observations_written"]),
+                int(run["attempts"]),
+                _canonical_utc(run["next_due"]),
+                run.get("fault"),
+            ),
+        )
+    return run_id
+
+
+def latest_collector_runs(market_id: str | None = None) -> list[dict]:
+    predicate = "WHERE market_id=?" if market_id is not None else ""
+    params = (market_id.upper(),) if market_id is not None else ()
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            f"""WITH ranked AS (
+                  SELECT run_id, market_id, adapter_id, status, started_at,
+                         finished_at, observations_written, attempts, next_due,
+                         fault,
+                         ROW_NUMBER() OVER (
+                           PARTITION BY market_id, adapter_id
+                           ORDER BY finished_at DESC, run_id DESC
+                         ) AS run_rank
+                    FROM collector_runs {predicate}
+                )
+                SELECT run_id, market_id, adapter_id, status, started_at,
+                       finished_at, observations_written, attempts, next_due, fault
+                  FROM ranked WHERE run_rank=1
+                  ORDER BY market_id, adapter_id""",
+            params,
+        ).fetchall()
+    keys = (
+        "run_id", "market_id", "adapter_id", "status", "started_at",
+        "finished_at", "observations_written", "attempts", "next_due", "fault",
+    )
+    return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def append_forward_record(
+    *,
+    snapshot_id: str,
+    market_id: str,
+    product: str,
+    event_cutoff: str | datetime,
+    knowledge_cutoff: str | datetime,
+    calibration_id: str,
+    payload: object,
+) -> str:
+    """Append one immutable, per-product hash-chain link for paper validation."""
+
+    market = market_id.upper()
+    event = _canonical_utc(event_cutoff)
+    knowledge = _canonical_utc(knowledge_cutoff)
+    payload_json = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    with _lock, _conn() as conn:
+        existing = conn.execute(
+            "SELECT record_id FROM forward_validation_records WHERE snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        if existing is not None:
+            return existing[0]
+        previous = conn.execute(
+            """SELECT record_hash FROM forward_validation_records
+                WHERE market_id=? AND product=?
+                ORDER BY created_at DESC, record_id DESC LIMIT 1""",
+            (market, product),
+        ).fetchone()
+        previous_hash = previous[0] if previous else "0" * 64
+        identity = "|".join(
+            (
+                snapshot_id, market, product, event, knowledge,
+                calibration_id, payload_hash, previous_hash,
+            )
+        )
+        record_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        record_id = record_hash
+        conn.execute(
+            """INSERT INTO forward_validation_records
+                 (record_id, snapshot_id, market_id, product, event_cutoff,
+                  knowledge_cutoff, calibration_id, created_at, payload_hash,
+                  previous_record_hash, record_hash, payload)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                record_id, snapshot_id, market, product, event, knowledge,
+                calibration_id, datetime.now(UTC).isoformat(timespec="seconds"),
+                payload_hash, previous_hash, record_hash, payload_json,
+            ),
+        )
+    return record_id
+
+
+def forward_record_count(market_id: str | None = None) -> int:
+    predicate = " WHERE market_id=?" if market_id is not None else ""
+    params = (market_id.upper(),) if market_id is not None else ()
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM forward_validation_records{predicate}",
+            params,
+        ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def load_series_as_of(

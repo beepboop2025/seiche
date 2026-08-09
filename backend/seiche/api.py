@@ -158,6 +158,21 @@ def _v2_capabilities(pack) -> tuple[dict[str, str], list[dict[str, Any]]]:
     return matrix, missing
 
 
+def _v2_collector_faults(pack) -> list[dict[str, Any]]:
+    return [
+        {
+            "market_id": pack.market_id,
+            "source": item["adapter_id"],
+            "status": item["status"],
+            "detail": item.get("fault"),
+            "finished_at": item["finished_at"],
+            "next_due": item["next_due"],
+        }
+        for item in get_repository().latest_collector_runs(pack.market_id)
+        if item["status"] != "SUCCESS"
+    ]
+
+
 def _v2_unavailable(pack, product: str, reason: str) -> JSONResponse:
     capabilities, missing = _v2_capabilities(pack)
     return JSONResponse(
@@ -181,7 +196,8 @@ def _v2_unavailable(pack, product: str, reason: str) -> JSONResponse:
             "evidence_eligibility": {"eligible": False, "reason": reason},
             "event_cutoff": None,
             "knowledge_cutoff": None,
-            "faults": [{"market_id": pack.market_id, "detail": reason}],
+            "faults": _v2_collector_faults(pack)
+            or [{"market_id": pack.market_id, "detail": reason}],
             "stale_inputs": [],
         },
     )
@@ -679,6 +695,7 @@ def markets_v2(response: Response):
     for pack in default_registry().list():
         summary = pack.summary()
         latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        payload = latest["payload"] if latest else None
         summary["latest_snapshot"] = (
             {
                 "snapshot_id": latest["snapshot_id"],
@@ -690,6 +707,28 @@ def markets_v2(response: Response):
             if latest
             else None
         )
+        summary["data_coverage"] = (
+            payload.get("data_coverage")
+            if payload
+            else {
+                "canonical_observations": get_repository().canonical_coverage(
+                    pack.market_id
+                )
+            }
+        )
+        summary["evidence_eligibility"] = (
+            payload.get("evidence_eligibility")
+            if payload
+            else {"eligible": False, "reason": "no sealed market snapshot"}
+        )
+        summary["event_cutoff"] = payload.get("event_cutoff") if payload else None
+        summary["knowledge_cutoff"] = (
+            payload.get("knowledge_cutoff") if payload else None
+        )
+        summary["faults"] = (
+            payload.get("faults", []) if payload else _v2_collector_faults(pack)
+        )
+        summary["stale_inputs"] = payload.get("stale_inputs", []) if payload else []
         markets.append(summary)
     return {
         "schema": "seiche.markets.v2",
@@ -794,6 +833,8 @@ def market_series_v2(market_id: str, response: Response, n: int = 1000):
         if item.staleness.value not in {"fresh", "aging"}
     ]
     capabilities, missing = _v2_capabilities(pack)
+    latest_gauge = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+    gauge_payload = latest_gauge["payload"] if latest_gauge else {}
     event_cutoff = max((item.event_time for item in observations), default=None)
     knowledge_cutoff = max((item.knowledge_time for item in observations), default=None)
     response.headers["Cache-Control"] = "public, max-age=60"
@@ -817,8 +858,8 @@ def market_series_v2(market_id: str, response: Response, n: int = 1000):
         },
         "event_cutoff": event_cutoff.isoformat() if event_cutoff else None,
         "knowledge_cutoff": knowledge_cutoff.isoformat() if knowledge_cutoff else None,
-        "faults": [],
-        "stale_inputs": stale,
+        "faults": gauge_payload.get("faults") or _v2_collector_faults(pack),
+        "stale_inputs": gauge_payload.get("stale_inputs") or stale,
         "instruments": instruments,
         "observations": records,
     }
@@ -865,6 +906,7 @@ def coverage_v2(response: Response):
     for pack in default_registry().list():
         capabilities, missing = _v2_capabilities(pack)
         latest = get_repository().load_latest_market_snapshot(pack.market_id, "gauge")
+        payload = latest["payload"] if latest else {}
         markets.append(
             {
                 "market_id": pack.market_id,
@@ -885,6 +927,17 @@ def coverage_v2(response: Response):
                     if latest
                     else None
                 ),
+                "evidence_eligibility": payload.get(
+                    "evidence_eligibility",
+                    {"eligible": False, "reason": "no sealed market snapshot"},
+                ),
+                "event_cutoff": payload.get("event_cutoff"),
+                "knowledge_cutoff": payload.get("knowledge_cutoff"),
+                "faults": payload.get("faults") or _v2_collector_faults(pack),
+                "stale_inputs": payload.get("stale_inputs") or [],
+                "forward_validation_records": get_repository().forward_record_count(
+                    pack.market_id
+                ),
                 "connectors": [
                     {
                         "adapter_id": adapter.adapter_id,
@@ -896,14 +949,31 @@ def coverage_v2(response: Response):
                 ],
             }
         )
+    global_snapshot = get_repository().load_latest_market_snapshot("GLOBAL", "tide")
     return {
         "schema": "seiche.coverage.v2",
         "markets": markets,
         "global_tide": (
-            "READY"
-            if get_repository().load_latest_market_snapshot("GLOBAL", "tide") is not None
+            global_snapshot["payload"].get("status", "UNAVAILABLE")
+            if global_snapshot
             else "UNAVAILABLE"
         ),
+        "global_tide_snapshot": (
+            {
+                "event_cutoff": global_snapshot["payload"].get("event_cutoff"),
+                "knowledge_cutoff": global_snapshot["payload"].get(
+                    "knowledge_cutoff"
+                ),
+                "evidence_eligibility": global_snapshot["payload"].get(
+                    "evidence_eligibility"
+                ),
+                "faults": global_snapshot["payload"].get("faults", []),
+                "stale_inputs": global_snapshot["payload"].get("stale_inputs", []),
+            }
+            if global_snapshot
+            else None
+        ),
+        "forward_validation_records": get_repository().forward_record_count(),
     }
 
 

@@ -44,12 +44,17 @@ async def test_collector_failure_is_isolated_by_market_and_source() -> None:
     healthy = _FakeAdapter("US-USD", "fred_daily", now)
     broken = _FakeAdapter("JP-JPY", "boj_rates", now, RuntimeError("upstream down"))
     written = []
+    recorded = []
 
     def writer(observations: tuple) -> int:
         written.append(observations)
         return len(observations)
 
-    supervisor = CollectorSupervisor(observation_writer=writer, sleep=_no_sleep)
+    supervisor = CollectorSupervisor(
+        observation_writer=writer,
+        run_writer=lambda run: recorded.append(run) or "run-id",
+        sleep=_no_sleep,
+    )
     supervisor.register(healthy)
     supervisor.register(broken)
     runs = await supervisor.run_due(now=now)
@@ -60,6 +65,10 @@ async def test_collector_failure_is_isolated_by_market_and_source() -> None:
     assert healthy.calls == 1
     assert broken.calls == 5  # initial attempt plus the pack-declared retries
     assert written == [()]
+    assert {(item["market_id"], item["status"]) for item in recorded} == {
+        ("US-USD", "SUCCESS"),
+        ("JP-JPY", "FAILED"),
+    }
 
 
 @pytest.mark.asyncio

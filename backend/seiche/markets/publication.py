@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from seiche.kernel.engines import KernelResult
+from seiche.kernel.engines import KernelResult, KernelStatus
 
 
 class PublicationStatus(StrEnum):
@@ -31,16 +31,35 @@ def decide_local_gauge_publication(
     components: Mapping[str, KernelResult],
     required_components: frozenset[str],
 ) -> PublicationDecision:
-    """Decide whether a partially covered local gauge may publish.
+    """Apply a strict required-component policy to a partial local gauge."""
 
-    TODO(learning): implement the 5-10 line product policy here. The safe
-    placeholder withholds the aggregate until a strict-vs-quorum policy is
-    chosen; individual component results remain publishable either way.
-    """
-
-    del components, required_components
+    missing = required_components - components.keys()
+    blocked = {
+        name
+        for name in required_components & components.keys()
+        if components[name].status
+        in {KernelStatus.UNAVAILABLE, KernelStatus.INSUFFICIENT_HISTORY}
+    }
+    if missing or blocked:
+        unavailable = ", ".join(sorted(missing | blocked))
+        return PublicationDecision(
+            PublicationStatus.UNAVAILABLE,
+            False,
+            f"required components unavailable: {unavailable}",
+        )
+    stale = {
+        name
+        for name in required_components
+        if components[name].status is KernelStatus.STALE
+    }
+    if stale:
+        return PublicationDecision(
+            PublicationStatus.DEGRADED,
+            True,
+            f"required components stale: {', '.join(sorted(stale))}",
+        )
     return PublicationDecision(
-        status=PublicationStatus.UNAVAILABLE,
-        publish_value=False,
-        reason="local-gauge publication policy has not been selected",
+        PublicationStatus.READY,
+        True,
+        "all required components are ready",
     )

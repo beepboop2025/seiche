@@ -202,9 +202,13 @@ def _ready(
 ) -> KernelResult:
     if not np.isfinite(value):
         return _missing(engine_id, roles, "calculation produced a non-finite value")
-    event_sets = [set(item.points.index) for item in inputs]
-    common_events = set.intersection(*event_sets) if event_sets else set()
-    cutoff = max(common_events) if common_events else min(
+    # Policy rates are event series: their last published value remains in
+    # force between decisions. A strict inner join would therefore compare an
+    # overnight rate only on policy-decision dates. The aligned panel carries
+    # values forward (never backward) and its last row is the true calculation
+    # cutoff knowable from the supplied point-in-time observations.
+    aligned = _aligned(inputs)
+    cutoff = aligned.index[-1] if not aligned.empty else min(
         item.latest.event_time for item in inputs
     )
     relevant = [
@@ -242,8 +246,8 @@ def _aligned(inputs: tuple[RoleSeries, ...]) -> pd.DataFrame:
     return pd.concat(
         [item.points.rename(item.role.value) for item in inputs],
         axis=1,
-        join="inner",
-    ).dropna()
+        join="outer",
+    ).sort_index().ffill().dropna()
 
 
 def policy_relative_overnight_pressure(

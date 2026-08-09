@@ -41,8 +41,18 @@ def test_pack_calendars_replace_generic_monday_friday() -> None:
     assert not registry.get("UK-GBP").settlement_calendar.is_business_day(date(2026, 12, 28))
     assert not registry.get("JP-JPY").settlement_calendar.is_business_day(date(2026, 9, 22))
 
+    assert not registry.get("IN-INR").settlement_calendar.is_business_day(
+        date(2026, 1, 26)
+    )
+    # Mainland China publishes working-weekend overrides; a generic weekday
+    # calendar cannot represent this Saturday settlement day.
+    assert registry.get("CN-CNY").settlement_calendar.is_business_day(
+        date(2026, 2, 14)
+    )
     with pytest.raises(CalendarUnavailableError):
-        registry.get("IN-INR").settlement_calendar.is_business_day(date(2026, 8, 10))
+        registry.get("CN-CNY").settlement_calendar.is_business_day(
+            date(2027, 1, 4)
+        )
 
 
 def test_publication_clocks_roll_over_local_holidays() -> None:

@@ -184,7 +184,7 @@ def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
     repository = get_repository()
     event_cutoff = overview["event_cutoff"]
     knowledge_cutoff = overview["knowledge_cutoff"]
-    return {
+    ids = {
         "overview": repository.seal_market_snapshot(
             market_id=PACK.market_id,
             product="overview",
@@ -204,3 +204,15 @@ def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
             payload=gauge,
         ),
     }
+    for product, snapshot_id in ids.items():
+        payload = overview if product == "overview" else gauge
+        repository.append_forward_record(
+            snapshot_id=snapshot_id,
+            market_id=PACK.market_id,
+            product=product,
+            event_cutoff=event_cutoff,
+            knowledge_cutoff=knowledge_cutoff,
+            calibration_id=PACK.calibration_id,
+            payload=payload,
+        )
+    return ids

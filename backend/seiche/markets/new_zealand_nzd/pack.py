@@ -19,10 +19,18 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import new_zealand_wellington_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-CALENDAR = BusinessCalendar("NZ-ESAS", "Pacific/Auckland")
+CALENDAR = BusinessCalendar(
+    "NZ-ESAS",
+    "Pacific/Auckland",
+    valid_from_year=2001,
+    valid_to_year=2035,
+    source_uri="https://www.govt.nz/browse/work/public-holidays-and-work/public-holidays-and-anniversary-dates/",
+    holiday_provider=new_zealand_wellington_holidays,
+)
 _POLICY_CLOCK = PublicationClock(
     "Pacific/Auckland", time(14, 0), 0, PublicationClockPrecision.SCHEDULED,
     CALENDAR.calendar_id,
@@ -69,13 +77,13 @@ PACK = MarketPack(
         rate_instrument("NZ.MARKET.BANK_BILL_3M", "NZ_BANK_BILL_3M", SemanticRole.CD_3M, "licensed_nzd_market", DayCountConvention.ACT_365),
     ),
     capabilities=pre_support_capabilities(
-        "the official overnight cash series mixes secured and unsecured trades; calendar, adapters, and role validation are incomplete"
+        "the official overnight cash series mixes secured and unsecured trades; canonical history and role validation are incomplete"
     ),
     events=(
         EventSpec("GOVERNMENT_SETTLEMENT", "government-security settlement", frozenset({SemanticRole.POLICY_TARGET})),
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.POLICY_TARGET})),
     ),
-    calibration_id="nz-nzd-reference-v0",
+    calibration_id="nz-nzd-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

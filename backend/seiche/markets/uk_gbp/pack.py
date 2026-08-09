@@ -21,14 +21,17 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
-from seiche.markets.calendars import england_wales_bank_holidays
+from seiche.markets.calendars import uk_england_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
 CALENDAR = BusinessCalendar(
     "GB-STERLING-SETTLEMENT",
     "Europe/London",
-    holiday_provider=england_wales_bank_holidays,
+    valid_from_year=1998,
+    valid_to_year=2035,
+    source_uri="https://www.gov.uk/bank-holidays",
+    holiday_provider=uk_england_holidays,
 )
 _SONIA_CLOCK = PublicationClock(
     "Europe/London", time(9, 0), 1, PublicationClockPrecision.EXACT,
@@ -90,7 +93,7 @@ PACK = MarketPack(
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.SECURED_OVERNIGHT, SemanticRole.UNSECURED_OVERNIGHT})),
         EventSpec("GILT_SETTLEMENT", "government-security settlement", frozenset({SemanticRole.RESERVE_BALANCES})),
     ),
-    calibration_id="gb-gbp-reference-v0",
+    calibration_id="uk-gbp-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

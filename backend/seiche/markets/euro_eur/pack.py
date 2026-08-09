@@ -26,7 +26,14 @@ from seiche.markets.calendars import target_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-CALENDAR = BusinessCalendar("TARGET", "Europe/Berlin", holiday_provider=target_holidays)
+CALENDAR = BusinessCalendar(
+    "TARGET",
+    "Europe/Berlin",
+    valid_from_year=1999,
+    valid_to_year=2035,
+    source_uri="https://www.ecb.europa.eu/paym/target/target-professional-use-documents-links/target-calendar/html/index.en.html",
+    holiday_provider=target_holidays,
+)
 _BENCHMARK_CLOCK = PublicationClock(
     "Europe/Berlin", time(8, 0), 1, PublicationClockPrecision.SCHEDULED, "TARGET"
 )
@@ -92,7 +99,7 @@ PACK = MarketPack(
         EventSpec("RESERVE_MAINTENANCE_END", "reserve-maintenance period end", frozenset({SemanticRole.SYSTEM_LIQUIDITY, SemanticRole.UNSECURED_OVERNIGHT})),
         EventSpec("TARGET_TURN", "settlement-calendar turn", frozenset({SemanticRole.UNSECURED_OVERNIGHT})),
     ),
-    calibration_id="ea-eur-reference-v0",
+    calibration_id="ea-eur-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

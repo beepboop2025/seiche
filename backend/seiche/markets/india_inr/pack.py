@@ -20,12 +20,18 @@ from seiche.markets.base import (
     ReserveMaintenanceSpec,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import india_maharashtra_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-# Mumbai clearing holidays vary by year and venue. Until an official dated
-# schedule is loaded, business-day methods fail rather than assuming weekdays.
-CALENDAR = BusinessCalendar("IN-MUMBAI-MONEY-MARKET", "Asia/Kolkata")
+CALENDAR = BusinessCalendar(
+    "IN-MUMBAI-MONEY-MARKET",
+    "Asia/Kolkata",
+    valid_from_year=2001,
+    valid_to_year=2035,
+    source_uri="https://www.rbi.org.in/Scripts/HolidayMatrixDisplay.aspx",
+    holiday_provider=india_maharashtra_holidays,
+)
 _CLOCK = PublicationClock(
     "Asia/Kolkata", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE,
     CALENDAR.calendar_id,
@@ -85,6 +91,15 @@ PACK = MarketPack(
             "rbi_official", "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
         ),
         InstrumentSpec(
+            "IN.RBI.CASH_BALANCES", "RBI_CASH_BALANCES", SemanticRole.RESERVE_BALANCES,
+            "rbi_official", "INR crore", CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+        ),
+        InstrumentSpec(
+            "IN.RBI.TRIPARTY_REPO_VOLUME", "RBI_TRIPARTY_REPO_VOLUME",
+            SemanticRole.REPO_VOLUME, "rbi_official", "INR crore",
+            CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
+        ),
+        InstrumentSpec(
             "IN.RBI.FACILITY_TAKEUP", "RBI_FACILITY_TAKEUP",
             SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP, "rbi_official", "INR crore",
             CanonicalUnit.LOCAL_CURRENCY_MILLIONS, 10,
@@ -96,7 +111,7 @@ PACK = MarketPack(
         ),
     ),
     capabilities=pre_support_capabilities(
-        "official calendar, canonical collectors, and point-in-time validation are incomplete"
+        "canonical collection history and point-in-time validation are incomplete"
     ),
     events=(
         EventSpec("RESERVE_MAINTENANCE_END", "reserve-maintenance period end", frozenset({SemanticRole.SYSTEM_LIQUIDITY, SemanticRole.UNSECURED_OVERNIGHT})),
@@ -104,7 +119,7 @@ PACK = MarketPack(
         EventSpec("GOVERNMENT_AUCTION", "government-security auction and settlement", frozenset({SemanticRole.GOVERNMENT_CASH_BALANCE, SemanticRole.TBILL_3M})),
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.SECURED_OVERNIGHT, SemanticRole.UNSECURED_OVERNIGHT})),
     ),
-    calibration_id="in-inr-reference-v0",
+    calibration_id="in-inr-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

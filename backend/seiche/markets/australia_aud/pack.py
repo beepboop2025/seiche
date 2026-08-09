@@ -19,10 +19,18 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import australia_nsw_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-CALENDAR = BusinessCalendar("AU-RITS", "Australia/Sydney")
+CALENDAR = BusinessCalendar(
+    "AU-RITS",
+    "Australia/Sydney",
+    valid_from_year=2001,
+    valid_to_year=2035,
+    source_uri="https://www.rba.gov.au/schedules-events/bank-holidays/",
+    holiday_provider=australia_nsw_holidays,
+)
 _CASH_CLOCK = PublicationClock(
     "Australia/Sydney", time(9, 20), 1, PublicationClockPrecision.SCHEDULED,
     CALENDAR.calendar_id,
@@ -71,13 +79,13 @@ PACK = MarketPack(
         rate_instrument("AU.MARKET.BBSW_3M", "BBSW_3M", SemanticRole.CD_3M, "licensed_aud_market", DayCountConvention.ACT_365),
     ),
     capabilities=pre_support_capabilities(
-        "official settlement calendar, canonical adapters, and secured-rate validation are incomplete"
+        "secured-rate coverage and local validation are incomplete"
     ),
     events=(
         EventSpec("QUARTER_END", "quarter-end reporting turn", frozenset({SemanticRole.SECURED_OVERNIGHT, SemanticRole.UNSECURED_OVERNIGHT})),
         EventSpec("GOVERNMENT_SETTLEMENT", "government-security settlement", frozenset({SemanticRole.UNSECURED_OVERNIGHT})),
     ),
-    calibration_id="au-aud-reference-v0",
+    calibration_id="au-aud-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

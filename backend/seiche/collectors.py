@@ -188,12 +188,14 @@ class CollectorSupervisor:
         raw_sink: RawCaptureSink | None = None,
         normalized_sink: NormalizedBatchSink | None = None,
         observation_writer: Callable[[tuple], int] | None = None,
+        run_writer: Callable[[dict], str] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.registry = registry or default_registry()
         self.raw_sink = raw_sink
         self.normalized_sink = normalized_sink
         self.observation_writer = observation_writer or get_repository().save_observations
+        self.run_writer = run_writer
         self.sleep = sleep
         self._tasks: dict[tuple[str, str], _CollectorTask] = {}
         self._states: dict[tuple[str, str], _CollectorState] = {}
@@ -228,7 +230,14 @@ class CollectorSupervisor:
         runs = await asyncio.gather(
             *(self._run_one(key, task, current) for key, task in due)
         )
-        return sorted(runs, key=lambda item: (item.market_id, item.adapter_id))
+        ordered = sorted(runs, key=lambda item: (item.market_id, item.adapter_id))
+        # Persist only after every due task has completed: a metadata-store
+        # problem can fail the scheduler cycle, but cannot cancel sibling
+        # collectors that are already running.
+        if self.run_writer is not None:
+            for run in ordered:
+                await asyncio.to_thread(self.run_writer, run.to_dict())
+        return ordered
 
     async def _run_one(
         self,

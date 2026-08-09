@@ -3,6 +3,9 @@
 GET|/api/public|200|application/json|"conclusion"
 GET|/api/oil-funding|200|application/json|"schema":"seiche.oil-funding.v1"
 GET|/api/estuary|200|application/json|"schema":"seiche.estuary.v1"
+GET|/api/v2/markets|200|application/json|"schema":"seiche.markets.v2"
+GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"
+GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"
 GET|/api/subscribe|200|application/json|"gates_nothing":true
 GET|/mcp|200|text/event-stream|stateless
 GET|/riptide/|200|application/json|"name": "riptide"

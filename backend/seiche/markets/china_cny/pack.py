@@ -20,13 +20,22 @@ from seiche.markets.base import (
     ReserveMaintenanceSpec,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import china_public_holidays, china_working_weekends
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-# Mainland settlement weekends/holidays are announced annually and can include
-# working weekends. A generic Monday-Friday fallback would be wrong, so the
-# provider remains absent until dated official schedules are loaded.
-CALENDAR = BusinessCalendar("CN-CFETS-SETTLEMENT", "Asia/Shanghai")
+# Mainland schedules include explicitly designated working weekends. 2026 is
+# the last officially reviewed pack year; 2027 fails loud until its notice is
+# loaded rather than silently reverting to Monday-Friday.
+CALENDAR = BusinessCalendar(
+    "CN-CFETS-SETTLEMENT",
+    "Asia/Shanghai",
+    valid_from_year=2001,
+    valid_to_year=2026,
+    source_uri="https://english.www.gov.cn/policies/latestreleases/",
+    holiday_provider=china_public_holidays,
+    working_day_provider=china_working_weekends,
+)
 _CLOCK = PublicationClock(
     "Asia/Shanghai", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE,
     CALENDAR.calendar_id,
@@ -85,14 +94,14 @@ PACK = MarketPack(
         ),
     ),
     capabilities=pre_support_capabilities(
-        "annual working-weekend calendar, canonical adapters, and local validation are incomplete"
+        "canonical collection history and local validation are incomplete"
     ),
     events=(
         EventSpec("MONTH_END", "month-end liquidity turn", frozenset({SemanticRole.SYSTEM_LIQUIDITY, SemanticRole.TERM_1W})),
         EventSpec("HOLIDAY_LIQUIDITY", "holiday liquidity operation", frozenset({SemanticRole.SYSTEM_LIQUIDITY, SemanticRole.CENTRAL_BANK_FACILITY_TAKEUP})),
         EventSpec("TAX_PAYMENT", "tax-payment liquidity drain", frozenset({SemanticRole.SYSTEM_LIQUIDITY})),
     ),
-    calibration_id="cn-cny-reference-v0",
+    calibration_id="cn-cny-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

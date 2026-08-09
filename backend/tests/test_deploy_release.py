@@ -142,6 +142,12 @@ case "$url" in
         type=application/json; body='{{"schema":"seiche.oil-funding.v1"}}' ;;
     */api/estuary)
         type=application/json; body='{{"schema":"seiche.estuary.v1"}}' ;;
+    */api/v2/markets)
+        type=application/json; body='{{"schema":"seiche.markets.v2"}}' ;;
+    */api/v2/coverage)
+        type=application/json; body='{{"schema":"seiche.coverage.v2"}}' ;;
+    */api/v2/global/tide)
+        type=application/json; body='{{"schema":"seiche.global-tide.v2"}}' ;;
     */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
@@ -183,6 +189,18 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert (
         'GET|/api/estuary|200|application/json|'
         '"schema":"seiche.estuary.v1"'
+    ) in definitions
+    assert (
+        'GET|/api/v2/markets|200|application/json|'
+        '"schema":"seiche.markets.v2"'
+    ) in definitions
+    assert (
+        'GET|/api/v2/coverage|200|application/json|'
+        '"schema":"seiche.coverage.v2"'
+    ) in definitions
+    assert (
+        'GET|/api/v2/global/tide|200|application/json|'
+        '"schema":"seiche.global-tide.v2"'
     ) in definitions
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
     assert (
@@ -268,6 +286,29 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     wrapper = (ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh").read_text()
     assert wrapper.count("deploy_caddy ||") == 2
     assert "already running ${AFTER:0:7} — checking edge config" in wrapper
+    assert "/api/v2/coverage" in wrapper
+    assert "systemctl is-active --quiet postgresql" in wrapper
+    assert wrapper.index("systemctl stop seiche-market-worker.service") < wrapper.index(
+        "bash /home/seiche/update.sh"
+    )
+    assert wrapper.count("restore_market_services") == 4
+    assert "previous market services restored" in wrapper
+
+
+def test_market_platform_units_are_independent_and_postgres_backed():
+    installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
+    worker = (ROOT / "ops" / "deploy" / "seiche-market-worker.service").read_text()
+    backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
+    caddy = CADDYFILE.read_text()
+
+    assert "postgresql:///seiche?host=/var/run/postgresql" in installer
+    assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
+    assert "systemctl start --no-block seiche-market-backfill.service" in installer
+    assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
+    assert "Restart=always" in worker
+    assert "Type=oneshot" in backfill
+    assert "TimeoutStartSec=2h" in backfill
+    assert "/api/v2/*" in caddy
 
 
 def test_palimpest_osint_edge_is_an_exact_static_allowlist():

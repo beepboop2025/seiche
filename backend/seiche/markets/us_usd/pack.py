@@ -84,6 +84,9 @@ def _federal_reserve_holidays(year: int) -> frozenset[date]:
 US_SETTLEMENT_CALENDAR = BusinessCalendar(
     calendar_id="US-FEDWIRE",
     timezone_name="America/New_York",
+    valid_from_year=1970,
+    valid_to_year=2035,
+    source_uri="https://www.frbservices.org/about/holiday-schedules",
     holiday_provider=_federal_reserve_holidays,
 )
 

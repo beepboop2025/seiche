@@ -98,6 +98,7 @@ class SourceSeriesSpec:
 
 
 HolidayProvider = Callable[[int], Iterable[date]]
+WorkingDayProvider = Callable[[int], Iterable[date]]
 
 
 class CalendarUnavailableError(RuntimeError):
@@ -109,7 +110,15 @@ class BusinessCalendar:
     calendar_id: str
     timezone_name: str
     weekend_days: frozenset[int] = frozenset({5, 6})
+    valid_from_year: int | None = None
+    valid_to_year: int | None = None
+    source_uri: str | None = None
     holiday_provider: HolidayProvider | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    working_day_provider: WorkingDayProvider | None = field(
         default=None,
         repr=False,
         compare=False,
@@ -124,19 +133,49 @@ class BusinessCalendar:
             raise ValueError("calendar_id is required")
         if not self.weekend_days or any(day not in range(7) for day in self.weekend_days):
             raise ValueError("weekend_days must use Python weekday numbers 0..6")
+        if (self.valid_from_year is None) != (self.valid_to_year is None):
+            raise ValueError("calendar validity needs both start and end years")
+        if (
+            self.valid_from_year is not None
+            and self.valid_to_year is not None
+            and self.valid_from_year > self.valid_to_year
+        ):
+            raise ValueError("calendar validity start cannot follow its end")
 
     @property
     def timezone(self) -> ZoneInfo:
         return ZoneInfo(self.timezone_name)
 
     def holidays(self, year: int) -> frozenset[date]:
+        self._require_supported_year(year)
         if self.holiday_provider is None:
             raise CalendarUnavailableError(
                 f"calendar {self.calendar_id!r} has no validated holiday set for {year}"
             )
         return frozenset(self.holiday_provider(year))
 
+    def working_days(self, year: int) -> frozenset[date]:
+        """Official weekend overrides, notably mainland-China working weekends."""
+
+        self._require_supported_year(year)
+        if self.working_day_provider is None:
+            return frozenset()
+        return frozenset(self.working_day_provider(year))
+
+    def _require_supported_year(self, year: int) -> None:
+        if self.valid_from_year is not None and not (
+            self.valid_from_year <= year <= self.valid_to_year  # type: ignore[operator]
+        ):
+            raise CalendarUnavailableError(
+                f"calendar {self.calendar_id!r} is validated for "
+                f"{self.valid_from_year}..{self.valid_to_year}, not {year}"
+            )
+
     def is_business_day(self, day: date) -> bool:
+        # Some jurisdictions explicitly turn weekends into settlement days.
+        # That official override must be checked before the generic weekend rule.
+        if day in self.working_days(day.year):
+            return True
         return day.weekday() not in self.weekend_days and day not in self.holidays(day.year)
 
     def roll_forward(self, day: date) -> date:
@@ -451,6 +490,14 @@ class MarketPack:
                 if self.settlement_calendar.holiday_provider is not None
                 else "UNAVAILABLE"
             ),
+            "calendar_validity": {
+                "from_year": self.settlement_calendar.valid_from_year,
+                "to_year": self.settlement_calendar.valid_to_year,
+                "source": self.settlement_calendar.source_uri,
+                "working_weekend_overrides": (
+                    self.settlement_calendar.working_day_provider is not None
+                ),
+            },
             "validation": {
                 "passed": sum(
                     item.outcome is ValidationOutcome.PASS

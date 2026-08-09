@@ -19,10 +19,18 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import singapore_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-CALENDAR = BusinessCalendar("SG-MEPS-PLUS", "Asia/Singapore")
+CALENDAR = BusinessCalendar(
+    "SG-MEPS-PLUS",
+    "Asia/Singapore",
+    valid_from_year=2001,
+    valid_to_year=2035,
+    source_uri="https://www.mom.gov.sg/employment-practices/public-holidays",
+    holiday_provider=singapore_holidays,
+)
 _SORA_CLOCK = PublicationClock(
     "Asia/Singapore", time(9, 0), 1, PublicationClockPrecision.SCHEDULED,
     CALENDAR.calendar_id,
@@ -71,13 +79,13 @@ PACK = MarketPack(
         rate_instrument("SG.MARKET.FX_SWAP_BASIS", "SGD_FX_BASIS", SemanticRole.FX_SWAP_BASIS, "licensed_sgd_market", DayCountConvention.ACT_365),
     ),
     capabilities=pre_support_capabilities(
-        "exchange-rate-regime calibration, settlement calendar, adapters, and validation are incomplete"
+        "exchange-rate-regime calibration, canonical history, and validation are incomplete"
     ),
     events=(
         EventSpec("MAS_POLICY_REVIEW", "exchange-rate policy review", frozenset({SemanticRole.FX_SWAP_BASIS, SemanticRole.UNSECURED_OVERNIGHT})),
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.UNSECURED_OVERNIGHT})),
     ),
-    calibration_id="sg-sgd-reference-v0",
+    calibration_id="sg-sgd-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

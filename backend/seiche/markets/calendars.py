@@ -1,8 +1,17 @@
-"""Reusable calendar rules; packs select the rules that their venue validates."""
+"""Reusable dated calendar datasets selected by monetary-area packs.
+
+The :mod:`holidays` dependency supplies versioned civil-holiday calculations;
+pack-specific wrappers add settlement-system closures and weekend overrides.
+Every deployed calendar is bounded, so an unreviewed future year fails loud.
+"""
 
 from __future__ import annotations
 
 from datetime import date, timedelta
+from functools import lru_cache
+from typing import Callable
+
+import holidays as holiday_data
 
 from seiche.markets.base import CalendarUnavailableError
 
@@ -63,6 +72,42 @@ def target_holidays(year: int) -> frozenset[date]:
     )
 
 
+def country_holiday_provider(
+    country: str,
+    *,
+    subdiv: str | None = None,
+    extra: Callable[[int], set[date] | frozenset[date]] | None = None,
+) -> Callable[[int], frozenset[date]]:
+    """Build a cached provider from the maintained ``holidays`` dataset."""
+
+    @lru_cache(maxsize=None)
+    def provider(year: int) -> frozenset[date]:
+        calendar = holiday_data.country_holidays(country, subdiv=subdiv, years=[year])
+        values = set(calendar.keys())
+        if extra is not None:
+            values.update(extra(year))
+        return frozenset(values)
+
+    return provider
+
+
+def country_working_day_provider(
+    country: str,
+    *,
+    subdiv: str | None = None,
+) -> Callable[[int], frozenset[date]]:
+    """Return officially designated weekend workdays when the dataset has them."""
+
+    @lru_cache(maxsize=None)
+    def provider(year: int) -> frozenset[date]:
+        calendar = holiday_data.country_holidays(country, subdiv=subdiv, years=[year])
+        return frozenset(
+            day for day in calendar.weekend_workdays if day.year == year
+        )
+
+    return provider
+
+
 def england_wales_bank_holidays(year: int) -> frozenset[date]:
     easter = western_easter_sunday(year)
     holidays = {
@@ -84,25 +129,29 @@ def england_wales_bank_holidays(year: int) -> frozenset[date]:
     return frozenset(holidays)
 
 
-_JAPAN_BANK_HOLIDAYS = {
-    2026: {
-        (1, 1), (1, 2), (1, 3), (1, 12), (2, 11), (2, 23), (3, 20),
-        (4, 29), (5, 3), (5, 4), (5, 5), (5, 6), (7, 20), (8, 11),
-        (9, 21), (9, 22), (9, 23), (10, 12), (11, 3), (11, 23), (12, 31),
-    },
-    2027: {
-        (1, 1), (1, 2), (1, 3), (1, 11), (2, 11), (2, 23), (3, 21),
-        (3, 22), (4, 29), (5, 3), (5, 4), (5, 5), (7, 19), (8, 11),
-        (9, 20), (9, 23), (10, 11), (11, 3), (11, 23), (12, 31),
-    },
-}
+def _japan_bank_closures(year: int) -> frozenset[date]:
+    return frozenset(
+        {
+            date(year, 1, 2),
+            date(year, 1, 3),
+            date(year, 12, 31),
+        }
+    )
 
 
-def japan_bank_holidays(year: int) -> frozenset[date]:
-    try:
-        values = _JAPAN_BANK_HOLIDAYS[year]
-    except KeyError as exc:
-        raise CalendarUnavailableError(
-            f"Japan settlement holidays have not been loaded for {year}"
-        ) from exc
-    return frozenset(date(year, month, day) for month, day in values)
+japan_bank_holidays = country_holiday_provider(
+    "JP",
+    extra=_japan_bank_closures,
+)
+
+# Public names keep pack declarations compact and make the jurisdictional
+# choice (for example Maharashtra rather than a synthetic all-India calendar)
+# reviewable in one place.
+australia_nsw_holidays = country_holiday_provider("AU", subdiv="NSW")
+china_public_holidays = country_holiday_provider("CN")
+china_working_weekends = country_working_day_provider("CN")
+hong_kong_holidays = country_holiday_provider("HK")
+india_maharashtra_holidays = country_holiday_provider("IN", subdiv="MH")
+new_zealand_wellington_holidays = country_holiday_provider("NZ", subdiv="WGN")
+singapore_holidays = country_holiday_provider("SG")
+uk_england_holidays = country_holiday_provider("GB", subdiv="ENG")

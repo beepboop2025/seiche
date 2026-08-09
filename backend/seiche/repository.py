@@ -55,6 +55,24 @@ class MarketRepository(Protocol):
         knowledge_time: str | datetime,
     ) -> dict | None: ...
 
+    def save_collector_run(self, run: dict) -> str: ...
+
+    def latest_collector_runs(self, market_id: str | None = None) -> list[dict]: ...
+
+    def append_forward_record(
+        self,
+        *,
+        snapshot_id: str,
+        market_id: str,
+        product: str,
+        event_cutoff: str | datetime,
+        knowledge_cutoff: str | datetime,
+        calibration_id: str,
+        payload: object,
+    ) -> str: ...
+
+    def forward_record_count(self, market_id: str | None = None) -> int: ...
+
 
 class SQLiteMarketRepository:
     """Delegate to the additive SQLite migration in ``seiche.store``."""
@@ -65,6 +83,10 @@ class SQLiteMarketRepository:
     seal_market_snapshot = staticmethod(store.seal_market_snapshot)
     load_latest_market_snapshot = staticmethod(store.load_latest_market_snapshot)
     load_market_snapshot_as_of = staticmethod(store.load_market_snapshot_as_of)
+    save_collector_run = staticmethod(store.save_collector_run)
+    latest_collector_runs = staticmethod(store.latest_collector_runs)
+    append_forward_record = staticmethod(store.append_forward_record)
+    forward_record_count = staticmethod(store.forward_record_count)
 
 
 _OBSERVATION_COLUMNS = (
@@ -137,6 +159,36 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 );
 CREATE INDEX IF NOT EXISTS market_snapshots_latest
   ON market_snapshots (market_id, product, knowledge_cutoff DESC, sealed_at DESC);
+CREATE TABLE IF NOT EXISTS collector_runs (
+  run_id TEXT PRIMARY KEY,
+  market_id TEXT NOT NULL,
+  adapter_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ NOT NULL,
+  observations_written INTEGER NOT NULL,
+  attempts INTEGER NOT NULL,
+  next_due TIMESTAMPTZ NOT NULL,
+  fault TEXT
+);
+CREATE INDEX IF NOT EXISTS collector_runs_latest
+  ON collector_runs (market_id, adapter_id, finished_at DESC);
+CREATE TABLE IF NOT EXISTS forward_validation_records (
+  record_id TEXT PRIMARY KEY,
+  snapshot_id TEXT NOT NULL UNIQUE,
+  market_id TEXT NOT NULL,
+  product TEXT NOT NULL,
+  event_cutoff TIMESTAMPTZ NOT NULL,
+  knowledge_cutoff TIMESTAMPTZ NOT NULL,
+  calibration_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  payload_hash TEXT NOT NULL,
+  previous_record_hash TEXT NOT NULL,
+  record_hash TEXT NOT NULL UNIQUE,
+  payload JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS forward_records_chain
+  ON forward_validation_records (market_id, product, created_at, record_id);
 """
 
 
@@ -363,7 +415,7 @@ class PostgresMarketRepository:
                     product,
                     event,
                     knowledge,
-                    datetime.now(UTC).replace(microsecond=0),
+                    datetime.now(UTC),
                     calibration_id,
                     evidence_eligible,
                     payload_hash,
@@ -424,6 +476,164 @@ class PostgresMarketRepository:
                 (market_id.upper(), product, _utc(knowledge_time)),
             ).fetchone()
         return self._snapshot(row)
+
+    def save_collector_run(self, run: dict) -> str:
+        self._ensure_schema()
+        canonical = json.dumps(
+            run,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        run_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO collector_runs
+                     (run_id, market_id, adapter_id, status, started_at,
+                      finished_at, observations_written, attempts, next_due, fault)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT DO NOTHING""",
+                (
+                    run_id,
+                    str(run["market_id"]).upper(),
+                    run["adapter_id"],
+                    run["status"],
+                    _utc(run["started_at"]),
+                    _utc(run["finished_at"]),
+                    int(run["observations_written"]),
+                    int(run["attempts"]),
+                    _utc(run["next_due"]),
+                    run.get("fault"),
+                ),
+            )
+        return run_id
+
+    def latest_collector_runs(self, market_id: str | None = None) -> list[dict]:
+        self._ensure_schema()
+        predicate = "WHERE market_id=%s" if market_id is not None else ""
+        params = (market_id.upper(),) if market_id is not None else ()
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""WITH ranked AS (
+                      SELECT run_id, market_id, adapter_id, status, started_at,
+                             finished_at, observations_written, attempts,
+                             next_due, fault,
+                             ROW_NUMBER() OVER (
+                               PARTITION BY market_id, adapter_id
+                               ORDER BY finished_at DESC, run_id DESC
+                             ) AS run_rank
+                        FROM collector_runs {predicate}
+                    )
+                    SELECT run_id, market_id, adapter_id, status, started_at,
+                           finished_at, observations_written, attempts,
+                           next_due, fault
+                      FROM ranked WHERE run_rank=1
+                      ORDER BY market_id, adapter_id""",
+                params,
+            ).fetchall()
+        keys = (
+            "run_id", "market_id", "adapter_id", "status", "started_at",
+            "finished_at", "observations_written", "attempts", "next_due", "fault",
+        )
+        output = []
+        for row in rows:
+            record = dict(zip(keys, row, strict=True))
+            for key in ("started_at", "finished_at", "next_due"):
+                record[key] = record[key].isoformat()
+            output.append(record)
+        return output
+
+    def append_forward_record(
+        self,
+        *,
+        snapshot_id: str,
+        market_id: str,
+        product: str,
+        event_cutoff: str | datetime,
+        knowledge_cutoff: str | datetime,
+        calibration_id: str,
+        payload: object,
+    ) -> str:
+        """Append an idempotent link to the per-market/product paper trail.
+
+        The transaction-scoped advisory lock prevents two workers from
+        branching the same hash chain when source schedules finish together.
+        """
+
+        self._ensure_schema()
+        market = market_id.upper()
+        event = _utc(event_cutoff)
+        knowledge = _utc(knowledge_cutoff)
+        payload_json = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        chain_key = f"{market}|{product}"
+        with self._connect() as connection:
+            connection.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (chain_key,))
+            existing = connection.execute(
+                "SELECT record_id FROM forward_validation_records WHERE snapshot_id=%s",
+                (snapshot_id,),
+            ).fetchone()
+            if existing is not None:
+                return existing[0]
+            previous = connection.execute(
+                """SELECT record_hash FROM forward_validation_records
+                    WHERE market_id=%s AND product=%s
+                    ORDER BY created_at DESC, record_id DESC LIMIT 1""",
+                (market, product),
+            ).fetchone()
+            previous_hash = previous[0] if previous else "0" * 64
+            identity = "|".join(
+                (
+                    snapshot_id,
+                    market,
+                    product,
+                    event.isoformat(),
+                    knowledge.isoformat(),
+                    calibration_id,
+                    payload_hash,
+                    previous_hash,
+                )
+            )
+            record_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            connection.execute(
+                """INSERT INTO forward_validation_records
+                     (record_id, snapshot_id, market_id, product, event_cutoff,
+                      knowledge_cutoff, calibration_id, created_at, payload_hash,
+                      previous_record_hash, record_hash, payload)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                (
+                    record_hash,
+                    snapshot_id,
+                    market,
+                    product,
+                    event,
+                    knowledge,
+                    calibration_id,
+                    datetime.now(UTC).replace(microsecond=0),
+                    payload_hash,
+                    previous_hash,
+                    record_hash,
+                    payload_json,
+                ),
+            )
+        return record_hash
+
+    def forward_record_count(self, market_id: str | None = None) -> int:
+        self._ensure_schema()
+        predicate = " WHERE market_id=%s" if market_id is not None else ""
+        params = (market_id.upper(),) if market_id is not None else ()
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT COUNT(*) FROM forward_validation_records{predicate}",
+                params,
+            ).fetchone()
+        return int(row[0]) if row else 0
 
 
 @lru_cache(maxsize=1)

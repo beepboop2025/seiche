@@ -598,6 +598,55 @@ def cmd_user(args) -> None:
             print(f"{u['username']:24s} {u['tier']}")
 
 
+def _market_ids(args) -> frozenset[str] | None:
+    values = getattr(args, "market", None) or []
+    return frozenset(item.upper() for item in values) or None
+
+
+def cmd_market_collect(args) -> int:
+    from seiche.market_runtime import collect_once
+
+    payload = asyncio.run(
+        collect_once(
+            backfill=False,
+            market_ids=_market_ids(args),
+            materialize=not args.no_materialize,
+        )
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_market_backfill(args) -> int:
+    from seiche.market_runtime import collect_once
+
+    payload = asyncio.run(
+        collect_once(
+            backfill=True,
+            market_ids=_market_ids(args),
+            materialize=not args.no_materialize,
+            # This current snapshot starts the real forward record; imported
+            # rows are never replayed as synthetic past forecasts.
+            record_forward=True,
+        )
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    # One blocked source must not make successful sibling backfills disappear.
+    # Per-adapter markers cause only failures to retry on the next invocation.
+    runs = payload["runs"]
+    return 0 if not runs or any(run["status"] == "SUCCESS" for run in runs) else 1
+
+
+def cmd_market_worker(args) -> int:
+    from seiche.market_runtime import run_worker
+
+    try:
+        asyncio.run(run_worker(poll_seconds=args.poll_seconds))
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="seiche", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -672,6 +721,20 @@ def main() -> None:
     p.add_argument("--username", default="", help="omit to auto-generate")
     p.add_argument("--ref", default="", help="payment reference (txid/invoice) for idempotency")
     p.set_defaults(fn=cmd_provision)
+
+    p = sub.add_parser("market-collect", help="run official market collectors once")
+    p.add_argument("--market", action="append", help="market ID; repeat to select several")
+    p.add_argument("--no-materialize", action="store_true")
+    p.set_defaults(fn=cmd_market_collect)
+
+    p = sub.add_parser("market-backfill", help="import official canonical history once")
+    p.add_argument("--market", action="append", help="market ID; repeat to select several")
+    p.add_argument("--no-materialize", action="store_true")
+    p.set_defaults(fn=cmd_market_backfill)
+
+    p = sub.add_parser("market-worker", help="run independent market schedules forever")
+    p.add_argument("--poll-seconds", type=int, default=30)
+    p.set_defaults(fn=cmd_market_worker)
 
     args = ap.parse_args()
     sys.exit(args.fn(args))

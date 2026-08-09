@@ -26,7 +26,29 @@ STATE=/home/seiche/.seiche-deployed-sha
 DEPLOYED=$(cat "$STATE" 2>/dev/null || true)
 
 BEFORE=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)
-runuser -u seiche -- bash /home/seiche/update.sh
+MARKET_WORKER_WAS_ACTIVE=""
+MARKET_BACKFILL_WAS_ACTIVE=""
+if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then
+  MARKET_WORKER_WAS_ACTIVE=1
+fi
+if systemctl is-active --quiet seiche-market-backfill.service 2>/dev/null; then
+  MARKET_BACKFILL_WAS_ACTIVE=1
+fi
+restore_market_services() {
+  [ -z "$MARKET_BACKFILL_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-market-backfill.service 2>/dev/null \
+    || true
+  [ -z "$MARKET_WORKER_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-market-worker.service 2>/dev/null \
+    || true
+}
+systemctl stop seiche-market-worker.service seiche-market-backfill.service \
+  2>/dev/null || true
+if ! runuser -u seiche -- bash /home/seiche/update.sh; then
+  restore_market_services
+  echo "FAIL: application update gate failed; previous market services restored"
+  exit 1
+fi
 AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)
 
 # Self-sync the deploy chain from the POST-pull checkout. The manual root
@@ -75,6 +97,21 @@ deploy_caddy() {
   bash "$installer"
 }
 
+deploy_market_platform() {
+  local installer="$APP/ops/deploy/install-market-platform.sh"
+  if [ ! -f "$installer" ]; then
+    echo "FAIL: market-platform installer missing: $installer"
+    return 1
+  fi
+  bash "$installer"
+}
+
+deploy_market_platform || {
+  restore_market_services
+  echo "FAIL: application checkout is intact but market-platform provisioning failed"
+  exit 1
+}
+
 if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   echo "already running ${AFTER:0:7} — checking edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
@@ -101,6 +138,29 @@ health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
   return 0
 }
 
+market_health() {
+  local body
+  body=$(mktemp)
+  if ! curl -sf -m 20 http://127.0.0.1:8787/api/v2/coverage >"$body"; then
+    echo "FAIL: v2 coverage cannot read the configured market repository"
+    rm -f -- "$body"
+    return 1
+  fi
+  if ! "$APP/backend/.venv/bin/python" -c \
+      'import json,sys; p=json.load(open(sys.argv[1])); assert p["schema"] == "seiche.coverage.v2"; assert len(p["markets"]) == 10' \
+      "$body"; then
+    echo "FAIL: v2 coverage returned an invalid market-platform contract"
+    rm -f -- "$body"
+    return 1
+  fi
+  rm -f -- "$body"
+  systemctl is-active --quiet postgresql || {
+    echo "FAIL: PostgreSQL is not active after market-platform provisioning"
+    return 1
+  }
+  return 0
+}
+
 systemctl restart seiche-api
 sleep 3
 # NOTE: health checks run inside `if` conditions on purpose — under set -e a
@@ -108,7 +168,9 @@ sleep 3
 HEALTHY=""
 if systemctl is-active --quiet seiche-api; then
   if health_wait 900; then
-    HEALTHY=1
+    if market_health; then
+      HEALTHY=1
+    fi
   fi
 else
   echo "FAIL: seiche-api not active after restart"
@@ -129,6 +191,7 @@ fi
 # way: this path always exits 1, because a deploy that needed the rollback
 # needs a human even when the rollback lands. Never rely on cancellation.
 echo "FAIL: ${AFTER:0:7} did not come healthy after restart"
+systemctl stop seiche-market-worker.service seiche-market-backfill.service 2>/dev/null || true
 if [ -z "$DEPLOYED" ] || [ "$DEPLOYED" = "$AFTER" ]; then
   echo "FAIL: no previously-deployed sha on record to roll back to — seiche-api needs a human NOW"
   exit 1
@@ -147,6 +210,7 @@ systemctl restart seiche-api
 sleep 3
 if systemctl is-active --quiet seiche-api && health_wait 480; then
   printf '%s\n' "$DEPLOYED" > "$STATE"
+  restore_market_services
   echo "FAIL: rolled back to ${DEPLOYED:0:7}, healthy; the deploy of ${AFTER:0:7} FAILED health and needs a human"
   exit 1
 fi

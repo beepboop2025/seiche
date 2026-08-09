@@ -19,10 +19,18 @@ from seiche.markets.base import (
     PublicationClockPrecision,
     SourceAdapterSpec,
 )
+from seiche.markets.calendars import hong_kong_holidays
 from seiche.markets.reference import pre_support_capabilities, rate_instrument
 
 
-CALENDAR = BusinessCalendar("HK-HKD-CHATS", "Asia/Hong_Kong")
+CALENDAR = BusinessCalendar(
+    "HK-HKD-CHATS",
+    "Asia/Hong_Kong",
+    valid_from_year=2001,
+    valid_to_year=2035,
+    source_uri="https://www.hkma.gov.hk/eng/key-functions/international-financial-centre/financial-infrastructure/",
+    holiday_provider=hong_kong_holidays,
+)
 _CLOCK = PublicationClock(
     "Asia/Hong_Kong", None, 0, PublicationClockPrecision.UPSTREAM_NATIVE,
     CALENDAR.calendar_id,
@@ -72,13 +80,13 @@ PACK = MarketPack(
         ),
     ),
     capabilities=pre_support_capabilities(
-        "currency-board calibration, settlement calendar, adapters, and validation are incomplete"
+        "currency-board calibration, canonical history, and validation are incomplete"
     ),
     events=(
         EventSpec("CURRENCY_BOARD_OPERATION", "currency-board market operation", frozenset({SemanticRole.SYSTEM_LIQUIDITY, SemanticRole.FX_SWAP_BASIS})),
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.UNSECURED_OVERNIGHT, SemanticRole.TERM_1W})),
     ),
-    calibration_id="hk-hkd-reference-v0",
+    calibration_id="hk-hkd-local-forward-v1",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

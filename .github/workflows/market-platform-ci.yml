@@ -1,0 +1,54 @@
+name: market-platform-ci
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "ops/**"
+      - ".github/workflows/market-platform-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: seiche
+          POSTGRES_PASSWORD: seiche-test-only
+          POSTGRES_DB: seiche_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seiche -d seiche_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      SEICHE_TEST_POSTGRES_URL: postgresql://seiche:seiche-test-only@127.0.0.1:5432/seiche_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install market platform
+        run: pip install -e "./backend[dev,collectors,postgres]"
+      - name: Run market architecture and PostgreSQL contracts
+        run: >-
+          python -m pytest -q
+          backend/tests/test_market_packs.py
+          backend/tests/test_canonical_store.py
+          backend/tests/test_repository_v2.py
+          backend/tests/test_postgres_market_repository.py
+          backend/tests/test_collectors_v2.py
+          backend/tests/test_universal_kernel.py
+          backend/tests/test_market_materialize.py
+          backend/tests/test_official_adapters.py
+          backend/tests/test_api_v2_markets.py
+          backend/tests/test_deploy_release.py
