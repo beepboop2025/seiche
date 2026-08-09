@@ -1,14 +1,10 @@
-"""Lead attribution must count people, not rooms.
+"""Subscription authorization must identify a person, not a shared room.
 
-Each channel post carries its own `?start=ref` deep link so record_lead can
-attribute an arrival to the post that earned it, and that ref count is the
-number meant to decide what the desks publish more of. A group /start books
-one lead for a whole room under whoever added the bot, which inflates that
-number in the one direction nobody would notice: upward, on the metric being
-optimised.
-
-Subscribing a group is deliberately still allowed. Seiche is a free public
-good and a room reading the daily letter is distribution working.
+Telegram gives this handler one shared chat ID for every member's group
+command. If /start and /stop mutate that ID, member A can subscribe the room
+and member B can remove it. Those commands therefore redirect shared chats to
+a neutral private-bot link; private subscription and lead behavior stays the
+same, and read-only group commands remain available.
 """
 
 import json
@@ -37,12 +33,31 @@ def _leads(tmp_path):
     p = tmp_path / "leads.jsonl"
     if not p.exists():
         return []
-    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    return [json.loads(line) for line in p.read_text().splitlines()
+            if line.strip()]
 
 
-def test_a_private_start_with_a_ref_books_a_lead(_isolated):
+def _assert_private_redirect(sent, chat_id):
+    assert len(sent) == 1
+    assert sent[0][0] == chat_id
+    assert sent[0][1] == bot.PRIVATE_SUBSCRIPTION_PROMPT
+    keyboard = sent[0][2]
+    assert keyboard == bot.PRIVATE_SUBSCRIPTION_KEYBOARD
+    assert keyboard[0][0]["url"] == bot.BOT_URL
+    assert "?start=" not in keyboard[0][0]["url"]
+    assert "/start" in sent[0][1] and "/stop" in sent[0][1]
+
+
+def _forbid_state_access(*args, **kwargs):
+    pytest.fail("a shared-chat subscription command touched private state")
+
+
+def test_a_private_start_with_a_ref_still_subscribes_and_books_a_lead(
+        _isolated):
     bot.handle(555, "/start lab_letter", "private")
 
+    subscribers = json.loads((_isolated / "subscribers.json").read_text())
+    assert "555" in subscribers
     rows = _leads(_isolated)
     assert len(rows) == 1
     assert rows[0]["ref"] == "lab_letter"
@@ -50,17 +65,59 @@ def test_a_private_start_with_a_ref_books_a_lead(_isolated):
 
 
 @pytest.mark.parametrize("chat_type", ["group", "supergroup", "channel"])
-def test_a_group_start_never_books_a_lead(_isolated, chat_type):
+def test_member_a_cannot_subscribe_a_shared_chat(
+        _isolated, monkeypatch, chat_type):
+    sent = []
+    monkeypatch.setattr(
+        bot, "send",
+        lambda chat_id, text, keyboard=None:
+            sent.append((chat_id, text, keyboard)),
+    )
+    monkeypatch.setattr(bot, "load_state", _forbid_state_access)
+    monkeypatch.setattr(bot, "save_state", _forbid_state_access)
+    monkeypatch.setattr(bot, "record_lead", _forbid_state_access)
+
     bot.handle(-100123, "/start lab_letter", chat_type)
 
-    assert _leads(_isolated) == [], (
-        "a room was booked as an arrival, crediting one person's ref with a "
-        "whole channel")
+    _assert_private_redirect(sent, -100123)
+    assert list(_isolated.iterdir()) == []
 
 
-def test_a_group_can_still_subscribe(_isolated):
-    """The guard must cost the room nothing except the false lead."""
-    bot.handle(-100123, "/start lab_letter", "group")
+@pytest.mark.parametrize("chat_type", ["group", "supergroup", "channel"])
+def test_member_b_cannot_unsubscribe_a_shared_chat(
+        _isolated, monkeypatch, chat_type):
+    sent = []
+    subscribers = _isolated / "subscribers.json"
+    subscribers.write_text(
+        json.dumps({"-100123": {"since": "legacy-group-subscription"}})
+    )
+    before = subscribers.read_bytes()
+    monkeypatch.setattr(
+        bot, "send",
+        lambda chat_id, text, keyboard=None:
+            sent.append((chat_id, text, keyboard)),
+    )
+    monkeypatch.setattr(bot, "load_state", _forbid_state_access)
+    monkeypatch.setattr(bot, "save_state", _forbid_state_access)
+    monkeypatch.setattr(bot, "record_lead", _forbid_state_access)
 
-    subs = json.loads((_isolated / "subscribers.json").read_text())
-    assert "-100123" in subs, "a free public good should still serve a group"
+    bot.handle(-100123, "/stop", chat_type)
+
+    _assert_private_redirect(sent, -100123)
+    assert subscribers.read_bytes() == before
+
+
+def test_read_only_commands_remain_available_in_a_group(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot, "send",
+        lambda chat_id, text, keyboard=None:
+            sent.append((chat_id, text, keyboard)),
+    )
+    monkeypatch.setattr(bot, "gauge_history_append", lambda gauge: None)
+
+    bot.handle(-100123, "/now", "group")
+
+    assert len(sent) == 1
+    assert sent[0][0] == -100123
+    assert sent[0][1] == "board"

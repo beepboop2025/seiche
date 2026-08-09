@@ -21,7 +21,7 @@ Modes
   --setup       register the bot name, command menu and descriptions with Telegram
 
 Commands
-  /start /stop     follow / unfollow the letter, cross-desk alerts and news
+  /start /stop     privately follow / unfollow the letter, alerts and news
   /now             the gauge right now: regime, composite, the Tell
   /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
@@ -40,6 +40,9 @@ Any plain text in a private chat (no slash) is treated as a question for
 /ask — the desk answers, grounded in the live board. Inline mode: type
 @seiche_desk_bot in ANY chat to drop the live gauge card there (enable
 inline mode for the bot in BotFather once).
+
+Following and unfollowing are private-chat only so one member cannot change a
+shared room's deliveries. Read-only desk commands remain available in groups.
 
 Tandem: both bots read each other's PUBLIC APIs and recompute the joint
 quadrant from source — no shared state, no trust in the other's summary.
@@ -78,6 +81,13 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 BOT_USERNAME = "seiche_desk_bot"
 BOT_URL = f"https://t.me/{BOT_USERNAME}"
+PRIVATE_SUBSCRIPTION_PROMPT = (
+    "Subscriptions are private so one member cannot change a shared chat. "
+    "Open Seiche in DM, then use /start or /stop."
+)
+PRIVATE_SUBSCRIPTION_KEYBOARD = [
+    [{"text": "🔒 Open Seiche in DM", "url": BOT_URL}],
+]
 
 POLL_TIMEOUT = 50
 
@@ -1125,11 +1135,11 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/start — daily letter (11:30 UTC) + state/cross-desk alerts + news\n"
-    "/stop — unsubscribe\n\n"
-    "Or just type a question — no slash needed; the desk answers, grounded "
-    "in the live board. Type @seiche_desk_bot in any other chat to drop the "
-    "live gauge card there.\n\n"
+    "/start — follow in DM: daily letter + state/cross-desk alerts + news\n"
+    "/stop — unsubscribe in DM\n\n"
+    "In a private chat, just type a question — no slash needed; the desk "
+    "answers, grounded in the live board. Type @seiche_desk_bot in any other "
+    "chat to drop the live gauge card there.\n\n"
     "Free public good: no paywall, no sign-in. Institutions are "
     "@LiquiLens_bot's desk."
 )
@@ -1343,16 +1353,21 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
             cmd, arg = "/ask", text.strip()
         else:
             return
+    # A shared chat has one chat_id but many people who can issue commands.
+    # Subscription mutations therefore belong in a one-person private chat;
+    # read-only desk commands continue through the normal group path below.
+    if cmd in ("/start", "/stop") and chat_type != "private":
+        send(chat_id, PRIVATE_SUBSCRIPTION_PROMPT,
+             PRIVATE_SUBSCRIPTION_KEYBOARD)
+        return
     if cmd == "/start":
         subs = load_state("subscribers.json", {})
         subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         save_state("subscribers.json", subs)
         # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x".
-        # A group is not a lead. Seiche is free, so a room subscribing to the
-        # letter is fine and stays, but booking it as an arrival would credit
-        # one person's ref with a whole channel and inflate the only number
-        # that decides what the desks publish more of. Leads are people.
-        if arg.strip() and chat_type == "private":
+        # The private-chat guard above makes both the subscription and its
+        # acquisition ref attributable to one person rather than a room.
+        if arg.strip():
             record_lead(chat_id, arg.strip()[:64])
         send(chat_id,
              fmt_welcome(api_get("/api/gauge"), api_get("/api/public")),
@@ -1691,8 +1706,8 @@ BOT_COMMANDS = [
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "share", "description": "Send this free desk to someone"},
     {"command": "help", "description": "Full command list and desk guide"},
-    {"command": "start", "description": "Follow letter + state/cross-desk alerts/news"},
-    {"command": "stop", "description": "Unsubscribe"},
+    {"command": "start", "description": "Follow privately: letter + state/cross-desk alerts/news"},
+    {"command": "stop", "description": "Unsubscribe in private chat"},
 ]
 
 
