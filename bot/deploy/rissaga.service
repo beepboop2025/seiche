@@ -1,13 +1,19 @@
 [Unit]
-Description=Rissaga lab news radar dispatch (facts only, owner DM + top item to channel)
+Description=Rissaga lab news radar dispatch (facts only, owner DM + Hermes handoff)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 # Token rides the seiche bot env so a rotation happens in ONE file;
-# rissaga.env carries the radar's own knobs (LAB_CHANNEL_ID etc.).
+# rissaga.env carries the radar's scoring and endpoint knobs.
 EnvironmentFile=/etc/seiche-bot.env
 EnvironmentFile=-/etc/rissaga.env
 Environment=PYTHONUNBUFFERED=1
+# Production state and its existing files are root owned. Moving this unit to
+# an unprivileged identity requires a separate, reviewed ownership migration.
 StateDirectory=rissaga
-ExecStart=/usr/bin/python3 /opt/rissaga/rissaga.py --run
+StateDirectoryMode=0755
+# EnvironmentFile settings override Environment settings in systemd. Pin the
+# sole publisher at the process boundary so a stale file cannot restore direct.
+ExecStart=/usr/bin/env RISSAGA_CHANNEL_MODE=hermes /usr/bin/python3 /opt/rissaga/rissaga.py --run
