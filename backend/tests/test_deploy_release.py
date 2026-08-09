@@ -16,6 +16,8 @@ EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
+DEPLOY_WRAPPER = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
+PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
@@ -305,7 +307,7 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     assert wrapper.index("systemctl stop seiche-market-worker.service") < wrapper.index(
         "bash /home/seiche/update.sh"
     )
-    assert wrapper.count("restore_market_services") == 4
+    assert wrapper.count("restore_market_services") == 5
     assert "previous market services restored" in wrapper
     market_installer = wrapper[
         wrapper.index("deploy_market_platform()") : wrapper.index(
@@ -362,6 +364,51 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "Persistent=true" in validation_timer
     assert "Unit=seiche-market-validation.service" in validation_timer
     assert "/api/v2/*" in caddy
+
+
+def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():
+    unit = PULL_UNIT.read_text()
+
+    assert "Requires=seiche-api.service" in unit
+    assert "After=network-online.target seiche-api.service" in unit
+    assert "WorkingDirectory=/home/seiche/app/backend" in unit
+    assert (
+        "ExecStart=/home/seiche/app/backend/.venv/bin/seiche alert "
+        "--api-url http://127.0.0.1:8787/api/overview "
+        "--max-snapshot-age-seconds 3600"
+    ) in unit
+    assert "--force" not in unit
+    assert "SuccessExitStatus=0 2" in unit
+    assert "TimeoutStartSec=1200" in unit
+
+
+def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    function = wrapper[
+        wrapper.index("deploy_pull_unit()") : wrapper.index("deploy_market_platform ||")
+    ]
+
+    assert "systemd-analyze verify" in function
+    assert function.index('cp -p "$destination" "$previous"') < function.index(
+        'mv -f "$candidate" "$destination"'
+    )
+    assert "daemon-reload rejected the pull unit; restoring" in function
+    assert 'mv -f "$previous" "$destination"' in function
+    assert "systemctl start seiche-pull" not in function
+    assert "systemctl restart seiche-pull" not in function
+
+    health = wrapper[
+        wrapper.index("HEALTHY=\"\"") : wrapper.index('if [ -n "$HEALTHY" ]')
+    ]
+    assert health.index("market_health") < health.index("deploy_pull_unit")
+    assert health.index("deploy_pull_unit") < health.index("HEALTHY=1")
+    already = wrapper[
+        wrapper.index('if [ "$BEFORE" = "$AFTER" ] &&') : wrapper.index(
+            'if [ "$BEFORE" = "$AFTER" ]; then'
+        )
+    ]
+    assert "deploy_pull_unit" in already
+    assert already.index("deploy_pull_unit") < already.index("restore_market_services")
 
 
 def test_palimpest_osint_edge_is_an_exact_static_allowlist():

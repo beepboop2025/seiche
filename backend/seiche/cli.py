@@ -20,17 +20,202 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
+import math
 import os
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 BOLD, DIM, RED, YEL, GRN, CYA, END = (
     "\033[1m", "\033[2m", "\033[31m", "\033[33m", "\033[32m", "\033[36m", "\033[0m"
 )
 REGIME_COLOR = {"CALM": GRN, "EROSION": YEL, "STRAIN": YEL, "STRESS": RED}
+
+ALERT_API_CONNECT_TIMEOUT_S = 2.0
+ALERT_API_READ_TIMEOUT_S = 10.0
+ALERT_API_MAX_BYTES = 64 * 1024 * 1024
+ALERT_API_FUTURE_SKEW_S = 5 * 60
+ALERT_API_DEFAULT_MAX_AGE_S = 60 * 60
+
+
+class AlertSnapshotError(RuntimeError):
+    """A localhost alert snapshot could not be trusted or retrieved."""
+
+
+def _localhost_alert_api_url(value: str) -> str:
+    """Argparse converter for the one read-only alert snapshot endpoint."""
+
+    if not value or value != value.strip() or any(char.isspace() for char in value):
+        raise argparse.ArgumentTypeError("must be a non-empty URL without whitespace")
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        # Accessing port performs urllib's range and syntax validation.
+        parsed.port
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a valid localhost URL") from exc
+    if parsed.scheme != "http":
+        raise argparse.ArgumentTypeError("must use http on localhost")
+    if not parsed.netloc or parsed.username is not None or parsed.password is not None:
+        raise argparse.ArgumentTypeError("must not contain credentials")
+    if parsed.query or parsed.fragment or parsed.path != "/api/overview":
+        raise argparse.ArgumentTypeError("must target exactly /api/overview")
+    if host is None:
+        raise argparse.ArgumentTypeError("must include a localhost host")
+    if host.lower() != "localhost":
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("host must be localhost or a loopback IP") from exc
+        if not address.is_loopback:
+            raise argparse.ArgumentTypeError("host must be localhost or a loopback IP")
+    return value
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _validate_alert_snapshot(
+    payload: object,
+    *,
+    max_age_seconds: int,
+    now: datetime | None = None,
+) -> dict:
+    """Validate the minimum safe contract before evaluating alert state."""
+
+    if not isinstance(payload, dict):
+        raise AlertSnapshotError("API payload is not a JSON object")
+    generated_at = payload.get("generated_at")
+    if not isinstance(generated_at, str) or not generated_at.strip():
+        raise AlertSnapshotError("API payload has no generated_at timestamp")
+    candidate = generated_at[:-1] + "+00:00" if generated_at.endswith(("Z", "z")) else generated_at
+    try:
+        generated = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise AlertSnapshotError("API generated_at is not ISO-8601") from exc
+    if generated.tzinfo is None or generated.utcoffset() is None:
+        raise AlertSnapshotError("API generated_at has no UTC offset")
+    try:
+        generated = generated.astimezone(UTC)
+    except (OverflowError, ValueError) as exc:
+        raise AlertSnapshotError("API generated_at is outside the supported range") from exc
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    age_seconds = (current - generated).total_seconds()
+    if age_seconds < -ALERT_API_FUTURE_SKEW_S:
+        raise AlertSnapshotError("API generated_at is too far in the future")
+    if age_seconds > max_age_seconds:
+        raise AlertSnapshotError(
+            f"API snapshot is stale ({int(age_seconds)}s old; limit {max_age_seconds}s)"
+        )
+    engines = payload.get("engines")
+    if not isinstance(engines, dict) or not engines:
+        raise AlertSnapshotError("API payload has no populated engines object")
+    composite = engines.get("composite")
+    if not isinstance(composite, dict):
+        raise AlertSnapshotError("API payload has no composite engine")
+    if composite.get("ok") is not True:
+        raise AlertSnapshotError("API composite engine is not usable")
+    from seiche.config import REGIMES
+
+    known_regimes = {name for _, name in REGIMES}
+    if composite.get("regime") not in known_regimes:
+        raise AlertSnapshotError("API composite engine has no known regime")
+    for field in ("value", "coverage_pct"):
+        number = composite.get(field)
+        if (
+            isinstance(number, bool)
+            or not isinstance(number, (int, float))
+            or not 0 <= number <= 100
+            or not math.isfinite(float(number))
+        ):
+            raise AlertSnapshotError(f"API composite engine has invalid {field}")
+    decomposition = composite.get("decomposition")
+    if (
+        not isinstance(decomposition, list)
+        or not decomposition
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("component"), str)
+            or not row["component"].strip()
+            or row.get("status") not in {"live", "DEAD"}
+            for row in decomposition
+        )
+    ):
+        raise AlertSnapshotError("API composite engine has invalid decomposition")
+    if not isinstance(payload.get("deep"), dict):
+        raise AlertSnapshotError("API payload has no deep object")
+    if not isinstance(payload.get("headline"), dict):
+        raise AlertSnapshotError("API payload has no headline object")
+    return payload
+
+
+def _load_alert_snapshot(
+    url: str,
+    *,
+    max_age_seconds: int,
+    now: datetime | None = None,
+    transport=None,
+) -> dict:
+    """Read one bounded, non-redirecting snapshot from the local API."""
+
+    import httpx
+
+    timeout = httpx.Timeout(
+        connect=ALERT_API_CONNECT_TIMEOUT_S,
+        read=ALERT_API_READ_TIMEOUT_S,
+        write=ALERT_API_CONNECT_TIMEOUT_S,
+        pool=ALERT_API_CONNECT_TIMEOUT_S,
+    )
+    try:
+        with httpx.Client(
+            timeout=timeout,
+            follow_redirects=False,
+            trust_env=False,
+            transport=transport,
+        ) as client:
+            with client.stream("GET", url, headers={"Accept": "application/json"}) as response:
+                if response.status_code != 200:
+                    raise AlertSnapshotError(f"API returned HTTP {response.status_code}")
+                media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if media_type != "application/json":
+                    raise AlertSnapshotError("API response is not application/json")
+                declared_size = response.headers.get("content-length")
+                if declared_size is not None:
+                    try:
+                        declared_bytes = int(declared_size)
+                        if declared_bytes < 0:
+                            raise ValueError
+                        if declared_bytes > ALERT_API_MAX_BYTES:
+                            raise AlertSnapshotError("API response exceeds the size limit")
+                    except ValueError as exc:
+                        raise AlertSnapshotError("API Content-Length is invalid") from exc
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > ALERT_API_MAX_BYTES:
+                        raise AlertSnapshotError("API response exceeds the size limit")
+                    chunks.append(chunk)
+    except AlertSnapshotError:
+        raise
+    except (httpx.RequestError, httpx.InvalidURL) as exc:
+        raise AlertSnapshotError(f"API request failed ({type(exc).__name__})") from exc
+    try:
+        payload = json.loads(b"".join(chunks))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise AlertSnapshotError("API response is not valid JSON") from exc
+    return _validate_alert_snapshot(payload, max_age_seconds=max_age_seconds, now=now)
 
 
 def _index_line(snap: dict) -> str:
@@ -76,8 +261,21 @@ def cmd_brief(args) -> int:
 
 
 def cmd_alert(args) -> int:
-    from seiche import alerts, assemble
-    snap = asyncio.run(assemble.snapshot(force=args.force))
+    from seiche import alerts
+
+    if args.api_url:
+        try:
+            snap = _load_alert_snapshot(
+                args.api_url,
+                max_age_seconds=args.max_snapshot_age_seconds,
+            )
+        except AlertSnapshotError as exc:
+            print(f"{RED}alert snapshot unavailable:{END} {exc}", file=sys.stderr)
+            return 1
+    else:
+        from seiche import assemble
+
+        snap = asyncio.run(assemble.snapshot(force=args.force))
     fired = alerts.evaluate(snap)
     if not fired:
         print(f"{DIM}no new alerts{END}")
@@ -794,7 +992,19 @@ def main() -> None:
     p.set_defaults(fn=cmd_brief)
 
     p = sub.add_parser("alert", help="evaluate alert rules once")
-    p.add_argument("--force", action="store_true")
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("--force", action="store_true")
+    source.add_argument(
+        "--api-url",
+        type=_localhost_alert_api_url,
+        help="read a cached snapshot from localhost /api/overview",
+    )
+    p.add_argument(
+        "--max-snapshot-age-seconds",
+        type=_positive_int,
+        default=ALERT_API_DEFAULT_MAX_AGE_S,
+        help="reject an API snapshot older than this many seconds",
+    )
     p.set_defaults(fn=cmd_alert)
 
     p = sub.add_parser("watch", help="pull + alert on a loop")
