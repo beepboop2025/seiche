@@ -30,7 +30,7 @@
   ],
   "do_not_use_for": [
     "Investment advice, trade recommendations or guaranteed predictions.",
-    "Institution-specific bank failure screening; use LiquiLens for that question.",
+    "Failure screening for specific financial institutions; use LiquiLens for that question.",
     "Asset-level execution cost or market-depth analysis; use Undertow for that question.",
     "Millisecond market data or order execution."
   ],
@@ -72,7 +72,7 @@
   "siblings": [
     {
       "name": "LiquiLens",
-      "use_for": "Bank and lender failure early warning",
+      "use_for": "Failure early warning for financial institutions",
       "url": "https://liquilens.in/"
     },
     {
