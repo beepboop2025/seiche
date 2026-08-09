@@ -26,6 +26,7 @@ days of journal held zero startup banners — nothing to scrape.
 | state-file mtime (`offset.json`) | the poll loop stopped turning |
 | `systemctl is-active` | the unit died outright |
 | JSON-RPC `initialize` on each MCP remote | the remote is up but not speaking MCP, or the path stopped routing to it |
+| Mac heartbeat mtime + exact `nyx=1` line | the NYX host stopped checking in, or checked in while the bridge was down |
 
 Both Telegram methods are read-only and neither touches `getUpdates`, so
 probing can **never** conflict with a running poller. Verified against all
@@ -78,10 +79,13 @@ server behind.
   ignored and the next usable bot is picked.
 - **Two consecutive bad runs before alerting**, so one network blip stays quiet.
 - **One alert per hour per bot**, plus an explicit `🟢 recovered` message.
-- The Mac-hosted bots (riptide, nyx) cannot report their own worst failure —
-  laptop asleep, offline or logged out. So the Mac *checks in* every 5 min via
-  `fleet-mac-heartbeat.sh` (a LaunchAgent), and the box alerts when the
-  check-in stops.
+- NYX cannot report its own worst failure — laptop asleep, offline or logged
+  out. So the Mac *checks in* every 5 min via `fleet-mac-heartbeat.sh` (a
+  LaunchAgent). The box requires both a fresh mtime and exactly one `nyx=1`
+  line. A fresh `nyx=0` therefore alerts instead of disguising a stopped
+  bridge as a healthy host. Missing, unreadable, symlinked, non-regular,
+  multiply linked, wrong-owner, or group/world-writable heartbeat files also
+  fail loud through the same deduplicated `mac-bots` alarm.
 
 ## Configuration (kept out of git)
 

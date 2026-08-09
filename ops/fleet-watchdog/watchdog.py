@@ -33,6 +33,7 @@ import collections
 import json
 import os
 import ssl
+import stat
 import subprocess
 import time
 import urllib.error
@@ -59,6 +60,7 @@ PENDING_MAX = 25
 # asleep, offline or logged out, nothing touches it and the box notices.
 MAC_HEARTBEAT = "/var/lib/fleet-watchdog/mac.heartbeat"
 MAC_STALE_S = 3600
+MAC_HEARTBEAT_MAX_BYTES = 64
 
 # What gets probed comes from CONFIG_PATH, never from here. The shape:
 #
@@ -458,6 +460,75 @@ def guarded(name: str, fn) -> list[str]:
         return [f"probe for {name} raised {type(exc).__name__}: {exc}"]
 
 
+def check_mac_heartbeat(now: float | None = None) -> list[str]:
+    """Prove that the Mac check-in is fresh *and* says NYX is running.
+
+    The LaunchAgent writes one line through a root SSH command.  Open the file
+    without following a final symlink, then inspect and read that same file
+    descriptor so a path swap cannot turn the safety check into a different
+    read.  This service runs as root, so accepting a file writable by another
+    account would let an unrelated local process forge NYX health.
+    """
+    now = time.time() if now is None else now
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        return ["Mac heartbeat cannot be opened safely (O_NOFOLLOW unavailable)"]
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    if not nonblock:
+        return ["Mac heartbeat cannot be opened safely (O_NONBLOCK unavailable)"]
+
+    # O_NONBLOCK matters before fstat: opening a FIFO read-only would otherwise
+    # wait forever for a writer, preventing this fail-loud check from running.
+    flags = os.O_RDONLY | nofollow | nonblock | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(MAC_HEARTBEAT, flags)
+    except FileNotFoundError:
+        return [f"Mac heartbeat missing: {MAC_HEARTBEAT}"]
+    except OSError as exc:
+        return [f"Mac heartbeat unreadable or unsafe ({type(exc).__name__})"]
+
+    try:
+        info = os.fstat(fd)
+        unsafe = []
+        if not stat.S_ISREG(info.st_mode):
+            unsafe.append("not a regular file")
+        if info.st_uid != os.geteuid():
+            unsafe.append("not owned by the watchdog account")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            unsafe.append("writable by another account")
+        if info.st_nlink != 1:
+            unsafe.append("has multiple hard links")
+        if unsafe:
+            return [f"Mac heartbeat unsafe ({'; '.join(unsafe)})"]
+
+        chunks = []
+        remaining = MAC_HEARTBEAT_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+    except OSError as exc:
+        return [f"Mac heartbeat unreadable ({type(exc).__name__})"]
+    finally:
+        os.close(fd)
+
+    # A terminal newline is normal for a line-oriented file; everything else
+    # (including CRLF, whitespace and a second line) is deliberately rejected.
+    if payload == b"nyx=0" or payload == b"nyx=0\n":
+        return ["Mac heartbeat reports nyx=0 (NYX bridge is not active)"]
+    if payload not in (b"nyx=1", b"nyx=1\n"):
+        return ["Mac heartbeat malformed (expected exactly one line: nyx=1)"]
+
+    age = now - info.st_mtime
+    if age > MAC_STALE_S:
+        return [f"no Mac check-in for {int(age // 60)} min "
+                f"(NYX bridge unreachable: Mac asleep, offline or logged out)"]
+    return []
+
+
 def main() -> int:
     if not OWNER_CHAT:
         # Refuse to run mute: a failed unit is greppable in the journal, a
@@ -475,15 +546,10 @@ def main() -> int:
     checks = [(b.unit, pick_via(b.unit, b.via, cfg), guarded(b.unit, lambda b=b: check(b)))
               for b in cfg.bots]
 
-    # the Mac-hosted bots (riptide, nyx) check in by touching a file over ssh
-    try:
-        age = now - os.path.getmtime(MAC_HEARTBEAT)
-        checks.append(("mac-bots", pick_via("mac-bots", "", cfg),
-                       [f"no Mac check-in for {int(age // 60)} min "
-                        f"(nyx bridge unreachable: Mac asleep, offline or logged out)"]
-                       if age > MAC_STALE_S else []))
-    except OSError:
-        pass  # heartbeat not established yet; stay quiet rather than cry wolf
+    # Keep the established state key: payload failures and stale check-ins are
+    # one NYX alarm, sharing the same debounce/re-alert history.
+    checks.append(("mac-bots", pick_via("mac-bots", "", cfg),
+                   guarded("mac-bots", lambda: check_mac_heartbeat(now))))
 
     mcp_checks = [(r.name, pick_via(r.name, r.via, cfg),
                    guarded(r.name, lambda r=r: check_mcp(r.url)))
