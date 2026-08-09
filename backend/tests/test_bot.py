@@ -28,8 +28,14 @@ def _isolated(tmp_path, monkeypatch):
 @pytest.fixture
 def sent(monkeypatch):
     out = []
-    monkeypatch.setattr(bot, "tg_call",
-                        lambda m, p: out.append((m, p)) or {"ok": True})
+
+    def fake_tg_call(method, payload):
+        out.append((method, payload))
+        result = {"id": 1, "is_bot": True, "username": "seiche_test_bot"} \
+            if method == "getMe" else True
+        return {"ok": True, "result": result}
+
+    monkeypatch.setattr(bot, "tg_call", fake_tg_call)
     return out
 
 
