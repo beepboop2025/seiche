@@ -239,3 +239,66 @@ async def test_changed_source_content_can_revert_without_revision_id_collision(
     assert len({first.revision_id, second.revision_id, reverted.revision_id}) == 3
     assert "@capture-20260810T110000Z" in second.revision_id
     assert "@capture-20260810T120000Z" in reverted.revision_id
+
+
+@pytest.mark.asyncio
+async def test_identical_content_gains_explicit_field_lineage_once(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "lineage-upgrade.sqlite")
+    repository = SQLiteMarketRepository()
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+        "application/json",
+        b"{}",
+        "nyfed_secured_rates",
+    )
+    evidence = b"same canonical P99 source row"
+    explicit_revision = "nyfed:percentPercentile99:2026-08-06:unrevised-content"
+
+    async def collect(*, captured_at: datetime, revision_id: str | None):
+        async def fetcher(_client):
+            return (document,)
+
+        def parser(_document):
+            return (
+                ParsedPoint(
+                    "US.NYFED.SOFR_P99",
+                    date(2026, 8, 6),
+                    Decimal("5.40"),
+                    evidence,
+                    revision_id=revision_id,
+                ),
+            )
+
+        adapter = FunctionalCanonicalAdapter(
+            pack=default_registry().get("US-USD"),
+            adapter_id="nyfed_rates",
+            source="nyfed_rates",
+            fetcher=fetcher,
+            parser=parser,
+            repository=repository,
+            clock=lambda: captured_at,
+        )
+        batch = await adapter.collect()
+        repository.save_observations(batch.observations)
+        return batch.observations[0]
+
+    legacy = await collect(
+        captured_at=datetime(2026, 8, 10, 10, tzinfo=UTC),
+        revision_id=None,
+    )
+    upgraded = await collect(
+        captured_at=datetime(2026, 8, 10, 11, tzinfo=UTC),
+        revision_id=explicit_revision,
+    )
+    repeated = await collect(
+        captured_at=datetime(2026, 8, 10, 12, tzinfo=UTC),
+        revision_id=explicit_revision,
+    )
+
+    assert legacy.revision_id.startswith("sha256:")
+    assert upgraded.revision_id.startswith(f"{explicit_revision}@capture-")
+    assert upgraded.evidence_hash == legacy.evidence_hash
+    assert repeated.revision_id == upgraded.revision_id
+    assert repeated.knowledge_time == upgraded.knowledge_time

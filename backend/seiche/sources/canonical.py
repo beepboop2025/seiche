@@ -57,7 +57,9 @@ class ParsedPoint:
 
 
 class DocumentFetcher(Protocol):
-    async def __call__(self, client: httpx.AsyncClient) -> Iterable[FetchedDocument]: ...
+    async def __call__(
+        self, client: httpx.AsyncClient
+    ) -> Iterable[FetchedDocument]: ...
 
 
 DocumentParser = Callable[[FetchedDocument], Iterable[ParsedPoint]]
@@ -97,7 +99,9 @@ def _event_business_date(value: date | datetime, pack: MarketPack) -> date:
     return value.astimezone(ZoneInfo(pack.local_timezone)).date()
 
 
-def _inferred_publication_time(event_day: date, pack: MarketPack, adapter_id: str) -> datetime:
+def _inferred_publication_time(
+    event_day: date, pack: MarketPack, adapter_id: str
+) -> datetime:
     """Conservative per-row clock for an upstream-native but undated record."""
 
     adapter = pack.adapter_map[adapter_id]
@@ -273,7 +277,17 @@ class FunctionalCanonicalAdapter:
                 continue
             row_hash = evidence_sha256(point.row_evidence)
             existing = prior_by_event.get((instrument.instrument_id, event_time))
-            if existing is not None and existing.evidence_hash == row_hash:
+            explicit_lineage_matches = (
+                point.revision_id is None
+                or existing is None
+                or existing.revision_id == point.revision_id
+                or existing.revision_id.startswith(f"{point.revision_id}@capture-")
+            )
+            if (
+                existing is not None
+                and existing.evidence_hash == row_hash
+                and explicit_lineage_matches
+            ):
                 observations.append(existing)
                 continue
             if existing is not None:
@@ -375,7 +389,9 @@ async def get_documents(
         documents.append(
             FetchedDocument(
                 source_uri=str(response.url),
-                media_type=response.headers.get("content-type", "application/octet-stream")
+                media_type=response.headers.get(
+                    "content-type", "application/octet-stream"
+                )
                 .split(";", 1)[0]
                 .lower(),
                 payload=response.content,
