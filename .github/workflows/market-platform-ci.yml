@@ -53,5 +53,6 @@ jobs:
           backend/tests/test_api_v2_markets.py
           backend/tests/test_deploy_release.py
           backend/tests/test_market_backup.py
+          backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py
           backend/tests/test_fleet_mac_heartbeat.py

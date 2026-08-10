@@ -13,6 +13,9 @@ CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
 CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
+WORLD_MODEL_DELIVERY_INSTALLER = (
+    ROOT / "ops" / "deploy" / "install-world-model-delivery-relay.sh"
+)
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
@@ -361,7 +364,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert 'chmod 0640 "$FUNDING_EXPORT_FILE"' in installer
     assert "setfacl -R" not in installer
     assert "find \"$FUNDING_EXPORT_DIR\"" not in installer
-    assert "usermod" not in installer
+    funding_acl = installer[: installer.index("ENV_STAGE=")]
+    assert "usermod" not in funding_acl
     assert 'FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"' in installer
     assert "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$FUNDING_EXPORT_DIR" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
@@ -409,6 +413,53 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RandomizedDelaySec=15m" in restore_timer
     assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
+
+
+def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
+    installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
+    relay_installer = WORLD_MODEL_DELIVERY_INSTALLER.read_text()
+    caddy = CADDYFILE.read_text()
+    delivery_docs = (ROOT / "ops" / "deploy" / "WORLD-MODEL-DELIVERY.md").read_text()
+    route = "/api/internal/v1/world-model/us-usd-funding-core-v2"
+    exact_file = (
+        "/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json"
+    )
+
+    assert f"path {route}" in caddy
+    private_edge = caddy[
+        caddy.index("@world_model_delivery {") : caddy.index("@public {")
+    ]
+    assert 'header Cache-Control "no-store, no-transform"' in private_edge
+    assert "reverse_proxy 127.0.0.1:8787" in private_edge
+    assert "@world_model_delivery_non_get path" in private_edge
+    assert 'respond "not here" 404' in private_edge
+    public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
+    assert route not in public_edge
+    assert route not in EXTERNAL_ROUTES.read_text()
+    assert f"https://api.seiche.info{route}" in delivery_docs
+    assert f"https://seiche.info{route}" not in delivery_docs
+
+    assert "EnvironmentFile=-$DELIVERY_ENV_FILE" in installer
+    assert exact_file in installer
+    assert "liquilens-world-model-readers" in installer
+    assert 'usermod -a -G "$DELIVERY_READER_GROUP" seiche' in installer
+    assert 'runuser -u seiche -- test -r "$DELIVERY_PATH"' in installer
+    assert exact_file in relay_installer
+    assert "SEICHE_WORLD_MODEL_DELIVERY_BEARER_TOKEN=$TOKEN" in relay_installer
+    assert "HARD_MAX_BYTES=5242880" in relay_installer
+    assert "liquilens-world-model-readers" in relay_installer
+    assert "/archive" not in relay_installer
+    assert "/latest" not in relay_installer
+    assert 'echo "$TOKEN"' not in relay_installer
+    assert "setfacl" not in relay_installer
+
+
+def test_deploy_smoke_runs_private_delivery_contracts():
+    update = BOX_UPDATE.read_text()
+    workflow = (ROOT / ".github" / "workflows" / "market-platform-ci.yml").read_text()
+
+    assert "tests/test_world_model_delivery.py" in update
+    assert "backend/tests/test_world_model_delivery.py" in workflow
 
 
 def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():

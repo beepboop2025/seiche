@@ -10,7 +10,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from seiche import api, mcp_server, usage, x402
+from seiche import api, mcp_server, usage, world_model_delivery, x402
 
 
 @pytest.fixture()
@@ -93,6 +93,7 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "/undertow/live/quotes.json" in spec["paths"]
     assert "/api/auth/login" not in spec["paths"]
     assert "/api/deep" not in spec["paths"]
+    assert world_model_delivery.DELIVERY_ROUTE not in spec["paths"]
     assert "public" in r.headers["cache-control"]
 
 

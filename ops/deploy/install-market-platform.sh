@@ -9,6 +9,9 @@ BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-readers}"
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
 FUNDING_EXPORT_FILE="$FUNDING_EXPORT_DIR/us-usd-funding-core-v1.json"
+DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-delivery.env}"
+DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
+DELIVERY_READER_GROUP=liquilens-world-model-readers
 
 PACKAGES=()
 if ! command -v psql >/dev/null 2>&1; then
@@ -178,6 +181,62 @@ mv -f "$RESTORE_STAGE" \
     /etc/systemd/system/seiche-market-restore-check.service.d/paths.conf
 RESTORE_STAGE=""
 
+# A relay is disabled unless the separately provisioned, root-controlled
+# credential file exists.  When it does, validate its exact three-line shape
+# without sourcing or printing the bearer secret, then converge only the API
+# identity's membership in Lab's dedicated export-reader group.
+if [ -e "$DELIVERY_ENV_FILE" ] || [ -L "$DELIVERY_ENV_FILE" ]; then
+    [ -f "$DELIVERY_ENV_FILE" ] && [ ! -L "$DELIVERY_ENV_FILE" ] || {
+        echo "market platform: world-model delivery env is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a' "$DELIVERY_ENV_FILE")" = "root:seiche:640" ] || {
+        echo "market platform: world-model delivery env ownership/mode is unsafe" >&2
+        exit 1
+    }
+    if ! { [ "$(wc -l <"$DELIVERY_ENV_FILE" | tr -d '[:space:]')" = "3" ] \
+        && grep -Fxq "SEICHE_WORLD_MODEL_DELIVERY_PATH=$DELIVERY_PATH" \
+            "$DELIVERY_ENV_FILE" \
+        && grep -Eq '^SEICHE_WORLD_MODEL_DELIVERY_BEARER_TOKEN=[0-9a-f]{64}$' \
+            "$DELIVERY_ENV_FILE" \
+        && grep -Eq '^SEICHE_WORLD_MODEL_DELIVERY_MAX_BYTES=[0-9]+$' \
+            "$DELIVERY_ENV_FILE"; }; then
+        echo "market platform: world-model delivery env contract is invalid" >&2
+        exit 1
+    fi
+    DELIVERY_MAX_BYTES=$(sed -n \
+        's/^SEICHE_WORLD_MODEL_DELIVERY_MAX_BYTES=//p' "$DELIVERY_ENV_FILE")
+    [ "$DELIVERY_MAX_BYTES" -ge 1 ] \
+        && [ "$DELIVERY_MAX_BYTES" -le 5242880 ] || {
+        echo "market platform: world-model delivery byte limit is unsafe" >&2
+        exit 1
+    }
+    getent group "$DELIVERY_READER_GROUP" >/dev/null || {
+        echo "market platform: Lab delivery reader group is not provisioned" >&2
+        exit 1
+    }
+    if ! id -nG seiche | tr ' ' '\n' | grep -Fxq "$DELIVERY_READER_GROUP"; then
+        usermod -a -G "$DELIVERY_READER_GROUP" seiche
+    fi
+    if [ ! -f "$DELIVERY_PATH" ] || [ -L "$DELIVERY_PATH" ]; then
+        echo "market platform: exact signed Lab delivery is not readable" >&2
+        exit 1
+    fi
+    [ "$(stat -c '%U:%G:%a' /var/lib/liquilens-world-model)" \
+        = "liquilens-world-model:$DELIVERY_READER_GROUP:710" ] \
+        && [ "$(stat -c '%U:%G:%a' /var/lib/liquilens-world-model/export)" \
+        = "liquilens-world-model:$DELIVERY_READER_GROUP:2750" ] \
+        && [ "$(stat -c '%U:%G:%a' "$DELIVERY_PATH")" \
+        = "liquilens-world-model:$DELIVERY_READER_GROUP:440" ] || {
+        echo "market platform: Lab delivery permission boundary is unsafe" >&2
+        exit 1
+    }
+    if ! runuser -u seiche -- test -r "$DELIVERY_PATH"; then
+        echo "market platform: exact signed Lab delivery is not readable" >&2
+        exit 1
+    fi
+fi
+
 # The production API unit predates this repository's unit template.  A drop-in
 # adds only the shared repository environment and writable evidence root.
 install -d -m 0755 /etc/systemd/system/seiche-api.service.d
@@ -185,6 +244,7 @@ DROPIN=$(mktemp /etc/systemd/system/seiche-api.service.d/.market-platform.XXXXXX
 cat >"$DROPIN" <<EOF
 [Service]
 EnvironmentFile=-$ENV_DIR/market.env
+EnvironmentFile=-$DELIVERY_ENV_FILE
 ReadWritePaths=$STATE_DIR
 EOF
 chmod 0644 "$DROPIN"
