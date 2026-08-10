@@ -70,7 +70,7 @@
       "retrospective_backtest_eligible_products": 0,
       "requested_products": 7
     },
-    "status_source": "https://api.seiche.info/api/public",
+    "status_source": "https://api.seiche.info/api/health",
     "methodology": "https://seiche.info/methodology.html",
     "skeptic_pack": "https://seiche.info/skeptic.html",
     "public_scoreboard": "https://api.seiche.info/api/public",

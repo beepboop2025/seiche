@@ -145,6 +145,9 @@ done
 echo "$url $*" >> "{calls}"
 status=200
 case "$url" in
+    */api/health)
+        type=application/json; body='{{"generated_at":"2026-08-10T00:00:00Z"}}'
+        ;;
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
     */api/oil-funding)
         type=application/json; body='{{"schema":"seiche.oil-funding.v1"}}' ;;
@@ -190,6 +193,7 @@ printf '%s|%s' "$status" "$type"
 
 def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
     definitions = EXTERNAL_ROUTES.read_text()
+    assert 'GET|/api/health|200|application/json|"generated_at"' in definitions
     assert (
         'GET|/api/oil-funding|200|application/json|'
         '"schema":"seiche.oil-funding.v1"'
@@ -462,6 +466,12 @@ def test_deploy_smoke_runs_private_delivery_contracts():
     assert "backend/tests/test_world_model_delivery.py" in workflow
 
 
+def test_deploy_smoke_runs_cache_only_health_contracts():
+    update = BOX_UPDATE.read_text()
+
+    assert "tests/test_api_caching.py" in update
+
+
 def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():
     unit = PULL_UNIT.read_text()
 
@@ -480,6 +490,11 @@ def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():
 
 def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     wrapper = DEPLOY_WRAPPER.read_text()
+    readiness = wrapper[
+        wrapper.index("health_wait()") : wrapper.index("market_health()")
+    ]
+    assert "/api/health" in readiness
+    assert "/api/public" not in readiness
     function = wrapper[
         wrapper.index("deploy_pull_unit()") : wrapper.index("deploy_market_platform ||")
     ]

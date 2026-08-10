@@ -262,9 +262,15 @@ bash ops/deploy/install.sh
 
 # every release after that: push to main — the deploy-hetzner workflow
 # runs the box's forced-command chain (test gate, rollback, restart,
-# warm-up-aware health check). Manual equivalent, as root on the box:
+# cache-only readiness check). Manual equivalent, as root on the box:
 bash /home/seiche/app/ops/deploy/update.sh   # engine deploy + Caddyfile
 ```
+
+`GET /api/health` never starts or waits for the full board build. It returns
+the last completed snapshot's health fields with HTTP 200, or an immediate
+HTTP 503 with `status: warming_or_unavailable` while the cache is cold. The
+production background warmer owns snapshot construction; deployment probes
+only observe whether it has published a result.
 
 Put a TLS reverse proxy in front. The box already serving another site
 (e.g. Palimpsest) just adds a vhost — nginx:

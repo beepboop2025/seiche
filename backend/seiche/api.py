@@ -550,8 +550,44 @@ def _public_openapi_document() -> dict[str, Any]:
         "/api/health": {
             "get": {
                 "operationId": "getSeicheHealth",
-                "summary": "Check service and data-source health",
-                "responses": {"200": object_response},
+                "summary": "Read cached service and data-source health",
+                "description": (
+                    "Reads only the last completed board snapshot. A cold cache "
+                    "returns 503 immediately; this request never starts or waits "
+                    "for a board build."
+                ),
+                "responses": {
+                    "200": object_response,
+                    "503": {
+                        "description": "Snapshot cache is warming or unavailable",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Suggested seconds before retrying",
+                                "schema": {"type": "string"},
+                            },
+                            "Cache-Control": {
+                                "description": "Unavailable health must not be cached",
+                                "schema": {"type": "string"},
+                            },
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["status", "version"],
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "const": "warming_or_unavailable",
+                                        },
+                                        "version": {"type": "string"},
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                    },
+                },
             },
         },
         "/api/gauge": {
@@ -1607,8 +1643,19 @@ async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
 
 
 @app.get("/api/health")
-async def health():
-    snap = await assemble.snapshot()
+async def health(response: Response):
+    """Readiness from completed cache state; never initiate a board build."""
+    snap = assemble.cached_snapshot()
+    if snap is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "warming_or_unavailable",
+                "version": assemble.VERSION_LABEL,
+            },
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    response.headers["Cache-Control"] = "no-store"
     return {
         "generated_at": snap["generated_at"],
         "version": snap.get("version"),

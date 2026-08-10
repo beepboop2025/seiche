@@ -9,7 +9,7 @@
 #   /root/seiche-deploy-wrapper.sh          (mirror: seiche-deploy-wrapper.sh)
 #     └─ /home/seiche/update.sh             (mirror: box-update.sh)
 #        pull main → pip install → focused smoke suite, rollback on red
-#     └─ systemctl restart seiche-api + poll /api/public through warm-up
+#     └─ systemctl restart seiche-api + poll cache-only /api/health
 #
 # The wrapper also deploys ops/Caddyfile to the edge, test-gated with backup
 # and rollback. Keeping that operation in the forced-command path means manual
