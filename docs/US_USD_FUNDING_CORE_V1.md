@@ -17,7 +17,7 @@ filtered to those three IDs before the generic role builder runs, so a future
 instrument assigned the same semantic role cannot silently replace a training
 input.
 
-## NY Fed median correction and lineage
+## NY Fed field correction and lineage
 
 The NY Fed secured-rates API's `percentRate` field is the published SOFR
 median. An earlier canonical parser incorrectly mapped
@@ -31,15 +31,17 @@ nyfed:<source-field>:<effective-date>:<revision-indicator-or-unrevised>-<content
 
 No historical row is deleted or rewritten. On recollection, a former
 P25-derived median remains the earlier revision and the corrected
-`percentRate` observation becomes the later revision for that event. The
-content prefix is derived from the canonical source-row evidence, so an
-unflagged upstream correction cannot collide with the prior revision ID. When
-content changes, canonical ingestion also appends the real capture occurrence
-to the revision ID; this keeps an A-to-B-to-A content reversion unique without
-creating rows for identical re-fetches. The
-profile fails closed until the latest median revision for every loaded median
-event explicitly binds `percentRate` and that event's date. All revisions for
-dates admitted to the profile remain in the exported pack.
+`percentRate` observation becomes the later revision for that event. Legacy
+hash-only P99 and volume rows likewise gain one provenance-only successor that
+binds `percentPercentile99` or `volumeInBillions`, even when the value bytes are
+unchanged. The content prefix is derived from the canonical source-row
+evidence, so an unflagged upstream correction cannot collide with the prior
+revision ID. When content changes, canonical ingestion also appends the real
+capture occurrence to the revision ID; this keeps an A-to-B-to-A content
+reversion unique without creating rows for identical re-fetches. The profile
+fails closed until every latest median, P99, and volume revision explicitly
+binds its expected source field and exact event date. All revisions for dates
+admitted to the profile remain in the exported pack.
 
 "Latest" is evaluated strictly at the requested `as_of`: rows whose event,
 source-publication, or knowledge clock follows the cutoff are excluded before
@@ -92,10 +94,10 @@ lineage or filesystem failure is logged and surfaced in one-shot collection
 results without changing any sibling collector's completed status.
 
 The corrected historical import has its own one-time backfill generation:
-`US-USD--nyfed_rates--percent-rate-v2.done`. A host's older unversioned
+`US-USD--nyfed_rates--funding-field-lineage-v3.done`. A host's older unversioned
 `US-USD--nyfed_rates.done` marker does not suppress this correction run. Once
-the full `percentRate` recollection and funding-core export both succeed, the
-v2 marker is written and
+the full three-field recollection and funding-core export both succeed, the
+v3 marker is written and
 future backfill-service starts skip it normally. Markers for every other
 adapter retain their existing names and behavior; provisioning does not delete
 or reset them.

@@ -175,6 +175,24 @@ api.seiche.info {
     # licensed series. (require_board is NOT a guard: it is a deliberate
     # no-op in production because Seiche is free — the licence gate lives in
     # the app, where it deploys through the normal chain.)
+    #
+    # The signed world-model delivery is deliberately outside @public. It is
+    # one bearer-gated machine-to-machine path and returns opaque publisher
+    # bytes; the Railway consumer, not Seiche, verifies Ed25519 authority.
+    @world_model_delivery {
+        method GET
+        path /api/internal/v1/world-model/us-usd-funding-core-v2
+    }
+    handle @world_model_delivery {
+        header Cache-Control "no-store, no-transform"
+        header X-Content-Type-Options "nosniff"
+        reverse_proxy 127.0.0.1:8787
+    }
+    @world_model_delivery_non_get path /api/internal/v1/world-model/us-usd-funding-core-v2
+    handle @world_model_delivery_non_get {
+        header Cache-Control "no-store, no-transform"
+        respond "not here" 404
+    }
     @public {
         method GET HEAD
         path /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe

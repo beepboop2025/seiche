@@ -199,7 +199,37 @@ def test_profile_rejects_latest_median_without_percent_rate_lineage() -> None:
         evidence_hash=evidence_sha256("wrong latest median lineage"),
     )
 
-    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+    with pytest.raises(FundingCoreProfileError, match="exact source-field lineage"):
+        build_funding_core_input_pack(rows, as_of=AS_OF)
+
+
+@pytest.mark.parametrize(
+    ("instrument_id", "wrong_revision", "expected_field"),
+    [
+        (
+            "US.NYFED.SOFR_P99",
+            "nyfed:percentPercentile75:2023-01-03:unrevised",
+            "percentPercentile99",
+        ),
+        (
+            "US.NYFED.SOFR_VOLUME",
+            "nyfed:percentPercentile99:2023-01-03:unrevised",
+            "volumeInBillions",
+        ),
+    ],
+)
+def test_profile_rejects_wrong_source_field_lineage_for_every_state(
+    instrument_id: str, wrong_revision: str, expected_field: str
+) -> None:
+    rows = _rows(504)
+    selected = next(item for item in rows if item.instrument_id == instrument_id)
+    rows[rows.index(selected)] = replace(
+        selected,
+        revision_id=wrong_revision,
+        evidence_hash=evidence_sha256(f"wrong {instrument_id} lineage"),
+    )
+
+    with pytest.raises(FundingCoreProfileError, match=expected_field):
         build_funding_core_input_pack(rows, as_of=AS_OF)
 
 
@@ -220,7 +250,7 @@ def test_profile_rejects_prior_day_revision_for_utc_midnight_date_label() -> Non
         evidence_hash=evidence_sha256("prior-day median lineage"),
     )
 
-    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+    with pytest.raises(FundingCoreProfileError, match="exact source-field lineage"):
         build_funding_core_input_pack(rows, as_of=AS_OF)
 
 
@@ -228,13 +258,11 @@ def test_profile_rejects_non_midnight_event_key_for_date_lineage() -> None:
     rows = _rows(504)
     shifted_event = START + timedelta(hours=1)
     rows = [
-        replace(item, event_time=shifted_event)
-        if item.event_time == START
-        else item
+        replace(item, event_time=shifted_event) if item.event_time == START else item
         for item in rows
     ]
 
-    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+    with pytest.raises(FundingCoreProfileError, match="exact source-field lineage"):
         build_funding_core_input_pack(rows, as_of=AS_OF)
 
 
@@ -256,7 +284,7 @@ def test_future_percent_rate_revision_cannot_satisfy_asof_lineage_gate() -> None
         evidence_hash=evidence_sha256("percentRate correction captured after cutoff"),
     )
 
-    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+    with pytest.raises(FundingCoreProfileError, match="exact source-field lineage"):
         build_funding_core_input_pack([*rows, future_correction], as_of=AS_OF)
 
 
@@ -355,8 +383,9 @@ async def test_worker_exports_once_at_cycle_boundary_not_per_us_adapter(
     monkeypatch.setattr(
         market_runtime,
         "_export_usd_funding_core_after_runs",
-        lambda cycle_runs, **_kwargs: export_calls.append(tuple(cycle_runs))
-        or {"status": "SUCCESS"},
+        lambda cycle_runs, **_kwargs: (
+            export_calls.append(tuple(cycle_runs)) or {"status": "SUCCESS"}
+        ),
     )
 
     async def stop_after_cycle(_seconds):
@@ -429,7 +458,7 @@ def test_percent_rate_backfill_generation_ignores_only_old_nyfed_marker(
     assert ("US-USD", "nyfed_rates") in before_v2._tasks
     assert ("US-USD", "fred_daily") not in before_v2._tasks
 
-    generation_marker = state / "US-USD--nyfed_rates--percent-rate-v2.done"
+    generation_marker = state / "US-USD--nyfed_rates--funding-field-lineage-v3.done"
     assert market_runtime._backfill_marker("US-USD", "nyfed_rates") == generation_marker
     market_runtime._mark_backfill_complete("US-USD", "nyfed_rates")
     assert generation_marker.exists()
@@ -481,5 +510,5 @@ async def test_percent_rate_marker_waits_for_ready_funding_export(
         repository=_BackfillRepository([]),
     )
 
-    marker = state / "US-USD--nyfed_rates--percent-rate-v2.done"
+    marker = state / "US-USD--nyfed_rates--funding-field-lineage-v3.done"
     assert marker.exists() is (export_status == "SUCCESS")

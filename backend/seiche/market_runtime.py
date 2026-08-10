@@ -28,11 +28,12 @@ from seiche.sources.official import build_official_adapters
 LOGGER = logging.getLogger(__name__)
 
 # Backfill markers are normally stable per adapter.  This one generation bump
-# is intentionally narrower: the NY Fed median field correction must recollect
-# full history once even on hosts carrying the pre-fix adapter marker.  After a
-# successful corrected import the versioned marker restores normal idempotency.
+# is intentionally narrower: all three NY Fed funding states must recollect
+# full history once so legacy hash-only rows gain explicit source-field
+# lineage. After a successful import the versioned marker restores normal
+# idempotency.
 _BACKFILL_MARKER_GENERATIONS = {
-    ("US-USD", "nyfed_rates"): "percent-rate-v2",
+    ("US-USD", "nyfed_rates"): "funding-field-lineage-v3",
 }
 
 

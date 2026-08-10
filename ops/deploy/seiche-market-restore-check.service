@@ -1,0 +1,47 @@
+[Unit]
+Description=Restore-check the newest Seiche market-data snapshot
+After=postgresql.service seiche-market-backup.service
+Wants=postgresql.service
+OnFailure=undertow-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/seiche/market.env
+ExecStart=/usr/bin/flock --wait 300 /run/lock/seiche-market-backup.lock /usr/bin/bash /home/seiche/app/ops/deploy/seiche-market-restore-check.sh
+TimeoutStartSec=2h
+CPUQuota=50%
+CPUWeight=5
+IOWeight=5
+Nice=15
+MemoryHigh=512M
+MemoryMax=1G
+MemorySwapMax=0
+TasksMax=64
+UMask=0077
+
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market
+ReadWritePaths=/var/lib/seiche/validation /run/lock

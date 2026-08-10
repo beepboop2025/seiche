@@ -13,6 +13,9 @@ CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
 CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
+WORLD_MODEL_DELIVERY_INSTALLER = (
+    ROOT / "ops" / "deploy" / "install-world-model-delivery-relay.sh"
+)
 FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
@@ -331,6 +334,15 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
     validation = (ROOT / "ops" / "deploy" / "seiche-market-validation.service").read_text()
     validation_timer = (ROOT / "ops" / "deploy" / "seiche-market-validation.timer").read_text()
+    backup = (ROOT / "ops" / "deploy" / "seiche-market-backup.service").read_text()
+    backup_script = (ROOT / "ops" / "deploy" / "seiche-market-backup.sh").read_text()
+    backup_timer = (ROOT / "ops" / "deploy" / "seiche-market-backup.timer").read_text()
+    restore = (
+        ROOT / "ops" / "deploy" / "seiche-market-restore-check.service"
+    ).read_text()
+    restore_timer = (
+        ROOT / "ops" / "deploy" / "seiche-market-restore-check.timer"
+    ).read_text()
     caddy = CADDYFILE.read_text()
 
     assert 'psql -tAc "SHOW port"' in installer
@@ -345,10 +357,17 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
-    assert (
-        "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$STATE_DIR/exports/"
-        "us-usd-funding-core-v1"
-    ) in installer
+    assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
+    assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
+    assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer
+    assert 'chmod 2750 "$FUNDING_EXPORT_DIR"' in installer
+    assert 'chmod 0640 "$FUNDING_EXPORT_FILE"' in installer
+    assert "setfacl -R" not in installer
+    assert "find \"$FUNDING_EXPORT_DIR\"" not in installer
+    funding_acl = installer[: installer.index("ENV_STAGE=")]
+    assert "usermod" not in funding_acl
+    assert 'FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"' in installer
+    assert "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$FUNDING_EXPORT_DIR" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "Restart=always" in worker
@@ -367,7 +386,80 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "OnCalendar=*-*-* 03:15:00 UTC" in validation_timer
     assert "Persistent=true" in validation_timer
     assert "Unit=seiche-market-validation.service" in validation_timer
+    assert "seiche-market-backup.service" in installer
+    assert "seiche-market-backup.timer" in installer
+    assert "seiche-market-restore-check.service" in installer
+    assert "seiche-market-restore-check.timer" in installer
+    assert "ReadWritePaths=$BACKUP_DIR" in installer
+    assert "ReadWritePaths=$STATE_DIR/validation" in installer
+    assert "ExecStart=/usr/bin/flock --wait 300" in backup
+    assert "seiche-market-backup.sh" in backup
+    assert "mountpoint -q" in backup_script
+    assert "CPUQuota=50%" in backup
+    assert "MemoryMax=1G" in backup
+    assert "ProtectSystem=strict" in backup
+    assert "RestrictAddressFamilies=AF_UNIX" in backup
+    assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
+    assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
+    assert "RandomizedDelaySec=10m" in backup_timer
+    assert "Persistent=true" in backup_timer
+    assert "ExecStart=/usr/bin/flock --wait 300" in restore
+    assert "seiche-market-restore-check.sh" in restore
+    assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
+    assert "ReadWritePaths=/var/lib/seiche/validation /run/lock" in restore
+    assert "CAP_CHOWN" in restore
+    assert "CAP_DAC_OVERRIDE" in restore
+    assert "OnCalendar=Sun *-*-* 07:30:00 UTC" in restore_timer
+    assert "RandomizedDelaySec=15m" in restore_timer
+    assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
+
+
+def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
+    installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
+    relay_installer = WORLD_MODEL_DELIVERY_INSTALLER.read_text()
+    caddy = CADDYFILE.read_text()
+    delivery_docs = (ROOT / "ops" / "deploy" / "WORLD-MODEL-DELIVERY.md").read_text()
+    route = "/api/internal/v1/world-model/us-usd-funding-core-v2"
+    exact_file = (
+        "/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json"
+    )
+
+    assert f"path {route}" in caddy
+    private_edge = caddy[
+        caddy.index("@world_model_delivery {") : caddy.index("@public {")
+    ]
+    assert 'header Cache-Control "no-store, no-transform"' in private_edge
+    assert "reverse_proxy 127.0.0.1:8787" in private_edge
+    assert "@world_model_delivery_non_get path" in private_edge
+    assert 'respond "not here" 404' in private_edge
+    public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
+    assert route not in public_edge
+    assert route not in EXTERNAL_ROUTES.read_text()
+    assert f"https://api.seiche.info{route}" in delivery_docs
+    assert f"https://seiche.info{route}" not in delivery_docs
+
+    assert "EnvironmentFile=-$DELIVERY_ENV_FILE" in installer
+    assert exact_file in installer
+    assert "liquilens-world-model-readers" in installer
+    assert 'usermod -a -G "$DELIVERY_READER_GROUP" seiche' in installer
+    assert 'runuser -u seiche -- test -r "$DELIVERY_PATH"' in installer
+    assert exact_file in relay_installer
+    assert "SEICHE_WORLD_MODEL_DELIVERY_BEARER_TOKEN=$TOKEN" in relay_installer
+    assert "HARD_MAX_BYTES=5242880" in relay_installer
+    assert "liquilens-world-model-readers" in relay_installer
+    assert "/archive" not in relay_installer
+    assert "/latest" not in relay_installer
+    assert 'echo "$TOKEN"' not in relay_installer
+    assert "setfacl" not in relay_installer
+
+
+def test_deploy_smoke_runs_private_delivery_contracts():
+    update = BOX_UPDATE.read_text()
+    workflow = (ROOT / ".github" / "workflows" / "market-platform-ci.yml").read_text()
+
+    assert "tests/test_world_model_delivery.py" in update
+    assert "backend/tests/test_world_model_delivery.py" in workflow
 
 
 def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():

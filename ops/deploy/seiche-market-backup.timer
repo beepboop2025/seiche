@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up the Seiche market data plane daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+Unit=seiche-market-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -76,13 +76,14 @@ fi
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
 export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
-# Nine files, collects 247 tests as of this commit. If a commit grows or
+# Ten files, collects 267 tests as of this commit. If a commit grows or
 # shrinks this subset, update this count in the same commit — the number is
 # how a reader of the deploy log knows the gate ran what it claims to run.
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \
 tests/test_citability.py tests/test_mcp_server.py tests/test_notary.py \
 tests/test_attest.py tests/test_api_v2_markets.py \
-tests/test_market_materialize.py tests/test_deploy_release.py"
+tests/test_market_materialize.py tests/test_deploy_release.py \
+tests/test_world_model_delivery.py"
 
 echo "=== import smoke $(date -u +%FT%TZ) ===" >>"$LOG"
 if ! timeout -k 30 120 backend/.venv/bin/python -c \
@@ -92,6 +93,8 @@ if ! timeout -k 30 120 backend/.venv/bin/python -c \
 fi
 
 echo "=== pytest smoke $(date -u +%FT%TZ) ===" >>"$LOG"
+# SMOKE is an intentional whitespace-separated file list.
+# shellcheck disable=SC2086
 if (cd backend && timeout -k 30 600 ../backend/.venv/bin/python -m pytest $SMOKE -q -x) >>"$LOG" 2>&1; then
   echo "updated to $(git rev-parse --short HEAD) — install ok, smoke green"
   exit 0

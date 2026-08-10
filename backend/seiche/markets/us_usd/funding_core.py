@@ -88,6 +88,11 @@ FUNDING_CORE_STATES = (
 
 _SPEC_BY_INSTRUMENT = {item.instrument_id: item for item in FUNDING_CORE_STATES}
 _INSTRUMENT_IDS = frozenset(_SPEC_BY_INSTRUMENT)
+_SOURCE_FIELD_BY_INSTRUMENT = {
+    "US.NYFED.SOFR_MEDIAN": "percentRate",
+    "US.NYFED.SOFR_P99": "percentPercentile99",
+    "US.NYFED.SOFR_VOLUME": "volumeInBillions",
+}
 _REQUIRED_STATES = tuple(
     RequiredWorldModelState(item.state_name, _MARKET_ID, item.semantic_role)
     for item in FUNDING_CORE_STATES
@@ -124,14 +129,15 @@ def _latest_by_event(
     return latest
 
 
-def _has_corrected_median_lineage(observation: Observation) -> bool:
+def _has_corrected_field_lineage(observation: Observation) -> bool:
     # Official date-labeled rows use UTC midnight as their canonical event key;
     # converting that sentinel to New York time would shift it to the prior day.
     event_time = observation.event_time
     if event_time.utcoffset() != timedelta(0) or event_time.time() != time.min:
         return False
     event_day = event_time.date().isoformat()
-    prefix = f"nyfed:percentRate:{event_day}:"
+    source_field = _SOURCE_FIELD_BY_INSTRUMENT[observation.instrument_id]
+    prefix = f"nyfed:{source_field}:{event_day}:"
     return observation.revision_id.startswith(prefix) and bool(
         observation.revision_id[len(prefix) :].strip()
     )
@@ -207,19 +213,25 @@ def build_funding_core_input_pack(
                 f"missing declared funding-core instrument {instrument_id}"
             )
 
-    # Old P25-derived rows intentionally remain earlier revisions, but a pack
-    # cannot leave Seiche until every latest median row proves the corrected
-    # NY Fed percentRate field and its exact source event date.
-    bad_medians = [
+    # Legacy hash-only/P25 rows intentionally remain earlier revisions, but a
+    # pack cannot leave Seiche until every selected latest row proves its exact
+    # NY Fed source field and source-native event date.
+    bad_lineage = [
         item
-        for item in latest["US.NYFED.SOFR_MEDIAN"].values()
-        if not _has_corrected_median_lineage(item)
+        for instrument_rows in latest.values()
+        for item in instrument_rows.values()
+        if not _has_corrected_field_lineage(item)
     ]
-    if bad_medians:
-        first = min(bad_medians, key=lambda item: item.event_time)
+    if bad_lineage:
+        first = min(
+            bad_lineage,
+            key=lambda item: (item.event_time, item.instrument_id),
+        )
+        expected_field = _SOURCE_FIELD_BY_INSTRUMENT[first.instrument_id]
         raise FundingCoreProfileError(
-            "latest SOFR median rows require corrected percentRate lineage; "
-            f"first failure is {first.event_time.isoformat()} ({first.revision_id})"
+            "latest SOFR funding rows require exact source-field lineage; "
+            f"first failure expects {expected_field} at "
+            f"{first.event_time.isoformat()} ({first.revision_id})"
         )
 
     eligible_events = [

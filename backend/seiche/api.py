@@ -23,7 +23,7 @@ from threading import Lock
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -38,6 +38,7 @@ from seiche import (
     store,
     subscribe as subscribe_list,
     usage,
+    world_model_delivery,
     x402,
 )
 from seiche.config import (
@@ -731,6 +732,50 @@ def _public_openapi_document() -> dict[str, Any]:
 def public_openapi(response: Response) -> dict[str, Any]:
     response.headers["Cache-Control"] = "public, max-age=3600"
     return _public_openapi_document()
+
+
+_DELIVERY_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-transform",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+@app.get(world_model_delivery.DELIVERY_ROUTE, include_in_schema=False)
+def signed_world_model_delivery(
+    authorization: str | None = Header(default=None),
+) -> StreamingResponse:
+    """Relay one signed Lab envelope; Railway verifies its Ed25519 authority."""
+
+    config = world_model_delivery.configured_delivery()
+    if config is None:
+        raise HTTPException(
+            status_code=404,
+            detail="not found",
+            headers=dict(_DELIVERY_CACHE_HEADERS),
+        )
+    if not world_model_delivery.bearer_authorized(config, authorization):
+        headers = {**_DELIVERY_CACHE_HEADERS, "WWW-Authenticate": "Bearer"}
+        raise HTTPException(status_code=401, detail="unauthorized", headers=headers)
+    try:
+        opened = world_model_delivery.open_delivery(config)
+    except world_model_delivery.DeliveryUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="signed delivery unavailable",
+            headers=dict(_DELIVERY_CACHE_HEADERS),
+        ) from exc
+    headers = {**_DELIVERY_CACHE_HEADERS, "Content-Length": str(opened.size)}
+    try:
+        return StreamingResponse(
+            world_model_delivery.iter_delivery(opened),
+            status_code=200,
+            media_type="application/json",
+            headers=headers,
+        )
+    except Exception:
+        opened.handle.close()
+        raise
 
 
 @app.head("/api/overview")

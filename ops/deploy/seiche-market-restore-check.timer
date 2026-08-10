@@ -1,0 +1,11 @@
+[Unit]
+Description=Exercise a Seiche market-data restore every week
+
+[Timer]
+OnCalendar=Sun *-*-* 07:30:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=seiche-market-restore-check.service
+
+[Install]
+WantedBy=timers.target
