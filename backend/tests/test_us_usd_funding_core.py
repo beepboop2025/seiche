@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -33,7 +32,7 @@ from seiche.markets.us_usd.funding_core import (
     export_funding_core_input_pack,
 )
 
-START = datetime(2023, 1, 3, tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)
+START = datetime(2023, 1, 3, tzinfo=UTC)
 AS_OF = datetime(2026, 8, 9, tzinfo=UTC)
 
 
@@ -49,7 +48,7 @@ def _observation(
     publication_delay: timedelta = timedelta(hours=1),
 ) -> Observation:
     event = START + timedelta(days=event_offset)
-    event_day = event.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    event_day = event.date().isoformat()
     field = {
         "US.NYFED.SOFR_MEDIAN": "percentRate",
         "US.NYFED.SOFR_P99": "percentPercentile99",
@@ -199,6 +198,41 @@ def test_profile_rejects_latest_median_without_percent_rate_lineage() -> None:
         revision_id="nyfed:percentPercentile25:2023-01-03:unrevised",
         evidence_hash=evidence_sha256("wrong latest median lineage"),
     )
+
+    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+        build_funding_core_input_pack(rows, as_of=AS_OF)
+
+
+def test_profile_accepts_correct_lineage_for_utc_midnight_date_labels() -> None:
+    rows = _rows(504)
+
+    pack = build_funding_core_input_pack(rows, as_of=AS_OF)
+
+    assert START.isoformat() in pack["event_grid"]
+
+
+def test_profile_rejects_prior_day_revision_for_utc_midnight_date_label() -> None:
+    rows = _rows(504)
+    median = next(item for item in rows if item.instrument_id == "US.NYFED.SOFR_MEDIAN")
+    rows[rows.index(median)] = replace(
+        median,
+        revision_id="nyfed:percentRate:2023-01-02:unrevised",
+        evidence_hash=evidence_sha256("prior-day median lineage"),
+    )
+
+    with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
+        build_funding_core_input_pack(rows, as_of=AS_OF)
+
+
+def test_profile_rejects_non_midnight_event_key_for_date_lineage() -> None:
+    rows = _rows(504)
+    shifted_event = START + timedelta(hours=1)
+    rows = [
+        replace(item, event_time=shifted_event)
+        if item.event_time == START
+        else item
+        for item in rows
+    ]
 
     with pytest.raises(FundingCoreProfileError, match="corrected percentRate lineage"):
         build_funding_core_input_pack(rows, as_of=AS_OF)

@@ -18,9 +18,8 @@ import os
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from seiche.domain.observation import (
     CanonicalUnit,
@@ -44,7 +43,6 @@ EXPORT_DIRECTORY_ENV = "SEICHE_USD_FUNDING_CORE_EXPORT_DIR"
 EXPORT_FILENAME = f"{FUNDING_CORE_PROFILE_ID}.json"
 
 _MARKET_ID = "US-USD"
-_LOCAL_TIMEZONE = ZoneInfo("America/New_York")
 
 
 class FundingCoreProfileError(WorldModelInputError):
@@ -127,7 +125,12 @@ def _latest_by_event(
 
 
 def _has_corrected_median_lineage(observation: Observation) -> bool:
-    event_day = observation.event_time.astimezone(_LOCAL_TIMEZONE).date().isoformat()
+    # Official date-labeled rows use UTC midnight as their canonical event key;
+    # converting that sentinel to New York time would shift it to the prior day.
+    event_time = observation.event_time
+    if event_time.utcoffset() != timedelta(0) or event_time.time() != time.min:
+        return False
+    event_day = event_time.date().isoformat()
     prefix = f"nyfed:percentRate:{event_day}:"
     return observation.revision_id.startswith(prefix) and bool(
         observation.revision_id[len(prefix) :].strip()
