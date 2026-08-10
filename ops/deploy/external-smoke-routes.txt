@@ -1,5 +1,6 @@
 # METHOD|PATH|EXPECTED_STATUS|CONTENT_TYPE_PREFIX|BODY_IDENTITY
 # Read-only probes only: this file must never subscribe an address or mutate data.
+GET|/api/health|200|application/json|"generated_at"
 GET|/api/public|200|application/json|"conclusion"
 GET|/api/oil-funding|200|application/json|"schema":"seiche.oil-funding.v1"
 GET|/api/estuary|200|application/json|"schema":"seiche.estuary.v1"

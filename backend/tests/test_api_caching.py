@@ -81,6 +81,67 @@ def test_public_and_gauge_carry_cache_control(client):
     assert "max-age=60" in client.get("/api/gauge").headers["cache-control"]
 
 
+def test_health_reads_only_the_completed_snapshot(client, monkeypatch, fake_snap):
+    async def boom(force=False):
+        raise AssertionError("health must never call snapshot or its builder")
+
+    monkeypatch.setattr(assemble, "snapshot", boom)
+    monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: fake_snap)
+
+    r = client.get("/api/health")
+
+    expected = {
+        "generated_at": fake_snap["generated_at"],
+        "version": fake_snap["version"],
+        "faults": fake_snap["faults"],
+        "provenance": fake_snap["provenance"],
+    }
+    assert r.status_code == 200
+    assert r.json() == expected
+    assert r.content == json.dumps(
+        expected, ensure_ascii=False, separators=(",", ":")
+    ).encode()
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_health_cold_cache_is_immediately_unavailable(client, monkeypatch):
+    async def boom(force=False):
+        raise AssertionError("health must never start or join a snapshot build")
+
+    monkeypatch.setattr(assemble, "snapshot", boom)
+    monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: None)
+
+    r = client.get("/api/health")
+
+    assert r.status_code == 503
+    assert r.json() == {
+        "status": "warming_or_unavailable",
+        "version": assemble.VERSION_LABEL,
+    }
+    assert r.headers["cache-control"] == "no-store"
+    assert r.headers["retry-after"] == "10"
+    assert "generated_at" not in r.json()
+    assert "faults" not in r.json()
+    assert "provenance" not in r.json()
+
+
+def test_health_treats_a_stale_completed_snapshot_as_ready(
+        client, clean_cache, monkeypatch, fake_snap):
+    async def boom(force=False):
+        raise AssertionError("health must not refresh a stale snapshot")
+
+    monkeypatch.setattr(assemble, "snapshot", boom)
+    monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    assemble._cache.update(payload=fake_snap, at=0.0)
+
+    r = client.get("/api/health")
+
+    assert r.status_code == 200
+    assert r.json()["generated_at"] == fake_snap["generated_at"]
+
+
 def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
     async def fake_asof(date):
         return {"ok": True, "asof": date, "engines": {}}
@@ -108,6 +169,20 @@ def test_fresh_cache_served_without_building(clean_cache, monkeypatch):
     fresh = {"generated_at": "fresh"}
     assemble._cache.update(payload=fresh, at=time.time())
     assert asyncio.run(assemble.snapshot()) is fresh
+
+
+def test_cached_snapshot_is_passive_for_empty_and_stale_cache(
+        clean_cache, monkeypatch):
+    async def boom():
+        raise AssertionError("cached_snapshot must never build")
+
+    monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    assert assemble.cached_snapshot() is None
+
+    stale = {"generated_at": "stale"}
+    assemble._cache.update(payload=stale, at=0.0)
+
+    assert assemble.cached_snapshot() is stale
 
 
 def test_stale_cache_served_instantly_then_refreshed_once(clean_cache, monkeypatch):

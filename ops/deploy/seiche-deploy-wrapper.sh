@@ -193,11 +193,12 @@ if [ "$BEFORE" = "$AFTER" ]; then
   echo "HEAD already at ${AFTER:0:7} but the running service is ${DEPLOYED:-unknown} — recovering a wedged deploy"
 fi
 
-# The API rebuilds its board on start and can take minutes before it answers;
-# poll instead of a single probe so a healthy warm-up is never reported red.
+# The API rebuilds its board in the background on start. This cache-only
+# readiness route answers 503 while cold and never starts or waits for that
+# full build, so each poll stays cheap even when warm-up takes minutes.
 health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
   local deadline=$((SECONDS + $1))
-  until curl -sf -m 10 http://127.0.0.1:8787/api/public >/dev/null; do
+  until curl -sf -m 10 http://127.0.0.1:8787/api/health >/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "FAIL: api not answering after $(($1 / 60))min warm-up window"
       return 1

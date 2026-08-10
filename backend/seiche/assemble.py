@@ -1610,6 +1610,16 @@ def _attest(day: str, record: dict) -> None:
 # Entry points
 # ---------------------------------------------------------------------------
 
+def cached_snapshot() -> dict | None:
+    """Return the last completed snapshot without refreshing or waiting.
+
+    This is the cache-status seam for readiness checks.  Unlike
+    :func:`snapshot`, it never acquires the build lock, schedules a refresh,
+    or turns a cold-cache read into a full board build.
+    """
+    return _cache["payload"]
+
+
 async def snapshot(force: bool = False) -> dict:
     """The live board, cache-first and never slow for a reader.
 

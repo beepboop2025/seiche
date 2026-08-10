@@ -76,6 +76,7 @@ def test_public_openapi_is_curated_and_importable(client):
     assert spec["openapi"] == "3.1.0"
     assert spec["servers"] == [{"url": "https://api.seiche.info"}]
     assert "/api/gauge" in spec["paths"]
+    assert "/api/health" in spec["paths"]
     assert "/api/public" in spec["paths"]
     assert "/api/oil-funding" in spec["paths"]
     assert "/api/estuary" in spec["paths"]
@@ -87,6 +88,16 @@ def test_public_openapi_is_curated_and_importable(client):
     assert oil_schema["properties"]["schema"]["const"] == "seiche.oil-funding.v1"
     assert estuary_schema["required"] == ["schema"]
     assert estuary_schema["properties"]["schema"]["const"] == "seiche.estuary.v1"
+    health = spec["paths"]["/api/health"]["get"]
+    assert set(health["responses"]) == {"200", "503"}
+    unavailable = health["responses"]["503"]["content"]["application/json"]["schema"]
+    assert unavailable["required"] == ["status", "version"]
+    assert unavailable["properties"]["status"]["const"] == "warming_or_unavailable"
+    assert unavailable["additionalProperties"] is False
+    assert set(health["responses"]["503"]["headers"]) == {
+        "Cache-Control", "Retry-After",
+    }
+    assert "never starts or waits" in health["description"]
     oil_description = spec["paths"]["/api/oil-funding"]["get"]["description"]
     assert "live Cushing" in oil_description
     assert "dated capacity" in oil_description
