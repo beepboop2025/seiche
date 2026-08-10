@@ -331,6 +331,15 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
     validation = (ROOT / "ops" / "deploy" / "seiche-market-validation.service").read_text()
     validation_timer = (ROOT / "ops" / "deploy" / "seiche-market-validation.timer").read_text()
+    backup = (ROOT / "ops" / "deploy" / "seiche-market-backup.service").read_text()
+    backup_script = (ROOT / "ops" / "deploy" / "seiche-market-backup.sh").read_text()
+    backup_timer = (ROOT / "ops" / "deploy" / "seiche-market-backup.timer").read_text()
+    restore = (
+        ROOT / "ops" / "deploy" / "seiche-market-restore-check.service"
+    ).read_text()
+    restore_timer = (
+        ROOT / "ops" / "deploy" / "seiche-market-restore-check.timer"
+    ).read_text()
     caddy = CADDYFILE.read_text()
 
     assert 'psql -tAc "SHOW port"' in installer
@@ -345,10 +354,16 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
-    assert (
-        "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$STATE_DIR/exports/"
-        "us-usd-funding-core-v1"
-    ) in installer
+    assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
+    assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
+    assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer
+    assert 'chmod 2750 "$FUNDING_EXPORT_DIR"' in installer
+    assert 'chmod 0640 "$FUNDING_EXPORT_FILE"' in installer
+    assert "setfacl -R" not in installer
+    assert "find \"$FUNDING_EXPORT_DIR\"" not in installer
+    assert "usermod" not in installer
+    assert 'FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"' in installer
+    assert "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$FUNDING_EXPORT_DIR" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "Restart=always" in worker
@@ -367,6 +382,32 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "OnCalendar=*-*-* 03:15:00 UTC" in validation_timer
     assert "Persistent=true" in validation_timer
     assert "Unit=seiche-market-validation.service" in validation_timer
+    assert "seiche-market-backup.service" in installer
+    assert "seiche-market-backup.timer" in installer
+    assert "seiche-market-restore-check.service" in installer
+    assert "seiche-market-restore-check.timer" in installer
+    assert "ReadWritePaths=$BACKUP_DIR" in installer
+    assert "ReadWritePaths=$STATE_DIR/validation" in installer
+    assert "ExecStart=/usr/bin/flock --wait 300" in backup
+    assert "seiche-market-backup.sh" in backup
+    assert "mountpoint -q" in backup_script
+    assert "CPUQuota=50%" in backup
+    assert "MemoryMax=1G" in backup
+    assert "ProtectSystem=strict" in backup
+    assert "RestrictAddressFamilies=AF_UNIX" in backup
+    assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
+    assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
+    assert "RandomizedDelaySec=10m" in backup_timer
+    assert "Persistent=true" in backup_timer
+    assert "ExecStart=/usr/bin/flock --wait 300" in restore
+    assert "seiche-market-restore-check.sh" in restore
+    assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
+    assert "ReadWritePaths=/var/lib/seiche/validation /run/lock" in restore
+    assert "CAP_CHOWN" in restore
+    assert "CAP_DAC_OVERRIDE" in restore
+    assert "OnCalendar=Sun *-*-* 07:30:00 UTC" in restore_timer
+    assert "RandomizedDelaySec=15m" in restore_timer
+    assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
 
 
