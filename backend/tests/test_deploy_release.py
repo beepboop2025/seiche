@@ -20,7 +20,9 @@ FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
 DEPLOY_WRAPPER = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
+MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
+PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
@@ -303,6 +305,9 @@ def test_box_smoke_installs_its_declared_async_test_plugin():
 
     assert any(item.startswith("pytest-asyncio") for item in deploy_dependencies)
     assert "./backend[deploy-test,notary,collectors,postgres]" in box_update
+    assert "TARGET=${SEICHE_UPDATE_TARGET_SHA:-}" in box_update
+    assert 'git reset -q --hard "$TARGET"' in box_update
+    assert "git reset -q --hard origin/main" not in box_update
 
 
 def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
@@ -317,8 +322,25 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     assert wrapper.index("systemctl stop seiche-market-worker.service") < wrapper.index(
         "bash /home/seiche/update.sh"
     )
-    assert wrapper.count("restore_market_services") == 6
-    assert "previous market services restored" in wrapper
+    target = wrapper.index('TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)')
+    quiesce = wrapper.index("systemctl stop seiche-api", target)
+    update = wrapper.index("bash /home/seiche/update.sh", quiesce)
+    assert target < quiesce < update
+    assert 'SEICHE_UPDATE_TARGET_SHA="$TARGET"' in wrapper[quiesce:update]
+    assert 'if [ "$BEFORE" != "$TARGET" ] || [ "$DEPLOYED" != "$TARGET" ]' in wrapper
+    update_failure = wrapper[update : wrapper.index('AFTER=""', update)]
+    assert "restore_pre_restart_services" in update_failure
+    assert "application update gate failed; recovery was attempted" in wrapper
+    recovery = wrapper[
+        wrapper.index("restore_pre_restart_services()") : wrapper.index(
+            "systemctl stop seiche-market-worker.service"
+        )
+    ]
+    assert recovery.index("restore_quiesced_api") < recovery.index(
+        "restore_market_services"
+    )
+    assert "market writers remain stopped because api recovery failed" in recovery
+    assert "healthy candidate code remains running and no rollback was attempted" in wrapper
     market_installer = wrapper[
         wrapper.index("deploy_market_platform()") : wrapper.index(
             "deploy_market_platform ||"
@@ -419,6 +441,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictSUIDSGID=true" in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
+    assert "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy" in backup
+    assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
     assert "RandomizedDelaySec=10m" in backup_timer
     assert "Persistent=true" in backup_timer
@@ -520,11 +544,15 @@ def test_pull_unit_reads_the_api_cache_without_owning_snapshot_refresh():
 def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     wrapper = DEPLOY_WRAPPER.read_text()
     readiness = wrapper[
-        wrapper.index("health_wait()") : wrapper.index("market_health()")
+        wrapper.index("parse_candidate_health()") : wrapper.index("market_health()")
     ]
     assert "/api/health" in readiness
     assert "require_rebuilt=true" in readiness
     assert "/api/public" not in readiness
+    assert 'set(candidate) != {"producer_sha", "activation_token"}' in readiness
+    assert 'candidate.get("producer_sha") != expected_sha' in readiness
+    assert 're.fullmatch(r"[0-9a-f]{64}"' in readiness
+    assert 'sys.stdout.write(candidate["activation_token"])' in readiness
     function = wrapper[
         wrapper.index("deploy_pull_unit()") : wrapper.index("deploy_market_platform ||")
     ]
@@ -537,21 +565,184 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     assert 'mv -f "$previous" "$destination"' in function
     assert "systemctl start seiche-pull" not in function
     assert "systemctl restart seiche-pull" not in function
+    assert "for attempt in 1 2 3" in function
+    assert 'candidate_health_once "$AFTER"' in function
+    assert 'write_promotion_request "$AFTER" "$ACTIVATION_TOKEN"' in function
+    assert 'systemctl start "$PROMOTION_UNIT"' in function
+    assert "runuser -u seiche" not in function[function.index("POINT_OF_NO_RETURN") :]
 
     health = wrapper[
         wrapper.index("HEALTHY=\"\"") : wrapper.index('if [ -n "$HEALTHY" ]')
     ]
+    assert 'if systemctl restart seiche-api; then' in health
+    assert 'RESTARTED=1' in health
+    assert 'if [ -n "$RESTARTED" ] && systemctl is-active' in health
+    assert health.index("systemctl restart seiche-api") < health.index(
+        "candidate_health_wait"
+    )
     assert health.index("market_health") < health.index("deploy_pull_unit")
-    assert health.index("deploy_pull_unit") < health.index("HEALTHY=1")
+    assert health.index("deploy_pull_unit") < health.index("promote_snapshot_handoff")
+    assert health.index("promote_snapshot_handoff") < health.index("HEALTHY=1")
     already = wrapper[
         wrapper.index('if [ "$BEFORE" = "$AFTER" ] &&') : wrapper.index(
             'if [ "$BEFORE" = "$AFTER" ]; then'
         )
     ]
-    assert "health_wait 900" in already
+    assert 'if ! systemctl is-active --quiet seiche-api; then' in already
+    assert already.index("systemctl restart seiche-api") < already.index(
+        'candidate_health_wait 900 "$AFTER"'
+    )
+    assert "without moving the checkout" in already
+    assert "market writers remain stopped" in already
+    assert 'candidate_health_wait 900 "$AFTER"' in already
+    assert "market_health" in already
     assert "deploy_pull_unit" in already
-    assert already.index("health_wait 900") < already.index("deploy_pull_unit")
-    assert "serving a handoff but has not rebuilt" in already
+    assert "promote_snapshot_handoff" in already
+    assert already.index("candidate_health_wait") < already.index("market_health")
+    assert already.index("market_health") < already.index("deploy_pull_unit")
+    assert already.index("deploy_pull_unit") < already.index(
+        "promote_snapshot_handoff"
+    )
+    promotion_failure = already[already.index("promote_snapshot_handoff ||") :]
+    assert "restore_market_services" in promotion_failure
+    assert "healthy running candidate kept in place" in promotion_failure
+    assert "accepted release did not recover strict health" in already
+
+
+def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
+    installer = MARKET_INSTALLER.read_text()
+    unit = PROMOTION_UNIT.read_text()
+
+    assert "Type=oneshot" in unit
+    assert "User=seiche" in unit
+    assert "Group=seiche" in unit
+    assert "WorkingDirectory=/home/seiche/app/backend" in unit
+    assert "EnvironmentFile=/etc/seiche/market.env" in unit
+    assert "EnvironmentFile=/etc/seiche/release.env" in unit
+    assert "EnvironmentFile=-/etc/seiche/market.env" not in unit
+    assert "EnvironmentFile=-/etc/seiche/release.env" not in unit
+    assert (
+        "ExecStart=/home/seiche/app/backend/.venv/bin/python "
+        "-m seiche.release_promote"
+    ) in unit
+    assert (
+        "ExecStartPost=+/usr/bin/rm -f "
+        "/run/seiche-release/promotion-request.json"
+    ) in unit
+    assert "ProtectSystem=strict" in unit
+    assert "RestrictAddressFamilies=AF_UNIX" in unit
+    assert unit.count("ReadWritePaths=") == 1
+    assert "ReadWritePaths=/home/seiche/app/backend/data" in unit
+
+    assert 'install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"' in installer
+    assert "systemd-analyze verify" in installer
+    assert "seiche-snapshot-promote.service" in installer
+    assert 'mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"' in installer
+    assert "systemctl enable seiche-snapshot-promote.service" not in installer
+    api_dropin = installer[installer.index('cat >"$DROPIN"') :]
+    assert "EnvironmentFile=-$ENV_DIR/release.env" in api_dropin
+
+
+def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    release_writer = wrapper[
+        wrapper.index("write_release_env()") : wrapper.index(
+            "write_promotion_request()"
+        )
+    ]
+    request_writer = wrapper[
+        wrapper.index("write_promotion_request()") : wrapper.index("# The sha whose")
+    ]
+
+    assert "^ [0-9a-f]" not in release_writer
+    assert "^[0-9a-f]{40}$" in wrapper
+    assert "^[0-9a-f]{64}$" in wrapper
+    assert "printf 'SEICHE_RELEASE_SHA=%s\\n'" in release_writer
+    assert "chown root:seiche" in release_writer
+    assert "chmod 0640" in release_writer
+    assert 'mv -f "$stage" "$RELEASE_ENV"' in release_writer
+    assert 'printf \'{"expected_sha":"%s","activation_token":"%s"}\\n\'' in request_writer
+    assert "chown root:seiche" in request_writer
+    assert "chmod 0640" in request_writer
+    assert 'mv -f "$stage" "$PROMOTION_REQUEST"' in request_writer
+    assert "/etc/seiche/market.env" not in wrapper
+    assert "source /etc/seiche" not in wrapper
+    assert "eval " not in wrapper
+    assert 'git -C "$APP" diff-index --quiet "$AFTER" --' in wrapper
+    assert '--others --exclude-standard -- backend' in wrapper
+    assert '--others --ignored --exclude-standard -- backend' in wrapper
+    assert "$0 !~ /^backend\\/\\.venv\\//" in wrapper
+    assert "$0 !~ /\\/__pycache__\\//" in wrapper
+    assert 'if ! AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)' in wrapper
+    unresolved = wrapper[
+        wrapper.index('if ! AFTER=$(runuser') : wrapper.index(
+            'if [ "$AFTER" != "$TARGET" ]'
+        )
+    ]
+    assert "restore_pre_restart_services" in unresolved
+    assert "STATE=$DEPLOY_STATE_DIR/deployed-sha" in wrapper
+    assert 'install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"' in wrapper
+    assert "root:root:700" in wrapper
+    assert "root:root:600" in wrapper
+    assert 'mktemp "$DEPLOY_STATE_DIR/.deployed-sha.XXXXXX"' in wrapper
+    assert 'mv -f "$stage" "$STATE"' in wrapper
+    assert 'SEICHE_DEPLOYED_SHA="$DEPLOYED"' in wrapper
+    assert "/home/seiche/.seiche-deployed-sha" not in wrapper
+    assert "DEPLOYED=${SEICHE_DEPLOYED_SHA:-}" in BOX_UPDATE.read_text()
+    deploy_lock = wrapper.index("flock --nonblock 9")
+    assert 'DEPLOY_RUNTIME_DIR=/run/seiche-deploy' in wrapper[:deploy_lock]
+    assert 'install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"' in wrapper[
+        :deploy_lock
+    ]
+    assert 'exec 9>"$DEPLOY_LOCK"' in wrapper[:deploy_lock]
+    assert "another seiche deployment is still running" in wrapper
+    assert deploy_lock < wrapper.index("# The sha whose code is actually RUNNING")
+
+
+def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    promotion = wrapper[
+        wrapper.index("promote_snapshot_handoff()") : wrapper.index(
+            "deploy_market_platform ||"
+        )
+    ]
+    assert promotion.index('write_deployed_state "$AFTER"') < promotion.index(
+        "POINT_OF_NO_RETURN=1"
+    )
+    assert promotion.index("POINT_OF_NO_RETURN=1") < promotion.index(
+        'systemctl start "$PROMOTION_UNIT"'
+    )
+    assert promotion.index('systemctl start "$PROMOTION_UNIT"') < promotion.index(
+        'candidate_health_wait 120 "$AFTER"'
+    )
+    assert 'rm -f -- "$PROMOTION_REQUEST"' in promotion
+
+    assert wrapper.index("market_health", wrapper.index("HEALTHY=\"\"")) < wrapper.index(
+        "promote_snapshot_handoff", wrapper.index("HEALTHY=\"\"")
+    )
+    no_rollback = wrapper[
+        wrapper.index('if [ -n "$POINT_OF_NO_RETURN" ]') : wrapper.index(
+            "# A red warm-up"
+        )
+    ]
+    assert "restore_market_services" in no_rollback
+    assert "exit 1" in no_rollback
+
+    rollback = wrapper[wrapper.index("# A red warm-up") :]
+    validate = rollback.index('valid_release_sha "$DEPLOYED"')
+    verify_commit = rollback.index('rev-parse --verify --quiet "$DEPLOYED^{commit}"')
+    stop_api = rollback.index("systemctl stop seiche-api")
+    rewrite_release = rollback.index('write_release_env "$DEPLOYED"')
+    reset = rollback.index('reset -q --hard "$DEPLOYED"')
+    restart = rollback.index("systemctl restart seiche-api")
+    assert validate < verify_commit < stop_api < rewrite_release < reset < restart
+    assert "systemctl stop seiche-api 2>/dev/null || true" not in rollback
+    assert 'rollback_health_wait 480' in rollback
+    rollback_health = wrapper[
+        wrapper.index("rollback_health_wait()") : wrapper.index("market_health()")
+    ]
+    assert "require_rebuilt=true" in rollback_health
+    assert "candidate_health_once" not in rollback_health
 
 
 def test_palimpest_osint_edge_is_an_exact_static_allowlist():

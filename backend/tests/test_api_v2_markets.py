@@ -20,7 +20,12 @@ from seiche.domain.observation import (
     StalenessState,
     evidence_sha256,
 )
-from seiche.markets.us_usd.materialize import seal_legacy_snapshot
+from seiche.markets.us_usd import materialize as us_materialize
+from seiche.markets.us_usd.materialize import (
+    seal_legacy_snapshot,
+    verify_release_receipt,
+)
+from seiche.repository import SQLiteMarketRepository
 
 
 def _request(ip: str = "127.0.0.1") -> Request:
@@ -156,6 +161,11 @@ def test_market_without_snapshot_is_explicitly_unavailable(tmp_path, monkeypatch
 def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "sealed-v2.sqlite")
     ids = seal_legacy_snapshot(_legacy_snapshot())
+    assert store.load_latest_market_snapshot("US-USD", "overview") is None
+    assert store.load_latest_market_snapshot("US-USD", "gauge") is None
+    store.promote_market_snapshots(
+        binding["snapshot_id"] for binding in ids.values()
+    )
 
     gauge = api.market_gauge_v2("US-USD", Response())
     assert gauge["schema"] == "seiche.local-gauge.v2"
@@ -163,14 +173,107 @@ def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) 
     assert gauge["reading"]["p_event_5bd_members"] == {"model": 0.2}
     assert gauge["evidence_eligibility"]["eligible"] is False
     assert [fault["source"] for fault in gauge["faults"]] == ["fred"]
-    assert ids["gauge"] == store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
+    assert ids["gauge"]["snapshot_id"] == store.load_latest_market_snapshot(
+        "US-USD", "gauge"
+    )["snapshot_id"]
+    records = store.load_forward_records(
+        "US-USD", "gauge", "us-usd-legacy-parity-v1"
+    )
+    assert ids["gauge"]["forward_record_id"] == records[-1]["record_hash"]
+
+
+def test_us_materializer_partial_append_retries_idempotently(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "partial-us-v2.sqlite")
+    previous = _legacy_snapshot()
+    previous_receipt = seal_legacy_snapshot(previous)
+    store.promote_market_snapshots(
+        binding["snapshot_id"] for binding in previous_receipt.values()
+    )
+    candidate = _legacy_snapshot()
+    candidate["generated_at"] = "2026-08-09T11:00:00+00:00"
+    delegate = SQLiteMarketRepository()
+
+    class FailGaugeOnce:
+        failed = False
+
+        def __getattr__(self, name):
+            return getattr(delegate, name)
+
+        def append_forward_record(self, **kwargs):
+            if kwargs["product"] == "gauge" and not self.failed:
+                self.failed = True
+                raise RuntimeError("injected gauge append failure")
+            return delegate.append_forward_record(**kwargs)
+
+    repository = FailGaugeOnce()
+    monkeypatch.setattr(us_materialize, "get_repository", lambda: repository)
+
+    with pytest.raises(RuntimeError, match="injected gauge append failure"):
+        seal_legacy_snapshot(candidate)
+    # Both candidate snapshots were staged, but public readers retain the
+    # previously promoted pair until the full forward bundle verifies.
+    assert store.load_latest_market_snapshot("US-USD", "overview")[
+        "snapshot_id"
+    ] == previous_receipt["overview"]["snapshot_id"]
+    assert store.load_latest_market_snapshot("US-USD", "gauge")[
+        "snapshot_id"
+    ] == previous_receipt["gauge"]["snapshot_id"]
+    assert len(store.load_forward_records("US-USD", "overview")) == 2
+    assert len(store.load_forward_records("US-USD", "gauge")) == 1
+
+    receipt = seal_legacy_snapshot(candidate)
+    assert set(receipt) == {"overview", "gauge"}
+    assert store.load_latest_market_snapshot("US-USD", "overview")[
+        "snapshot_id"
+    ] == previous_receipt["overview"]["snapshot_id"]
+    assert store.load_latest_market_snapshot("US-USD", "gauge")[
+        "snapshot_id"
+    ] == previous_receipt["gauge"]["snapshot_id"]
+    store.promote_market_snapshots(
+        binding["snapshot_id"] for binding in receipt.values()
+    )
+    assert store.load_latest_market_snapshot("US-USD", "overview")[
+        "snapshot_id"
+    ] == receipt["overview"]["snapshot_id"]
+    assert store.load_latest_market_snapshot("US-USD", "gauge")[
+        "snapshot_id"
+    ] == receipt["gauge"]["snapshot_id"]
+    assert len(store.load_forward_records("US-USD", "overview")) == 2
+    assert len(store.load_forward_records("US-USD", "gauge")) == 2
+
+
+def test_corrupt_us_forward_record_cannot_issue_a_release_receipt(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "corrupt-us-v2.sqlite")
+    receipt = seal_legacy_snapshot(_legacy_snapshot())
+
+    with store._conn() as connection:
+        connection.execute(
+            "UPDATE forward_validation_records SET payload=? WHERE record_id=?",
+            ('{"tampered":true}', receipt["gauge"]["forward_record_id"]),
+        )
+
+    release_receipt = {
+        "generated_at": _legacy_snapshot()["generated_at"],
+        "producer": "seiche.markets.us_usd.materialize.seal_legacy_snapshot",
+        "products": receipt,
+    }
+    with pytest.raises(RuntimeError, match="post-append verification"):
+        verify_release_receipt(SQLiteMarketRepository(), release_receipt)
+    assert assemble._seal_release_evidence(_legacy_snapshot()) is None
 
 
 def test_market_asof_reads_sealed_history_and_global_tide_stays_separate(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "asof-v2.sqlite")
-    seal_legacy_snapshot(_legacy_snapshot())
+    receipt = seal_legacy_snapshot(_legacy_snapshot())
+    store.promote_market_snapshots(
+        binding["snapshot_id"] for binding in receipt.values()
+    )
 
     historical = api.market_asof_v2(
         "US-USD", "2026-08-09T10:00:00+00:00", Response()

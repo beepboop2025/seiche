@@ -7,11 +7,37 @@ import gzip
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from seiche import api, assemble
+from seiche import ai, api, assemble, brief, mcp_server, public_view, repository
+
+
+def _release_receipt(payload: dict, marker: str = "a") -> dict:
+    return {
+        "generated_at": payload["generated_at"],
+        "producer": "seiche.markets.us_usd.materialize.seal_legacy_snapshot",
+        "products": {
+            "overview": {
+                "snapshot_id": marker * 64,
+                "forward_record_id": "b" * 64,
+                "snapshot_row_sha256": "1" * 64,
+            },
+            "gauge": {
+                "snapshot_id": "c" * 64,
+                "forward_record_id": "d" * 64,
+                "snapshot_row_sha256": "2" * 64,
+            },
+        },
+    }
+
+
+class _NoActiveRepository:
+    @staticmethod
+    def load_active_release_handoff():
+        return None
 
 
 @pytest.fixture()
@@ -147,6 +173,7 @@ def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
         client, monkeypatch, fake_snap):
     monkeypatch.setattr(assemble, "cached_snapshot", lambda: fake_snap)
     monkeypatch.setattr(assemble, "cached_snapshot_was_rebuilt", lambda: False)
+    monkeypatch.setattr(assemble, "cached_snapshot_release_handoff", lambda: None)
 
     available = client.get("/api/health")
     candidate = client.get("/api/health?require_rebuilt=true")
@@ -161,7 +188,37 @@ def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
     assert candidate.headers["retry-after"] == "10"
 
     monkeypatch.setattr(assemble, "cached_snapshot_was_rebuilt", lambda: True)
-    assert client.get("/api/health?require_rebuilt=true").status_code == 200
+    evidence_incomplete = client.get("/api/health?require_rebuilt=true")
+    assert evidence_incomplete.status_code == 503
+    assert evidence_incomplete.json()["status"] == "rebuilt_without_market_evidence"
+
+    monkeypatch.setattr(
+        assemble,
+        "cached_snapshot_release_handoff",
+        lambda: {
+            "producer_sha": "a" * 40,
+            "activation_token": "b" * 64,
+        },
+    )
+    ready = client.get("/api/health?require_rebuilt=true")
+    assert ready.status_code == 200
+    assert ready.json()["release_candidate"] == {
+        "producer_sha": "a" * 40,
+        "activation_token": "b" * 64,
+    }
+
+
+def test_health_openapi_lists_every_runtime_unavailable_status():
+    schema = api._public_openapi_document()["paths"]["/api/health"]["get"]
+    statuses = schema["responses"]["503"]["content"]["application/json"][
+        "schema"
+    ]["properties"]["status"]["enum"]
+
+    assert set(statuses) == {
+        "warming_or_unavailable",
+        "rebuilding_from_last_known_good",
+        "rebuilt_without_market_evidence",
+    }
 
 
 def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
@@ -181,6 +238,10 @@ def clean_cache(monkeypatch):
     monkeypatch.setitem(assemble._cache, "payload", None)
     monkeypatch.setitem(assemble._cache, "at", 0.0)
     monkeypatch.setitem(assemble._cache, "source", None)
+    monkeypatch.setitem(assemble._cache, "release_receipt", None)
+    monkeypatch.setitem(assemble._cache, "release_handoff_id", None)
+    monkeypatch.setitem(assemble._cache, "producer_sha", None)
+    monkeypatch.setattr(assemble, "_process_release_sha", None)
     monkeypatch.setattr(assemble, "_refreshing", False)
 
 
@@ -214,6 +275,7 @@ def test_restart_restores_durable_snapshot_as_stale_without_building(
         raise AssertionError("restart hydration must not build")
 
     monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    monkeypatch.setattr(repository, "get_repository", _NoActiveRepository)
     monkeypatch.setattr(assemble.store, "load_blob", lambda key: fake_snap)
     monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", tmp_path / "missing.json")
 
@@ -223,12 +285,14 @@ def test_restart_restores_durable_snapshot_as_stale_without_building(
     assert assemble.cached_snapshot() is fake_snap
     assert assemble._cache["at"] == 0.0
     assert assemble.cached_snapshot_was_rebuilt() is False
+    assert assemble.cached_snapshot_release_receipt() is None
 
 
 def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
         clean_cache, monkeypatch, fake_snap, tmp_path):
     static = tmp_path / "overview.json"
     static.write_text(json.dumps(fake_snap))
+    monkeypatch.setattr(repository, "get_repository", _NoActiveRepository)
     monkeypatch.setattr(assemble.store, "load_blob", lambda key: {"bad": True})
     monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", static)
 
@@ -236,12 +300,122 @@ def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
     assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
 
 
+def test_restart_falls_back_to_ci_snapshot_when_durable_read_fails(
+        clean_cache, monkeypatch, fake_snap, tmp_path):
+    static = tmp_path / "overview.json"
+    static.write_text(json.dumps(fake_snap))
+
+    def unreadable(_key):
+        raise OSError("cache database unavailable")
+
+    monkeypatch.setattr(repository, "get_repository", _NoActiveRepository)
+    monkeypatch.setattr(assemble.store, "load_blob", unreadable)
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", static)
+
+    assert assemble.restore_cached_snapshot() == "static"
+    assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
+
+
+def test_release_evidence_receipt_requires_both_sealed_products(
+        monkeypatch, fake_snap):
+    from seiche.markets.us_usd import materialize
+
+    monkeypatch.setattr(
+        materialize,
+        "seal_legacy_snapshot",
+        lambda payload: {
+            "overview": {
+                "snapshot_id": "overview-snapshot",
+                "forward_record_id": "overview-record",
+                "snapshot_row_sha256": "overview-row",
+            },
+            "gauge": {
+                "snapshot_id": "gauge-snapshot",
+                "forward_record_id": "gauge-record",
+                "snapshot_row_sha256": "gauge-row",
+            },
+        },
+    )
+
+    receipt = assemble._seal_release_evidence(fake_snap)
+
+    assert receipt == {
+        "generated_at": fake_snap["generated_at"],
+        "producer": "seiche.markets.us_usd.materialize.seal_legacy_snapshot",
+        "products": {
+            "overview": {
+                "snapshot_id": "overview-snapshot",
+                "forward_record_id": "overview-record",
+                "snapshot_row_sha256": "overview-row",
+            },
+            "gauge": {
+                "snapshot_id": "gauge-snapshot",
+                "forward_record_id": "gauge-record",
+                "snapshot_row_sha256": "gauge-row",
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        materialize,
+        "seal_legacy_snapshot",
+        lambda payload: {
+            "overview": {
+                "snapshot_id": "overview-snapshot",
+                "forward_record_id": "overview-record",
+                "snapshot_row_sha256": "overview-row",
+            }
+        },
+    )
+    assert assemble._seal_release_evidence(fake_snap) is None
+
+
+def test_only_a_receipted_rebuild_stages_the_durable_handoff(
+        clean_cache, monkeypatch, fake_snap):
+    persisted = []
+
+    def persist(payload, receipt):
+        persisted.append((payload, receipt))
+        return "e" * 64
+
+    monkeypatch.setattr(
+        assemble,
+        "_persist_pending_snapshot",
+        persist,
+    )
+
+    asyncio.run(assemble._publish_rebuilt_snapshot(fake_snap, None))
+    assert assemble.cached_snapshot() is fake_snap
+    assert assemble.cached_snapshot_was_rebuilt() is True
+    assert assemble.cached_snapshot_release_receipt() is None
+    assert persisted == []
+
+    monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: "f" * 40)
+    receipt = _release_receipt(fake_snap)
+    asyncio.run(assemble._publish_rebuilt_snapshot(fake_snap, receipt))
+    assert assemble.cached_snapshot_release_receipt() == receipt
+    assert assemble.cached_snapshot_release_handoff() == {
+        "producer_sha": "f" * 40,
+        "activation_token": "e" * 64,
+    }
+    assert persisted == [(fake_snap, receipt)]
+
+    monkeypatch.setattr(
+        assemble,
+        "_persist_pending_snapshot",
+        lambda payload, receipt: None,
+    )
+    asyncio.run(assemble._publish_rebuilt_snapshot(fake_snap, receipt))
+    assert assemble.cached_snapshot_release_receipt() is None
+
+
 @pytest.mark.parametrize(
     "case",
     [
         "composite", "tell", "stacker", "members_now", "navigator",
         "modelcourt", "court_ensemble", "backtest", "event_capture",
-        "episodes", "calendar", "crunch_windows",
+        "episodes", "calendar", "crunch_windows", "tell_missing_fields",
+        "fault_row", "provenance_row",
     ],
 )
 def test_restart_rejects_nested_shapes_that_would_break_public_routes(
@@ -265,41 +439,306 @@ def test_restart_rejects_nested_shapes_that_would_break_public_routes(
         "calendar": lambda p: p.__setitem__("calendar", []),
         "crunch_windows": lambda p: p.__setitem__(
             "calendar", {"crunch_windows": "bad"}),
+        "tell_missing_fields": lambda p: p["deep"].__setitem__(
+            "tell", {"ok": True}),
+        "fault_row": lambda p: p.__setitem__("faults", ["bad"]),
+        "provenance_row": lambda p: p.__setitem__("provenance", ["bad"]),
     }
     mutations[case](payload)
 
     assert assemble._servable_snapshot(payload) is False
 
 
-def test_packaged_static_snapshot_satisfies_the_boot_contract():
+def test_optional_legacy_calendar_none_still_renders_a_brief(fake_snap):
+    payload = json.loads(json.dumps(fake_snap))
+    payload["calendar"] = None
+
+    assert assemble._servable_snapshot(payload) is True
+    assert brief.render_markdown(payload).startswith("# SEICHE BRIEF")
+
+
+@pytest.mark.parametrize(
+    ("section", "engine", "consumer"),
+    [
+        ("engines", "sonar", brief.render_markdown),
+        ("deep", "ml", ai.context_pack),
+    ],
+)
+def test_optional_null_engine_blocks_are_safe_for_durable_consumers(
+        section, engine, consumer):
+    payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
+    payload[section][engine] = None
+
+    assert assemble._servable_snapshot(payload) is True
+    assert consumer(payload)
+
+
+def test_packaged_static_snapshot_satisfies_the_boot_contract(monkeypatch):
     assert assemble.STATIC_SNAPSHOT_PATH.parent == Path(
         assemble.__file__
     ).resolve().parent
     payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
 
     assert assemble._servable_snapshot(payload) is True
+    assert public_view.public_payload(payload)["schema"] == "seiche.public.v2"
+    assert ai.context_pack(payload)["provenance_staleness"] == {"stale": 1}
+    assert "all sources and engines live" not in brief.render_markdown(payload)
+
+    monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: payload)
+    assert mcp_server.tool_stress_now({}, True)["schema"] == "seiche.public.v2"
+    assert mcp_server.tool_proof({}, True)["event_capture"]["n_events"] == 13
+
+    async def packaged_snapshot(force=False):
+        return payload
+
+    monkeypatch.setattr(assemble, "snapshot", packaged_snapshot)
+    client = TestClient(api.app)
+    assert client.get("/api/public").status_code == 200
+    assert client.get("/api/gauge").status_code == 200
 
 
-def test_completed_snapshot_handoff_is_best_effort(monkeypatch, fake_snap):
-    saved = []
-    monkeypatch.setattr(
-        assemble.store, "save_blob",
-        lambda key, payload: saved.append((key, payload)),
-    )
+def test_completed_snapshot_handoff_is_staged_with_digest(monkeypatch, fake_snap):
+    release_sha = "a" * 40
+    staged = []
 
-    assemble._persist_last_good_snapshot(fake_snap)
+    class FakeRepository:
+        @staticmethod
+        def stage_release_handoff(handoff_id, producer_sha, envelope):
+            staged.append((handoff_id, producer_sha, envelope))
 
-    assert saved == [(assemble.LAST_GOOD_SNAPSHOT_KEY, fake_snap)]
+        @staticmethod
+        def load_active_release_handoff():
+            return None
 
-    def fail(*_args):
+    monkeypatch.setattr(repository, "get_repository", FakeRepository)
+    monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: release_sha)
+
+    receipt = _release_receipt(fake_snap)
+    handoff_id = assemble._persist_pending_snapshot(fake_snap, receipt)
+
+    assert isinstance(handoff_id, str) and len(handoff_id) == 64
+    assert len(staged) == 1
+    saved_id, saved_sha, envelope = staged[0]
+    assert saved_id == handoff_id
+    assert saved_sha == release_sha
+    assert envelope["schema"] == assemble.SNAPSHOT_HANDOFF_SCHEMA
+    assert envelope["producer_sha"] == release_sha
+    assert envelope["payload"] is fake_snap
+    assert envelope["release_receipt"] == receipt
+    assert envelope["payload_sha256"] == assemble._snapshot_digest(fake_snap)
+    assert envelope["handoff_id"] == handoff_id
+
+    def fail(*_args, **_kwargs):
         raise OSError("disk unavailable")
 
-    monkeypatch.setattr(assemble.store, "save_blob", fail)
-    assemble._persist_last_good_snapshot(fake_snap)  # serving must continue
+    monkeypatch.setattr(FakeRepository, "stage_release_handoff", fail)
+    assert assemble._persist_pending_snapshot(fake_snap, receipt) is None
+
+
+def test_controller_activation_is_bound_to_exact_payload_and_receipt(
+        monkeypatch, fake_snap):
+    from seiche.markets.us_usd import materialize
+
+    release_sha = "a" * 40
+    receipt = _release_receipt(fake_snap)
+    envelope = assemble._build_handoff(fake_snap, receipt, release_sha)
+    activated = []
+
+    class FakeRepository:
+        current = envelope
+
+        @classmethod
+        def load_release_handoff(cls, handoff_id):
+            return cls.current
+
+        @staticmethod
+        def activate_release_handoff(handoff_id, producer_sha, snapshot_bindings):
+            activated.append((handoff_id, producer_sha, tuple(snapshot_bindings)))
+
+    monkeypatch.setattr(repository, "get_repository", FakeRepository)
+    monkeypatch.setattr(
+        materialize,
+        "verify_release_receipt",
+        lambda repo, value: tuple(
+            (
+                product,
+                value["products"][product]["snapshot_id"],
+                value["products"][product]["forward_record_id"],
+                value["products"][product]["snapshot_row_sha256"],
+            )
+            for product in ("overview", "gauge")
+        ),
+    )
+    legacy = []
+    monkeypatch.setattr(
+        assemble.store,
+        "save_blob",
+        lambda key, value: legacy.append((key, value)),
+    )
+
+    token = envelope["handoff_id"]
+    assert assemble.verify_pending_snapshot(release_sha, token) is True
+    assert assemble.activate_pending_snapshot(release_sha, token) is True
+    assert activated == [(
+        token,
+        release_sha,
+        (
+            (
+                "overview",
+                receipt["products"]["overview"]["snapshot_id"],
+                receipt["products"]["overview"]["forward_record_id"],
+                receipt["products"]["overview"]["snapshot_row_sha256"],
+            ),
+            (
+                "gauge",
+                receipt["products"]["gauge"]["snapshot_id"],
+                receipt["products"]["gauge"]["forward_record_id"],
+                receipt["products"]["gauge"]["snapshot_row_sha256"],
+            ),
+        ),
+    )]
+    assert legacy == [(assemble.LAST_GOOD_SNAPSHOT_KEY, fake_snap)]
+
+    tampered = json.loads(json.dumps(envelope))
+    tampered["release_receipt"]["products"]["gauge"][
+        "forward_record_id"
+    ] = "e" * 64
+    FakeRepository.current = tampered
+    activated.clear()
+    assert assemble.verify_pending_snapshot(release_sha, token) is False
+    assert assemble.activate_pending_snapshot(release_sha, token) is False
+    assert activated == []
+
+    newer = json.loads(json.dumps(fake_snap))
+    newer["generated_at"] = "2026-07-10T00:15:00Z"
+    newer_envelope = assemble._build_handoff(
+        newer, _release_receipt(newer, "e"), release_sha
+    )
+    FakeRepository.current = newer_envelope
+    assert assemble.activate_pending_snapshot(release_sha, token) is False
+    assert activated == []
+
+
+def test_accepted_release_keeps_lkg_fresh_across_later_rebuild_and_restart(
+        clean_cache, monkeypatch, fake_snap, tmp_path):
+    from seiche.markets.us_usd import materialize
+
+    release_sha = "b" * 40
+    legacy = {}
+
+    class FakeRepository:
+        handoffs = {}
+        active_id = None
+
+        @classmethod
+        def stage_release_handoff(cls, handoff_id, producer_sha, envelope):
+            cls.handoffs[handoff_id] = envelope
+
+        @classmethod
+        def load_release_handoff(cls, handoff_id):
+            return cls.handoffs.get(handoff_id)
+
+        @classmethod
+        def load_active_release_handoff(cls):
+            return cls.handoffs.get(cls.active_id)
+
+        @classmethod
+        def activate_release_handoff(
+                cls, handoff_id, producer_sha, snapshot_bindings):
+            cls.active_id = handoff_id
+
+    monkeypatch.setattr(repository, "get_repository", FakeRepository)
+    monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: release_sha)
+    monkeypatch.setattr(
+        assemble.store,
+        "save_blob",
+        lambda key, payload: legacy.__setitem__(key, payload),
+    )
+    monkeypatch.setattr(
+        assemble.store, "load_blob", lambda key, ttl_minutes=None: legacy.get(key)
+    )
+    monkeypatch.setattr(
+        materialize,
+        "verify_release_receipt",
+        lambda repo, value: tuple(
+            (
+                product,
+                value["products"][product]["snapshot_id"],
+                value["products"][product]["forward_record_id"],
+                value["products"][product]["snapshot_row_sha256"],
+            )
+            for product in ("overview", "gauge")
+        ),
+    )
+
+    first = json.loads(json.dumps(fake_snap))
+    first_receipt = _release_receipt(first)
+    first_token = assemble._persist_pending_snapshot(first, first_receipt)
+    assert first_token is not None
+    assert assemble.LAST_GOOD_SNAPSHOT_KEY not in legacy
+
+    assert assemble.activate_pending_snapshot(release_sha, first_token) is True
+    assert legacy[assemble.LAST_GOOD_SNAPSHOT_KEY] == first
+
+    later = json.loads(json.dumps(fake_snap))
+    later["generated_at"] = "2026-07-10T00:15:00Z"
+    later_receipt = _release_receipt(later, "e")
+    later_token = assemble._persist_pending_snapshot(later, later_receipt)
+    assert later_token is not None and later_token != first_token
+    assert FakeRepository.active_id == later_token
+    assert legacy[assemble.LAST_GOOD_SNAPSHOT_KEY] == later
+
+    assemble._cache.update(
+        payload=None,
+        at=0.0,
+        source=None,
+        release_receipt=None,
+        release_handoff_id=None,
+        producer_sha=None,
+    )
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", tmp_path / "missing.json")
+    assert assemble.restore_cached_snapshot() == "durable"
+    assert assemble.cached_snapshot()["generated_at"] == later["generated_at"]
+
+
+def test_process_release_sha_is_immutable_after_first_capture(monkeypatch):
+    resolved = iter(("a" * 40, "b" * 40))
+    monkeypatch.setattr(assemble, "_process_release_sha", None)
+    monkeypatch.setattr(assemble, "_release_sha", lambda: next(resolved))
+
+    assert assemble.capture_process_release_sha() == "a" * 40
+    assert assemble.capture_process_release_sha() == "a" * 40
+
+
+def test_malformed_explicit_release_sha_fails_closed(monkeypatch):
+    monkeypatch.setenv("SEICHE_RELEASE_SHA", "not-a-commit")
+
+    with pytest.raises(ValueError, match="canonical commit SHA"):
+        assemble._release_sha()
+
+
+def test_explicit_release_sha_must_match_checkout_head(monkeypatch):
+    checkout_sha = "a" * 40
+    monkeypatch.setattr(
+        assemble.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=f"{checkout_sha}\n"),
+    )
+    monkeypatch.setenv("SEICHE_RELEASE_SHA", checkout_sha)
+
+    assert assemble._release_sha() == checkout_sha
+
+    monkeypatch.setenv("SEICHE_RELEASE_SHA", "b" * 40)
+    with pytest.raises(ValueError, match="does not match the checkout HEAD"):
+        assemble._release_sha()
 
 
 def test_production_lifespan_restores_before_background_refresh(monkeypatch):
     events = []
+
+    def capture_identity():
+        events.append("identity")
+        return "a" * 40
 
     def restore():
         events.append("restore")
@@ -310,6 +749,7 @@ def test_production_lifespan_restores_before_background_refresh(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setattr(assemble, "capture_process_release_sha", capture_identity)
     monkeypatch.setattr(assemble, "restore_cached_snapshot", restore)
     monkeypatch.setattr(api, "_keep_warm", refresh_forever)
 
@@ -319,7 +759,7 @@ def test_production_lifespan_restores_before_background_refresh(monkeypatch):
                 if "refresh" in events:
                     break
                 await asyncio.sleep(0)
-            assert events == ["restore", "refresh"]
+            assert events == ["identity", "restore", "refresh"]
 
     asyncio.run(scenario())
 

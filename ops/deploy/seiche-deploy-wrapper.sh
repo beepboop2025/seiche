@@ -15,6 +15,104 @@ set -euo pipefail
 echo "== seiche auto-deploy $(date -u +%FT%TZ) =="
 
 APP=/home/seiche/app
+DEPLOY_STATE_DIR=/var/lib/seiche-deploy
+STATE=$DEPLOY_STATE_DIR/deployed-sha
+RELEASE_ENV=/etc/seiche/release.env
+PROMOTION_REQUEST_DIR=/run/seiche-release
+PROMOTION_REQUEST=$PROMOTION_REQUEST_DIR/promotion-request.json
+PROMOTION_UNIT=seiche-snapshot-promote.service
+DEPLOY_RUNTIME_DIR=/run/seiche-deploy
+DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
+
+if [ -L "$DEPLOY_RUNTIME_DIR" ] \
+    || { [ -e "$DEPLOY_RUNTIME_DIR" ] && [ ! -d "$DEPLOY_RUNTIME_DIR" ]; }; then
+  echo "FAIL: deploy runtime directory is not a real directory"
+  exit 1
+fi
+install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"
+if [ "$(stat -c '%U:%G:%a' "$DEPLOY_RUNTIME_DIR")" != "root:root:700" ]; then
+  echo "FAIL: deploy runtime directory permissions are unsafe"
+  exit 1
+fi
+exec 9>"$DEPLOY_LOCK"
+chown root:root "$DEPLOY_LOCK"
+chmod 0600 "$DEPLOY_LOCK"
+if ! flock --nonblock 9; then
+  echo "FAIL: another seiche deployment is still running"
+  exit 1
+fi
+
+valid_release_sha() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+}
+
+valid_activation_token() {
+  [[ "$1" =~ ^[0-9a-f]{64}$ ]]
+}
+
+write_deployed_state() {
+  local release_sha="$1" stage=""
+  if ! valid_release_sha "$release_sha"; then
+    echo "FAIL: refusing to record a non-canonical deployed SHA"
+    return 1
+  fi
+  stage=$(mktemp "$DEPLOY_STATE_DIR/.deployed-sha.XXXXXX") || return 1
+  if ! printf '%s\n' "$release_sha" >"$stage" \
+      || ! chown root:root "$stage" \
+      || ! chmod 0600 "$stage" \
+      || ! mv -f "$stage" "$STATE"; then
+    rm -f -- "$stage"
+    echo "FAIL: could not atomically record the deployed release"
+    return 1
+  fi
+}
+
+write_release_env() {
+  local release_sha="$1" stage=""
+  if ! valid_release_sha "$release_sha"; then
+    echo "FAIL: refusing to install a non-canonical release SHA"
+    return 1
+  fi
+  if [ ! -d /etc/seiche ] || [ -L /etc/seiche ]; then
+    echo "FAIL: /etc/seiche is not a safe release environment directory"
+    return 1
+  fi
+  stage=$(mktemp /etc/seiche/.release.env.XXXXXX) || return 1
+  if ! printf 'SEICHE_RELEASE_SHA=%s\n' "$release_sha" >"$stage" \
+      || ! chown root:seiche "$stage" \
+      || ! chmod 0640 "$stage" \
+      || ! mv -f "$stage" "$RELEASE_ENV"; then
+    rm -f -- "$stage"
+    echo "FAIL: could not atomically install the release environment"
+    return 1
+  fi
+}
+
+write_promotion_request() {
+  local expected_sha="$1" activation_token="$2" stage=""
+  if ! valid_release_sha "$expected_sha" \
+      || ! valid_activation_token "$activation_token"; then
+    echo "FAIL: refusing to write an invalid snapshot promotion request"
+    return 1
+  fi
+  if [ ! -d "$PROMOTION_REQUEST_DIR" ] \
+      || [ -L "$PROMOTION_REQUEST_DIR" ] \
+      || [ "$(stat -c '%U:%G:%a' "$PROMOTION_REQUEST_DIR")" != "root:seiche:750" ]; then
+    echo "FAIL: snapshot promotion request directory is unsafe"
+    return 1
+  fi
+  stage=$(mktemp "$PROMOTION_REQUEST_DIR/.promotion-request.json.XXXXXX") \
+    || return 1
+  if ! printf '{"expected_sha":"%s","activation_token":"%s"}\n' \
+      "$expected_sha" "$activation_token" >"$stage" \
+      || ! chown root:seiche "$stage" \
+      || ! chmod 0640 "$stage" \
+      || ! mv -f "$stage" "$PROMOTION_REQUEST"; then
+    rm -f -- "$stage"
+    echo "FAIL: could not atomically install the snapshot promotion request"
+    return 1
+  fi
+}
 
 # The sha whose code is actually RUNNING, written only after a healthy
 # restart. HEAD alone cannot answer that: a deploy killed between pull and
@@ -22,10 +120,39 @@ APP=/home/seiche/app
 # the old sha-compare then said "nothing to deploy" forever — even
 # workflow_dispatch could not recover the box (2026-07-28). A missing file
 # means unknown, and unknown means deploy.
-STATE=/home/seiche/.seiche-deployed-sha
-DEPLOYED=$(cat "$STATE" 2>/dev/null || true)
+if [ -L "$DEPLOY_STATE_DIR" ] \
+    || { [ -e "$DEPLOY_STATE_DIR" ] && [ ! -d "$DEPLOY_STATE_DIR" ]; }; then
+  echo "FAIL: deploy state directory is not a real directory"
+  exit 1
+fi
+install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"
+if [ "$(stat -c '%U:%G:%a' "$DEPLOY_STATE_DIR")" != "root:root:700" ]; then
+  echo "FAIL: deploy state directory permissions are unsafe"
+  exit 1
+fi
+DEPLOYED=""
+if [ -e "$STATE" ] || [ -L "$STATE" ]; then
+  if [ -L "$STATE" ] || [ ! -f "$STATE" ] \
+      || [ "$(stat -c '%U:%G:%a' "$STATE")" != "root:root:600" ] \
+      || ! IFS= read -r DEPLOYED <"$STATE" \
+      || ! valid_release_sha "$DEPLOYED"; then
+    echo "FAIL: deployed release state is unsafe or invalid"
+    exit 1
+  fi
+fi
 
 BEFORE=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)
+if ! runuser -u seiche -- git -C "$APP" fetch -q origin main; then
+  echo "FAIL: could not fetch the candidate release"
+  exit 1
+fi
+TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)
+if ! valid_release_sha "$TARGET" \
+    || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+      "$TARGET^{commit}" >/dev/null; then
+  echo "FAIL: origin/main did not resolve to a canonical local commit"
+  exit 1
+fi
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_BACKFILL_WAS_ACTIVE=""
 if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then
@@ -46,14 +173,106 @@ start_market_services() {
   systemctl start --no-block \
     seiche-market-backfill.service seiche-market-worker.service
 }
+restore_preupdate_api() {
+  local restore_sha="$DEPLOYED" deadline
+  if ! valid_release_sha "$restore_sha"; then
+    restore_sha="$BEFORE"
+  fi
+  if ! valid_release_sha "$restore_sha" \
+      || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+        "$restore_sha^{commit}" >/dev/null; then
+    echo "FAIL: no verified pre-update release is available to restart"
+    return 1
+  fi
+  if ! runuser -u seiche -- git -C "$APP" reset -q --hard "$restore_sha" \
+      || ! runuser -u seiche -- bash -c \
+        "cd $APP && timeout -k 30 600 backend/.venv/bin/pip install -q -e './backend[notary]'" \
+      || ! write_release_env "$restore_sha" \
+      || ! systemctl restart seiche-api; then
+    echo "FAIL: pre-update api could not be restored"
+    return 1
+  fi
+  deadline=$((SECONDS + 480))
+  until curl -sf -m 10 \
+      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ] \
+        || ! systemctl is-active --quiet seiche-api; then
+      echo "FAIL: restored pre-update api did not become healthy"
+      return 1
+    fi
+    sleep 10
+  done
+  echo "pre-update api restored at ${restore_sha:0:7}"
+}
+restore_quiesced_api() {
+  if [ -n "$API_QUIESCED" ]; then
+    restore_preupdate_api || {
+      echo "FAIL: seiche-api needs a human after a pre-restart failure"
+      return 1
+    }
+  fi
+}
+restore_pre_restart_services() {
+  if ! restore_quiesced_api; then
+    echo "FAIL: market writers remain stopped because api recovery failed"
+    return 1
+  fi
+  restore_market_services
+}
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
   2>/dev/null || true
-if ! runuser -u seiche -- bash /home/seiche/update.sh; then
-  restore_market_services
-  echo "FAIL: application update gate failed; previous market services restored"
+API_QUIESCED=""
+if [ "$BEFORE" != "$TARGET" ] || [ "$DEPLOYED" != "$TARGET" ]; then
+  if ! systemctl stop seiche-api; then
+    restore_market_services
+    echo "FAIL: seiche-api could not be quiesced before checkout mutation"
+    exit 1
+  fi
+  API_QUIESCED=1
+fi
+if ! runuser -u seiche -- env SEICHE_DEPLOYED_SHA="$DEPLOYED" \
+    SEICHE_UPDATE_TARGET_SHA="$TARGET" \
+    bash /home/seiche/update.sh; then
+  restore_pre_restart_services \
+    || echo "FAIL: seiche-api needs a human after the update-gate failure"
+  echo "FAIL: application update gate failed; recovery was attempted"
   exit 1
 fi
-AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)
+AFTER=""
+if ! AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD); then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate checkout identity could not be resolved"
+  exit 1
+fi
+if [ "$AFTER" != "$TARGET" ] \
+    || ! valid_release_sha "$AFTER" \
+    || ! runuser -u seiche -- git -C "$APP" diff-index --quiet "$AFTER" --; then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate checkout does not exactly match its release SHA"
+  exit 1
+fi
+UNTRACKED_IMPORTS=""
+if ! UNTRACKED_IMPORTS=$(
+  {
+    runuser -u seiche -- git -C "$APP" ls-files \
+      --others --exclude-standard -- backend
+    runuser -u seiche -- git -C "$APP" ls-files \
+      --others --ignored --exclude-standard -- backend
+  } | awk '
+    /\.(py|pyc|so)$/ \
+      && $0 !~ /^backend\/\.venv\// \
+      && $0 !~ /\/__pycache__\// { print }
+  '
+); then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate checkout import-surface audit failed"
+  exit 1
+fi
+if [ -n "$UNTRACKED_IMPORTS" ]; then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate checkout has untracked importable backend files"
+  exit 1
+fi
 
 # Self-sync the deploy chain from the POST-pull checkout. The manual root
 # deploy synced these mirrors only when someone ran it, and from the pre-pull
@@ -174,12 +393,56 @@ deploy_pull_unit() {
 # but it is not proof that this candidate can assemble a board.  The query flag
 # keeps the release gate waiting for a build completed by the current process;
 # every poll remains cache-only and cheap.
-health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
-  local deadline=$((SECONDS + $1))
-  until curl -sf -m 10 \
-      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
+parse_candidate_health() {
+  local body="$1" expected_sha="$2"
+  "$APP/backend/.venv/bin/python" -c '
+import json
+import re
+import sys
+
+try:
+    expected_sha = sys.argv[2]
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError
+    candidate = payload.get("release_candidate")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", expected_sha) is None
+        or not isinstance(candidate, dict)
+        or set(candidate) != {"producer_sha", "activation_token"}
+        or candidate.get("producer_sha") != expected_sha
+        or not isinstance(candidate.get("activation_token"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", candidate["activation_token"]) is None
+    ):
+        raise ValueError
+except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+sys.stdout.write(candidate["activation_token"])
+' "$body" "$expected_sha"
+}
+
+ACTIVATION_TOKEN=""
+candidate_health_once() {
+  local expected_sha="$1" body token
+  body=$(mktemp) || return 1
+  if ! curl -sf -m 10 \
+      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >"$body"; then
+    rm -f -- "$body"
+    return 1
+  fi
+  if ! token=$(parse_candidate_health "$body" "$expected_sha"); then
+    rm -f -- "$body"
+    return 1
+  fi
+  rm -f -- "$body"
+  ACTIVATION_TOKEN="$token"
+}
+
+candidate_health_wait() {  # candidate_health_wait SECONDS SHA -> exact candidate
+  local window="$1" expected_sha="$2" deadline=$((SECONDS + $1))
+  until candidate_health_once "$expected_sha"; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "FAIL: api did not rebuild after $(($1 / 60))min warm-up window"
+      echo "FAIL: api did not rebuild the exact release after $((window / 60))min warm-up window"
       return 1
     fi
     systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api died during warm-up"; return 1; }
@@ -188,33 +451,24 @@ health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
   return 0
 }
 
-deploy_market_platform || {
-  restore_market_services
-  echo "FAIL: application checkout is intact but market-platform provisioning failed"
-  exit 1
+# A rollback target can predate the controller token contract. It still has to
+# complete its own rebuild, but a legacy healthy response need not advertise a
+# promotion capability that only the candidate gate consumes.
+rollback_health_wait() {
+  local window="$1" deadline=$((SECONDS + $1))
+  until curl -sf -m 10 \
+      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "FAIL: rollback api did not rebuild after $((window / 60))min warm-up window"
+      return 1
+    fi
+    systemctl is-active --quiet seiche-api || {
+      echo "FAIL: seiche-api died during rollback warm-up"
+      return 1
+    }
+    sleep 10
+  done
 }
-
-if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
-  echo "already running ${AFTER:0:7} — checking candidate rebuild and edge config"
-  health_wait 900 || {
-    restore_market_services
-    echo "FAIL: running candidate is serving a handoff but has not rebuilt its own board"
-    exit 1
-  }
-  deploy_pull_unit || {
-    restore_market_services
-    echo "FAIL: canonical pull unit could not be converged"
-    exit 1
-  }
-  start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
-  deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
-  sync_verdict
-  echo "already deployed ${AFTER:0:7} — application and edge match the repo"
-  exit 0
-fi
-if [ "$BEFORE" = "$AFTER" ]; then
-  echo "HEAD already at ${AFTER:0:7} but the running service is ${DEPLOYED:-unknown} — recovering a wedged deploy"
-fi
 
 market_health() {
   local body
@@ -239,31 +493,139 @@ market_health() {
   return 0
 }
 
-systemctl restart seiche-api
-sleep 3
-# NOTE: health checks run inside `if` conditions on purpose — under set -e a
-# bare failing check would abort the script here and skip the rollback below.
+POINT_OF_NO_RETURN=""
+promote_snapshot_handoff() {
+  local attempt
+  for attempt in 1 2 3; do
+    ACTIVATION_TOKEN=""
+    # Refresh immediately before each request so the unit can activate only the
+    # exact handoff generation the healthy candidate is serving right now.
+    if ! candidate_health_once "$AFTER"; then
+      echo "FAIL: promotion attempt $attempt could not refresh exact candidate health"
+    elif ! write_promotion_request "$AFTER" "$ACTIVATION_TOKEN"; then
+      echo "FAIL: promotion attempt $attempt could not install its exact request"
+    elif ! write_deployed_state "$AFTER"; then
+      # The candidate is healthy, but without durable acceptance a later
+      # forced-deploy could mistake the old release for the rollback target.
+      echo "FAIL: promotion attempt $attempt could not durably accept the candidate"
+    else
+      # The unit may commit and then lose its response. Never move the checkout
+      # underneath the healthy candidate once an activation has been submitted.
+      # deployed-sha already names this healthy candidate, so the boundary also
+      # survives this shell process exiting before systemctl returns.
+      POINT_OF_NO_RETURN=1
+      if systemctl start "$PROMOTION_UNIT"; then
+        if ! rm -f -- "$PROMOTION_REQUEST"; then
+          echo "FAIL: activated request could not be cleared"
+          return 1
+        fi
+        if ! candidate_health_wait 120 "$AFTER"; then
+          echo "FAIL: candidate lost strict health after snapshot activation"
+          return 1
+        fi
+        echo "snapshot handoff: activated controller-approved candidate"
+        return 0
+      fi
+      echo "FAIL: promotion attempt $attempt did not complete"
+    fi
+  done
+  rm -f -- "$PROMOTION_REQUEST" \
+    || echo "FAIL: stale snapshot promotion request could not be cleared"
+  echo "FAIL: verified candidate snapshot could not be activated after 3 attempts"
+  return 1
+}
+
+deploy_market_platform || {
+  restore_pre_restart_services || true
+  echo "FAIL: application checkout is intact but market-platform provisioning failed"
+  exit 1
+}
+
+# The API captures this root-controlled identity at process start. The same
+# file is required by the unprivileged promotion unit on both a normal deploy
+# and the second pass of the first controller rollout.
+if ! write_release_env "$AFTER"; then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate release identity could not be installed"
+  exit 1
+fi
+
+if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
+  echo "already running ${AFTER:0:7} — checking candidate rebuild and edge config"
+  if ! systemctl is-active --quiet seiche-api; then
+    echo "accepted release api is inactive — restarting it without moving the checkout"
+    if ! systemctl restart seiche-api; then
+      echo "FAIL: accepted release api could not be restarted; market writers remain stopped"
+      exit 1
+    fi
+    sleep 3
+  fi
+  candidate_health_wait 900 "$AFTER" || {
+    echo "FAIL: accepted release did not recover strict health; market writers remain stopped"
+    exit 1
+  }
+  market_health || {
+    restore_market_services
+    echo "FAIL: running candidate cannot read the market repository"
+    exit 1
+  }
+  deploy_pull_unit || {
+    restore_market_services
+    echo "FAIL: canonical pull unit could not be converged"
+    exit 1
+  }
+  promote_snapshot_handoff || {
+    restore_market_services
+    echo "FAIL: healthy running candidate kept in place; snapshot activation needs a human"
+    exit 1
+  }
+  start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
+  deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
+  sync_verdict
+  echo "already deployed ${AFTER:0:7} — application and edge match the repo"
+  exit 0
+fi
+if [ "$BEFORE" = "$AFTER" ]; then
+  echo "HEAD already at ${AFTER:0:7} but the running service is ${DEPLOYED:-unknown} — recovering a wedged deploy"
+fi
+
 HEALTHY=""
-if systemctl is-active --quiet seiche-api; then
-  if health_wait 900; then
+RESTARTED=""
+# Every fallible pre-activation step stays inside a conditional. Under set -e,
+# a bare restart failure would otherwise abort before the rollback state machine.
+if systemctl restart seiche-api; then
+  RESTARTED=1
+  sleep 3
+else
+  echo "FAIL: seiche-api could not be restarted onto the candidate"
+fi
+if [ -n "$RESTARTED" ] && systemctl is-active --quiet seiche-api; then
+  if candidate_health_wait 900 "$AFTER"; then
     if market_health; then
       if deploy_pull_unit; then
-        HEALTHY=1
+        if promote_snapshot_handoff; then
+          HEALTHY=1
+        fi
       fi
     fi
   fi
-else
+elif [ -n "$RESTARTED" ]; then
   echo "FAIL: seiche-api not active after restart"
 fi
 
 if [ -n "$HEALTHY" ]; then
-  printf '%s\n' "$AFTER" > "$STATE"
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
   echo "deployed ${AFTER:0:7} — service active, api healthy, edge config current"
   exit 0
+fi
+
+if [ -n "$POINT_OF_NO_RETURN" ]; then
+  restore_market_services
+  echo "FAIL: snapshot activation failed; healthy candidate code remains running and no rollback was attempted"
+  exit 1
 fi
 
 # A red warm-up used to leave the NEW code live with a dead API and nothing
@@ -277,8 +639,20 @@ if [ -z "$DEPLOYED" ] || [ "$DEPLOYED" = "$AFTER" ]; then
   echo "FAIL: no previously-deployed sha on record to roll back to — seiche-api needs a human NOW"
   exit 1
 fi
+if ! valid_release_sha "$DEPLOYED"; then
+  echo "FAIL: recorded deployment identity is not a canonical commit SHA — cannot roll back automatically"
+  exit 1
+fi
 if ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet "$DEPLOYED^{commit}" >/dev/null; then
   echo "FAIL: recorded sha ${DEPLOYED:0:7} is not in the checkout — cannot roll back automatically"
+  exit 1
+fi
+if ! systemctl stop seiche-api; then
+  echo "FAIL: seiche-api could not be stopped cleanly — refusing to mutate its checkout"
+  exit 1
+fi
+if ! write_release_env "$DEPLOYED"; then
+  echo "FAIL: rollback release identity could not be installed — checkout remains unchanged"
   exit 1
 fi
 echo "rolling the service back to ${DEPLOYED:0:7} (last sha that passed health)"
@@ -289,8 +663,11 @@ runuser -u seiche -- bash -c "cd $APP && timeout -k 30 120 backend/.venv/bin/pyt
   || { echo "FAIL: rollback tree does not import — seiche-api needs a human NOW"; exit 1; }
 systemctl restart seiche-api
 sleep 3
-if systemctl is-active --quiet seiche-api && health_wait 480; then
-  printf '%s\n' "$DEPLOYED" > "$STATE"
+if systemctl is-active --quiet seiche-api && rollback_health_wait 480; then
+  write_deployed_state "$DEPLOYED" || {
+    echo "FAIL: rollback is healthy but deployed state could not be recorded"
+    exit 1
+  }
   restore_market_services
   echo "FAIL: rolled back to ${DEPLOYED:0:7}, healthy; the deploy of ${AFTER:0:7} FAILED health and needs a human"
   exit 1

@@ -18,10 +18,17 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 from seiche import store
-from seiche.domain.forward_record import forward_chain_generation, forward_record_hash
+from seiche.domain.forward_record import (
+    forward_chain_generation,
+    forward_record_hash,
+    release_handoff_generated_at,
+    validate_release_handoff_envelope,
+    validate_snapshot_forward_binding,
+)
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 
 _MIN_POSTGRES_SERVER_VERSION = 110000
+_RELEASE_HANDOFF_ACTIVATION_LOCK = 0x534549434845
 
 
 class MarketRepository(Protocol):
@@ -97,7 +104,30 @@ class MarketRepository(Protocol):
         calibration_id: str,
         evidence_eligible: bool,
         payload: object,
+        promoted: bool = True,
     ) -> str: ...
+
+    def promote_market_snapshots(self, snapshot_ids: Iterable[str]) -> None: ...
+
+    def load_staged_market_snapshot(self, snapshot_id: str) -> dict | None: ...
+
+    def stage_release_handoff(
+        self,
+        handoff_id: str,
+        producer_sha: str,
+        envelope: dict,
+    ) -> None: ...
+
+    def load_release_handoff(self, handoff_id: str) -> dict | None: ...
+
+    def load_active_release_handoff(self) -> dict | None: ...
+
+    def activate_release_handoff(
+        self,
+        handoff_id: str,
+        producer_sha: str,
+        snapshot_bindings: Iterable[tuple[str, str, str, str]],
+    ) -> None: ...
 
     def load_latest_market_snapshot(
         self, market_id: str, product: str
@@ -149,6 +179,12 @@ class SQLiteMarketRepository:
     latest_observation_hashes = staticmethod(store.latest_observation_hashes)
     canonical_coverage = staticmethod(store.canonical_coverage)
     seal_market_snapshot = staticmethod(store.seal_market_snapshot)
+    promote_market_snapshots = staticmethod(store.promote_market_snapshots)
+    load_staged_market_snapshot = staticmethod(store.load_staged_market_snapshot)
+    stage_release_handoff = staticmethod(store.stage_release_handoff)
+    load_release_handoff = staticmethod(store.load_release_handoff)
+    load_active_release_handoff = staticmethod(store.load_active_release_handoff)
+    activate_release_handoff = staticmethod(store.activate_release_handoff)
     load_latest_market_snapshot = staticmethod(store.load_latest_market_snapshot)
     load_market_snapshot_as_of = staticmethod(store.load_market_snapshot_as_of)
     save_collector_run = staticmethod(store.save_collector_run)
@@ -206,9 +242,13 @@ _FORWARD_RECORD_COLUMNS = (
 
 def _postgres_forward_record(row: tuple) -> dict:
     record = dict(zip(_FORWARD_RECORD_COLUMNS, row, strict=True))
-    for key in ("event_cutoff", "knowledge_cutoff", "created_at"):
+    for key in ("event_cutoff", "knowledge_cutoff"):
         if isinstance(record[key], datetime):
-            record[key] = record[key].isoformat()
+            record[key] = record[key].astimezone(UTC).isoformat(timespec="seconds")
+    if isinstance(record["created_at"], datetime):
+        record["created_at"] = record["created_at"].astimezone(UTC).isoformat(
+            timespec="microseconds"
+        )
     if isinstance(record["payload"], str):
         record["payload"] = json.loads(record["payload"])
     return record
@@ -265,6 +305,28 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
 );
 CREATE INDEX IF NOT EXISTS market_snapshots_latest
   ON market_snapshots (market_id, product, knowledge_cutoff DESC, sealed_at DESC);
+CREATE TABLE IF NOT EXISTS market_snapshot_staging (
+  snapshot_id TEXT PRIMARY KEY,
+  market_id TEXT NOT NULL,
+  product TEXT NOT NULL,
+  event_cutoff TIMESTAMPTZ NOT NULL,
+  knowledge_cutoff TIMESTAMPTZ NOT NULL,
+  sealed_at TIMESTAMPTZ NOT NULL,
+  calibration_id TEXT NOT NULL,
+  evidence_eligible BOOLEAN NOT NULL,
+  payload_hash TEXT NOT NULL,
+  payload JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS release_snapshot_handoffs (
+  handoff_id TEXT PRIMARY KEY,
+  producer_sha TEXT NOT NULL,
+  envelope_hash TEXT NOT NULL,
+  envelope TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS active_release_snapshot_handoff (
+  singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
+  handoff_id TEXT NOT NULL REFERENCES release_snapshot_handoffs (handoff_id)
+);
 CREATE TABLE IF NOT EXISTS collector_runs (
   run_id TEXT PRIMARY KEY,
   market_id TEXT NOT NULL,
@@ -321,6 +383,24 @@ def _utc(value: str | datetime) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
     return parsed.astimezone(UTC).replace(microsecond=0)
+
+
+def _release_handoff_envelope(envelope: dict) -> tuple[str, str, dict]:
+    if not isinstance(envelope, dict):
+        raise ValueError("release handoff envelope must be a dictionary")
+    try:
+        canonical = json.dumps(
+            envelope,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("release handoff envelope must be JSON-serializable") from exc
+    normalized = json.loads(canonical)
+    envelope_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return canonical, envelope_hash, normalized
 
 
 def _observation_record_hash(observation: Observation) -> str:
@@ -846,6 +926,7 @@ class PostgresMarketRepository:
         calibration_id: str,
         evidence_eligible: bool,
         payload: object,
+        promoted: bool = True,
     ) -> str:
         self._ensure_schema()
         market = market_id.upper()
@@ -872,9 +953,10 @@ class PostgresMarketRepository:
             )
         )
         snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        table = "market_snapshots" if promoted else "market_snapshot_staging"
         with self._connect() as connection:
             connection.execute(
-                """INSERT INTO market_snapshots
+                f"""INSERT INTO {table}
                      (snapshot_id, market_id, product, event_cutoff,
                       knowledge_cutoff, sealed_at, calibration_id,
                       evidence_eligible, payload_hash, payload)
@@ -895,6 +977,296 @@ class PostgresMarketRepository:
             )
         return snapshot_id
 
+    def promote_market_snapshots(self, snapshot_ids: Iterable[str]) -> None:
+        """Atomically make an exact staged snapshot bundle visible to readers."""
+        ids = tuple(dict.fromkeys(snapshot_ids))
+        if not ids or any(not isinstance(item, str) or not item for item in ids):
+            raise ValueError("snapshot_ids must contain non-empty strings")
+        self._ensure_schema()
+        placeholders = ",".join(["%s"] * len(ids))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT snapshot_id FROM market_snapshot_staging
+                     WHERE snapshot_id IN ({placeholders}) FOR UPDATE""",
+                ids,
+            ).fetchall()
+            found = {row[0] for row in rows}
+            if found != set(ids):
+                raise ValueError("cannot promote a missing market snapshot")
+            columns = (
+                "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+                "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+            )
+            connection.execute(
+                f"""INSERT INTO market_snapshots ({columns})
+                     SELECT {columns} FROM market_snapshot_staging
+                      WHERE snapshot_id IN ({placeholders})
+                     ON CONFLICT DO NOTHING""",
+                ids,
+            )
+
+    def load_staged_market_snapshot(self, snapshot_id: str) -> dict | None:
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("snapshot_id must be a non-empty string")
+        self._ensure_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT snapshot_id, market_id, product, event_cutoff,
+                          knowledge_cutoff, sealed_at, calibration_id,
+                          evidence_eligible, payload_hash, payload
+                     FROM market_snapshot_staging WHERE snapshot_id=%s""",
+                (snapshot_id,),
+            ).fetchone()
+        return self._snapshot(row)
+
+    def stage_release_handoff(
+        self,
+        handoff_id: str,
+        producer_sha: str,
+        envelope: dict,
+    ) -> None:
+        """Append an immutable release envelope, allowing exact replay only."""
+
+        if not isinstance(handoff_id, str) or not handoff_id:
+            raise ValueError("handoff_id must be a non-empty string")
+        if not isinstance(producer_sha, str) or not producer_sha:
+            raise ValueError("producer_sha must be a non-empty string")
+        canonical, envelope_hash, normalized = _release_handoff_envelope(envelope)
+        self._ensure_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                """INSERT INTO release_snapshot_handoffs
+                     (handoff_id, producer_sha, envelope_hash, envelope)
+                   VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (handoff_id) DO NOTHING
+                   RETURNING producer_sha, envelope_hash, envelope""",
+                (handoff_id, producer_sha, envelope_hash, canonical),
+            ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """SELECT producer_sha, envelope_hash, envelope
+                         FROM release_snapshot_handoffs
+                        WHERE handoff_id=%s
+                        FOR UPDATE""",
+                    (handoff_id,),
+                ).fetchone()
+            stored_envelope = json.loads(row[2]) if isinstance(row[2], str) else row[2]
+            if (
+                row[0] != producer_sha
+                or row[1] != envelope_hash
+                or stored_envelope != normalized
+            ):
+                raise ValueError(
+                    "release handoff already exists with a different producer "
+                    "or envelope"
+                )
+
+    def load_release_handoff(self, handoff_id: str) -> dict | None:
+        if not isinstance(handoff_id, str) or not handoff_id:
+            raise ValueError("handoff_id must be a non-empty string")
+        self._ensure_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT envelope FROM release_snapshot_handoffs
+                    WHERE handoff_id=%s""",
+                (handoff_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0]) if isinstance(row[0], str) else row[0]
+
+    def load_active_release_handoff(self) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT handoff.envelope
+                     FROM active_release_snapshot_handoff AS active
+                     JOIN release_snapshot_handoffs AS handoff
+                       ON handoff.handoff_id = active.handoff_id
+                    WHERE active.singleton=1"""
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0]) if isinstance(row[0], str) else row[0]
+
+    def activate_release_handoff(
+        self,
+        handoff_id: str,
+        producer_sha: str,
+        snapshot_bindings: Iterable[tuple[str, str, str, str]],
+    ) -> None:
+        """Atomically copy a staged bundle and advance the active envelope pointer."""
+
+        if not isinstance(handoff_id, str) or not handoff_id:
+            raise ValueError("handoff_id must be a non-empty string")
+        if not isinstance(producer_sha, str) or not producer_sha:
+            raise ValueError("producer_sha must be a non-empty string")
+        bindings = tuple(tuple(binding) for binding in snapshot_bindings)
+        if not bindings or any(
+            len(binding) != 4
+            or not all(isinstance(item, str) and item for item in binding)
+            for binding in bindings
+        ):
+            raise ValueError(
+                "snapshot_bindings must contain product, snapshot, record, and row hashes"
+            )
+        products = tuple(binding[0] for binding in bindings)
+        ids = tuple(binding[1] for binding in bindings)
+        record_hashes = tuple(binding[2] for binding in bindings)
+        row_hashes = tuple(binding[3] for binding in bindings)
+        if (
+            len(set(products)) != len(products)
+            or len(set(ids)) != len(ids)
+            or len(set(record_hashes)) != len(record_hashes)
+            or len(set(row_hashes)) != len(row_hashes)
+        ):
+            raise ValueError("snapshot bindings must be unique")
+        expected = {
+            snapshot_id: (product, record_hash, row_hash)
+            for product, snapshot_id, record_hash, row_hash in bindings
+        }
+        self._ensure_schema()
+        placeholders = ",".join(["%s"] * len(ids))
+        columns = (
+            "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+            "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+        )
+        with self._connect() as connection:
+            # Serialize even the first activation, when the singleton pointer
+            # row does not exist yet and therefore cannot be row-locked.
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                (_RELEASE_HANDOFF_ACTIVATION_LOCK,),
+            )
+            handoff = connection.execute(
+                """SELECT producer_sha, envelope_hash, envelope
+                     FROM release_snapshot_handoffs
+                    WHERE handoff_id=%s FOR UPDATE""",
+                (handoff_id,),
+            ).fetchone()
+            if handoff is None:
+                raise ValueError("release handoff does not exist")
+            if handoff[0] != producer_sha:
+                raise ValueError("release handoff producer mismatch")
+            stored_envelope = (
+                json.loads(handoff[2])
+                if isinstance(handoff[2], str)
+                else handoff[2]
+            )
+            _, envelope_hash, _ = _release_handoff_envelope(stored_envelope)
+            authorized_bindings = validate_release_handoff_envelope(
+                stored_envelope,
+                expected_handoff_id=handoff_id,
+                expected_producer_sha=producer_sha,
+            )
+            if (
+                handoff[1] != envelope_hash
+                or set(authorized_bindings) != set(bindings)
+            ):
+                raise ValueError(
+                    "activation bindings differ from the locked handoff"
+                )
+            active = connection.execute(
+                """SELECT active.handoff_id, handoff.producer_sha,
+                          handoff.envelope_hash, handoff.envelope
+                     FROM active_release_snapshot_handoff AS active
+                     JOIN release_snapshot_handoffs AS handoff
+                       ON handoff.handoff_id = active.handoff_id
+                    WHERE active.singleton=1
+                    FOR UPDATE OF active"""
+            ).fetchone()
+            if active is not None and active[0] != handoff_id:
+                active_envelope = (
+                    json.loads(active[3])
+                    if isinstance(active[3], str)
+                    else active[3]
+                )
+                _, active_envelope_hash, _ = _release_handoff_envelope(
+                    active_envelope
+                )
+                validate_release_handoff_envelope(
+                    active_envelope,
+                    expected_handoff_id=active[0],
+                    expected_producer_sha=active[1],
+                )
+                if active[2] != active_envelope_hash:
+                    raise ValueError(
+                        "active release handoff envelope hash is invalid"
+                    )
+                if active[1] == producer_sha and release_handoff_generated_at(
+                    stored_envelope
+                ) <= release_handoff_generated_at(active_envelope):
+                    raise ValueError(
+                        "cannot regress an active same-release handoff"
+                    )
+            staged_rows = connection.execute(
+                f"""SELECT {columns} FROM market_snapshot_staging
+                      WHERE snapshot_id IN ({placeholders})
+                      ORDER BY snapshot_id FOR UPDATE""",
+                ids,
+            ).fetchall()
+            staged = {
+                row[0]: self._snapshot(tuple(row))
+                for row in staged_rows
+            }
+            if set(staged) != set(ids):
+                raise ValueError("cannot activate a missing market snapshot")
+            forward_columns = ",".join(_FORWARD_RECORD_COLUMNS)
+            forward_rows = connection.execute(
+                f"""SELECT {forward_columns} FROM forward_validation_records
+                      WHERE snapshot_id IN ({placeholders})
+                      ORDER BY snapshot_id FOR UPDATE""",
+                ids,
+            ).fetchall()
+            forward = {
+                row[1]: _postgres_forward_record(tuple(row))
+                for row in forward_rows
+            }
+            if set(forward) != set(ids):
+                raise ValueError("cannot activate without an exact forward record")
+            for snapshot_id in ids:
+                product, expected_record_hash, expected_row_hash = expected[
+                    snapshot_id
+                ]
+                if staged[snapshot_id]["product"] != product:
+                    raise ValueError(
+                        "release receipt product does not match staging"
+                    )
+                validate_snapshot_forward_binding(
+                    staged[snapshot_id],
+                    forward[snapshot_id],
+                    expected_record_hash,
+                    expected_row_hash,
+                )
+            connection.execute(
+                f"""INSERT INTO market_snapshots ({columns})
+                     SELECT {columns} FROM market_snapshot_staging
+                      WHERE snapshot_id IN ({placeholders})
+                      ORDER BY snapshot_id
+                     ON CONFLICT DO NOTHING""",
+                ids,
+            )
+            canonical_rows = connection.execute(
+                f"""SELECT {columns} FROM market_snapshots
+                      WHERE snapshot_id IN ({placeholders}) FOR UPDATE""",
+                ids,
+            ).fetchall()
+            canonical = {
+                row[0]: self._snapshot(tuple(row))
+                for row in canonical_rows
+            }
+            if canonical != staged:
+                raise RuntimeError(
+                    "release handoff canonical rows differ from validated staging"
+                )
+            connection.execute(
+                """INSERT INTO active_release_snapshot_handoff
+                     (singleton, handoff_id) VALUES (1, %s)
+                   ON CONFLICT (singleton) DO UPDATE
+                     SET handoff_id=EXCLUDED.handoff_id""",
+                (handoff_id,),
+            )
+
     @staticmethod
     def _snapshot(row: tuple | None) -> dict | None:
         if row is None:
@@ -904,9 +1276,11 @@ class PostgresMarketRepository:
             "snapshot_id": row[0],
             "market_id": row[1],
             "product": row[2],
-            "event_cutoff": row[3].isoformat(),
-            "knowledge_cutoff": row[4].isoformat(),
-            "sealed_at": row[5].isoformat(),
+            "event_cutoff": row[3].astimezone(UTC).isoformat(timespec="seconds"),
+            "knowledge_cutoff": row[4]
+            .astimezone(UTC)
+            .isoformat(timespec="seconds"),
+            "sealed_at": row[5].astimezone(UTC).isoformat(timespec="microseconds"),
             "calibration_id": row[6],
             "evidence_eligible": bool(row[7]),
             "payload_hash": row[8],

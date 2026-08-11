@@ -98,6 +98,7 @@ def test_public_openapi_is_curated_and_importable(client):
     assert unavailable["properties"]["status"]["enum"] == [
         "warming_or_unavailable",
         "rebuilding_from_last_known_good",
+        "rebuilt_without_market_evidence",
     ]
     assert unavailable["additionalProperties"] is False
     assert set(health["responses"]["503"]["headers"]) == {

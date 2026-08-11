@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from seiche import mcp_server as mcp
+from seiche import assemble, mcp_server as mcp
 
 
 @pytest.fixture()
@@ -34,6 +34,41 @@ def _payload(resp):
         return json.loads(text)
     except json.JSONDecodeError:
         return text
+
+
+def test_mcp_cache_immediately_adopts_a_completed_assembler_rebuild(monkeypatch):
+    restored = {"generated_at": "restart-seed"}
+    rebuilt = {"generated_at": "rebuilt"}
+    monkeypatch.setitem(mcp._cache, "snap", restored)
+    monkeypatch.setitem(mcp._cache, "at", 100.0)
+    monkeypatch.setattr(mcp.time, "time", lambda: 101.0)
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: rebuilt)
+
+    def must_not_bridge(_coroutine):
+        raise AssertionError("a completed assembler rebuild must not be rebuilt again")
+
+    monkeypatch.setattr(mcp, "_run", must_not_bridge)
+
+    assert mcp._get_snapshot() is rebuilt
+    assert mcp._cache == {"snap": rebuilt, "at": 101.0}
+
+
+def test_mcp_force_bypasses_both_cache_layers(monkeypatch):
+    cached = {"generated_at": "cached"}
+    rebuilt = {"generated_at": "forced"}
+    monkeypatch.setitem(mcp._cache, "snap", cached)
+    monkeypatch.setitem(mcp._cache, "at", 100.0)
+    monkeypatch.setattr(mcp.time, "time", lambda: 101.0)
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: cached)
+
+    def bridge(coroutine):
+        coroutine.close()
+        return rebuilt
+
+    monkeypatch.setattr(mcp, "_run", bridge)
+
+    assert mcp._get_snapshot(force=True) is rebuilt
+    assert mcp._cache == {"snap": rebuilt, "at": 101.0}
 
 
 # ---- protocol handshake -----------------------------------------------------

@@ -6,6 +6,9 @@ payload. Neither the observation domain nor the universal kernel imports it.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -13,10 +16,18 @@ from typing import Any
 from seiche.markets.base import CapabilityStatus
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.us_usd.pack import PACK
+from seiche.markets.validation_forward import verify_repository_forward_chain
+from seiche.domain.forward_record import (
+    market_snapshot_row_hash,
+    validate_snapshot_forward_binding,
+)
 from seiche.repository import get_repository
 
 
 _FAULT_PREFIXES = ("fred", "nyfed", "ofr", "fiscaldata", "tga", "auctions")
+_RELEASE_RECEIPT_PRODUCER = (
+    "seiche.markets.us_usd.materialize.seal_legacy_snapshot"
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -175,14 +186,20 @@ def build_products(snapshot: dict) -> tuple[dict, dict]:
     return _json_safe(overview), _json_safe(gauge)
 
 
-def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
-    """Materialize US products after a collector/engine cycle, never in API."""
+def seal_legacy_snapshot(snapshot: dict) -> dict[str, dict[str, str]]:
+    """Materialize and verify US products after a collector/engine cycle.
+
+    Forward rows are append-only evidence that a build was attempted. The
+    repository handoff records its producer and exact record hashes; controller
+    acceptance governs canonical snapshot visibility rather than erasing audit
+    evidence from a later-rejected build.
+    """
 
     overview, gauge = build_products(snapshot)
     repository = get_repository()
     event_cutoff = overview["event_cutoff"]
     knowledge_cutoff = overview["knowledge_cutoff"]
-    ids = {
+    snapshot_ids = {
         "overview": repository.seal_market_snapshot(
             market_id=PACK.market_id,
             product="overview",
@@ -191,6 +208,7 @@ def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
             calibration_id=PACK.calibration_id,
             evidence_eligible=False,
             payload=overview,
+            promoted=False,
         ),
         "gauge": repository.seal_market_snapshot(
             market_id=PACK.market_id,
@@ -200,11 +218,13 @@ def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
             calibration_id=PACK.calibration_id,
             evidence_eligible=False,
             payload=gauge,
+            promoted=False,
         ),
     }
-    for product, snapshot_id in ids.items():
+    forward_record_ids = {}
+    for product, snapshot_id in snapshot_ids.items():
         payload = overview if product == "overview" else gauge
-        repository.append_forward_record(
+        forward_record_ids[product] = repository.append_forward_record(
             snapshot_id=snapshot_id,
             market_id=PACK.market_id,
             product=product,
@@ -213,4 +233,126 @@ def seal_legacy_snapshot(snapshot: dict) -> dict[str, str]:
             calibration_id=PACK.calibration_id,
             payload=payload,
         )
-    return ids
+
+    products = {
+        product: {
+            "snapshot_id": snapshot_ids[product],
+            "forward_record_id": forward_record_ids[product],
+            "snapshot_row_sha256": market_snapshot_row_hash(
+                repository.load_staged_market_snapshot(snapshot_ids[product])
+                or {}
+            ),
+        }
+        for product in ("overview", "gauge")
+    }
+    verify_release_receipt(
+        repository,
+        {
+            "generated_at": snapshot["generated_at"],
+            "producer": _RELEASE_RECEIPT_PRODUCER,
+            "products": products,
+        },
+    )
+    return products
+
+
+def verify_release_receipt(
+    repository, receipt: dict
+) -> tuple[tuple[str, str, str, str], tuple[str, str, str, str]]:
+    """Revalidate exact US forward records before controller activation."""
+    if set(receipt) != {"generated_at", "producer", "products"}:
+        raise ValueError("US-USD release receipt has an invalid contract")
+    if receipt.get("producer") != _RELEASE_RECEIPT_PRODUCER:
+        raise ValueError("US-USD release receipt producer is invalid")
+    products = receipt.get("products")
+    if not isinstance(products, dict) or set(products) != {"overview", "gauge"}:
+        raise ValueError("US-USD release receipt must bind overview and gauge")
+    for product, binding in products.items():
+        if not isinstance(binding, dict) or set(binding) != {
+            "snapshot_id",
+            "forward_record_id",
+            "snapshot_row_sha256",
+        }:
+            raise ValueError(f"US-USD {product} receipt binding is invalid")
+        if not all(
+            isinstance(binding.get(key), str)
+            and len(binding[key]) == 64
+            and all(character in "0123456789abcdef" for character in binding[key])
+            for key in (
+                "snapshot_id",
+                "forward_record_id",
+                "snapshot_row_sha256",
+            )
+        ):
+            raise ValueError(f"US-USD {product} receipt hashes are invalid")
+
+    integrity = verify_repository_forward_chain(
+        repository,
+        market_id=PACK.market_id,
+        calibration_id=PACK.calibration_id,
+        required_products=("overview", "gauge"),
+        minimum_records=0,
+        minimum_span_days=0,
+    )
+    if integrity["status"] != "PASS":
+        raise RuntimeError(
+            "US-USD forward materialization failed post-append verification: "
+            + ",".join(integrity["reason_codes"])
+        )
+
+    rows = repository.load_forward_records(market_id=PACK.market_id)
+    for product, binding in products.items():
+        matches = [
+            row
+            for row in rows
+            if row.get("product") == product
+            and row.get("calibration_id") == PACK.calibration_id
+            and row.get("snapshot_id") == binding["snapshot_id"]
+            and row.get("record_hash") == binding["forward_record_id"]
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"US-USD {product} forward receipt did not read back exactly once"
+            )
+        row = matches[0]
+        payload_json = json.dumps(
+            row["payload"],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        identity = "|".join(
+            (
+                PACK.market_id,
+                product,
+                row["event_cutoff"],
+                row["knowledge_cutoff"],
+                PACK.calibration_id,
+                payload_hash,
+            )
+        )
+        expected_snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(binding["snapshot_id"], expected_snapshot_id):
+            raise RuntimeError(
+                f"US-USD {product} receipt does not bind its forward payload"
+            )
+        staged = repository.load_staged_market_snapshot(binding["snapshot_id"])
+        if staged is None:
+            raise RuntimeError(f"US-USD {product} staged snapshot is missing")
+        validate_snapshot_forward_binding(
+            staged,
+            row,
+            binding["forward_record_id"],
+            binding["snapshot_row_sha256"],
+        )
+    return tuple(
+        (
+            product,
+            products[product]["snapshot_id"],
+            products[product]["forward_record_id"],
+            products[product]["snapshot_row_sha256"],
+        )
+        for product in ("overview", "gauge")
+    )

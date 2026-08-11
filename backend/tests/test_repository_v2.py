@@ -48,6 +48,16 @@ def test_postgres_schema_preserves_bitemporal_and_snapshot_indexes() -> None:
     assert "knowledge_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
     assert "source_publication_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
     assert "market_snapshots_latest" in _POSTGRES_SCHEMA
+    assert "CREATE TABLE IF NOT EXISTS market_snapshot_staging" in _POSTGRES_SCHEMA
+    assert "CREATE TABLE IF NOT EXISTS release_snapshot_handoffs" in _POSTGRES_SCHEMA
+    handoff_schema = _POSTGRES_SCHEMA.split(
+        "CREATE TABLE IF NOT EXISTS release_snapshot_handoffs", 1
+    )[1].split(");", 1)[0]
+    assert "envelope TEXT NOT NULL" in handoff_schema
+    assert "envelope JSONB" not in handoff_schema
+    assert (
+        "CREATE TABLE IF NOT EXISTS active_release_snapshot_handoff" in _POSTGRES_SCHEMA
+    )
 
 
 def test_postgres_schema_rejects_servers_older_than_version_11(monkeypatch) -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -18,7 +21,28 @@ from seiche.domain.observation import (
     StalenessState,
     evidence_sha256,
 )
+from seiche.domain.forward_record import market_snapshot_row_hash
 from seiche.repository import PostgresMarketRepository
+
+
+def _release_handoff(producer_sha: str, receipt: dict, payload: dict) -> dict:
+    payload_json = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    body = {
+        "schema": "seiche.snapshot-handoff.v1",
+        "producer_sha": producer_sha,
+        "payload_sha256": hashlib.sha256(payload_json.encode()).hexdigest(),
+        "release_receipt": receipt,
+        "payload": payload,
+    }
+    body_json = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return {
+        **body,
+        "handoff_id": hashlib.sha256(body_json.encode()).hexdigest(),
+    }
 
 
 pytestmark = pytest.mark.skipif(
@@ -256,6 +280,298 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         )["snapshot_id"]
         == snapshot_id
     )
+
+    staging_suffix = uuid4().hex
+    staged_products = (
+        f"postgres-staged-overview-{staging_suffix}",
+        f"postgres-staged-gauge-{staging_suffix}",
+    )
+    staged_payloads = (
+        {
+            "schema": "seiche.postgres-staged.v1",
+            "value": 43,
+            "evidence_eligibility": {"eligible": True},
+        },
+        {
+            "schema": "seiche.postgres-staged.v1",
+            "value": 44,
+            "evidence_eligibility": {"eligible": True},
+        },
+    )
+    staged_ids = tuple(
+        repository.seal_market_snapshot(
+            market_id="US-USD",
+            product=product,
+            event_cutoff=event,
+            knowledge_cutoff=knowledge,
+            calibration_id="postgres-staging-integration-v1",
+            evidence_eligible=True,
+            payload=staged_payload,
+            promoted=False,
+        )
+        for product, staged_payload in zip(staged_products, staged_payloads)
+    )
+    staged_forward_ids = tuple(
+        repository.append_forward_record(
+            snapshot_id=staged_id,
+            market_id="US-USD",
+            product=product,
+            event_cutoff=event,
+            knowledge_cutoff=knowledge,
+            calibration_id="postgres-staging-integration-v1",
+            payload=staged_payload,
+        )
+        for product, staged_payload, staged_id in zip(
+            staged_products, staged_payloads, staged_ids, strict=True
+        )
+    )
+    staged_row_hashes = tuple(
+        market_snapshot_row_hash(
+            repository.load_staged_market_snapshot(snapshot_id) or {}
+        )
+        for snapshot_id in staged_ids
+    )
+    bindings = tuple(
+        zip(
+            staged_products,
+            staged_ids,
+            staged_forward_ids,
+            staged_row_hashes,
+            strict=True,
+        )
+    )
+    assert all(
+        repository.load_latest_market_snapshot("US-USD", product) is None
+        for product in staged_products
+    )
+
+    producer_sha = "d" * 40
+    envelope = _release_handoff(
+        producer_sha,
+        {
+            "generated_at": "2026-08-08T10:00:00+00:00",
+            "products": {
+                product: {
+                    "snapshot_id": staged_id,
+                    "forward_record_id": forward_record_id,
+                    "snapshot_row_sha256": snapshot_row_hash,
+                }
+                for product, staged_id, forward_record_id, snapshot_row_hash in zip(
+                    staged_products,
+                    staged_ids,
+                    staged_forward_ids,
+                    staged_row_hashes,
+                    strict=True,
+                )
+            },
+        },
+        {
+            "generated_at": "2026-08-08T10:00:00+00:00",
+            "products": list(staged_products),
+        },
+    )
+    handoff_id = envelope["handoff_id"]
+    active_before = repository.load_active_release_handoff()
+    assert repository.load_release_handoff(handoff_id) is None
+    repository.stage_release_handoff(handoff_id, producer_sha, envelope)
+    repository.stage_release_handoff(handoff_id, producer_sha, envelope)
+    assert repository.load_release_handoff(handoff_id) == envelope
+    with pytest.raises(ValueError, match="different producer or envelope"):
+        repository.stage_release_handoff(
+            handoff_id,
+            producer_sha,
+            {**envelope, "payload": {"products": ["changed"]}},
+        )
+
+    missing_id = uuid4().hex + uuid4().hex
+    with pytest.raises(ValueError, match="locked handoff"):
+        repository.activate_release_handoff(
+            handoff_id,
+            producer_sha,
+            (
+                bindings[0],
+                (staged_products[1], missing_id, "f" * 64, "e" * 64),
+            ),
+        )
+    assert all(
+        repository.load_latest_market_snapshot("US-USD", product) is None
+        for product in staged_products
+    )
+    assert repository.load_active_release_handoff() == active_before
+
+    staging_columns = (
+        "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+        "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+    )
+    with repository._connect() as connection:
+        deleted_staging = connection.execute(
+            """SELECT snapshot_id,market_id,product,event_cutoff,
+                      knowledge_cutoff,sealed_at,calibration_id,
+                      evidence_eligible,payload_hash,payload::text
+                 FROM market_snapshot_staging WHERE snapshot_id=%s""",
+            (staged_ids[1],),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM market_snapshot_staging WHERE snapshot_id=%s",
+            (staged_ids[1],),
+        )
+    with pytest.raises(ValueError, match="missing market snapshot"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    with repository._connect() as connection:
+        connection.execute(
+            f"""INSERT INTO market_snapshot_staging ({staging_columns})
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+            deleted_staging,
+        )
+    assert (
+        market_snapshot_row_hash(
+            repository.load_staged_market_snapshot(staged_ids[1]) or {}
+        )
+        == staged_row_hashes[1]
+    )
+
+    with repository._connect() as connection:
+        original_market_id = connection.execute(
+            "SELECT market_id FROM market_snapshot_staging WHERE snapshot_id=%s",
+            (staged_ids[0],),
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE market_snapshot_staging SET market_id=%s WHERE snapshot_id=%s",
+            (original_market_id.lower(), staged_ids[0]),
+        )
+    with pytest.raises(ValueError, match="market_id is not canonical uppercase"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == active_before
+    with repository._connect() as connection:
+        connection.execute(
+            "UPDATE market_snapshot_staging SET market_id=%s WHERE snapshot_id=%s",
+            (original_market_id, staged_ids[0]),
+        )
+
+    # TIMESTAMPTZ canonicalizes equivalent offsets on write, so PostgreSQL cannot
+    # retain the raw-offset tamper exercised by SQLite. sealed_at remains a
+    # representable non-identity row mutation and must still be receipt-bound.
+    with repository._connect() as connection:
+        original_sealed_at = connection.execute(
+            "SELECT sealed_at FROM market_snapshot_staging WHERE snapshot_id=%s",
+            (staged_ids[0],),
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE market_snapshot_staging SET sealed_at=%s WHERE snapshot_id=%s",
+            (datetime(2000, 1, 1, tzinfo=UTC), staged_ids[0]),
+        )
+    with pytest.raises(ValueError, match="row differs from the release receipt"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == active_before
+    with repository._connect() as connection:
+        connection.execute(
+            "UPDATE market_snapshot_staging SET sealed_at=%s WHERE snapshot_id=%s",
+            (original_sealed_at, staged_ids[0]),
+        )
+
+    with repository._connect() as connection:
+        original_staging = connection.execute(
+            """SELECT evidence_eligible, payload_hash, payload::text
+                 FROM market_snapshot_staging WHERE snapshot_id=%s""",
+            (staged_ids[0],),
+        ).fetchone()
+        connection.execute(
+            """UPDATE market_snapshot_staging
+                  SET payload_hash=%s, payload=%s::jsonb WHERE snapshot_id=%s""",
+            ("0" * 64, '{"tampered":true}', staged_ids[0]),
+        )
+    with pytest.raises(ValueError, match="payload"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == active_before
+    with repository._connect() as connection:
+        connection.execute(
+            """UPDATE market_snapshot_staging
+                  SET evidence_eligible=%s, payload_hash=%s, payload=%s::jsonb
+                WHERE snapshot_id=%s""",
+            (*original_staging, staged_ids[0]),
+        )
+
+    with repository._connect() as connection:
+        connection.execute(
+            """UPDATE market_snapshot_staging SET evidence_eligible=FALSE
+                WHERE snapshot_id=%s""",
+            (staged_ids[0],),
+        )
+    with pytest.raises(ValueError, match="row differs from the release receipt"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == active_before
+    with repository._connect() as connection:
+        connection.execute(
+            """UPDATE market_snapshot_staging SET evidence_eligible=TRUE
+                WHERE snapshot_id=%s""",
+            (staged_ids[0],),
+        )
+
+    with repository._connect() as connection:
+        columns = (
+            "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+            "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+        )
+        connection.execute(
+            f"""INSERT INTO market_snapshots ({columns})
+                 SELECT {columns} FROM market_snapshot_staging
+                  WHERE snapshot_id=%s ON CONFLICT DO NOTHING""",
+            (staged_ids[0],),
+        )
+        connection.execute(
+            """UPDATE market_snapshots SET payload_hash=%s, payload=%s::jsonb
+                WHERE snapshot_id=%s""",
+            ("0" * 64, '{"tampered":true}', staged_ids[0]),
+        )
+    with pytest.raises(RuntimeError, match="canonical rows differ"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == active_before
+    with repository._connect() as connection:
+        connection.execute(
+            "DELETE FROM market_snapshots WHERE snapshot_id=%s",
+            (staged_ids[0],),
+        )
+
+    with pytest.raises(ValueError, match="producer mismatch"):
+        repository.activate_release_handoff(handoff_id, "e" * 40, bindings)
+    assert all(
+        repository.load_latest_market_snapshot("US-USD", product) is None
+        for product in staged_products
+    )
+    assert repository.load_active_release_handoff() == active_before
+
+    repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    promoted = tuple(
+        repository.load_latest_market_snapshot("US-USD", product)
+        for product in staged_products
+    )
+    assert tuple(row["snapshot_id"] for row in promoted) == staged_ids
+    assert tuple(row["payload"] for row in promoted) == staged_payloads
+    assert repository.load_active_release_handoff() == envelope
+
+    # Exact replay proves activation retained its staged source bundle.
+    repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == envelope
+    newer_receipt = json.loads(json.dumps(envelope["release_receipt"]))
+    newer_receipt["generated_at"] = "2026-08-08T10:01:00+00:00"
+    newer_envelope = _release_handoff(
+        producer_sha,
+        newer_receipt,
+        {
+            "generated_at": "2026-08-08T10:01:00+00:00",
+            "products": list(staged_products),
+        },
+    )
+    repository.stage_release_handoff(
+        newer_envelope["handoff_id"], producer_sha, newer_envelope
+    )
+    repository.activate_release_handoff(
+        newer_envelope["handoff_id"], producer_sha, bindings
+    )
+    assert repository.load_active_release_handoff() == newer_envelope
+    with pytest.raises(ValueError, match="cannot regress"):
+        repository.activate_release_handoff(handoff_id, producer_sha, bindings)
+    assert repository.load_active_release_handoff() == newer_envelope
 
     record_id = repository.append_forward_record(
         snapshot_id=snapshot_id,

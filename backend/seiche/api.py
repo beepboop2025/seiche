@@ -98,6 +98,10 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     mcp_server.set_main_loop(asyncio.get_running_loop())
     refresh_task: asyncio.Task[None] | None = None
     if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+        # Freeze the process identity before any background work starts. A
+        # rollback may later move the editable checkout, but it must never be
+        # able to relabel an in-flight candidate build as the old release.
+        await asyncio.to_thread(assemble.capture_process_release_sha)
         restored = await asyncio.to_thread(assemble.restore_cached_snapshot)
         if restored is not None:
             logging.getLogger("uvicorn.error").info(
@@ -562,8 +566,9 @@ def _public_openapi_document() -> dict[str, Any]:
                     "Reads only the last completed board snapshot. A restart can "
                     "serve a dated last-known-good snapshot while rebuilding. A "
                     "cold cache, or require_rebuilt=true before this process has "
-                    "completed its own build, returns 503 immediately. This request "
-                    "never starts or waits for a board build."
+                    "completed its own build and sealed its market evidence, returns "
+                    "503 immediately. This request never starts or waits for a board "
+                    "build."
                 ),
                 "parameters": [{
                     "name": "require_rebuilt",
@@ -571,7 +576,8 @@ def _public_openapi_document() -> dict[str, Any]:
                     "required": False,
                     "description": (
                         "Deployment gate: require a snapshot completed by the "
-                        "current process rather than a restored handoff."
+                        "current process with both US market products sealed, rather "
+                        "than a restored handoff or a degraded rebuild."
                     ),
                     "schema": {"type": "boolean", "default": False},
                 }],
@@ -600,6 +606,7 @@ def _public_openapi_document() -> dict[str, Any]:
                                             "enum": [
                                                 "warming_or_unavailable",
                                                 "rebuilding_from_last_known_good",
+                                                "rebuilt_without_market_evidence",
                                             ],
                                         },
                                         "version": {"type": "string"},
@@ -1690,13 +1697,29 @@ async def health(response: Response, require_rebuilt: bool = False):
             },
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
+    release_candidate = None
+    if require_rebuilt:
+        release_candidate = assemble.cached_snapshot_release_handoff()
+    if require_rebuilt and release_candidate is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "rebuilt_without_market_evidence",
+                "version": assemble.VERSION_LABEL,
+                "serving_generated_at": snap.get("generated_at"),
+            },
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
     response.headers["Cache-Control"] = "no-store"
-    return {
+    content = {
         "generated_at": snap["generated_at"],
         "version": snap.get("version"),
         "faults": snap["faults"],
         "provenance": snap["provenance"],
     }
+    if release_candidate is not None:
+        content["release_candidate"] = release_candidate
+    return content
 
 
 @app.get("/api/badge/record")

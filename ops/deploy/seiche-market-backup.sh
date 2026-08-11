@@ -21,7 +21,7 @@ SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 GIT_BIN="${SEICHE_GIT_BIN:-git}"
-DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/home/seiche/.seiche-deployed-sha}"
+DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
 
 fail() {
     echo "seiche market backup: $*" >&2
