@@ -4,6 +4,7 @@ import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from seiche import store
@@ -15,11 +16,14 @@ from seiche.sources.canonical import (
     FunctionalCanonicalAdapter,
     ParsedPoint,
 )
+from seiche.sources import official
 from seiche.sources.official import (
     PRODUCTION_ADAPTER_KEYS,
+    RBNZSourceUnavailableError,
     bounded_date_windows,
     build_official_adapters,
     parse_nyfed_rates,
+    parse_rbnz,
 )
 
 
@@ -144,6 +148,257 @@ def test_every_production_adapter_is_pack_declared_without_network_io(
         adapter.adapter_id in registry.get(adapter.market_id).adapter_map
         for adapter in adapters
     )
+
+
+def _official_adapter(
+    adapter_id: str, *, backfill: bool = False
+) -> FunctionalCanonicalAdapter:
+    adapters = build_official_adapters(
+        repository=SQLiteMarketRepository(),
+        backfill=backfill,
+        clock=lambda: datetime(2026, 8, 11, tzinfo=UTC),
+    )
+    return next(item for item in adapters if item.adapter_id == adapter_id)
+
+
+def test_connector_owned_retry_policies_are_not_multiplied_by_supervisor() -> None:
+    registry = default_registry()
+
+    assert registry.get("HK-HKD").adapter_map["hkma_official"].retry_limit == 0
+    assert registry.get("NZ-NZD").adapter_map["rbnz_policy"].retry_limit == 0
+    assert registry.get("NZ-NZD").adapter_map["rbnz_wholesale"].retry_limit == 0
+
+
+@pytest.mark.asyncio
+async def test_hkma_retries_server_errors_with_bounded_backoff(
+    monkeypatch,
+) -> None:
+    statuses = iter((502, 503, 200))
+    requests: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status = next(statuses)
+        return httpx.Response(
+            status,
+            headers={"content-type": "application/json; charset=utf-8"},
+            json={"result": {"records": []}},
+        )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await _official_adapter("hkma_official").fetcher(client))
+
+    assert [request.url.params["pagesize"] for request in requests] == [
+        "1000",
+        "1000",
+        "1000",
+    ]
+    assert all(request.headers["accept"] == "application/json" for request in requests)
+    assert delays == [1.0, 2.0]
+    assert len(documents) == 1
+    assert documents[0].label == "hkma_liquidity"
+    assert documents[0].media_type == "application/json"
+    assert documents[0].source_uri == str(requests[-1].url)
+
+
+@pytest.mark.asyncio
+async def test_hkma_raises_last_server_response_after_retry_exhaustion(
+    monkeypatch,
+) -> None:
+    requests: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(502, text="upstream temporarily unavailable")
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            await _official_adapter("hkma_official").fetcher(client)
+
+    assert raised.value.response.status_code == 502
+    assert len(requests) == 3
+    assert delays == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_hkma_does_not_retry_a_non_server_response(monkeypatch) -> None:
+    requests: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(403, text="forbidden")
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await _official_adapter("hkma_official").fetcher(client)
+
+    assert len(requests) == 1
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
+    requests: list[httpx.Request] = []
+    page = b"""
+        <html><body><table>
+          <tr><th>Cash rate (%pa)</th></tr>
+          <tr>
+            <th>Date</th>
+            <th>Official Cash Rate (OCR)</th>
+            <th>Overnight Deposit Rate</th>
+            <th>Overnight Reverse Repurchase Facility Rate</th>
+          </tr>
+          <tr><td>08 Aug 2026</td><td>3.25</td><td>3.20</td><td>3.50</td></tr>
+        </table></body></html>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith(".xlsx"):
+            return httpx.Response(403, text="forbidden")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=page,
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await _official_adapter("rbnz_wholesale").fetcher(client))
+
+    assert [str(request.url) for request in requests] == [
+        "https://www.rbnz.govt.nz/-/media/project/sites/rbnz/files/statistics/"
+        "series/b/b2/hb2-daily-close.xlsx",
+        "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates/"
+        "wholesale-interest-rates",
+    ]
+    assert (
+        requests[0]
+        .headers["accept"]
+        .startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    )
+    assert requests[0].headers["referer"] == str(requests[1].url)
+    assert all(
+        request.headers["user-agent"] == official.USER_AGENT for request in requests
+    )
+    assert documents[0].source_uri == str(requests[1].url)
+    assert documents[0].media_type == "text/html"
+    assert {
+        point.instrument_id: point.raw_value for point in parse_rbnz(documents[0])
+    } == {
+        "NZ.RBNZ.OVERNIGHT_DEPOSIT": Decimal("3.20"),
+        "NZ.RBNZ.OVERNIGHT_REVERSE_REPO": Decimal("3.50"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={
+                "content-type": (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            },
+            content=b"PK\x03\x04representative workbook bytes",
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await _official_adapter("rbnz_policy").fetcher(client))
+
+    assert len(requests) == 1
+    assert len(documents) == 1
+    assert documents[0].source_uri == str(requests[0].url)
+    assert documents[0].source_uri.endswith("hb2-daily-close.xlsx")
+    assert documents[0].media_type.endswith("spreadsheetml.sheet")
+    assert documents[0].payload.startswith(b"PK\x03\x04")
+
+
+@pytest.mark.asyncio
+async def test_rbnz_403_exhaustion_reports_both_official_endpoints() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(403, text="cloudflare challenge")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    detail = str(raised.value)
+    assert len(requests) == 2
+    assert detail.count("HTTP 403") == 2
+    assert "hb2-daily-close.xlsx" in detail
+    assert "/statistics/series/exchange-and-interest-rates/" in detail
+
+
+@pytest.mark.asyncio
+async def test_rbnz_rejects_html_without_the_expected_b2_table() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".xlsx"):
+            return httpx.Response(403, text="forbidden")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><table><tr><th>Date</th><th>Unrelated</th></tr>"
+            "<tr><td>08 Aug 2026</td><td>9.99</td></tr></table></html>",
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    detail = str(raised.value)
+    assert "HTTP 403" in detail
+    assert "no expected B2 interest-rate table header" in detail
+
+
+@pytest.mark.asyncio
+async def test_rbnz_backfill_rejects_the_bounded_html_summary() -> None:
+    page = b"""
+        <table>
+          <tr>
+            <th>Date</th>
+            <th>Official Cash Rate (OCR)</th>
+            <th>Overnight Deposit Rate</th>
+            <th>Overnight Reverse Repurchase Facility Rate</th>
+          </tr>
+          <tr><td>10 Aug 2026</td><td>2.50</td><td>2.50</td><td>3.00</td></tr>
+        </table>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(".xlsx"):
+            return httpx.Response(403, text="forbidden")
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy", backfill=True).fetcher(client)
+
+    detail = str(raised.value)
+    assert "HTTP 403" in detail
+    assert "recent summary" in detail
+    assert "cannot satisfy a historical backfill" in detail
 
 
 @pytest.mark.asyncio
