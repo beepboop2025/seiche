@@ -56,10 +56,14 @@ PACK = MarketPack(
         SourceAdapterSpec(
             "rbnz_policy", ConnectorClassification.OFFICIAL_OPEN, "P1D", _POLICY_CLOCK,
             RedistributionStatus.ALLOWED,
+            # The connector already tries both official representations;
+            # replaying a Cloudflare 403 would only repeat the challenge.
+            retry_limit=0,
         ),
         SourceAdapterSpec(
             "rbnz_wholesale", ConnectorClassification.OFFICIAL_OPEN, "P1D", _DATA_CLOCK,
             RedistributionStatus.ALLOWED,
+            retry_limit=0,
         ),
         SourceAdapterSpec(
             "licensed_nzd_market", ConnectorClassification.LICENSED, "P1D", _DATA_CLOCK,

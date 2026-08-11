@@ -52,6 +52,9 @@ PACK = MarketPack(
         SourceAdapterSpec(
             "hkma_official", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
             RedistributionStatus.ALLOWED,
+            # The connector owns its status-aware 5xx retry budget. Do not
+            # multiply it through the generic supervisor retry loop.
+            retry_limit=0,
         ),
         SourceAdapterSpec(
             "tma_benchmarks", ConnectorClassification.LICENSED, "P1D", _CLOCK,
