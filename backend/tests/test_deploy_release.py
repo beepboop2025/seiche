@@ -434,6 +434,17 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "/api/v2/*" in caddy
 
 
+def test_forward_incident_runbook_loads_systemd_environment_without_sourcing():
+    runbook = (
+        ROOT / "docs" / "FORWARD_CHAIN_INCIDENT_2026-08-11.md"
+    ).read_text()
+
+    assert "mapfile -t MARKET_ENV" in runbook
+    assert 'env "${MARKET_ENV[@]}"' in runbook
+    assert "never `source` this file" in runbook
+    assert ". /etc/seiche/market.env" not in runbook
+
+
 def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
     installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
     relay_installer = WORLD_MODEL_DELIVERY_INSTALLER.read_text()

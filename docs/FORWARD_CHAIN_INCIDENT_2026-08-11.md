@@ -102,9 +102,16 @@ history never makes it mature and is never presented as having passed.
 8. Run the forward gate with a frozen policy and inspect both the active and
    quarantine metrics:
 
-   ```text
-   seiche market-validate --market NZ-NZD --check forward_paper_record \
-     --minimum-forward-records 250 --minimum-forward-span-days 365
+   ```bash
+   # Run as root. EnvironmentFile values are systemd syntax, not shell syntax:
+   # never `source` this file because the PostgreSQL DSN contains `&`.
+   mapfile -t MARKET_ENV < <(
+     sed -n '/^SEICHE_[A-Z0-9_]*=/p' /etc/seiche/market.env
+   )
+   runuser -u seiche -- env "${MARKET_ENV[@]}" \
+     /home/seiche/app/backend/.venv/bin/seiche market-validate \
+       --market NZ-NZD --check forward_paper_record \
+       --minimum-forward-records 250 --minimum-forward-span-days 365
    ```
 
    Expected immediately after rollout: active generation v2, integrity intact,
