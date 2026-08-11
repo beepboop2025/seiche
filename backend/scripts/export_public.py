@@ -1,6 +1,6 @@
 """Export the FREE public surface (argument + quality + conclusion + PROOF).
 
-Usage: python backend/scripts/export_public.py <public-path> [<overview-path>]
+Usage: python backend/scripts/export_public.py [--snapshot FILE] <public-path> [<overview-path>]
 
 The slim derived slice is always written. It includes the thesis, evidence,
 countercase and data-quality contract, but never the underlying engine
@@ -12,6 +12,7 @@ screen.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import math
@@ -21,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from seiche import assemble, public_view  # noqa: E402
+from seiche.publish_snapshot import PublishSnapshotError, load_publish_snapshot  # noqa: E402
 
 
 def _json_safe(o):
@@ -34,10 +36,24 @@ def _json_safe(o):
     return o
 
 
-def main() -> int:
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("public.json")
-    overview_out = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-    snap = asyncio.run(assemble.snapshot(force=True))
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot", help="reuse this already-built full-board JSON")
+    parser.add_argument("public_path", nargs="?", default="public.json")
+    parser.add_argument("overview_path", nargs="?")
+    args = parser.parse_args(argv)
+
+    out = Path(args.public_path)
+    overview_out = Path(args.overview_path) if args.overview_path else None
+    if args.snapshot:
+        try:
+            snap = load_publish_snapshot(args.snapshot)
+        except PublishSnapshotError as exc:
+            print(f"FATAL: {exc}", file=sys.stderr)
+            return 1
+        print(f"board read from {args.snapshot} (generated {snap.get('generated_at')})")
+    else:
+        snap = asyncio.run(assemble.snapshot(force=True))
     engines = snap.get("engines", {})
     if sum(1 for v in engines.values() if isinstance(v, dict) and v.get("ok")) == 0:
         print("FATAL: zero engines produced output; refusing to publish", file=sys.stderr)

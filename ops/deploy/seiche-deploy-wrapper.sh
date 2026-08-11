@@ -167,6 +167,22 @@ if ! valid_release_sha "$TARGET" \
   echo "FAIL: origin/main did not resolve to a canonical local commit"
   exit 1
 fi
+# A local candidate controller can spend an hour testing one exact commit while
+# main keeps moving.  It passes that tested identity here; never let this wrapper
+# silently re-resolve and deploy a newer, untested tip.  The forced-command SSH
+# path does not pass this variable and retains its established latest-main
+# behavior.  A malformed constraint fails closed before any service is stopped.
+EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}
+if [ -n "$EXPECTED_TARGET" ]; then
+  if ! valid_release_sha "$EXPECTED_TARGET"; then
+    echo "FAIL: expected target is not a canonical commit SHA"
+    exit 1
+  fi
+  if [ "$TARGET" != "$EXPECTED_TARGET" ]; then
+    echo "FAIL: tested target ${EXPECTED_TARGET:0:7} was superseded by ${TARGET:0:7}; refusing to deploy an untested commit"
+    exit 1
+  fi
+fi
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_BACKFILL_WAS_ACTIVE=""
 if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then

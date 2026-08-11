@@ -68,7 +68,9 @@ jobs:
           # -L: github.io 301s to the seiche.info custom domain since 2026-07-09
           curl -sfL https://seiche.info/data/book_history.json \
             -o /tmp/book_history.json || echo "[]" > /tmp/book_history.json
-          python backend/scripts/append_book_record.py /tmp/book_history.json frontend/public/data/book_history.json
+          python backend/scripts/append_book_record.py \
+            --snapshot frontend/public/data/overview.json \
+            /tmp/book_history.json frontend/public/data/book_history.json
 
       # Static SEO surface: one indexable HTML page per dispatch + archive +
       # regenerated sitemap, baked into public/ so the frontend build ships them.

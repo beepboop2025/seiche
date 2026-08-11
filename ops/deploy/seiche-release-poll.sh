@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# Poll trusted origin/main, gate one exact commit outside the live checkout, and
+# hand only that tested identity to the existing rollback-owning deploy wrapper.
+#
+# This is installed as /usr/local/sbin/seiche-release-poll by
+# install-release-poller.sh.  It deliberately has no write credential for the
+# source repository: GitHub remains the source of truth and the box only reads.
+set -euo pipefail
+
+APP_DIR="${SEICHE_CONTROL_APP_DIR:-/home/seiche/app}"
+SERVICE_USER="${SEICHE_CONTROL_USER:-seiche}"
+STATE_DIR="${SEICHE_CONTROL_STATE_DIR:-/var/lib/seiche-control}"
+RECEIPT_DIR="$STATE_DIR/receipts"
+CANDIDATE_PARENT="$STATE_DIR/candidates"
+CANDIDATE_DIR="$CANDIDATE_PARENT/main"
+RUNTIME_DIR="${SEICHE_CONTROL_RUNTIME_DIR:-/run/seiche-control}"
+CONTROL_LOCK="$RUNTIME_DIR/release.lock"
+DEPLOY_STATE="${SEICHE_CONTROL_DEPLOY_STATE:-/var/lib/seiche-deploy/deployed-sha}"
+DEPLOY_WRAPPER="${SEICHE_CONTROL_DEPLOY_WRAPPER:-/root/seiche-deploy-wrapper.sh}"
+RUNUSER="${SEICHE_CONTROL_RUNUSER:-runuser}"
+SYSTEMCTL="${SEICHE_CONTROL_SYSTEMCTL:-systemctl}"
+CURL="${SEICHE_CONTROL_CURL:-curl}"
+SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
+TIMEOUT="${SEICHE_CONTROL_TIMEOUT:-timeout}"
+SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
+SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
+GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
+INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
+TEST_COMMAND="python -m pytest backend/tests -q --memray --pystack-threshold=300"
+STARTED_AT=$(date -u +%FT%TZ)
+CANDIDATE_ADDED=""
+HEALTH_BODY=""
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+valid_sha() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+}
+
+as_service() {
+  "$RUNUSER" -u "$SERVICE_USER" -- "$@"
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [ -n "$HEALTH_BODY" ]; then
+    rm -f -- "$HEALTH_BODY" || true
+  fi
+  if [ -n "$CANDIDATE_ADDED" ]; then
+    if ! as_service git -C "$APP_DIR" worktree remove --force "$CANDIDATE_DIR"; then
+      echo "FAIL: candidate worktree cleanup failed: $CANDIDATE_DIR" >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
+    as_service git -C "$APP_DIR" worktree prune || true
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ "$(id -u)" -ne 0 ]; then
+  fail "release polling must run as root"
+fi
+case "$GATE_ONLY" in
+  0|1) ;;
+  *) fail "SEICHE_CONTROL_GATE_ONLY must be exactly 0 or 1" ;;
+esac
+for path in "$STATE_DIR" "$RECEIPT_DIR" "$CANDIDATE_PARENT" "$RUNTIME_DIR"; do
+  if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
+    fail "$path is not a real directory"
+  fi
+done
+install -d -o root -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
+install -d -o root -g root -m 0700 "$RECEIPT_DIR" "$RUNTIME_DIR"
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$CANDIDATE_PARENT"
+if [ "$(stat -c '%U:%G:%a' "$RECEIPT_DIR")" != "root:root:700" ] \
+    || [ "$(stat -c '%U:%G:%a' "$RUNTIME_DIR")" != "root:root:700" ] \
+    || [ "$(stat -c '%U:%G:%a' "$CANDIDATE_PARENT")" \
+      != "$SERVICE_USER:$SERVICE_USER:700" ]; then
+  fail "control receipt/runtime/candidate directory permissions are unsafe"
+fi
+exec 8>"$CONTROL_LOCK"
+chown root:root "$CONTROL_LOCK"
+chmod 0600 "$CONTROL_LOCK"
+if ! flock --nonblock 8; then
+  echo "release poll coalesced: another candidate gate is active"
+  exit 0
+fi
+
+[ -x "$DEPLOY_WRAPPER" ] || fail "deploy wrapper is missing or not executable: $DEPLOY_WRAPPER"
+[ -d "$APP_DIR/.git" ] || fail "canonical checkout is missing: $APP_DIR"
+
+if ! as_service git -C "$APP_DIR" fetch -q origin main; then
+  fail "could not fetch trusted origin/main"
+fi
+TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main) \
+  || fail "could not resolve origin/main"
+if ! valid_sha "$TARGET" \
+    || ! as_service git -C "$APP_DIR" rev-parse --verify --quiet \
+      "$TARGET^{commit}" >/dev/null; then
+  fail "origin/main is not a canonical local commit"
+fi
+
+DEPLOYED=""
+if [ -e "$DEPLOY_STATE" ] || [ -L "$DEPLOY_STATE" ]; then
+  if [ -L "$DEPLOY_STATE" ] || [ ! -f "$DEPLOY_STATE" ] \
+      || [ "$(stat -c '%U:%G:%a' "$DEPLOY_STATE")" != "root:root:600" ] \
+      || ! IFS= read -r DEPLOYED <"$DEPLOY_STATE" \
+      || ! valid_sha "$DEPLOYED"; then
+    fail "deployed release state is unsafe or invalid"
+  fi
+fi
+
+health_matches() {
+  local expected="$1"
+  HEALTH_BODY=$(mktemp "$RUNTIME_DIR/.release-health.XXXXXX") || return 1
+  if ! "$SYSTEMCTL" is-active --quiet seiche-api \
+      || ! "$CURL" -sf -m 20 \
+        http://127.0.0.1:8787/api/internal/v1/release-health >"$HEALTH_BODY" \
+      || ! "$SYSTEM_PYTHON" - "$HEALTH_BODY" "$expected" <<'PY'
+import json
+import re
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+    assert isinstance(payload, dict)
+    candidate = payload.get("release_candidate")
+    assert re.fullmatch(r"[0-9a-f]{40}", sys.argv[2])
+    assert isinstance(candidate, dict)
+    assert set(candidate) == {"producer_sha", "activation_token"}
+    assert candidate.get("producer_sha") == sys.argv[2]
+    assert re.fullmatch(r"[0-9a-f]{64}", candidate.get("activation_token", ""))
+except (AssertionError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+PY
+  then
+    rm -f -- "$HEALTH_BODY"
+    HEALTH_BODY=""
+    return 1
+  fi
+  rm -f -- "$HEALTH_BODY"
+  HEALTH_BODY=""
+  return 0
+}
+
+if [ "$GATE_ONLY" != 1 ] \
+    && [ "$DEPLOYED" = "$TARGET" ] \
+    && health_matches "$TARGET"; then
+  echo "release poll: ${TARGET:0:7} is already deployed and strictly healthy"
+  exit 0
+fi
+
+# The candidate uses a detached worktree and its own venv, so ordinary relative
+# writes cannot dirty the live checkout.  It receives no production
+# EnvironmentFile.  It intentionally shares the checkout's Unix identity for
+# read-only Git access, however, so this is process isolation, not a security
+# sandbox: only protected, trusted main commits may reach this controller.
+if [ -L "$CANDIDATE_DIR" ]; then
+  fail "candidate path is an unsafe symlink: $CANDIDATE_DIR"
+fi
+as_service git -C "$APP_DIR" worktree prune
+if [ -e "$CANDIDATE_DIR" ]; then
+  as_service git -C "$APP_DIR" worktree remove --force "$CANDIDATE_DIR" \
+    || fail "could not remove the stale candidate worktree"
+fi
+if ! as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"; then
+  fail "could not create the detached candidate worktree"
+fi
+CANDIDATE_ADDED=1
+CANDIDATE_SHA=$(as_service git -C "$CANDIDATE_DIR" rev-parse HEAD) \
+  || fail "candidate identity could not be resolved"
+[ "$CANDIDATE_SHA" = "$TARGET" ] || fail "candidate does not match the selected target"
+CANDIDATE_TREE=$(as_service git -C "$CANDIDATE_DIR" rev-parse "HEAD^{tree}") \
+  || fail "candidate tree identity could not be resolved"
+valid_sha "$CANDIDATE_TREE" || fail "candidate tree identity is invalid"
+as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
+  || fail "candidate worktree is dirty before the gate"
+
+VENV="$CANDIDATE_DIR/.gate-venv"
+as_service "$TIMEOUT" -k 30 300 "$SYSTEM_PYTHON" -m venv "$VENV" \
+  || fail "candidate virtualenv creation failed or timed out"
+as_service "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
+  "$CANDIDATE_DIR/backend[dev,collectors]" \
+  || fail "candidate dependency install failed or timed out"
+(
+  cd "$CANDIDATE_DIR"
+  as_service env \
+    PATH="$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$TIMEOUT" -k 30 3600 "$VENV/bin/python" -m pytest backend/tests -q \
+      --memray --pystack-threshold=300
+) || fail "candidate full test gate failed or timed out"
+as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
+  || fail "candidate tests modified tracked release files"
+
+# Re-fetch after the expensive gate.  A newer tip is not an error and is never
+# deployed by accident: discard this candidate and let the next timer gate the
+# new identity from the beginning.
+if ! as_service git -C "$APP_DIR" fetch -q origin main; then
+  fail "could not re-fetch origin/main after the candidate gate"
+fi
+LATEST=$(as_service git -C "$APP_DIR" rev-parse origin/main) \
+  || fail "could not re-resolve origin/main after the candidate gate"
+valid_sha "$LATEST" || fail "origin/main became invalid after the candidate gate"
+if [ "$LATEST" != "$TARGET" ]; then
+  echo "release poll: tested ${TARGET:0:7} was superseded by ${LATEST:0:7}; production unchanged"
+  exit 0
+fi
+
+write_receipt() {
+  local kind="$1" path="$2" gate_digest="${3:-}" stage=""
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    if [ -L "$path" ] || [ ! -f "$path" ] \
+        || [ "$(stat -c '%U:%G:%a' "$path")" != "root:root:400" ]; then
+      fail "$kind receipt is unsafe: $path"
+    fi
+    "$SYSTEM_PYTHON" - "$path" "$kind" "$TARGET" "$CANDIDATE_TREE" \
+      "$INSTALL_COMMAND" "$TEST_COMMAND" "$gate_digest" <<'PY' \
+      || fail "existing receipt does not bind this exact candidate"
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+expected = {
+    "schema": "seiche.release-receipt.v1",
+    "kind": sys.argv[2],
+    "commit": sys.argv[3],
+    "tree": sys.argv[4],
+    "conclusion": "success",
+}
+for key, value in expected.items():
+    assert payload.get(key) == value
+if sys.argv[2] == "gate":
+    assert payload.get("install_command") == sys.argv[5]
+    assert payload.get("test_command") == sys.argv[6]
+else:
+    assert payload.get("gate_receipt_sha256") == sys.argv[7]
+PY
+    return 0
+  fi
+  stage=$(mktemp "$RECEIPT_DIR/.${TARGET}.${kind}.XXXXXX") \
+    || fail "could not stage the $kind receipt"
+  if ! "$SYSTEM_PYTHON" - "$kind" "$TARGET" "$CANDIDATE_TREE" \
+      "$STARTED_AT" "$(date -u +%FT%TZ)" "$INSTALL_COMMAND" \
+      "$TEST_COMMAND" "$gate_digest" \
+      >"$stage" <<'PY'
+import json
+import sys
+
+(
+    kind,
+    commit,
+    tree,
+    started_at,
+    completed_at,
+    install_command,
+    test_command,
+    gate_digest,
+) = sys.argv[1:]
+payload = {
+    "schema": "seiche.release-receipt.v1",
+    "kind": kind,
+    "commit": commit,
+    "tree": tree,
+    "started_at": started_at,
+    "completed_at": completed_at,
+    "conclusion": "success",
+}
+if kind == "gate":
+    payload["install_command"] = install_command
+    payload["test_command"] = test_command
+else:
+    payload["gate_receipt_sha256"] = gate_digest
+print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+PY
+  then
+    rm -f -- "$stage"
+    fail "could not render the $kind receipt"
+  fi
+  # A hard link is an atomic no-clobber install because both names are on the
+  # same state filesystem.  Unlike `mv -n`, it fails when a receipt appears
+  # unexpectedly instead of silently reporting success without installing it.
+  if ! chown root:root "$stage" || ! chmod 0400 "$stage" \
+      || ! "$SYNC" -f "$stage" || ! ln "$stage" "$path" \
+      || ! "$SYNC" "$RECEIPT_DIR" || ! rm -f -- "$stage" \
+      || ! "$SYNC" "$RECEIPT_DIR"; then
+    rm -f -- "$stage"
+    fail "could not atomically install the $kind receipt"
+  fi
+}
+
+GATE_RECEIPT="$RECEIPT_DIR/$TARGET.gate.json"
+write_receipt gate "$GATE_RECEIPT"
+GATE_DIGEST=$("$SHA256SUM" "$GATE_RECEIPT" | awk '{print $1}') \
+  || fail "could not digest the candidate gate receipt"
+[[ "$GATE_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "candidate gate receipt digest is invalid"
+if [ "$GATE_ONLY" = 1 ]; then
+  echo "release poll: gate-only success for ${TARGET:0:7}; production unchanged"
+  exit 0
+fi
+
+# The wrapper owns checkout mutation, service quiescence, exact-candidate
+# readiness, snapshot promotion, Caddy convergence, and automatic rollback.
+# A non-zero result remains non-zero even when its rollback recovered service.
+if ! SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"; then
+  fail "deploy wrapper rejected ${TARGET:0:7}; its rollback path owns recovery"
+fi
+if ! IFS= read -r DEPLOYED_AFTER <"$DEPLOY_STATE" \
+    || [ "$DEPLOYED_AFTER" != "$TARGET" ] \
+    || ! health_matches "$TARGET"; then
+  fail "deploy wrapper returned without an exact healthy deployed target"
+fi
+
+RELEASE_RECEIPT="$RECEIPT_DIR/$TARGET.release.json"
+write_receipt release "$RELEASE_RECEIPT" "$GATE_DIGEST"
+echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, $RELEASE_RECEIPT)"

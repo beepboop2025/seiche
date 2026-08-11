@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll trusted Seiche main for a new release
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+AccuracySec=15s
+Unit=seiche-release-poll.service
+
+[Install]
+WantedBy=timers.target

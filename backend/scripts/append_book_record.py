@@ -1,6 +1,6 @@
 """Append today's as-published Book record to the hash-chained history.
 
-Usage: python backend/scripts/append_book_record.py <prev_history.json|-> <out.json>
+Usage: python backend/scripts/append_book_record.py [--snapshot FILE] <prev_history.json|-> <out.json>
 
 CI is stateless, so the published artifact itself is the ledger: the previous
 history is pulled from the live site before the build, verified (fail-loud on
@@ -14,6 +14,7 @@ replaced.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import sys
@@ -22,13 +23,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from seiche import assemble, publisher  # noqa: E402
+from seiche.publish_snapshot import PublishSnapshotError, load_publish_snapshot  # noqa: E402
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        print(__doc__, file=sys.stderr)
-        return 2
-    prev_path, out_path = sys.argv[1], Path(sys.argv[2])
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--snapshot", help="reuse this already-built full-board JSON")
+    parser.add_argument("prev_history")
+    parser.add_argument("out_path")
+    args = parser.parse_args(argv)
+    prev_path, out_path = args.prev_history, Path(args.out_path)
 
     history: list[dict] = []
     if prev_path != "-" and Path(prev_path).exists():
@@ -42,7 +46,15 @@ def main() -> int:
         print(f"FATAL: {msg} — refusing to append to a tampered chain", file=sys.stderr)
         return 1
 
-    snap = asyncio.run(assemble.snapshot(force=True))
+    if args.snapshot:
+        try:
+            snap = load_publish_snapshot(args.snapshot)
+        except PublishSnapshotError as exc:
+            print(f"FATAL: {exc}", file=sys.stderr)
+            return 1
+        print(f"board read from {args.snapshot} (generated {snap.get('generated_at')})")
+    else:
+        snap = asyncio.run(assemble.snapshot(force=True))
     deep = snap.get("deep", {})
     book = deep.get("book", {})
     comp = snap.get("engines", {}).get("composite", {})

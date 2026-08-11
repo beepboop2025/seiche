@@ -23,6 +23,10 @@ FORCED_DEPLOY = ROOT / "ops" / "deploy" / "trigger-forced-deploy.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-hetzner.yml"
 BOX_UPDATE = ROOT / "ops" / "deploy" / "box-update.sh"
 DEPLOY_WRAPPER = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
+RELEASE_POLLER = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
+RELEASE_POLLER_INSTALLER = ROOT / "ops" / "deploy" / "install-release-poller.sh"
+RELEASE_POLLER_SERVICE = ROOT / "ops" / "deploy" / "seiche-release-poll.service"
+RELEASE_POLLER_TIMER = ROOT / "ops" / "deploy" / "seiche-release-poll.timer"
 MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
@@ -1043,6 +1047,186 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert 'exec 9>"$DEPLOY_LOCK"' in wrapper[:deploy_lock]
     assert "another seiche deployment is still running" in wrapper
     assert deploy_lock < wrapper.index("# The sha whose code is actually RUNNING")
+
+
+def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    resolved = wrapper.index(
+        'TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)'
+    )
+    constrained = wrapper.index("EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}")
+    stopped = wrapper.index(
+        "systemctl stop seiche-market-worker.service seiche-market-backfill.service"
+    )
+    checked = wrapper[constrained:stopped]
+
+    assert resolved < constrained < stopped
+    assert 'valid_release_sha "$EXPECTED_TARGET"' in checked
+    assert '[ "$TARGET" != "$EXPECTED_TARGET" ]' in checked
+    assert "refusing to deploy an untested commit" in checked
+    assert "exit 1" in checked
+
+
+def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
+    poller = RELEASE_POLLER.read_text()
+    selected = poller.index('TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)')
+    detached = poller.index(
+        'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
+    )
+    full_gate = poller.index(
+        '"$VENV/bin/python" -m pytest backend/tests -q', detached
+    )
+    refetched = poller.index(
+        'as_service git -C "$APP_DIR" fetch -q origin main', full_gate
+    )
+    superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
+    gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
+    gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
+    deployed = poller.index(
+        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', gate_only
+    )
+
+    assert (
+        selected
+        < detached
+        < full_gate
+        < refetched
+        < superseded
+        < gate_receipt
+        < gate_only
+        < deployed
+    )
+    assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
+    assert 'install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700' in poller
+    assert 'exec 8>"$CONTROL_LOCK"' in poller
+    assert 'flock --nonblock 8' in poller
+    assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
+    gate_slice = poller[detached:gate_receipt]
+    assert 'as_service "$TIMEOUT"' in gate_slice
+    assert "EnvironmentFile" not in gate_slice
+    assert "production unchanged" in poller[superseded:gate_receipt]
+    assert "gate-only success" in poller[gate_only:deployed]
+
+
+def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
+    poller = RELEASE_POLLER.read_text()
+    writer = poller[poller.index("write_receipt()") :]
+    gate = writer.index('write_receipt gate "$GATE_RECEIPT"')
+    deploy = writer.index(
+        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', gate
+    )
+    exact_health = writer.index('health_matches "$TARGET"', deploy)
+    release = writer.index('write_receipt release "$RELEASE_RECEIPT"', exact_health)
+
+    assert 'chmod 0400 "$stage"' in writer
+    assert 'ln "$stage" "$path"' in writer
+    assert 'mv -n "$stage" "$path"' not in writer
+    assert '"conclusion": "success"' in writer
+    assert '"gate_receipt_sha256"' in writer
+    assert gate < deploy < exact_health < release
+    assert "wrapper failure never writes" in (
+        ROOT / "ops" / "deploy" / "RELEASE-POLLER.md"
+    ).read_text()
+
+
+def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
+    tmp_path,
+):
+    app = tmp_path / "app"
+    source = app / "ops" / "deploy"
+    source.mkdir(parents=True)
+    for path in (RELEASE_POLLER, RELEASE_POLLER_SERVICE, RELEASE_POLLER_TIMER):
+        shutil.copy2(path, source / path.name)
+
+    systemd = tmp_path / "systemd"
+    binary_dir = tmp_path / "sbin"
+    runtime = tmp_path / "run"
+    systemd.mkdir()
+    binary_dir.mkdir()
+    wrapper = _executable(
+        tmp_path / "seiche-deploy-wrapper",
+        'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n',
+    )
+    installed = {
+        binary_dir / "seiche-release-poll": "old script\n",
+        systemd / "seiche-release-poll.service": "old service\n",
+        systemd / "seiche-release-poll.timer": "old timer\n",
+    }
+    for path, body in installed.items():
+        path.write_text(body)
+
+    calls = tmp_path / "systemctl.calls"
+    reload_count = tmp_path / "reload.count"
+    systemctl = _executable(
+        tmp_path / "systemctl",
+        f'''
+printf '%s\n' "$*" >>"{calls}"
+case "$1" in
+  is-enabled|is-active) exit 0 ;;
+  daemon-reload)
+    count=0
+    [ ! -f "{reload_count}" ] || count=$(cat "{reload_count}")
+    count=$((count + 1))
+    printf '%s\n' "$count" >"{reload_count}"
+    [ "$count" -gt 1 ]
+    ;;
+  enable|start|disable|stop) exit 0 ;;
+  *) exit 64 ;;
+esac
+''',
+    )
+    always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
+    env = os.environ | {
+        "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+        "SEICHE_APP_DIR": str(app),
+        "SEICHE_SYSTEMD_DIR": str(systemd),
+        "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
+        "SEICHE_DEPLOY_WRAPPER": str(wrapper),
+        "SEICHE_CONTROL_RUNTIME_DIR": str(runtime),
+        "SEICHE_SYSTEMCTL_BIN": str(systemctl),
+        "SEICHE_SYSTEMD_ANALYZE_BIN": str(always_ok),
+        "SEICHE_SYNC_BIN": str(always_ok),
+        "SEICHE_FLOCK_BIN": str(always_ok),
+    }
+
+    result = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "restoring the previous release-poller files and timer state" in result.stderr
+    for path, body in installed.items():
+        assert path.read_text() == body
+    systemctl_calls = calls.read_text().splitlines()
+    assert systemctl_calls.count("daemon-reload") == 2
+    assert "enable seiche-release-poll.timer" in systemctl_calls
+    assert "start seiche-release-poll.timer" in systemctl_calls
+    assert not list(systemd.glob(".seiche-release-poll.*"))
+
+
+def test_release_poller_units_are_inert_until_an_explicit_handoff():
+    installer = RELEASE_POLLER_INSTALLER.read_text()
+    service = RELEASE_POLLER_SERVICE.read_text()
+    timer = RELEASE_POLLER_TIMER.read_text()
+
+    assert "expected-target-SHA safety pin" in installer
+    assert 'exec 9>"$CONTROL_LOCK"' in installer
+    assert '"$FLOCK" --nonblock 9' in installer
+    assert installer.index('mv -f -- "$SCRIPT_NEW" "$SCRIPT_DEST"') < installer.index(
+        '"$SYSTEMD_ANALYZE" verify'
+    )
+    assert "rollback_install" in installer
+    assert '"$SYSTEMCTL" disable --now seiche-release-poll.timer' in installer
+    assert 'ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"' in installer
+    assert "ExecStart=/usr/local/sbin/seiche-release-poll" in service
+    assert "ConditionPathExists" not in service
+    assert "TimeoutStartSec=3h" in service
+    assert "OnUnitInactiveSec=5min" in timer
+    assert "WantedBy=timers.target" in timer
 
 
 def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():

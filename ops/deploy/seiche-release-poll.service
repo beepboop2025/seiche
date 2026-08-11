@@ -1,0 +1,30 @@
+[Unit]
+Description=Gate and deploy the exact trusted Seiche main commit
+After=network-online.target
+Wants=network-online.target
+OnFailure=undertow-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/seiche-release-poll
+TimeoutStartSec=3h
+TimeoutStopSec=2min
+KillMode=mixed
+UMask=0077
+Nice=10
+CPUWeight=10
+IOWeight=10
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictNamespaces=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
