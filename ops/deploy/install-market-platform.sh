@@ -20,10 +20,17 @@ fi
 if ! command -v setfacl >/dev/null 2>&1; then
     PACKAGES+=(acl)
 fi
+if [ ! -x /usr/bin/setpriv ]; then
+    PACKAGES+=(util-linux)
+fi
 if [ "${#PACKAGES[@]}" -gt 0 ]; then
     apt-get update -q
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${PACKAGES[@]}"
 fi
+[ -x /usr/bin/setpriv ] || {
+    echo "market platform: /usr/bin/setpriv is required for sandboxed PostgreSQL backups" >&2
+    exit 1
+}
 systemctl enable --now postgresql
 
 # Debian assigns the next free port when another local service already owns

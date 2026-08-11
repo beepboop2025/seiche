@@ -23,7 +23,8 @@ UMask=0077
 
 NoNewPrivileges=true
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID
-AmbientCapabilities=
+# Preserve only the credential-transition capabilities across flock and bash.
+AmbientCapabilities=CAP_SETGID CAP_SETUID
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
