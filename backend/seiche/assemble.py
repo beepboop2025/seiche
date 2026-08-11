@@ -1627,6 +1627,17 @@ def _servable_snapshot(payload: object) -> bool:
         return False
     engines = payload.get("engines")
     composite = engines.get("composite") if isinstance(engines, dict) else None
+    deep = payload.get("deep")
+    tell = deep.get("tell") if isinstance(deep, dict) else None
+    stacker = deep.get("stacker") if isinstance(deep, dict) else None
+    modelcourt = deep.get("modelcourt") if isinstance(deep, dict) else None
+    backtest = deep.get("backtest") if isinstance(deep, dict) else None
+    calendar = payload.get("calendar")
+    navigator = payload.get("navigator")
+
+    def mapping_or_none(value: object) -> bool:
+        return value is None or isinstance(value, dict)
+
     return (
         isinstance(payload.get("generated_at"), str)
         and bool(payload["generated_at"])
@@ -1634,7 +1645,38 @@ def _servable_snapshot(payload: object) -> bool:
         and isinstance(composite, dict)
         and isinstance(composite.get("regime"), str)
         and isinstance(composite.get("value"), (int, float))
-        and isinstance(payload.get("deep"), dict)
+        and isinstance(deep, dict)
+        and mapping_or_none(tell)
+        and mapping_or_none(stacker)
+        and (
+            not isinstance(stacker, dict)
+            or mapping_or_none(stacker.get("members_now"))
+        )
+        and mapping_or_none(modelcourt)
+        and (
+            not isinstance(modelcourt, dict)
+            or mapping_or_none(modelcourt.get("ensemble"))
+        )
+        and mapping_or_none(backtest)
+        and (
+            not isinstance(backtest, dict)
+            or mapping_or_none(backtest.get("event_capture"))
+        )
+        and (
+            not isinstance(backtest, dict)
+            or backtest.get("episodes") is None
+            or (
+                isinstance(backtest.get("episodes"), list)
+                and all(isinstance(row, dict) for row in backtest["episodes"])
+            )
+        )
+        and mapping_or_none(calendar)
+        and (
+            not isinstance(calendar, dict)
+            or calendar.get("crunch_windows") is None
+            or isinstance(calendar.get("crunch_windows"), list)
+        )
+        and mapping_or_none(navigator)
         and isinstance(payload.get("faults"), list)
         and isinstance(payload.get("provenance"), (dict, list))
     )

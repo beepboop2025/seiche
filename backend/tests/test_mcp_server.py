@@ -203,6 +203,7 @@ def test_stress_now(stubbed):
     p = _payload(response)
     assert p["composite"]["regime"] == "EROSION"
     assert p["headline"].startswith("SEICHE 41.0 EROSION")
+    assert "delivery" not in p
     assert response["result"]["structuredContent"] == p
 
 

@@ -88,6 +88,7 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
     assert "https://t.me/seiche_desk_bot?start=agent_developers" in page
     assert "11:30 UTC" in page
     assert 'id="toolHandoff" hidden' in page
+    assert "delete value.delivery" in script
     assert 'getElementById("toolHandoff").hidden = false' in script
 
 

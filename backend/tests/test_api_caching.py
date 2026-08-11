@@ -235,6 +235,47 @@ def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
     assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "composite", "tell", "stacker", "members_now", "navigator",
+        "modelcourt", "court_ensemble", "backtest", "event_capture",
+        "episodes", "calendar", "crunch_windows",
+    ],
+)
+def test_restart_rejects_nested_shapes_that_would_break_public_routes(
+        fake_snap, case):
+    payload = json.loads(json.dumps(fake_snap))
+    mutations = {
+        "composite": lambda p: p["engines"].__setitem__("composite", "bad"),
+        "tell": lambda p: p["deep"].__setitem__("tell", "bad"),
+        "stacker": lambda p: p["deep"].__setitem__("stacker", "bad"),
+        "members_now": lambda p: p["deep"].__setitem__(
+            "stacker", {"members_now": "bad"}),
+        "navigator": lambda p: p.__setitem__("navigator", []),
+        "modelcourt": lambda p: p["deep"].__setitem__("modelcourt", "bad"),
+        "court_ensemble": lambda p: p["deep"].__setitem__(
+            "modelcourt", {"ensemble": []}),
+        "backtest": lambda p: p["deep"].__setitem__("backtest", "bad"),
+        "event_capture": lambda p: p["deep"].__setitem__(
+            "backtest", {"event_capture": []}),
+        "episodes": lambda p: p["deep"].__setitem__(
+            "backtest", {"episodes": ["bad"]}),
+        "calendar": lambda p: p.__setitem__("calendar", []),
+        "crunch_windows": lambda p: p.__setitem__(
+            "calendar", {"crunch_windows": "bad"}),
+    }
+    mutations[case](payload)
+
+    assert assemble._servable_snapshot(payload) is False
+
+
+def test_tracked_static_snapshot_satisfies_the_boot_contract():
+    payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
+
+    assert assemble._servable_snapshot(payload) is True
+
+
 def test_completed_snapshot_handoff_is_best_effort(monkeypatch, fake_snap):
     saved = []
     monkeypatch.setattr(

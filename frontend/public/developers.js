@@ -52,8 +52,13 @@
       .then(function (message) {
         var result = message.result || {};
         if (result.isError) throw new Error("tool returned an unavailable reading");
-        var value = result.structuredContent ||
-          ((result.content || [])[0] || {}).text || message;
+        var value = result.structuredContent;
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          value = Object.assign({}, value);
+          delete value.delivery;
+        } else {
+          value = value || ((result.content || [])[0] || {}).text || message;
+        }
         output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
         document.getElementById("toolHandoff").hidden = false;
       })
