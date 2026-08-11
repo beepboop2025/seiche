@@ -345,11 +345,14 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         for product in staged_products
     )
 
-    producer_sha = "d" * 40
+    # The integration database is intentionally persistent across test runs.
+    # Give each invocation its own release identity and monotonic receipt clock.
+    producer_sha = hashlib.sha256(staging_suffix.encode()).hexdigest()[:40]
+    run_generated_at = datetime.now(UTC).isoformat(timespec="microseconds")
     envelope = _release_handoff(
         producer_sha,
         {
-            "generated_at": "2026-08-08T10:00:00+00:00",
+            "generated_at": run_generated_at,
             "products": {
                 product: {
                     "snapshot_id": staged_id,
@@ -366,7 +369,7 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
             },
         },
         {
-            "generated_at": "2026-08-08T10:00:00+00:00",
+            "generated_at": run_generated_at,
             "products": list(staged_products),
         },
     )
@@ -553,12 +556,15 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
     repository.activate_release_handoff(handoff_id, producer_sha, bindings)
     assert repository.load_active_release_handoff() == envelope
     newer_receipt = json.loads(json.dumps(envelope["release_receipt"]))
-    newer_receipt["generated_at"] = "2026-08-08T10:01:00+00:00"
+    newer_generated_at = (
+        datetime.fromisoformat(run_generated_at) + timedelta(minutes=1)
+    ).isoformat(timespec="microseconds")
+    newer_receipt["generated_at"] = newer_generated_at
     newer_envelope = _release_handoff(
         producer_sha,
         newer_receipt,
         {
-            "generated_at": "2026-08-08T10:01:00+00:00",
+            "generated_at": newer_generated_at,
             "products": list(staged_products),
         },
     )

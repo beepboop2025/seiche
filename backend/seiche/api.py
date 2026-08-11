@@ -1674,9 +1674,13 @@ async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
     return {"records": [_json.loads(p) for _, p in reversed(rows)]}
 
 
-@app.get("/api/health")
-async def health(response: Response, require_rebuilt: bool = False):
-    """Cached availability, plus an optional current-process release gate."""
+def _health_response(
+    response: Response,
+    *,
+    require_rebuilt: bool,
+    include_release_candidate: bool,
+):
+    """Return cached health while keeping controller evidence private."""
     snap = assemble.cached_snapshot()
     if snap is None:
         return JSONResponse(
@@ -1717,9 +1721,29 @@ async def health(response: Response, require_rebuilt: bool = False):
         "faults": snap["faults"],
         "provenance": snap["provenance"],
     }
-    if release_candidate is not None:
+    if include_release_candidate and release_candidate is not None:
         content["release_candidate"] = release_candidate
     return content
+
+
+@app.get("/api/health")
+async def health(response: Response, require_rebuilt: bool = False):
+    """Public cached availability, plus an optional rebuild readiness gate."""
+    return _health_response(
+        response,
+        require_rebuilt=require_rebuilt,
+        include_release_candidate=False,
+    )
+
+
+@app.get("/api/internal/v1/release-health", include_in_schema=False)
+async def release_health(response: Response):
+    """Loopback-only deployment gate with the exact activation capability."""
+    return _health_response(
+        response,
+        require_rebuilt=True,
+        include_release_candidate=True,
+    )
 
 
 @app.get("/api/badge/record")

@@ -50,8 +50,10 @@ valid_activation_token() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
 }
 
+DEPLOYED_STATE_RENAMED=""
 write_deployed_state() {
   local release_sha="$1" stage=""
+  DEPLOYED_STATE_RENAMED=""
   if ! valid_release_sha "$release_sha"; then
     echo "FAIL: refusing to record a non-canonical deployed SHA"
     return 1
@@ -60,9 +62,21 @@ write_deployed_state() {
   if ! printf '%s\n' "$release_sha" >"$stage" \
       || ! chown root:root "$stage" \
       || ! chmod 0600 "$stage" \
-      || ! mv -f "$stage" "$STATE"; then
+      || ! /usr/bin/sync -f "$stage"; then
     rm -f -- "$stage"
     echo "FAIL: could not atomically record the deployed release"
+    return 1
+  fi
+  if ! mv -f "$stage" "$STATE"; then
+    rm -f -- "$stage"
+    echo "FAIL: could not atomically record the deployed release"
+    return 1
+  fi
+  # The visible state now names the candidate. Even if its directory flush
+  # fails, rolling old code back would contradict the state we just installed.
+  DEPLOYED_STATE_RENAMED=1
+  if ! /usr/bin/sync "$DEPLOY_STATE_DIR"; then
+    echo "FAIL: could not durably record the deployed release"
     return 1
   fi
 }
@@ -426,7 +440,7 @@ candidate_health_once() {
   local expected_sha="$1" body token
   body=$(mktemp) || return 1
   if ! curl -sf -m 10 \
-      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >"$body"; then
+      'http://127.0.0.1:8787/api/internal/v1/release-health' >"$body"; then
     rm -f -- "$body"
     return 1
   fi
@@ -497,6 +511,7 @@ POINT_OF_NO_RETURN=""
 promote_snapshot_handoff() {
   local attempt
   for attempt in 1 2 3; do
+    [ "$attempt" -eq 1 ] || sleep 15
     ACTIVATION_TOKEN=""
     # Refresh immediately before each request so the unit can activate only the
     # exact handoff generation the healthy candidate is serving right now.
@@ -507,6 +522,9 @@ promote_snapshot_handoff() {
     elif ! write_deployed_state "$AFTER"; then
       # The candidate is healthy, but without durable acceptance a later
       # forced-deploy could mistake the old release for the rollback target.
+      if [ -n "$DEPLOYED_STATE_RENAMED" ]; then
+        POINT_OF_NO_RETURN=1
+      fi
       echo "FAIL: promotion attempt $attempt could not durably accept the candidate"
     else
       # The unit may commit and then lose its response. Never move the checkout

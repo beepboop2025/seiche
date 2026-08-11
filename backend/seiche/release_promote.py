@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -95,6 +96,9 @@ def main() -> int:
             activation_token,
         )
     except Exception:  # noqa: BLE001 - the controller receives only an exit status
+        logging.getLogger("seiche.release_promote").exception(
+            "rejected the snapshot promotion request"
+        )
         return 1
     return 0 if activated else 1
 

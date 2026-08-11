@@ -19,6 +19,7 @@ from seiche.markets.us_usd.pack import PACK
 from seiche.markets.validation_forward import verify_repository_forward_chain
 from seiche.domain.forward_record import (
     market_snapshot_row_hash,
+    validate_release_product_bindings,
     validate_snapshot_forward_binding,
 )
 from seiche.repository import get_repository
@@ -264,27 +265,14 @@ def verify_release_receipt(
         raise ValueError("US-USD release receipt has an invalid contract")
     if receipt.get("producer") != _RELEASE_RECEIPT_PRODUCER:
         raise ValueError("US-USD release receipt producer is invalid")
-    products = receipt.get("products")
-    if not isinstance(products, dict) or set(products) != {"overview", "gauge"}:
-        raise ValueError("US-USD release receipt must bind overview and gauge")
-    for product, binding in products.items():
-        if not isinstance(binding, dict) or set(binding) != {
-            "snapshot_id",
-            "forward_record_id",
-            "snapshot_row_sha256",
-        }:
-            raise ValueError(f"US-USD {product} receipt binding is invalid")
-        if not all(
-            isinstance(binding.get(key), str)
-            and len(binding[key]) == 64
-            and all(character in "0123456789abcdef" for character in binding[key])
-            for key in (
-                "snapshot_id",
-                "forward_record_id",
-                "snapshot_row_sha256",
-            )
-        ):
-            raise ValueError(f"US-USD {product} receipt hashes are invalid")
+    bindings = validate_release_product_bindings(
+        receipt.get("products"),
+        required_products=("overview", "gauge"),
+    )
+    products = {
+        product: (snapshot_id, forward_record_id, snapshot_row_hash)
+        for product, snapshot_id, forward_record_id, snapshot_row_hash in bindings
+    }
 
     integrity = verify_repository_forward_chain(
         repository,
@@ -300,15 +288,18 @@ def verify_release_receipt(
             + ",".join(integrity["reason_codes"])
         )
 
-    rows = repository.load_forward_records(market_id=PACK.market_id)
-    for product, binding in products.items():
+    for product in ("overview", "gauge"):
+        snapshot_id, forward_record_id, snapshot_row_hash = products[product]
+        rows = repository.load_forward_records(
+            market_id=PACK.market_id,
+            product=product,
+            calibration_id=PACK.calibration_id,
+        )
         matches = [
             row
             for row in rows
-            if row.get("product") == product
-            and row.get("calibration_id") == PACK.calibration_id
-            and row.get("snapshot_id") == binding["snapshot_id"]
-            and row.get("record_hash") == binding["forward_record_id"]
+            if row.get("snapshot_id") == snapshot_id
+            and row.get("record_hash") == forward_record_id
         ]
         if len(matches) != 1:
             raise RuntimeError(
@@ -334,25 +325,20 @@ def verify_release_receipt(
             )
         )
         expected_snapshot_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        if not hmac.compare_digest(binding["snapshot_id"], expected_snapshot_id):
+        if not hmac.compare_digest(snapshot_id, expected_snapshot_id):
             raise RuntimeError(
                 f"US-USD {product} receipt does not bind its forward payload"
             )
-        staged = repository.load_staged_market_snapshot(binding["snapshot_id"])
+        staged = repository.load_staged_market_snapshot(snapshot_id)
         if staged is None:
             raise RuntimeError(f"US-USD {product} staged snapshot is missing")
         validate_snapshot_forward_binding(
             staged,
             row,
-            binding["forward_record_id"],
-            binding["snapshot_row_sha256"],
+            forward_record_id,
+            snapshot_row_hash,
         )
     return tuple(
-        (
-            product,
-            products[product]["snapshot_id"],
-            products[product]["forward_record_id"],
-            products[product]["snapshot_row_sha256"],
-        )
+        (product, *products[product])
         for product in ("overview", "gauge")
     )

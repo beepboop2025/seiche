@@ -202,10 +202,15 @@ def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
     )
     ready = client.get("/api/health?require_rebuilt=true")
     assert ready.status_code == 200
-    assert ready.json()["release_candidate"] == {
+    assert "release_candidate" not in ready.json()
+
+    operator_ready = client.get("/api/internal/v1/release-health")
+    assert operator_ready.status_code == 200
+    assert operator_ready.json()["release_candidate"] == {
         "producer_sha": "a" * 40,
         "activation_token": "b" * 64,
     }
+    assert "/api/internal/v1/release-health" not in api.app.openapi()["paths"]
 
 
 def test_health_openapi_lists_every_runtime_unavailable_status():
@@ -455,6 +460,18 @@ def test_optional_legacy_calendar_none_still_renders_a_brief(fake_snap):
 
     assert assemble._servable_snapshot(payload) is True
     assert brief.render_markdown(payload).startswith("# SEICHE BRIEF")
+
+
+@pytest.mark.parametrize("legacy_backtest", [None, {"status": "UNVERIFIED"}])
+def test_optional_legacy_or_unverified_backtest_is_servable(
+        fake_snap, legacy_backtest):
+    payload = json.loads(json.dumps(fake_snap))
+    if legacy_backtest is None:
+        payload["deep"].pop("backtest", None)
+    else:
+        payload["deep"]["backtest"] = legacy_backtest
+
+    assert assemble._servable_snapshot(payload) is True
 
 
 @pytest.mark.parametrize(

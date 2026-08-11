@@ -69,6 +69,7 @@ from seiche.config import (
 from seiche.domain.forward_record import (
     SNAPSHOT_HANDOFF_SCHEMA,
     validate_release_handoff_envelope,
+    validate_release_product_bindings,
 )
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
@@ -1681,10 +1682,22 @@ def _servable_snapshot(payload: object) -> bool:
             not isinstance(modelcourt, dict)
             or mapping_or_none(modelcourt.get("ensemble"))
         )
-        and isinstance(backtest, dict)
-        and isinstance(backtest.get("event_capture"), dict)
-        and isinstance(backtest.get("episodes"), list)
-        and all(isinstance(row, dict) for row in backtest["episodes"])
+        and mapping_or_none(backtest)
+        and (
+            not isinstance(backtest, dict)
+            or (
+                mapping_or_none(backtest.get("event_capture"))
+                and (
+                    backtest.get("episodes") is None
+                    or (
+                        isinstance(backtest.get("episodes"), list)
+                        and all(
+                            isinstance(row, dict) for row in backtest["episodes"]
+                        )
+                    )
+                )
+            )
+        )
         and mapping_or_none(calendar)
         and (
             not isinstance(calendar, dict)
@@ -1843,31 +1856,12 @@ def _release_receipt_snapshot_ids(receipt: object, payload: dict) -> tuple[str, 
         "seiche.markets.us_usd.materialize.seal_legacy_snapshot"
     ):
         raise ValueError("release receipt producer is invalid")
-    products = receipt.get("products")
-    if not isinstance(products, dict) or set(products) != {"overview", "gauge"}:
-        raise ValueError("release receipt does not bind both market products")
-    snapshot_ids = []
-    for product in ("overview", "gauge"):
-        binding = products.get(product)
-        if not isinstance(binding, dict) or set(binding) != {
-            "snapshot_id",
-            "forward_record_id",
-            "snapshot_row_sha256",
-        }:
-            raise ValueError(f"release receipt {product} binding is invalid")
-        if not all(
-            isinstance(binding.get(key), str)
-            and len(binding[key]) == 64
-            and all(character in "0123456789abcdef" for character in binding[key])
-            for key in (
-                "snapshot_id",
-                "forward_record_id",
-                "snapshot_row_sha256",
-            )
-        ):
-            raise ValueError(f"release receipt {product} hashes are invalid")
-        snapshot_ids.append(binding["snapshot_id"])
-    return tuple(snapshot_ids)  # type: ignore[return-value]
+    bindings = validate_release_product_bindings(
+        receipt.get("products"),
+        required_products=("overview", "gauge"),
+    )
+    snapshot_ids = tuple(binding[1] for binding in bindings)
+    return snapshot_ids[0], snapshot_ids[1]
 
 
 def _handoff_body(payload: dict, release_receipt: dict, producer_sha: str) -> dict:

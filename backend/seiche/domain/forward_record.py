@@ -217,7 +217,8 @@ def validate_snapshot_forward_binding(
     """Prove one staged snapshot is the exact payload sealed by its receipt."""
 
     if any(
-        re.fullmatch(r"[0-9a-f]{64}", value) is None
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9a-f]{64}", value) is None
         for value in (expected_record_hash, expected_snapshot_row_hash)
     ):
         raise ValueError("release receipt record hash is invalid")
@@ -392,15 +393,23 @@ def market_snapshot_row_hash(snapshot: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def release_handoff_snapshot_bindings(
-    envelope: Mapping[str, object],
+def validate_release_product_bindings(
+    products: object,
+    *,
+    required_products: Iterable[str] | None = None,
 ) -> tuple[tuple[str, str, str, str], ...]:
-    """Extract exact product/snapshot/forward/row bindings from a handoff."""
+    """Validate canonical product/snapshot/forward/row receipt bindings."""
 
-    receipt = envelope.get("release_receipt")
-    products = receipt.get("products") if isinstance(receipt, Mapping) else None
     if not isinstance(products, Mapping) or not products:
-        raise ValueError("release handoff does not contain product bindings")
+        raise ValueError("release receipt does not contain product bindings")
+    if required_products is not None:
+        required = frozenset(required_products)
+        if (
+            not required
+            or any(not isinstance(product, str) or not product for product in required)
+            or set(products) != required
+        ):
+            raise ValueError("release receipt does not bind the required products")
     bindings = []
     for product, binding in products.items():
         if (
@@ -410,7 +419,7 @@ def release_handoff_snapshot_bindings(
             or set(binding)
             != {"snapshot_id", "forward_record_id", "snapshot_row_sha256"}
         ):
-            raise ValueError("release handoff product binding is invalid")
+            raise ValueError("release receipt product binding is invalid")
         snapshot_id = binding.get("snapshot_id")
         record_hash = binding.get("forward_record_id")
         snapshot_row_hash = binding.get("snapshot_row_sha256")
@@ -422,11 +431,21 @@ def release_handoff_snapshot_bindings(
             or not isinstance(snapshot_row_hash, str)
             or re.fullmatch(r"[0-9a-f]{64}", snapshot_row_hash) is None
         ):
-            raise ValueError("release handoff product hashes are invalid")
+            raise ValueError("release receipt product hashes are invalid")
         bindings.append((product, snapshot_id, record_hash, snapshot_row_hash))
     if len({binding[1] for binding in bindings}) != len(bindings):
-        raise ValueError("release handoff snapshot bindings are not unique")
+        raise ValueError("release receipt snapshot bindings are not unique")
     return tuple(sorted(bindings))
+
+
+def release_handoff_snapshot_bindings(
+    envelope: Mapping[str, object],
+) -> tuple[tuple[str, str, str, str], ...]:
+    """Extract exact product/snapshot/forward/row bindings from a handoff."""
+
+    receipt = envelope.get("release_receipt")
+    products = receipt.get("products") if isinstance(receipt, Mapping) else None
+    return validate_release_product_bindings(products)
 
 
 def release_handoff_generated_at(envelope: Mapping[str, object]) -> datetime:
@@ -530,6 +549,7 @@ __all__ = [
     "market_snapshot_row_hash",
     "release_handoff_generated_at",
     "release_handoff_snapshot_bindings",
+    "validate_release_product_bindings",
     "validate_release_handoff_envelope",
     "validate_snapshot_forward_binding",
 ]

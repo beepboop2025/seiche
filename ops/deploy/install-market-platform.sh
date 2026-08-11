@@ -13,6 +13,7 @@ DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-
 DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
 DELIVERY_READER_GROUP=liquilens-world-model-readers
 PROMOTION_REQUEST_DIR=/run/seiche-release
+DEPLOY_STATE_DIR=/var/lib/seiche-deploy
 PROMOTION_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
 
@@ -26,6 +27,9 @@ fi
 if [ ! -x /usr/bin/setpriv ]; then
     PACKAGES+=(util-linux)
 fi
+if [ ! -x /usr/bin/sync ]; then
+    PACKAGES+=(coreutils)
+fi
 if [ "${#PACKAGES[@]}" -gt 0 ]; then
     apt-get update -q
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${PACKAGES[@]}"
@@ -34,6 +38,12 @@ fi
     echo "market platform: /usr/bin/setpriv is required for sandboxed PostgreSQL backups" >&2
     exit 1
 }
+SYNC_VERSION=$(/usr/bin/sync --version | sed -n '1s/.* //p')
+if [ ! -x /usr/bin/dpkg ] \
+        || ! /usr/bin/dpkg --compare-versions "$SYNC_VERSION" ge 8.24; then
+    echo "market platform: GNU coreutils sync 8.24 or newer is required" >&2
+    exit 1
+fi
 systemctl enable --now postgresql
 
 # Debian assigns the next free port when another local service already owns
@@ -148,6 +158,7 @@ install -d -o seiche -g seiche -m 0750 \
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
 install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"
+install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"
 
 # Give the future Lab runtime access to only the stable funding-core export.
 # The group is provisioned independently of the consumer account so a Seiche

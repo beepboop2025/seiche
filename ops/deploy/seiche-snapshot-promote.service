@@ -2,6 +2,7 @@
 Description=Activate an exact controller-approved Seiche snapshot
 After=postgresql.service
 Wants=postgresql.service
+OnFailure=undertow-failure-alert@%n.service
 
 [Service]
 Type=oneshot
@@ -11,11 +12,14 @@ WorkingDirectory=/home/seiche/app/backend
 EnvironmentFile=/etc/seiche/market.env
 EnvironmentFile=/etc/seiche/release.env
 ExecStart=/home/seiche/app/backend/.venv/bin/python -m seiche.release_promote
-ExecStartPost=+/usr/bin/rm -f /run/seiche-release/promotion-request.json
+ExecStopPost=+/usr/bin/rm -f /run/seiche-release/promotion-request.json
 TimeoutStartSec=300
 UMask=0027
 
 NoNewPrivileges=true
+CapabilityBoundingSet=
+MemoryMax=1G
+TasksMax=64
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict

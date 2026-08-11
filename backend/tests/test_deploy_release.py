@@ -511,6 +511,20 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
     assert "setfacl" not in relay_installer
 
 
+def test_release_health_capability_is_loopback_only():
+    caddy = CADDYFILE.read_text()
+    route = "/api/internal/v1/release-health"
+    private_edge = caddy[
+        caddy.index("@release_health path") : caddy.index("@public {")
+    ]
+
+    assert f"@release_health path {route}" in private_edge
+    assert 'respond "not here" 404' in private_edge
+    assert "reverse_proxy" not in private_edge
+    public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
+    assert route not in public_edge
+
+
 def test_deploy_smoke_runs_private_delivery_contracts():
     update = BOX_UPDATE.read_text()
     workflow = (ROOT / ".github" / "workflows" / "market-platform-ci.yml").read_text()
@@ -546,8 +560,13 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     readiness = wrapper[
         wrapper.index("parse_candidate_health()") : wrapper.index("market_health()")
     ]
-    assert "/api/health" in readiness
-    assert "require_rebuilt=true" in readiness
+    candidate_once = readiness[
+        readiness.index("candidate_health_once()") : readiness.index(
+            "candidate_health_wait()"
+        )
+    ]
+    assert "/api/internal/v1/release-health" in readiness
+    assert "require_rebuilt=true" not in candidate_once
     assert "/api/public" not in readiness
     assert 'set(candidate) != {"producer_sha", "activation_token"}' in readiness
     assert 'candidate.get("producer_sha") != expected_sha' in readiness
@@ -626,15 +645,22 @@ def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
         "-m seiche.release_promote"
     ) in unit
     assert (
-        "ExecStartPost=+/usr/bin/rm -f "
+        "ExecStopPost=+/usr/bin/rm -f "
         "/run/seiche-release/promotion-request.json"
     ) in unit
+    assert "CapabilityBoundingSet=" in unit
+    assert "MemoryMax=1G" in unit
+    assert "TasksMax=64" in unit
+    assert "OnFailure=undertow-failure-alert@%n.service" in unit
     assert "ProtectSystem=strict" in unit
     assert "RestrictAddressFamilies=AF_UNIX" in unit
     assert unit.count("ReadWritePaths=") == 1
     assert "ReadWritePaths=/home/seiche/app/backend/data" in unit
 
     assert 'install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"' in installer
+    assert 'install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"' in installer
+    assert "coreutils" in installer
+    assert 'dpkg --compare-versions "$SYNC_VERSION" ge 8.24' in installer
     assert "systemd-analyze verify" in installer
     assert "seiche-snapshot-promote.service" in installer
     assert 'mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"' in installer
@@ -686,6 +712,15 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert "root:root:600" in wrapper
     assert 'mktemp "$DEPLOY_STATE_DIR/.deployed-sha.XXXXXX"' in wrapper
     assert 'mv -f "$stage" "$STATE"' in wrapper
+    assert '/usr/bin/sync -f "$stage"' in wrapper
+    assert '/usr/bin/sync "$DEPLOY_STATE_DIR"' in wrapper
+    assert "DEPLOYED_STATE_RENAMED=1" in wrapper
+    state_writer = wrapper[
+        wrapper.index("write_deployed_state()") : wrapper.index("write_release_env()")
+    ]
+    assert state_writer.index('/usr/bin/sync -f "$stage"') < state_writer.index(
+        'mv -f "$stage" "$STATE"'
+    ) < state_writer.index('/usr/bin/sync "$DEPLOY_STATE_DIR"')
     assert 'SEICHE_DEPLOYED_SHA="$DEPLOYED"' in wrapper
     assert "/home/seiche/.seiche-deployed-sha" not in wrapper
     assert "DEPLOYED=${SEICHE_DEPLOYED_SHA:-}" in BOX_UPDATE.read_text()
@@ -709,6 +744,7 @@ def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     assert promotion.index('write_deployed_state "$AFTER"') < promotion.index(
         "POINT_OF_NO_RETURN=1"
     )
+    assert 'if [ -n "$DEPLOYED_STATE_RENAMED" ]; then' in promotion
     assert promotion.index("POINT_OF_NO_RETURN=1") < promotion.index(
         'systemctl start "$PROMOTION_UNIT"'
     )
