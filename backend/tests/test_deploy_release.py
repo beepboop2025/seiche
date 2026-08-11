@@ -680,6 +680,52 @@ def test_legacy_updater_retirement_is_idempotent(tmp_path):
     assert calls.count("disable seiche-update.service\n") == 1
 
 
+def test_legacy_updater_retirement_records_never_present_units(tmp_path):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    for unit_name in ("seiche-update.service", "seiche-update.timer"):
+        (systemd_dir / unit_name).unlink()
+        (fake_state / f"{unit_name}.active").unlink(missing_ok=True)
+        (fake_state / f"{unit_name}.enabled").unlink(missing_ok=True)
+    for wants_dir in ("timers.target.wants", "multi-user.target.wants"):
+        for wants_link in (systemd_dir / wants_dir).iterdir():
+            wants_link.unlink()
+
+    first = _run_legacy_retirement(env)
+    second = _run_legacy_retirement(env)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert (archive / "seiche-update.service.absent").is_file()
+    assert (archive / "seiche-update.timer.absent").is_file()
+    assert "seiche-update.service.absent" in (archive / "SHA256SUMS").read_text()
+    assert "seiche-update.timer.absent" in (archive / "SHA256SUMS").read_text()
+
+
+def test_legacy_updater_retirement_rejects_unproven_premasked_units(tmp_path):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    for unit_name in ("seiche-update.service", "seiche-update.timer"):
+        (systemd_dir / unit_name).unlink()
+        (systemd_dir / unit_name).symlink_to("/dev/null")
+        (fake_state / f"{unit_name}.active").unlink(missing_ok=True)
+        (fake_state / f"{unit_name}.enabled").unlink(missing_ok=True)
+    for wants_dir in ("timers.target.wants", "multi-user.target.wants"):
+        for wants_link in (systemd_dir / wants_dir).iterdir():
+            wants_link.unlink()
+
+    result = _run_legacy_retirement(env)
+
+    assert result.returncode != 0
+    assert "no verified retirement evidence" in result.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert not (archive / "SHA256SUMS").exists()
+    assert not (archive / "STAT").exists()
+    assert (systemd_dir / "seiche-update.service").readlink() == Path("/dev/null")
+    assert (systemd_dir / "seiche-update.timer").readlink() == Path("/dev/null")
+
+
 def test_legacy_updater_retirement_accepts_failed_state_and_partial_stage(tmp_path):
     env, _systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
     fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])

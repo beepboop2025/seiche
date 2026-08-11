@@ -83,7 +83,9 @@ cleanup_stale_stages() {
             '.SHA256SUMS.*' \
             '.STAT.*' \
             ".$SERVICE_NAME.archive.*" \
-            ".$TIMER_NAME.archive.*"; do
+            ".$TIMER_NAME.archive.*" \
+            ".$SERVICE_NAME.absent.archive.*" \
+            ".$TIMER_NAME.absent.archive.*"; do
         while IFS= read -r -d '' candidate; do
             [ "$(dirname "$candidate")" = "$ARCHIVE_DIR" ] \
                 || fail "stale stage escaped the archive directory"
@@ -145,19 +147,73 @@ unit_is_running() {
     esac
 }
 
-archive_unit() {
-    local source="$1" archive="$2" source_meta="" archive_meta=""
-    if [ -L "$source" ]; then
-        [ "$(readlink "$source")" = /dev/null ] \
-            || fail "legacy unit is an unexpected symlink: $(basename "$source")"
+valid_absence_marker() {
+    local path="$1" unit_name="$2" expected=""
+    safe_archive_file "$path" || return 1
+    expected=$(printf '%s\n%s' \
+        'schema=seiche.retired-update-unit-absence.v1' \
+        "unit=$unit_name")
+    [ "$(cat "$path")" = "$expected" ]
+}
+
+write_absence_marker_once() {
+    local marker="$1" unit_name="$2"
+    if [ -e "$marker" ] || [ -L "$marker" ]; then
+        valid_absence_marker "$marker" "$unit_name" \
+            || fail "retired unit absence marker is unsafe: $unit_name"
         return
     fi
-    [ -e "$source" ] || return
+    ARCHIVE_STAGE=$(mktemp "$ARCHIVE_DIR/.$(basename "$marker").archive.XXXXXX")
+    if ! printf '%s\n%s\n' \
+            'schema=seiche.retired-update-unit-absence.v1' \
+            "unit=$unit_name" >"$ARCHIVE_STAGE" \
+        || ! chmod 0600 "$ARCHIVE_STAGE" \
+        || ! safe_archive_file "$ARCHIVE_STAGE" \
+        || ! "$SYNC_BIN" -f "$ARCHIVE_STAGE" \
+        || ! mv -f "$ARCHIVE_STAGE" "$marker"; then
+        fail "could not record absent legacy unit: $unit_name"
+    fi
+    ARCHIVE_STAGE=""
+    "$SYNC_BIN" "$ARCHIVE_DIR"
+}
+
+archive_unit() {
+    local source="$1" archive="$2" source_meta="" archive_meta=""
+    local unit_name="" absence_marker=""
+    unit_name=$(basename "$source")
+    absence_marker="$archive.absent"
+    if [ -L "$source" ]; then
+        [ "$(readlink "$source")" = /dev/null ] \
+            || fail "legacy unit is an unexpected symlink: $unit_name"
+        if safe_archive_file "$archive"; then
+            [ ! -e "$absence_marker" ] && [ ! -L "$absence_marker" ] \
+                || fail "retired unit has conflicting archive evidence: $unit_name"
+        elif valid_absence_marker "$absence_marker" "$unit_name"; then
+            [ ! -e "$archive" ] && [ ! -L "$archive" ] \
+                || fail "retired unit archive member is unsafe: $unit_name"
+        else
+            fail "masked legacy unit has no verified retirement evidence: $unit_name"
+        fi
+        return
+    fi
+    if [ ! -e "$source" ]; then
+        if [ -e "$archive" ] || [ -L "$archive" ]; then
+            safe_archive_file "$archive" \
+                || fail "retired unit archive member is unsafe: $unit_name"
+            [ ! -e "$absence_marker" ] && [ ! -L "$absence_marker" ] \
+                || fail "retired unit has conflicting archive evidence: $unit_name"
+        else
+            write_absence_marker_once "$absence_marker" "$unit_name"
+        fi
+        return
+    fi
     [ -f "$source" ] \
-        || fail "legacy unit is not a regular file: $(basename "$source")"
+        || fail "legacy unit is not a regular file: $unit_name"
+    [ ! -e "$absence_marker" ] && [ ! -L "$absence_marker" ] \
+        || fail "retired unit has conflicting absence evidence: $unit_name"
     if [ "$ALLOW_NON_ROOT_TEST" != "1" ]; then
         [ "$("$STAT_BIN" -c '%U:%G' "$source")" = "root:root" ] \
-            || fail "legacy unit ownership is unsafe: $(basename "$source")"
+            || fail "legacy unit ownership is unsafe: $unit_name"
     fi
     source_meta=$("$STAT_BIN" -c '%u:%g:%a:%Y' "$source")
     if [ -e "$archive" ] || [ -L "$archive" ]; then
@@ -187,14 +243,24 @@ archive_unit() {
 }
 
 write_inventory_once() {
-    local expected_stat=""
-    if [ ! -f "$ARCHIVE_DIR/$SERVICE_NAME" ] \
-        && [ ! -f "$ARCHIVE_DIR/$TIMER_NAME" ]; then
-        return
-    fi
-    [ -f "$ARCHIVE_DIR/$SERVICE_NAME" ] \
-        && [ -f "$ARCHIVE_DIR/$TIMER_NAME" ] \
-        || fail "retired unit archive is incomplete"
+    local expected_stat="" unit_name="" archive="" absence_marker=""
+    local member=""
+    local -a inventory_members=()
+    for unit_name in "$SERVICE_NAME" "$TIMER_NAME"; do
+        archive="$ARCHIVE_DIR/$unit_name"
+        absence_marker="$archive.absent"
+        if safe_archive_file "$archive"; then
+            [ ! -e "$absence_marker" ] && [ ! -L "$absence_marker" ] \
+                || fail "retired unit has conflicting archive evidence: $unit_name"
+            inventory_members+=("$unit_name")
+        elif valid_absence_marker "$absence_marker" "$unit_name"; then
+            [ ! -e "$archive" ] && [ ! -L "$archive" ] \
+                || fail "retired unit archive member is unsafe: $unit_name"
+            inventory_members+=("$unit_name.absent")
+        else
+            fail "retired unit archive is incomplete: $unit_name"
+        fi
+    done
     if [ -e "$SHA_PATH" ] || [ -L "$SHA_PATH" ]; then
         safe_archive_file "$SHA_PATH" \
             || fail "retired unit checksum inventory is unsafe"
@@ -204,18 +270,20 @@ write_inventory_once() {
         SHA_STAGE=$(mktemp "$ARCHIVE_DIR/.SHA256SUMS.XXXXXX")
         (
             cd "$ARCHIVE_DIR"
-            "$SHA256SUM_BIN" "$SERVICE_NAME" "$TIMER_NAME"
+            "$SHA256SUM_BIN" "${inventory_members[@]}"
         ) >"$SHA_STAGE"
         chmod 0600 "$SHA_STAGE"
         "$SYNC_BIN" -f "$SHA_STAGE"
         mv -f "$SHA_STAGE" "$SHA_PATH"
         SHA_STAGE=""
     fi
-    expected_stat=$(printf '%s|%s\n%s|%s\n' \
-        "$SERVICE_NAME" \
-        "$("$STAT_BIN" -c '%u:%g:%a:%Y' "$ARCHIVE_DIR/$SERVICE_NAME")" \
-        "$TIMER_NAME" \
-        "$("$STAT_BIN" -c '%u:%g:%a:%Y' "$ARCHIVE_DIR/$TIMER_NAME")")
+    expected_stat=$(
+        for member in "${inventory_members[@]}"; do
+            printf '%s|%s\n' \
+                "$member" \
+                "$("$STAT_BIN" -c '%u:%g:%a:%Y' "$ARCHIVE_DIR/$member")"
+        done
+    )
     if [ -e "$STAT_PATH" ] || [ -L "$STAT_PATH" ]; then
         safe_archive_file "$STAT_PATH" \
             || fail "retired unit metadata inventory is unsafe"
