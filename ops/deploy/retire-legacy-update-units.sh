@@ -19,6 +19,10 @@ ARCHIVE_DIR="$DEPLOY_STATE_DIR/retired-units/seiche-update-v1"
 PRESTATE_PATH="$ARCHIVE_DIR/pre-retirement-state.env"
 SHA_PATH="$ARCHIVE_DIR/SHA256SUMS"
 STAT_PATH="$ARCHIVE_DIR/STAT"
+PRESTATE_STAGE=""
+ARCHIVE_STAGE=""
+SHA_STAGE=""
+STAT_STAGE=""
 
 fail() {
     echo "legacy updater retirement: $*" >&2
@@ -56,17 +60,48 @@ fi
 safe_archive_file() {
     local path="$1"
     [ -f "$path" ] && [ ! -L "$path" ] \
-        || fail "archive member is not a regular file: $(basename "$path")"
+        || return 1
     if [ "$ALLOW_NON_ROOT_TEST" != "1" ]; then
         [ "$("$STAT_BIN" -c '%U:%G' "$path")" = "root:root" ] \
-            || fail "archive member ownership is unsafe: $(basename "$path")"
+            || return 1
     fi
 }
 
+cleanup_active_stages() {
+    local stage_path=""
+    for stage_path in \
+            "$PRESTATE_STAGE" "$ARCHIVE_STAGE" "$SHA_STAGE" "$STAT_STAGE"; do
+        [ -z "$stage_path" ] || rm -f -- "$stage_path"
+    done
+}
+trap cleanup_active_stages EXIT
+
+cleanup_stale_stages() {
+    local pattern="" candidate=""
+    for pattern in \
+            '.pre-retirement-state.*' \
+            '.SHA256SUMS.*' \
+            '.STAT.*' \
+            ".$SERVICE_NAME.archive.*" \
+            ".$TIMER_NAME.archive.*"; do
+        while IFS= read -r -d '' candidate; do
+            [ "$(dirname "$candidate")" = "$ARCHIVE_DIR" ] \
+                || fail "stale stage escaped the archive directory"
+            rm -f -- "$candidate"
+        done < <(
+            find "$ARCHIVE_DIR" -mindepth 1 -maxdepth 1 -type f \
+                -name "$pattern" -print0
+        )
+    done
+    "$SYNC_BIN" "$ARCHIVE_DIR"
+}
+cleanup_stale_stages
+
 write_prestate_once() {
-    local stage="" timer_enabled="" timer_active="" service_active=""
+    local timer_enabled="" timer_active="" service_active=""
     if [ -e "$PRESTATE_PATH" ] || [ -L "$PRESTATE_PATH" ]; then
-        safe_archive_file "$PRESTATE_PATH"
+        safe_archive_file "$PRESTATE_PATH" \
+            || fail "pre-retirement state archive is unsafe"
         return
     fi
     timer_enabled=$("$SYSTEMCTL_BIN" is-enabled "$TIMER_NAME" 2>/dev/null || true)
@@ -86,18 +121,18 @@ write_prestate_once() {
             *) fail "unexpected legacy unit activity state" ;;
         esac
     done
-    stage=$(mktemp "$ARCHIVE_DIR/.pre-retirement-state.XXXXXX")
+    PRESTATE_STAGE=$(mktemp "$ARCHIVE_DIR/.pre-retirement-state.XXXXXX")
     if ! printf '%s\n' \
             "schema=seiche.retired-update-units.v1" \
             "timer_enabled=${timer_enabled:-unknown}" \
             "timer_active=${timer_active:-unknown}" \
-            "service_active=${service_active:-unknown}" >"$stage" \
-        || ! chmod 0600 "$stage" \
-        || ! "$SYNC_BIN" -f "$stage" \
-        || ! mv -f "$stage" "$PRESTATE_PATH"; then
-        rm -f -- "$stage"
+            "service_active=${service_active:-unknown}" >"$PRESTATE_STAGE" \
+        || ! chmod 0600 "$PRESTATE_STAGE" \
+        || ! "$SYNC_BIN" -f "$PRESTATE_STAGE" \
+        || ! mv -f "$PRESTATE_STAGE" "$PRESTATE_PATH"; then
         fail "could not record the pre-retirement unit state"
     fi
+    PRESTATE_STAGE=""
     "$SYNC_BIN" "$ARCHIVE_DIR"
 }
 
@@ -111,7 +146,7 @@ unit_is_running() {
 }
 
 archive_unit() {
-    local source="$1" archive="$2" source_meta="" archive_meta="" stage=""
+    local source="$1" archive="$2" source_meta="" archive_meta=""
     if [ -L "$source" ]; then
         [ "$(readlink "$source")" = /dev/null ] \
             || fail "legacy unit is an unexpected symlink: $(basename "$source")"
@@ -126,7 +161,8 @@ archive_unit() {
     fi
     source_meta=$("$STAT_BIN" -c '%u:%g:%a:%Y' "$source")
     if [ -e "$archive" ] || [ -L "$archive" ]; then
-        safe_archive_file "$archive"
+        safe_archive_file "$archive" \
+            || fail "retired unit archive member is unsafe"
         cmp -s "$source" "$archive" \
             || fail "retired unit archive differs from the original"
         archive_meta=$("$STAT_BIN" -c '%u:%g:%a:%Y' "$archive")
@@ -134,25 +170,24 @@ archive_unit() {
             || fail "retired unit archive metadata differs from the original"
         return
     fi
-    stage=$(mktemp "$ARCHIVE_DIR/.$(basename "$archive").archive.XXXXXX")
-    if ! "$CP_BIN" -a "$source" "$stage" \
-        || ! safe_archive_file "$stage" \
-        || ! cmp -s "$source" "$stage"; then
-        rm -f -- "$stage"
+    ARCHIVE_STAGE=$(mktemp "$ARCHIVE_DIR/.$(basename "$archive").archive.XXXXXX")
+    if ! "$CP_BIN" -a "$source" "$ARCHIVE_STAGE" \
+        || ! safe_archive_file "$ARCHIVE_STAGE" \
+        || ! cmp -s "$source" "$ARCHIVE_STAGE"; then
         fail "retired unit archive copy failed verification"
     fi
-    archive_meta=$("$STAT_BIN" -c '%u:%g:%a:%Y' "$stage")
+    archive_meta=$("$STAT_BIN" -c '%u:%g:%a:%Y' "$ARCHIVE_STAGE")
     if [ "$archive_meta" != "$source_meta" ] \
-        || ! "$SYNC_BIN" -f "$stage" \
-        || ! mv -f "$stage" "$archive" \
-        || ! "$SYNC_BIN" "$ARCHIVE_DIR"; then
-        rm -f -- "$stage"
+        || ! "$SYNC_BIN" -f "$ARCHIVE_STAGE" \
+        || ! mv -f "$ARCHIVE_STAGE" "$archive"; then
         fail "retired unit archive metadata copy failed verification"
     fi
+    ARCHIVE_STAGE=""
+    "$SYNC_BIN" "$ARCHIVE_DIR"
 }
 
 write_inventory_once() {
-    local sha_stage="" stat_stage="" expected_stat=""
+    local expected_stat=""
     if [ ! -f "$ARCHIVE_DIR/$SERVICE_NAME" ] \
         && [ ! -f "$ARCHIVE_DIR/$TIMER_NAME" ]; then
         return
@@ -161,18 +196,20 @@ write_inventory_once() {
         && [ -f "$ARCHIVE_DIR/$TIMER_NAME" ] \
         || fail "retired unit archive is incomplete"
     if [ -e "$SHA_PATH" ] || [ -L "$SHA_PATH" ]; then
-        safe_archive_file "$SHA_PATH"
+        safe_archive_file "$SHA_PATH" \
+            || fail "retired unit checksum inventory is unsafe"
         (cd "$ARCHIVE_DIR" && "$SHA256SUM_BIN" --check --strict SHA256SUMS) \
             >/dev/null || fail "retired unit checksum inventory is invalid"
     else
-        sha_stage=$(mktemp "$ARCHIVE_DIR/.SHA256SUMS.XXXXXX")
+        SHA_STAGE=$(mktemp "$ARCHIVE_DIR/.SHA256SUMS.XXXXXX")
         (
             cd "$ARCHIVE_DIR"
             "$SHA256SUM_BIN" "$SERVICE_NAME" "$TIMER_NAME"
-        ) >"$sha_stage"
-        chmod 0600 "$sha_stage"
-        "$SYNC_BIN" -f "$sha_stage"
-        mv -f "$sha_stage" "$SHA_PATH"
+        ) >"$SHA_STAGE"
+        chmod 0600 "$SHA_STAGE"
+        "$SYNC_BIN" -f "$SHA_STAGE"
+        mv -f "$SHA_STAGE" "$SHA_PATH"
+        SHA_STAGE=""
     fi
     expected_stat=$(printf '%s|%s\n%s|%s\n' \
         "$SERVICE_NAME" \
@@ -180,32 +217,55 @@ write_inventory_once() {
         "$TIMER_NAME" \
         "$("$STAT_BIN" -c '%u:%g:%a:%Y' "$ARCHIVE_DIR/$TIMER_NAME")")
     if [ -e "$STAT_PATH" ] || [ -L "$STAT_PATH" ]; then
-        safe_archive_file "$STAT_PATH"
+        safe_archive_file "$STAT_PATH" \
+            || fail "retired unit metadata inventory is unsafe"
         [ "$(cat "$STAT_PATH")" = "$expected_stat" ] \
             || fail "retired unit metadata inventory is invalid"
     else
-        stat_stage=$(mktemp "$ARCHIVE_DIR/.STAT.XXXXXX")
-        printf '%s\n' "$expected_stat" >"$stat_stage"
-        chmod 0600 "$stat_stage"
-        "$SYNC_BIN" -f "$stat_stage"
-        mv -f "$stat_stage" "$STAT_PATH"
+        STAT_STAGE=$(mktemp "$ARCHIVE_DIR/.STAT.XXXXXX")
+        printf '%s\n' "$expected_stat" >"$STAT_STAGE"
+        chmod 0600 "$STAT_STAGE"
+        "$SYNC_BIN" -f "$STAT_STAGE"
+        mv -f "$STAT_STAGE" "$STAT_PATH"
+        STAT_STAGE=""
     fi
     "$SYNC_BIN" "$ARCHIVE_DIR"
 }
 
 write_prestate_once
 
-if ! "$SYSTEMCTL_BIN" disable --now "$TIMER_NAME" >/dev/null 2>&1; then
+unit_path_is_masked() {
+    [ -L "$1" ] && [ "$(readlink "$1")" = /dev/null ]
+}
+
+for unit_path in "$SERVICE_PATH" "$TIMER_PATH"; do
+    if [ -L "$unit_path" ] && ! unit_path_is_masked "$unit_path"; then
+        fail "legacy unit is an unexpected symlink: $(basename "$unit_path")"
+    fi
+done
+
+if ! unit_path_is_masked "$TIMER_PATH" \
+    && ! "$SYSTEMCTL_BIN" disable --now "$TIMER_NAME" >/dev/null 2>&1; then
     if [ -e "$TIMER_PATH" ] || [ -L "$TIMER_PATH" ]; then
         fail "could not disable the legacy update timer"
+    fi
+fi
+if ! unit_path_is_masked "$SERVICE_PATH" \
+    && ! "$SYSTEMCTL_BIN" disable "$SERVICE_NAME" >/dev/null 2>&1; then
+    if [ -e "$SERVICE_PATH" ] || [ -L "$SERVICE_PATH" ]; then
+        fail "could not disable the legacy update service"
     fi
 fi
 if unit_is_running "$SERVICE_NAME"; then
     "$SYSTEMCTL_BIN" stop "$SERVICE_NAME" >/dev/null \
         || fail "could not stop the legacy update service"
 fi
-unit_is_running "$TIMER_NAME" && fail "legacy update timer is still active"
-unit_is_running "$SERVICE_NAME" && fail "legacy update service is still active"
+if unit_is_running "$TIMER_NAME"; then
+    fail "legacy update timer is still active"
+fi
+if unit_is_running "$SERVICE_NAME"; then
+    fail "legacy update service is still active"
+fi
 
 archive_unit "$SERVICE_PATH" "$ARCHIVE_DIR/$SERVICE_NAME"
 archive_unit "$TIMER_PATH" "$ARCHIVE_DIR/$TIMER_NAME"
@@ -229,11 +289,19 @@ for unit_name in "$SERVICE_NAME" "$TIMER_NAME"; do
         || fail "$unit_name was not masked exactly"
     enabled_state=$("$SYSTEMCTL_BIN" is-enabled "$unit_name" 2>/dev/null || true)
     [ "$enabled_state" = "masked" ] || fail "$unit_name is not reported masked"
-    unit_is_running "$unit_name" && fail "$unit_name became active after masking"
+    if unit_is_running "$unit_name"; then
+        fail "$unit_name became active after masking"
+    fi
 done
 wants_path="$SYSTEMD_DIR/timers.target.wants/$TIMER_NAME"
 [ ! -e "$wants_path" ] && [ ! -L "$wants_path" ] \
     || fail "legacy timer enablement link still exists"
+if find "$SYSTEMD_DIR" -mindepth 2 -maxdepth 2 -type l \
+        \( -path "$SYSTEMD_DIR/*.wants/$SERVICE_NAME" \
+        -o -path "$SYSTEMD_DIR/*.wants/$TIMER_NAME" \) \
+        -print -quit | grep -q .; then
+    fail "legacy unit enablement link still exists"
+fi
 "$SYNC_BIN" "$SYSTEMD_DIR"
 
 echo "legacy updater retirement: service and timer archived and masked"

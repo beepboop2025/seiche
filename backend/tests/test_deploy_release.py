@@ -44,6 +44,7 @@ def _legacy_retirement_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Pa
     state_dir.mkdir()
     fake_state.mkdir()
     (systemd_dir / "timers.target.wants").mkdir()
+    (systemd_dir / "multi-user.target.wants").mkdir()
 
     service = systemd_dir / "seiche-update.service"
     timer = systemd_dir / "seiche-update.timer"
@@ -53,7 +54,9 @@ def _legacy_retirement_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Pa
     timer.chmod(0o644)
     (fake_state / "seiche-update.timer.active").touch()
     (fake_state / "seiche-update.timer.enabled").touch()
+    (fake_state / "seiche-update.service.enabled").touch()
     (systemd_dir / "timers.target.wants" / timer.name).symlink_to(timer)
+    (systemd_dir / "multi-user.target.wants" / service.name).symlink_to(service)
 
     fake_systemctl = _executable(
         tmp_path / "systemctl",
@@ -99,9 +102,21 @@ case "$command" in
       case "$argument" in
         --*) ;;
         *)
+          if [ -L "$units/$argument" ] \
+              && [ "$(readlink "$units/$argument")" = /dev/null ]; then
+            exit 1
+          fi
+          ;;
+      esac
+    done
+    for argument in "$@"; do
+      case "$argument" in
+        --*) ;;
+        *)
           rm -f -- "$state/$argument.active" "$state/$argument.enabled"
           rm -f -- "$state/$argument.state"
           rm -f -- "$units/timers.target.wants/$argument"
+          rm -f -- "$units/multi-user.target.wants/$argument"
           ;;
       esac
     done
@@ -635,6 +650,9 @@ def test_legacy_updater_retirement_archives_exact_units_and_masks_both(tmp_path)
     assert not (
         systemd_dir / "timers.target.wants" / "seiche-update.timer"
     ).exists()
+    assert not (
+        systemd_dir / "multi-user.target.wants" / "seiche-update.service"
+    ).exists()
 
 
 def test_legacy_updater_retirement_is_idempotent(tmp_path):
@@ -657,6 +675,9 @@ def test_legacy_updater_retirement_is_idempotent(tmp_path):
         if path.is_file()
     }
     assert after == before
+    calls = Path(env["FAKE_SYSTEMCTL_STATE"], "calls.log").read_text()
+    assert calls.count("disable --now seiche-update.timer\n") == 1
+    assert calls.count("disable seiche-update.service\n") == 1
 
 
 def test_legacy_updater_retirement_accepts_failed_state_and_partial_stage(tmp_path):
@@ -673,7 +694,7 @@ def test_legacy_updater_retirement_accepts_failed_state_and_partial_stage(tmp_pa
     assert result.returncode == 0, result.stderr
     assert (archive / "seiche-update.service").is_file()
     assert (archive / "seiche-update.timer").is_file()
-    assert interrupted.read_text() == "partial\n"
+    assert not interrupted.exists()
 
 
 def test_legacy_updater_retirement_rejects_collision_and_unsafe_symlink(tmp_path):
@@ -690,7 +711,7 @@ def test_legacy_updater_retirement_rejects_collision_and_unsafe_symlink(tmp_path
 
     (archive / "seiche-update.service").unlink()
     (systemd_dir / "seiche-update.service").unlink()
-    (systemd_dir / "seiche-update.service").symlink_to("/tmp/unexpected")
+    (systemd_dir / "seiche-update.service").symlink_to(tmp_path / "unexpected")
     unsafe = _run_legacy_retirement(env)
 
     assert unsafe.returncode != 0
