@@ -1,14 +1,32 @@
 from __future__ import annotations
 
+import pytest
+
 from seiche.repository import (
     PostgresMarketRepository,
     SQLiteMarketRepository,
+    _MIN_POSTGRES_SERVER_VERSION,
     _OBSERVATION_INSERT_COLUMNS,
     _OBSERVATION_INSERT_PLACEHOLDERS,
     _POSTGRES_SCHEMA,
     get_repository,
     reset_repository_cache,
 )
+
+
+class _FakeConnection:
+    def __init__(self, server_version: int) -> None:
+        self.info = type("Info", (), {"server_version": server_version})()
+        self.statements: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+
+    def execute(self, statement: str) -> None:
+        self.statements.append(statement)
 
 
 def test_repository_defaults_to_sqlite(monkeypatch) -> None:
@@ -30,6 +48,18 @@ def test_postgres_schema_preserves_bitemporal_and_snapshot_indexes() -> None:
     assert "knowledge_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
     assert "source_publication_time TIMESTAMPTZ NOT NULL" in _POSTGRES_SCHEMA
     assert "market_snapshots_latest" in _POSTGRES_SCHEMA
+
+
+def test_postgres_schema_rejects_servers_older_than_version_11(monkeypatch) -> None:
+    repository = PostgresMarketRepository("postgresql://example.invalid/seiche")
+    connection = _FakeConnection(_MIN_POSTGRES_SERVER_VERSION - 1)
+    monkeypatch.setattr(repository, "_connect", lambda: connection)
+
+    with pytest.raises(RuntimeError, match="PostgreSQL 11 or newer"):
+        repository._ensure_schema()
+
+    assert connection.statements == []
+    assert repository._initialized is False
 
 
 def test_postgres_observation_insert_casts_only_json_fields() -> None:

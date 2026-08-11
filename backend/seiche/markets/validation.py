@@ -9,10 +9,10 @@ successful.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterable, Mapping
 
 from seiche.domain.observation import Observation, SemanticRole
 from seiche.markets.base import (
@@ -43,7 +43,7 @@ from seiche.repository import MarketRepository, get_repository
 
 
 VALIDATION_RUNNER_ID = "market-validate"
-VALIDATION_RUNNER_VERSION = "market-validation-policy-v1"
+VALIDATION_RUNNER_VERSION = "market-validation-policy-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -842,11 +842,13 @@ def _forward_paper_record(
     result = verify_repository_forward_chain(
         repository,
         market_id=pack.market_id,
+        calibration_id=pack.calibration_id,
+        required_products=("gauge", "overview"),
         minimum_records=minimum_records or 0,
         minimum_span_days=minimum_span_days or 0,
     )
     metrics = {
-        "implementation": "forward-chain-and-maturity-v1",
+        "implementation": "forward-topology-and-generation-v2",
         "chain_integrity_status": result["status"],
         "maturity_policy_frozen": policy_frozen,
         **result["metrics"],

@@ -44,6 +44,18 @@ case "$POSTGRES_PORT" in
         exit 1
         ;;
 esac
+POSTGRES_VERSION_NUM=$(runuser -u postgres -- psql -tAc \
+    "SHOW server_version_num" | tr -d '[:space:]')
+case "$POSTGRES_VERSION_NUM" in
+    ''|*[!0-9]*)
+        echo "market platform: could not resolve PostgreSQL server_version_num" >&2
+        exit 1
+        ;;
+esac
+if [ "$POSTGRES_VERSION_NUM" -lt 110000 ]; then
+    echo "market platform: PostgreSQL 11 or newer is required (found $POSTGRES_VERSION_NUM)" >&2
+    exit 1
+fi
 
 if ! runuser -u postgres -- psql -tAc \
         "SELECT 1 FROM pg_roles WHERE rolname='seiche'" | grep -qx 1; then
@@ -52,6 +64,78 @@ fi
 if ! runuser -u postgres -- psql -tAc \
         "SELECT 1 FROM pg_database WHERE datname='seiche'" | grep -qx 1; then
     runuser -u postgres -- createdb --owner=seiche seiche
+fi
+
+# The forward-chain invariant is an additive one-time migration. If any marker
+# is missing, fail closed unless every process that can initialize the schema
+# or append a record is already quiesced. The deploy wrapper stops the market
+# daemons, but the API warmer is also a forward writer and must be stopped by
+# the incident runbook before the first rollout.
+FORWARD_TABLE_EXISTS=$(runuser -u postgres -- psql --no-psqlrc \
+    --tuples-only --no-align --set ON_ERROR_STOP=1 --dbname=seiche \
+    --command "SELECT to_regclass('public.forward_validation_records') IS NOT NULL" \
+    | tr -d '[:space:]')
+if [ "$FORWARD_TABLE_EXISTS" = "t" ]; then
+    FORWARD_MIGRATION_MARKERS=$(runuser -u postgres -- psql --no-psqlrc \
+        --tuples-only --no-align --set ON_ERROR_STOP=1 --dbname=seiche \
+        --command "SELECT
+          (SELECT count(*) FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='forward_validation_records'
+              AND column_name='chain_generation')::text || '|' ||
+          (SELECT count(*) FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='forward_validation_records'
+              AND indexname='forward_records_generation')::text || '|' ||
+          (SELECT count(*) FROM pg_indexes
+            WHERE schemaname='public'
+              AND tablename='forward_validation_records'
+              AND indexname='forward_records_one_child')::text" \
+        | tr -d '[:space:]')
+    if [ "$FORWARD_MIGRATION_MARKERS" != "1|1|1" ]; then
+        for unit in seiche-api.service seiche-market-worker.service \
+                seiche-market-backfill.service seiche-market-validation.service; do
+            state=$(systemctl show "$unit" --property=ActiveState --value \
+                2>/dev/null || true)
+            case "$state" in
+                ''|inactive|failed) ;;
+                *)
+                    echo "market platform: $unit must be inactive before the forward-chain migration" >&2
+                    exit 1
+                    ;;
+            esac
+        done
+        if pgrep -f '/home/seiche/app/backend/.venv/bin/seiche (market-worker|market-backfill|market-collect)' \
+                >/dev/null; then
+            echo "market platform: an ad-hoc forward writer is still running" >&2
+            exit 1
+        fi
+        V2_FORWARD_ROWS=$(runuser -u postgres -- psql --no-psqlrc \
+            --tuples-only --no-align --set ON_ERROR_STOP=1 --dbname=seiche \
+            --command "SELECT count(*) FROM forward_validation_records
+                       WHERE calibration_id='nz-nzd-local-forward-v2'" \
+            | tr -d '[:space:]')
+        [ "$V2_FORWARD_ROWS" = "0" ] || {
+            echo "market platform: NZ-NZD v2 rows predate the guarded migration; topology review required" >&2
+            exit 1
+        }
+        DUPLICATE_FORWARD_CHILDREN=$(runuser -u postgres -- psql --no-psqlrc \
+            --tuples-only --no-align --set ON_ERROR_STOP=1 --dbname=seiche \
+            --command "SELECT count(*) FROM (
+                         SELECT 1 FROM forward_validation_records
+                          WHERE NOT (
+                            market_id='NZ-NZD'
+                            AND calibration_id='nz-nzd-local-forward-v1'
+                          )
+                          GROUP BY market_id, product, calibration_id,
+                                   previous_record_hash
+                         HAVING count(*) > 1
+                       ) AS duplicate_children" | tr -d '[:space:]')
+        [ "$DUPLICATE_FORWARD_CHILDREN" = "0" ] || {
+            echo "market platform: duplicate forward children exist outside the NZ-NZD v1 quarantine" >&2
+            exit 1
+        }
+    fi
 fi
 
 install -d -o seiche -g seiche -m 0750 \
@@ -115,7 +199,7 @@ ENV_STAGE=""
 runuser -u seiche -- env \
     SEICHE_DATABASE_URL="postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT" \
     "$APP_DIR/backend/.venv/bin/python" -c \
-    'import os, psycopg; connection = psycopg.connect(os.environ["SEICHE_DATABASE_URL"]); connection.execute("SELECT 1").fetchone(); connection.close()'
+    'import os, psycopg; from seiche.repository import get_repository; connection = psycopg.connect(os.environ["SEICHE_DATABASE_URL"]); connection.execute("SELECT 1").fetchone(); connection.close(); get_repository().forward_record_count()'
 
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-worker.service" \
     /etc/systemd/system/seiche-market-worker.service

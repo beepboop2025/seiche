@@ -350,9 +350,16 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     caddy = CADDYFILE.read_text()
 
     assert 'psql -tAc "SHOW port"' in installer
+    assert '"SHOW server_version_num"' in installer
+    assert '"$POSTGRES_VERSION_NUM" -lt 110000' in installer
     assert "host=/var/run/postgresql&port=$POSTGRES_PORT" in installer
     assert "could not resolve the PostgreSQL cluster port" in installer
     assert 'connection.execute("SELECT 1")' in installer
+    assert "get_repository().forward_record_count()" in installer
+    assert 'FORWARD_MIGRATION_MARKERS" != "1|1|1' in installer
+    assert "seiche-api.service seiche-market-worker.service" in installer
+    assert "must be inactive before the forward-chain migration" in installer
+    assert "duplicate forward children exist outside" in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
     assert '"$STATE_DIR/validation"' in installer
     assert "SEICHE_VALIDATION_DIR=$STATE_DIR/validation" in installer
