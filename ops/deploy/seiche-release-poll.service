@@ -6,6 +6,8 @@ OnFailure=undertow-failure-alert@%n.service
 
 [Service]
 Type=oneshot
+Environment=SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers
+Environment=SEICHE_CONTROL_SIGNING_PRINCIPAL=beepboop2025@users.noreply.github.com
 ExecStart=/usr/local/sbin/seiche-release-poll
 TimeoutStartSec=3h
 TimeoutStopSec=2min
@@ -28,3 +30,4 @@ LockPersonality=true
 RestrictNamespaces=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/etc/seiche-release.allowed-signers

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tomllib
 
 import pytest
@@ -27,6 +28,7 @@ RELEASE_POLLER = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
 RELEASE_POLLER_INSTALLER = ROOT / "ops" / "deploy" / "install-release-poller.sh"
 RELEASE_POLLER_SERVICE = ROOT / "ops" / "deploy" / "seiche-release-poll.service"
 RELEASE_POLLER_TIMER = ROOT / "ops" / "deploy" / "seiche-release-poll.timer"
+RELEASE_ALLOWED_SIGNERS = ROOT / "ops" / "deploy" / "release-allowed-signers"
 MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
@@ -40,6 +42,91 @@ def _executable(path: Path, body: str) -> Path:
     path.write_text("#!/usr/bin/env bash\nset -u\n" + body)
     path.chmod(0o755)
     return path
+
+
+def _git(*arguments: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", *arguments],
+        cwd=cwd,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+
+def _release_signature_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    ssh_keygen = shutil.which("ssh-keygen")
+    if ssh_keygen is None:
+        pytest.skip("OpenSSH is required for the release-signature contract")
+
+    repository = tmp_path / "signed-repository"
+    _git("init", "-b", "main", str(repository), cwd=tmp_path)
+    _git("config", "user.name", "Seiche Release", cwd=repository)
+    _git("config", "user.email", "release@example.invalid", cwd=repository)
+    signing_key = tmp_path / "release-signing-key"
+    subprocess.run(
+        [ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", str(signing_key)],
+        check=True,
+    )
+    _git("config", "gpg.format", "ssh", cwd=repository)
+    _git("config", "user.signingkey", str(signing_key), cwd=repository)
+    _git("config", "commit.gpgsign", "true", cwd=repository)
+
+    public_key = signing_key.with_suffix(".pub").read_text(encoding="ascii").split()
+    allowed_signers = tmp_path / "allowed-signers"
+    allowed_signers.write_text(
+        f"release@example.invalid {public_key[0]} {public_key[1]}\n",
+        encoding="ascii",
+    )
+    allowed_signers.chmod(0o444)
+    runuser = _executable(
+        tmp_path / "runuser",
+        'if [ "$1" = -u ]; then shift 2; fi\n'
+        'if [ "${1:-}" = -- ]; then shift; fi\n'
+        'exec "$@"\n',
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_APP_DIR": str(repository),
+        "SEICHE_CONTROL_USER": "release-test",
+        "SEICHE_CONTROL_RUNUSER": str(runuser),
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+        "SEICHE_CONTROL_ALLOWED_SIGNERS": str(allowed_signers),
+        "SEICHE_CONTROL_SIGNING_PRINCIPAL": "release@example.invalid",
+        "SEICHE_CONTROL_SIGNER_UID": str(os.getuid()),
+        "SEICHE_CONTROL_SIGNER_GID": str(os.getgid()),
+        "SEICHE_CONTROL_SIGNER_MODE": "444",
+        "SEICHE_CONTROL_SSH_KEYGEN": ssh_keygen,
+    }
+    return repository, env
+
+
+def _commit_release(repository: Path, message: str, *, signed: bool = True) -> str:
+    (repository / "release-marker.txt").write_text(f"{message}\n", encoding="utf-8")
+    _git("add", "release-marker.txt", cwd=repository)
+    command = ["git"]
+    if not signed:
+        command.extend(["-c", "commit.gpgsign=false"])
+    command.extend(["commit", "-m", message])
+    subprocess.run(command, cwd=repository, check=True, capture_output=True, text=True)
+    return _git("rev-parse", "HEAD", cwd=repository)
+
+
+def _verify_release_signature(
+    environment: dict[str, str], target: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$SEICHE_POLLER"; verify_target_signature "$SEICHE_TARGET"',
+        ],
+        env=environment
+        | {"SEICHE_POLLER": str(RELEASE_POLLER), "SEICHE_TARGET": target},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _legacy_retirement_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
@@ -1070,6 +1157,7 @@ def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
 def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     poller = RELEASE_POLLER.read_text()
     selected = poller.index('TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)')
+    signature = poller.index('verify_target_signature "$TARGET"', selected)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
@@ -1088,6 +1176,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
 
     assert (
         selected
+        < signature
         < detached
         < full_gate
         < refetched
@@ -1106,6 +1195,55 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "EnvironmentFile" not in gate_slice
     assert "production unchanged" in poller[superseded:gate_receipt]
     assert "gate-only success" in poller[gate_only:deployed]
+
+
+def test_release_signature_boundary_accepts_only_the_pinned_signed_identity(tmp_path):
+    repository, env = _release_signature_fixture(tmp_path)
+    target = _commit_release(repository, "signed release")
+
+    result = _verify_release_signature(env, target)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_unsigned_release_target_is_rejected_before_candidate_execution(tmp_path):
+    repository, env = _release_signature_fixture(tmp_path)
+    target = _commit_release(repository, "unsigned release", signed=False)
+
+    result = _verify_release_signature(env, target)
+
+    assert result.returncode != 0
+    assert "does not carry a valid pinned SSH signature" in result.stderr
+
+
+def test_wrong_principal_release_target_is_rejected_before_candidate_execution(
+    tmp_path,
+):
+    repository, env = _release_signature_fixture(tmp_path)
+    _git("config", "user.email", "intruder@example.invalid", cwd=repository)
+    target = _commit_release(repository, "wrong author release")
+
+    result = _verify_release_signature(env, target)
+
+    assert result.returncode != 0
+    assert (
+        "target commit author is not the pinned release principal: "
+        "intruder@example.invalid"
+    ) in result.stderr
+
+
+def test_release_signature_policy_is_fixed_to_one_ed25519_identity():
+    signer = RELEASE_ALLOWED_SIGNERS.read_text(encoding="ascii")
+    poller = RELEASE_POLLER.read_text()
+
+    assert signer.count("\n") == 1
+    assert signer.startswith(
+        "beepboop2025@users.noreply.github.com ssh-ed25519 "
+    )
+    assert "validate_allowed_signers" in poller
+    assert 'stat.S_IMODE(info.st_mode) != int(mode, 8)' in poller
+    assert 'info.st_nlink != 1' in poller
+    assert '-c "gpg.ssh.program=$SSH_KEYGEN"' in poller
 
 
 def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
@@ -1135,7 +1273,12 @@ def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     app = tmp_path / "app"
     source = app / "ops" / "deploy"
     source.mkdir(parents=True)
-    for path in (RELEASE_POLLER, RELEASE_POLLER_SERVICE, RELEASE_POLLER_TIMER):
+    for path in (
+        RELEASE_POLLER,
+        RELEASE_POLLER_SERVICE,
+        RELEASE_POLLER_TIMER,
+        RELEASE_ALLOWED_SIGNERS,
+    ):
         shutil.copy2(path, source / path.name)
 
     systemd = tmp_path / "systemd"
@@ -1176,6 +1319,7 @@ esac
 ''',
     )
     always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
+    installed_signer = tmp_path / "seiche-release.allowed-signers"
     env = os.environ | {
         "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
         "SEICHE_APP_DIR": str(app),
@@ -1187,6 +1331,8 @@ esac
         "SEICHE_SYSTEMD_ANALYZE_BIN": str(always_ok),
         "SEICHE_SYNC_BIN": str(always_ok),
         "SEICHE_FLOCK_BIN": str(always_ok),
+        "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
+        "SEICHE_CONTROL_PYTHON": sys.executable,
     }
 
     result = subprocess.run(
@@ -1206,6 +1352,61 @@ esac
     assert "enable seiche-release-poll.timer" in systemctl_calls
     assert "start seiche-release-poll.timer" in systemctl_calls
     assert not list(systemd.glob(".seiche-release-poll.*"))
+    assert installed_signer.read_text(encoding="ascii") == (
+        RELEASE_ALLOWED_SIGNERS.read_text(encoding="ascii")
+    )
+    assert installed_signer.stat().st_mode & 0o777 == 0o444
+    assert installed_signer.stat().st_nlink == 1
+
+
+def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path):
+    app = tmp_path / "app"
+    source = app / "ops" / "deploy"
+    source.mkdir(parents=True)
+    for path in (
+        RELEASE_POLLER,
+        RELEASE_POLLER_SERVICE,
+        RELEASE_POLLER_TIMER,
+        RELEASE_ALLOWED_SIGNERS,
+    ):
+        shutil.copy2(path, source / path.name)
+
+    systemd = tmp_path / "systemd"
+    binary_dir = tmp_path / "sbin"
+    systemd.mkdir()
+    binary_dir.mkdir()
+    wrapper = _executable(
+        tmp_path / "seiche-deploy-wrapper",
+        'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n',
+    )
+    installed_signer = tmp_path / "seiche-release.allowed-signers"
+    wrong_pin = (
+        "beepboop2025@users.noreply.github.com ssh-ed25519 "
+        "AAAAC3NzaC1lZDI1NTE5AAAAIGX2PaWkr0977OLNJdYgi6QJnX/LBHS7OT+Ea8uzY8/x\n"
+    )
+    installed_signer.write_text(wrong_pin, encoding="ascii")
+    installed_signer.chmod(0o444)
+    env = os.environ | {
+        "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+        "SEICHE_APP_DIR": str(app),
+        "SEICHE_SYSTEMD_DIR": str(systemd),
+        "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
+        "SEICHE_DEPLOY_WRAPPER": str(wrapper),
+        "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+    }
+
+    result = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "refusing to replace the pinned Seiche release signer" in result.stderr
+    assert installed_signer.read_text(encoding="ascii") == wrong_pin
 
 
 def test_release_poller_units_are_inert_until_an_explicit_handoff():
@@ -1222,6 +1423,11 @@ def test_release_poller_units_are_inert_until_an_explicit_handoff():
     assert "rollback_install" in installer
     assert '"$SYSTEMCTL" disable --now seiche-release-poll.timer' in installer
     assert 'ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"' in installer
+    assert "refusing to replace the pinned Seiche release signer" in installer
+    assert 'ln "$SIGNER_STAGE" "$ALLOWED_SIGNERS"' in installer
+    assert "SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers" in service
+    assert "SEICHE_CONTROL_SIGNING_PRINCIPAL=" in service
+    assert "ReadOnlyPaths=/etc/seiche-release.allowed-signers" in service
     assert "ExecStart=/usr/local/sbin/seiche-release-poll" in service
     assert "ConditionPathExists" not in service
     assert "TimeoutStartSec=3h" in service

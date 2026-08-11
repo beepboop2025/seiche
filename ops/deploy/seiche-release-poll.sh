@@ -24,6 +24,12 @@ SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
 TIMEOUT="${SEICHE_CONTROL_TIMEOUT:-timeout}"
 SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
 SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
+ALLOWED_SIGNERS="${SEICHE_CONTROL_ALLOWED_SIGNERS:-/etc/seiche-release.allowed-signers}"
+SIGNING_PRINCIPAL="${SEICHE_CONTROL_SIGNING_PRINCIPAL:-beepboop2025@users.noreply.github.com}"
+SIGNER_UID="${SEICHE_CONTROL_SIGNER_UID:-0}"
+SIGNER_GID="${SEICHE_CONTROL_SIGNER_GID:-0}"
+SIGNER_MODE="${SEICHE_CONTROL_SIGNER_MODE:-444}"
+SSH_KEYGEN="${SEICHE_CONTROL_SSH_KEYGEN:-/usr/bin/ssh-keygen}"
 GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
 TEST_COMMAND="python -m pytest backend/tests -q --memray --pystack-threshold=300"
@@ -44,6 +50,81 @@ as_service() {
   "$RUNUSER" -u "$SERVICE_USER" -- "$@"
 }
 
+validate_allowed_signers() {
+  "$SYSTEM_PYTHON" - "$ALLOWED_SIGNERS" "$SIGNING_PRINCIPAL" \
+    "$SIGNER_UID" "$SIGNER_GID" "$SIGNER_MODE" <<'PY'
+import base64
+import os
+import stat
+import struct
+import sys
+
+path, expected_principal, uid, gid, mode = sys.argv[1:]
+try:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+    )
+except OSError as exc:
+    raise SystemExit(f"pinned release signer cannot be opened safely: {exc}")
+try:
+    info = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != int(uid)
+        or info.st_gid != int(gid)
+        or stat.S_IMODE(info.st_mode) != int(mode, 8)
+    ):
+        raise SystemExit("pinned release signer metadata is unsafe")
+    with os.fdopen(descriptor, encoding="ascii") as handle:
+        descriptor = -1
+        content = handle.read()
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+
+if "\r" in content or not content.endswith("\n") or content.count("\n") != 1:
+    raise SystemExit("pinned release signer must contain exactly one canonical line")
+line = content[:-1]
+parts = line.split(" ")
+if len(parts) != 3 or any(not part for part in parts):
+    raise SystemExit("pinned release signer has an invalid allowed-signers shape")
+principal, key_type, key_material = parts
+if principal != expected_principal:
+    raise SystemExit("pinned release signer principal does not match release policy")
+if key_type not in {"ssh-ed25519", "sk-ssh-ed25519@openssh.com"}:
+    raise SystemExit("pinned release signer key type is not allowed")
+try:
+    decoded = base64.b64decode(key_material, validate=True)
+    name_length = struct.unpack(">I", decoded[:4])[0]
+    encoded_key_type = decoded[4 : 4 + name_length].decode("ascii")
+except (ValueError, UnicodeDecodeError, struct.error):
+    raise SystemExit("pinned release signer key material is invalid") from None
+if encoded_key_type != key_type:
+    raise SystemExit("pinned release signer key material has the wrong type")
+PY
+}
+
+verify_target_signature() {
+  local target="$1" author_email=""
+  validate_allowed_signers \
+    || fail "pinned release signer failed its integrity check"
+  [ -x "$SSH_KEYGEN" ] \
+    || fail "trusted SSH signature verifier is missing: $SSH_KEYGEN"
+  author_email=$(as_service git -C "$APP_DIR" show -s --format=%ae "$target") \
+    || fail "target commit author could not be resolved"
+  [ "$author_email" = "$SIGNING_PRINCIPAL" ] \
+    || fail "target commit author is not the pinned release principal: ${author_email:-unknown}"
+  if ! as_service git -C "$APP_DIR" \
+      -c gpg.format=ssh \
+      -c "gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS" \
+      -c "gpg.ssh.program=$SSH_KEYGEN" \
+      verify-commit "$target"; then
+    fail "target commit does not carry a valid pinned SSH signature: $target"
+  fi
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
@@ -59,6 +140,15 @@ cleanup() {
   fi
   exit "$status"
 }
+
+# Regression tests source only the signature boundary. This cannot authorize a
+# release: the production unit never sets it, and the mode exits before any
+# candidate, receipt, wrapper, or checkout mutation exists.
+if [ "${SEICHE_CONTROL_LIBRARY_ONLY:-0}" = 1 ]; then
+  [ "${BASH_SOURCE[0]}" != "$0" ] \
+    || fail "library-only mode is valid only when the poller is sourced"
+  return 0
+fi
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -105,6 +195,7 @@ if ! valid_sha "$TARGET" \
       "$TARGET^{commit}" >/dev/null; then
   fail "origin/main is not a canonical local commit"
 fi
+verify_target_signature "$TARGET"
 
 DEPLOYED=""
 if [ -e "$DEPLOY_STATE" ] || [ -L "$DEPLOY_STATE" ]; then
@@ -160,7 +251,7 @@ fi
 # writes cannot dirty the live checkout.  It receives no production
 # EnvironmentFile.  It intentionally shares the checkout's Unix identity for
 # read-only Git access, however, so this is process isolation, not a security
-# sandbox: only protected, trusted main commits may reach this controller.
+# sandbox: only commits authorized by the host-pinned release key may reach it.
 if [ -L "$CANDIDATE_DIR" ]; then
   fail "candidate path is an unsafe symlink: $CANDIDATE_DIR"
 fi
