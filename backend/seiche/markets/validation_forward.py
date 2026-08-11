@@ -15,10 +15,15 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from seiche.domain.forward_record import forward_record_hash
+from seiche.domain.forward_record import (
+    FORWARD_RECORD_GENESIS_HASH,
+    analyze_forward_topology,
+    forward_chain_generation,
+    forward_record_hash,
+)
 
 
-GENESIS_HASH = "0" * 64
+GENESIS_HASH = FORWARD_RECORD_GENESIS_HASH
 
 _FORWARD_RECORD_FIELDS = (
     "record_id",
@@ -41,6 +46,7 @@ class ForwardRecordReader(Protocol):
         self,
         market_id: str | None = None,
         product: str | None = None,
+        calibration_id: str | None = None,
     ) -> list[dict]: ...
 
 
@@ -141,6 +147,13 @@ def verify_forward_chain(
         "record_hash_mismatches": 0,
         "record_id_mismatches": 0,
         "link_mismatches": 0,
+        "fork_defects": 0,
+        "missing_predecessor_defects": 0,
+        "cycle_defects": 0,
+        "orphaned_records": 0,
+        "root_defects": 0,
+        "head_defects": 0,
+        "duplicate_record_hashes": 0,
         "malformed_record_defects": 0,
         "chains": [],
     }
@@ -178,12 +191,11 @@ def verify_forward_chain(
         record_id = str(record["record_id"])
         market_id = str(record["market_id"])
         product = str(record["product"])
+        calibration_id = record["calibration_id"]
         label = f"{market_id}/{product}/{record_id}"
         if record_id in seen_record_ids:
             base_metrics["malformed_record_defects"] += 1
-            issues.append(
-                ("DUPLICATE_RECORD_ID", f"{label}: record_id is duplicated")
-            )
+            issues.append(("DUPLICATE_RECORD_ID", f"{label}: record_id is duplicated"))
         seen_record_ids.add(record_id)
         if market_id != market_id.upper():
             base_metrics["malformed_record_defects"] += 1
@@ -193,6 +205,32 @@ def verify_forward_chain(
                     f"{label}: market_id is not uppercase canonical form",
                 )
             )
+
+        try:
+            expected_generation = forward_chain_generation(calibration_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            base_metrics["malformed_record_defects"] += 1
+            issues.append(
+                (
+                    "INVALID_CHAIN_GENERATION",
+                    f"{label}: calibration_id has no valid chain generation ({exc})",
+                )
+            )
+            continue
+        stored_generation = record.get("chain_generation", expected_generation)
+        if (
+            isinstance(stored_generation, bool)
+            or not isinstance(stored_generation, int)
+            or stored_generation != expected_generation
+        ):
+            base_metrics["malformed_record_defects"] += 1
+            issues.append(
+                (
+                    "CHAIN_GENERATION_MISMATCH",
+                    f"{label}: stored chain_generation does not match calibration_id",
+                )
+            )
+            continue
 
         parsed_timestamps: dict[str, datetime] = {}
         canonical_timestamps: dict[str, str] = {}
@@ -284,32 +322,96 @@ def verify_forward_chain(
                 "record_id": record_id,
                 "market_id": market_id,
                 "product": product,
+                "calibration_id": calibration_id,
+                "chain_generation": expected_generation,
                 "created_at": parsed_timestamps["created_at"],
                 "knowledge_cutoff": parsed_timestamps["knowledge_cutoff"],
             }
         )
 
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    groups: dict[tuple[str, str, str, int], list[dict[str, Any]]] = defaultdict(list)
     for item in prepared:
-        groups[(item["market_id"], item["product"])].append(item)
+        groups[
+            (
+                item["market_id"],
+                item["product"],
+                item["calibration_id"],
+                item["chain_generation"],
+            )
+        ].append(item)
 
     chain_metrics: list[dict[str, Any]] = []
-    for (market_id, product), chain in sorted(groups.items()):
-        chain.sort(key=lambda item: (item["created_at"], item["record_id"]))
-        expected_previous = GENESIS_HASH
-        for offset, item in enumerate(chain):
-            record = item["record"]
-            if record["previous_record_hash"] != expected_previous:
-                base_metrics["link_mismatches"] += 1
-                code = "CHAIN_START_MISMATCH" if offset == 0 else "CHAIN_LINK_MISMATCH"
-                issues.append(
-                    (
-                        code,
-                        f"{market_id}/{product}/{item['record_id']}: "
-                        "previous_record_hash does not identify the prior link",
-                    )
+    for (market_id, product, calibration_id, generation), chain in sorted(
+        groups.items()
+    ):
+        topology = analyze_forward_topology(item["record"] for item in chain)
+        label = f"{market_id}/{product}/{calibration_id}"
+        if len(topology.roots) == 0:
+            base_metrics["root_defects"] += 1
+            issues.append(("MISSING_CHAIN_ROOT", f"{label}: no genesis link exists"))
+        elif len(topology.roots) > 1:
+            base_metrics["root_defects"] += len(topology.roots) - 1
+            issues.append(
+                (
+                    "MULTIPLE_CHAIN_ROOTS",
+                    f"{label}: {len(topology.roots)} genesis links exist",
                 )
-            expected_previous = str(record["record_hash"])
+            )
+        if len(topology.heads) == 0:
+            base_metrics["head_defects"] += 1
+            issues.append(("MISSING_CHAIN_HEAD", f"{label}: no terminal head exists"))
+        elif len(topology.heads) > 1:
+            base_metrics["head_defects"] += len(topology.heads) - 1
+            issues.append(
+                (
+                    "MULTIPLE_CHAIN_HEADS",
+                    f"{label}: {len(topology.heads)} terminal heads exist",
+                )
+            )
+        for parent, children in topology.forks:
+            base_metrics["fork_defects"] += len(children) - 1
+            base_metrics["link_mismatches"] += len(children) - 1
+            issues.append(
+                (
+                    "CHAIN_FORK",
+                    f"{label}: parent {parent} has {len(children)} children",
+                )
+            )
+        for record_hash, previous_hash in topology.missing_predecessors:
+            base_metrics["missing_predecessor_defects"] += 1
+            base_metrics["link_mismatches"] += 1
+            issues.append(
+                (
+                    "MISSING_PREDECESSOR",
+                    f"{label}/{record_hash}: predecessor {previous_hash} is absent",
+                )
+            )
+        for cycle in topology.cycles:
+            base_metrics["cycle_defects"] += 1
+            issues.append(
+                (
+                    "CHAIN_CYCLE",
+                    f"{label}: parent cycle contains {','.join(cycle)}",
+                )
+            )
+        if topology.orphans:
+            base_metrics["orphaned_records"] += len(topology.orphans)
+            issues.append(
+                (
+                    "ORPHANED_FORWARD_RECORD",
+                    f"{label}: {len(topology.orphans)} records are unreachable from genesis",
+                )
+            )
+        if topology.duplicate_record_hashes:
+            base_metrics["duplicate_record_hashes"] += len(
+                topology.duplicate_record_hashes
+            )
+            issues.append(
+                (
+                    "DUPLICATE_RECORD_HASH",
+                    f"{label}: duplicate record hashes are present",
+                )
+            )
         knowledge_times = [item["knowledge_cutoff"] for item in chain]
         first_knowledge = min(knowledge_times)
         last_knowledge = max(knowledge_times)
@@ -318,11 +420,24 @@ def verify_forward_chain(
             {
                 "market_id": market_id,
                 "product": product,
+                "calibration_id": calibration_id,
+                "chain_generation": generation,
                 "record_count": len(chain),
                 "knowledge_span_days": span_days,
                 "first_knowledge_cutoff": first_knowledge.isoformat(),
                 "last_knowledge_cutoff": last_knowledge.isoformat(),
-                "head_record_hash": expected_previous,
+                "root_count": len(topology.roots),
+                "head_count": len(topology.heads),
+                "fork_count": sum(
+                    len(children) - 1 for _, children in topology.forks
+                ),
+                "fork_parent_count": len(topology.forks),
+                "orphan_count": len(topology.orphans),
+                "cycle_count": len(topology.cycles),
+                "missing_predecessor_count": len(topology.missing_predecessors),
+                "head_record_hash": topology.heads[0]
+                if len(topology.heads) == 1
+                else None,
             }
         )
 
@@ -365,16 +480,139 @@ def verify_repository_forward_chain(
     *,
     market_id: str | None = None,
     product: str | None = None,
+    calibration_id: str | None = None,
+    required_products: Iterable[str] = (),
     minimum_records: int,
     minimum_span_days: int,
 ) -> dict[str, Any]:
-    """Load and verify a repository selection without evidence-layer coupling."""
+    """Verify an active generation and report excluded history as quarantine.
 
-    return verify_forward_chain(
-        repository.load_forward_records(market_id=market_id, product=product),
+    Historical generations remain immutable and visible, but they can never
+    satisfy the maturity gate for a new active generation.
+    """
+
+    rows = repository.load_forward_records(market_id=market_id, product=product)
+    active_rows = (
+        [row for row in rows if row.get("calibration_id") == calibration_id]
+        if calibration_id is not None
+        else rows
+    )
+    result = verify_forward_chain(
+        active_rows,
         minimum_records=minimum_records,
         minimum_span_days=minimum_span_days,
     )
+    required_product_set = {
+        item
+        for item in required_products
+        if isinstance(item, str) and item.strip()
+    }
+    present_products = {str(row.get("product", "")) for row in active_rows}
+    missing_products = sorted(required_product_set - present_products)
+    if missing_products:
+        result = {
+            **result,
+            "status": "FAIL" if result["status"] == "FAIL" else "PENDING",
+            "reason_codes": sorted(
+                {*result["reason_codes"], "MISSING_FORWARD_PRODUCT_CHAIN"}
+            ),
+            "reasons": sorted(
+                {
+                    *result["reasons"],
+                    "active generation is missing product chains: "
+                    + ",".join(missing_products),
+                }
+            ),
+        }
+    try:
+        active_generation = (
+            forward_chain_generation(calibration_id)
+            if calibration_id is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        active_generation = None
+    metrics = dict(result["metrics"])
+    metrics["active_calibration_id"] = calibration_id
+    metrics["active_chain_generation"] = active_generation
+    metrics["required_products"] = sorted(required_product_set)
+    metrics["missing_product_chains"] = missing_products
+
+    quarantined: list[dict[str, Any]] = []
+    if calibration_id is not None:
+        historical: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+        for row in rows:
+            historical_calibration = str(row.get("calibration_id", ""))
+            if historical_calibration != calibration_id:
+                historical[
+                    (
+                        str(row.get("market_id", "")),
+                        historical_calibration,
+                        str(row.get("product", "")),
+                    )
+                ].append(row)
+        for (
+            historical_market,
+            historical_calibration,
+            historical_product,
+        ), generation_rows in sorted(historical.items()):
+            audit = verify_forward_chain(
+                generation_rows,
+                minimum_records=0,
+                minimum_span_days=0,
+            )
+            try:
+                historical_generation = forward_chain_generation(
+                    historical_calibration
+                )
+            except (TypeError, ValueError):
+                historical_generation = None
+            audited_chains = audit["metrics"]["chains"]
+            topology_metrics = audited_chains[0] if len(audited_chains) == 1 else {}
+            quarantined.append(
+                {
+                    "market_id": historical_market,
+                    "calibration_id": historical_calibration,
+                    "chain_generation": historical_generation,
+                    "product": historical_product,
+                    "record_count": len(generation_rows),
+                    "integrity_status": audit["status"],
+                    "reason_codes": audit["reason_codes"],
+                    "topology": {
+                        key: topology_metrics.get(key, 0)
+                        for key in (
+                            "root_count",
+                            "head_count",
+                            "fork_count",
+                            "fork_parent_count",
+                            "orphan_count",
+                            "cycle_count",
+                            "missing_predecessor_count",
+                        )
+                    },
+                    "disposition": (
+                        "QUARANTINED_INTEGRITY_INCIDENT"
+                        if audit["status"] == "FAIL"
+                        else "HISTORICAL_READ_ONLY"
+                    ),
+                }
+            )
+    metrics["historical_generation_count"] = len(
+        {(item["market_id"], item["calibration_id"]) for item in quarantined}
+    )
+    metrics["quarantined_chain_count"] = len(quarantined)
+    metrics["quarantined_generations"] = quarantined
+    metrics["historical_quarantine_status"] = (
+        "INCIDENT_EVIDENCE_QUARANTINED"
+        if any(
+            item["disposition"] == "QUARANTINED_INTEGRITY_INCIDENT"
+            for item in quarantined
+        )
+        else "HISTORICAL_READ_ONLY"
+        if quarantined
+        else "NONE"
+    )
+    return {**result, "metrics": metrics}
 
 
 __all__ = [

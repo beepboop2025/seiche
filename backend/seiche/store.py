@@ -13,16 +13,73 @@ import hmac
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
 from seiche.config import DATA_DIR, DB_PATH
-from seiche.domain.forward_record import forward_record_hash
+from seiche.domain.forward_record import forward_chain_generation, forward_record_hash
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 from seiche.sources.base import Series
 
 _lock = threading.Lock()
+_schema_lock = threading.Lock()
+_forward_child_index_state: dict[tuple[str, int, int], str] = {}
+
+_FORWARD_CHILD_INDEX_SQL = """CREATE UNIQUE INDEX IF NOT EXISTS
+             forward_records_one_child
+             ON forward_validation_records (
+               market_id, product, calibration_id, previous_record_hash
+             )
+             WHERE NOT (
+               market_id = 'NZ-NZD'
+               AND calibration_id = 'nz-nzd-local-forward-v1'
+             )"""
+
+
+def _database_identity() -> tuple[str, int, int]:
+    database = Path(DB_PATH).resolve()
+    stat = database.stat()
+    return str(database), stat.st_dev, stat.st_ino
+
+
+def _converge_forward_child_index(conn: sqlite3.Connection) -> None:
+    """Attempt the legacy uniqueness migration once per database/process.
+
+    A pre-existing non-quarantined fork is evidence that needs operator
+    review. It must disable forward appends without taking unrelated cache
+    reads down with a generic ``sqlite3.IntegrityError`` on every connection.
+    """
+
+    identity = _database_identity()
+    with _schema_lock:
+        if identity in _forward_child_index_state:
+            return
+        try:
+            conn.execute(_FORWARD_CHILD_INDEX_SQL)
+        except sqlite3.IntegrityError:
+            state = "blocked"
+        else:
+            state = "ready"
+        # Persist the migration attempt before caching its state. A later
+        # caller rollback must never remove a successfully installed index
+        # while this process still remembers it as ready.
+        conn.commit()
+        _forward_child_index_state[identity] = state
+
+
+def _require_forward_child_index(conn: sqlite3.Connection) -> None:
+    indexes = {
+        row[1]
+        for row in conn.execute("PRAGMA index_list(forward_validation_records)")
+    }
+    if "forward_records_one_child" not in indexes:
+        raise RuntimeError(
+            "forward appends disabled: forward_records_one_child could not be "
+            "installed because legacy duplicate children require integrity review; "
+            "restart after quarantining the incident evidence"
+        )
 
 
 def _conn() -> sqlite3.Connection:
@@ -139,12 +196,23 @@ def _conn() -> sqlite3.Connection:
              event_cutoff TEXT NOT NULL,
              knowledge_cutoff TEXT NOT NULL,
              calibration_id TEXT NOT NULL,
+             chain_generation INTEGER NOT NULL DEFAULT 1,
              created_at TEXT NOT NULL,
              payload_hash TEXT NOT NULL,
              previous_record_hash TEXT NOT NULL,
              record_hash TEXT NOT NULL UNIQUE,
              payload TEXT NOT NULL)"""
     )
+    forward_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(forward_validation_records)")
+    }
+    if "chain_generation" not in forward_columns:
+        # Existing records are the deployed v1 evidence. SQLite adds the
+        # constant default without changing their hash-bound identity fields.
+        conn.execute(
+            """ALTER TABLE forward_validation_records
+               ADD COLUMN chain_generation INTEGER NOT NULL DEFAULT 1"""
+        )
     conn.execute(
         """CREATE INDEX IF NOT EXISTS forward_records_chain
              ON forward_validation_records (
@@ -152,9 +220,18 @@ def _conn() -> sqlite3.Connection:
              )"""
     )
     conn.execute(
+        """CREATE INDEX IF NOT EXISTS forward_records_generation
+             ON forward_validation_records (
+               market_id, product, calibration_id, chain_generation
+             )"""
+    )
+    _converge_forward_child_index(conn)
+    conn.execute(
         """CREATE TABLE IF NOT EXISTS blobs (
              key TEXT PRIMARY KEY, fetched_at TEXT, payload TEXT)"""
     )
+    # Callers begin their data transaction from a clean schema checkpoint.
+    conn.commit()
     return conn
 
 
@@ -802,6 +879,30 @@ def latest_collector_runs(market_id: str | None = None) -> list[dict]:
     return [dict(zip(keys, row, strict=True)) for row in rows]
 
 
+_FORWARD_RECORD_COLUMNS = (
+    "record_id",
+    "snapshot_id",
+    "market_id",
+    "product",
+    "event_cutoff",
+    "knowledge_cutoff",
+    "calibration_id",
+    "chain_generation",
+    "created_at",
+    "payload_hash",
+    "previous_record_hash",
+    "record_hash",
+    "payload",
+)
+
+
+def _forward_record_from_row(row: tuple) -> dict:
+    record = dict(zip(_FORWARD_RECORD_COLUMNS, row, strict=True))
+    if isinstance(record["payload"], str):
+        record["payload"] = json.loads(record["payload"])
+    return record
+
+
 def append_forward_record(
     *,
     snapshot_id: str,
@@ -825,23 +926,72 @@ def append_forward_record(
         allow_nan=False,
     )
     payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    generation = forward_chain_generation(calibration_id)
     with _lock, _conn() as conn:
-        existing = conn.execute(
-            "SELECT record_id FROM forward_validation_records WHERE snapshot_id=?",
+        _require_forward_child_index(conn)
+        # Serialize the read-head/write-child sequence across processes. The
+        # partial unique index remains the database-level last line of defence.
+        conn.execute("BEGIN IMMEDIATE")
+        columns = ",".join(_FORWARD_RECORD_COLUMNS)
+        existing_row = conn.execute(
+            f"""SELECT {columns}
+                 FROM forward_validation_records WHERE snapshot_id=?""",
             (snapshot_id,),
         ).fetchone()
+        existing = (
+            _forward_record_from_row(existing_row)
+            if existing_row is not None
+            else None
+        )
         if existing is not None:
-            return existing[0]
-        previous = conn.execute(
-            """SELECT record_hash, created_at FROM forward_validation_records
-                WHERE market_id=? AND product=?
-                ORDER BY created_at DESC, record_id DESC LIMIT 1""",
-            (market, product),
-        ).fetchone()
-        previous_hash = previous[0] if previous else "0" * 64
+            if (
+                existing["market_id"],
+                existing["product"],
+                existing["calibration_id"],
+            ) != (market, product, calibration_id):
+                raise ValueError(
+                    "forward snapshot identity is already bound to another chain"
+                )
+        rows = conn.execute(
+            f"""SELECT {columns} FROM forward_validation_records
+                 WHERE market_id=? AND product=? AND calibration_id=?""",
+            (market, product, calibration_id),
+        ).fetchall()
+        records = [_forward_record_from_row(row) for row in rows]
+        previous_hash = "0" * 64
+        previous_created_at: datetime | None = None
+        if records:
+            # Imported lazily to keep the storage and validation modules free
+            # of an import-time cycle.
+            from seiche.markets.validation_forward import verify_forward_chain
+
+            integrity = verify_forward_chain(
+                records, minimum_records=0, minimum_span_days=0
+            )
+            chains = integrity["metrics"]["chains"]
+            if integrity["status"] != "PASS" or len(chains) != 1:
+                raise ValueError(
+                    "forward chain has no single valid head; refusing to append"
+                )
+            previous_hash = chains[0]["head_record_hash"]
+            previous_record = next(
+                row for row in records if row["record_hash"] == previous_hash
+            )
+            previous_created_at = datetime.fromisoformat(
+                str(previous_record["created_at"]).replace("Z", "+00:00")
+            ).astimezone(UTC)
+        if existing is not None:
+            if (
+                _canonical_utc(existing["event_cutoff"]) != event
+                or _canonical_utc(existing["knowledge_cutoff"]) != knowledge
+                or existing["payload_hash"] != payload_hash
+            ):
+                raise ValueError(
+                    "forward snapshot retry does not match its stored identity"
+                )
+            return str(existing["record_id"])
         created_at = datetime.now(UTC)
-        if previous is not None:
-            previous_created_at = datetime.fromisoformat(previous[1]).astimezone(UTC)
+        if previous_created_at is not None:
             if created_at <= previous_created_at:
                 created_at = previous_created_at + timedelta(microseconds=1)
         record_hash = forward_record_hash(
@@ -858,39 +1008,34 @@ def append_forward_record(
         conn.execute(
             """INSERT INTO forward_validation_records
                  (record_id, snapshot_id, market_id, product, event_cutoff,
-                  knowledge_cutoff, calibration_id, created_at, payload_hash,
-                  previous_record_hash, record_hash, payload)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                  knowledge_cutoff, calibration_id, chain_generation, created_at,
+                  payload_hash, previous_record_hash, record_hash, payload)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                record_id, snapshot_id, market, product, event, knowledge,
-                calibration_id, created_at.isoformat(timespec="microseconds"),
-                payload_hash, previous_hash, record_hash, payload_json,
+                record_id,
+                snapshot_id,
+                market,
+                product,
+                event,
+                knowledge,
+                calibration_id,
+                generation,
+                created_at.isoformat(timespec="microseconds"),
+                payload_hash,
+                previous_hash,
+                record_hash,
+                payload_json,
             ),
         )
     return record_id
 
 
-_FORWARD_RECORD_COLUMNS = (
-    "record_id",
-    "snapshot_id",
-    "market_id",
-    "product",
-    "event_cutoff",
-    "knowledge_cutoff",
-    "calibration_id",
-    "created_at",
-    "payload_hash",
-    "previous_record_hash",
-    "record_hash",
-    "payload",
-)
-
-
 def load_forward_records(
     market_id: str | None = None,
     product: str | None = None,
+    calibration_id: str | None = None,
 ) -> list[dict]:
-    """Read complete forward-chain links in deterministic chronological order."""
+    """Read immutable links; ordering is presentation-only, never topology."""
 
     predicates: list[str] = []
     params: list[str] = []
@@ -900,6 +1045,9 @@ def load_forward_records(
     if product is not None:
         predicates.append("product=?")
         params.append(product)
+    if calibration_id is not None:
+        predicates.append("calibration_id=?")
+        params.append(calibration_id)
     where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
     columns = ",".join(_FORWARD_RECORD_COLUMNS)
     with _lock, _conn() as conn:
@@ -909,12 +1057,7 @@ def load_forward_records(
                  ORDER BY created_at, record_id""",
             params,
         ).fetchall()
-    records: list[dict] = []
-    for row in rows:
-        record = dict(zip(_FORWARD_RECORD_COLUMNS, row, strict=True))
-        record["payload"] = json.loads(record["payload"])
-        records.append(record)
-    return records
+    return [_forward_record_from_row(row) for row in rows]
 
 
 def forward_record_count(market_id: str | None = None) -> int:

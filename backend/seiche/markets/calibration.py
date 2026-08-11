@@ -366,7 +366,7 @@ _CALIBRATIONS = {
         ),
     ),
     "NZ-NZD": LocalCalibration(
-        "nz-nzd-local-forward-v1",
+        "nz-nzd-local-forward-v2",
         "NZ-NZD",
         (
             _component(

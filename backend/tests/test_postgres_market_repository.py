@@ -293,6 +293,7 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         "event_cutoff",
         "knowledge_cutoff",
         "calibration_id",
+        "chain_generation",
         "created_at",
         "payload_hash",
         "previous_record_hash",

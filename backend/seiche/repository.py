@@ -18,8 +18,10 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 from seiche import store
-from seiche.domain.forward_record import forward_record_hash
+from seiche.domain.forward_record import forward_chain_generation, forward_record_hash
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
+
+_MIN_POSTGRES_SERVER_VERSION = 110000
 
 
 class MarketRepository(Protocol):
@@ -128,6 +130,7 @@ class MarketRepository(Protocol):
         self,
         market_id: str | None = None,
         product: str | None = None,
+        calibration_id: str | None = None,
     ) -> list[dict]: ...
 
     def forward_record_count(self, market_id: str | None = None) -> int: ...
@@ -183,6 +186,33 @@ _OBSERVATION_INSERT_PLACEHOLDERS = tuple(
     "%s::jsonb" if column == "jurisdiction_codes" else "%s"
     for column in _OBSERVATION_INSERT_COLUMNS
 )
+
+_FORWARD_RECORD_COLUMNS = (
+    "record_id",
+    "snapshot_id",
+    "market_id",
+    "product",
+    "event_cutoff",
+    "knowledge_cutoff",
+    "calibration_id",
+    "chain_generation",
+    "created_at",
+    "payload_hash",
+    "previous_record_hash",
+    "record_hash",
+    "payload",
+)
+
+
+def _postgres_forward_record(row: tuple) -> dict:
+    record = dict(zip(_FORWARD_RECORD_COLUMNS, row, strict=True))
+    for key in ("event_cutoff", "knowledge_cutoff", "created_at"):
+        if isinstance(record[key], datetime):
+            record[key] = record[key].isoformat()
+    if isinstance(record["payload"], str):
+        record["payload"] = json.loads(record["payload"])
+    return record
+
 
 _POSTGRES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS canonical_observations (
@@ -257,14 +287,28 @@ CREATE TABLE IF NOT EXISTS forward_validation_records (
   event_cutoff TIMESTAMPTZ NOT NULL,
   knowledge_cutoff TIMESTAMPTZ NOT NULL,
   calibration_id TEXT NOT NULL,
+  chain_generation SMALLINT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL,
   payload_hash TEXT NOT NULL,
   previous_record_hash TEXT NOT NULL,
   record_hash TEXT NOT NULL UNIQUE,
   payload JSONB NOT NULL
 );
+ALTER TABLE forward_validation_records
+  ADD COLUMN IF NOT EXISTS chain_generation SMALLINT NOT NULL DEFAULT 1;
 CREATE INDEX IF NOT EXISTS forward_records_chain
   ON forward_validation_records (market_id, product, created_at, record_id);
+CREATE INDEX IF NOT EXISTS forward_records_generation
+  ON forward_validation_records (
+    market_id, product, calibration_id, chain_generation
+  );
+CREATE UNIQUE INDEX IF NOT EXISTS forward_records_one_child
+  ON forward_validation_records (
+    market_id, product, calibration_id, previous_record_hash
+  ) WHERE NOT (
+    market_id = 'NZ-NZD'
+    AND calibration_id = 'nz-nzd-local-forward-v1'
+  );
 """
 
 
@@ -338,6 +382,12 @@ class PostgresMarketRepository:
             if self._initialized:
                 return
             with self._connect() as connection:
+                server_version = connection.info.server_version
+                if server_version < _MIN_POSTGRES_SERVER_VERSION:
+                    raise RuntimeError(
+                        "PostgreSQL 11 or newer is required for safe additive "
+                        f"schema migration; server_version_num={server_version}"
+                    )
                 # Executing individual statements works with both psycopg's
                 # simple and extended query protocols.
                 for statement in _POSTGRES_SCHEMA.split(";"):
@@ -1001,32 +1051,70 @@ class PostgresMarketRepository:
             allow_nan=False,
         )
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
-        chain_key = f"{market}|{product}"
+        generation = forward_chain_generation(calibration_id)
+        chain_key = f"{market}|{product}|{calibration_id}"
         with self._connect() as connection:
             connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))", (chain_key,)
             )
-            existing = connection.execute(
-                "SELECT record_id FROM forward_validation_records WHERE snapshot_id=%s",
+            columns = ",".join(_FORWARD_RECORD_COLUMNS)
+            existing_row = connection.execute(
+                f"""SELECT {columns}
+                     FROM forward_validation_records WHERE snapshot_id=%s""",
                 (snapshot_id,),
             ).fetchone()
+            existing = (
+                _postgres_forward_record(tuple(existing_row))
+                if existing_row is not None
+                else None
+            )
             if existing is not None:
-                return existing[0]
-            previous = connection.execute(
-                """SELECT record_hash, created_at FROM forward_validation_records
-                    WHERE market_id=%s AND product=%s
-                    ORDER BY created_at DESC, record_id DESC LIMIT 1""",
-                (market, product),
-            ).fetchone()
-            previous_hash = previous[0] if previous else "0" * 64
-            created_at = datetime.now(UTC)
-            if previous is not None:
-                previous_created_at = previous[1]
-                if isinstance(previous_created_at, str):
-                    previous_created_at = datetime.fromisoformat(
-                        previous_created_at.replace("Z", "+00:00")
+                if (
+                    existing["market_id"],
+                    existing["product"],
+                    existing["calibration_id"],
+                ) != (market, product, calibration_id):
+                    raise ValueError(
+                        "forward snapshot identity is already bound to another chain"
                     )
-                previous_created_at = previous_created_at.astimezone(UTC)
+            rows = connection.execute(
+                f"""SELECT {columns} FROM forward_validation_records
+                     WHERE market_id=%s AND product=%s AND calibration_id=%s""",
+                (market, product, calibration_id),
+            ).fetchall()
+            records = [_postgres_forward_record(tuple(row)) for row in rows]
+            previous_hash = "0" * 64
+            previous_created_at: datetime | None = None
+            if records:
+                from seiche.markets.validation_forward import verify_forward_chain
+
+                integrity = verify_forward_chain(
+                    records, minimum_records=0, minimum_span_days=0
+                )
+                chains = integrity["metrics"]["chains"]
+                if integrity["status"] != "PASS" or len(chains) != 1:
+                    raise ValueError(
+                        "forward chain has no single valid head; refusing to append"
+                    )
+                previous_hash = chains[0]["head_record_hash"]
+                previous_record = next(
+                    row for row in records if row["record_hash"] == previous_hash
+                )
+                previous_created_at = datetime.fromisoformat(
+                    str(previous_record["created_at"]).replace("Z", "+00:00")
+                ).astimezone(UTC)
+            if existing is not None:
+                if (
+                    _utc(existing["event_cutoff"]) != event
+                    or _utc(existing["knowledge_cutoff"]) != knowledge
+                    or existing["payload_hash"] != payload_hash
+                ):
+                    raise ValueError(
+                        "forward snapshot retry does not match its stored identity"
+                    )
+                return str(existing["record_id"])
+            created_at = datetime.now(UTC)
+            if previous_created_at is not None:
                 if created_at <= previous_created_at:
                     created_at = previous_created_at + timedelta(microseconds=1)
             record_hash = forward_record_hash(
@@ -1042,9 +1130,10 @@ class PostgresMarketRepository:
             connection.execute(
                 """INSERT INTO forward_validation_records
                      (record_id, snapshot_id, market_id, product, event_cutoff,
-                      knowledge_cutoff, calibration_id, created_at, payload_hash,
-                      previous_record_hash, record_hash, payload)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                      knowledge_cutoff, calibration_id, chain_generation,
+                      created_at, payload_hash, previous_record_hash, record_hash,
+                      payload)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
                 (
                     record_hash,
                     snapshot_id,
@@ -1053,6 +1142,7 @@ class PostgresMarketRepository:
                     event,
                     knowledge,
                     calibration_id,
+                    generation,
                     created_at,
                     payload_hash,
                     previous_hash,
@@ -1066,8 +1156,9 @@ class PostgresMarketRepository:
         self,
         market_id: str | None = None,
         product: str | None = None,
+        calibration_id: str | None = None,
     ) -> list[dict]:
-        """Read complete forward-chain links in deterministic chronological order."""
+        """Read immutable links; ordering is presentation-only, never topology."""
 
         self._ensure_schema()
         predicates: list[str] = []
@@ -1078,12 +1169,11 @@ class PostgresMarketRepository:
         if product is not None:
             predicates.append("product=%s")
             params.append(product)
+        if calibration_id is not None:
+            predicates.append("calibration_id=%s")
+            params.append(calibration_id)
         where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
-        columns = (
-            "record_id, snapshot_id, market_id, product, event_cutoff, "
-            "knowledge_cutoff, calibration_id, created_at, payload_hash, "
-            "previous_record_hash, record_hash, payload"
-        )
+        columns = ",".join(_FORWARD_RECORD_COLUMNS)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""SELECT {columns}
@@ -1091,30 +1181,7 @@ class PostgresMarketRepository:
                      ORDER BY created_at, record_id""",
                 params,
             ).fetchall()
-        keys = (
-            "record_id",
-            "snapshot_id",
-            "market_id",
-            "product",
-            "event_cutoff",
-            "knowledge_cutoff",
-            "calibration_id",
-            "created_at",
-            "payload_hash",
-            "previous_record_hash",
-            "record_hash",
-            "payload",
-        )
-        records: list[dict] = []
-        for row in rows:
-            record = dict(zip(keys, row, strict=True))
-            for key in ("event_cutoff", "knowledge_cutoff", "created_at"):
-                if isinstance(record[key], datetime):
-                    record[key] = record[key].isoformat()
-            if isinstance(record["payload"], str):
-                record["payload"] = json.loads(record["payload"])
-            records.append(record)
-        return records
+        return [_postgres_forward_record(tuple(row)) for row in rows]
 
     def forward_record_count(self, market_id: str | None = None) -> int:
         self._ensure_schema()

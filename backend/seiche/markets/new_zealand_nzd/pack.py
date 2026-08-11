@@ -83,7 +83,9 @@ PACK = MarketPack(
         EventSpec("GOVERNMENT_SETTLEMENT", "government-security settlement", frozenset({SemanticRole.POLICY_TARGET})),
         EventSpec("REPORTING_TURN", "reporting-period turn", frozenset({SemanticRole.POLICY_TARGET})),
     ),
-    calibration_id="nz-nzd-local-forward-v1",
+    # v2 is an evidence-chain generation boundary after the preserved v1
+    # topology incident; the model components themselves remain research-only.
+    calibration_id="nz-nzd-local-forward-v2",
     minimum_history=MinimumHistory(750, 1095),
     support_status=PackSupportStatus.REFERENCE,
 )

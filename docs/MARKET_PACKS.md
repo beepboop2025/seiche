@@ -105,8 +105,10 @@ exact no-imputation event intersection, not another API or a fitted model.
 
 Local development retains the same repository protocol over SQLite. Setting
 `SEICHE_DATABASE_URL` selects PostgreSQL without changing an adapter, engine, or
-API contract. The dedicated `market-platform-ci` workflow executes the complete
-repository contract against PostgreSQL 17.
+API contract. PostgreSQL 11 is the minimum supported server because additive
+constant-default migrations rely on its metadata-only behavior. The dedicated
+`market-platform-ci` workflow executes the complete repository contract against
+PostgreSQL 17.
 
 The production commands are also available directly:
 
@@ -177,7 +179,7 @@ registered pack.
 The v2 API never invokes collection. It reads only canonical observations and
 sealed snapshots. The US cycle continues to materialize `US-USD` through its
 pack-local compatibility bridge, preserving v1 parity. Other packs invoke the
-universal semantic engines through versioned `*-local-forward-v1` calibrations.
+universal semantic engines through versioned `*-local-forward-vN` calibrations.
 Required component absence produces `UNAVAILABLE`; stale required evidence may
 publish only as `DEGRADED`.
 
@@ -221,8 +223,19 @@ supplies credentials/data. Their absence is a capability state, never a zero.
 - Local scores blend a declared market calibration with point-in-time
   within-market percentile/robust-z normalization once minimum history accrues.
   Raw interest-rate levels never cross markets.
-- Forward records are immutable per-product hash chains. They establish the
+- Forward records are immutable per-product, per-calibration-generation hash
+  graphs. Verification follows authenticated parent hashes rather than
+  timestamp order and fails on forks, orphans, cycles, missing predecessors,
+  or non-unique roots/heads. Historical generations remain reportable but
+  cannot satisfy the active generation's promotion gate. They establish the
   paper trail but do not, by themselves, promote a pack.
+
+NZ-NZD uses `nz-nzd-local-forward-v2` for evidence captured after the
+2026-08-11 topology incident. Its v1 gauge and overview rows remain immutable
+historical incident evidence; they are explicitly quarantined from v2 maturity
+counts and are never repaired, relinked, or represented as passing. See the
+[forward-chain incident runbook](FORWARD_CHAIN_INCIDENT_2026-08-11.md) for the
+production migration boundary.
 
 No pack is promoted to `SUPPORTED` by this deployment. Promotion still requires
 all eleven evidence-backed checks: units/schema, calendar/timezone, truncation,
