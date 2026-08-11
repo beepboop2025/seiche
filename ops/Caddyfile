@@ -136,6 +136,20 @@ api.seiche.info {
         file_server
     }
 
+    # Palimpsest BLEEDTHROUGH publishes only the sanitized aggregate latest
+    # reading and its bounded movement history. Prefixes, target addresses,
+    # baselines, locks, and the kill switch have no public route.
+    @palimpsest_bleedthrough path /palimpsest/bleedthrough/bleedthrough-latest.json /palimpsest/bleedthrough/bleedthrough-history.jsonl
+    handle @palimpsest_bleedthrough {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/bleedthrough
+        root * /var/lib/palimpsest/readings
+        file_server
+    }
+
     # Palimpsest MCP (censorship signals). This is its permanent home: a
     # dedicated mcp.palimpsest.info was considered and declined 2026-08-02,
     # since the only thing it bought was keeping the Palimpsest name out of a

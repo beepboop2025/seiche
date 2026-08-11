@@ -1100,8 +1100,34 @@ def test_palimpest_osint_edge_is_an_exact_static_allowlist():
         "/palimpsest/osint/osint-china.json.hmac-sha256"
     ) in caddy
     assert "root * /var/lib/palimpsest-nemesis/public" in caddy
-    osint_block = caddy[caddy.index("@palimpsest_osint path") : caddy.index("# Palimpsest MCP")]
+    osint_block = caddy[
+        caddy.index("@palimpsest_osint path") : caddy.index(
+            "# Palimpsest BLEEDTHROUGH"
+        )
+    ]
     assert 'header Cache-Control "no-store"' in osint_block
     assert "stale-if-error" not in osint_block
     assert "uri strip_prefix /palimpsest/osint" in osint_block
     assert "reverse_proxy" not in osint_block
+
+
+def test_palimpsest_bleedthrough_edge_is_an_exact_sanitized_allowlist():
+    caddy = CADDYFILE.read_text()
+    assert "handle_path /palimpsest/bleedthrough/*" not in caddy
+    assert (
+        "@palimpsest_bleedthrough path "
+        "/palimpsest/bleedthrough/bleedthrough-latest.json "
+        "/palimpsest/bleedthrough/bleedthrough-history.jsonl"
+    ) in caddy
+    block = caddy[
+        caddy.index("@palimpsest_bleedthrough path") : caddy.index(
+            "# Palimpsest MCP"
+        )
+    ]
+    assert 'header Access-Control-Allow-Origin "https://palimpsest.info"' in block
+    assert 'header Cache-Control "no-store, no-transform"' in block
+    assert 'header Content-Disposition "inline"' in block
+    assert "uri strip_prefix /palimpsest/bleedthrough" in block
+    assert "root * /var/lib/palimpsest/readings" in block
+    assert "file_server" in block
+    assert "reverse_proxy" not in block
