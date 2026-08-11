@@ -60,8 +60,16 @@ def test_write_creates_files_and_prepends_index(fake_snap, tmp_path):
     desk = (tmp_path / "backend" / "seiche" / "dispatches" / f"{d['slug']}.desk.md").read_text()
     assert "forward read" in desk
 
+    story = json.loads(
+        (tmp_path / "frontend" / "public" / "dispatches" / f"{d['slug']}.json").read_text()
+    )
+    assert story["schema"] == "seiche.analytical-story.v1"
+    assert story["canonical_url"].endswith(f"/{d['slug']}.html")
+    assert story["original_contribution"]["exclusive_fact_claimed"] is False
+
     idx = json.loads((tmp_path / "frontend" / "public" / "dispatches" / "index.json").read_text())
     assert [e["slug"] for e in idx] == [d["slug"], "2026-07-09-fat-tail"]  # newest first
+    assert idx[0]["story_url"] == f"/dispatches/{d['slug']}.json"
 
 
 def test_rewrite_same_day_does_not_duplicate_index(fake_snap, tmp_path):

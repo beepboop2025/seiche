@@ -134,6 +134,25 @@ def test_feed_is_valid_atom_with_full_content(repo):
     assert "EROSION" in entries[0].find("a:content", ns).text
 
 
+def test_machine_news_feed_carries_typed_story_and_legacy_pointers(repo):
+    root, d = repo
+    free_dir = root / "frontend" / "public" / "dispatches"
+    index = json.loads((free_dir / "index.json").read_text())
+    index.append({"slug": "2026-06-01-daily", "title": "Older water",
+                  "date": "2026-06-01", "tag": "CALM", "summary": "Archive."})
+    (free_dir / "index.json").write_text(json.dumps(index))
+    (free_dir / "2026-06-01-daily.md").write_text("## Reading\n\nQuiet.\n")
+
+    build_all(repo_root=root)
+    feed = json.loads((free_dir / "news.json").read_text())
+    assert feed["schema"] == "seiche.analytical-feed.v1"
+    by_slug = {row["slug"]: row for row in feed["entries"]}
+    assert by_slug[d["slug"]]["newsworthiness"]["decision"] in {
+        "full_story", "desk_brief", "watch_note"
+    }
+    assert by_slug["2026-06-01-daily"]["editorial_class"] == "legacy_dispatch"
+
+
 def test_letter_page_links_its_markdown_twin(repo):
     root, d = repo
     build_all(repo_root=root)

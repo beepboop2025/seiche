@@ -592,6 +592,42 @@ def build_all(repo_root: Path | None = None) -> list[str]:
     feed.write_text(render_feed(entries, bodies))
     written.append(str(feed))
 
+    # One stable machine feed for LiquiLens and the other lab desks. New
+    # letters have typed story sidecars; older letters remain discoverable as
+    # explicitly labelled pointers instead of vanishing from the wire.
+    stories = []
+    for e in entries:
+        story_path = free_dir / f"{e['slug']}.json"
+        if story_path.exists():
+            story = json.loads(story_path.read_text())
+            if story.get("slug") != e["slug"]:
+                raise SystemExit(f"story sidecar slug mismatch at {story_path}")
+            stories.append(story)
+        else:
+            stories.append({
+                "schema": "seiche.legacy-dispatch-pointer.v1",
+                "id": f"seiche:{e['slug']}",
+                "product": "seiche",
+                "slug": e["slug"],
+                "canonical_url": f"{SITE}/dispatches/{e['slug']}.html",
+                "headline": e.get("title"),
+                "dek": e.get("summary"),
+                "editorial_class": "legacy_dispatch",
+                "publication_status": "PUBLISHED",
+                "published_at": f"{e.get('date')}T00:00:00Z",
+                "limitations": [
+                    "Published before the structured analytical-story contract."
+                ],
+            })
+    news = free_dir / "news.json"
+    news.write_text(json.dumps({
+        "schema": "seiche.analytical-feed.v1",
+        "product": "seiche",
+        "generated_from": "/dispatches/index.json",
+        "entries": stories,
+    }, indent=2, ensure_ascii=False) + "\n")
+    written.append(str(news))
+
     public = root / "frontend" / "public"
     for name, content in (
         ("sitemap.xml", render_sitemap(entries)),
