@@ -7,7 +7,9 @@ STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-$STATE_DIR/validation/backup-restore-check.status}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
-RUNUSER_BIN="${SEICHE_RUNUSER_BIN:-runuser}"
+POSTGRES_GROUP="${SEICHE_POSTGRES_OS_GROUP:-}"
+ID_BIN="${SEICHE_ID_BIN:-id}"
+SETPRIV_BIN="${SEICHE_SETPRIV_BIN:-/usr/bin/setpriv}"
 PSQL_BIN="${SEICHE_PSQL_BIN:-psql}"
 PG_RESTORE_BIN="${SEICHE_PG_RESTORE_BIN:-pg_restore}"
 CREATEDB_BIN="${SEICHE_CREATEDB_BIN:-createdb}"
@@ -35,7 +37,13 @@ fi
     || fail "backup directory must be a real directory"
 
 run_as_postgres() {
-    "$RUNUSER_BIN" -u "$POSTGRES_USER" -- "$@"
+    local postgres_group="$POSTGRES_GROUP"
+    if [ -z "$postgres_group" ]; then
+        postgres_group=$("$ID_BIN" -g "$POSTGRES_USER") \
+            || fail "cannot resolve primary group for PostgreSQL OS user $POSTGRES_USER"
+    fi
+    "$SETPRIV_BIN" --reuid="$POSTGRES_USER" --regid="$postgres_group" \
+        --init-groups --inh-caps=-all -- "$@"
 }
 
 SNAPSHOT="${SEICHE_RESTORE_SNAPSHOT:-}"

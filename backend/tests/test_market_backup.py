@@ -23,19 +23,25 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
     tools = tmp_path / "tools"
     tools.mkdir()
     calls = tmp_path / "calls.log"
-    runuser = _executable(
-        tools / "runuser",
+    setpriv = _executable(
+        tools / "setpriv",
         """
         import os
         import subprocess
         import sys
 
         args = sys.argv[1:]
-        if len(args) < 4 or args[0] != "-u" or args[2] != "--":
+        if args[:5] != [
+            "--reuid=postgres",
+            "--regid=5432",
+            "--init-groups",
+            "--inh-caps=-all",
+            "--",
+        ]:
             raise SystemExit(97)
         with open(os.environ["FAKE_CALLS"], "a", encoding="utf-8") as handle:
-            handle.write("runuser " + " ".join(args[3:]) + "\\n")
-        raise SystemExit(subprocess.run(args[3:], check=False).returncode)
+            handle.write("setpriv " + " ".join(args[5:]) + "\\n")
+        raise SystemExit(subprocess.run(args[5:], check=False).returncode)
         """,
     )
     psql = _executable(
@@ -140,10 +146,21 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
     createdb = _executable(tools / "createdb", database_tool.format(name="createdb"))
     dropdb = _executable(tools / "dropdb", database_tool.format(name="dropdb"))
     date = _executable(tools / "date", 'print("2026-08-10T08:00:00Z")\n')
+    identity = _executable(
+        tools / "id",
+        """
+        import sys
+
+        if sys.argv[1:] != ["-g", "postgres"]:
+            raise SystemExit(96)
+        print("5432")
+        """,
+    )
     env = {
         **os.environ,
         "SEICHE_ALLOW_NON_ROOT_BACKUP_TEST": "1",
-        "SEICHE_RUNUSER_BIN": str(runuser),
+        "SEICHE_ID_BIN": str(identity),
+        "SEICHE_SETPRIV_BIN": str(setpriv),
         "SEICHE_PSQL_BIN": str(psql),
         "SEICHE_PG_DUMP_BIN": str(pg_dump),
         "SEICHE_PG_RESTORE_BIN": str(pg_restore),
@@ -216,6 +233,7 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     assert "refusing to replace existing snapshot" in repeated.stderr
     assert (snapshot / "seiche.dump").read_bytes() == first_dump
     log = calls.read_text()
+    assert "setpriv " in log
     assert "SHOW port" in log
     assert "--port=5544" in log
 
@@ -269,6 +287,7 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert not list((state / "validation").glob(".backup-state-restore.*"))
     assert "can_publish=false" in status
     log = calls.read_text()
+    assert "setpriv " in log
     assert "createdb --template=template0" in log
     assert sum(line.startswith("dropdb ") for line in log.splitlines()) == 1
     assert "--port=5544" in log

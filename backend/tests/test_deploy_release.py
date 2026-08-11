@@ -394,6 +394,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-market-backup.timer" in installer
     assert "seiche-market-restore-check.service" in installer
     assert "seiche-market-restore-check.timer" in installer
+    assert "PACKAGES+=(util-linux)" in installer
+    assert "/usr/bin/setpriv is required" in installer
     assert "ReadWritePaths=$BACKUP_DIR" in installer
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "ExecStart=/usr/bin/flock --wait 300" in backup
@@ -403,6 +405,9 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "MemoryMax=1G" in backup
     assert "ProtectSystem=strict" in backup
     assert "RestrictAddressFamilies=AF_UNIX" in backup
+    assert "NoNewPrivileges=true" in backup
+    assert "RestrictSUIDSGID=true" in backup
+    assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
     assert "RandomizedDelaySec=10m" in backup_timer
@@ -413,6 +418,9 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=/var/lib/seiche/validation /run/lock" in restore
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
+    assert "NoNewPrivileges=true" in restore
+    assert "RestrictSUIDSGID=true" in restore
+    assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in restore
     assert "OnCalendar=Sun *-*-* 07:30:00 UTC" in restore_timer
     assert "RandomizedDelaySec=15m" in restore_timer
     assert "Persistent=true" in restore_timer

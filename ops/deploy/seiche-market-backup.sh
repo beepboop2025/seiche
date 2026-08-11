@@ -10,7 +10,9 @@ DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 RETENTION_DAYS="${SEICHE_BACKUP_RETENTION_DAYS:-21}"
 MIN_DUMP_BYTES="${SEICHE_BACKUP_MIN_DUMP_BYTES:-10240}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
-RUNUSER_BIN="${SEICHE_RUNUSER_BIN:-runuser}"
+POSTGRES_GROUP="${SEICHE_POSTGRES_OS_GROUP:-}"
+ID_BIN="${SEICHE_ID_BIN:-id}"
+SETPRIV_BIN="${SEICHE_SETPRIV_BIN:-/usr/bin/setpriv}"
 PSQL_BIN="${SEICHE_PSQL_BIN:-psql}"
 PG_DUMP_BIN="${SEICHE_PG_DUMP_BIN:-pg_dump}"
 PG_RESTORE_BIN="${SEICHE_PG_RESTORE_BIN:-pg_restore}"
@@ -52,7 +54,13 @@ else
 fi
 
 run_as_postgres() {
-    "$RUNUSER_BIN" -u "$POSTGRES_USER" -- "$@"
+    local postgres_group="$POSTGRES_GROUP"
+    if [ -z "$postgres_group" ]; then
+        postgres_group=$("$ID_BIN" -g "$POSTGRES_USER") \
+            || fail "cannot resolve primary group for PostgreSQL OS user $POSTGRES_USER"
+    fi
+    "$SETPRIV_BIN" --reuid="$POSTGRES_USER" --regid="$postgres_group" \
+        --init-groups --inh-caps=-all -- "$@"
 }
 
 POSTGRES_PORT=$(run_as_postgres "$PSQL_BIN" --no-psqlrc -tAc "SHOW port" \
