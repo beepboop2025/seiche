@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import tomllib
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
@@ -703,12 +705,17 @@ def test_legacy_updater_retirement_records_never_present_units(tmp_path):
     assert "seiche-update.timer.absent" in (archive / "SHA256SUMS").read_text()
 
 
-def test_legacy_updater_retirement_rejects_unproven_premasked_units(tmp_path):
+@pytest.mark.parametrize(
+    "masked_unit", ("seiche-update.service", "seiche-update.timer")
+)
+def test_legacy_updater_retirement_rejects_unproven_premasked_units(
+    tmp_path, masked_unit
+):
     env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
     fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    (systemd_dir / masked_unit).unlink()
+    (systemd_dir / masked_unit).symlink_to("/dev/null")
     for unit_name in ("seiche-update.service", "seiche-update.timer"):
-        (systemd_dir / unit_name).unlink()
-        (systemd_dir / unit_name).symlink_to("/dev/null")
         (fake_state / f"{unit_name}.active").unlink(missing_ok=True)
         (fake_state / f"{unit_name}.enabled").unlink(missing_ok=True)
     for wants_dir in ("timers.target.wants", "multi-user.target.wants"):
@@ -720,10 +727,11 @@ def test_legacy_updater_retirement_rejects_unproven_premasked_units(tmp_path):
     assert result.returncode != 0
     assert "no verified retirement evidence" in result.stderr
     archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert not (archive / masked_unit).exists()
+    assert not (archive / f"{masked_unit}.absent").exists()
     assert not (archive / "SHA256SUMS").exists()
     assert not (archive / "STAT").exists()
-    assert (systemd_dir / "seiche-update.service").readlink() == Path("/dev/null")
-    assert (systemd_dir / "seiche-update.timer").readlink() == Path("/dev/null")
+    assert (systemd_dir / masked_unit).readlink() == Path("/dev/null")
 
 
 def test_legacy_updater_retirement_accepts_failed_state_and_partial_stage(tmp_path):
