@@ -266,6 +266,33 @@ def test_corrupt_us_forward_record_cannot_issue_a_release_receipt(
     assert assemble._seal_release_evidence(_legacy_snapshot()) is None
 
 
+def test_release_receipt_requires_a_canonical_utc_generation_time(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "receipt-time.sqlite")
+    snapshot = _legacy_snapshot()
+    products = seal_legacy_snapshot(snapshot)
+    receipt = {
+        "generated_at": snapshot["generated_at"],
+        "producer": "seiche.markets.us_usd.materialize.seal_legacy_snapshot",
+        "products": products,
+    }
+
+    assert verify_release_receipt(SQLiteMarketRepository(), receipt)
+    for invalid in (
+        None,
+        "2026-08-09T10:00:00",
+        "2026-08-09T15:30:00+05:30",
+        "2026-08-09T10:00:00Z",
+        "2026-08-09T10:00:00.000000+00:00",
+    ):
+        with pytest.raises(ValueError, match="generated_at must be canonical UTC"):
+            verify_release_receipt(
+                SQLiteMarketRepository(),
+                {**receipt, "generated_at": invalid},
+            )
+
+
 def test_market_asof_reads_sealed_history_and_global_tide_stays_separate(
     tmp_path, monkeypatch
 ) -> None:

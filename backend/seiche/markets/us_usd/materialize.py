@@ -265,6 +265,28 @@ def verify_release_receipt(
         raise ValueError("US-USD release receipt has an invalid contract")
     if receipt.get("producer") != _RELEASE_RECEIPT_PRODUCER:
         raise ValueError("US-USD release receipt producer is invalid")
+    generated_at = receipt.get("generated_at")
+    if not isinstance(generated_at, str):
+        raise ValueError(
+            "US-USD release receipt generated_at must be canonical UTC"
+        )
+    try:
+        parsed_generated_at = datetime.fromisoformat(
+            generated_at.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "US-USD release receipt generated_at must be canonical UTC"
+        ) from exc
+    if (
+        parsed_generated_at.tzinfo is None
+        or parsed_generated_at.utcoffset() is None
+        or generated_at
+        != parsed_generated_at.astimezone(UTC).isoformat(timespec="seconds")
+    ):
+        raise ValueError(
+            "US-USD release receipt generated_at must be canonical UTC"
+        )
     bindings = validate_release_product_bindings(
         receipt.get("products"),
         required_products=("overview", "gauge"),
