@@ -1,5 +1,5 @@
 {
-  "date": "2026-08-10",
+  "date": "2026-08-11",
   "reported_prev": {
     "Brent crude oil spot, Europe": "2026-08-03",
     "2y Treasury constant maturity yield": "2026-08-06",
@@ -9,10 +9,11 @@
   },
   "reported": {
     "Brent crude oil spot, Europe": "2026-08-03",
-    "2y Treasury constant maturity yield": "2026-08-06",
+    "Canadian dollars per USD (H.10)": "2026-08-07",
+    "2y Treasury constant maturity yield": "2026-08-07",
     "WTI crude oil spot, Cushing": "2026-08-03",
     "Discount window primary credit (Wed level)": "2026-08-05",
-    "S&P 500 index": "2026-08-07"
+    "S&P 500 index": "2026-08-10"
   },
   "letter_prev": {
     "regime": "EROSION",
@@ -39,7 +40,7 @@
   },
   "letter": {
     "regime": "EROSION",
-    "value": 45.0,
+    "value": 44.8,
     "decomp": {
       "weather": 11.0,
       "resonance": 6.7,
@@ -49,14 +50,14 @@
       "confession": 2.9,
       "undertow": 2.9,
       "warehouse": 2.4,
-      "tails": 2.1,
+      "tails": 1.9,
       "auctions": 1.2,
       "hydrophone": 0.0
     },
     "crunch": {
       "date": "2026-08-13",
-      "worst_case_b": 2962.8,
-      "settlement_b": 266.0
+      "worst_case_b": 2967.9,
+      "settlement_b": 95.0
     },
     "tell": 35.0
   }
