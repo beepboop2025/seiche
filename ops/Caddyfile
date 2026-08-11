@@ -193,6 +193,13 @@ api.seiche.info {
         header Cache-Control "no-store, no-transform"
         respond "not here" 404
     }
+    # Release handoff IDs are controller capabilities. The root deploy wrapper
+    # reads this route directly over loopback; the public edge must never proxy it.
+    @release_health path /api/internal/v1/release-health
+    handle @release_health {
+        header Cache-Control "no-store"
+        respond "not here" 404
+    }
     @public {
         method GET HEAD
         path /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe

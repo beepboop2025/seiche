@@ -15,15 +15,24 @@ PREV=$(git rev-parse HEAD)
 # with the old process serving it, and the old early-exit here made that
 # state permanent (2026-07-28) — workflow_dispatch re-ran, matched SHAs, and
 # declared victory. Unknown (missing file) means deploy.
-DEPLOYED=$(cat /home/seiche/.seiche-deployed-sha 2>/dev/null || true)
-git fetch -q origin main
-if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+DEPLOYED=${SEICHE_DEPLOYED_SHA:-}
+TARGET=${SEICHE_UPDATE_TARGET_SHA:-}
+if [ -z "$TARGET" ]; then
+  git fetch -q origin main || exit 1
+  TARGET=$(git rev-parse origin/main) || exit 1
+fi
+if [[ ! "$TARGET" =~ ^[0-9a-f]{40}$ ]] \
+    || ! git rev-parse --verify --quiet "$TARGET^{commit}" >/dev/null; then
+  echo "REFUSING UPDATE: target is not a local canonical commit" >&2
+  exit 1
+fi
+if [ "$(git rev-parse HEAD)" = "$TARGET" ]; then
   if [ "$DEPLOYED" = "$(git rev-parse HEAD)" ]; then
     exit 0
   fi
   echo "HEAD already at $(git rev-parse --short HEAD) but the running service is ${DEPLOYED:-unknown}: re-running install+smoke so the wrapper can restart onto it"
 else
-  git reset -q --hard origin/main
+  git reset -q --hard "$TARGET" || exit 1
 fi
 
 rollback() {
@@ -76,7 +85,7 @@ fi
 # If a deploy ever needs the full suite here, run it by hand; do not put it
 # back in the restart path.
 export PATH="/home/seiche/app/backend/.venv/bin:$PATH"
-# Eleven files, collects 303 tests as of this commit. If a commit grows or
+# Eleven files, collects 329 tests as of this commit. If a commit grows or
 # shrinks this subset, update this count in the same commit — the number is
 # how a reader of the deploy log knows the gate ran what it claims to run.
 SMOKE="tests/test_dispatch_daily.py tests/test_dispatch_pages.py \

@@ -44,5 +44,5 @@ RestrictNamespaces=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native
-ReadOnlyPaths=/home/seiche/app /var/lib/seiche
+ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy
 ReadWritePaths=/var/backups/seiche-market /run/lock

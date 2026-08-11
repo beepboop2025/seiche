@@ -32,12 +32,12 @@ def _regime_line(composite: dict, tell: dict) -> str:
 
 
 def public_payload(snap: dict) -> dict:
-    engines = snap.get("engines", {})
-    deep = snap.get("deep", {})
-    composite = engines.get("composite", {})
-    tell = deep.get("tell", {})
-    bt = deep.get("backtest", {})
-    ec = bt.get("event_capture", {})
+    engines = snap.get("engines") or {}
+    deep = snap.get("deep") or {}
+    composite = engines.get("composite") or {}
+    tell = deep.get("tell") or {}
+    bt = deep.get("backtest") or {}
+    ec = bt.get("event_capture") or {}
     evidence = historical_evidence(snap)
 
     return {
@@ -63,9 +63,9 @@ def public_payload(snap: dict) -> dict:
             "episodes": [
                 {"episode": e.get("episode"), "date": e.get("date"),
                  "in_sample": e.get("in_sample")}
-                for e in bt.get("episodes", [])
+                for e in (bt.get("episodes") or [])
             ],
-            "caveats": bt.get("caveats", []),
+            "caveats": bt.get("caveats") or [],
             "historical_evidence": evidence,
         },
         # The argument, evidence and countercase travel together. These are

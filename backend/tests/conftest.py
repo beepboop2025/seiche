@@ -194,7 +194,13 @@ _FAKE_SNAP = {
         },
     },
     "deep": {
-        "tell": {"ok": True, "tell": 12.0},
+        "tell": {
+            "ok": True,
+            "tell": 12.0,
+            "plumbing_pctl": 58.0,
+            "market_pctl": 46.0,
+            "reading": "plumbing leads price",
+        },
         "backtest": {
             "ok": True,
             "sample": {"start": "2018-01-01", "end": "2026-07-01", "n_events": 14},

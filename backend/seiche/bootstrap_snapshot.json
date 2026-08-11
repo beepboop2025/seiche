@@ -92,14 +92,24 @@
     "ok": false,
     "p_event_5bd": null
   },
-  "faults": [],
-  "provenance": {
-    "bootstrap_seed": {
+  "faults": [
+    {
+      "source": "bootstrap_snapshot",
+      "detail": "Serving a dated minimal restart handoff while the current process rebuilds the full board"
+    }
+  ],
+  "provenance": [
+    {
+      "mnemonic": "bootstrap_seed",
       "source": "Seiche public snapshot",
+      "label": "Packaged restart handoff",
+      "asof": "2026-08-08T01:22:11+00:00",
+      "fetched_at": "2026-08-08T01:22:11+00:00",
+      "staleness": "stale",
       "generated_at": "2026-08-08T01:22:11+00:00",
       "scope": "Dated public handoff while the current process rebuilds the full board"
     }
-  },
+  ],
   "editorial": {
     "schema": "seiche.editorial.v1",
     "generated_at": "2026-08-08T01:22:11+00:00",

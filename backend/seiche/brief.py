@@ -36,12 +36,12 @@ def _pit_yesterday(today_value: float | None) -> str:
 
 
 def render_markdown(snap: dict) -> str:
-    eng = snap.get("engines", {})
-    deep = snap.get("deep", {})
-    cal = snap.get("calendar", {})
-    hl = snap.get("headline", {})
-    comp = eng.get("composite", {})
-    tell = deep.get("tell", {})
+    eng = snap.get("engines") or {}
+    deep = snap.get("deep") or {}
+    cal = snap.get("calendar") or {}
+    hl = snap.get("headline") or {}
+    comp = eng.get("composite") or {}
+    tell = deep.get("tell") or {}
     turn = (deep.get("turn") or {}).get("next_turn")
     lines: list[str] = []
 
@@ -62,20 +62,26 @@ def render_markdown(snap: dict) -> str:
     lines.append("")
 
     # Top drivers by contribution
-    decomp = [d for d in comp.get("decomposition", []) if d.get("contribution")]
+    decomp = [
+        d for d in (comp.get("decomposition") or []) if d.get("contribution")
+    ]
     if decomp:
         top = decomp[:3]
         lines.append("## Drivers")
         for d in top:
             lines.append(f"- {d['component']}: score {d['score']} (w {d['weight']}, +{d['contribution']} pts)")
-        dead = [d["component"] for d in comp.get("decomposition", []) if d.get("status") == "DEAD"]
+        dead = [
+            d["component"]
+            for d in (comp.get("decomposition") or [])
+            if d.get("status") == "DEAD"
+        ]
         if dead:
             lines.append(f"- DEAD inputs: {', '.join(dead)}")
         lines.append("")
 
     # Overnight movers
-    sonar = eng.get("sonar", {})
-    flagged = [m for m in sonar.get("movers", []) if m.get("flag")]
+    sonar = eng.get("sonar") or {}
+    flagged = [m for m in (sonar.get("movers") or []) if m.get("flag")]
     lines.append("## Moved overnight")
     if flagged:
         for m in flagged[:6]:
@@ -110,17 +116,17 @@ def render_markdown(snap: dict) -> str:
         lines.append(f"- SRF take-up ${hl['srf_accepted_b']['value']}B (asof {hl['srf_accepted_b']['asof']})")
     if hl.get("dw_b"):
         lines.append(f"- Discount window ${hl['dw_b']['value']}B (asof {hl['dw_b']['asof']})")
-    wh = eng.get("warehouse", {})
+    wh = eng.get("warehouse") or {}
     if wh.get("ok"):
         lines.append(
             f"- Dealer warehouse ${wh['total_net_b']:.0f}B ({wh['total_pctl']:.0f}th pctl, "
             f"long-end {wh['long_end_share_pct']}%)"
         )
-    res = eng.get("resonance", {})
+    res = eng.get("resonance") or {}
     if res.get("ok"):
-        wm = res.get("worst_mode", {})
+        wm = res.get("worst_mode") or {}
         lines.append(f"- Resonance {res['score']}: {wm.get('label')} amplifying {wm.get('amplification')}x")
-    bath = deep.get("bathymetry", {})
+    bath = deep.get("bathymetry") or {}
     if bath.get("ok"):
         spec = bath.get("spectrum") or {}
         arrow = bath.get("arrow") or {}
@@ -130,30 +136,30 @@ def render_markdown(snap: dict) -> str:
             f"relaxation τ {spec.get('tau_bd')}bd ({spec.get('tau_pctl', '?')}th pctl) · "
             f"entropy production {arrow.get('sigma_nats_bd')} nats/bd ({arrow.get('pctl', '?')}th)"
         )
-    mer = eng.get("merian", {})
+    mer = eng.get("merian") or {}
     if mer.get("ok") and (mer.get("instability") or {}).get("g_now") is not None:
         inst = mer["instability"]
         if (inst.get("g_now") or 0.0) > 0 and (inst.get("pctl") or 0.0) >= 90:
             lines.append(
                 f"- Merian: GROWING mode live (g {inst['g_now']:+.3f}/bd, {inst['pctl']:.0f}th pctl)"
             )
-    rogue = eng.get("roguewave", {})
+    rogue = eng.get("roguewave") or {}
     if rogue.get("ok"):
-        rl = next((r for r in rogue.get("return_levels", []) if r.get("years") == 10.0), None)
+        rl = next((r for r in (rogue.get("return_levels") or []) if r.get("years") == 10.0), None)
         if rl:
             lines.append(
                 f"- Rogue Wave: ξ {rogue['fit']['xi']} — 10y wave ~{rl['bp']:.0f}bp "
                 f"(sample max {rogue.get('sample_max_bp')}bp)"
             )
-    crowd = eng.get("crowding", {})
+    crowd = eng.get("crowding") or {}
     if crowd.get("ok") and crowd.get("rows"):
         r = crowd["rows"][0]
         lines.append(f"- Most crowded: {r['contract']} lev net {r['lev_net_share_oi']:+.2f} of OI (z {r['z']})")
-    echo = eng.get("echo", {})
+    echo = eng.get("echo") or {}
     if echo.get("ok") and echo.get("top"):
         t = echo["top"]
         lines.append(f"- Echo: {t['similarity']:.2f} similar to T−{t['lead_days']}d before {echo['matches'][0]['episode']}")
-    moor = eng.get("moorings", {})
+    moor = eng.get("moorings") or {}
     if moor.get("ok"):
         u = moor.get("usdt") or {}
         dem = moor.get("demand") or {}
@@ -167,9 +173,9 @@ def render_markdown(snap: dict) -> str:
             bits.append(f"BTC vol z {can['btc_rv10_z']}")
         if bits:
             lines.append(f"- Moorings: {' · '.join(bits)}")
-    basins_e = eng.get("basins", {})
+    basins_e = eng.get("basins") or {}
     if basins_e.get("ok"):
-        hot = [b for b in basins_e.get("basins", []) if abs(b.get("z") or 0) >= 1.5]
+        hot = [b for b in (basins_e.get("basins") or []) if abs(b.get("z") or 0) >= 1.5]
         for b in hot[:2]:
             lines.append(f"- Basin {b['basin']}: {b['value_bp']} ({b['anchor']}) z {b['z']}")
     lines.append("")

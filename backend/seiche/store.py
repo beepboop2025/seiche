@@ -19,7 +19,13 @@ from typing import Iterable
 import pandas as pd
 
 from seiche.config import DATA_DIR, DB_PATH
-from seiche.domain.forward_record import forward_chain_generation, forward_record_hash
+from seiche.domain.forward_record import (
+    forward_chain_generation,
+    forward_record_hash,
+    release_handoff_generated_at,
+    validate_release_handoff_envelope,
+    validate_snapshot_forward_binding,
+)
 from seiche.domain.observation import Observation, RedistributionStatus, SemanticRole
 from seiche.sources.base import Series
 
@@ -163,6 +169,33 @@ def _conn() -> sqlite3.Connection:
              evidence_eligible INTEGER NOT NULL,
              payload_hash TEXT NOT NULL,
              payload TEXT NOT NULL)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS market_snapshot_staging (
+             snapshot_id TEXT PRIMARY KEY,
+             market_id TEXT NOT NULL,
+             product TEXT NOT NULL,
+             event_cutoff TEXT NOT NULL,
+             knowledge_cutoff TEXT NOT NULL,
+             sealed_at TEXT NOT NULL,
+             calibration_id TEXT NOT NULL,
+             evidence_eligible INTEGER NOT NULL,
+             payload_hash TEXT NOT NULL,
+             payload TEXT NOT NULL)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS release_snapshot_handoffs (
+             handoff_id TEXT PRIMARY KEY,
+             producer_sha TEXT NOT NULL,
+             envelope_hash TEXT NOT NULL,
+             envelope TEXT NOT NULL)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS active_release_snapshot_handoff (
+             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+             handoff_id TEXT NOT NULL,
+             FOREIGN KEY (handoff_id)
+               REFERENCES release_snapshot_handoffs (handoff_id))"""
     )
     conn.execute(
         """CREATE INDEX IF NOT EXISTS market_snapshots_latest
@@ -717,6 +750,7 @@ def seal_market_snapshot(
     calibration_id: str,
     evidence_eligible: bool,
     payload: object,
+    promoted: bool = True,
 ) -> str:
     """Append an immutable API snapshot and return its content-derived ID."""
 
@@ -741,9 +775,10 @@ def seal_market_snapshot(
     # the same knowledge cutoff. Preserve subsecond insertion order so
     # ``latest`` cannot nondeterministically return the earlier seal.
     sealed_at = datetime.now(UTC).isoformat(timespec="microseconds")
+    table = "market_snapshots" if promoted else "market_snapshot_staging"
     with _lock, _conn() as conn:
         conn.execute(
-            """INSERT OR IGNORE INTO market_snapshots
+            f"""INSERT OR IGNORE INTO {table}
                  (snapshot_id, market_id, product, event_cutoff,
                   knowledge_cutoff, sealed_at, calibration_id,
                   evidence_eligible, payload_hash, payload)
@@ -764,6 +799,257 @@ def seal_market_snapshot(
     return snapshot_id
 
 
+def promote_market_snapshots(snapshot_ids: Iterable[str]) -> None:
+    """Atomically make an exact staged snapshot bundle visible to readers."""
+    ids = tuple(dict.fromkeys(snapshot_ids))
+    if not ids or any(not isinstance(item, str) or not item for item in ids):
+        raise ValueError("snapshot_ids must contain non-empty strings")
+    placeholders = ",".join("?" for _ in ids)
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            f"""SELECT snapshot_id FROM market_snapshot_staging
+                 WHERE snapshot_id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        found = {row[0] for row in rows}
+        if found != set(ids):
+            raise ValueError("cannot promote a missing market snapshot")
+        columns = (
+            "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+            "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+        )
+        conn.execute(
+            f"""INSERT OR IGNORE INTO market_snapshots ({columns})
+                 SELECT {columns} FROM market_snapshot_staging
+                  WHERE snapshot_id IN ({placeholders})""",
+            ids,
+        )
+
+
+def _release_handoff_envelope(envelope: dict) -> tuple[str, str]:
+    if not isinstance(envelope, dict):
+        raise ValueError("release handoff envelope must be a dictionary")
+    try:
+        canonical = json.dumps(
+            envelope,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("release handoff envelope must be JSON-serializable") from exc
+    return canonical, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def stage_release_handoff(
+    handoff_id: str,
+    producer_sha: str,
+    envelope: dict,
+) -> None:
+    """Append an immutable release envelope, allowing exact replay only."""
+
+    if not isinstance(handoff_id, str) or not handoff_id:
+        raise ValueError("handoff_id must be a non-empty string")
+    if not isinstance(producer_sha, str) or not producer_sha:
+        raise ValueError("producer_sha must be a non-empty string")
+    canonical, envelope_hash = _release_handoff_envelope(envelope)
+    with _lock, _conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO release_snapshot_handoffs
+                 (handoff_id, producer_sha, envelope_hash, envelope)
+               VALUES (?,?,?,?)""",
+            (handoff_id, producer_sha, envelope_hash, canonical),
+        )
+        row = conn.execute(
+            """SELECT producer_sha, envelope_hash, envelope
+                 FROM release_snapshot_handoffs
+                WHERE handoff_id=?""",
+            (handoff_id,),
+        ).fetchone()
+        if row != (producer_sha, envelope_hash, canonical):
+            raise ValueError(
+                "release handoff already exists with a different producer or envelope"
+            )
+
+
+def load_release_handoff(handoff_id: str) -> dict | None:
+    if not isinstance(handoff_id, str) or not handoff_id:
+        raise ValueError("handoff_id must be a non-empty string")
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT envelope FROM release_snapshot_handoffs
+                WHERE handoff_id=?""",
+            (handoff_id,),
+        ).fetchone()
+    return json.loads(row[0]) if row is not None else None
+
+
+def load_active_release_handoff() -> dict | None:
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT handoff.envelope
+                 FROM active_release_snapshot_handoff AS active
+                 JOIN release_snapshot_handoffs AS handoff
+                   ON handoff.handoff_id = active.handoff_id
+                WHERE active.singleton=1"""
+        ).fetchone()
+    return json.loads(row[0]) if row is not None else None
+
+
+def activate_release_handoff(
+    handoff_id: str,
+    producer_sha: str,
+    snapshot_bindings: Iterable[tuple[str, str, str, str]],
+) -> None:
+    """Atomically copy a staged bundle and advance the active envelope pointer."""
+
+    if not isinstance(handoff_id, str) or not handoff_id:
+        raise ValueError("handoff_id must be a non-empty string")
+    if not isinstance(producer_sha, str) or not producer_sha:
+        raise ValueError("producer_sha must be a non-empty string")
+    bindings = tuple(tuple(binding) for binding in snapshot_bindings)
+    if not bindings or any(
+        len(binding) != 4
+        or not all(isinstance(item, str) and item for item in binding)
+        for binding in bindings
+    ):
+        raise ValueError(
+            "snapshot_bindings must contain product, snapshot, record, and row hashes"
+        )
+    products = tuple(binding[0] for binding in bindings)
+    ids = tuple(binding[1] for binding in bindings)
+    record_hashes = tuple(binding[2] for binding in bindings)
+    row_hashes = tuple(binding[3] for binding in bindings)
+    if (
+        len(set(products)) != len(products)
+        or len(set(ids)) != len(ids)
+        or len(set(record_hashes)) != len(record_hashes)
+        or len(set(row_hashes)) != len(row_hashes)
+    ):
+        raise ValueError("snapshot bindings must be unique")
+    expected = {
+        snapshot_id: (product, record_hash, row_hash)
+        for product, snapshot_id, record_hash, row_hash in bindings
+    }
+    placeholders = ",".join("?" for _ in ids)
+    columns = (
+        "snapshot_id,market_id,product,event_cutoff,knowledge_cutoff,"
+        "sealed_at,calibration_id,evidence_eligible,payload_hash,payload"
+    )
+    with _lock, _conn() as conn:
+        # Schema setup commits before returning. BEGIN IMMEDIATE therefore
+        # covers every validation, copied snapshot, and the pointer flip while
+        # also excluding another process-level writer.
+        conn.execute("BEGIN IMMEDIATE")
+        handoff = conn.execute(
+            """SELECT producer_sha, envelope_hash, envelope
+                 FROM release_snapshot_handoffs
+                WHERE handoff_id=?""",
+            (handoff_id,),
+        ).fetchone()
+        if handoff is None:
+            raise ValueError("release handoff does not exist")
+        if handoff[0] != producer_sha:
+            raise ValueError("release handoff producer mismatch")
+        try:
+            envelope = json.loads(handoff[2])
+            _, envelope_hash = _release_handoff_envelope(envelope)
+            authorized_bindings = validate_release_handoff_envelope(
+                envelope,
+                expected_handoff_id=handoff_id,
+                expected_producer_sha=producer_sha,
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ValueError("release handoff envelope is invalid") from exc
+        if (
+            handoff[1] != envelope_hash
+            or set(authorized_bindings) != set(bindings)
+        ):
+            raise ValueError("activation bindings differ from the locked handoff")
+        active = conn.execute(
+            """SELECT active.handoff_id, handoff.producer_sha,
+                      handoff.envelope_hash, handoff.envelope
+                 FROM active_release_snapshot_handoff AS active
+                 JOIN release_snapshot_handoffs AS handoff
+                   ON handoff.handoff_id = active.handoff_id
+                WHERE active.singleton=1"""
+        ).fetchone()
+        if active is not None and active[0] != handoff_id:
+            try:
+                active_envelope = json.loads(active[3])
+                _, active_envelope_hash = _release_handoff_envelope(active_envelope)
+                validate_release_handoff_envelope(
+                    active_envelope,
+                    expected_handoff_id=active[0],
+                    expected_producer_sha=active[1],
+                )
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValueError("active release handoff is invalid") from exc
+            if active[2] != active_envelope_hash:
+                raise ValueError("active release handoff envelope hash is invalid")
+            if active[1] == producer_sha and release_handoff_generated_at(
+                envelope
+            ) <= release_handoff_generated_at(active_envelope):
+                raise ValueError("cannot regress an active same-release handoff")
+        staged_rows = conn.execute(
+            f"""SELECT {columns} FROM market_snapshot_staging
+                  WHERE snapshot_id IN ({placeholders})
+                  ORDER BY snapshot_id""",
+            ids,
+        ).fetchall()
+        staged = {row[0]: _snapshot_record(row) for row in staged_rows}
+        if set(staged) != set(ids):
+            raise ValueError("cannot activate a missing market snapshot")
+        forward_columns = ",".join(_FORWARD_RECORD_COLUMNS)
+        forward_rows = conn.execute(
+            f"""SELECT {forward_columns} FROM forward_validation_records
+                  WHERE snapshot_id IN ({placeholders})
+                  ORDER BY snapshot_id""",
+            ids,
+        ).fetchall()
+        forward = {
+            row[1]: _forward_record_from_row(row)
+            for row in forward_rows
+        }
+        if set(forward) != set(ids):
+            raise ValueError("cannot activate without an exact forward record")
+        for snapshot_id in ids:
+            product, expected_record_hash, expected_row_hash = expected[snapshot_id]
+            if staged[snapshot_id]["product"] != product:
+                raise ValueError("release receipt product does not match staging")
+            validate_snapshot_forward_binding(
+                staged[snapshot_id],
+                forward[snapshot_id],
+                expected_record_hash,
+                expected_row_hash,
+            )
+        conn.execute(
+            f"""INSERT OR IGNORE INTO market_snapshots ({columns})
+                 SELECT {columns} FROM market_snapshot_staging
+                  WHERE snapshot_id IN ({placeholders})
+                  ORDER BY snapshot_id""",
+            ids,
+        )
+        canonical_rows = conn.execute(
+            f"""SELECT {columns} FROM market_snapshots
+                  WHERE snapshot_id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        canonical = {row[0]: _snapshot_record(row) for row in canonical_rows}
+        if canonical != staged:
+            raise RuntimeError(
+                "release handoff canonical rows differ from validated staging"
+            )
+        conn.execute(
+            """INSERT INTO active_release_snapshot_handoff
+                 (singleton, handoff_id) VALUES (1, ?)
+               ON CONFLICT(singleton) DO UPDATE
+                 SET handoff_id=excluded.handoff_id""",
+            (handoff_id,),
+        )
+
+
 def _snapshot_record(row: tuple | None) -> dict | None:
     if row is None:
         return None
@@ -779,6 +1065,20 @@ def _snapshot_record(row: tuple | None) -> dict | None:
         "payload_hash": row[8],
         "payload": json.loads(row[9]),
     }
+
+
+def load_staged_market_snapshot(snapshot_id: str) -> dict | None:
+    if not isinstance(snapshot_id, str) or not snapshot_id:
+        raise ValueError("snapshot_id must be a non-empty string")
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT snapshot_id, market_id, product, event_cutoff,
+                      knowledge_cutoff, sealed_at, calibration_id,
+                      evidence_eligible, payload_hash, payload
+                 FROM market_snapshot_staging WHERE snapshot_id=?""",
+            (snapshot_id,),
+        ).fetchone()
+    return _snapshot_record(row)
 
 
 def load_latest_market_snapshot(market_id: str, product: str) -> dict | None:
@@ -1157,6 +1457,19 @@ def save_blob(key: str, payload: object) -> None:
                 json.dumps(payload),
             ),
         )
+
+
+def save_blobs(payloads: dict[str, object]) -> None:
+    """Atomically replace a related set of blob values."""
+    if not payloads or any(not isinstance(key, str) or not key for key in payloads):
+        raise ValueError("payloads must use non-empty string keys")
+    fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows = [
+        (key, fetched_at, json.dumps(payload))
+        for key, payload in payloads.items()
+    ]
+    with _lock, _conn() as conn:
+        conn.executemany("INSERT OR REPLACE INTO blobs VALUES (?,?,?)", rows)
 
 
 def load_pit_records(limit: int = 2000) -> list[dict]:

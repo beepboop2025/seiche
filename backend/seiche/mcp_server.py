@@ -142,11 +142,18 @@ def _get_snapshot(force: bool = False) -> dict:
     from seiche import assemble
 
     now = time.time()
-    if not force and _cache["snap"] is not None and now - _cache["at"] < _CACHE_TTL_S:
-        return _cache["snap"]
+    cached = _cache["snap"]
+    current = assemble.cached_snapshot()
+    if not force and current is not None and current is not cached:
+        # The assembler can replace its restart seed with a fully rebuilt
+        # board while this independent MCP TTL is still fresh.  Adopt that
+        # completed object immediately instead of pinning the partial seed.
+        _cache.update(snap=current, at=now)
+        return current
+    if not force and cached is not None and now - _cache["at"] < _CACHE_TTL_S:
+        return cached
     snap = _run(assemble.snapshot(force=force))
-    _cache["snap"] = snap
-    _cache["at"] = now
+    _cache.update(snap=snap, at=now)
     return snap
 
 

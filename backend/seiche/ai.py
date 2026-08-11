@@ -70,19 +70,44 @@ def _fp(deep: dict) -> dict:
 
 def context_pack(snap: dict) -> dict:
     """Compact, deterministic extract of the payload — the model's whole world."""
-    eng = snap.get("engines", {})
-    deep = snap.get("deep", {})
-    comp = eng.get("composite", {})
-    tell = deep.get("tell", {})
+    eng = snap.get("engines") or {}
+    deep = snap.get("deep") or {}
+    comp = eng.get("composite") or {}
+    tell = deep.get("tell") or {}
     turn = (deep.get("turn") or {}).get("next_turn")
-    ml = deep.get("ml", {})
-    bt = (deep.get("backtest") or {}).get("event_capture", {})
-    sonar = eng.get("sonar", {})
-    basins = eng.get("basins", {})
-    moor = eng.get("moorings", {})
-    prov = snap.get("provenance", [])
+    ml = deep.get("ml") or {}
+    backtest = deep.get("backtest") or {}
+    bt = backtest.get("event_capture") or {}
+    sonar = eng.get("sonar") or {}
+    basins = eng.get("basins") or {}
+    moor = eng.get("moorings") or {}
+    kink = eng.get("kink") or {}
+    weather = eng.get("weather") or {}
+    resonance = eng.get("resonance") or {}
+    warehouse = eng.get("warehouse") or {}
+    echo = eng.get("echo") or {}
+    book = deep.get("book") or {}
+    stacker = deep.get("stacker") or {}
+    farbasin = eng.get("farbasin") or {}
+    tidetables = deep.get("tidetables") or {}
+    undertow = eng.get("undertow") or {}
+    bathymetry = deep.get("bathymetry") or {}
+    swell = deep.get("swell") or {}
+    merian = eng.get("merian") or {}
+    gyre = deep.get("gyre") or {}
+    roguewave = eng.get("roguewave") or {}
+    communique = eng.get("communique") or {}
+    breakwater = eng.get("breakwater") or {}
+    playbook = deep.get("playbook") or {}
+    prov = snap.get("provenance") or []
+    if isinstance(prov, dict):
+        # Compatibility with the first packaged restart seed. Full assembled
+        # boards use a list, but an older durable handoff must not crash /ask.
+        prov = list(prov.values())
     stale_counts: dict[str, int] = {}
     for p in prov:
+        if not isinstance(p, dict):
+            continue
         stale_counts[p.get("staleness", "?")] = stale_counts.get(p.get("staleness", "?"), 0) + 1
 
     return {
@@ -97,83 +122,83 @@ def context_pack(snap: dict) -> dict:
         "tell": {k: tell.get(k) for k in ("tell", "plumbing_pctl", "market_pctl", "reading", "asof")} if tell.get("ok") else None,
         "next_turn": turn,
         "ml": {k: ml.get(k) for k in ("p_event_5bd", "verdict", "asof")} if ml.get("ok") else None,
-        "kink": {k: eng.get("kink", {}).get(k) for k in ("kink_reserves_b", "current_reserves_b", "distance_b", "days_to_kink", "r2", "asof")} if eng.get("kink", {}).get("ok") else None,
-        "weather_crunches": eng.get("weather", {}).get("crunch_windows", [])[:5],
+        "kink": {k: kink.get(k) for k in ("kink_reserves_b", "current_reserves_b", "distance_b", "days_to_kink", "r2", "asof")} if kink.get("ok") else None,
+        "weather_crunches": (weather.get("crunch_windows") or [])[:5],
         "resonance": {
-            "score": eng.get("resonance", {}).get("score"),
-            "worst_mode": eng.get("resonance", {}).get("worst_mode"),
-        } if eng.get("resonance", {}).get("ok") else None,
-        "warehouse": {k: eng.get("warehouse", {}).get(k) for k in ("total_net_b", "total_pctl", "long_end_share_pct", "asof")} if eng.get("warehouse", {}).get("ok") else None,
-        "echo_top": eng.get("echo", {}).get("top"),
+            "score": resonance.get("score"),
+            "worst_mode": resonance.get("worst_mode"),
+        } if resonance.get("ok") else None,
+        "warehouse": {k: warehouse.get(k) for k in ("total_net_b", "total_pctl", "long_end_share_pct", "asof")} if warehouse.get("ok") else None,
+        "echo_top": echo.get("top"),
         "book": {
-            "today": deep.get("book", {}).get("today"),
-            "verdict": (deep.get("book", {}).get("backtest") or {}).get("verdict"),
-            "live": deep.get("book", {}).get("live"),
-        } if (deep.get("book") or {}).get("ok") else None,
+            "today": book.get("today"),
+            "verdict": (book.get("backtest") or {}).get("verdict"),
+            "live": book.get("live"),
+        } if book.get("ok") else None,
         "stacker": {
-            "p_now": deep.get("stacker", {}).get("p_now"),
-            "published": deep.get("stacker", {}).get("published"),
-            "dispersion_now": deep.get("stacker", {}).get("dispersion_now"),
-            "verdict": deep.get("stacker", {}).get("verdict"),
-        } if (deep.get("stacker") or {}).get("ok") else None,
+            "p_now": stacker.get("p_now"),
+            "published": stacker.get("published"),
+            "dispersion_now": stacker.get("dispersion_now"),
+            "verdict": stacker.get("verdict"),
+        } if stacker.get("ok") else None,
         "farbasin": {
             "channels": {k: {kk: vv for kk, vv in (v or {}).items() if kk != "series"}
-                          for k, v in (eng.get("farbasin", {}).get("channels") or {}).items()},
-            "status": eng.get("farbasin", {}).get("status"),
-        } if eng.get("farbasin", {}).get("ok") else None,
+                          for k, v in (farbasin.get("channels") or {}).items()},
+            "status": farbasin.get("status"),
+        } if farbasin.get("ok") else None,
         "tidetables": {
-            "event_odds": deep.get("tidetables", {}).get("event_odds"),
-            "novelty": deep.get("tidetables", {}).get("novelty"),
-            "skill_verdict": (deep.get("tidetables", {}).get("skill") or {}).get("verdict"),
-            "asof": deep.get("tidetables", {}).get("asof"),
-        } if (deep.get("tidetables") or {}).get("ok") else None,
+            "event_odds": tidetables.get("event_odds"),
+            "novelty": tidetables.get("novelty"),
+            "skill_verdict": (tidetables.get("skill") or {}).get("verdict"),
+            "asof": tidetables.get("asof"),
+        } if tidetables.get("ok") else None,
         "undertow": {
-            "score": eng.get("undertow", {}).get("score"),
+            "score": undertow.get("score"),
             "per_series": {
                 k: {kk: v.get(kk) for kk in ("ac1_pctl", "tau_bd", "var_pctl")}
-                for k, v in (eng.get("undertow", {}).get("per_series") or {}).items()
+                for k, v in (undertow.get("per_series") or {}).items()
             },
-            "asof": eng.get("undertow", {}).get("asof"),
-        } if eng.get("undertow", {}).get("ok") else None,
+            "asof": undertow.get("asof"),
+        } if undertow.get("ok") else None,
         "bathymetry": {
-            "p_event_5bd": deep.get("bathymetry", {}).get("p_event_5bd"),
-            "mfpt_bd": deep.get("bathymetry", {}).get("mfpt_bd"),
+            "p_event_5bd": bathymetry.get("p_event_5bd"),
+            "mfpt_bd": bathymetry.get("mfpt_bd"),
             "floor": {
-                k: (deep.get("bathymetry", {}).get("floor") or {}).get(k)
+                k: (bathymetry.get("floor") or {}).get(k)
                 for k in ("well_bp", "stiffness", "barrier_kt")
             },
-            "tau_bd": (deep.get("bathymetry", {}).get("spectrum") or {}).get("tau_bd"),
-            "tau_pctl": (deep.get("bathymetry", {}).get("spectrum") or {}).get("tau_pctl"),
-            "entropy_pctl": (deep.get("bathymetry", {}).get("arrow") or {}).get("pctl"),
-            "validation_verdict": (deep.get("bathymetry", {}).get("validation") or {}).get("verdict"),
-            "asof": deep.get("bathymetry", {}).get("asof"),
-        } if (deep.get("bathymetry") or {}).get("ok") else None,
+            "tau_bd": (bathymetry.get("spectrum") or {}).get("tau_bd"),
+            "tau_pctl": (bathymetry.get("spectrum") or {}).get("tau_pctl"),
+            "entropy_pctl": (bathymetry.get("arrow") or {}).get("pctl"),
+            "validation_verdict": (bathymetry.get("validation") or {}).get("verdict"),
+            "asof": bathymetry.get("asof"),
+        } if bathymetry.get("ok") else None,
         "swell": {
-            "p_event_5bd": deep.get("swell", {}).get("p_event_5bd"),
-            "event_by_horizon": deep.get("swell", {}).get("event_by_horizon"),
-            "peak": deep.get("swell", {}).get("peak"),
-            "validation_verdict": (deep.get("swell", {}).get("validation") or {}).get("verdict"),
-            "asof": deep.get("swell", {}).get("asof"),
-        } if (deep.get("swell") or {}).get("ok") else None,
+            "p_event_5bd": swell.get("p_event_5bd"),
+            "event_by_horizon": swell.get("event_by_horizon"),
+            "peak": swell.get("peak"),
+            "validation_verdict": (swell.get("validation") or {}).get("verdict"),
+            "asof": swell.get("asof"),
+        } if swell.get("ok") else None,
         "merian": {
-            "instability": eng.get("merian", {}).get("instability"),
-            "modes": (eng.get("merian", {}).get("modes") or [])[:3],
-            "asof": eng.get("merian", {}).get("asof"),
-        } if eng.get("merian", {}).get("ok") else None,
+            "instability": merian.get("instability"),
+            "modes": (merian.get("modes") or [])[:3],
+            "asof": merian.get("asof"),
+        } if merian.get("ok") else None,
         "gyre": {
-            "determinism_verdict": (deep.get("gyre", {}).get("determinism") or {}).get("verdict"),
-            "nonlinearity_verdict": (deep.get("gyre", {}).get("nonlinearity") or {}).get("verdict"),
-            "stability": deep.get("gyre", {}).get("stability"),
-            "forecast": deep.get("gyre", {}).get("forecast"),
-            "asof": deep.get("gyre", {}).get("asof"),
-        } if (deep.get("gyre") or {}).get("ok") else None,
+            "determinism_verdict": (gyre.get("determinism") or {}).get("verdict"),
+            "nonlinearity_verdict": (gyre.get("nonlinearity") or {}).get("verdict"),
+            "stability": gyre.get("stability"),
+            "forecast": gyre.get("forecast"),
+            "asof": gyre.get("asof"),
+        } if gyre.get("ok") else None,
         "roguewave": {
-            "tail_verdict": eng.get("roguewave", {}).get("tail_verdict"),
-            "fit": eng.get("roguewave", {}).get("fit"),
-            "return_levels": eng.get("roguewave", {}).get("return_levels"),
-            "sample_max_bp": eng.get("roguewave", {}).get("sample_max_bp"),
-            "asof": eng.get("roguewave", {}).get("asof"),
-        } if eng.get("roguewave", {}).get("ok") else None,
+            "tail_verdict": roguewave.get("tail_verdict"),
+            "fit": roguewave.get("fit"),
+            "return_levels": roguewave.get("return_levels"),
+            "sample_max_bp": roguewave.get("sample_max_bp"),
+            "asof": roguewave.get("asof"),
+        } if roguewave.get("ok") else None,
         "basins": basins.get("basins") if basins.get("ok") else None,
         "swap_lines_30d_m": (basins.get("swap_lines") or {}).get("ops_30d_total_m") if basins.get("ok") else None,
         "moorings": {
@@ -182,10 +207,10 @@ def context_pack(snap: dict) -> dict:
             "stable_chg_30d_pct": (moor.get("demand") or {}).get("chg_30d_pct"),
         } if moor.get("ok") else None,
         "communique": {
-            "latest": eng.get("communique", {}).get("latest"),
-            "flags": eng.get("communique", {}).get("flags"),
-            "n_statements": eng.get("communique", {}).get("n_statements"),
-        } if eng.get("communique", {}).get("ok") else None,
+            "latest": communique.get("latest"),
+            "flags": communique.get("flags"),
+            "n_statements": communique.get("n_statements"),
+        } if communique.get("ok") else None,
         # Read the canonical key, fall back to the legacy one so a board
         # assembled before the 2026-08-04 rename still answers.
         "funding_pop": {
@@ -194,19 +219,19 @@ def context_pack(snap: dict) -> dict:
             "asof": _fp(deep).get("asof"),
         } if _fp(deep).get("ok") else None,
         "breakwater": {
-            "rescue_proximity": eng.get("breakwater", {}).get("rescue_proximity"),
-            "revealed_threshold": eng.get("breakwater", {}).get("revealed_threshold"),
-            "reading": eng.get("breakwater", {}).get("reading"),
-        } if eng.get("breakwater", {}).get("ok") else None,
+            "rescue_proximity": breakwater.get("rescue_proximity"),
+            "revealed_threshold": breakwater.get("revealed_threshold"),
+            "reading": breakwater.get("reading"),
+        } if breakwater.get("ok") else None,
         "sonar_flagged": [m for m in sonar.get("movers", []) if m.get("flag")][:6],
         "calendar": snap.get("calendar", {}),
-        "playbook": deep.get("playbook", {}).get("tables") if (deep.get("playbook") or {}).get("ok") else None,
-        "playbook_state": (deep.get("playbook") or {}).get("state"),
+        "playbook": playbook.get("tables") if playbook.get("ok") else None,
+        "playbook_state": playbook.get("state"),
         "backtest_headline": {
             "recall": bt.get("recall"), "precision": bt.get("precision"),
             "base_rate": bt.get("base_rate"), "median_lead_d": bt.get("median_lead_d"),
         },
-        "backtest_caveats": (deep.get("backtest") or {}).get("caveats"),
+        "backtest_caveats": backtest.get("caveats"),
         "faults": snap.get("faults"),
         "provenance_staleness": stale_counts,
     }

@@ -19,9 +19,12 @@ backtest reconstruction can be accused of polishing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
+import subprocess
 import time
 import traceback
 from pathlib import Path
@@ -62,6 +65,11 @@ from seiche.config import (
     REFEREE_SERIES,
     RUNWAY_QT_PACE_B_PER_MONTH,
     SWAP_LINE_OPS_N,
+)
+from seiche.domain.forward_record import (
+    SNAPSHOT_HANDOFF_SCHEMA,
+    validate_release_handoff_envelope,
+    validate_release_product_bindings,
 )
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
@@ -136,7 +144,15 @@ LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
 STATIC_SNAPSHOT_PATH = (
     Path(__file__).resolve().with_name("bootstrap_snapshot.json")
 )
-_cache: dict = {"at": 0.0, "payload": None, "source": None}
+_cache: dict = {
+    "at": 0.0,
+    "payload": None,
+    "source": None,
+    "release_receipt": None,
+    "release_handoff_id": None,
+    "producer_sha": None,
+}
+_process_release_sha: str | None = None
 _lock = asyncio.Lock()
 _refreshing = False  # one background rebuild at a time; readers never wait on it
 
@@ -1633,6 +1649,7 @@ def _servable_snapshot(payload: object) -> bool:
     backtest = deep.get("backtest") if isinstance(deep, dict) else None
     calendar = payload.get("calendar")
     navigator = payload.get("navigator")
+    provenance = payload.get("provenance")
 
     def mapping_or_none(value: object) -> bool:
         return value is None or isinstance(value, dict)
@@ -1645,7 +1662,16 @@ def _servable_snapshot(payload: object) -> bool:
         and isinstance(composite.get("regime"), str)
         and isinstance(composite.get("value"), (int, float))
         and isinstance(deep, dict)
-        and mapping_or_none(tell)
+        and isinstance(tell, dict)
+        and (
+            not tell.get("ok")
+            or (
+                isinstance(tell.get("tell"), (int, float))
+                and isinstance(tell.get("plumbing_pctl"), (int, float))
+                and isinstance(tell.get("market_pctl"), (int, float))
+                and isinstance(tell.get("reading"), str)
+            )
+        )
         and mapping_or_none(stacker)
         and (
             not isinstance(stacker, dict)
@@ -1659,14 +1685,17 @@ def _servable_snapshot(payload: object) -> bool:
         and mapping_or_none(backtest)
         and (
             not isinstance(backtest, dict)
-            or mapping_or_none(backtest.get("event_capture"))
-        )
-        and (
-            not isinstance(backtest, dict)
-            or backtest.get("episodes") is None
             or (
-                isinstance(backtest.get("episodes"), list)
-                and all(isinstance(row, dict) for row in backtest["episodes"])
+                mapping_or_none(backtest.get("event_capture"))
+                and (
+                    backtest.get("episodes") is None
+                    or (
+                        isinstance(backtest.get("episodes"), list)
+                        and all(
+                            isinstance(row, dict) for row in backtest["episodes"]
+                        )
+                    )
+                )
             )
         )
         and mapping_or_none(calendar)
@@ -1677,15 +1706,26 @@ def _servable_snapshot(payload: object) -> bool:
         )
         and mapping_or_none(navigator)
         and isinstance(payload.get("faults"), list)
-        and isinstance(payload.get("provenance"), (dict, list))
+        and all(isinstance(row, dict) for row in payload["faults"])
+        and (
+            (
+                isinstance(provenance, list)
+                and all(isinstance(row, dict) for row in provenance)
+            )
+            or (
+                isinstance(provenance, dict)
+                and all(isinstance(row, dict) for row in provenance.values())
+            )
+        )
     )
 
 
 def restore_cached_snapshot() -> str | None:
     """Hydrate the in-process cache without fetching or running an engine.
 
-    The durable SQLite copy is preferred.  The backend-packaged snapshot is a
-    disaster-recovery seed for the first rollout or a lost cache database.
+    The repository's controller-accepted handoff is preferred.  The legacy
+    SQLite copy remains a rollback bridge, and the backend-packaged snapshot
+    is a disaster-recovery seed for the first rollout or a lost database.
     Restored payloads are marked stale so the normal background owner rebuilds
     immediately while readers continue to receive the dated prior reading.
     Returns the source name for startup logging, or ``None`` when no safe
@@ -1695,13 +1735,29 @@ def restore_cached_snapshot() -> str | None:
         return "memory"
 
     log = logging.getLogger("seiche.assemble")
+    durable = None
     try:
-        durable = store.load_blob(LAST_GOOD_SNAPSHOT_KEY)
+        from seiche.repository import get_repository
+
+        active = get_repository().load_active_release_handoff()
+        if active is not None:
+            durable, _, _, _ = _validated_handoff(active)
     except Exception:  # noqa: BLE001 - a broken handoff must fall through
-        log.exception("could not load durable last-known-good snapshot")
-        durable = None
+        log.exception("could not load active repository snapshot handoff")
+    if durable is None:
+        try:
+            durable = store.load_blob(LAST_GOOD_SNAPSHOT_KEY)
+        except Exception:  # noqa: BLE001 - a broken handoff must fall through
+            log.exception("could not load legacy last-known-good snapshot")
     if _servable_snapshot(durable):
-        _cache.update(at=0.0, payload=durable, source="durable")
+        _cache.update(
+            at=0.0,
+            payload=durable,
+            source="durable",
+            release_receipt=None,
+            release_handoff_id=None,
+            producer_sha=None,
+        )
         return "durable"
     if durable is not None:
         log.warning("ignored invalid durable last-known-good snapshot")
@@ -1711,21 +1767,275 @@ def restore_cached_snapshot() -> str | None:
     except (OSError, UnicodeError, json.JSONDecodeError):
         static = None
     if _servable_snapshot(static):
-        _cache.update(at=0.0, payload=static, source="static")
+        _cache.update(
+            at=0.0,
+            payload=static,
+            source="static",
+            release_receipt=None,
+            release_handoff_id=None,
+            producer_sha=None,
+        )
         return "static"
     if static is not None:
         log.warning("ignored invalid static last-known-good snapshot")
     return None
 
 
-def _persist_last_good_snapshot(payload: dict) -> None:
-    """Best-effort release handoff; persistence cannot invalidate a live read."""
+def _snapshot_digest(payload: dict) -> str:
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _handoff_digest(body: dict) -> str:
+    canonical = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _valid_release_sha(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
+
+
+def _release_sha() -> str:
+    checkout = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    resolved = result.stdout.strip()
+    if not _valid_release_sha(resolved):
+        raise ValueError("could not resolve a canonical release SHA")
+    resolved = resolved.lower()
+    explicit = os.getenv("SEICHE_RELEASE_SHA")
+    if explicit is not None:
+        explicit = explicit.strip()
+        if not _valid_release_sha(explicit):
+            raise ValueError("SEICHE_RELEASE_SHA is not a canonical commit SHA")
+        explicit = explicit.lower()
+        if explicit != resolved:
+            raise ValueError("SEICHE_RELEASE_SHA does not match the checkout HEAD")
+    return resolved
+
+
+def capture_process_release_sha() -> str:
+    """Resolve the release identity once, before a mutable checkout can move."""
+    global _process_release_sha
+    if _process_release_sha is None:
+        _process_release_sha = _release_sha()
+    return _process_release_sha
+
+
+def _release_receipt_snapshot_ids(receipt: object, payload: dict) -> tuple[str, str]:
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "generated_at",
+        "producer",
+        "products",
+    }:
+        raise ValueError("release receipt has an invalid top-level contract")
+    if receipt.get("generated_at") != payload.get("generated_at"):
+        raise ValueError("release receipt does not bind its payload")
+    if receipt.get("producer") != (
+        "seiche.markets.us_usd.materialize.seal_legacy_snapshot"
+    ):
+        raise ValueError("release receipt producer is invalid")
+    bindings = validate_release_product_bindings(
+        receipt.get("products"),
+        required_products=("overview", "gauge"),
+    )
+    snapshot_ids = tuple(binding[1] for binding in bindings)
+    return snapshot_ids[0], snapshot_ids[1]
+
+
+def _handoff_body(payload: dict, release_receipt: dict, producer_sha: str) -> dict:
+    return {
+        "schema": SNAPSHOT_HANDOFF_SCHEMA,
+        "producer_sha": producer_sha,
+        "payload_sha256": _snapshot_digest(payload),
+        "release_receipt": release_receipt,
+        "payload": payload,
+    }
+
+
+def _build_handoff(payload: dict, release_receipt: dict, producer_sha: str) -> dict:
+    body = _handoff_body(payload, release_receipt, producer_sha)
+    _release_receipt_snapshot_ids(release_receipt, payload)
+    return {**body, "handoff_id": _handoff_digest(body)}
+
+
+def _validated_handoff(
+    envelope: object,
+    *,
+    expected_release_sha: str | None = None,
+    expected_handoff_id: str | None = None,
+) -> tuple[dict, dict, str, str]:
+    if not isinstance(envelope, dict):
+        raise ValueError("snapshot handoff envelope is incomplete")
+    validate_release_handoff_envelope(
+        envelope,
+        expected_handoff_id=expected_handoff_id,
+        expected_producer_sha=expected_release_sha,
+    )
+    if not isinstance(envelope, dict) or set(envelope) != {
+        "schema",
+        "producer_sha",
+        "payload_sha256",
+        "release_receipt",
+        "payload",
+        "handoff_id",
+    }:
+        raise ValueError("snapshot handoff envelope is incomplete")
+    if envelope.get("schema") != SNAPSHOT_HANDOFF_SCHEMA:
+        raise ValueError("snapshot handoff schema is invalid")
+    producer_sha = envelope.get("producer_sha")
+    handoff_id = envelope.get("handoff_id")
+    payload = envelope.get("payload")
+    receipt = envelope.get("release_receipt")
+    if not _valid_release_sha(producer_sha):
+        raise ValueError("snapshot handoff producer SHA is invalid")
+    producer_sha = producer_sha.lower()
+    if expected_release_sha is not None and producer_sha != expected_release_sha:
+        raise ValueError("snapshot handoff belongs to another release")
+    if not isinstance(handoff_id, str) or len(handoff_id) != 64:
+        raise ValueError("snapshot handoff ID is invalid")
+    if expected_handoff_id is not None and not hmac.compare_digest(
+        handoff_id, expected_handoff_id
+    ):
+        raise ValueError("snapshot handoff ID changed after health verification")
+    if not _servable_snapshot(payload) or not isinstance(receipt, dict):
+        raise ValueError("snapshot handoff payload is not safely servable")
+    payload_digest = envelope.get("payload_sha256")
+    expected_payload_digest = _snapshot_digest(payload)
+    if not isinstance(payload_digest, str) or not hmac.compare_digest(
+        payload_digest, expected_payload_digest
+    ):
+        raise ValueError("snapshot handoff payload digest mismatch")
+    _release_receipt_snapshot_ids(receipt, payload)
+    body = {key: value for key, value in envelope.items() if key != "handoff_id"}
+    expected_digest = _handoff_digest(body)
+    if not hmac.compare_digest(handoff_id, expected_digest):
+        raise ValueError("snapshot handoff receipt or envelope digest mismatch")
+    return payload, receipt, producer_sha, handoff_id
+
+
+def _accepted_release(repository, producer_sha: str) -> bool:
+    active = repository.load_active_release_handoff()
+    if active is None:
+        return False
     try:
-        store.save_blob(LAST_GOOD_SNAPSHOT_KEY, payload)
+        _, _, active_sha, _ = _validated_handoff(active)
+    except ValueError:
+        logging.getLogger("seiche.assemble").exception(
+            "active release handoff failed validation"
+        )
+        return False
+    return active_sha == producer_sha
+
+
+def _persist_pending_snapshot(payload: dict, release_receipt: dict) -> str | None:
+    """Stage a verified handoff; only the deploy controller may activate it."""
+    try:
+        from seiche.repository import get_repository
+
+        repository = get_repository()
+        producer_sha = capture_process_release_sha()
+        envelope = _build_handoff(payload, release_receipt, producer_sha)
+        handoff_id = envelope["handoff_id"]
+        repository.stage_release_handoff(handoff_id, producer_sha, envelope)
+        if _accepted_release(repository, producer_sha) and not activate_pending_snapshot(
+            producer_sha, handoff_id, repository=repository
+        ):
+            raise RuntimeError("accepted release could not advance active handoff")
     except Exception:  # noqa: BLE001 - memory cache remains authoritative
         logging.getLogger("seiche.assemble").exception(
-            "could not persist last-known-good snapshot"
+            "could not stage pending release snapshot"
         )
+        return None
+    return handoff_id
+
+
+def verify_pending_snapshot(
+    expected_release_sha: str, expected_handoff_id: str
+) -> bool:
+    """Read-only controller preflight for the exact health-returned handoff."""
+    try:
+        from seiche.repository import get_repository
+
+        if not _valid_release_sha(expected_release_sha):
+            raise ValueError("expected release SHA is invalid")
+        repository = get_repository()
+        envelope = repository.load_release_handoff(expected_handoff_id)
+        _validated_handoff(
+            envelope,
+            expected_release_sha=expected_release_sha.lower(),
+            expected_handoff_id=expected_handoff_id,
+        )
+    except Exception:  # noqa: BLE001 - caller treats False as a failed preflight
+        logging.getLogger("seiche.assemble").exception(
+            "pending release handoff failed exact verification"
+        )
+        return False
+    return True
+
+
+def activate_pending_snapshot(
+    expected_release_sha: str,
+    expected_handoff_id: str,
+    *,
+    repository=None,
+) -> bool:
+    """Atomically activate the exact market bundle and full-board handoff."""
+    try:
+        from seiche.markets.us_usd.materialize import verify_release_receipt
+        from seiche.repository import get_repository
+
+        if not _valid_release_sha(expected_release_sha):
+            raise ValueError("expected release SHA is invalid")
+        expected_release_sha = expected_release_sha.lower()
+        repository = repository or get_repository()
+        envelope = repository.load_release_handoff(expected_handoff_id)
+        payload, receipt, _, handoff_id = _validated_handoff(
+            envelope,
+            expected_release_sha=expected_release_sha,
+            expected_handoff_id=expected_handoff_id,
+        )
+        snapshot_bindings = verify_release_receipt(repository, receipt)
+        repository.activate_release_handoff(
+            handoff_id,
+            expected_release_sha,
+            snapshot_bindings,
+        )
+        # Best-effort bridge for pre-handoff binaries. This is deliberately
+        # outside the atomic repository commit and never changes its verdict.
+        try:
+            store.save_blob(LAST_GOOD_SNAPSHOT_KEY, payload)
+        except Exception:  # noqa: BLE001 - accepted repository state is canonical
+            logging.getLogger("seiche.assemble").exception(
+                "could not mirror accepted handoff to legacy SQLite"
+            )
+    except Exception:  # noqa: BLE001 - controller reconciles this exact token
+        logging.getLogger("seiche.assemble").exception(
+            "could not activate exact pending release snapshot"
+        )
+        return False
+    return True
 
 
 def cached_snapshot() -> dict | None:
@@ -1741,6 +2051,94 @@ def cached_snapshot() -> dict | None:
 def cached_snapshot_was_rebuilt() -> bool:
     """True only after this process completed the full assembly pipeline."""
     return _cache["payload"] is not None and _cache.get("source") == "rebuilt"
+
+
+def cached_snapshot_release_receipt() -> dict | None:
+    """Return proof that this process rebuilt and sealed its market products.
+
+    A completed v1 board remains readable when v2 sealing fails, but that
+    degraded state must not satisfy a deployment gate.  The receipt is kept
+    in process memory so a restored handoff can never impersonate work done by
+    the candidate process.
+    """
+    if not cached_snapshot_was_rebuilt():
+        return None
+    receipt = _cache.get("release_receipt")
+    return receipt if isinstance(receipt, dict) else None
+
+
+def cached_snapshot_release_handoff() -> dict | None:
+    """Return the exact staged generation accepted by the strict health gate."""
+    if cached_snapshot_release_receipt() is None:
+        return None
+    handoff_id = _cache.get("release_handoff_id")
+    producer_sha = _cache.get("producer_sha")
+    if (
+        not isinstance(handoff_id, str)
+        or len(handoff_id) != 64
+        or not _valid_release_sha(producer_sha)
+    ):
+        return None
+    return {
+        "producer_sha": producer_sha,
+        "activation_token": handoff_id,
+    }
+
+
+def _seal_release_evidence(payload: dict) -> dict | None:
+    """Seal both US market products and issue an all-or-nothing build receipt."""
+    try:
+        from seiche.markets.us_usd.materialize import seal_legacy_snapshot
+
+        products = seal_legacy_snapshot(payload)
+        if set(products) != {"overview", "gauge"} or not all(
+            isinstance(binding, dict)
+            and set(binding)
+            == {"snapshot_id", "forward_record_id", "snapshot_row_sha256"}
+            and all(isinstance(value, str) and value for value in binding.values())
+            for binding in products.values()
+        ):
+            raise ValueError("US-USD materializer returned an incomplete receipt")
+    except Exception:  # noqa: BLE001 — v2 cannot take ordinary v1 reads down
+        logging.getLogger("seiche.assemble").exception(
+            "US-USD v2 snapshot materialization failed"
+        )
+        return None
+    return {
+        "generated_at": payload["generated_at"],
+        "producer": "seiche.markets.us_usd.materialize.seal_legacy_snapshot",
+        "products": products,
+    }
+
+
+async def _publish_rebuilt_snapshot(
+    payload: dict,
+    release_receipt: dict | None,
+) -> None:
+    """Publish live v1 reads; stage only a cycle that passed evidence sealing.
+
+    This is an in-place deployment, not a blue/green public-read switch. The
+    controller boundary governs canonical v2 products and restart-durable LKG
+    state; ordinary v1 memory/PIT publication remains the live process's
+    established behavior while the candidate health gate runs.
+    """
+    _cache.update(
+        at=time.time(),
+        payload=payload,
+        source="rebuilt",
+        release_receipt=None,
+        release_handoff_id=None,
+        producer_sha=None,
+    )
+    handoff_id = None
+    if release_receipt is not None:
+        handoff_id = await asyncio.to_thread(
+            _persist_pending_snapshot, payload, release_receipt
+        )
+    if handoff_id is not None:
+        _cache["release_receipt"] = release_receipt
+        _cache["release_handoff_id"] = handoff_id
+        _cache["producer_sha"] = capture_process_release_sha()
 
 
 async def snapshot(force: bool = False) -> dict:
@@ -1849,20 +2247,13 @@ async def _build_snapshot() -> dict:
     # v2 never collects at request time. The existing US cycle is the first
     # producer during migration: once its payload is complete, a pack-local
     # adapter seals independent market products for read-only v2 routes.
-    # Failure is isolated from v1 publication and reported in operator logs.
-    try:
-        from seiche.markets.us_usd.materialize import seal_legacy_snapshot
-
-        seal_legacy_snapshot(payload)
-    except Exception:  # noqa: BLE001 — a v2 materializer cannot block v1
-        logging.getLogger("seiche.assemble").exception(
-            "US-USD v2 snapshot materialization failed"
-        )
+    # Failure is isolated from ordinary v1 reads but makes the candidate
+    # ineligible for promotion through the strict deployment health gate.
+    release_receipt = await asyncio.to_thread(_seal_release_evidence, payload)
     # Publish to memory first: a slow or locked SQLite handoff must never make
-    # an already-completed reading wait.  Persist off the event loop so the
-    # next process can serve this exact payload while it rebuilds its own.
-    _cache.update(at=time.time(), payload=payload, source="rebuilt")
-    await asyncio.to_thread(_persist_last_good_snapshot, payload)
+    # an already-completed reading wait. Stage only after the evidence seal;
+    # the root deploy controller activates it after every remaining gate.
+    await _publish_rebuilt_snapshot(payload, release_receipt)
     return payload
 
 
