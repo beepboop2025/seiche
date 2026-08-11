@@ -211,6 +211,9 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
     assert destination == f"{bot.BOT_URL}?start=lab_alert"
     assert destination in text
     assert destination.startswith(bot.BOT_URL)
-    assert subscribing_buttons
+    assert len(keyboard) == 1
+    assert len(subscribing_buttons) == 1
     assert all("follow" in button["text"].lower()
                for button in subscribing_buttons)
+    assert "11:30 UTC" in text
+    assert "state-change alerts" in text

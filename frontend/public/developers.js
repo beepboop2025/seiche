@@ -51,9 +51,11 @@
       })
       .then(function (message) {
         var result = message.result || {};
+        if (result.isError) throw new Error("tool returned an unavailable reading");
         var value = result.structuredContent ||
           ((result.content || [])[0] || {}).text || message;
         output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        document.getElementById("toolHandoff").hidden = false;
       })
       .catch(function (error) { output.textContent = "Live call failed: " + error.message; })
       .finally(function () { button.disabled = false; });

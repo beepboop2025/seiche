@@ -98,6 +98,12 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     mcp_server.set_main_loop(asyncio.get_running_loop())
     refresh_task: asyncio.Task[None] | None = None
     if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+        restored = await asyncio.to_thread(assemble.restore_cached_snapshot)
+        if restored is not None:
+            logging.getLogger("uvicorn.error").info(
+                "serving %s last-known-good snapshot while board rebuilds",
+                restored,
+            )
         refresh_task = asyncio.create_task(_keep_warm(), name="seiche-keep-warm")
     try:
         yield
@@ -481,6 +487,7 @@ def api_index() -> dict[str, Any]:
             "authentication": "none for the eight public tools",
             "first_tool": "funding_stress_now",
         },
+        "delivery": mcp_server.telegram_delivery("agent_api"),
         "rest": {
             "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",
@@ -552,10 +559,22 @@ def _public_openapi_document() -> dict[str, Any]:
                 "operationId": "getSeicheHealth",
                 "summary": "Read cached service and data-source health",
                 "description": (
-                    "Reads only the last completed board snapshot. A cold cache "
-                    "returns 503 immediately; this request never starts or waits "
-                    "for a board build."
+                    "Reads only the last completed board snapshot. A restart can "
+                    "serve a dated last-known-good snapshot while rebuilding. A "
+                    "cold cache, or require_rebuilt=true before this process has "
+                    "completed its own build, returns 503 immediately. This request "
+                    "never starts or waits for a board build."
                 ),
+                "parameters": [{
+                    "name": "require_rebuilt",
+                    "in": "query",
+                    "required": False,
+                    "description": (
+                        "Deployment gate: require a snapshot completed by the "
+                        "current process rather than a restored handoff."
+                    ),
+                    "schema": {"type": "boolean", "default": False},
+                }],
                 "responses": {
                     "200": object_response,
                     "503": {
@@ -578,9 +597,15 @@ def _public_openapi_document() -> dict[str, Any]:
                                     "properties": {
                                         "status": {
                                             "type": "string",
-                                            "const": "warming_or_unavailable",
+                                            "enum": [
+                                                "warming_or_unavailable",
+                                                "rebuilding_from_last_known_good",
+                                            ],
                                         },
                                         "version": {"type": "string"},
+                                        "serving_generated_at": {
+                                            "type": ["string", "null"],
+                                        },
                                     },
                                     "additionalProperties": False,
                                 },
@@ -1643,8 +1668,8 @@ async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
 
 
 @app.get("/api/health")
-async def health(response: Response):
-    """Readiness from completed cache state; never initiate a board build."""
+async def health(response: Response, require_rebuilt: bool = False):
+    """Cached availability, plus an optional current-process release gate."""
     snap = assemble.cached_snapshot()
     if snap is None:
         return JSONResponse(
@@ -1652,6 +1677,16 @@ async def health(response: Response):
             content={
                 "status": "warming_or_unavailable",
                 "version": assemble.VERSION_LABEL,
+            },
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    if require_rebuilt and not assemble.cached_snapshot_was_rebuilt():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "rebuilding_from_last_known_good",
+                "version": assemble.VERSION_LABEL,
+                "serving_generated_at": snap.get("generated_at"),
             },
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )

@@ -308,13 +308,16 @@ def test_box_smoke_installs_its_declared_async_test_plugin():
 def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     wrapper = (ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh").read_text()
     assert wrapper.count("deploy_caddy ||") == 2
-    assert "already running ${AFTER:0:7} — checking edge config" in wrapper
+    assert (
+        "already running ${AFTER:0:7} — checking candidate rebuild and edge config"
+        in wrapper
+    )
     assert "/api/v2/coverage" in wrapper
     assert "systemctl is-active --quiet postgresql" in wrapper
     assert wrapper.index("systemctl stop seiche-market-worker.service") < wrapper.index(
         "bash /home/seiche/update.sh"
     )
-    assert wrapper.count("restore_market_services") == 5
+    assert wrapper.count("restore_market_services") == 6
     assert "previous market services restored" in wrapper
     market_installer = wrapper[
         wrapper.index("deploy_market_platform()") : wrapper.index(
@@ -520,6 +523,7 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
         wrapper.index("health_wait()") : wrapper.index("market_health()")
     ]
     assert "/api/health" in readiness
+    assert "require_rebuilt=true" in readiness
     assert "/api/public" not in readiness
     function = wrapper[
         wrapper.index("deploy_pull_unit()") : wrapper.index("deploy_market_platform ||")
@@ -544,8 +548,10 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
             'if [ "$BEFORE" = "$AFTER" ]; then'
         )
     ]
+    assert "health_wait 900" in already
     assert "deploy_pull_unit" in already
-    assert already.index("deploy_pull_unit") < already.index("restore_market_services")
+    assert already.index("health_wait 900") < already.index("deploy_pull_unit")
+    assert "serving a handoff but has not rebuilt" in already
 
 
 def test_palimpest_osint_edge_is_an_exact_static_allowlist():

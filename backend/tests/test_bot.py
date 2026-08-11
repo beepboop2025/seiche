@@ -658,10 +658,10 @@ def test_post_channel_carries_deep_links_with_ref(monkeypatch, sent):
     assert "the read" in p["text"]
     urls = [b["url"] for row in p["reply_markup"]["inline_keyboard"]
             for b in row]
-    # every desk reachable, and every link attributes back to this post type
-    assert any("seiche_desk_bot?start=lab_letter" in u for u in urls)
-    assert any("LiquiLens_bot?start=lab_letter" in u for u in urls)
-    assert any("undertow_LiquiLens_bot?start=lab_letter" in u for u in urls)
+    # One letter, one conversion decision. Sibling discovery follows inside
+    # the bot rather than competing with the attributed subscription action.
+    assert urls == ["https://t.me/seiche_desk_bot?start=lab_letter"]
+    assert "11:30 UTC" in p["text"]
 
 
 def test_post_channel_survives_a_rejection(monkeypatch):
@@ -678,5 +678,6 @@ def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
     monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
     monkeypatch.setattr(bot, "fmt_daily_letter", lambda: "today's letter")
     bot.run_letter()
-    assert any(p.get("chat_id") == -1004297805949 and
-               "today's letter" in p.get("text", "") for _, p in sent)
+    channel_posts = [p for _, p in sent if p.get("chat_id") == -1004297805949]
+    assert len(channel_posts) == 1, "conversion work must not increase post volume"
+    assert "today's letter" in channel_posts[0].get("text", "")

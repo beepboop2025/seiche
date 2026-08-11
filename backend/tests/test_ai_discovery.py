@@ -81,6 +81,16 @@ def test_selection_page_is_canonical_and_links_its_evidence():
     assert "static.cloudflareinsights.com/beacon.min.js" in page
 
 
+def test_developer_activation_converts_to_attributed_ongoing_delivery():
+    page = (PUBLIC / "developers.html").read_text()
+    script = (PUBLIC / "developers.js").read_text()
+
+    assert "https://t.me/seiche_desk_bot?start=agent_developers" in page
+    assert "11:30 UTC" in page
+    assert 'id="toolHandoff" hidden' in page
+    assert 'getElementById("toolHandoff").hidden = false' in script
+
+
 def test_generated_discovery_indexes_include_the_selection_surface():
     assert ("/use-cases.html", "monthly", "0.9") in dispatch_pages.BASE_URLS
     for url in ("https://seiche.info/use-cases.html",
