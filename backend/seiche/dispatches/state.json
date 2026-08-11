@@ -40,7 +40,7 @@
   },
   "letter": {
     "regime": "EROSION",
-    "value": 44.8,
+    "value": 44.9,
     "decomp": {
       "weather": 11.0,
       "resonance": 6.7,
@@ -50,15 +50,15 @@
       "confession": 2.9,
       "undertow": 2.9,
       "warehouse": 2.4,
-      "tails": 1.9,
+      "tails": 2.0,
       "auctions": 1.2,
       "hydrophone": 0.0
     },
     "crunch": {
-      "date": "2026-08-13",
-      "worst_case_b": 2967.9,
-      "settlement_b": 95.0
+      "date": "2026-08-17",
+      "worst_case_b": 2945.0,
+      "settlement_b": 125.0
     },
-    "tell": 35.0
+    "tell": 39.0
   }
 }
