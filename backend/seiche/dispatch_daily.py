@@ -50,6 +50,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from seiche.newsroom import build_story
+
 DEFAULT_API = "https://api.seiche.info"
 HISTORY_URL = "https://seiche.info/data/book_history.json"
 # The continuation marker. Everything on Seiche is free: ".paid.md" and
@@ -1905,7 +1907,7 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
     if issues:
         raise SystemExit("letter failed lint: " + "; ".join(issues))
 
-    return {
+    dispatch = {
         "slug": f"{date}-daily",
         "title": title,
         "date": date,
@@ -1916,6 +1918,14 @@ def build_dispatch(snap: dict, prev_value=None, date: str | None = None,
         "state": _updated_state(snap, baseline, letter_prev, date),
         "odds": _current_odds(snap, date) + [r for r in [_spread_row(snap, date)] if r],
     }
+    dispatch["story"] = build_story(
+        dispatch,
+        snap,
+        novel_movers=novel,
+        previous_value=prev_value,
+        letter_previous=letter_prev,
+    )
+    return dispatch
 
 
 def _forward_pulse(snap: dict, date: str) -> list[str]:
@@ -1949,6 +1959,10 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
     free_path.write_text(body)
 
     written = [str(free_path)]
+    if d.get("story"):
+        story_path = free_dir / f"{d['slug']}.json"
+        story_path.write_text(json.dumps(d["story"], indent=2, ensure_ascii=False) + "\n")
+        written.append(str(story_path))
     if d["desk_md"]:
         desk_path = paid_dir / f"{d['slug']}.desk.md"
         desk_path.write_text(d["desk_md"] + "\n")
@@ -1985,7 +1999,11 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
     if index.exists():
         entries = json.loads(index.read_text())
     entries = [e for e in entries if e.get("slug") != d["slug"]]
-    entries.insert(0, {k: d[k] for k in ("slug", "title", "date", "tag", "summary")})
+    entry = {k: d[k] for k in ("slug", "title", "date", "tag", "summary")}
+    if d.get("story"):
+        entry["story_url"] = f"/dispatches/{d['slug']}.json"
+        entry["editorial_class"] = d["story"].get("editorial_class")
+    entries.insert(0, entry)
     entries.sort(key=lambda e: e.get("date", ""), reverse=True)
     index.write_text(json.dumps(entries, indent=2) + "\n")
     written.append(str(index))
