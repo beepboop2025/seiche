@@ -200,9 +200,9 @@ def post_channel(text: str, ref: str) -> bool:
         f"Follow Seiche for one 11:30 UTC letter plus material state-change "
         f"alerts; /stop any time: {desk_url}</i>"
     )
-    # A letter has one conversion job.  The sibling desks remain one tap away
-    # after onboarding through FLEET_ROW, where they do not compete with the
-    # decision to follow the desk that produced this read.
+    # A letter has one conversion job.  The sibling desks remain discoverable
+    # from the on-demand desk keyboards through FLEET_ROW, where they do not
+    # compete with the decision to follow the desk that produced this read.
     keyboard = [
         [{"text": "📨 Follow: next Seiche letter", "url": desk_url}],
     ]

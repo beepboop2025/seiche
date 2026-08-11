@@ -1625,12 +1625,15 @@ def _servable_snapshot(payload: object) -> bool:
     """
     if not isinstance(payload, dict):
         return False
+    engines = payload.get("engines")
+    composite = engines.get("composite") if isinstance(engines, dict) else None
     return (
         isinstance(payload.get("generated_at"), str)
         and bool(payload["generated_at"])
         and isinstance(payload.get("version"), str)
-        and isinstance(payload.get("engines"), dict)
-        and bool(payload["engines"])
+        and isinstance(composite, dict)
+        and isinstance(composite.get("regime"), str)
+        and isinstance(composite.get("value"), (int, float))
         and isinstance(payload.get("deep"), dict)
         and isinstance(payload.get("faults"), list)
         and isinstance(payload.get("provenance"), (dict, list))
