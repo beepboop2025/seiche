@@ -16,6 +16,7 @@ PROMOTION_REQUEST_DIR=/run/seiche-release
 DEPLOY_STATE_DIR=/var/lib/seiche-deploy
 PROMOTION_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
+LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
 
 PACKAGES=()
 if ! command -v psql >/dev/null 2>&1; then
@@ -44,6 +45,9 @@ if [ ! -x /usr/bin/dpkg ] \
     echo "market platform: GNU coreutils sync 8.24 or newer is required" >&2
     exit 1
 fi
+install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"
+SEICHE_DEPLOY_STATE_DIR="$DEPLOY_STATE_DIR" \
+    /usr/bin/bash "$LEGACY_UPDATE_RETIRER"
 systemctl enable --now postgresql
 
 # Debian assigns the next free port when another local service already owns
@@ -158,7 +162,6 @@ install -d -o seiche -g seiche -m 0750 \
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
 install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"
-install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"
 
 # Give the future Lab runtime access to only the stable funding-core export.
 # The group is provisioned independently of the consumer account so a Seiche

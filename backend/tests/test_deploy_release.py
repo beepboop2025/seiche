@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tomllib
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +26,9 @@ DEPLOY_WRAPPER = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
 MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
+LEGACY_UPDATE_RETIRER = (
+    ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
+)
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
@@ -30,6 +36,153 @@ def _executable(path: Path, body: str) -> Path:
     path.write_text("#!/usr/bin/env bash\nset -u\n" + body)
     path.chmod(0o755)
     return path
+
+
+def _legacy_retirement_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
+    systemd_dir = tmp_path / "systemd"
+    state_dir = tmp_path / "deploy-state"
+    fake_state = tmp_path / "fake-systemctl"
+    systemd_dir.mkdir()
+    state_dir.mkdir()
+    fake_state.mkdir()
+    (systemd_dir / "timers.target.wants").mkdir()
+    (systemd_dir / "multi-user.target.wants").mkdir()
+
+    service = systemd_dir / "seiche-update.service"
+    timer = systemd_dir / "seiche-update.timer"
+    service.write_text("[Service]\nExecStart=/home/seiche/update.sh\n")
+    timer.write_text("[Timer]\nOnCalendar=*-*-* 05:30:00 UTC\n")
+    service.chmod(0o644)
+    timer.chmod(0o644)
+    (fake_state / "seiche-update.timer.active").touch()
+    (fake_state / "seiche-update.timer.enabled").touch()
+    (fake_state / "seiche-update.service.enabled").touch()
+    (systemd_dir / "timers.target.wants" / timer.name).symlink_to(timer)
+    (systemd_dir / "multi-user.target.wants" / service.name).symlink_to(service)
+
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+state=${FAKE_SYSTEMCTL_STATE:?}
+units=${SEICHE_SYSTEMD_DIR:?}
+printf '%s\n' "$*" >>"$state/calls.log"
+command=${1:?}
+shift
+case "$command" in
+  is-active)
+    unit=${1:?}
+    if [ -f "$state/$unit.state" ]; then
+      unit_state=$(cat "$state/$unit.state")
+      echo "$unit_state"
+      case "$unit_state" in
+        active|activating|reloading|deactivating|maintenance|refreshing) exit 0 ;;
+        *) exit 3 ;;
+      esac
+    fi
+    if [ -f "$state/$unit.active" ]; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
+    ;;
+  is-enabled)
+    unit=${1:?}
+    if [ -L "$units/$unit" ] && [ "$(readlink "$units/$unit")" = /dev/null ]; then
+      echo masked
+      exit 1
+    fi
+    if [ -f "$state/$unit.enabled" ]; then
+      echo enabled
+      exit 0
+    fi
+    echo disabled
+    exit 1
+    ;;
+  disable)
+    for argument in "$@"; do
+      case "$argument" in
+        --*) ;;
+        *)
+          if [ -L "$units/$argument" ] \
+              && [ "$(readlink "$units/$argument")" = /dev/null ]; then
+            exit 1
+          fi
+          ;;
+      esac
+    done
+    for argument in "$@"; do
+      case "$argument" in
+        --*) ;;
+        *)
+          rm -f -- "$state/$argument.active" "$state/$argument.enabled"
+          rm -f -- "$state/$argument.state"
+          rm -f -- "$units/timers.target.wants/$argument"
+          rm -f -- "$units/multi-user.target.wants/$argument"
+          ;;
+      esac
+    done
+    ;;
+  stop)
+    rm -f -- "$state/${1:?}.active" "$state/${1:?}.state"
+    ;;
+  mask)
+    for unit in "$@"; do
+      case "$unit" in --*) continue ;; esac
+      rm -f -- "$units/$unit"
+      ln -s /dev/null "$units/$unit"
+      rm -f -- "$state/$unit.active" "$state/$unit.enabled" "$state/$unit.state"
+    done
+    ;;
+  daemon-reload) ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    fake_stat = tmp_path / "stat"
+    fake_stat.write_text(
+        """#!/usr/bin/env python3
+import os
+import stat
+import sys
+
+if len(sys.argv) != 4 or sys.argv[1] != "-c":
+    raise SystemExit(64)
+fmt, path = sys.argv[2:]
+value = os.stat(path, follow_symlinks=False)
+rendered = (
+    fmt.replace("%u", str(value.st_uid))
+    .replace("%g", str(value.st_gid))
+    .replace("%a", format(stat.S_IMODE(value.st_mode), "o"))
+    .replace("%Y", str(int(value.st_mtime)))
+)
+print(rendered)
+"""
+    )
+    fake_stat.chmod(0o755)
+    env = os.environ | {
+        "FAKE_SYSTEMCTL_STATE": str(fake_state),
+        "SEICHE_ALLOW_NON_ROOT_RETIRE_TEST": "1",
+        "SEICHE_SYSTEMD_DIR": str(systemd_dir),
+        "SEICHE_DEPLOY_STATE_DIR": str(state_dir),
+        "SEICHE_SYSTEMCTL_BIN": str(fake_systemctl),
+        "SEICHE_SYNC_BIN": shutil.which("true") or "/usr/bin/true",
+        "SEICHE_CP_BIN": shutil.which("cp") or "/bin/cp",
+        "SEICHE_STAT_BIN": str(fake_stat),
+        "SEICHE_SHA256SUM_BIN": shutil.which("sha256sum")
+        or "/usr/bin/sha256sum",
+    }
+    return env, systemd_dir, state_dir
+
+
+def _run_legacy_retirement(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(LEGACY_UPDATE_RETIRER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _caddy_env(tmp_path: Path, *, reject_new_reload: bool = False) -> tuple[dict, Path, Path]:
@@ -459,6 +612,164 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RandomizedDelaySec=15m" in restore_timer
     assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
+
+
+def test_legacy_updater_is_retired_before_other_host_services_change():
+    installer = MARKET_INSTALLER.read_text()
+    retirer = LEGACY_UPDATE_RETIRER.read_text()
+
+    retirement = installer.index('/usr/bin/bash "$LEGACY_UPDATE_RETIRER"')
+    assert retirement < installer.index("systemctl enable --now postgresql")
+    assert retirement < installer.index("systemctl daemon-reload")
+    assert "seiche-update.service" in retirer
+    assert "seiche-update.timer" in retirer
+    assert '"$SYSTEMCTL_BIN" disable --now "$TIMER_NAME"' in retirer
+    assert '"$SYSTEMCTL_BIN" mask --now "$SERVICE_NAME" "$TIMER_NAME"' in retirer
+    assert "ExecStartPost" not in retirer
+    assert "GIT_SSH_COMMAND" not in retirer
+
+
+def test_legacy_updater_retirement_archives_exact_units_and_masks_both(tmp_path):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    original_service = (systemd_dir / "seiche-update.service").read_bytes()
+    original_timer = (systemd_dir / "seiche-update.timer").read_bytes()
+
+    result = _run_legacy_retirement(env)
+
+    assert result.returncode == 0, result.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert (archive / "seiche-update.service").read_bytes() == original_service
+    assert (archive / "seiche-update.timer").read_bytes() == original_timer
+    assert (archive / "seiche-update.service").stat().st_mode & 0o777 == 0o644
+    assert (archive / "seiche-update.timer").stat().st_mode & 0o777 == 0o644
+    prestate = (archive / "pre-retirement-state.env").read_text()
+    assert "timer_enabled=enabled" in prestate
+    assert "timer_active=active" in prestate
+    assert (archive / "SHA256SUMS").is_file()
+    assert (archive / "STAT").is_file()
+    assert (systemd_dir / "seiche-update.service").readlink() == Path("/dev/null")
+    assert (systemd_dir / "seiche-update.timer").readlink() == Path("/dev/null")
+    assert not (
+        systemd_dir / "timers.target.wants" / "seiche-update.timer"
+    ).exists()
+    assert not (
+        systemd_dir / "multi-user.target.wants" / "seiche-update.service"
+    ).exists()
+
+
+def test_legacy_updater_retirement_is_idempotent(tmp_path):
+    env, _systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    first = _run_legacy_retirement(env)
+    assert first.returncode == 0, first.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    before = {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in archive.iterdir()
+        if path.is_file()
+    }
+
+    second = _run_legacy_retirement(env)
+
+    assert second.returncode == 0, second.stderr
+    after = {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in archive.iterdir()
+        if path.is_file()
+    }
+    assert after == before
+    calls = Path(env["FAKE_SYSTEMCTL_STATE"], "calls.log").read_text()
+    assert calls.count("disable --now seiche-update.timer\n") == 1
+    assert calls.count("disable seiche-update.service\n") == 1
+
+
+def test_legacy_updater_retirement_records_never_present_units(tmp_path):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    for unit_name in ("seiche-update.service", "seiche-update.timer"):
+        (systemd_dir / unit_name).unlink()
+        (fake_state / f"{unit_name}.active").unlink(missing_ok=True)
+        (fake_state / f"{unit_name}.enabled").unlink(missing_ok=True)
+    for wants_dir in ("timers.target.wants", "multi-user.target.wants"):
+        for wants_link in (systemd_dir / wants_dir).iterdir():
+            wants_link.unlink()
+
+    first = _run_legacy_retirement(env)
+    second = _run_legacy_retirement(env)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert (archive / "seiche-update.service.absent").is_file()
+    assert (archive / "seiche-update.timer.absent").is_file()
+    assert "seiche-update.service.absent" in (archive / "SHA256SUMS").read_text()
+    assert "seiche-update.timer.absent" in (archive / "SHA256SUMS").read_text()
+
+
+@pytest.mark.parametrize(
+    "masked_unit", ("seiche-update.service", "seiche-update.timer")
+)
+def test_legacy_updater_retirement_rejects_unproven_premasked_units(
+    tmp_path, masked_unit
+):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    (systemd_dir / masked_unit).unlink()
+    (systemd_dir / masked_unit).symlink_to("/dev/null")
+    for unit_name in ("seiche-update.service", "seiche-update.timer"):
+        (fake_state / f"{unit_name}.active").unlink(missing_ok=True)
+        (fake_state / f"{unit_name}.enabled").unlink(missing_ok=True)
+    for wants_dir in ("timers.target.wants", "multi-user.target.wants"):
+        for wants_link in (systemd_dir / wants_dir).iterdir():
+            wants_link.unlink()
+
+    result = _run_legacy_retirement(env)
+
+    assert result.returncode != 0
+    assert "no verified retirement evidence" in result.stderr
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    assert not (archive / masked_unit).exists()
+    assert not (archive / f"{masked_unit}.absent").exists()
+    assert not (archive / "SHA256SUMS").exists()
+    assert not (archive / "STAT").exists()
+    assert (systemd_dir / masked_unit).readlink() == Path("/dev/null")
+
+
+def test_legacy_updater_retirement_accepts_failed_state_and_partial_stage(tmp_path):
+    env, _systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    fake_state = Path(env["FAKE_SYSTEMCTL_STATE"])
+    (fake_state / "seiche-update.service.state").write_text("failed\n")
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    archive.mkdir(parents=True)
+    interrupted = archive / ".seiche-update.service.archive.partial"
+    interrupted.write_text("partial\n")
+
+    result = _run_legacy_retirement(env)
+
+    assert result.returncode == 0, result.stderr
+    assert (archive / "seiche-update.service").is_file()
+    assert (archive / "seiche-update.timer").is_file()
+    assert not interrupted.exists()
+
+
+def test_legacy_updater_retirement_rejects_collision_and_unsafe_symlink(tmp_path):
+    env, systemd_dir, state_dir = _legacy_retirement_fixture(tmp_path)
+    archive = state_dir / "retired-units" / "seiche-update-v1"
+    archive.mkdir(parents=True)
+    (archive / "seiche-update.service").write_text("different\n")
+
+    collision = _run_legacy_retirement(env)
+
+    assert collision.returncode != 0
+    assert "archive differs" in collision.stderr
+    assert (systemd_dir / "seiche-update.service").is_file()
+
+    (archive / "seiche-update.service").unlink()
+    (systemd_dir / "seiche-update.service").unlink()
+    (systemd_dir / "seiche-update.service").symlink_to(tmp_path / "unexpected")
+    unsafe = _run_legacy_retirement(env)
+
+    assert unsafe.returncode != 0
+    assert "unexpected symlink" in unsafe.stderr
 
 
 def test_forward_incident_runbook_loads_systemd_environment_without_sourcing():
