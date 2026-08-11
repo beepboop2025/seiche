@@ -35,7 +35,9 @@ jobs:
           cache: pip
 
       - name: Install backend
-        run: pip install -e "./backend[dev]"
+        # The full publish gate exercises the official workbook adapters.
+        # Their dependencies intentionally live in the collectors extra.
+        run: pip install -e "./backend[dev,collectors]"
 
       - name: Engine tests (publish gates on green)
         run: python -m pytest backend/tests -q --memray --pystack-threshold=300
