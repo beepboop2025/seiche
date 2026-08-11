@@ -1,0 +1,157 @@
+{
+  "generated_at": "2026-08-08T01:22:11+00:00",
+  "version": "0.8.0 tier1",
+  "engines": {
+    "composite": {
+      "ok": true,
+      "value": 45.0,
+      "regime": "EROSION",
+      "coverage_pct": 100.0
+    }
+  },
+  "deep": {
+    "tell": {
+      "ok": true,
+      "asof": "2026-08-06",
+      "tell": 35.0,
+      "plumbing_pctl": 62.0,
+      "market_pctl": 27.0,
+      "reading": "plumbing leads price"
+    },
+    "stacker": {
+      "ok": true,
+      "p_now": 0.064,
+      "dispersion_now": 0.028,
+      "members_now": {
+        "rule": 0.088,
+        "ml": 0.033,
+        "tide": 0.048,
+        "swell": 0.046,
+        "bathy": 0.037,
+        "tell": 0.07
+      }
+    },
+    "modelcourt": {
+      "ok": true,
+      "ensemble": {
+        "p": 0.0397
+      }
+    },
+    "backtest": {
+      "event_capture": {
+        "n_events": 13,
+        "recall": 0.615,
+        "recall_ci95": [0.355, 0.823],
+        "base_rate": 0.045,
+        "precision_runs": 0.167,
+        "median_lead_d": 60.0
+      },
+      "episodes": [
+        {
+          "episode": "Sep 2019 repo spike (SOFR 5.25%, GC 10%)",
+          "date": "2019-09-17",
+          "in_sample": false
+        },
+        {
+          "episode": "Mar 2020 dash-for-cash",
+          "date": "2020-03-16",
+          "in_sample": true
+        },
+        {
+          "episode": "Mar 2023 SVB / regional bank run",
+          "date": "2023-03-13",
+          "in_sample": true
+        },
+        {
+          "episode": "Apr 2025 tariff shock basis unwind",
+          "date": "2025-04-09",
+          "in_sample": true
+        },
+        {
+          "episode": "Sep 2025 tax-date squeeze (SOFR +18bp over EFFR)",
+          "date": "2025-09-15",
+          "in_sample": true
+        },
+        {
+          "episode": "Dec 2025 year-end squeeze (SRF $74.6B record)",
+          "date": "2025-12-31",
+          "in_sample": true
+        }
+      ],
+      "caveats": [
+        "Final-vintage construction-PIT reconstruction; not a validated as-published backtest.",
+        "Event count is small; run-level precision is the load-bearing number."
+      ]
+    }
+  },
+  "calendar": {
+    "next_turn": null,
+    "crunch_windows": []
+  },
+  "navigator": {
+    "ok": false,
+    "p_event_5bd": null
+  },
+  "faults": [],
+  "provenance": {
+    "bootstrap_seed": {
+      "source": "Seiche public snapshot",
+      "generated_at": "2026-08-08T01:22:11+00:00",
+      "scope": "Dated public handoff while the current process rebuilds the full board"
+    }
+  },
+  "editorial": {
+    "schema": "seiche.editorial.v1",
+    "generated_at": "2026-08-08T01:22:11+00:00",
+    "thesis": "The calendar is carrying the strain call; the price of overnight cash still says abundance.",
+    "standfirst": "The board reads 45 out of 100, EROSION; the pooled five-business-day event read is 6.4%; plumbing leads market pricing by +35 percentile points.",
+    "confidence": "guarded",
+    "confidence_note": "The read is led by modelled or slow-moving structure while current market plumbing has not broadly confirmed it.",
+    "evidence": [
+      {
+        "label": "Balance-sheet identity",
+        "claim": "Reserves rose $8.8B on the week to $2,993B.",
+        "asof": "2026-08-05",
+        "source": "Federal Reserve H.4.1"
+      },
+      {
+        "label": "Reserve-demand curve",
+        "claim": "Reserves are $710B below the fitted kink, but SOFR is -2.8bp versus IORB.",
+        "asof": "2026-08-05",
+        "source": "FRED, NY Fed secured rates, BEA GDP"
+      }
+    ],
+    "countercase": [
+      {
+        "claim": "SOFR is 2.8bp below IORB, a current abundance signal rather than a scarcity print.",
+        "asof": "2026-08-05",
+        "source": "NY Fed secured rates and Federal Reserve IORB"
+      },
+      {
+        "claim": "Market stress sits at only the 27th percentile of its own history.",
+        "asof": "2026-08-06",
+        "source": "VIX, credit spreads and rates volatility"
+      }
+    ],
+    "watch": [],
+    "method": "Deterministic synthesis over the published point-in-time engines."
+  },
+  "data_quality": {
+    "schema": "seiche.data_quality.v1",
+    "generated_at": "2026-08-08T01:22:11+00:00",
+    "source_count": 77,
+    "status_counts": {
+      "aging": 13,
+      "dead": 2,
+      "fresh": 54,
+      "unknown": 8
+    },
+    "classified_source_count": 69,
+    "unclassified_source_count": 8,
+    "classification_coverage_pct": 89.6,
+    "fresh_share_pct": 80.6,
+    "last_fetch_at": "2026-08-08T01:05:51+00:00",
+    "oldest_fetch_at": "2026-07-06T16:47:05+00:00",
+    "publication_note": "This is a dated bootstrap handoff; current source quality resumes after the background rebuild."
+  }
+}

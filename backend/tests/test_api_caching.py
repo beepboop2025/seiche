@@ -5,6 +5,7 @@ assembly bill, and a poller must never re-download bytes it already has."""
 import asyncio
 import gzip
 import json
+from pathlib import Path
 import time
 
 import pytest
@@ -270,7 +271,10 @@ def test_restart_rejects_nested_shapes_that_would_break_public_routes(
     assert assemble._servable_snapshot(payload) is False
 
 
-def test_tracked_static_snapshot_satisfies_the_boot_contract():
+def test_packaged_static_snapshot_satisfies_the_boot_contract():
+    assert assemble.STATIC_SNAPSHOT_PATH.parent == Path(
+        assemble.__file__
+    ).resolve().parent
     payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
 
     assert assemble._servable_snapshot(payload) is True
