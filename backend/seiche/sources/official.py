@@ -40,6 +40,7 @@ _HKMA_LIQUIDITY_URI = (
     "daily-monetary-statistics/daily-figures-interbank-liquidity"
 )
 _HKMA_RETRY_DELAYS_SECONDS = (1.0, 2.0)
+_sleep = asyncio.sleep
 
 _RBNZ_B2_XLSX_URI = (
     "https://www.rbnz.govt.nz/-/media/project/sites/rbnz/files/statistics/"
@@ -529,11 +530,18 @@ class _TableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.rows: list[list[str]] = []
+        self.tables: list[list[list[str]]] = []
+        self._table: list[list[str]] | None = None
+        self._table_depth = 0
         self._row: list[str] | None = None
         self._cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs) -> None:
-        if tag.lower() == "tr":
+        if tag.lower() == "table":
+            if self._table_depth == 0:
+                self._table = []
+            self._table_depth += 1
+        elif tag.lower() == "tr":
             self._row = []
         elif tag.lower() in {"td", "th"} and self._row is not None:
             self._cell = []
@@ -550,7 +558,14 @@ class _TableParser(HTMLParser):
             self._cell = None
         elif tag.lower() == "tr" and self._row is not None:
             self.rows.append(self._row)
+            if self._table is not None:
+                self._table.append(self._row)
             self._row = None
+        elif tag.lower() == "table" and self._table_depth:
+            self._table_depth -= 1
+            if self._table_depth == 0 and self._table is not None:
+                self.tables.append(self._table)
+                self._table = None
 
 
 class _HiddenInputParser(HTMLParser):
@@ -572,6 +587,12 @@ def _table_rows(payload: bytes) -> list[list[str]]:
     parser = _TableParser()
     parser.feed(payload.decode("utf-8-sig", errors="replace"))
     return parser.rows
+
+
+def _html_tables(payload: bytes) -> list[list[list[str]]]:
+    parser = _TableParser()
+    parser.feed(payload.decode("utf-8-sig", errors="replace"))
+    return parser.tables
 
 
 def parse_mas_sora(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
@@ -795,24 +816,28 @@ _RBNZ_COLUMN_HEADINGS = {
 def _rbnz_html_data_rows(payload: bytes) -> tuple[list[list[str]], dict[int, str]]:
     """Locate the declared B2 table instead of accepting any dated HTML table."""
 
-    rows = _table_rows(payload)
-    for header_index, row in enumerate(rows):
-        normalized = [" ".join(value.lower().split()) for value in row]
-        if not normalized or normalized[0] != "date":
-            continue
-        columns: dict[int, str] = {}
-        for column, heading in enumerate(normalized):
-            for instrument, needle in _RBNZ_COLUMN_HEADINGS.items():
-                if needle in heading:
-                    columns[column] = instrument
-        if set(columns.values()) == set(_RBNZ_COLUMN_HEADINGS):
-            return rows[header_index + 1 :], columns
+    for rows in _html_tables(payload):
+        for header_index, row in enumerate(rows):
+            normalized = [" ".join(value.lower().split()) for value in row]
+            if not normalized or normalized[0] != "date":
+                continue
+            columns: dict[int, str] = {}
+            for column, heading in enumerate(normalized):
+                for instrument, needle in _RBNZ_COLUMN_HEADINGS.items():
+                    if needle in heading:
+                        columns[column] = instrument
+            if set(columns.values()) == set(_RBNZ_COLUMN_HEADINGS):
+                return rows[header_index + 1 :], columns
     raise ValueError("RBNZ HTML page has no expected B2 interest-rate table header")
 
 
 def parse_rbnz(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     points: list[ParsedPoint] = []
-    if "spreadsheet" in document.media_type or document.source_uri.endswith(".xlsx"):
+    if (
+        "spreadsheet" in document.media_type
+        or document.source_uri.endswith(".xlsx")
+        or document.payload.startswith(b"PK\x03\x04")
+    ):
         workbook = _workbook(document)
         worksheet = workbook.worksheets[0]
         header_row: tuple | None = None
@@ -866,7 +891,10 @@ def parse_rbnz(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
                             instrument,
                             event_day,
                             value,
-                            _row_evidence(instrument, row),
+                            _row_evidence(
+                                instrument,
+                                [event_day.isoformat(), str(row[column])],
+                            ),
                         )
                     )
     allowed = {
@@ -930,28 +958,32 @@ def _response_media_type(
 async def _fetch_hkma_documents(
     client: httpx.AsyncClient,
 ) -> tuple[FetchedDocument, ...]:
-    """Fetch HKMA liquidity, retrying only transient server responses."""
+    """Fetch HKMA liquidity within one transport/5xx retry budget."""
 
-    response: httpx.Response | None = None
     for attempt in range(len(_HKMA_RETRY_DELAYS_SECONDS) + 1):
-        response = await client.get(
-            _HKMA_LIQUIDITY_URI,
-            params={"pagesize": 1000},
-            headers={"Accept": "application/json", "User-Agent": USER_AGENT},
-        )
-        if not 500 <= response.status_code < 600:
-            response.raise_for_status()
-            return (
-                FetchedDocument(
-                    str(response.url),
-                    _response_media_type(response),
-                    response.content,
-                    "hkma_liquidity",
-                ),
+        try:
+            response = await client.get(
+                _HKMA_LIQUIDITY_URI,
+                params={"pagesize": 1000},
+                headers={"Accept": "application/json", "User-Agent": USER_AGENT},
             )
-        if attempt == len(_HKMA_RETRY_DELAYS_SECONDS):
-            response.raise_for_status()
-        await asyncio.sleep(_HKMA_RETRY_DELAYS_SECONDS[attempt])
+        except httpx.RequestError:
+            if attempt == len(_HKMA_RETRY_DELAYS_SECONDS):
+                raise
+        else:
+            if not 500 <= response.status_code < 600:
+                response.raise_for_status()
+                return (
+                    FetchedDocument(
+                        str(response.url),
+                        _response_media_type(response),
+                        response.content,
+                        "hkma_liquidity",
+                    ),
+                )
+            if attempt == len(_HKMA_RETRY_DELAYS_SECONDS):
+                response.raise_for_status()
+        await _sleep(_HKMA_RETRY_DELAYS_SECONDS[attempt])
     raise RuntimeError(
         "HKMA request loop exhausted without a response"
     )  # pragma: no cover
@@ -963,6 +995,18 @@ def _rbnz_failure_detail(exc: Exception) -> str:
     if isinstance(exc, httpx.RequestError):
         return f"{type(exc).__name__} from {exc.request.url}: {exc}"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _validate_rbnz_document(document: FetchedDocument) -> None:
+    """Prove a candidate can emit the adapter's declared B2 instruments."""
+
+    try:
+        parse_rbnz(document)
+    except Exception as exc:  # noqa: BLE001 - normalize source/parser failures
+        raise ValueError(
+            f"{document.source_uri} has no usable {document.label} B2 data: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 async def _fetch_rbnz_document(
@@ -989,17 +1033,17 @@ async def _fetch_rbnz_document(
                 f"HTTP {response.status_code} from {response.url} returned "
                 f"{_response_media_type(response)} instead of an XLSX workbook"
             )
+        document = FetchedDocument(
+            str(response.url),
+            _response_media_type(response, _RBNZ_XLSX_MEDIA_TYPE),
+            response.content,
+            label,
+        )
+        _validate_rbnz_document(document)
     except (httpx.HTTPError, ValueError) as exc:
         primary_failure = _rbnz_failure_detail(exc)
     else:
-        return (
-            FetchedDocument(
-                str(response.url),
-                _response_media_type(response, _RBNZ_XLSX_MEDIA_TYPE),
-                response.content,
-                label,
-            ),
-        )
+        return (document,)
 
     try:
         fallback = await client.get(
@@ -1017,7 +1061,7 @@ async def _fetch_rbnz_document(
             fallback.content,
             label,
         )
-        _rbnz_html_data_rows(document.payload)
+        _validate_rbnz_document(document)
     except (httpx.HTTPError, ValueError) as exc:
         fallback_failure = _rbnz_failure_detail(exc)
         raise RBNZSourceUnavailableError(

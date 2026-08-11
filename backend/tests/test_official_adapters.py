@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -161,6 +162,29 @@ def _official_adapter(
     return next(item for item in adapters if item.adapter_id == adapter_id)
 
 
+def _rbnz_workbook_payload(*, include_b2: bool = True) -> bytes:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    if include_b2:
+        worksheet.append(
+            [
+                "Date",
+                "Official Cash Rate (OCR)",
+                "Overnight Deposit Rate",
+                "Overnight Reverse Repurchase Facility Rate",
+            ]
+        )
+        worksheet.append([datetime(2026, 8, 10), 2.50, 2.50, 3.00])
+    else:
+        worksheet.append(["Date", "Unrelated series"])
+        worksheet.append([datetime(2026, 8, 10), 9.99])
+    payload = io.BytesIO()
+    workbook.save(payload)
+    return payload.getvalue()
+
+
 def test_connector_owned_retry_policies_are_not_multiplied_by_supervisor() -> None:
     registry = default_registry()
 
@@ -189,7 +213,7 @@ async def test_hkma_retries_server_errors_with_bounded_backoff(
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(official, "_sleep", record_sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         documents = tuple(await _official_adapter("hkma_official").fetcher(client))
 
@@ -207,6 +231,31 @@ async def test_hkma_retries_server_errors_with_bounded_backoff(
 
 
 @pytest.mark.asyncio
+async def test_hkma_retries_request_errors_within_the_same_budget(
+    monkeypatch,
+) -> None:
+    requests: list[httpx.Request] = []
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) < 3:
+            raise httpx.ConnectError("temporary connect failure", request=request)
+        return httpx.Response(200, json={"result": {"records": []}})
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(official, "_sleep", record_sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await _official_adapter("hkma_official").fetcher(client))
+
+    assert len(requests) == 3
+    assert delays == [1.0, 2.0]
+    assert documents[0].source_uri == str(requests[-1].url)
+
+
+@pytest.mark.asyncio
 async def test_hkma_raises_last_server_response_after_retry_exhaustion(
     monkeypatch,
 ) -> None:
@@ -220,7 +269,7 @@ async def test_hkma_raises_last_server_response_after_retry_exhaustion(
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(official, "_sleep", record_sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(httpx.HTTPStatusError) as raised:
             await _official_adapter("hkma_official").fetcher(client)
@@ -242,7 +291,7 @@ async def test_hkma_does_not_retry_a_non_server_response(monkeypatch) -> None:
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr(official.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(official, "_sleep", record_sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(httpx.HTTPStatusError):
             await _official_adapter("hkma_official").fetcher(client)
@@ -264,7 +313,11 @@ async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
             <th>Overnight Reverse Repurchase Facility Rate</th>
           </tr>
           <tr><td>08 Aug 2026</td><td>3.25</td><td>3.20</td><td>3.50</td></tr>
-        </table></body></html>
+        </table>
+        <table>
+          <tr><td>09 Aug 2026</td><td>9.25</td><td>9.20</td><td>9.50</td></tr>
+        </table>
+        </body></html>
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -318,7 +371,7 @@ async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> 
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             },
-            content=b"PK\x03\x04representative workbook bytes",
+            content=_rbnz_workbook_payload(),
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -330,6 +383,73 @@ async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> 
     assert documents[0].source_uri.endswith("hb2-daily-close.xlsx")
     assert documents[0].media_type.endswith("spreadsheetml.sheet")
     assert documents[0].payload.startswith(b"PK\x03\x04")
+
+
+@pytest.mark.asyncio
+async def test_rbnz_unusable_pk_workbook_gets_one_canonical_html_attempt() -> None:
+    requests: list[httpx.Request] = []
+    page = b"""
+        <table>
+          <tr>
+            <th>Date</th>
+            <th>Official Cash Rate (OCR)</th>
+            <th>Overnight Deposit Rate</th>
+            <th>Overnight Reverse Repurchase Facility Rate</th>
+          </tr>
+          <tr><td>10 Aug 2026</td><td>2.50</td><td>2.50</td><td>3.00</td></tr>
+        </table>
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith(".xlsx"):
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/octet-stream"},
+                content=_rbnz_workbook_payload(include_b2=False),
+            )
+        return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await _official_adapter("rbnz_policy").fetcher(client))
+
+    assert len(requests) == 2
+    assert requests[0].url.path.endswith("hb2-daily-close.xlsx")
+    assert requests[1].url.path.endswith("wholesale-interest-rates")
+    assert documents[0].source_uri == str(requests[1].url)
+    assert documents[0].media_type == "text/html"
+
+
+def test_rbnz_html_evidence_is_scoped_to_each_instrument_cell() -> None:
+    def parse(*, ocr: str, deposit: str, reverse_repo: str):
+        document = FetchedDocument(
+            "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates/"
+            "wholesale-interest-rates",
+            "text/html",
+            f"""
+                <table>
+                  <tr><th>Date</th><th>Official Cash Rate (OCR)</th>
+                    <th>Overnight Deposit Rate</th>
+                    <th>Overnight Reverse Repurchase Facility Rate</th></tr>
+                  <tr><td>10 Aug 2026</td><td>{ocr}</td><td>{deposit}</td>
+                    <td>{reverse_repo}</td></tr>
+                </table>
+            """.encode(),
+            "rbnz_wholesale",
+        )
+        return {point.instrument_id: point for point in parse_rbnz(document)}
+
+    first = parse(ocr="2.50", deposit="2.50", reverse_repo="3.00")
+    changed = parse(ocr="9.99", deposit="2.50", reverse_repo="3.10")
+
+    assert (
+        first["NZ.RBNZ.OVERNIGHT_DEPOSIT"].row_evidence
+        == changed["NZ.RBNZ.OVERNIGHT_DEPOSIT"].row_evidence
+    )
+    assert (
+        first["NZ.RBNZ.OVERNIGHT_REVERSE_REPO"].row_evidence
+        != changed["NZ.RBNZ.OVERNIGHT_REVERSE_REPO"].row_evidence
+    )
 
 
 @pytest.mark.asyncio

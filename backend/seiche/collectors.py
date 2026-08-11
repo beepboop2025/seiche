@@ -12,13 +12,14 @@ import hashlib
 import json
 import os
 import tempfile
+import uuid
 from builtins import ExceptionGroup
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 import pandas as pd
 
@@ -28,10 +29,17 @@ from seiche.repository import get_repository
 from seiche.sources.base import CanonicalSourceAdapter, ObservationBatch, RawCapture
 
 
+_T = TypeVar("_T")
+
+
 class CollectorRunStatus(StrEnum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     CIRCUIT_OPEN = "CIRCUIT_OPEN"
+
+
+class PersistenceStageError(RuntimeError):
+    """A named persistence stage exhausted its local retry budget."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,12 +124,28 @@ class FileRawCaptureSink:
             "application/xml": ".xml",
         }.get(capture.media_type, ".bin")
         target = directory / f"{capture.evidence_hash}{suffix}"
-        try:
-            with target.open("xb") as handle:
-                handle.write(capture.payload)
-        except FileExistsError:
+        if target.exists():
             if hashlib.sha256(target.read_bytes()).hexdigest() != capture.evidence_hash:
                 raise ValueError(f"raw capture hash collision at {target}")
+            return str(target)
+        temporary = directory / f".seiche-raw-{uuid.uuid4().hex}.tmp"
+        try:
+            with temporary.open("xb") as handle:
+                written = handle.write(capture.payload)
+                if written != len(capture.payload):
+                    raise OSError(
+                        f"short raw-capture write: {written}/{len(capture.payload)} bytes"
+                    )
+            try:
+                os.link(temporary, target)
+            except FileExistsError:
+                if (
+                    hashlib.sha256(target.read_bytes()).hexdigest()
+                    != capture.evidence_hash
+                ):
+                    raise ValueError(f"raw capture hash collision at {target}")
+        finally:
+            temporary.unlink(missing_ok=True)
         return str(target)
 
 
@@ -191,15 +215,42 @@ class CollectorSupervisor:
         observation_writer: Callable[[tuple], int] | None = None,
         run_writer: Callable[[dict], str] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        persistence_retry_limit: int = 4,
+        persistence_backoff_seconds: float = 1.5,
     ) -> None:
+        if persistence_retry_limit < 0 or persistence_backoff_seconds < 0:
+            raise ValueError("persistence retry settings cannot be negative")
         self.registry = registry or default_registry()
         self.raw_sink = raw_sink
         self.normalized_sink = normalized_sink
         self.observation_writer = observation_writer or get_repository().save_observations
         self.run_writer = run_writer
         self.sleep = sleep
+        self.persistence_retry_limit = persistence_retry_limit
+        self.persistence_backoff_seconds = persistence_backoff_seconds
         self._tasks: dict[tuple[str, str], _CollectorTask] = {}
         self._states: dict[tuple[str, str], _CollectorState] = {}
+
+    async def _persist_with_retry(
+        self,
+        operation: Callable[[], _T],
+        *,
+        stage: str,
+    ) -> _T:
+        """Retry one persistence stage without recollecting its source batch."""
+
+        for attempt in range(self.persistence_retry_limit + 1):
+            try:
+                return await asyncio.to_thread(operation)
+            except Exception as exc:  # noqa: BLE001 - bounded persistence boundary
+                deterministic = isinstance(exc, (ImportError, TypeError, ValueError))
+                if deterministic or attempt == self.persistence_retry_limit:
+                    raise PersistenceStageError(
+                        f"{stage} persistence failed after {attempt + 1} attempt(s): "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
+                await self.sleep(self.persistence_backoff_seconds * (2**attempt))
+        raise RuntimeError("persistence retry loop exhausted")  # pragma: no cover
 
     def register(self, adapter: CanonicalSourceAdapter) -> None:
         market_id = adapter.market_id.upper()
@@ -287,21 +338,46 @@ class CollectorSupervisor:
             )
 
         fault: Exception | None = None
+        batch: ObservationBatch | None = None
         attempts = 0
         for attempt in range(task.spec.retry_limit + 1):
             attempts = attempt + 1
             try:
                 batch = await task.adapter.collect()
                 if batch.market_id != key[0] or batch.adapter_id != key[1]:
-                    raise ValueError("collector returned a batch outside its registered scope")
+                    raise ValueError(
+                        "collector returned a batch outside its registered scope"
+                    )
+            except Exception as exc:  # noqa: BLE001 — isolation boundary
+                fault = exc
+                batch = None
+                if attempt < task.spec.retry_limit:
+                    await self.sleep(task.spec.backoff_seconds * (2**attempt))
+            else:
+                break
+
+        if batch is not None:
+            try:
                 if self.raw_sink is not None and batch.raw_capture is not None:
-                    await asyncio.to_thread(self.raw_sink.write, batch.raw_capture)
+                    raw_sink = self.raw_sink
+                    raw_capture = batch.raw_capture
+                    await self._persist_with_retry(
+                        lambda: raw_sink.write(raw_capture),
+                        stage="raw capture",
+                    )
                 if self.normalized_sink is not None:
-                    await asyncio.to_thread(self.normalized_sink.write, batch)
-                written = await asyncio.to_thread(
-                    self.observation_writer,
-                    batch.observations,
+                    normalized_sink = self.normalized_sink
+                    await self._persist_with_retry(
+                        lambda: normalized_sink.write(batch),
+                        stage="normalized batch",
+                    )
+                written = await self._persist_with_retry(
+                    lambda: self.observation_writer(batch.observations),
+                    stage="observation writer",
                 )
+            except Exception as exc:  # noqa: BLE001 — isolation boundary
+                fault = exc
+            else:
                 state.consecutive_failures = 0
                 state.open_until = None
                 state.next_due = now + cadence
@@ -311,10 +387,6 @@ class CollectorSupervisor:
                     started.isoformat(), finished.isoformat(), written, attempts,
                     state.next_due.isoformat(),
                 )
-            except Exception as exc:  # noqa: BLE001 — isolation boundary
-                fault = exc
-                if attempt < task.spec.retry_limit:
-                    await self.sleep(task.spec.backoff_seconds * (2 ** attempt))
 
         state.consecutive_failures += 1
         state.next_due = now + cadence
