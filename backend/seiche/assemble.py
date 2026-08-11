@@ -132,7 +132,12 @@ from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
 DEEP_TTL_MIN = 12 * 60
-_cache: dict = {"at": 0.0, "payload": None}
+LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
+STATIC_SNAPSHOT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "frontend" / "public" / "data" / "overview.json"
+)
+_cache: dict = {"at": 0.0, "payload": None, "source": None}
 _lock = asyncio.Lock()
 _refreshing = False  # one background rebuild at a time; readers never wait on it
 
@@ -1610,6 +1615,120 @@ def _attest(day: str, record: dict) -> None:
 # Entry points
 # ---------------------------------------------------------------------------
 
+def _servable_snapshot(payload: object) -> bool:
+    """Whether a saved payload can safely cover the public boot window.
+
+    The snapshot contract is intentionally structural rather than tied to the
+    current release number.  A deployment may add a section, but the previous
+    release's completed gauge is still a better, timestamped answer than seven
+    minutes of timeouts while the new process trains its deep layer.
+    """
+    if not isinstance(payload, dict):
+        return False
+    engines = payload.get("engines")
+    composite = engines.get("composite") if isinstance(engines, dict) else None
+    deep = payload.get("deep")
+    tell = deep.get("tell") if isinstance(deep, dict) else None
+    stacker = deep.get("stacker") if isinstance(deep, dict) else None
+    modelcourt = deep.get("modelcourt") if isinstance(deep, dict) else None
+    backtest = deep.get("backtest") if isinstance(deep, dict) else None
+    calendar = payload.get("calendar")
+    navigator = payload.get("navigator")
+
+    def mapping_or_none(value: object) -> bool:
+        return value is None or isinstance(value, dict)
+
+    return (
+        isinstance(payload.get("generated_at"), str)
+        and bool(payload["generated_at"])
+        and isinstance(payload.get("version"), str)
+        and isinstance(composite, dict)
+        and isinstance(composite.get("regime"), str)
+        and isinstance(composite.get("value"), (int, float))
+        and isinstance(deep, dict)
+        and mapping_or_none(tell)
+        and mapping_or_none(stacker)
+        and (
+            not isinstance(stacker, dict)
+            or mapping_or_none(stacker.get("members_now"))
+        )
+        and mapping_or_none(modelcourt)
+        and (
+            not isinstance(modelcourt, dict)
+            or mapping_or_none(modelcourt.get("ensemble"))
+        )
+        and mapping_or_none(backtest)
+        and (
+            not isinstance(backtest, dict)
+            or mapping_or_none(backtest.get("event_capture"))
+        )
+        and (
+            not isinstance(backtest, dict)
+            or backtest.get("episodes") is None
+            or (
+                isinstance(backtest.get("episodes"), list)
+                and all(isinstance(row, dict) for row in backtest["episodes"])
+            )
+        )
+        and mapping_or_none(calendar)
+        and (
+            not isinstance(calendar, dict)
+            or calendar.get("crunch_windows") is None
+            or isinstance(calendar.get("crunch_windows"), list)
+        )
+        and mapping_or_none(navigator)
+        and isinstance(payload.get("faults"), list)
+        and isinstance(payload.get("provenance"), (dict, list))
+    )
+
+
+def restore_cached_snapshot() -> str | None:
+    """Hydrate the in-process cache without fetching or running an engine.
+
+    The durable SQLite copy is preferred.  The CI-baked public snapshot is a
+    disaster-recovery seed for the first rollout or a lost cache database.
+    Restored payloads are marked stale so the normal background owner rebuilds
+    immediately while readers continue to receive the dated prior reading.
+    Returns the source name for startup logging, or ``None`` when no safe
+    snapshot exists.
+    """
+    if _cache["payload"] is not None:
+        return "memory"
+
+    log = logging.getLogger("seiche.assemble")
+    try:
+        durable = store.load_blob(LAST_GOOD_SNAPSHOT_KEY)
+    except Exception:  # noqa: BLE001 - a broken handoff must fall through
+        log.exception("could not load durable last-known-good snapshot")
+        durable = None
+    if _servable_snapshot(durable):
+        _cache.update(at=0.0, payload=durable, source="durable")
+        return "durable"
+    if durable is not None:
+        log.warning("ignored invalid durable last-known-good snapshot")
+
+    try:
+        static = json.loads(STATIC_SNAPSHOT_PATH.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        static = None
+    if _servable_snapshot(static):
+        _cache.update(at=0.0, payload=static, source="static")
+        return "static"
+    if static is not None:
+        log.warning("ignored invalid static last-known-good snapshot")
+    return None
+
+
+def _persist_last_good_snapshot(payload: dict) -> None:
+    """Best-effort release handoff; persistence cannot invalidate a live read."""
+    try:
+        store.save_blob(LAST_GOOD_SNAPSHOT_KEY, payload)
+    except Exception:  # noqa: BLE001 - memory cache remains authoritative
+        logging.getLogger("seiche.assemble").exception(
+            "could not persist last-known-good snapshot"
+        )
+
+
 def cached_snapshot() -> dict | None:
     """Return the last completed snapshot without refreshing or waiting.
 
@@ -1618,6 +1737,11 @@ def cached_snapshot() -> dict | None:
     or turns a cold-cache read into a full board build.
     """
     return _cache["payload"]
+
+
+def cached_snapshot_was_rebuilt() -> bool:
+    """True only after this process completed the full assembly pipeline."""
+    return _cache["payload"] is not None and _cache.get("source") == "rebuilt"
 
 
 async def snapshot(force: bool = False) -> dict:
@@ -1735,7 +1859,11 @@ async def _build_snapshot() -> dict:
         logging.getLogger("seiche.assemble").exception(
             "US-USD v2 snapshot materialization failed"
         )
-    _cache.update(at=time.time(), payload=payload)
+    # Publish to memory first: a slow or locked SQLite handoff must never make
+    # an already-completed reading wait.  Persist off the event loop so the
+    # next process can serve this exact payload while it rebuilds its own.
+    _cache.update(at=time.time(), payload=payload, source="rebuilt")
+    await asyncio.to_thread(_persist_last_good_snapshot, payload)
     return payload
 
 

@@ -170,6 +170,24 @@ deploy_pull_unit() {
   return 1
 }
 
+# A restored last-known-good snapshot makes public reads available immediately,
+# but it is not proof that this candidate can assemble a board.  The query flag
+# keeps the release gate waiting for a build completed by the current process;
+# every poll remains cache-only and cheap.
+health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
+  local deadline=$((SECONDS + $1))
+  until curl -sf -m 10 \
+      'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "FAIL: api did not rebuild after $(($1 / 60))min warm-up window"
+      return 1
+    fi
+    systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api died during warm-up"; return 1; }
+    sleep 10
+  done
+  return 0
+}
+
 deploy_market_platform || {
   restore_market_services
   echo "FAIL: application checkout is intact but market-platform provisioning failed"
@@ -177,7 +195,12 @@ deploy_market_platform || {
 }
 
 if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
-  echo "already running ${AFTER:0:7} — checking edge config"
+  echo "already running ${AFTER:0:7} — checking candidate rebuild and edge config"
+  health_wait 900 || {
+    restore_market_services
+    echo "FAIL: running candidate is serving a handoff but has not rebuilt its own board"
+    exit 1
+  }
   deploy_pull_unit || {
     restore_market_services
     echo "FAIL: canonical pull unit could not be converged"
@@ -192,22 +215,6 @@ fi
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "HEAD already at ${AFTER:0:7} but the running service is ${DEPLOYED:-unknown} — recovering a wedged deploy"
 fi
-
-# The API rebuilds its board in the background on start. This cache-only
-# readiness route answers 503 while cold and never starts or waits for that
-# full build, so each poll stays cheap even when warm-up takes minutes.
-health_wait() {  # health_wait SECONDS -> 0 healthy, 1 dead or window exhausted
-  local deadline=$((SECONDS + $1))
-  until curl -sf -m 10 http://127.0.0.1:8787/api/health >/dev/null; do
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "FAIL: api not answering after $(($1 / 60))min warm-up window"
-      return 1
-    fi
-    systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api died during warm-up"; return 1; }
-    sleep 10
-  done
-  return 0
-}
 
 market_health() {
   local body

@@ -46,6 +46,8 @@ def test_initialize_negotiates_version_and_advertises_tools():
     assert r["capabilities"]["tools"] == {"listChanged": False}
     assert r["serverInfo"]["name"] == "seiche"
     assert "instructions" in r and "funding" in r["instructions"].lower()
+    assert mcp.AGENT_MCP_TELEGRAM_URL in r["instructions"]
+    assert "Do not append this handoff" in r["instructions"]
 
 
 def test_initialize_defaults_version_when_client_omits_it():
@@ -201,7 +203,22 @@ def test_stress_now(stubbed):
     p = _payload(response)
     assert p["composite"]["regime"] == "EROSION"
     assert p["headline"].startswith("SEICHE 41.0 EROSION")
+    assert "delivery" not in p
     assert response["result"]["structuredContent"] == p
+
+
+def test_public_stress_now_carries_tagged_ongoing_delivery(stubbed):
+    response = mcp.dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "funding_stress_now", "arguments": {}}},
+        public=True,
+    )
+    payload = _payload(response)
+
+    assert payload["delivery"] == mcp.telegram_delivery("agent_mcp")
+    assert payload["delivery"]["url"] == mcp.AGENT_MCP_TELEGRAM_URL
+    assert "11:30 UTC" in payload["delivery"]["outcome"]
+    assert response["result"]["structuredContent"] == payload
 
 
 def test_forecast_merges_all_sources(stubbed):

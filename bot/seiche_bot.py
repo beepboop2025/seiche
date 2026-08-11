@@ -196,17 +196,15 @@ def post_channel(text: str, ref: str) -> bool:
         return False
     desk_url = f"{BOT_URL}?start={urllib.parse.quote(ref, safe='')}"
     body = text + (
-        f"\n\n<i>Seiche is the lab's free plumbing desk. Open and follow it "
-        f"for the live gauge, forward odds and historical diagnostic: "
-        f"{desk_url}</i>"
+        f"\n\n<i>Want the next funding-stress turn before the US open? "
+        f"Follow Seiche for one 11:30 UTC letter plus material state-change "
+        f"alerts; /stop any time: {desk_url}</i>"
     )
+    # A letter has one conversion job.  The sibling desks remain discoverable
+    # from the on-demand desk keyboards through FLEET_ROW, where they do not
+    # compete with the decision to follow the desk that produced this read.
     keyboard = [
-        [{"text": "📈 Open + follow Seiche",
-          "url": desk_url}],
-        [{"text": "🏦 Bank failure radar",
-          "url": f"https://t.me/LiquiLens_bot?start={ref}"},
-         {"text": "🌊 Market depth",
-          "url": f"https://t.me/undertow_LiquiLens_bot?start={ref}"}],
+        [{"text": "📨 Follow: next Seiche letter", "url": desk_url}],
     ]
     try:
         res = send(int(LAB_CHANNEL), body, keyboard)

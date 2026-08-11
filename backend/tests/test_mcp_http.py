@@ -61,6 +61,8 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "funding_stress_now"
+    assert payload["delivery"]["url"].endswith("?start=agent_api")
+    assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
     assert payload["rest"]["oil_funding"] == "/api/oil-funding"
     assert payload["rest"]["fx_materials"] == "/api/estuary"
@@ -90,9 +92,13 @@ def test_public_openapi_is_curated_and_importable(client):
     assert estuary_schema["properties"]["schema"]["const"] == "seiche.estuary.v1"
     health = spec["paths"]["/api/health"]["get"]
     assert set(health["responses"]) == {"200", "503"}
+    assert any(p["name"] == "require_rebuilt" for p in health["parameters"])
     unavailable = health["responses"]["503"]["content"]["application/json"]["schema"]
     assert unavailable["required"] == ["status", "version"]
-    assert unavailable["properties"]["status"]["const"] == "warming_or_unavailable"
+    assert unavailable["properties"]["status"]["enum"] == [
+        "warming_or_unavailable",
+        "rebuilding_from_last_known_good",
+    ]
     assert unavailable["additionalProperties"] is False
     assert set(health["responses"]["503"]["headers"]) == {
         "Cache-Control", "Retry-After",
@@ -317,6 +323,8 @@ def test_tool_call_returns_content_and_meters(client):
                     {"name": "funding_stress_now", "arguments": {}}))
     assert r.status_code == 200
     assert "EROSION" in r.json()["result"]["content"][0]["text"]
+    delivery = r.json()["result"]["structuredContent"]["delivery"]
+    assert delivery["url"].endswith("?start=agent_mcp")
     # the billable call was metered
     assert r.headers["X-MCP-Usage-Used"] == "1"
     assert r.headers["X-MCP-Usage-Limit"] == str(usage.MCP_ANON_DAILY)

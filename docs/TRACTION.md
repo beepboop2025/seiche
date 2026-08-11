@@ -34,6 +34,22 @@ in this event. `origin` separates Caddy-edge demand from loopback product
 integration without retaining a caller identity; SDK transports that cannot
 expose this use `unknown`.
 
+## Seiche conversion handoffs
+
+The Seiche letter and agent surfaces use the existing Telegram `/start`
+attribution rather than increasing Liquidity Lab channel cadence:
+
+| Source | Telegram ref | Handoff moment |
+|---|---|---|
+| Liquidity Lab Seiche letter | `lab_letter` | One focused button below the served letter |
+| MCP `funding_stress_now` | `agent_mcp` | Machine-readable `delivery` in the first-tool result |
+| Public API catalog | `agent_api` | Machine-readable delivery field in `/api` |
+| Developer live runner | `agent_developers` | Revealed only after a successful first tool call |
+
+Keep the channel at its existing one-letter cadence. Compare private starts by
+ref with successful agent activations; optimize the handoff copy or onboarding
+when either source sends traffic without starts, rather than adding posts.
+
 ## Weekly scorecard
 
 Report, per product and in total:

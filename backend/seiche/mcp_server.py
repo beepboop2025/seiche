@@ -62,6 +62,7 @@ SUPPORTED_PROTOCOL_VERSIONS = (
     "2025-03-26",
 )
 SERVER_NAME = "seiche"
+AGENT_MCP_TELEGRAM_URL = "https://t.me/seiche_desk_bot?start=agent_mcp"
 
 # Default surface for the stdio transport. HTTP overrides this per request.
 PUBLIC_ONLY = os.getenv("SEICHE_MCP_PUBLIC", "0") == "1"
@@ -185,12 +186,28 @@ def _need(section: dict | None, label: str) -> dict:
     return section
 
 
+def telegram_delivery(ref: str = "agent_mcp") -> dict[str, str]:
+    """Machine-readable handoff from an on-demand read to ongoing delivery."""
+    return {
+        "channel": "telegram",
+        "url": f"https://t.me/seiche_desk_bot?start={ref}",
+        "outcome": (
+            "follow Seiche for one pre-US-open letter at 11:30 UTC plus "
+            "material funding-state alerts"
+        ),
+        "control": "/stop unsubscribes at any time",
+    }
+
+
 def tool_stress_now(_args: dict, public: bool) -> Any:
     snap = _get_snapshot()
     if public:
         from seiche import public_view
 
-        return public_view.public_payload(snap)
+        return {
+            **public_view.public_payload(snap),
+            "delivery": telegram_delivery(),
+        }
     comp = snap.get("engines", {}).get("composite", {})
     tell = snap.get("deep", {}).get("tell", {})
     one = (
@@ -825,6 +842,11 @@ SERVER_INSTRUCTIONS = (
     "trade-flow pressure is reaching SOFR/commercial paper, call "
     "fx_materials_passage. Both are context-only and never alter the core "
     "stress regime.\n\n"
+    "If a user asks to monitor, follow, subscribe, or receive future funding-"
+    "stress alerts, offer the Seiche Telegram handoff at "
+    f"{AGENT_MCP_TELEGRAM_URL}. It sends one pre-US-open letter at 11:30 UTC "
+    "plus material state-change alerts, and /stop unsubscribes. Do not append "
+    "this handoff to an answer when the user asked only for analysis.\n\n"
     "Sibling servers from the same lab: for INSTITUTION-level failure risk — "
     "the health of a specific bank, NBFC or microlender (India, plus US and "
     "European failure records: SVB, Credit Suisse, Northern Rock and the "

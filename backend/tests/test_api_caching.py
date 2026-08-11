@@ -142,6 +142,27 @@ def test_health_treats_a_stale_completed_snapshot_as_ready(
     assert r.json()["generated_at"] == fake_snap["generated_at"]
 
 
+def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
+        client, monkeypatch, fake_snap):
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: fake_snap)
+    monkeypatch.setattr(assemble, "cached_snapshot_was_rebuilt", lambda: False)
+
+    available = client.get("/api/health")
+    candidate = client.get("/api/health?require_rebuilt=true")
+
+    assert available.status_code == 200
+    assert candidate.status_code == 503
+    assert candidate.json() == {
+        "status": "rebuilding_from_last_known_good",
+        "version": assemble.VERSION_LABEL,
+        "serving_generated_at": fake_snap["generated_at"],
+    }
+    assert candidate.headers["retry-after"] == "10"
+
+    monkeypatch.setattr(assemble, "cached_snapshot_was_rebuilt", lambda: True)
+    assert client.get("/api/health?require_rebuilt=true").status_code == 200
+
+
 def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
     async def fake_asof(date):
         return {"ok": True, "asof": date, "engines": {}}
@@ -158,6 +179,7 @@ def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
 def clean_cache(monkeypatch):
     monkeypatch.setitem(assemble._cache, "payload", None)
     monkeypatch.setitem(assemble._cache, "at", 0.0)
+    monkeypatch.setitem(assemble._cache, "source", None)
     monkeypatch.setattr(assemble, "_refreshing", False)
 
 
@@ -183,6 +205,119 @@ def test_cached_snapshot_is_passive_for_empty_and_stale_cache(
     assemble._cache.update(payload=stale, at=0.0)
 
     assert assemble.cached_snapshot() is stale
+
+
+def test_restart_restores_durable_snapshot_as_stale_without_building(
+        clean_cache, monkeypatch, fake_snap, tmp_path):
+    async def boom():
+        raise AssertionError("restart hydration must not build")
+
+    monkeypatch.setattr(assemble, "_build_snapshot", boom)
+    monkeypatch.setattr(assemble.store, "load_blob", lambda key: fake_snap)
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", tmp_path / "missing.json")
+
+    source = assemble.restore_cached_snapshot()
+
+    assert source == "durable"
+    assert assemble.cached_snapshot() is fake_snap
+    assert assemble._cache["at"] == 0.0
+    assert assemble.cached_snapshot_was_rebuilt() is False
+
+
+def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
+        clean_cache, monkeypatch, fake_snap, tmp_path):
+    static = tmp_path / "overview.json"
+    static.write_text(json.dumps(fake_snap))
+    monkeypatch.setattr(assemble.store, "load_blob", lambda key: {"bad": True})
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", static)
+
+    assert assemble.restore_cached_snapshot() == "static"
+    assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "composite", "tell", "stacker", "members_now", "navigator",
+        "modelcourt", "court_ensemble", "backtest", "event_capture",
+        "episodes", "calendar", "crunch_windows",
+    ],
+)
+def test_restart_rejects_nested_shapes_that_would_break_public_routes(
+        fake_snap, case):
+    payload = json.loads(json.dumps(fake_snap))
+    mutations = {
+        "composite": lambda p: p["engines"].__setitem__("composite", "bad"),
+        "tell": lambda p: p["deep"].__setitem__("tell", "bad"),
+        "stacker": lambda p: p["deep"].__setitem__("stacker", "bad"),
+        "members_now": lambda p: p["deep"].__setitem__(
+            "stacker", {"members_now": "bad"}),
+        "navigator": lambda p: p.__setitem__("navigator", []),
+        "modelcourt": lambda p: p["deep"].__setitem__("modelcourt", "bad"),
+        "court_ensemble": lambda p: p["deep"].__setitem__(
+            "modelcourt", {"ensemble": []}),
+        "backtest": lambda p: p["deep"].__setitem__("backtest", "bad"),
+        "event_capture": lambda p: p["deep"].__setitem__(
+            "backtest", {"event_capture": []}),
+        "episodes": lambda p: p["deep"].__setitem__(
+            "backtest", {"episodes": ["bad"]}),
+        "calendar": lambda p: p.__setitem__("calendar", []),
+        "crunch_windows": lambda p: p.__setitem__(
+            "calendar", {"crunch_windows": "bad"}),
+    }
+    mutations[case](payload)
+
+    assert assemble._servable_snapshot(payload) is False
+
+
+def test_tracked_static_snapshot_satisfies_the_boot_contract():
+    payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
+
+    assert assemble._servable_snapshot(payload) is True
+
+
+def test_completed_snapshot_handoff_is_best_effort(monkeypatch, fake_snap):
+    saved = []
+    monkeypatch.setattr(
+        assemble.store, "save_blob",
+        lambda key, payload: saved.append((key, payload)),
+    )
+
+    assemble._persist_last_good_snapshot(fake_snap)
+
+    assert saved == [(assemble.LAST_GOOD_SNAPSHOT_KEY, fake_snap)]
+
+    def fail(*_args):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(assemble.store, "save_blob", fail)
+    assemble._persist_last_good_snapshot(fake_snap)  # serving must continue
+
+
+def test_production_lifespan_restores_before_background_refresh(monkeypatch):
+    events = []
+
+    def restore():
+        events.append("restore")
+        return "durable"
+
+    async def refresh_forever():
+        events.append("refresh")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setattr(assemble, "restore_cached_snapshot", restore)
+    monkeypatch.setattr(api, "_keep_warm", refresh_forever)
+
+    async def scenario():
+        async with api._lifespan(api.app):
+            for _ in range(20):
+                if "refresh" in events:
+                    break
+                await asyncio.sleep(0)
+            assert events == ["restore", "refresh"]
+
+    asyncio.run(scenario())
 
 
 def test_stale_cache_served_instantly_then_refreshed_once(clean_cache, monkeypatch):
