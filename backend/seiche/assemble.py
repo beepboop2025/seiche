@@ -134,8 +134,7 @@ CACHE_MIN = 15
 DEEP_TTL_MIN = 12 * 60
 LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
 STATIC_SNAPSHOT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "frontend" / "public" / "data" / "overview.json"
+    Path(__file__).resolve().with_name("bootstrap_snapshot.json")
 )
 _cache: dict = {"at": 0.0, "payload": None, "source": None}
 _lock = asyncio.Lock()
@@ -1685,7 +1684,7 @@ def _servable_snapshot(payload: object) -> bool:
 def restore_cached_snapshot() -> str | None:
     """Hydrate the in-process cache without fetching or running an engine.
 
-    The durable SQLite copy is preferred.  The CI-baked public snapshot is a
+    The durable SQLite copy is preferred.  The backend-packaged snapshot is a
     disaster-recovery seed for the first rollout or a lost cache database.
     Restored payloads are marked stale so the normal background owner rebuilds
     immediately while readers continue to receive the dated prior reading.
