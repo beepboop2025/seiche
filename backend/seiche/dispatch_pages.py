@@ -52,6 +52,8 @@ BASE_URLS = [
     ("/skeptic.html", "monthly", "0.8"),
     ("/ampleness.html", "daily", "0.8"),
     ("/referee.html", "daily", "0.8"),
+    ("/investigations/", "weekly", "0.9"),
+    ("/investigations/the-282-billion-settlement-test/", "monthly", "0.8"),
     ("/dispatches/", "daily", "0.8"),
     ("/support.html", "monthly", "0.5"),
     ("/privacy.html", "yearly", "0.2"),
@@ -492,6 +494,8 @@ same product; the callable contract remains the MCP server above.
 - [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
 - [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
 - [Live board]({SITE}/): the current funding stress reading
+- [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
+- [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file

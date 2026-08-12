@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">The 282 billion dollar day hiding inside a calm money market</title>
+  <desc id="desc">Seiche share card showing a modelled reserve path declining through dated Treasury settlement pressure points.</desc>
+  <rect width="1200" height="630" fill="#070a11"/>
+  <circle cx="1050" cy="60" r="310" fill="#62d7df" opacity=".055"/>
+  <text x="64" y="70" fill="#a99cff" font-family="ui-monospace,monospace" font-size="18" letter-spacing="4">SEICHE / INVESTIGATION 001</text>
+  <text x="64" y="145" fill="#f2f4f8" font-family="Inter,system-ui,sans-serif" font-size="53" font-weight="560">The $282 billion day</text>
+  <text x="64" y="205" fill="#f2f4f8" font-family="Inter,system-ui,sans-serif" font-size="53" font-weight="560">hiding inside a calm</text>
+  <text x="64" y="265" fill="#d5d0ff" font-family="Inter,system-ui,sans-serif" font-size="53" font-weight="560">money market</text>
+  <g transform="translate(64 322)">
+    <line x1="0" y1="28" x2="1050" y2="28" stroke="#a99cff" stroke-opacity=".15"/>
+    <line x1="0" y1="118" x2="1050" y2="118" stroke="#a99cff" stroke-opacity=".15"/>
+    <line x1="0" y1="208" x2="1050" y2="208" stroke="#a99cff" stroke-opacity=".15"/>
+    <path d="M20 28 L230 69 L430 116 L625 132 L830 178 L1035 204" fill="none" stroke="#a99cff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="230" y1="0" x2="230" y2="220" stroke="#e5ae72" stroke-width="2" stroke-dasharray="7 7"/>
+    <g fill="#070a11" stroke="#d5d0ff" stroke-width="4"><circle cx="20" cy="28" r="8"/><circle cx="230" cy="69" r="8"/><circle cx="430" cy="116" r="8"/><circle cx="625" cy="132" r="8"/><circle cx="830" cy="178" r="8"/><circle cx="1035" cy="204" r="8"/></g>
+    <text x="245" y="20" fill="#e5ae72" font-family="ui-monospace,monospace" font-size="15">AUG 18 · $282B SETTLEMENT</text>
+  </g>
+  <text x="64" y="592" fill="#a3acc1" font-family="ui-monospace,monospace" font-size="16">COUNTER-CASE: SOFR −2.8BP VS IORB · SRF $0.10B</text>
+  <text x="1136" y="592" fill="#62d7df" font-family="ui-monospace,monospace" font-size="16" text-anchor="end">SEICHE.INFO</text>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "schema": "seiche.investigation-index.v1",
+  "publication_policy": "reviewed_longform",
+  "articles": [
+    {
+      "slug": "the-282-billion-settlement-test",
+      "headline": "The $282 billion day hiding inside a calm money market",
+      "published_at": "2026-08-12T12:00:00+05:30",
+      "modified_at": "2026-08-12T12:00:00+05:30",
+      "editorial_status": "reviewed",
+      "canonical_url": "https://seiche.info/investigations/the-282-billion-settlement-test/",
+      "chart": "/investigations/the-282-billion-settlement-test/reserve-path.png",
+      "evidence_as_of": "2026-08-12",
+      "related_products": ["liquilens", "liquilens-undertow"]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">The calendar, not overnight cash, carries the warning</title>
+  <desc id="desc">A line chart of Seiche's modelled worst-case reserve path. It begins at 2,993 billion dollars on August 5 and falls across dated pressure points to 2,830 billion dollars on September 30. This is a scenario, not an observed future outcome.</desc>
+  <rect width="1600" height="900" fill="#0b0f18"/>
+  <circle cx="1390" cy="50" r="330" fill="#62d7df" opacity=".045"/>
+  <text x="110" y="105" fill="#62d7df" font-family="ui-monospace,monospace" font-size="17" letter-spacing="3">SEICHE / DATED RESERVE PATH</text>
+  <text x="110" y="160" fill="#f2f4f8" font-family="Inter,system-ui,sans-serif" font-size="42" font-weight="560">The calendar—not overnight cash—carries the warning</text>
+  <text x="110" y="200" fill="#a3acc1" font-family="Inter,system-ui,sans-serif" font-size="20">Worst-case reserve scenario · USD billions · August 12 evidence cut</text>
+
+  <g stroke="#a99cff" stroke-opacity=".15" stroke-width="1">
+    <line x1="150" y1="240" x2="1450" y2="240"/>
+    <line x1="150" y1="350" x2="1450" y2="350"/>
+    <line x1="150" y1="460" x2="1450" y2="460"/>
+    <line x1="150" y1="570" x2="1450" y2="570"/>
+    <line x1="150" y1="680" x2="1450" y2="680"/>
+  </g>
+  <g fill="#737e98" font-family="ui-monospace,monospace" font-size="16" text-anchor="end">
+    <text x="132" y="246">3,000</text><text x="132" y="356">2,950</text><text x="132" y="466">2,900</text><text x="132" y="576">2,850</text><text x="132" y="686">2,800</text>
+  </g>
+
+  <path d="M170 255 L420 356 L660 464 L900 492 L1140 559 L1380 615" fill="none" stroke="#a99cff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M170 255 L420 356 L660 464 L900 492 L1140 559 L1380 615 L1380 680 L170 680 Z" fill="#a99cff" opacity=".07"/>
+  <line x1="420" y1="230" x2="420" y2="680" stroke="#e5ae72" stroke-width="2" stroke-dasharray="8 9" opacity=".8"/>
+  <text x="436" y="280" fill="#e5ae72" font-family="ui-monospace,monospace" font-size="17">$282B SETTLEMENT</text>
+  <text x="436" y="306" fill="#a3acc1" font-family="Inter,system-ui,sans-serif" font-size="17">August 18</text>
+
+  <g fill="#0b0f18" stroke="#d5d0ff" stroke-width="5">
+    <circle cx="170" cy="255" r="10"/><circle cx="420" cy="356" r="10"/><circle cx="660" cy="464" r="10"/><circle cx="900" cy="492" r="10"/><circle cx="1140" cy="559" r="10"/><circle cx="1380" cy="615" r="10"/>
+  </g>
+  <g fill="#f2f4f8" font-family="ui-monospace,monospace" font-size="18" text-anchor="middle">
+    <text x="170" y="230">$2,993B</text><text x="420" y="393">$2,947B</text><text x="660" y="501">$2,898B</text><text x="900" y="529">$2,886B</text><text x="1140" y="596">$2,855B</text><text x="1380" y="652">$2,830B</text>
+  </g>
+  <g fill="#737e98" font-family="ui-monospace,monospace" font-size="15" text-anchor="middle">
+    <text x="170" y="730">AUG 05</text><text x="420" y="730">AUG 18</text><text x="660" y="730">AUG 31</text><text x="900" y="730">SEP 15</text><text x="1140" y="730">SEP 16</text><text x="1380" y="730">SEP 30</text>
+  </g>
+
+  <rect x="108" y="790" width="1384" height="1" fill="#f2f4f8" opacity=".12"/>
+  <text x="110" y="835" fill="#a3acc1" font-family="Inter,system-ui,sans-serif" font-size="17">Scenario, not fact. Calm rates and negligible SRF use through Aug 18 would weaken the thesis.</text>
+  <text x="1490" y="835" fill="#d5d0ff" font-family="ui-monospace,monospace" font-size="16" text-anchor="end">seiche.info/investigations</text>
+</svg>
