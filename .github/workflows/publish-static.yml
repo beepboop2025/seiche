@@ -7,6 +7,7 @@ name: publish-static
 # the repo's stale data/ over the live site would corrupt the Book ledger.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:

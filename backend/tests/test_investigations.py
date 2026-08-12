@@ -59,6 +59,7 @@ def test_generated_discovery_keeps_the_investigation_urls():
 
 def test_static_fast_path_reaches_the_canonical_cloudflare_origin():
     workflow = (ROOT / ".github" / "workflows" / "publish-static.yml").read_text()
+    assert "workflow_dispatch:" in workflow
     assert "--exclude data/" in workflow
     assert "rsync -a --delete --exclude .git /tmp/site/ /tmp/cloudflare-site/" in workflow
     assert "pages deploy /tmp/cloudflare-site --project-name=seiche --branch=main" in workflow
