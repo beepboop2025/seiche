@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/site_key
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site
-          rsync -a +            --exclude data/ +            --exclude dispatches/ +            --exclude sitemap.xml +            --exclude llms.txt +            --exclude llms-full.txt +            --exclude methodology.html +            --exclude skeptic.html +            --exclude ampleness.html +            --exclude referee.html +            frontend/public/ /tmp/site/
+          rsync -a --exclude data/ --exclude dispatches/ --exclude sitemap.xml --exclude llms.txt --exclude llms-full.txt --exclude methodology.html --exclude skeptic.html --exclude ampleness.html --exclude referee.html frontend/public/ /tmp/site/
           cd /tmp/site
           git config user.name "seiche-publish"
           git config user.email "noreply@seiche"

@@ -72,6 +72,7 @@ def test_static_fast_path_reaches_the_canonical_cloudflare_origin():
         "referee.html",
     ):
         assert f"--exclude {generated}" in workflow
+    assert "rsync -a +" not in workflow
     assert 'echo "nothing to update"; exit 0' not in workflow
     assert "rsync -a --delete --exclude .git /tmp/site/ /tmp/cloudflare-site/" in workflow
     assert "pages deploy /tmp/cloudflare-site --project-name=seiche --branch=main" in workflow
