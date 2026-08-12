@@ -41,3 +41,20 @@ jobs:
           if git diff --cached --quiet; then echo "nothing to update"; exit 0; fi
           git commit -q -m "static fast-path $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -q origin main || (git pull --rebase -q origin main && git push -q origin main)
+          mkdir -p /tmp/cloudflare-site
+          rsync -a --delete --exclude .git /tmp/site/ /tmp/cloudflare-site/
+
+      # seiche.info is served by Cloudflare Pages, while seiche-site is the
+      # durable GitHub mirror. Deploy the just-updated mirror so passthrough
+      # pages do not remain 404 until the next full engine rebuild. The mirror
+      # already contains the latest generated data; frontend/public/data is
+      # still excluded above, so this fast path cannot replace it with stale
+      # repository fixtures.
+      - name: Deploy static fast path to Cloudflare Pages
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "3.90.0"
+          command: pages deploy /tmp/cloudflare-site --project-name=seiche --branch=main
