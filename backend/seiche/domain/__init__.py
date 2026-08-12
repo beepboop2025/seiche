@@ -1,5 +1,19 @@
 """Market-neutral domain contracts used by adapters, storage, and kernels."""
 
+from seiche.domain.investigative_outcome import (
+    DatasetEligibility,
+    InvestigativeOutcomeExport,
+    MAX_OUTCOME_EXPORT_BYTES,
+    OutcomeExportPurpose,
+    OutcomeIntegrityError,
+    OutcomeLedgerEntry,
+    OutcomeLedgerError,
+    OutcomeRecordKind,
+    OutcomeRowStatus,
+    ResolutionDisposition,
+    build_investigative_outcome_export,
+    verify_outcome_chain,
+)
 from seiche.domain.observation import (
     CanonicalUnit,
     ConnectorClassification,
@@ -16,12 +30,24 @@ from seiche.domain.observation import (
 __all__ = [
     "CanonicalUnit",
     "ConnectorClassification",
+    "DatasetEligibility",
     "DayCountConvention",
+    "InvestigativeOutcomeExport",
+    "MAX_OUTCOME_EXPORT_BYTES",
     "Observation",
+    "OutcomeExportPurpose",
+    "OutcomeIntegrityError",
+    "OutcomeLedgerEntry",
+    "OutcomeLedgerError",
+    "OutcomeRecordKind",
+    "OutcomeRowStatus",
     "QualityState",
     "RateCompounding",
     "RedistributionStatus",
+    "ResolutionDisposition",
     "SemanticRole",
     "StalenessState",
+    "build_investigative_outcome_export",
     "evidence_sha256",
+    "verify_outcome_chain",
 ]
