@@ -455,6 +455,30 @@ function AppInner() {
         </div>
       </Suspense>
 
+      <aside className="network-rail" aria-labelledby="network-rail-title">
+        <div className="network-rail__head">
+          <span>THE STRESS CHAIN</span>
+          <strong id="network-rail-title">Follow the pressure after it leaves the plumbing.</strong>
+        </div>
+        <div className="network-rail__links">
+          <a href="https://liquilens.in/">
+            <b>02 / INSTITUTION</b>
+            <span>LiquiLens</span>
+            <small>See which lender should feel funding stress first.</small>
+          </a>
+          <a href="https://liquilens-undertow.com/">
+            <b>03 / MARKET</b>
+            <span>Undertow</span>
+            <small>See what a position-sized exit could cost.</small>
+          </a>
+          <a href="https://myquantdoesntspeakenglish.com/">
+            <b>04 / EDITORIAL WIRE</b>
+            <span>My Quant Doesn’t Speak English</span>
+            <small>Read every Seiche, LiquiLens and Undertow dispatch together.</small>
+          </a>
+        </div>
+      </aside>
+
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
         Not investment advice. All data from free public APIs with their native lags (COT is T+3 by construction; that lag is shown, never hidden). ·
@@ -476,6 +500,8 @@ function AppInner() {
         Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, the failure radar for financial institutions.
         <br />
         From the same lab: <a href="https://liquilens-undertow.com" style={{ color: "var(--dim)" }}>Undertow</a>, the cross-market liquidity terminal — exit cost at your size, tiers across nine segments, and a sealed record that keeps its own misses. Seiche watches the plumbing; Undertow watches whether the market will still be there when you exit. Live on the MARKET tab.
+        <br />
+        The full editorial wire: <a href="https://myquantdoesntspeakenglish.com/" style={{ color: "var(--dim)" }}>My Quant Doesn’t Speak English</a> consolidates every Seiche, LiquiLens and Undertow dispatch, plus original investigations.
         <br />
         Sibling project: <a href="https://palimpsest.info" style={{ color: "var(--dim)" }}>Palimpsest</a>, which works the opposite problem. Seiche exists because the Fed publishes its plumbing every week; Palimpsest measures what happens when a state stops publishing, watching China's information controls and the money-market series that go quiet under stress. The CHINA row on this board already reads its keyless CFETS feed.
       </div>

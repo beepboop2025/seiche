@@ -482,6 +482,12 @@ The Telegram delivery surfaces are https://t.me/seiche_desk_bot for the bot
 and https://t.me/LiquidityLabDesk for the public channel. They deliver the
 same product; the callable contract remains the MCP server above.
 
+## Related products
+
+- [LiquiLens](https://liquilens.in/): the institution layer, ranking which banks and lenders should feel funding stress first
+- [Undertow](https://liquilens-undertow.com/): the market layer, mapping liquidity fragility and estimated exit cost at position size
+- [My Quant Doesn't Speak English](https://myquantdoesntspeakenglish.com/): the editorial wire containing every Seiche, LiquiLens and Undertow dispatch, plus original investigations
+
 ## Docs
 
 - [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon

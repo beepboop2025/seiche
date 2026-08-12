@@ -116,6 +116,11 @@
       "name": "Undertow",
       "use_for": "Cross-market liquidity fragility and exit cost",
       "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "name": "My Quant Doesn't Speak English",
+      "use_for": "Every Seiche, LiquiLens, and Undertow dispatch in one editorial wire",
+      "url": "https://myquantdoesntspeakenglish.com/"
     }
   ],
   "citation": "Seiche. Funding-stress terminal for US money markets. https://seiche.info/ (include the board's generated_at timestamp when citing a live reading)."
