@@ -106,6 +106,15 @@ def test_terminal_navigation_exposes_the_selection_surface():
     assert "USE CASES" in nav
 
 
+def test_contextual_product_network_is_visible_and_machine_readable():
+    hub = "https://myquantdoesntspeakenglish.com/"
+    app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
+    card = json.loads((PUBLIC / "product-card.json").read_text())
+    assert hub in app
+    assert hub in dispatch_pages._LLMS_PREAMBLE
+    assert any(sibling["url"] == hub for sibling in card["siblings"])
+
+
 def test_search_and_answer_crawlers_are_explicitly_welcome():
     robots = (PUBLIC / "robots.txt").read_text()
     for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
