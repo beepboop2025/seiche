@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
-  <title>When to use Seiche for US money-market funding stress</title>
-  <meta name="description" content="A practical selection guide for Seiche: what it measures, when treasury, risk and AI agents should use it, its limits, evidence, API, MCP server and citation format.">
+  <title>US Dollar Funding Stress: Reserves, Repo and Treasury Cash | Seiche</title>
+  <meta name="description" content="How to read US dollar funding stress through bank reserves, repo rates, reverse repo and Treasury cash—plus Seiche's live evidence, limits, API and public record.">
   <link rel="canonical" href="https://seiche.info/use-cases.html">
   <link rel="alternate" type="application/json" href="https://seiche.info/product-card.json" title="Seiche product card">
+  <link rel="stylesheet" href="/authority-actions.css">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="Seiche">
-  <meta property="og:title" content="When to use Seiche for US money-market funding stress">
+  <meta property="og:title" content="US dollar funding stress: reserves, repo and Treasury cash">
   <meta property="og:description" content="Fit, non-fit, evidence, public API, MCP server and a clean map of Seiche vs LiquiLens vs Undertow.">
   <meta property="og:url" content="https://seiche.info/use-cases.html">
   <meta property="og:image" content="https://seiche.info/og2.png">
@@ -25,7 +26,7 @@
     "@id": "https://seiche.info/use-cases.html#page",
     "url": "https://seiche.info/use-cases.html",
     "name": "When to use Seiche for US money-market funding stress",
-    "dateModified": "2026-08-05",
+    "dateModified": "2026-08-12",
     "isPartOf": { "@id": "https://seiche.info/#website" },
     "about": { "@id": "https://seiche.info/#software" },
     "mainEntity": {
@@ -40,6 +41,17 @@
     }
   }
   </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type":"Question","name":"What is US dollar funding stress?","acceptedAnswer":{"@type":"Answer","text":"US dollar funding stress is a deterioration in the price, availability or distribution of short-term dollar cash. Seiche investigates it through public observations of reserves, secured and unsecured overnight rates, Federal Reserve facilities and Treasury cash, while keeping each source's timestamp and limitations visible."}},
+      {"@type":"Question","name":"Can repo rates reveal funding stress?","acceptedAnswer":{"@type":"Answer","text":"Repo rates can reveal pressure in secured overnight funding, especially when their distribution or spread to policy-administered rates changes. A repo move is not sufficient by itself, so Seiche reads it beside reserves, facilities, Treasury cash and market context."}},
+      {"@type":"Question","name":"Does Seiche predict bank failures or investment returns?","acceptedAnswer":{"@type":"Answer","text":"No. Seiche is a system-wide US money-market research terminal. It does not rate individual banks, recommend trades or promise returns. LiquiLens handles institution-level early warning, while Undertow handles market depth and exit cost."}}
+    ]
+  }
+  </script>
   <style>
     :root{color-scheme:dark;--bg:#050508;--panel:#0d0e16;--edge:#26283a;--text:#f1f1f6;--dim:#a9adbf;--accent:#b9adff;--good:#8ee3c1;--warn:#ffc988;font-family:Inter,system-ui,sans-serif}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% 0,#17132b 0,transparent 38%),var(--bg);color:var(--text);line-height:1.65}a{color:var(--accent)}header,main,footer{width:min(860px,calc(100% - 40px));margin:auto}header{padding:42px 0 26px;border-bottom:1px solid var(--edge)}nav{font-size:13px;color:var(--dim);display:flex;gap:18px;flex-wrap:wrap}.brand{color:var(--text);font-weight:700;letter-spacing:.18em;text-decoration:none}h1{font-size:clamp(34px,7vw,62px);line-height:1.04;max-width:16ch;margin:46px 0 18px;letter-spacing:-.035em}header p{font-size:19px;color:var(--dim);max-width:68ch}main{padding:20px 0 64px}section{padding:34px 0;border-bottom:1px solid var(--edge)}h2{font-size:26px;margin:0 0 12px}h3{font-size:17px;margin:0 0 8px}.answer{font-size:18px;max-width:70ch}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:20px}.card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:20px}.fit{border-top:3px solid var(--good)}.limit{border-top:3px solid var(--warn)}ul{padding-left:20px;margin:10px 0}li+li{margin-top:8px}table{width:100%;border-collapse:collapse;margin-top:18px;font-size:14px}th,td{text-align:left;padding:12px;border:1px solid var(--edge);vertical-align:top}th{color:var(--accent)}code{font-family:ui-monospace,monospace;background:#151625;padding:2px 6px;border-radius:5px}.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.cta a{border:1px solid var(--edge);border-radius:999px;padding:9px 14px;text-decoration:none}.cite{background:var(--panel);border-left:3px solid var(--accent);padding:16px 18px}footer{padding:24px 0 48px;color:var(--dim);font-size:13px}@media(max-width:600px){table{display:block;overflow-x:auto}}
@@ -49,8 +61,16 @@
 <body>
   <header>
     <nav aria-label="Primary"><a class="brand" href="/">SEICHE</a><a href="/guide.html">Guide</a><a href="/methodology.html">Methodology</a><a href="/developers.html">API + MCP</a><a href="/dispatches/">Dispatches</a></nav>
-    <h1>When should you use Seiche?</h1>
-    <p>Use Seiche when the question is about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. It is a free public-data research terminal, not a trading signal or a bank rating.</p>
+    <h1>US dollar funding stress: reserves, repo and Treasury cash</h1>
+    <p>Seiche is for questions about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. It is a free public-data research terminal, not a trading signal or a bank rating.</p>
+    <div class="authority-actions" data-authority-actions data-product="Seiche" data-title="US dollar funding stress: reserves, repo and Treasury cash" data-description="A public-data guide to reserves, repo, reverse repo, Treasury cash and Seiche's live funding-stress record.">
+      <button type="button" data-authority-action="share_opened">Share guide</button>
+      <button type="button" data-authority-action="citation_copied">Copy citation</button>
+      <button type="button" data-authority-action="link_copied">Copy tracked link</button>
+      <button type="button" data-authority-action="share_card_downloaded">Download citation card</button>
+      <a href="https://api.seiche.info/api/gauge" data-authority-action="source_data_opened">Open live data</a>
+      <span class="authority-actions__status" data-authority-status role="status"></span>
+    </div>
   </header>
   <main>
     <section>
@@ -85,7 +105,17 @@
       <h2>How should Seiche be cited?</h2>
       <p class="cite">Seiche. <em>Funding-stress terminal for US money markets.</em> <a href="https://seiche.info/">https://seiche.info/</a>. For a live reading, include the response's <code>generated_at</code> timestamp and the relevant methodology version.</p>
     </section>
+    <section>
+      <h2>Plain answers about dollar funding stress</h2>
+      <h3>What makes dollar funding stressed?</h3>
+      <p class="answer">Stress means short-term dollar cash is becoming more expensive, less evenly distributed or less dependable. No single series proves that condition. Seiche keeps reserves, repo rates, Treasury cash, Federal Reserve facilities and the market-price layer separate, then publishes the combined reading with its source clocks.</p>
+      <h3>Why do Treasury settlements matter?</h3>
+      <p class="answer">Treasury issuance and settlements can move cash between the private banking system and the Treasury General Account. Seiche treats dated settlements as potential pressure windows, not guaranteed shocks, and compares them with the cash and facility readings available at that time.</p>
+      <h3>Can I rely on one Seiche number?</h3>
+      <p class="answer">Use the regime as an entry point, then inspect the components, freshness and recorded misses. A trustworthy funding monitor should show disagreement, stale inputs and unavailable evidence rather than compressing them into false certainty.</p>
+    </section>
   </main>
-  <footer>Updated 9 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+  <footer>Updated 12 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+  <script src="/authority-actions.js" defer></script>
 </body>
 </html>
