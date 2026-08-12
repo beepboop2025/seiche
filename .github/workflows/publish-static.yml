@@ -39,9 +39,12 @@ jobs:
           git config user.name "seiche-publish"
           git config user.email "noreply@seiche"
           git add -A
-          if git diff --cached --quiet; then echo "nothing to update"; exit 0; fi
-          git commit -q -m "static fast-path $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push -q origin main || (git pull --rebase -q origin main && git push -q origin main)
+          if git diff --cached --quiet; then
+            echo "mirror already contains the static files"
+          else
+            git commit -q -m "static fast-path $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push -q origin main || (git pull --rebase -q origin main && git push -q origin main)
+          fi
           mkdir -p /tmp/cloudflare-site
           rsync -a --delete --exclude .git /tmp/site/ /tmp/cloudflare-site/
 
