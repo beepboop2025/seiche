@@ -2,9 +2,9 @@ name: publish-static
 
 # Fast path: passthrough files in frontend/public/ (support page, QR assets,
 # robots.txt, …) go straight to the live seiche-site repo without waiting for
-# the ~40-minute engine build. Everything under frontend/public/data/ is build
-# output owned by the full publish pipeline and is never touched here — copying
-# the repo's stale data/ over the live site would corrupt the Book ledger.
+# the ~40-minute engine build. Data plus the dispatch, discovery and methodology
+# surfaces are owned by the full publish pipeline and are never touched here —
+# copying repository snapshots over them would regress the live evidence cut.
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           chmod 600 ~/.ssh/site_key
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site
-          rsync -a --exclude data/ frontend/public/ /tmp/site/
+          rsync -a +            --exclude data/ +            --exclude dispatches/ +            --exclude sitemap.xml +            --exclude llms.txt +            --exclude llms-full.txt +            --exclude methodology.html +            --exclude skeptic.html +            --exclude ampleness.html +            --exclude referee.html +            frontend/public/ /tmp/site/
           cd /tmp/site
           git config user.name "seiche-publish"
           git config user.email "noreply@seiche"
@@ -51,8 +51,8 @@ jobs:
       # seiche.info is served by Cloudflare Pages, while seiche-site is the
       # durable GitHub mirror. Deploy the just-updated mirror so passthrough
       # pages do not remain 404 until the next full engine rebuild. The mirror
-      # already contains the latest generated data; frontend/public/data is
-      # still excluded above, so this fast path cannot replace it with stale
+      # already contains the latest generated surfaces; their source snapshots
+      # are excluded above, so this fast path cannot replace them with stale
       # repository fixtures.
       - name: Deploy static fast path to Cloudflare Pages
         continue-on-error: true
