@@ -104,6 +104,8 @@
     "oil_funding": "https://api.seiche.info/api/oil-funding",
     "fx_materials": "https://api.seiche.info/api/estuary",
     "mcp": "https://api.seiche.info/mcp",
+    "telegram_bot": "https://t.me/seiche_desk_bot",
+    "telegram_channel": "https://t.me/LiquidityLabDesk",
     "authentication": "Eight public MCP tools require no token; five additional subscriber tools require a bearer token."
   },
   "siblings": [

@@ -479,6 +479,28 @@ function AppInner() {
         </div>
       </aside>
 
+      <aside className="telegram-rail" aria-labelledby="telegram-rail-title">
+        <div className="telegram-rail__head">
+          <span>THE SONAR INBOX</span>
+          <strong id="telegram-rail-title">Choose the alert surface that matches the question.</strong>
+          <small>Every destination is opt-in. The website shares no visitor data with Telegram.</small>
+        </div>
+        <div className="telegram-rail__links">
+          <a className="primary" href="https://t.me/seiche_desk_bot?start=site_ecosystem" target="_blank" rel="noopener noreferrer">
+            <b>THIS INSTRUMENT</b><span>@seiche_desk_bot</span><small>Funding regime, week ahead, sources, and the public record.</small>
+          </a>
+          <a href="https://t.me/LiquiLens_bot?start=seiche_ecosystem" target="_blank" rel="noopener noreferrer">
+            <b>INSTITUTIONS</b><span>@LiquiLens_bot</span><small>Which lender should feel the pressure first?</small>
+          </a>
+          <a href="https://t.me/undertow_LiquiLens_bot?start=ref_seiche_ecosystem" target="_blank" rel="noopener noreferrer">
+            <b>MARKET EXITS</b><span>@undertow_LiquiLens_bot</span><small>What could a position-sized exit cost?</small>
+          </a>
+          <a href="https://t.me/LiquidityLabDesk" target="_blank" rel="noopener noreferrer">
+            <b>FREE DAILY CHANNEL</b><span>@LiquidityLabDesk</span><small>One reviewed read across the whole stress chain.</small>
+          </a>
+        </div>
+      </aside>
+
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
         Not investment advice. All data from free public APIs with their native lags (COT is T+3 by construction; that lag is shown, never hidden). ·
