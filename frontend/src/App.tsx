@@ -378,8 +378,8 @@ function AppInner() {
       </aside>}
 
       <nav className="tabs">
-        <a href="/investigations/" aria-label="Seiche reviewed investigations">
-          INVESTIGATIONS
+        <a href="/investigations/" aria-label="Seiche articles, daily analysis and reviewed investigations">
+          ARTICLES
         </a>
         {TABS.map((t) => (
           <Fragment key={t}>

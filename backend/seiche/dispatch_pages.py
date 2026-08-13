@@ -365,13 +365,15 @@ def render_archive(entries: list[dict]) -> str:
         ],
     }
     intro = (
-        "<h1>Dispatches</h1>"
-        '<p class="lede">The daily letter on US money market plumbing, written by the terminal '
-        "from the same free public data the board runs on. Every claim carries the number it "
-        "stands on, and the misses stay published next to the hits.</p>"
+        "<h1>Daily analysis</h1>"
+        '<p class="lede">The dated letter on US money market plumbing, written from the same '
+        "public evidence the board runs on. The board checks six times a day; one daily edition "
+        "freezes the reading, leads with a genuinely fresh print when one exists, and says what "
+        "held when it does not. Every claim carries the number it stands on, and the misses stay "
+        "beside the hits.</p>"
     )
     return _page(
-        title="Dispatches · the Seiche daily funding stress letter",
+        title="Daily analysis · the Seiche funding stress letter",
         description=(
             "The archive of Seiche's daily letters on US money market plumbing: "
             "funding stress readings, the dates that matter, and the desk's forward read, "

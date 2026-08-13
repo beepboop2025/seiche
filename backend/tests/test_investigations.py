@@ -39,6 +39,17 @@ def test_network_links_are_bidirectional_destinations():
         assert "https://liquilens-undertow.com/investigations/" in page
 
 
+def test_articles_are_the_public_front_door_without_hiding_evidence():
+    hub = HUB.read_text()
+    app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
+    assert "SEICHE / ARTICLES" in hub
+    assert 'href="/dispatches/"' in hub
+    assert "https://myquantdoesntspeakenglish.com/" in hub
+    assert "The board checks new evidence six times a day" in hub
+    assert "If coverage cannot support a verdict, Seiche abstains" in hub
+    assert "ARTICLES" in app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
+
+
 def test_manifest_and_share_assets_are_publication_ready():
     manifest = json.loads((PUBLIC / "investigations" / "index.json").read_text())
     assert manifest["publication_policy"] == "reviewed_longform"
