@@ -42,7 +42,15 @@ def test_network_links_are_bidirectional_destinations():
 def test_manifest_and_share_assets_are_publication_ready():
     manifest = json.loads((PUBLIC / "investigations" / "index.json").read_text())
     assert manifest["publication_policy"] == "reviewed_longform"
-    assert manifest["articles"][0]["editorial_status"] == "reviewed"
+    article = manifest["articles"][0]
+    assert article["editorial_status"] == "reviewed"
+    assert article["article_type"] == "investigation"
+    assert article["publication_status"] == "PUBLISHED"
+    assert article["canonical_url"].startswith("https://seiche.info/investigations/")
+    assert article["dek"] and article["limitations"]
+    assert article["clocks"]["event_time"] <= article["clocks"]["knowledge_time"]
+    assert article["original_contribution"]["kinds"] == [
+        "dated_forward_test", "cross_signal_divergence"]
     asset_dir = STORY.parent
     assert _png_size(asset_dir / "reserve-path.png") == (1600, 900)
     assert _png_size(asset_dir / "share.png") == (1200, 630)

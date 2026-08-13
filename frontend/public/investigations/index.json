@@ -3,11 +3,29 @@
   "publication_policy": "reviewed_longform",
   "articles": [
     {
+      "id": "seiche:investigation:the-282-billion-settlement-test",
       "slug": "the-282-billion-settlement-test",
+      "article_type": "investigation",
       "headline": "The $282 billion day hiding inside a calm money market",
+      "dek": "SOFR is below IORB and the Standing Repo Facility is barely being touched. Seiche still flags August 18 because a large Treasury settlement lands while reserve balances sit below its estimated demand-curve kink. The contradiction, not either reading alone, is the story.",
+      "beat": "dollar-funding-plumbing",
+      "editorial_class": "investigation",
+      "publication_status": "PUBLISHED",
       "published_at": "2026-08-12T12:00:00+05:30",
       "modified_at": "2026-08-12T12:00:00+05:30",
       "editorial_status": "reviewed",
+      "clocks": {
+        "event_time": "2026-08-12T08:20:00Z",
+        "knowledge_time": "2026-08-12T12:00:00+05:30"
+      },
+      "evidence_status": "POINT_IN_TIME_REVIEWED_ANALYSIS",
+      "original_contribution": {
+        "kinds": ["dated_forward_test", "cross_signal_divergence"],
+        "statement": "A dated capacity test that keeps calm overnight prices, the modelled reserve path, and the counter-case separate."
+      },
+      "limitations": [
+        "The reserve-demand kink and forward path are Seiche derivations. Historical inputs use final or current-vintage data where publication vintages are unavailable, so this is not a validated backtest."
+      ],
       "canonical_url": "https://seiche.info/investigations/the-282-billion-settlement-test/",
       "chart": "/investigations/the-282-billion-settlement-test/reserve-path.png",
       "evidence_as_of": "2026-08-12",
