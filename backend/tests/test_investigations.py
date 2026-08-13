@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import struct
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -59,7 +60,12 @@ def test_manifest_and_share_assets_are_publication_ready():
     assert article["publication_status"] == "PUBLISHED"
     assert article["canonical_url"].startswith("https://seiche.info/investigations/")
     assert article["dek"] and article["limitations"]
-    assert article["clocks"]["event_time"] <= article["clocks"]["knowledge_time"]
+    event_time = datetime.fromisoformat(article["clocks"]["event_time"].replace("Z", "+00:00"))
+    knowledge_time = datetime.fromisoformat(article["clocks"]["knowledge_time"])
+    published_at = datetime.fromisoformat(article["published_at"])
+    assert event_time <= knowledge_time <= published_at
+    assert article["corrections"][0]["fields"] == [
+        "published_at", "modified_at", "clocks.knowledge_time"]
     assert article["original_contribution"]["kinds"] == [
         "dated_forward_test", "cross_signal_divergence"]
     asset_dir = STORY.parent
