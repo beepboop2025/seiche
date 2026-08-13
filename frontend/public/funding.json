@@ -47,7 +47,7 @@
             {
                 "guid": "crypto",
                 "type": "other",
-                "address": "https://seiche.info/support.html",
+                "address": "https://seiche.info/support",
                 "description": "BTC, ETH, SOL and TRON addresses listed on the support page."
             }
         ],

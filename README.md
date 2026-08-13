@@ -211,7 +211,7 @@ curl https://api.seiche.info/api/gauge
 ```
 
 The copy-paste quickstart and live tool runner are at
-**[seiche.info/developers.html](https://seiche.info/developers.html)**.
+**[seiche.info/developers](https://seiche.info/developers)**.
 
 | tool | what it answers |
 |---|---|

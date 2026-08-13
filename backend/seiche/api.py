@@ -484,7 +484,7 @@ def api_index() -> dict[str, Any]:
     return {
         "product": "Seiche",
         "job": "system-level US dollar funding-stress early warning",
-        "developer_guide": "https://seiche.info/developers.html",
+        "developer_guide": "https://seiche.info/developers",
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
@@ -790,7 +790,7 @@ def _public_openapi_document() -> dict[str, Any]:
         "servers": [{"url": "https://api.seiche.info"}],
         "externalDocs": {
             "description": "MCP and API quickstart",
-            "url": "https://seiche.info/developers.html",
+            "url": "https://seiche.info/developers",
         },
         "paths": paths,
     }

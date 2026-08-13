@@ -91,7 +91,7 @@ board. Richer per-issuer context arrives with Phase 2.
 **Phase 4 — distribution. SHIPPED (rails):** the desk-agent kit
 (docs/HERMES.md) gives any AI agent the board. Seiche stays a free public
 good: the money model is grants and voluntary support (crypto donations at
-seiche.info/support.html), never a paywall. A dormant x402 rail exists for
+seiche.info/support), never a paywall. A dormant x402 rail exists for
 machine-native voluntary support (see docs/MCP.md) — off by default, and
 the public surface is free regardless.
 

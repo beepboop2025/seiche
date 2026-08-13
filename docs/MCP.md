@@ -210,7 +210,7 @@ Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
 ## Machine-native support (x402) — dormant by design
 
 Seiche is a free public good funded by grants and voluntary support
-(seiche.info/support.html), not a subscription product. The codebase also
+(seiche.info/support), not a subscription product. The codebase also
 carries a dormant [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
 if it is ever enabled, an AI agent with a wallet can voluntarily chip in a
 few cents of USDC per call for the operator-cost tools — support in the

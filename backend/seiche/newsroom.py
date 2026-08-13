@@ -195,7 +195,7 @@ def build_story(dispatch: dict, snap: dict, *, novel_movers: list[dict] | None =
                       if current_value is not None else f"Seiche's regime reads {regime}."),
         "metric": {"label": "Seiche composite", "value": current_value,
                    "unit": "index points", "coverage_pct": coverage},
-        "method_url": f"{SITE}/methodology.html",
+        "method_url": f"{SITE}/methodology",
     }]
     for mover in novel_movers[:3]:
         claims.append({
@@ -234,7 +234,7 @@ def build_story(dispatch: dict, snap: dict, *, novel_movers: list[dict] | None =
         "id": f"seiche:{dispatch['slug']}",
         "product": "seiche",
         "slug": dispatch["slug"],
-        "canonical_url": f"{SITE}/dispatches/{dispatch['slug']}.html",
+        "canonical_url": f"{SITE}/dispatches/{dispatch['slug']}",
         "headline": dispatch["title"],
         "dek": dispatch["summary"],
         "beat": "dollar-funding-plumbing",

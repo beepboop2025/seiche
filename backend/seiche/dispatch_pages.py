@@ -45,20 +45,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Base site URLs that always belong in the sitemap, with their cadence.
 BASE_URLS = [
     ("/", "daily", "1.0"),
-    ("/developers.html", "monthly", "0.9"),
-    ("/use-cases.html", "monthly", "0.9"),
-    ("/guide.html", "monthly", "0.8"),
-    ("/methodology.html", "monthly", "0.8"),
-    ("/skeptic.html", "monthly", "0.8"),
-    ("/ampleness.html", "daily", "0.8"),
-    ("/referee.html", "daily", "0.8"),
+    ("/developers", "monthly", "0.9"),
+    ("/use-cases", "monthly", "0.9"),
+    ("/guide", "monthly", "0.8"),
+    ("/methodology", "monthly", "0.8"),
+    ("/skeptic", "monthly", "0.8"),
+    ("/ampleness", "daily", "0.8"),
+    ("/referee", "daily", "0.8"),
     ("/investigations/", "weekly", "0.9"),
     ("/investigations/the-282-billion-settlement-test/", "monthly", "0.8"),
     ("/dispatches/", "daily", "0.8"),
-    ("/support.html", "monthly", "0.5"),
-    ("/privacy.html", "yearly", "0.2"),
-    ("/terms.html", "yearly", "0.2"),
+    ("/support", "monthly", "0.5"),
+    ("/privacy", "yearly", "0.2"),
+    ("/terms", "yearly", "0.2"),
 ]
+
+
+def dispatch_path(slug: str) -> str:
+    """Return the public clean URL while keeping the on-disk .html artifact."""
+    return f"/dispatches/{slug}"
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +250,7 @@ _FOOTER = (
     '<div class="foot">Written by the terminal from the live board, no model in the loop; '
     'every number is checkable on the <a href="/">free board</a>. '
     'Seiche is free open source software (<a href="https://github.com/beepboop2025/seiche">AGPL-3.0, source</a>). '
-    '<a href="/guide.html">Plain English guide</a> &middot; <a href="/support.html">Support</a> &middot; '
+    '<a href="/guide">Plain English guide</a> &middot; <a href="/support">Support</a> &middot; '
     'Not investment advice.</div>'
 )
 
@@ -294,7 +299,7 @@ def render_letter_page(meta: dict, free_md: str, desk_md: str | None) -> str:
     slug = meta["slug"]
     date = meta["date"]
     tag = meta.get("tag", "")
-    path = f"/dispatches/{slug}.html"
+    path = dispatch_path(slug)
     body_md = _strip_markers(free_md).strip()
     body_html = md_to_html(body_md)
     if desk_md:
@@ -340,7 +345,7 @@ def render_archive(entries: list[dict]) -> str:
     cards = []
     for e in entries:
         cards.append(
-            f'<a class="card" href="/dispatches/{_esc(e["slug"])}.html">'
+            f'<a class="card" href="{dispatch_path(_esc(e["slug"]))}">'
             f'<div class="date" style="margin-top:0">{_esc(e["date"])}'
             f'{" &middot; " + _esc(e["tag"]) if e.get("tag") else ""}</div>'
             f'<div class="card-title">{_esc(e["title"])}</div>'
@@ -358,7 +363,7 @@ def render_archive(entries: list[dict]) -> str:
             {
                 "@type": "Article",
                 "headline": e["title"],
-                "url": f"{SITE}/dispatches/{e['slug']}.html",
+                "url": f"{SITE}{dispatch_path(e['slug'])}",
                 "datePublished": e["date"],
             }
             for e in entries
@@ -393,7 +398,7 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     newest = max((e.get("date", "") for e in entries), default="")
     items = []
     for e in entries[:50]:
-        url = f"{SITE}/dispatches/{e['slug']}.html"
+        url = f"{SITE}{dispatch_path(e['slug'])}"
         items.append(
             "  <entry>\n"
             f"    <title>{_esc(e['title'])}</title>\n"
@@ -442,8 +447,8 @@ sibling boards: LiquiLens at https://liquilens.in and Undertow at
 https://liquilens-undertow.com.
 
 Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
-at {SITE}/guide.html; the versioned methodology page, with citations, a
-changelog and a cite-as block, is at {SITE}/methodology.html. The source code
+at {SITE}/guide; the versioned methodology page, with citations, a
+changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
 over MCP at https://api.seiche.info/mcp. Eight tools answer with no auth at all:
 funding_stress_now, historical_analogs, proof_backtest, data_health,
@@ -492,15 +497,15 @@ same product; the callable contract remains the MCP server above.
 
 ## Docs
 
-- [Plain English guide]({SITE}/guide.html): every engine and regime word explained without jargon
-- [API + MCP quickstart]({SITE}/developers.html): connect an agent or make the first public API call in under a minute
+- [Plain English guide]({SITE}/guide): every engine and regime word explained without jargon
+- [API + MCP quickstart]({SITE}/developers): connect an agent or make the first public API call in under a minute
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
-- [Selection guide]({SITE}/use-cases.html): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
+- [Selection guide]({SITE}/use-cases): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
 - [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
-- [Methodology]({SITE}/methodology.html): versioned methods page with citations, changelog and cite-as block
-- [Skeptic pack]({SITE}/skeptic.html): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
-- [Ampleness check]({SITE}/ampleness.html): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
+- [Methodology]({SITE}/methodology): versioned methods page with citations, changelog and cite-as block
+- [Skeptic pack]({SITE}/skeptic): the leakage audit, the orthogonal event-capture test, the construction-PIT replay and the notary, with the commands to check each one
+- [Ampleness check]({SITE}/ampleness): are reserves still ample, walked indicator by indicator with the threshold behind every verdict
 - [Live board]({SITE}/): the current funding stress reading
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
@@ -530,7 +535,7 @@ def render_llms_full(entries: list[dict], texts: dict[str, str]) -> str:
             "---",
             "",
             f"# {e['title']}",
-            f"Date: {e['date']} · Regime: {e.get('tag', '?')} · Canonical: {SITE}/dispatches/{e['slug']}.html",
+            f"Date: {e['date']} · Regime: {e.get('tag', '?')} · Canonical: {SITE}{dispatch_path(e['slug'])}",
             "",
             texts.get(e["slug"], "").strip(),
         ]
@@ -548,7 +553,7 @@ def render_sitemap(entries: list[dict]) -> str:
         )
     for e in entries:
         rows.append(
-            f"  <url>\n    <loc>{SITE}/dispatches/{e['slug']}.html</loc>\n"
+            f"  <url>\n    <loc>{SITE}{dispatch_path(e['slug'])}</loc>\n"
             f"    <lastmod>{e['date']}</lastmod>\n"
             f"    <changefreq>monthly</changefreq>\n    <priority>0.6</priority>\n  </url>"
         )
@@ -621,7 +626,7 @@ def build_all(repo_root: Path | None = None) -> list[str]:
                 "id": f"seiche:{e['slug']}",
                 "product": "seiche",
                 "slug": e["slug"],
-                "canonical_url": f"{SITE}/dispatches/{e['slug']}.html",
+                "canonical_url": f"{SITE}{dispatch_path(e['slug'])}",
                 "headline": e.get("title"),
                 "dek": e.get("summary"),
                 "editorial_class": "legacy_dispatch",

@@ -64,7 +64,7 @@ def test_write_creates_files_and_prepends_index(fake_snap, tmp_path):
         (tmp_path / "frontend" / "public" / "dispatches" / f"{d['slug']}.json").read_text()
     )
     assert story["schema"] == "seiche.analytical-story.v1"
-    assert story["canonical_url"].endswith(f"/{d['slug']}.html")
+    assert story["canonical_url"].endswith(f"/{d['slug']}")
     assert story["original_contribution"]["exclusive_fact_claimed"] is False
 
     idx = json.loads((tmp_path / "frontend" / "public" / "dispatches" / "index.json").read_text())

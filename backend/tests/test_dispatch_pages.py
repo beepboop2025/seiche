@@ -40,7 +40,7 @@ def test_letter_page_carries_canonical_jsonld_and_both_halves(repo):
     html_path = root / "frontend" / "public" / "dispatches" / f"{d['slug']}.html"
     assert str(html_path) in pages
     page = html_path.read_text()
-    assert f'<link rel="canonical" href="https://seiche.info/dispatches/{d["slug"]}.html">' in page
+    assert f'<link rel="canonical" href="https://seiche.info/dispatches/{d["slug"]}">' in page
     assert '"@type": "Article"' in page and d["date"] in page
     # the free reading and the desk's forward read are both in the static page
     assert "EROSION" in page
@@ -74,7 +74,7 @@ def test_archive_lists_every_letter(repo):
     root, d = repo
     build_all(repo_root=root)
     archive = (root / "frontend" / "public" / "dispatches" / "index.html").read_text()
-    assert f'href="/dispatches/{d["slug"]}.html"' in archive
+    assert f'href="/dispatches/{d["slug"]}"' in archive
     assert '<link rel="canonical" href="https://seiche.info/dispatches/">' in archive
 
 
@@ -82,9 +82,9 @@ def test_sitemap_has_base_pages_and_letters(repo):
     root, d = repo
     build_all(repo_root=root)
     sm = (root / "frontend" / "public" / "sitemap.xml").read_text()
-    for loc in ("https://seiche.info/", "https://seiche.info/guide.html",
+    for loc in ("https://seiche.info/", "https://seiche.info/guide",
                 "https://seiche.info/dispatches/",
-                f"https://seiche.info/dispatches/{d['slug']}.html"):
+                f"https://seiche.info/dispatches/{d['slug']}"):
         assert f"<loc>{loc}</loc>" in sm
     assert f"<lastmod>{d['date']}</lastmod>" in sm
 
@@ -130,7 +130,7 @@ def test_feed_is_valid_atom_with_full_content(repo):
     ns = {"a": "http://www.w3.org/2005/Atom"}
     entries = tree.findall("a:entry", ns)
     assert len(entries) == 1
-    assert entries[0].find("a:id", ns).text == f"https://seiche.info/dispatches/{d['slug']}.html"
+    assert entries[0].find("a:id", ns).text == f"https://seiche.info/dispatches/{d['slug']}"
     assert "EROSION" in entries[0].find("a:content", ns).text
 
 

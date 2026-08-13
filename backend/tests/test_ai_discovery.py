@@ -57,6 +57,10 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
     assert len(mcp["capabilities"]) == 8
+    assert catalog["host"]["documentationUrl"] == (
+        "https://seiche.info/developers")
+    assert all(".html" not in json.dumps(entry)
+               for entry in catalog["entries"])
 
 
 def test_ard_catalog_is_advertised_on_every_discovery_surface():
@@ -71,8 +75,8 @@ def test_ard_catalog_is_advertised_on_every_discovery_surface():
 
 def test_selection_page_is_canonical_and_links_its_evidence():
     page = (PUBLIC / "use-cases.html").read_text()
-    assert '<link rel="canonical" href="https://seiche.info/use-cases.html">' in page
-    for required in ("/methodology.html", "/skeptic.html", "/developers.html",
+    assert '<link rel="canonical" href="https://seiche.info/use-cases">' in page
+    for required in ("/methodology", "/skeptic", "/developers",
                      "/product-card.json", "https://api.seiche.info/mcp"):
         assert required in page
     assert "Do not use Seiche for" in page
@@ -93,17 +97,34 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
 
 
 def test_generated_discovery_indexes_include_the_selection_surface():
-    assert ("/use-cases.html", "monthly", "0.9") in dispatch_pages.BASE_URLS
-    for url in ("https://seiche.info/use-cases.html",
+    assert ("/use-cases", "monthly", "0.9") in dispatch_pages.BASE_URLS
+    for url in ("https://seiche.info/use-cases",
                 "https://seiche.info/product-card.json"):
         assert url in dispatch_pages._LLMS_PREAMBLE
+
+
+def test_clean_public_urls_match_cloudflare_redirect_targets():
+    for path, _, _ in dispatch_pages.BASE_URLS:
+        assert not path.endswith(".html")
+    for name, canonical in (
+        ("developers.html", "https://seiche.info/developers"),
+        ("guide.html", "https://seiche.info/guide"),
+        ("privacy.html", "https://seiche.info/privacy"),
+        ("support.html", "https://seiche.info/support"),
+        ("terms.html", "https://seiche.info/terms"),
+        ("use-cases.html", "https://seiche.info/use-cases"),
+    ):
+        assert f'<link rel="canonical" href="{canonical}">' in (PUBLIC / name).read_text()
 
 
 def test_terminal_navigation_exposes_the_selection_surface():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
     nav = app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
-    assert 'href="/use-cases.html"' in nav
+    assert 'href="/use-cases"' in nav
     assert "USE CASES" in nav
+    commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
+    assert 'url: "/guide"' in commands
+    assert 'url: "/support"' in commands
 
 
 def test_contextual_product_network_is_visible_and_machine_readable():
@@ -118,7 +139,8 @@ def test_contextual_product_network_is_visible_and_machine_readable():
 def test_search_and_answer_crawlers_are_explicitly_welcome():
     robots = (PUBLIC / "robots.txt").read_text()
     for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
-                  "Claude-User", "PerplexityBot", "Google-Extended"):
+                  "Claude-User", "PerplexityBot", "Perplexity-User",
+                  "Google-Extended", "Googlebot", "Bingbot"):
         assert f"User-agent: {agent}\nAllow: /" in robots
 
 

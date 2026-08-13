@@ -165,7 +165,7 @@ def test_methodology_page_contents(tmp_path):
     assert "the archive is preserved as published" in text
     # cite block with stable URL and version string
     assert "Cite as" in text
-    assert "https://seiche.info/methodology.html" in text
+    assert "https://seiche.info/methodology" in text
     assert f"methodology {methodology.METHODOLOGY_VERSION}" in text
     # repo convention: no em or en dashes in generated prose
     assert "—" not in text and "–" not in text

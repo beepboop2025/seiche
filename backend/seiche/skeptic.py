@@ -47,7 +47,7 @@ DEFAULT_OUT = REPO_ROOT / "frontend" / "public" / "skeptic.html"
 DEFAULT_SNAPSHOT = REPO_ROOT / "frontend" / "public" / "data" / "overview.json"
 DEFAULT_API = "https://api.seiche.info"
 
-SKEPTIC_URL = f"{SITE}/skeptic.html"
+SKEPTIC_URL = f"{SITE}/skeptic"
 
 # The page version is the date of the newest changelog entry, so the version
 # string moves exactly when the record of changes does.
@@ -694,7 +694,7 @@ def render_skeptic_html(snap: dict) -> str:
 <body>
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
-  <div class="faint"><a href="/">back to the board</a> &middot; <a href="/methodology.html">methodology</a> &middot; <a href="/guide.html">plain English guide</a></div>
+  <div class="faint"><a href="/">back to the board</a> &middot; <a href="/methodology">methodology</a> &middot; <a href="/guide">plain English guide</a></div>
 </div>
 
 <h1>The skeptic pack</h1>

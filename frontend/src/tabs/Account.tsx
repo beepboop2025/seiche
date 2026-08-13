@@ -43,7 +43,7 @@ export default function Account() {
             one is set up by hand, free, usually within a day.
           </div>
           <div className="method">
-            Prefer to keep the lights on? <a href="/support.html">Support Seiche</a> — voluntary, never required.
+            Prefer to keep the lights on? <a href="/support">Support Seiche</a> — voluntary, never required.
           </div>
         </div>
         <div className="card span6">

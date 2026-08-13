@@ -42,7 +42,7 @@ ARD_REGISTRY_LABELS = {
     "ora": "Ora",
     "huggingFace": "HF",
 }
-USER_AGENT = "LiquidityLab-ARD-Coverage/1.0 (+https://seiche.info/developers.html)"
+USER_AGENT = "LiquidityLab-ARD-Coverage/1.0 (+https://seiche.info/developers)"
 URN = re.compile(r"^urn:air:[a-zA-Z0-9.-]+(:[a-zA-Z0-9._-]+)+$")
 SCALAR = (str, int, float, bool, type(None))
 

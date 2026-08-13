@@ -117,7 +117,7 @@ def test_prerender_carries_the_board_and_the_letter(site):
 
     # the letter, in full, not just its summary
     assert d["title"] in text
-    assert f'href="/dispatches/{d["slug"]}.html"' in page
+    assert f'href="/dispatches/{d["slug"]}"' in page
 
     # the Week Ahead's pre-registered calls
     assert "W9-1" in text and "W9-2" in text

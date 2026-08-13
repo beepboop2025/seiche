@@ -4,7 +4,7 @@
   "id": "seiche:2026-08-13-daily",
   "product": "seiche",
   "slug": "2026-08-13-daily",
-  "canonical_url": "https://seiche.info/dispatches/2026-08-13-daily.html",
+  "canonical_url": "https://seiche.info/dispatches/2026-08-13-daily",
   "headline": "SRF accepted wakes to 0.00 $B overnight: 13.5 sigma on a near-zero base, not a large flow",
   "dek": "The board reads 45 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.1%; plumbing leads market pricing by +29 percentile points. The index is +0.0 against the last published letter.",
   "beat": "dollar-funding-plumbing",
@@ -52,7 +52,7 @@
         "unit": "index points",
         "coverage_pct": 100.0
       },
-      "method_url": "https://seiche.info/methodology.html"
+      "method_url": "https://seiche.info/methodology"
     },
     {
       "evidence_status": "OBSERVED",

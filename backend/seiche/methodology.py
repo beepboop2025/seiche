@@ -30,7 +30,7 @@ ENGINES_DIR = Path(__file__).resolve().parent / "engines"
 DEFAULT_OUT = REPO_ROOT / "frontend" / "public" / "methodology.html"
 
 SITE = "https://seiche.info"
-METHODOLOGY_URL = f"{SITE}/methodology.html"
+METHODOLOGY_URL = f"{SITE}/methodology"
 REPO_URL = "https://github.com/beepboop2025/seiche"
 
 # The methodology version is the date of the newest changelog entry, so the
@@ -343,7 +343,7 @@ def render_methodology_html(board_version: str | None = None) -> str:
 <body>
 <div class="top">
   <div class="wordmark">SEI<span>CHE</span></div>
-  <div class="faint"><a href="/">back to the board</a> &middot; <a href="/guide.html">plain English guide</a></div>
+  <div class="faint"><a href="/">back to the board</a> &middot; <a href="/guide">plain English guide</a></div>
 </div>
 
 <h1>Methodology</h1>

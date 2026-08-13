@@ -87,7 +87,7 @@ export default function Dispatches() {
               <div><dt>dated source clocks</dt><dd>{sourceClocks}</dd></div>
             </dl>
             <p>The live board can change. This letter cannot. Its argument, countercase and misses stay attached to the date.</p>
-            <a href="/methodology.html">methods + source register →</a>
+            <a href="/methodology">methods + source register →</a>
           </aside>
           <article className="dispatch-copy">
             <div className="dispatch-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(free) }} />
@@ -108,7 +108,7 @@ export default function Dispatches() {
     <div className="dispatch-list" style={{ marginTop: 18 }}>
       <div className="dispatch-intro">
         <h1>Dispatches</h1>
-        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. All of it is free, including the desk's forward read; if it earns its keep, <a href="/support.html">support keeps it running</a>.</p>
+        <p>What the plumbing did, and what it means — written from the same free public data the board runs on. Every claim traces to a number you can check. All of it is free, including the desk's forward read; if it earns its keep, <a href="/support">support keeps it running</a>.</p>
       </div>
       {/* The field is here and on the board, and it gates nothing in either
           place: the whole archive below renders identically whether or not an

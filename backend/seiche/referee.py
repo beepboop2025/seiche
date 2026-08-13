@@ -47,8 +47,8 @@ DEFAULT_OUT = REPO_ROOT / "frontend" / "public" / "referee.html"
 DEFAULT_SNAPSHOT = REPO_ROOT / "frontend" / "public" / "data" / "overview.json"
 DEFAULT_API = "https://api.seiche.info"
 
-REFEREE_URL = f"{SITE}/referee.html"
-SKEPTIC_URL = f"{SITE}/skeptic.html"
+REFEREE_URL = f"{SITE}/referee"
+SKEPTIC_URL = f"{SITE}/skeptic"
 
 CHANGELOG: list[tuple[str, str]] = [
     ("2026-08-01",
@@ -225,6 +225,13 @@ def _shell(title: str, body: str) -> str:
 <meta name="description" content="The global liquidity category's headline
 claims, tested on the publicly reconstructible layer, with bootstrap
 intervals, walk forward tests and both causal directions published.">
+<link rel="canonical" href="{REFEREE_URL}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Seiche">
+<meta property="og:title" content="{e(title)} | Seiche">
+<meta property="og:url" content="{REFEREE_URL}">
+<meta property="og:image" content="{SITE}/og.png">
 <style>{_CSS}{_EXTRA_CSS}</style>
 </head>
 <body>

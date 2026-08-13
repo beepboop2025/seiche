@@ -410,9 +410,9 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
     head = (
         '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
         '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; '
-        '<a href="/guide.html">guide</a> &middot; '
-        '<a href="/methodology.html">methodology</a> &middot; '
-        '<a href="/skeptic.html">skeptic pack</a></span></div>'
+        '<a href="/guide">guide</a> &middot; '
+        '<a href="/methodology">methodology</a> &middot; '
+        '<a href="/skeptic">skeptic pack</a></span></div>'
         f'<div class="date">funding-stress &amp; leveraged-positioning early warning '
         f'&middot; free public data only &middot; board built {_esc(_stamp(facts["generated_at"]))}</div>'
         f'<h1>{_esc(facts["headline"])}</h1>'
@@ -442,7 +442,7 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
             f"<h2>The latest dispatch: {_esc(latest['title'])}</h2>",
             f'<p class="lede">{_esc(latest["date"])}'
             f'{" &middot; " + _esc(latest["tag"]) if latest.get("tag") else ""} &middot; '
-            f'<a href="/dispatches/{_esc(latest["slug"])}.html">this letter as its own page</a>, '
+            f'<a href="/dispatches/{_esc(latest["slug"])}">this letter as its own page</a>, '
             f'<a href="/dispatches/{_esc(latest["slug"])}.md">as markdown</a>, or the '
             f'<a href="/dispatches/">whole archive</a>. The free reading is below in full; '
             "the desk's forward read, which is free too, continues on the letter's own page.</p>",
@@ -459,7 +459,7 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
             f'<p class="lede">{_esc(week["title"])}, {_esc(week["date"])}. Each call carries a '
             'stable ID, the number the desk expects, the date it resolves and the rule that '
             'decides it, printed before the week runs. The next issue opens by grading them, '
-            f'misses first. <a href="/dispatches/{_esc(week["slug"])}.html">The full issue</a>.</p>',
+            f'misses first. <a href="/dispatches/{_esc(week["slug"])}">The full issue</a>.</p>',
             md_to_html(md),
         ]
         facts["week_slug"] = week["slug"]

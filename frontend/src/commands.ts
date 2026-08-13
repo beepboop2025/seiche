@@ -42,8 +42,8 @@ export const ENTRIES: Entry[] = [
   { code: "GLANCE", title: "GLANCE", hint: "sounding: the verdict and the Tell, nothing else", keywords: "depth skim summary simple overview zoom out", run: { type: "depth", level: "glance" } },
   { code: "DESK", title: "DESK", hint: "sounding: the working board (default depth)", keywords: "depth normal default working", run: { type: "depth", level: "desk" } },
   { code: "DEEP", title: "DEEP", hint: "sounding: full fathom — every method note surfaces", keywords: "depth methods internals detail expert fathom", run: { type: "depth", level: "deep" } },
-  { code: "GUIDE", title: "GUIDE", hint: "how to read this terminal", keywords: "help onboarding manual docs", run: { type: "href", url: "/guide.html" } },
-  { code: "SUP", title: "SUPPORT", hint: "keep Seiche free", keywords: "donate support crypto", run: { type: "href", url: "/support.html" } },
+  { code: "GUIDE", title: "GUIDE", hint: "how to read this terminal", keywords: "help onboarding manual docs", run: { type: "href", url: "/guide" } },
+  { code: "SUP", title: "SUPPORT", hint: "keep Seiche free", keywords: "donate support crypto", run: { type: "href", url: "/support" } },
 ];
 
 // Engine-name codes: typing the engine gets you to the tab that owns it.

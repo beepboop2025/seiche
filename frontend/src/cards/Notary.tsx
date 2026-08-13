@@ -428,9 +428,9 @@ export default function Notary({ snap }: { snap: Any }) {
       </div>
 
       <div style={{ marginTop: 12, fontSize: 13 }}>
-        <a href="/skeptic.html" style={{ color: "var(--accent-bright)" }}>the skeptic's page</a>
+        <a href="/skeptic" style={{ color: "var(--accent-bright)" }}>the skeptic's page</a>
         {" · "}
-        <a href="/methodology.html" style={{ color: "var(--dim)" }}>methodology</a>
+        <a href="/methodology" style={{ color: "var(--dim)" }}>methodology</a>
         {" · "}
         <a href={`${API_BASE}/api/notary`} style={{ color: "var(--dim)" }}>the raw chain (JSON, no login)</a>
         {" · "}

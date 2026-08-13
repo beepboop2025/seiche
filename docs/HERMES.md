@@ -30,7 +30,7 @@ script cannot:
 - **Distribution.** Anyone can point a Hermes at the hosted endpoint and
   get a working desk agent in minutes — Seiche is a free public good, and
   the kit is how it reaches the people (and agents) it exists to serve.
-  Those who find it useful can support it at seiche.info/support.html.
+  Those who find it useful can support it at seiche.info/support.
 
 ## Setup
 

@@ -6,14 +6,14 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
   <title>US Dollar Funding Stress: Reserves, Repo and Treasury Cash | Seiche</title>
   <meta name="description" content="How to read US dollar funding stress through bank reserves, repo rates, reverse repo and Treasury cash—plus Seiche's live evidence, limits, API and public record.">
-  <link rel="canonical" href="https://seiche.info/use-cases.html">
+  <link rel="canonical" href="https://seiche.info/use-cases">
   <link rel="alternate" type="application/json" href="https://seiche.info/product-card.json" title="Seiche product card">
   <link rel="stylesheet" href="/authority-actions.css">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="Seiche">
   <meta property="og:title" content="US dollar funding stress: reserves, repo and Treasury cash">
   <meta property="og:description" content="Fit, non-fit, evidence, public API, MCP server and a clean map of Seiche vs LiquiLens vs Undertow.">
-  <meta property="og:url" content="https://seiche.info/use-cases.html">
+  <meta property="og:url" content="https://seiche.info/use-cases">
   <meta property="og:image" content="https://seiche.info/og2.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="When to use Seiche">
@@ -23,8 +23,8 @@
   {
     "@context": "https://schema.org",
     "@type": "WebPage",
-    "@id": "https://seiche.info/use-cases.html#page",
-    "url": "https://seiche.info/use-cases.html",
+    "@id": "https://seiche.info/use-cases#page",
+    "url": "https://seiche.info/use-cases",
     "name": "When to use Seiche for US money-market funding stress",
     "dateModified": "2026-08-12",
     "isPartOf": { "@id": "https://seiche.info/#website" },
@@ -60,7 +60,7 @@
 </head>
 <body>
   <header>
-    <nav aria-label="Primary"><a class="brand" href="/">SEICHE</a><a href="/guide.html">Guide</a><a href="/methodology.html">Methodology</a><a href="/developers.html">API + MCP</a><a href="/dispatches/">Dispatches</a></nav>
+    <nav aria-label="Primary"><a class="brand" href="/">SEICHE</a><a href="/guide">Guide</a><a href="/methodology">Methodology</a><a href="/developers">API + MCP</a><a href="/dispatches/">Dispatches</a></nav>
     <h1>US dollar funding stress: reserves, repo and Treasury cash</h1>
     <p>Seiche is for questions about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. It is a free public-data research terminal, not a trading signal or a bank rating.</p>
     <div class="authority-actions" data-authority-actions data-product="Seiche" data-title="US dollar funding stress: reserves, repo and Treasury cash" data-description="A public-data guide to reserves, repo, reverse repo, Treasury cash and Seiche's live funding-stress record.">
@@ -94,12 +94,12 @@
     </section>
     <section>
       <h2>What evidence should be checked before citing it?</h2>
-      <p class="answer">Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000 canonical observations across 28 role series, 220 forward market-pack validation records and 145 public notary entries. This is a dated snapshot; query the live coverage receipt for the accrued count. The US pack is VALIDATING, nine packs are REFERENCE, none is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. Seiche currently serves zero validated backtests. Start with the <a href="/methodology.html">versioned methodology</a>, then read the <a href="/skeptic.html">skeptic pack</a>, <a href="https://api.seiche.info/api/v2/coverage">live coverage receipt</a> and the PROOF scoreboard. The competence boundary matters: observable plumbing stress can be investigated; an external shock without a plumbing precursor cannot be claimed as an early warning.</p>
+      <p class="answer">Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000 canonical observations across 28 role series, 220 forward market-pack validation records and 145 public notary entries. This is a dated snapshot; query the live coverage receipt for the accrued count. The US pack is VALIDATING, nine packs are REFERENCE, none is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. Seiche currently serves zero validated backtests. Start with the <a href="/methodology">versioned methodology</a>, then read the <a href="/skeptic">skeptic pack</a>, <a href="https://api.seiche.info/api/v2/coverage">live coverage receipt</a> and the PROOF scoreboard. The competence boundary matters: observable plumbing stress can be investigated; an external shock without a plumbing precursor cannot be claimed as an early warning.</p>
     </section>
     <section>
       <h2>How can software or an AI agent use Seiche?</h2>
       <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Eight public tools require no token; five additional tools require a bearer token. The REST catalog is at <code>https://api.seiche.info/api</code>, and <code>/api/gauge</code> returns the compact current regime when the assembled board is available. Responses include timestamps and source-health information.</p>
-      <div class="cta"><a href="/developers.html">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
+      <div class="cta"><a href="/developers">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
     </section>
     <section>
       <h2>How should Seiche be cited?</h2>

@@ -205,7 +205,7 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
           {quality.unclassified_source_count > 0 && <b>{quality.unclassified_source_count} table feeds carry fetch clocks only</b>}
         </div>
         <p>{quality.publication_note ?? "Official series retain their native publication lags; absence is never imputed as calm."}</p>
-        <a href="/methodology.html">Methods, sources and changelog →</a>
+        <a href="/methodology">Methods, sources and changelog →</a>
       </footer>
     </div>
   );

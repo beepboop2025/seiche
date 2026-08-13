@@ -97,7 +97,7 @@ export default function Referee({ snap }: { snap: Any }) {
         <Chart rows={yoyRows} series={[{ label: "G3 central bank assets, yoy %", color: P.accent }]} height={170} />
         <Method>
           G3 only — no keyless PBoC or BoE feed exists, and the gap is stated, not interpolated over.
-          Indexable twin of this tab with full prose: <a href="/referee.html">/referee.html</a>
+          Indexable twin of this tab with full prose: <a href="/referee">/referee</a>
         </Method>
       </div>
 

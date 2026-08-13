@@ -2,7 +2,7 @@
   "specVersion": "1.0",
   "host": {
     "displayName": "Seiche",
-    "documentationUrl": "https://seiche.info/developers.html",
+    "documentationUrl": "https://seiche.info/developers",
     "logoUrl": "https://seiche.info/og.png"
   },
   "entries": [
@@ -112,7 +112,7 @@
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",
-        "documentation": "https://seiche.info/developers.html"
+        "documentation": "https://seiche.info/developers"
       }
     }
   ]

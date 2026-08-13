@@ -5,7 +5,7 @@ surfaces. It treats traction as repeated useful answers, not endpoint traffic.
 
 | Product | Job | Developer page | First activation tool |
 |---|---|---|---|
-| Seiche | systemic dollar-funding stress | `https://seiche.info/developers.html` | `funding_stress_now` |
+| Seiche | systemic dollar-funding stress | `https://seiche.info/developers` | `funding_stress_now` |
 | LiquiLens | institution failure risk | `https://liquilens.in/developers/` | `failure_radar_board` |
 | Undertow | market liquidity and exit cost | `https://liquilens-undertow.com/developers/` | `exit_cost` |
 

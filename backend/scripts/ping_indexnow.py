@@ -34,7 +34,7 @@ def main() -> int:
         f"https://{SITE_HOST}/",
         f"https://{SITE_HOST}/dispatches/",
         f"https://{SITE_HOST}/llms.txt",
-    ] + [f"https://{SITE_HOST}/dispatches/{e['slug']}.html" for e in entries]
+    ] + [f"https://{SITE_HOST}/dispatches/{e['slug']}" for e in entries]
 
     body = json.dumps({
         "host": SITE_HOST,

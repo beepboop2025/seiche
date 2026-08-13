@@ -344,7 +344,7 @@ function AppInner() {
         <div className="masthead">
           <div className="wordmark">SEI<span>CHE</span></div>
           <div className="tagline">funding-stress &amp; leveraged-positioning early warning · free public data only</div>
-          <a className="prolink" href="/guide.html">new? how to read this</a>
+          <a className="prolink" href="/guide">new? how to read this</a>
           <div className="mastindex">
             {/* sonar: ping period tightens as the composite rises — CALM pings
                 lazily, STRESS pings urgently. The gauge needle sweeps up on
@@ -364,7 +364,7 @@ function AppInner() {
             <LivePulse snap={snap} /><br />
             {live ? "live" : "static snapshot"} · generated {snap.generated_at?.slice(0, 16).replace("T", " ")}Z<br />
             FRED · NY Fed · OFR · FiscalData · CFTC · ECB<br />
-            <a className="prolink" href="/support.html">free · support Seiche</a>
+            <a className="prolink" href="/support">free · support Seiche</a>
           </div>
         </div>
       </div>
@@ -374,7 +374,7 @@ function AppInner() {
       {tab !== "TODAY" && <aside className="agent-launch" aria-label="Seiche API and MCP access">
         <span className="agent-launch__eyebrow">BUILD WITH THE LIVE BOARD</span>
         <span className="agent-launch__copy">Give an AI agent the current funding-stress regime, analogs and published track record.</span>
-        <a href="/developers.html">Connect the free MCP or API →</a>
+        <a href="/developers">Connect the free MCP or API →</a>
       </aside>}
 
       <nav className="tabs">
@@ -391,7 +391,7 @@ function AppInner() {
               {t}
             </a>
             {t === "BOARD" && (
-              <a href="/use-cases.html" aria-label="Seiche use cases and selection guide">
+              <a href="/use-cases" aria-label="Seiche use cases and selection guide">
                 USE CASES
               </a>
             )}
@@ -507,17 +507,17 @@ function AppInner() {
         Composite weights are editorial and live in backend/seiche/config.py.
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}
-        <a href="/guide.html" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
-        <a href="/methodology.html" style={{ color: "var(--dim)" }}>methodology</a> ·{" "}
-        <a href="/ampleness.html" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
-        <a href="/skeptic.html" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
-        <a href="/developers.html" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
-        <a href="/use-cases.html" style={{ color: "var(--dim)" }}>when to use Seiche</a> ·{" "}
-        <a href="/support.html" style={{ color: "var(--dim)" }}>support</a> ·{" "}
+        <a href="/guide" style={{ color: "var(--dim)" }}>guide</a> ·{" "}
+        <a href="/methodology" style={{ color: "var(--dim)" }}>methodology</a> ·{" "}
+        <a href="/ampleness" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
+        <a href="/skeptic" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
+        <a href="/developers" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
+        <a href="/use-cases" style={{ color: "var(--dim)" }}>when to use Seiche</a> ·{" "}
+        <a href="/support" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}
         <a href="https://t.me/LiquidityLabDesk" style={{ color: "var(--dim)" }}>the daily read on Telegram</a> ·{" "}
-        <a href="/terms.html" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
-        <a href="/privacy.html" style={{ color: "var(--faint)" }}>privacy</a>
+        <a href="/terms" style={{ color: "var(--faint)" }}>terms</a> ·{" "}
+        <a href="/privacy" style={{ color: "var(--faint)" }}>privacy</a>
         <br />
         Built by the team behind <a href="https://liquilens.in" style={{ color: "var(--dim)" }}>LiquiLens</a>, the failure radar for financial institutions.
         <br />
