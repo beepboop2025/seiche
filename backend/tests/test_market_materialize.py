@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
+import pytest
 from seiche import store
 from seiche import market_runtime
 from seiche.collectors import CollectorRun, CollectorRunStatus
@@ -878,6 +879,101 @@ def test_early_materialization_fault_is_persisted_then_retried(
     assert calls == 2
     assert snapshots["IN-INR"]["gauge"] == "IN-INR-gauge"
     assert snapshots["GLOBAL"]
+
+
+def test_worker_cycle_isolates_bad_market_from_sibling_and_global(
+    monkeypatch, caplog
+) -> None:
+    cutoff = datetime(2026, 8, 14, 10, tzinfo=UTC)
+    runs = [
+        CollectorRun(
+            market_id,
+            adapter_id,
+            CollectorRunStatus.SUCCESS,
+            cutoff.isoformat(),
+            cutoff.isoformat(),
+            1,
+            1,
+            (cutoff + timedelta(days=1)).isoformat(),
+        )
+        for market_id, adapter_id in (
+            ("IN-INR", "rbi_official"),
+            ("JP-JPY", "boj_rates"),
+        )
+    ]
+    calls = []
+
+    def materialize_local(market_id, **_kwargs):
+        calls.append(market_id)
+        if market_id == "IN-INR":
+            raise ValueError("postgresql://private-user:private-password@db/seiche")
+        return {"gauge": "japan-healthy"}
+
+    def materialize_global(**_kwargs):
+        calls.append("GLOBAL")
+        return {"tide": "global-healthy"}
+
+    monkeypatch.setattr(market_runtime, "materialize_market", materialize_local)
+    monkeypatch.setattr(market_runtime, "materialize_global_tide", materialize_global)
+    faulted_markets: set[str] = set()
+
+    snapshots = market_runtime._materialize_after_runs(
+        runs,
+        repository=object(),
+        registry=market_runtime.default_registry(),
+        cutoff=cutoff,
+        record_forward=True,
+        faulted_markets=faulted_markets,
+    )
+
+    assert calls == ["IN-INR", "JP-JPY", "GLOBAL"]
+    assert snapshots == {
+        "JP-JPY": {"gauge": "japan-healthy"},
+        "GLOBAL": {"tide": "global-healthy"},
+    }
+    assert faulted_markets == {"IN-INR"}
+    assert "market_id=IN-INR fault_type=ValueError" in caplog.text
+    assert "private-password" not in caplog.text
+
+
+def test_one_shot_cycle_boundary_materialization_remains_strict(
+    monkeypatch,
+) -> None:
+    cutoff = datetime(2026, 8, 14, 10, tzinfo=UTC)
+    run = CollectorRun(
+        "IN-INR",
+        "rbi_official",
+        CollectorRunStatus.SUCCESS,
+        cutoff.isoformat(),
+        cutoff.isoformat(),
+        1,
+        1,
+        (cutoff + timedelta(days=1)).isoformat(),
+    )
+    global_calls = []
+    monkeypatch.setattr(
+        market_runtime,
+        "materialize_market",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("strict forward-chain failure")
+        ),
+    )
+    monkeypatch.setattr(
+        market_runtime,
+        "materialize_global_tide",
+        lambda **_kwargs: global_calls.append("GLOBAL"),
+    )
+
+    with pytest.raises(ValueError, match="strict forward-chain failure"):
+        market_runtime._materialize_after_runs(
+            [run],
+            repository=object(),
+            registry=market_runtime.default_registry(),
+            cutoff=cutoff,
+            record_forward=True,
+        )
+
+    assert global_calls == []
 
 
 def test_later_same_market_failure_invalidates_the_earlier_snapshot(

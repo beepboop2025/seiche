@@ -95,16 +95,35 @@ async def _worker_heartbeat_loop(
     *,
     interval_seconds: float,
     grace_seconds: float,
+    heartbeat_enabled: asyncio.Event | None = None,
+    heartbeat_write_lock: asyncio.Lock | None = None,
 ) -> None:
-    while True:
-        try:
+    async def persist_if_enabled() -> None:
+        if heartbeat_enabled is None or heartbeat_enabled.is_set():
             await _write_worker_heartbeat(
                 repository,
                 grace_seconds=grace_seconds,
             )
+
+    while True:
+        try:
+            if heartbeat_write_lock is None:
+                await persist_if_enabled()
+            else:
+                async with heartbeat_write_lock:
+                    await persist_if_enabled()
+        except Exception as exc:  # noqa: BLE001 - report, then retry
+            LOGGER.error(
+                "collector worker heartbeat persistence failed fault_type=%s",
+                type(exc).__name__,
+            )
+        try:
             _systemd_notify("WATCHDOG=1")
-        except Exception:  # noqa: BLE001 - liveness fault must remain visible
-            LOGGER.exception("collector worker heartbeat persistence failed")
+        except Exception as exc:  # noqa: BLE001 - watchdog loop must survive
+            LOGGER.error(
+                "collector worker watchdog notification failed fault_type=%s",
+                type(exc).__name__,
+            )
         await asyncio.sleep(interval_seconds)
 
 
@@ -225,8 +244,12 @@ def _completed_run_handler(
                     record_forward=record_forward,
                 )
                 publication_complete = True
-            except Exception:  # noqa: BLE001 — retry at the cycle boundary
-                LOGGER.exception("early materialization failed for %s", market_id)
+            except Exception as exc:  # noqa: BLE001 — retry at cycle boundary
+                LOGGER.error(
+                    "early materialization failed market_id=%s fault_type=%s",
+                    market_id,
+                    type(exc).__name__,
+                )
         if (
             backfill
             and run["status"] == "SUCCESS"
@@ -249,30 +272,94 @@ def _materialize_after_runs(
     cutoff: datetime,
     record_forward: bool,
     existing: dict[str, object] | None = None,
+    faulted_markets: set[str] | None = None,
 ) -> dict[str, object]:
-    market_ids = sorted({item.market_id for item in runs})
+    """Materialize a completed cycle, optionally isolating worker faults.
+
+    One-shot collection and backfill omit ``faulted_markets`` and retain their
+    strict all-or-error contract.  The long-lived worker supplies its carried
+    fault set so each market and the global tide can fail independently.  A
+    carried market is retried only at a later nonempty collection boundary.
+    """
+
+    market_ids = {item.market_id for item in runs}
+    if faulted_markets is not None:
+        market_ids.update(faulted_markets - {"GLOBAL"})
     snapshots: dict[str, object] = dict(existing or {})
-    for market_id in market_ids:
+    for market_id in sorted(market_ids):
         # US v2 remains the pack-local compatibility materialization emitted
         # by assemble.py, preserving bit-identical v1 migration output.
         if market_id == "US-USD":
             continue
         if market_id in snapshots:
+            if faulted_markets is not None:
+                faulted_markets.discard(market_id)
             continue
-        snapshots[market_id] = materialize_market(
-            market_id,
+        if faulted_markets is None:
+            snapshots[market_id] = materialize_market(
+                market_id,
+                repository=repository,
+                registry=registry,
+                knowledge_time=cutoff,
+                record_forward=record_forward,
+            )
+            continue
+        try:
+            snapshots[market_id] = materialize_market(
+                market_id,
+                repository=repository,
+                registry=registry,
+                knowledge_time=cutoff,
+                record_forward=record_forward,
+            )
+        except Exception as exc:  # noqa: BLE001 - isolate long-lived worker
+            faulted_markets.add(market_id)
+            LOGGER.error(
+                "cycle materialization failed market_id=%s fault_type=%s",
+                market_id,
+                type(exc).__name__,
+            )
+        else:
+            faulted_markets.discard(market_id)
+    if faulted_markets is None:
+        snapshots["GLOBAL"] = materialize_global_tide(
             repository=repository,
             registry=registry,
             knowledge_time=cutoff,
             record_forward=record_forward,
         )
-    snapshots["GLOBAL"] = materialize_global_tide(
-        repository=repository,
-        registry=registry,
-        knowledge_time=cutoff,
-        record_forward=record_forward,
-    )
+        return snapshots
+    try:
+        snapshots["GLOBAL"] = materialize_global_tide(
+            repository=repository,
+            registry=registry,
+            knowledge_time=cutoff,
+            record_forward=record_forward,
+        )
+    except Exception as exc:  # noqa: BLE001 - isolate long-lived worker
+        faulted_markets.add("GLOBAL")
+        LOGGER.error(
+            "cycle materialization failed market_id=GLOBAL fault_type=%s",
+            type(exc).__name__,
+        )
+    else:
+        faulted_markets.discard("GLOBAL")
     return snapshots
+
+
+def _notify_materialization_status(faulted_markets: frozenset[str]) -> None:
+    if faulted_markets:
+        pending = ",".join(sorted(faulted_markets))
+        message = f"STATUS=collector materialization degraded; pending={pending}"
+    else:
+        message = "STATUS=collector materialization healthy"
+    try:
+        _systemd_notify(message)
+    except Exception as exc:  # noqa: BLE001 - status must not stop collection
+        LOGGER.error(
+            "collector worker status notification failed fault_type=%s",
+            type(exc).__name__,
+        )
 
 
 def _export_usd_funding_core_after_runs(
@@ -400,6 +487,10 @@ async def run_worker(
     repo = repository or get_repository()
     markets = registry or default_registry()
     published_snapshots: dict[str, object] = {}
+    faulted_markets: set[str] = set()
+    heartbeat_enabled = asyncio.Event()
+    heartbeat_enabled.set()
+    heartbeat_write_lock = asyncio.Lock()
     supervisor = build_supervisor(
         repository=repo,
         registry=markets,
@@ -413,6 +504,7 @@ async def run_worker(
         ),
     )
     heartbeat_task: asyncio.Task[None] | None = None
+    heartbeat_grace: float | None = None
     if callable(getattr(repo, "save_worker_heartbeat", None)):
         heartbeat_interval = _positive_seconds(
             "SEICHE_COLLECTOR_HEARTBEAT_INTERVAL_SECONDS",
@@ -432,6 +524,8 @@ async def run_worker(
                 repo,
                 interval_seconds=heartbeat_interval,
                 grace_seconds=heartbeat_grace,
+                heartbeat_enabled=heartbeat_enabled,
+                heartbeat_write_lock=heartbeat_write_lock,
             ),
             name="seiche-collector-heartbeat",
         )
@@ -443,6 +537,7 @@ async def run_worker(
             runs = await supervisor.run_due(now=schedule_time)
             if runs:
                 cutoff = datetime.now(UTC).replace(microsecond=0)
+                previous_faults = frozenset(faulted_markets)
                 await asyncio.to_thread(
                     _materialize_after_runs,
                     runs,
@@ -451,7 +546,32 @@ async def run_worker(
                     cutoff=cutoff,
                     record_forward=True,
                     existing=published_snapshots,
+                    faulted_markets=faulted_markets,
                 )
+                current_faults = frozenset(faulted_markets)
+                if current_faults:
+                    heartbeat_enabled.clear()
+                    # Drain a heartbeat already inside its durable write. Any
+                    # waiter observes the closed gate after acquiring the lock.
+                    async with heartbeat_write_lock:
+                        pass
+                elif previous_faults:
+                    async with heartbeat_write_lock:
+                        heartbeat_enabled.set()
+                        if heartbeat_grace is not None:
+                            try:
+                                await _write_worker_heartbeat(
+                                    repo,
+                                    grace_seconds=heartbeat_grace,
+                                )
+                            except Exception as exc:  # noqa: BLE001 - loop retries
+                                LOGGER.error(
+                                    "collector worker heartbeat recovery failed "
+                                    "fault_type=%s",
+                                    type(exc).__name__,
+                                )
+                if current_faults != previous_faults:
+                    _notify_materialization_status(current_faults)
                 if any(item.market_id == "US-USD" for item in runs):
                     await asyncio.to_thread(
                         _export_usd_funding_core_after_runs,
