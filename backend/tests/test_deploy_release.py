@@ -532,12 +532,14 @@ def test_external_smoke_rejects_generic_json_200(tmp_path):
     assert "not its route identity" in result.stderr
 
 
-def test_forced_command_bootstrap_converges_in_one_workflow_run(tmp_path):
+def _forced_deploy_env(tmp_path, *, second_pass_status=0):
     calls = tmp_path / "ssh.log"
     ssh = _executable(
         tmp_path / "ssh",
         f'''for arg in "$@"; do printf '<%s>' "$arg" >> "{calls}"; done
 printf '\\n' >> "{calls}"
+attempt=$(wc -l < "{calls}")
+if [ "$attempt" -eq 2 ]; then exit {second_pass_status}; fi
 ''',
     )
     key = tmp_path / "key"
@@ -552,6 +554,11 @@ printf '\\n' >> "{calls}"
         "SEICHE_EXPECTED_TARGET_SHA": "a" * 40,
         "SEICHE_SSH_BIN": str(ssh),
     }
+    return env, calls
+
+
+def test_forced_command_bootstrap_converges_in_one_workflow_run(tmp_path):
+    env, calls = _forced_deploy_env(tmp_path)
     result = subprocess.run(
         ["bash", str(FORCED_DEPLOY)], env=env, text=True, capture_output=True
     )
@@ -567,6 +574,29 @@ printf '\\n' >> "{calls}"
     assert workflow.index("trigger-forced-deploy.sh") < workflow.index(
         "external-route-smoke.sh"
     )
+
+
+def test_forced_command_keeps_success_after_second_pass_busy_defer(tmp_path):
+    env, calls = _forced_deploy_env(tmp_path, second_pass_status=75)
+
+    result = subprocess.run(
+        ["bash", str(FORCED_DEPLOY)], env=env, text=True, capture_output=True
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(calls.read_text().splitlines()) == 2
+    assert "pass 2/2 shared-host admission was busy" in result.stderr
+
+
+def test_forced_command_preserves_a_real_second_pass_failure(tmp_path):
+    env, calls = _forced_deploy_env(tmp_path, second_pass_status=42)
+
+    result = subprocess.run(
+        ["bash", str(FORCED_DEPLOY)], env=env, text=True, capture_output=True
+    )
+
+    assert result.returncode == 42
+    assert len(calls.read_text().splitlines()) == 2
 
 
 def test_forced_command_refuses_an_unbound_target(tmp_path):

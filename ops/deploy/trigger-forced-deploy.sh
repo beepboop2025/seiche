@@ -31,4 +31,16 @@ trigger() {
 echo "forced deploy pass 1/2: application release + wrapper self-sync"
 trigger
 echo "forced deploy pass 2/2: same-SHA edge convergence"
+set +e
 trigger
+second_pass_status=$?
+set -e
+case "$second_pass_status" in
+    0) ;;
+    75)
+        echo "DEFER: pass 2/2 shared-host admission was busy after successful pass 1; continuing to external route verification" >&2
+        ;;
+    *)
+        exit "$second_pass_status"
+        ;;
+esac
