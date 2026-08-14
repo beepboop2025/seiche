@@ -56,7 +56,7 @@ valid_activation_token() {
 # phases. The fixed 75 percent ceiling leaves four cores free on the 16-core
 # production host without trusting caller-controlled configuration.
 admit_shared_host() {
-  local cpu_count ceiling sample load_one
+  local cpu_count ceiling sample load_one load_five
   if ! cpu_count=$(/usr/bin/getconf _NPROCESSORS_ONLN 2>/dev/null) \
       || [[ ! "$cpu_count" =~ ^[0-9]+$ ]] \
       || (( cpu_count < 1 || cpu_count > 4096 )); then
@@ -71,8 +71,9 @@ admit_shared_host() {
     return 1
   fi
   for (( sample = 1; sample <= 3; sample++ )); do
-    if ! IFS=' ' read -r load_one _ </proc/loadavg \
-        || [[ ! "$load_one" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    if ! IFS=' ' read -r load_one load_five _ </proc/loadavg \
+        || [[ ! "$load_one" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+        || [[ ! "$load_five" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
       echo "DEFER: shared-host load is unreadable; production unchanged"
       return 1
     fi
@@ -82,11 +83,18 @@ admit_shared_host() {
         "$load_one" "$ceiling"
       return 1
     fi
+    if ! LC_ALL=C /usr/bin/awk -v observed="$load_five" -v limit="$ceiling" \
+        'BEGIN { exit !(observed <= limit) }'; then
+      printf 'DEFER: shared-host five-minute load %s exceeds %s; production unchanged\n' \
+        "$load_five" "$ceiling"
+      return 1
+    fi
     if (( sample < 3 )); then
       sleep 10 || return 1
     fi
   done
-  printf 'shared-host admission: three quiet samples at or below %s\n' "$ceiling"
+  printf 'shared-host admission: three quiet one/five-minute samples at or below %s\n' \
+    "$ceiling"
 }
 
 case "${SEICHE_DEPLOY_ADMISSION_ONLY:-0}" in

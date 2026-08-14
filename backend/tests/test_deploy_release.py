@@ -1272,13 +1272,17 @@ def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
         "cpus * 0.75",
         "sample <= 3",
         "</proc/loadavg",
+        "load_five",
         '-v observed="$load_one"',
+        '-v observed="$load_five"',
         "observed <= limit",
         "sleep 10",
         "production unchanged",
     ):
         assert marker in helper
     assert "SEICHE_DEPLOY_MAX" not in helper
+    assert "one-minute load" in helper
+    assert "five-minute load" in helper
     assert target < admission < capture < stop
     assert "exit 75" in wrapper[admission:capture]
     admission_case = wrapper.index(

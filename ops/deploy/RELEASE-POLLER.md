@@ -44,13 +44,15 @@ snapshot activation, Caddy deployment, health gates, and rollback.
 - If `main` advances during the full gate, the tested candidate is discarded.
   The wrapper also checks `SEICHE_EXPECTED_TARGET_SHA` before stopping a unit,
   closing the smaller race between the gate and wrapper hand-off.
-- Before stopping any service, the wrapper requires three one-minute load
-  samples, ten seconds apart, at or below 75 percent of online CPU count. A
-  poller first invokes the same check in admission-only mode, before candidate
-  installation or tests, and the wrapper repeats it before quiescence. A busy
-  host records no release receipt and defers without paging; the timer retries
-  the same signed tip on a later five-minute cycle. Do not lengthen snapshot
-  health deadlines to compensate for unrelated workload pressure.
+- Before stopping any service, the wrapper requires three one- and five-minute
+  load samples, ten seconds apart, at or below 75 percent of online CPU count.
+  The longer average prevents a brief dip from admitting immediately after a
+  sustained sibling workload. A poller first invokes the same check in
+  admission-only mode, before candidate installation or tests, and the wrapper
+  repeats it before quiescence. A busy host records no release receipt and
+  defers without paging; the timer retries the same signed tip on a later
+  five-minute cycle. Do not lengthen snapshot health deadlines to compensate
+  for unrelated workload pressure.
 
 ## Install without activating
 
