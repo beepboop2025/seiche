@@ -375,6 +375,30 @@ def test_equal_caddyfile_is_validated_and_reloaded_to_heal_runtime(tmp_path):
     assert not list(tmp_path.glob("installed.Caddyfile.bak-*"))
 
 
+def test_caddy_access_log_redacts_credential_query_values():
+    caddy = CADDYFILE.read_text()
+    access_log = caddy[caddy.index("(accesslog) {") : caddy.index("api.seiche.info {")]
+
+    assert "format filter {" in access_log
+    assert "wrap json" in access_log
+    assert "request>uri query {" in access_log
+    for name in ("api_key", "api-key", "access_token", "token"):
+        assert f"replace {name} [REDACTED]" in access_log
+    assert "format json" not in access_log
+
+
+def test_api_dropin_disables_unredacted_uvicorn_access_log():
+    installer = MARKET_INSTALLER.read_text()
+    api_dropin = installer[
+        installer.index('cat >"$DROPIN"') : installer.index(
+            'mv -f "$DROPIN"', installer.index('cat >"$DROPIN"')
+        )
+    ]
+
+    assert "Environment=UVICORN_ACCESS_LOG=false" in api_dropin
+    assert "ExecStart=" not in api_dropin
+
+
 def _smoke_env(tmp_path: Path, scenario: str = "success") -> tuple[dict, Path]:
     calls = tmp_path / "curl.log"
     _executable(
@@ -628,6 +652,41 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     )
 
 
+def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("restore_preupdate_market_worker_unit()") : wrapper.index(
+            "restore_preupdate_api()"
+        )
+    ]
+
+    assert 'git -C "$APP" show' in helper
+    assert '"${restore_sha}:ops/deploy/seiche-market-worker.service"' in helper
+    assert 'systemd-analyze verify "$candidate"' in helper
+    assert 'mv -f "$candidate" "$destination"' in helper
+    assert helper.index('mv -f "$candidate" "$destination"') < helper.index(
+        "systemctl daemon-reload"
+    )
+
+    deploy = wrapper.index("MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1")
+    provision = wrapper.index("deploy_market_platform ||", deploy)
+    assert deploy < provision
+
+    recovery = wrapper[
+        wrapper.index("restore_pre_restart_services()") : wrapper.index(
+            "systemctl stop seiche-market-worker.service"
+        )
+    ]
+    assert recovery.index("restore_quiesced_api") < recovery.index(
+        "restore_preupdate_market_worker_unit"
+    ) < recovery.index("restore_market_services")
+
+    rollback = wrapper[wrapper.index("rolling the service back to") :]
+    assert rollback.index("restore_preupdate_market_worker_unit") < rollback.index(
+        "systemctl restart seiche-api"
+    ) < rollback.index("restore_market_services")
+
+
 def test_market_platform_units_are_independent_and_postgres_backed():
     installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
     worker = (ROOT / "ops" / "deploy" / "seiche-market-worker.service").read_text()
@@ -664,6 +723,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
+    worker_verify = installer.index("worker unit failed verification")
+    worker_install = installer.index(
+        'mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"'
+    )
+    assert installer.index("systemd-analyze verify", 0, worker_verify) < worker_install
     assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
     assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
     assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer

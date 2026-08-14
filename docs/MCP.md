@@ -81,6 +81,14 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
 }
 ```
 
+- Authentication is **header-only**. Put subscriber credentials in
+  `Authorization: Bearer ...`; a credential-looking query parameter never
+  authenticates a caller. Through 2026-09-14 UTC, a query-only caller remains
+  anonymous and receives `Warning`, `Deprecation`, and `Sunset` response
+  headers. Beginning 2026-09-15 UTC, `/mcp` and `/mcp/usage` reject those query
+  fields with HTTP 400. If both are present during the transition, only the
+  valid `Authorization` header determines identity. Do not put credentials in
+  URLs, where intermediaries and request histories can retain them.
 - **Anonymous** (no token) → eight tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and

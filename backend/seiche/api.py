@@ -58,7 +58,7 @@ from seiche.markets.base import CapabilityStatus, PackSupportStatus
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
-from seiche.repository import get_repository
+from seiche.repository import COLLECTOR_WORKER_COMPONENT_ID, get_repository
 
 # In production (SEICHE_ENV=production, set in the systemd unit) the interactive
 # API docs and the machine-readable schema are turned off — they enumerate every
@@ -124,6 +124,65 @@ app = FastAPI(title="Seiche", version=assemble.VERSION,
               redoc_url=None if _PROD else "/redoc",
               openapi_url=None if _PROD else "/openapi.json",
               lifespan=_lifespan)
+
+# Authentication is header-only. Some external MCP cataloguers append their
+# own credential to every URL they probe; FastAPI otherwise ignores that extra
+# query field while access logs retain it. During the compatibility window the
+# request still runs, but the query field never contributes identity. After the
+# published cutoff it is rejected so callers have a bounded migration period.
+_MCP_QUERY_CREDENTIAL_NAMES = frozenset({
+    "api_key", "api-key", "access_token", "token",
+})
+_MCP_QUERY_CREDENTIAL_PATHS = frozenset({"/mcp", "/mcp/usage"})
+_MCP_QUERY_CREDENTIAL_DEPRECATED_AT = 1_786_665_600  # 2026-08-14 00:00:00 UTC
+_MCP_QUERY_CREDENTIAL_REJECT_AT = 1_789_430_400  # 2026-09-15 00:00:00 UTC
+_MCP_QUERY_CREDENTIAL_SUNSET = "Tue, 15 Sep 2026 00:00:00 GMT"
+
+
+def _mcp_query_credential_headers() -> dict[str, str]:
+    return {
+        "Warning": (
+            '299 Seiche "URL credentials are deprecated; use '
+            'Authorization: Bearer"'
+        ),
+        "Deprecation": f"@{_MCP_QUERY_CREDENTIAL_DEPRECATED_AT}",
+        "Sunset": _MCP_QUERY_CREDENTIAL_SUNSET,
+    }
+
+
+@app.middleware("http")
+async def _retire_mcp_query_credentials(request: Request, call_next):
+    if request.url.path not in _MCP_QUERY_CREDENTIAL_PATHS:
+        return await call_next(request)
+    # Inspect names only. Values are neither read nor copied into diagnostics.
+    has_query_credential = any(
+        name in _MCP_QUERY_CREDENTIAL_NAMES
+        for name in request.query_params.keys()
+    )
+    if not has_query_credential:
+        return await call_next(request)
+
+    transition_headers = _mcp_query_credential_headers()
+    if time.time() >= _MCP_QUERY_CREDENTIAL_REJECT_AT:
+        return JSONResponse(
+            {
+                "detail": (
+                    "credentials in URLs are not accepted; use the "
+                    "Authorization header"
+                )
+            },
+            status_code=400,
+            headers={
+                **transition_headers,
+                "WWW-Authenticate": 'Bearer realm="seiche"',
+            },
+        )
+
+    response = await call_next(request)
+    for name, value in transition_headers.items():
+        response.headers[name] = value
+    return response
+
 # Uvicorn's default config gives only its own logger tree an INFO sink. Give
 # this one bounded event stream its own stderr sink instead of raising the root
 # logger (and every application dependency) to INFO. The guard keeps module
@@ -1715,15 +1774,89 @@ def _health_response(
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
     response.headers["Cache-Control"] = "no-store"
+    faults = list(snap["faults"])
+    required_setting = os.getenv(
+        "SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", ""
+    ).strip().lower()
+    heartbeat_required = (
+        required_setting in {"1", "true", "yes"}
+        if required_setting
+        else _PROD
+    )
+    if heartbeat_required:
+        worker_fault = _collector_worker_fault()
+        if worker_fault is not None:
+            faults.append(worker_fault)
     content = {
         "generated_at": snap["generated_at"],
         "version": snap.get("version"),
-        "faults": snap["faults"],
+        "faults": faults,
         "provenance": snap["provenance"],
     }
     if include_release_candidate and release_candidate is not None:
         content["release_candidate"] = release_candidate
     return content
+
+
+def _collector_worker_fault(
+    *,
+    now: datetime | None = None,
+    repository=None,
+) -> dict[str, Any] | None:
+    """Return only public liveness state; never storage or host diagnostics."""
+
+    try:
+        source_repository = repository if repository is not None else get_repository()
+        heartbeat = source_repository.load_worker_heartbeat(
+            COLLECTOR_WORKER_COMPONENT_ID
+        )
+    except Exception:  # noqa: BLE001 - public boundary intentionally redacts details
+        return {
+            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "status": "UNKNOWN",
+            "detail": "official collector worker health is unavailable",
+        }
+    if heartbeat is None:
+        return {
+            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "status": "MISSING",
+            "detail": "official collector worker has not reported a heartbeat",
+        }
+    try:
+        heartbeat_at = datetime.fromisoformat(
+            str(heartbeat["heartbeat_at"]).replace("Z", "+00:00")
+        )
+        expected_by = datetime.fromisoformat(
+            str(heartbeat["expected_by"]).replace("Z", "+00:00")
+        )
+        if (
+            heartbeat_at.tzinfo is None
+            or heartbeat_at.utcoffset() is None
+            or expected_by.tzinfo is None
+            or expected_by.utcoffset() is None
+        ):
+            raise ValueError("heartbeat timestamp lacks timezone")
+        heartbeat_at = heartbeat_at.astimezone(UTC).replace(microsecond=0)
+        expected_by = expected_by.astimezone(UTC).replace(microsecond=0)
+    except (KeyError, TypeError, ValueError):
+        return {
+            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "status": "UNKNOWN",
+            "detail": "official collector worker health is unavailable",
+        }
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("collector health clock must be timezone-aware")
+    current = current.astimezone(UTC).replace(microsecond=0)
+    if current <= expected_by:
+        return None
+    return {
+        "source": COLLECTOR_WORKER_COMPONENT_ID,
+        "status": "OVERDUE",
+        "detail": "official collector worker heartbeat is overdue",
+        "heartbeat_at": heartbeat_at.isoformat(),
+        "expected_by": expected_by.isoformat(),
+    }
 
 
 @app.get("/api/health")

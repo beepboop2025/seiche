@@ -288,6 +288,54 @@ def test_anonymous_sees_only_public_tools(client):
         assert paid not in names
 
 
+@pytest.mark.parametrize(
+    "query_name",
+    ("api_key", "api-key", "access_token", "token"),
+)
+def test_query_credential_stays_anonymous_and_warns(
+    client, monkeypatch, query_name
+):
+    monkeypatch.setattr(api, "_MCP_QUERY_CREDENTIAL_REJECT_AT", float("inf"))
+    marker = "synthetic-query-credential"
+
+    r = client.post(
+        f"/mcp?{query_name}={marker}",
+        json=_rpc("tools/list"),
+    )
+
+    assert r.status_code == 200
+    names = {tool["name"] for tool in r.json()["result"]["tools"]}
+    assert "positioning_book" not in names
+    assert r.headers["Warning"].startswith("299 Seiche")
+    assert r.headers["Deprecation"] == "@1786665600"
+    assert r.headers["Sunset"] == "Tue, 15 Sep 2026 00:00:00 GMT"
+    assert marker not in r.text
+
+
+def test_authorization_header_wins_during_query_transition(client, monkeypatch):
+    monkeypatch.setattr(api, "_MCP_QUERY_CREDENTIAL_REJECT_AT", float("inf"))
+
+    r = client.post(
+        "/mcp?api_key=synthetic-query-credential",
+        json=_rpc("tools/list"),
+        headers={"Authorization": f"Bearer {_pro_token()}"},
+    )
+
+    assert r.status_code == 200
+    names = {tool["name"] for tool in r.json()["result"]["tools"]}
+    assert "positioning_book" in names
+    assert r.headers["Warning"].startswith("299 Seiche")
+
+
+def test_noncredential_query_does_not_emit_transition_headers(client):
+    r = client.post("/mcp?source=catalog", json=_rpc("tools/list"))
+
+    assert r.status_code == 200
+    assert "Warning" not in r.headers
+    assert "Deprecation" not in r.headers
+    assert "Sunset" not in r.headers
+
+
 def test_anonymous_cannot_call_a_paid_tool(client):
     # replay_asof is the gated flagship; an anonymous caller must be refused,
     # not served the Time Machine for free.
@@ -422,6 +470,36 @@ def test_usage_report_anonymous(client):
     assert j["tier"] == "anon"
     assert j["daily_limit"] == usage.MCP_ANON_DAILY
     assert "upgrade_url" in j
+
+
+def test_usage_query_credential_stays_anonymous_and_warns(client, monkeypatch):
+    monkeypatch.setattr(api, "_MCP_QUERY_CREDENTIAL_REJECT_AT", float("inf"))
+
+    r = client.get("/mcp/usage?access_token=synthetic-query-credential")
+
+    assert r.status_code == 200
+    assert r.json()["tier"] == "anon"
+    assert r.headers["Warning"].startswith("299 Seiche")
+    assert r.headers["Deprecation"] == "@1786665600"
+    assert r.headers["Sunset"] == "Tue, 15 Sep 2026 00:00:00 GMT"
+
+
+def test_query_credentials_are_rejected_after_sunset(client, monkeypatch):
+    monkeypatch.setattr(api, "_MCP_QUERY_CREDENTIAL_REJECT_AT", 0)
+    marker = "synthetic-query-credential"
+
+    mcp = client.post(
+        f"/mcp?token={marker}",
+        json=_rpc("tools/list"),
+        headers={"Authorization": f"Bearer {_pro_token()}"},
+    )
+    usage_report = client.get(f"/mcp/usage?api-key={marker}")
+
+    for response in (mcp, usage_report):
+        assert response.status_code == 400
+        assert response.headers["WWW-Authenticate"] == 'Bearer realm="seiche"'
+        assert response.headers["Sunset"] == "Tue, 15 Sep 2026 00:00:00 GMT"
+        assert marker not in response.text
 
 
 def test_usage_report_reflects_calls(client):

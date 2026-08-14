@@ -14,7 +14,7 @@ import os
 import tempfile
 import uuid
 from builtins import ExceptionGroup
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -42,6 +42,10 @@ class PersistenceStageError(RuntimeError):
     """A named persistence stage exhausted its local retry budget."""
 
 
+class AdapterDeadlineExceeded(TimeoutError):
+    """A collector exhausted its bounded acquisition/retry budget."""
+
+
 @dataclass(frozen=True, slots=True)
 class CollectorRun:
     market_id: str
@@ -53,6 +57,8 @@ class CollectorRun:
     attempts: int
     next_due: str
     fault: str | None = None
+    consecutive_failures: int = 0
+    circuit_open_until: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,6 +71,8 @@ class CollectorRun:
             "attempts": self.attempts,
             "next_due": self.next_due,
             "fault": self.fault,
+            "consecutive_failures": self.consecutive_failures,
+            "circuit_open_until": self.circuit_open_until,
         }
 
 
@@ -101,6 +109,21 @@ def cadence_delta(value: str) -> timedelta:
     amount = int(value[1:-1])
     suffix = value[-1]
     return {"D": timedelta(days=amount), "W": timedelta(weeks=amount)}[suffix]
+
+
+def _state_timestamp(value: object, field: str) -> datetime:
+    if not isinstance(value, (str, datetime)):
+        raise ValueError(
+            f"persisted collector {field} must be an ISO-8601 timestamp"
+        )
+    parsed = (
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if isinstance(value, str)
+        else value
+    )
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"persisted collector {field} must be timezone-aware")
+    return parsed.astimezone(UTC).replace(microsecond=0)
 
 
 class FileRawCaptureSink:
@@ -217,9 +240,13 @@ class CollectorSupervisor:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         persistence_retry_limit: int = 4,
         persistence_backoff_seconds: float = 1.5,
+        adapter_deadline_seconds: float = 300.0,
+        restored_runs: Iterable[dict] = (),
     ) -> None:
         if persistence_retry_limit < 0 or persistence_backoff_seconds < 0:
             raise ValueError("persistence retry settings cannot be negative")
+        if adapter_deadline_seconds <= 0:
+            raise ValueError("adapter deadline must be positive")
         self.registry = registry or default_registry()
         self.raw_sink = raw_sink
         self.normalized_sink = normalized_sink
@@ -228,8 +255,25 @@ class CollectorSupervisor:
         self.sleep = sleep
         self.persistence_retry_limit = persistence_retry_limit
         self.persistence_backoff_seconds = persistence_backoff_seconds
+        self.adapter_deadline_seconds = adapter_deadline_seconds
         self._tasks: dict[tuple[str, str], _CollectorTask] = {}
         self._states: dict[tuple[str, str], _CollectorState] = {}
+        self._restored_states: dict[tuple[str, str], _CollectorState] = {}
+        for run in restored_runs:
+            key = (str(run["market_id"]).upper(), str(run["adapter_id"]))
+            failures = int(run.get("consecutive_failures", 0))
+            if failures < 0:
+                raise ValueError("persisted collector failures cannot be negative")
+            open_value = run.get("circuit_open_until")
+            self._restored_states[key] = _CollectorState(
+                next_due=_state_timestamp(run["next_due"], "next_due"),
+                consecutive_failures=failures,
+                open_until=(
+                    _state_timestamp(open_value, "circuit_open_until")
+                    if open_value is not None
+                    else None
+                ),
+            )
 
     async def _persist_with_retry(
         self,
@@ -265,7 +309,10 @@ class CollectorSupervisor:
         if key in self._tasks:
             raise ValueError(f"collector {key!r} is already registered")
         self._tasks[key] = _CollectorTask(adapter, spec)
-        self._states[key] = _CollectorState(next_due=datetime.min.replace(tzinfo=UTC))
+        self._states[key] = self._restored_states.pop(
+            key,
+            _CollectorState(next_due=datetime.min.replace(tzinfo=UTC)),
+        )
 
     async def run_due(
         self,
@@ -335,26 +382,37 @@ class CollectorSupervisor:
                 0,
                 state.open_until.isoformat(),
                 "circuit breaker is open after consecutive source failures",
+                state.consecutive_failures,
+                state.open_until.isoformat(),
             )
 
         fault: Exception | None = None
         batch: ObservationBatch | None = None
         attempts = 0
-        for attempt in range(task.spec.retry_limit + 1):
-            attempts = attempt + 1
-            try:
-                batch = await task.adapter.collect()
-                if batch.market_id != key[0] or batch.adapter_id != key[1]:
-                    raise ValueError(
-                        "collector returned a batch outside its registered scope"
-                    )
-            except Exception as exc:  # noqa: BLE001 — isolation boundary
-                fault = exc
-                batch = None
-                if attempt < task.spec.retry_limit:
-                    await self.sleep(task.spec.backoff_seconds * (2**attempt))
-            else:
-                break
+        try:
+            # The timeout is one total acquisition budget: source calls,
+            # connector-owned retries, supervisor retries, and their backoff.
+            async with asyncio.timeout(self.adapter_deadline_seconds):
+                for attempt in range(task.spec.retry_limit + 1):
+                    attempts = attempt + 1
+                    try:
+                        batch = await task.adapter.collect()
+                        if batch.market_id != key[0] or batch.adapter_id != key[1]:
+                            raise ValueError(
+                                "collector returned a batch outside its registered scope"
+                            )
+                    except Exception as exc:  # noqa: BLE001 — isolation boundary
+                        fault = exc
+                        batch = None
+                        if attempt < task.spec.retry_limit:
+                            await self.sleep(task.spec.backoff_seconds * (2**attempt))
+                    else:
+                        break
+        except TimeoutError:
+            fault = AdapterDeadlineExceeded(
+                f"collector exceeded {self.adapter_deadline_seconds:g}s acquisition deadline"
+            )
+            batch = None
 
         if batch is not None:
             try:
@@ -386,6 +444,9 @@ class CollectorSupervisor:
                     key[0], key[1], CollectorRunStatus.SUCCESS,
                     started.isoformat(), finished.isoformat(), written, attempts,
                     state.next_due.isoformat(),
+                    None,
+                    0,
+                    None,
                 )
 
         state.consecutive_failures += 1
@@ -394,11 +455,15 @@ class CollectorSupervisor:
             state.open_until = now + timedelta(
                 seconds=task.spec.circuit_breaker_cooldown_seconds
             )
-            state.next_due = state.open_until
+            # A circuit breaker may delay a high-frequency source, but it must
+            # never make a slower source run more often than its declared
+            # cadence. Daily official feeds often have a shorter cooldown.
+            state.next_due = max(state.next_due, state.open_until)
         finished = datetime.now(UTC).replace(microsecond=0)
         detail = f"{type(fault).__name__}: {fault}" if fault is not None else "unknown fault"
         return CollectorRun(
             key[0], key[1], CollectorRunStatus.FAILED,
             started.isoformat(), finished.isoformat(), 0, attempts,
-            state.next_due.isoformat(), detail,
+            state.next_due.isoformat(), detail, state.consecutive_failures,
+            state.open_until.isoformat() if state.open_until is not None else None,
         )

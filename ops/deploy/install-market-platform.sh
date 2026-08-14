@@ -19,6 +19,8 @@ PROMOTION_REQUEST_DIR=/run/seiche-release
 DEPLOY_STATE_DIR=/var/lib/seiche-deploy
 PROMOTION_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
+WORKER_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-market-worker.service"
+WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-market-worker.service
 LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
 
 PACKAGES=()
@@ -197,8 +199,13 @@ VALIDATION_STAGE=""
 BACKUP_STAGE=""
 RESTORE_STAGE=""
 PROMOTION_UNIT_STAGE_DIR=""
+WORKER_UNIT_STAGE_DIR=""
 cleanup() {
     rm -f -- "$ENV_STAGE" "$VALIDATION_STAGE" "$BACKUP_STAGE" "$RESTORE_STAGE"
+    if [ -n "$WORKER_UNIT_STAGE_DIR" ]; then
+        rm -f -- "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"
+        rmdir "$WORKER_UNIT_STAGE_DIR" 2>/dev/null || true
+    fi
     if [ -n "$PROMOTION_UNIT_STAGE_DIR" ]; then
         rm -f -- "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"
         rmdir "$PROMOTION_UNIT_STAGE_DIR" 2>/dev/null || true
@@ -250,8 +257,21 @@ runuser -u seiche -- env \
     "$APP_DIR/backend/.venv/bin/python" -c \
     'import os, psycopg; from seiche.repository import get_repository; connection = psycopg.connect(os.environ["SEICHE_DATABASE_URL"]); connection.execute("SELECT 1").fetchone(); connection.close(); get_repository().forward_record_count()'
 
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-worker.service" \
-    /etc/systemd/system/seiche-market-worker.service
+# Readiness and watchdog semantics are a release boundary. Verify the exact
+# candidate unit before replacing the running host's last-known-good template.
+WORKER_UNIT_STAGE_DIR=$(mktemp -d \
+    /etc/systemd/system/.seiche-market-worker-stage.XXXXXX)
+install -m 0644 "$WORKER_UNIT_SOURCE" \
+    "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"
+if ! systemd-analyze verify \
+        "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"; then
+    echo "market platform: worker unit failed verification" >&2
+    exit 1
+fi
+mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service" \
+    "$WORKER_UNIT_DESTINATION"
+rmdir "$WORKER_UNIT_STAGE_DIR"
+WORKER_UNIT_STAGE_DIR=""
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
     /etc/systemd/system/seiche-market-backfill.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
@@ -403,6 +423,9 @@ cat >"$DROPIN" <<EOF
 EnvironmentFile=-$ENV_DIR/market.env
 EnvironmentFile=-$ENV_DIR/release.env
 EnvironmentFile=-$DELIVERY_ENV_FILE
+# Caddy owns privacy-filtered edge request telemetry; Uvicorn's raw path logger
+# includes the query string and would create a second, unredacted copy.
+Environment=UVICORN_ACCESS_LOG=false
 ReadWritePaths=$STATE_DIR
 EOF
 chmod 0644 "$DROPIN"

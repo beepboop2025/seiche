@@ -4,7 +4,8 @@ After=network-online.target postgresql.service seiche-market-backfill.service
 Wants=network-online.target postgresql.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=seiche
 Group=seiche
 WorkingDirectory=/home/seiche/app
@@ -13,6 +14,9 @@ EnvironmentFile=-/etc/seiche/rbnz-access.env
 ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker --poll-seconds 30
 Restart=always
 RestartSec=15
+WatchdogSec=180
+TimeoutStartSec=60
+TimeoutStopSec=45
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

@@ -64,6 +64,26 @@ def test_edge_parser_separates_known_automation_from_unclassified(tmp_path):
     assert stats["seiche-mcp"]["err"] == 1
 
 
+def test_edge_parser_keeps_redacted_query_request_in_route_counts(tmp_path):
+    log = tmp_path / "access.log"
+    log.write_text(
+        _edge_line(
+            101,
+            "api.seiche.info",
+            "/mcp?api_key=[REDACTED]&source=catalog",
+            "POST",
+            "catalog-probe/1",
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    stats = usage.parse_log(100, log)
+
+    assert stats["seiche-mcp"]["req"] == 1
+    assert stats["seiche-mcp"]["post"] == 1
+
+
 def test_edge_parser_reads_rotation_boundary_once_and_keeps_cutoff(tmp_path):
     current = tmp_path / "access.log"
     rotated = tmp_path / "access-2026-08-09.log.gz"
