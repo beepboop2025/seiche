@@ -220,6 +220,38 @@ start_market_services() {
   systemctl start --no-block \
     seiche-market-backfill.service seiche-market-worker.service
 }
+MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
+restore_preupdate_market_worker_unit() {
+  local restore_sha="$DEPLOYED" stage candidate destination
+  [ -n "$MARKET_WORKER_UNIT_MAY_HAVE_CHANGED" ] || return 0
+  if ! valid_release_sha "$restore_sha"; then
+    restore_sha="$BEFORE"
+  fi
+  if ! valid_release_sha "$restore_sha" \
+      || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+        "$restore_sha^{commit}" >/dev/null; then
+    echo "FAIL: no verified pre-update worker unit is available"
+    return 1
+  fi
+  stage=$(mktemp -d /etc/systemd/system/.seiche-market-worker-restore.XXXXXX) \
+    || return 1
+  candidate="$stage/seiche-market-worker.service"
+  destination=/etc/systemd/system/seiche-market-worker.service
+  if ! runuser -u seiche -- git -C "$APP" show \
+      "${restore_sha}:ops/deploy/seiche-market-worker.service" >"$candidate" \
+      || ! chmod 0644 "$candidate" \
+      || ! systemd-analyze verify "$candidate" \
+      || ! mv -f "$candidate" "$destination" \
+      || ! systemctl daemon-reload; then
+    rm -f -- "$candidate"
+    rmdir "$stage" 2>/dev/null || true
+    echo "FAIL: pre-update market worker unit could not be restored"
+    return 1
+  fi
+  rmdir "$stage"
+  MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
+  echo "market worker unit restored from ${restore_sha:0:7}"
+}
 restore_preupdate_api() {
   local restore_sha="$DEPLOYED" deadline
   if ! valid_release_sha "$restore_sha"; then
@@ -262,6 +294,10 @@ restore_quiesced_api() {
 restore_pre_restart_services() {
   if ! restore_quiesced_api; then
     echo "FAIL: market writers remain stopped because api recovery failed"
+    return 1
+  fi
+  if ! restore_preupdate_market_worker_unit; then
+    echo "FAIL: market writers remain stopped because their unit recovery failed"
     return 1
   fi
   restore_market_services
@@ -586,6 +622,7 @@ promote_snapshot_handoff() {
   return 1
 }
 
+MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1
 deploy_market_platform || {
   restore_pre_restart_services || true
   echo "FAIL: application checkout is intact but market-platform provisioning failed"
@@ -712,6 +749,8 @@ runuser -u seiche -- bash -c "cd $APP && timeout -k 30 600 backend/.venv/bin/pip
   || { echo "FAIL: rollback pip install failed or timed out — seiche-api needs a human NOW"; exit 1; }
 runuser -u seiche -- bash -c "cd $APP && timeout -k 30 120 backend/.venv/bin/python -c 'import seiche.api, seiche.assemble, seiche.dispatch_daily'" \
   || { echo "FAIL: rollback tree does not import — seiche-api needs a human NOW"; exit 1; }
+restore_preupdate_market_worker_unit \
+  || { echo "FAIL: rollback worker unit could not be restored; market writers remain stopped"; exit 1; }
 systemctl restart seiche-api
 sleep 3
 if systemctl is-active --quiet seiche-api && rollback_health_wait 480; then

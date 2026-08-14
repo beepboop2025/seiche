@@ -44,6 +44,18 @@ _FORWARD_CHILD_INDEX_SQL = """CREATE UNIQUE INDEX IF NOT EXISTS
                AND calibration_id = 'nz-nzd-local-forward-v1'
              )"""
 
+_COLLECTOR_RUN_ID_FIELDS = (
+    "market_id",
+    "adapter_id",
+    "status",
+    "started_at",
+    "finished_at",
+    "observations_written",
+    "attempts",
+    "next_due",
+    "fault",
+)
+
 
 def _database_identity() -> tuple[str, int, int]:
     database = Path(DB_PATH).resolve()
@@ -220,6 +232,24 @@ def _conn() -> sqlite3.Connection:
     conn.execute(
         """CREATE INDEX IF NOT EXISTS collector_runs_latest
              ON collector_runs (market_id, adapter_id, finished_at DESC)"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS collector_states (
+             market_id TEXT NOT NULL,
+             adapter_id TEXT NOT NULL,
+             next_due TEXT NOT NULL,
+             consecutive_failures INTEGER NOT NULL,
+             circuit_open_until TEXT,
+             updated_at TEXT NOT NULL,
+             CHECK (consecutive_failures >= 0),
+             PRIMARY KEY (market_id, adapter_id))"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS worker_heartbeats (
+             component_id TEXT PRIMARY KEY,
+             heartbeat_at TEXT NOT NULL,
+             expected_by TEXT NOT NULL,
+             CHECK (expected_by >= heartbeat_at))"""
     )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS forward_validation_records (
@@ -1111,11 +1141,23 @@ def load_market_snapshot_as_of(
     return _snapshot_record(row)
 
 
+def collector_run_id(run: dict) -> str:
+    """Keep run identity stable as scheduler state fields evolve."""
+
+    identity = {field: run.get(field) for field in _COLLECTOR_RUN_ID_FIELDS}
+    canonical = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def save_collector_run(run: dict) -> str:
     """Append one independently scheduled collector outcome."""
 
-    canonical = json.dumps(run, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    run_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    run_id = collector_run_id(run)
     with _lock, _conn() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO collector_runs
@@ -1133,6 +1175,30 @@ def save_collector_run(run: dict) -> str:
                 int(run["attempts"]),
                 _canonical_utc(run["next_due"]),
                 run.get("fault"),
+            ),
+        )
+        conn.execute(
+            """INSERT INTO collector_states
+                 (market_id, adapter_id, next_due, consecutive_failures,
+                  circuit_open_until, updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(market_id, adapter_id) DO UPDATE SET
+                 next_due=excluded.next_due,
+                 consecutive_failures=excluded.consecutive_failures,
+                 circuit_open_until=excluded.circuit_open_until,
+                 updated_at=excluded.updated_at
+               WHERE excluded.updated_at >= collector_states.updated_at""",
+            (
+                str(run["market_id"]).upper(),
+                run["adapter_id"],
+                _canonical_utc(run["next_due"]),
+                int(run.get("consecutive_failures", 0)),
+                (
+                    _canonical_utc(run["circuit_open_until"])
+                    if run.get("circuit_open_until") is not None
+                    else None
+                ),
+                _canonical_utc(run["finished_at"]),
             ),
         )
     return run_id
@@ -1153,10 +1219,18 @@ def latest_collector_runs(market_id: str | None = None) -> list[dict]:
                          ) AS run_rank
                     FROM collector_runs {predicate}
                 )
-                SELECT run_id, market_id, adapter_id, status, started_at,
-                       finished_at, observations_written, attempts, next_due, fault
-                  FROM ranked WHERE run_rank=1
-                  ORDER BY market_id, adapter_id""",
+                SELECT ranked.run_id, ranked.market_id, ranked.adapter_id,
+                       ranked.status, ranked.started_at, ranked.finished_at,
+                       ranked.observations_written, ranked.attempts,
+                       ranked.next_due, ranked.fault,
+                       COALESCE(states.consecutive_failures, 0),
+                       states.circuit_open_until
+                  FROM ranked
+                  LEFT JOIN collector_states AS states
+                    ON states.market_id=ranked.market_id
+                   AND states.adapter_id=ranked.adapter_id
+                 WHERE ranked.run_rank=1
+                 ORDER BY ranked.market_id, ranked.adapter_id""",
             params,
         ).fetchall()
     keys = (
@@ -1170,8 +1244,75 @@ def latest_collector_runs(market_id: str | None = None) -> list[dict]:
         "attempts",
         "next_due",
         "fault",
+        "consecutive_failures",
+        "circuit_open_until",
     )
     return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def load_collector_states(market_id: str | None = None) -> list[dict]:
+    predicate = "WHERE market_id=?" if market_id is not None else ""
+    params = (market_id.upper(),) if market_id is not None else ()
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            f"""SELECT market_id, adapter_id, next_due, consecutive_failures,
+                       circuit_open_until, updated_at
+                  FROM collector_states {predicate}
+                 ORDER BY market_id, adapter_id""",
+            params,
+        ).fetchall()
+    keys = (
+        "market_id",
+        "adapter_id",
+        "next_due",
+        "consecutive_failures",
+        "circuit_open_until",
+        "updated_at",
+    )
+    return [dict(zip(keys, row, strict=True)) for row in rows]
+
+
+def save_worker_heartbeat(
+    *,
+    component_id: str,
+    heartbeat_at: str | datetime,
+    expected_by: str | datetime,
+) -> None:
+    """Upsert a privacy-safe component heartbeat without regressing time."""
+
+    heartbeat = _canonical_utc(heartbeat_at)
+    deadline = _canonical_utc(expected_by)
+    if deadline < heartbeat:
+        raise ValueError("worker heartbeat deadline cannot precede its timestamp")
+    with _lock, _conn() as conn:
+        conn.execute(
+            """INSERT INTO worker_heartbeats
+                 (component_id, heartbeat_at, expected_by)
+               VALUES (?,?,?)
+               ON CONFLICT(component_id) DO UPDATE SET
+                 heartbeat_at=excluded.heartbeat_at,
+                 expected_by=excluded.expected_by
+               WHERE excluded.heartbeat_at >= worker_heartbeats.heartbeat_at""",
+            (component_id, heartbeat, deadline),
+        )
+
+
+def load_worker_heartbeat(component_id: str) -> dict | None:
+    with _lock, _conn() as conn:
+        row = conn.execute(
+            """SELECT component_id, heartbeat_at, expected_by
+                 FROM worker_heartbeats WHERE component_id=?""",
+            (component_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(
+        zip(
+            ("component_id", "heartbeat_at", "expected_by"),
+            row,
+            strict=True,
+        )
+    )
 
 
 _FORWARD_RECORD_COLUMNS = (

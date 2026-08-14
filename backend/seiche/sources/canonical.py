@@ -8,6 +8,7 @@ unrelated change elsewhere in the document revise every historical point.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import Callable, Iterable
@@ -230,6 +231,11 @@ class FunctionalCanonicalAdapter:
                 event_day = _event_business_date(point.event_time, self.pack)
                 event_time = _event_datetime(point.event_time, self.pack)
                 prepared.append((point, instrument, event_day, event_time))
+        if not prepared:
+            raise ValueError(
+                "official adapter parsed zero declared observations from "
+                "nonempty source documents"
+            )
 
         prior = (
             self.repository.load_observations_as_of(
@@ -357,6 +363,11 @@ class FunctionalCanonicalAdapter:
                     staleness=StalenessState.FRESH,
                 )
             )
+        if not observations:
+            raise ValueError(
+                "official adapter produced zero usable observations after "
+                "point-in-time validation"
+            )
         return ObservationBatch(
             market_id=self.pack.market_id,
             adapter_id=self.adapter_id,
@@ -379,23 +390,42 @@ class FunctionalCanonicalAdapter:
 async def get_documents(
     client: httpx.AsyncClient,
     requests: Iterable[tuple[str, str, dict[str, object] | None]],
+    *,
+    max_concurrency: int = 4,
 ) -> tuple[FetchedDocument, ...]:
-    """Fetch independent GET documents without hiding a failed response."""
+    """Fetch independent GETs concurrently, preserving declaration order."""
 
-    documents: list[FetchedDocument] = []
-    for label, uri, params in requests:
-        response = await client.get(uri, params=params)
-        response.raise_for_status()
-        documents.append(
-            FetchedDocument(
-                source_uri=str(response.url),
-                media_type=response.headers.get(
-                    "content-type", "application/octet-stream"
-                )
-                .split(";", 1)[0]
-                .lower(),
-                payload=response.content,
-                label=label,
+    if max_concurrency < 1:
+        raise ValueError("document fetch concurrency must be positive")
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def fetch(
+        request: tuple[str, str, dict[str, object] | None],
+    ) -> FetchedDocument:
+        label, uri, params = request
+        async with semaphore:
+            response = await client.get(uri, params=params)
+            response.raise_for_status()
+        return FetchedDocument(
+            source_uri=str(response.url),
+            media_type=response.headers.get(
+                "content-type", "application/octet-stream"
             )
+            .split(";", 1)[0]
+            .lower(),
+            payload=response.content,
+            label=label,
         )
-    return tuple(documents)
+
+    tasks = [asyncio.create_task(fetch(request)) for request in tuple(requests)]
+    try:
+        # gather returns in input order even when faster documents finish first.
+        return tuple(await asyncio.gather(*tasks))
+    except BaseException:
+        # A failed response is the adapter fault. Reap siblings so no requests
+        # escape the adapter deadline or mutate completion state afterward.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise

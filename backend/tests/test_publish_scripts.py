@@ -136,3 +136,22 @@ def test_static_publish_reuses_its_exported_board_for_the_book():
 
     assert exported < appended
     assert "--snapshot frontend/public/data/overview.json" in workflow[appended:]
+
+
+def test_static_publish_reuses_only_an_exact_sha_gate():
+    """Cron speedups must not let one revision bless another revision."""
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text()
+
+    restored = workflow.index("name: Restore exact-code publish gate")
+    verified = workflow.index("name: Verify exact-code publish gate")
+    tested = workflow.index("name: Engine tests (publish gates on green)")
+    exported = workflow.index("name: Run engines, export snapshot")
+    restore_block = workflow[restored:verified]
+
+    assert restored < verified < tested < exported
+    assert "seiche-publish-gate-v1-${{ runner.os }}-py312-${{ github.sha }}" in workflow
+    assert "restore-keys:" not in restore_block
+    assert "[ \"$CACHE_HIT\" = \"true\" ]" in workflow
+    assert "= \"$GITHUB_SHA\"" in workflow
+    assert "if: steps.publish-gate.outputs.run-full-suite == 'true'" in workflow
+    assert 'printf \'%s\\n\' "$GITHUB_SHA"' in workflow[tested:exported]

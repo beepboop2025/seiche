@@ -30,6 +30,7 @@ from seiche.domain.observation import Observation, RedistributionStatus, Semanti
 
 _MIN_POSTGRES_SERVER_VERSION = 110000
 _RELEASE_HANDOFF_ACTIVATION_LOCK = 0x534549434845
+COLLECTOR_WORKER_COMPONENT_ID = "official-market-collector"
 
 
 class MarketRepository(Protocol):
@@ -145,6 +146,18 @@ class MarketRepository(Protocol):
 
     def latest_collector_runs(self, market_id: str | None = None) -> list[dict]: ...
 
+    def load_collector_states(self, market_id: str | None = None) -> list[dict]: ...
+
+    def save_worker_heartbeat(
+        self,
+        *,
+        component_id: str,
+        heartbeat_at: str | datetime,
+        expected_by: str | datetime,
+    ) -> None: ...
+
+    def load_worker_heartbeat(self, component_id: str) -> dict | None: ...
+
     def append_forward_record(
         self,
         *,
@@ -190,6 +203,9 @@ class SQLiteMarketRepository:
     load_market_snapshot_as_of = staticmethod(store.load_market_snapshot_as_of)
     save_collector_run = staticmethod(store.save_collector_run)
     latest_collector_runs = staticmethod(store.latest_collector_runs)
+    load_collector_states = staticmethod(store.load_collector_states)
+    save_worker_heartbeat = staticmethod(store.save_worker_heartbeat)
+    load_worker_heartbeat = staticmethod(store.load_worker_heartbeat)
     append_forward_record = staticmethod(store.append_forward_record)
     load_forward_records = staticmethod(store.load_forward_records)
     forward_record_count = staticmethod(store.forward_record_count)
@@ -342,6 +358,22 @@ CREATE TABLE IF NOT EXISTS collector_runs (
 );
 CREATE INDEX IF NOT EXISTS collector_runs_latest
   ON collector_runs (market_id, adapter_id, finished_at DESC);
+CREATE TABLE IF NOT EXISTS collector_states (
+  market_id TEXT NOT NULL,
+  adapter_id TEXT NOT NULL,
+  next_due TIMESTAMPTZ NOT NULL,
+  consecutive_failures INTEGER NOT NULL,
+  circuit_open_until TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL,
+  CHECK (consecutive_failures >= 0),
+  PRIMARY KEY (market_id, adapter_id)
+);
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+  component_id TEXT PRIMARY KEY,
+  heartbeat_at TIMESTAMPTZ NOT NULL,
+  expected_by TIMESTAMPTZ NOT NULL,
+  CHECK (expected_by >= heartbeat_at)
+);
 CREATE TABLE IF NOT EXISTS forward_validation_records (
   record_id TEXT PRIMARY KEY,
   snapshot_id TEXT NOT NULL UNIQUE,
@@ -1319,13 +1351,7 @@ class PostgresMarketRepository:
 
     def save_collector_run(self, run: dict) -> str:
         self._ensure_schema()
-        canonical = json.dumps(
-            run,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
-        run_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        run_id = store.collector_run_id(run)
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO collector_runs
@@ -1346,6 +1372,30 @@ class PostgresMarketRepository:
                     run.get("fault"),
                 ),
             )
+            connection.execute(
+                """INSERT INTO collector_states
+                     (market_id, adapter_id, next_due, consecutive_failures,
+                      circuit_open_until, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (market_id, adapter_id) DO UPDATE SET
+                     next_due=EXCLUDED.next_due,
+                     consecutive_failures=EXCLUDED.consecutive_failures,
+                     circuit_open_until=EXCLUDED.circuit_open_until,
+                     updated_at=EXCLUDED.updated_at
+                   WHERE EXCLUDED.updated_at >= collector_states.updated_at""",
+                (
+                    str(run["market_id"]).upper(),
+                    run["adapter_id"],
+                    _utc(run["next_due"]),
+                    int(run.get("consecutive_failures", 0)),
+                    (
+                        _utc(run["circuit_open_until"])
+                        if run.get("circuit_open_until") is not None
+                        else None
+                    ),
+                    _utc(run["finished_at"]),
+                ),
+            )
         return run_id
 
     def latest_collector_runs(self, market_id: str | None = None) -> list[dict]:
@@ -1364,11 +1414,18 @@ class PostgresMarketRepository:
                              ) AS run_rank
                         FROM collector_runs {predicate}
                     )
-                    SELECT run_id, market_id, adapter_id, status, started_at,
-                           finished_at, observations_written, attempts,
-                           next_due, fault
-                      FROM ranked WHERE run_rank=1
-                      ORDER BY market_id, adapter_id""",
+                    SELECT ranked.run_id, ranked.market_id, ranked.adapter_id,
+                           ranked.status, ranked.started_at, ranked.finished_at,
+                           ranked.observations_written, ranked.attempts,
+                           ranked.next_due, ranked.fault,
+                           COALESCE(states.consecutive_failures, 0),
+                           states.circuit_open_until
+                      FROM ranked
+                      LEFT JOIN collector_states AS states
+                        ON states.market_id=ranked.market_id
+                       AND states.adapter_id=ranked.adapter_id
+                     WHERE ranked.run_rank=1
+                     ORDER BY ranked.market_id, ranked.adapter_id""",
                 params,
             ).fetchall()
         keys = (
@@ -1382,14 +1439,91 @@ class PostgresMarketRepository:
             "attempts",
             "next_due",
             "fault",
+            "consecutive_failures",
+            "circuit_open_until",
         )
         output = []
         for row in rows:
             record = dict(zip(keys, row, strict=True))
-            for key in ("started_at", "finished_at", "next_due"):
-                record[key] = record[key].isoformat()
+            for key in (
+                "started_at",
+                "finished_at",
+                "next_due",
+                "circuit_open_until",
+            ):
+                if record[key] is not None:
+                    record[key] = record[key].isoformat()
             output.append(record)
         return output
+
+    def load_collector_states(self, market_id: str | None = None) -> list[dict]:
+        self._ensure_schema()
+        predicate = "WHERE market_id=%s" if market_id is not None else ""
+        params = (market_id.upper(),) if market_id is not None else ()
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT market_id, adapter_id, next_due,
+                           consecutive_failures, circuit_open_until, updated_at
+                      FROM collector_states {predicate}
+                     ORDER BY market_id, adapter_id""",
+                params,
+            ).fetchall()
+        keys = (
+            "market_id",
+            "adapter_id",
+            "next_due",
+            "consecutive_failures",
+            "circuit_open_until",
+            "updated_at",
+        )
+        output = []
+        for row in rows:
+            record = dict(zip(keys, row, strict=True))
+            for key in ("next_due", "circuit_open_until", "updated_at"):
+                if record[key] is not None:
+                    record[key] = record[key].isoformat()
+            output.append(record)
+        return output
+
+    def save_worker_heartbeat(
+        self,
+        *,
+        component_id: str,
+        heartbeat_at: str | datetime,
+        expected_by: str | datetime,
+    ) -> None:
+        self._ensure_schema()
+        heartbeat = _utc(heartbeat_at)
+        deadline = _utc(expected_by)
+        if deadline < heartbeat:
+            raise ValueError("worker heartbeat deadline cannot precede its timestamp")
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO worker_heartbeats
+                     (component_id, heartbeat_at, expected_by)
+                   VALUES (%s,%s,%s)
+                   ON CONFLICT (component_id) DO UPDATE SET
+                     heartbeat_at=EXCLUDED.heartbeat_at,
+                     expected_by=EXCLUDED.expected_by
+                   WHERE EXCLUDED.heartbeat_at >= worker_heartbeats.heartbeat_at""",
+                (component_id, heartbeat, deadline),
+            )
+
+    def load_worker_heartbeat(self, component_id: str) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT component_id, heartbeat_at, expected_by
+                     FROM worker_heartbeats WHERE component_id=%s""",
+                (component_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "component_id": row[0],
+            "heartbeat_at": row[1].isoformat(),
+            "expected_by": row[2].isoformat(),
+        }
 
     def append_forward_record(
         self,

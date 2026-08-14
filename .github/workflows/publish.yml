@@ -34,13 +34,52 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # A scheduled refresh reruns the same immutable code many times.  The
+      # expensive engine suite proves the code, not the current market data,
+      # so cache that proof by the exact commit SHA.  The cache action saves
+      # only after the whole job succeeds; a failed test, export, or publish
+      # can never mint a reusable green marker.  Concurrency serializes runs,
+      # so the first invocation for a new SHA finishes before another can use
+      # its marker.
+      - name: Restore exact-code publish gate
+        id: publish-gate-cache
+        uses: actions/cache@v6
+        with:
+          path: .cache/publish-gates/${{ github.sha }}
+          key: seiche-publish-gate-v1-${{ runner.os }}-py312-${{ github.sha }}
+
+      - name: Verify exact-code publish gate
+        id: publish-gate
+        env:
+          CACHE_HIT: ${{ steps.publish-gate-cache.outputs.cache-hit }}
+          MARKER: .cache/publish-gates/${{ github.sha }}/validated-sha
+        run: |
+          if [ "$CACHE_HIT" = "true" ] && [ "$(cat "$MARKER" 2>/dev/null || true)" = "$GITHUB_SHA" ]; then
+            echo "run-full-suite=false" >> "$GITHUB_OUTPUT"
+            echo "reusing successful publish gate for $GITHUB_SHA"
+          else
+            echo "run-full-suite=true" >> "$GITHUB_OUTPUT"
+            echo "no valid gate for $GITHUB_SHA; the full suite will run"
+          fi
+
       - name: Install backend
         # The full publish gate exercises the official workbook adapters.
         # Their dependencies intentionally live in the collectors extra.
-        run: pip install -e "./backend[dev,collectors]"
+        env:
+          RUN_FULL_SUITE: ${{ steps.publish-gate.outputs.run-full-suite }}
+        run: |
+          if [ "$RUN_FULL_SUITE" = "true" ]; then
+            pip install -e "./backend[dev,collectors]"
+          else
+            pip install -e "./backend[collectors]"
+          fi
 
       - name: Engine tests (publish gates on green)
-        run: python -m pytest backend/tests -q --memray --pystack-threshold=300
+        if: steps.publish-gate.outputs.run-full-suite == 'true'
+        run: |
+          python -m pytest backend/tests -q --memray --pystack-threshold=300
+          mkdir -p ".cache/publish-gates/$GITHUB_SHA"
+          printf '%s\n' "$GITHUB_SHA" > ".cache/publish-gates/$GITHUB_SHA/validated-sha"
 
       - name: Restore GDELT WEB-NGRAM baseline
         uses: actions/cache@v6
