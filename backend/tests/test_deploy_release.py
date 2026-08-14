@@ -677,8 +677,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$FUNDING_EXPORT_DIR" in installer
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
+    assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in worker
     assert "Restart=always" in worker
     assert "Type=oneshot" in backfill
+    assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in backfill
     assert "TimeoutStartSec=2h" in backfill
     assert "CPUQuota=100%" in backfill
     assert "CPUWeight=10" in backfill
@@ -730,6 +732,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RandomizedDelaySec=15m" in restore_timer
     assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
+    assert 'RBNZ_ACCESS_ENV_FILE="${SEICHE_RBNZ_ACCESS_ENV_FILE:-' in installer
+    assert "RBNZ access env ownership/mode is unsafe" in installer
+    assert "SEICHE_RBNZ_ACCESS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
+    assert "SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL=[0-9]{4}" in installer
 
 
 def test_legacy_updater_is_retired_before_other_host_services_change():

@@ -10,6 +10,7 @@ EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-re
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
 FUNDING_EXPORT_FILE="$FUNDING_EXPORT_DIR/us-usd-funding-core-v1.json"
 DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-delivery.env}"
+RBNZ_ACCESS_ENV_FILE="${SEICHE_RBNZ_ACCESS_ENV_FILE:-$ENV_DIR/rbnz-access.env}"
 DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
 DELIVERY_READER_GROUP=liquilens-world-model-readers
 PROMOTION_REQUEST_DIR=/run/seiche-release
@@ -215,6 +216,29 @@ chown root:seiche "$ENV_STAGE"
 chmod 0640 "$ENV_STAGE"
 mv -f "$ENV_STAGE" "$ENV_DIR/market.env"
 ENV_STAGE=""
+
+# RBNZ permits automated website access only after prior written approval.  A
+# separately provisioned, root-controlled two-line file records the approval
+# artifact hash and a bounded re-review date.  Its absence is intentional: the
+# adapter then fails closed before making any RBNZ request.
+if [ -e "$RBNZ_ACCESS_ENV_FILE" ] || [ -L "$RBNZ_ACCESS_ENV_FILE" ]; then
+    [ -f "$RBNZ_ACCESS_ENV_FILE" ] && [ ! -L "$RBNZ_ACCESS_ENV_FILE" ] || {
+        echo "market platform: RBNZ access env is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a' "$RBNZ_ACCESS_ENV_FILE")" = "root:seiche:640" ] || {
+        echo "market platform: RBNZ access env ownership/mode is unsafe" >&2
+        exit 1
+    }
+    if ! { [ "$(wc -l <"$RBNZ_ACCESS_ENV_FILE" | tr -d '[:space:]')" = "2" ] \
+        && grep -Eq '^SEICHE_RBNZ_ACCESS_APPROVAL_SHA256=[0-9a-f]{64}$' \
+            "$RBNZ_ACCESS_ENV_FILE" \
+        && grep -Eq '^SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL=[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+            "$RBNZ_ACCESS_ENV_FILE"; }; then
+        echo "market platform: RBNZ access env contract is invalid" >&2
+        exit 1
+    fi
+fi
 
 # Fail before changing service units if the application user cannot reach the
 # exact socket/port written above. pg_wrapper succeeding as postgres is not a
