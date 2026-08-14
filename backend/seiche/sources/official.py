@@ -16,6 +16,8 @@ import io
 import json
 import os
 import re
+import urllib.parse
+import zipfile
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -47,12 +49,25 @@ _RBNZ_B2_XLSX_URI = (
     "series/b/b2/hb2-daily-close.xlsx"
 )
 _RBNZ_B2_PAGE_URI = (
-    "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates/"
+    "https://www.rbnz.govt.nz/en/statistics/series/exchange-and-interest-rates/"
     "wholesale-interest-rates"
 )
 _RBNZ_XLSX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+_RBNZ_TERMS_URI = "https://www.rbnz.govt.nz/about-our-site/terms-of-use"
+_RBNZ_ACCESS_APPROVAL_SHA256_ENV = "SEICHE_RBNZ_ACCESS_APPROVAL_SHA256"
+_RBNZ_ACCESS_APPROVAL_VALID_UNTIL_ENV = "SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL"
+_RBNZ_ALLOWED_HOSTS = frozenset({"rbnz.govt.nz", "www.rbnz.govt.nz"})
+_RBNZ_MAX_BODY_BYTES = 8 * 1024 * 1024
+_RBNZ_MAX_XLSX_MEMBERS = 256
+_RBNZ_MAX_XLSX_EXPANDED_BYTES = 64 * 1024 * 1024
+_RBNZ_MAX_WORKBOOK_SHEETS = 16
+_RBNZ_MAX_WORKBOOK_ROWS = 50_000
+_RBNZ_MAX_WORKBOOK_COLUMNS = 256
+_RBNZ_MAX_WORKBOOK_CELLS = 400_000
+_RBNZ_MAX_APPROVAL_REVIEW_DAYS = 366
+_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS = 90.0
 
 
 class RBNZSourceUnavailableError(RuntimeError):
@@ -811,6 +826,11 @@ _RBNZ_COLUMN_HEADINGS = {
     "NZ.RBNZ.OVERNIGHT_DEPOSIT": "overnight deposit",
     "NZ.RBNZ.OVERNIGHT_REVERSE_REPO": "overnight reverse",
 }
+_RBNZ_SERIES_IDS = {
+    "INM.DP1.N": "NZ.RBNZ.OCR",
+    "INM.DD1.N": "NZ.RBNZ.OVERNIGHT_DEPOSIT",
+    "INM.DD2.N": "NZ.RBNZ.OVERNIGHT_REVERSE_REPO",
+}
 
 
 def _rbnz_html_data_rows(payload: bytes) -> tuple[list[list[str]], dict[int, str]]:
@@ -826,9 +846,176 @@ def _rbnz_html_data_rows(payload: bytes) -> tuple[list[list[str]], dict[int, str
                 for instrument, needle in _RBNZ_COLUMN_HEADINGS.items():
                     if needle in heading:
                         columns[column] = instrument
-            if set(columns.values()) == set(_RBNZ_COLUMN_HEADINGS):
+            if len(columns) == len(_RBNZ_COLUMN_HEADINGS) and set(
+                columns.values()
+            ) == set(_RBNZ_COLUMN_HEADINGS):
                 return rows[header_index + 1 :], columns
     raise ValueError("RBNZ HTML page has no expected B2 interest-rate table header")
+
+
+def _validate_rbnz_workbook_archive(payload: bytes) -> None:
+    """Bound ZIP expansion before openpyxl reads an upstream workbook."""
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            members = archive.infolist()
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ValueError("RBNZ workbook is not a valid XLSX ZIP archive") from exc
+    if not members or len(members) > _RBNZ_MAX_XLSX_MEMBERS:
+        raise ValueError("RBNZ workbook exceeds the XLSX member limit")
+    if len({member.filename for member in members}) != len(members):
+        raise ValueError("RBNZ workbook contains duplicate XLSX member names")
+    expanded_bytes = 0
+    for member in members:
+        parts = member.filename.replace("\\", "/").split("/")
+        if member.filename.startswith("/") or ".." in parts:
+            raise ValueError("RBNZ workbook contains an unsafe XLSX member name")
+        if member.flag_bits & 0x1:
+            raise ValueError("RBNZ workbook contains an encrypted XLSX member")
+        if member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+            raise ValueError("RBNZ workbook uses an unsupported ZIP compression method")
+        expanded_bytes += member.file_size
+        if expanded_bytes > _RBNZ_MAX_XLSX_EXPANDED_BYTES:
+            raise ValueError("RBNZ workbook exceeds the XLSX expansion limit")
+
+
+def _bounded_rbnz_worksheets(
+    document: FetchedDocument,
+) -> list[tuple[str, list[tuple]]]:
+    _validate_rbnz_workbook_archive(document.payload)
+    workbook = _workbook(document)
+    try:
+        if len(workbook.worksheets) > _RBNZ_MAX_WORKBOOK_SHEETS:
+            raise ValueError("RBNZ workbook exceeds the worksheet limit")
+        worksheets: list[tuple[str, list[tuple]]] = []
+        row_count = 0
+        cell_count = 0
+        for sheet in workbook.worksheets:
+            if (
+                sheet.max_column is not None
+                and sheet.max_column > _RBNZ_MAX_WORKBOOK_COLUMNS
+            ):
+                raise ValueError("RBNZ workbook exceeds the column limit")
+            if (
+                sheet.max_row is not None
+                and row_count + sheet.max_row > _RBNZ_MAX_WORKBOOK_ROWS
+            ):
+                raise ValueError("RBNZ workbook exceeds the row limit")
+            rows: list[tuple] = []
+            for values in sheet.iter_rows(values_only=True):
+                row = tuple(values)
+                row_count += 1
+                cell_count += len(row)
+                if cell_count > _RBNZ_MAX_WORKBOOK_CELLS:
+                    raise ValueError("RBNZ workbook exceeds the cell limit")
+                if row_count > _RBNZ_MAX_WORKBOOK_ROWS:
+                    raise ValueError("RBNZ workbook exceeds the row limit")
+                if len(row) > _RBNZ_MAX_WORKBOOK_COLUMNS:
+                    raise ValueError("RBNZ workbook exceeds the column limit")
+                rows.append(row)
+            worksheets.append((sheet.title, rows))
+        return worksheets
+    finally:
+        workbook.close()
+
+
+def _rbnz_workbook_data_rows(
+    document: FetchedDocument,
+) -> tuple[list[tuple], dict[int, str]]:
+    """Locate one unambiguous B2 worksheet using IDs, then legacy headings."""
+
+    worksheets = _bounded_rbnz_worksheets(document)
+    expected = set(_RBNZ_COLUMN_HEADINGS)
+    candidates: list[tuple[str, list[tuple], dict[int, str]]] = []
+    saw_series_layout = any(
+        " ".join(title.lower().split()) in {"series definitions", "table description"}
+        for title, _ in worksheets
+    )
+
+    for title, rows in worksheets:
+        for index, row in enumerate(rows):
+            marker = " ".join(str(row[0] or "").lower().split()) if row else ""
+            values = {str(value).strip() for value in row}
+            if marker.startswith("series id") or values.intersection(_RBNZ_SERIES_IDS):
+                saw_series_layout = True
+            if marker != "series id":
+                continue
+            columns = {
+                column: _RBNZ_SERIES_IDS[str(value).strip()]
+                for column, value in enumerate(row)
+                if str(value).strip() in _RBNZ_SERIES_IDS
+            }
+            if len(columns) != len(expected) or set(columns.values()) != expected:
+                continue
+            data_rows = [
+                tuple(candidate)
+                for candidate in rows[index + 1 :]
+                if candidate
+                and _date(candidate[0]) is not None
+                and any(
+                    len(candidate) > column and _number(candidate[column]) is not None
+                    for column in columns
+                )
+            ]
+            if data_rows:
+                candidates.append((title, data_rows, columns))
+
+    # A modern workbook declaring Series IDs must satisfy the exact ID contract;
+    # never downgrade it to fuzzy display-heading matching.
+    if not saw_series_layout:
+        for title, rows in worksheets:
+            for index, row in enumerate(rows):
+                if not row or str(row[0]).strip().lower() != "date":
+                    continue
+                if any(
+                    any(value is not None and str(value).strip() for value in prior)
+                    for prior in rows[:index]
+                ):
+                    continue
+                following = next(
+                    (
+                        candidate
+                        for candidate in rows[index + 1 :]
+                        if candidate
+                        and any(
+                            value is not None and str(value).strip()
+                            for value in candidate
+                        )
+                    ),
+                    (),
+                )
+                if not following or _date(following[0]) is None:
+                    continue
+                columns: dict[int, str] = {}
+                for column, heading in enumerate(row):
+                    normalized = " ".join(str(heading or "").lower().split())
+                    for instrument, needle in _RBNZ_COLUMN_HEADINGS.items():
+                        if needle in normalized:
+                            columns[column] = instrument
+                if len(columns) != len(expected) or set(columns.values()) != expected:
+                    continue
+                data_rows = [
+                    tuple(candidate)
+                    for candidate in rows[index + 1 :]
+                    if candidate
+                    and _date(candidate[0]) is not None
+                    and any(
+                        len(candidate) > column
+                        and _number(candidate[column]) is not None
+                        for column in columns
+                    )
+                ]
+                if data_rows:
+                    candidates.append((title, data_rows, columns))
+
+    if len(candidates) != 1:
+        titles = ", ".join(title for title, _, _ in candidates) or "none"
+        raise ValueError(
+            "RBNZ workbook must contain exactly one usable B2 data sheet; "
+            f"found {len(candidates)} ({titles})"
+        )
+    _, rows, columns = candidates[0]
+    return rows, columns
 
 
 def parse_rbnz(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
@@ -838,25 +1025,8 @@ def parse_rbnz(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         or document.source_uri.endswith(".xlsx")
         or document.payload.startswith(b"PK\x03\x04")
     ):
-        workbook = _workbook(document)
-        worksheet = workbook.worksheets[0]
-        header_row: tuple | None = None
-        header_index = 0
-        rows = list(worksheet.iter_rows(values_only=True))
-        for index, row in enumerate(rows):
-            if row and str(row[0]).strip().lower() == "date":
-                header_row = tuple(row)
-                header_index = index
-                break
-        if header_row is None:
-            raise ValueError("RBNZ workbook has no Date header")
-        columns: dict[int, str] = {}
-        for index, heading in enumerate(header_row):
-            normalized = " ".join(str(heading or "").lower().split())
-            for instrument, needle in _RBNZ_COLUMN_HEADINGS.items():
-                if needle in normalized:
-                    columns[index] = instrument
-        for row in rows[header_index + 1 :]:
+        rows, columns = _rbnz_workbook_data_rows(document)
+        for row in rows:
             if not row:
                 continue
             event_day = _date(row[0])
@@ -997,6 +1167,117 @@ def _rbnz_failure_detail(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _rbnz_access_today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _require_rbnz_access_approval() -> None:
+    """Require a bounded operator attestation to RBNZ's written permission."""
+
+    approval_hash = os.getenv(_RBNZ_ACCESS_APPROVAL_SHA256_ENV, "").strip().lower()
+    valid_until_raw = os.getenv(_RBNZ_ACCESS_APPROVAL_VALID_UNTIL_ENV, "").strip()
+    try:
+        valid_until = date.fromisoformat(valid_until_raw)
+    except ValueError:
+        valid_until = None
+    if not re.fullmatch(r"[0-9a-f]{64}", approval_hash) or valid_until is None:
+        raise RBNZSourceUnavailableError(
+            "RBNZ automated access is disabled before any request: prior written "
+            f"permission is required by {_RBNZ_TERMS_URI}; configure an approval "
+            "artifact SHA-256 and ISO valid-until date only after approval"
+        )
+    today = _rbnz_access_today()
+    review_days = (valid_until - today).days
+    if review_days < 0:
+        raise RBNZSourceUnavailableError(
+            "RBNZ automated-access approval review has expired; no request was made"
+        )
+    if review_days > _RBNZ_MAX_APPROVAL_REVIEW_DAYS:
+        raise RBNZSourceUnavailableError(
+            "RBNZ automated-access approval must be reviewed within 366 days; "
+            "no request was made"
+        )
+
+
+def _rbnz_request_headers(*, navigation: bool) -> dict[str, str]:
+    """Identify Seiche honestly on an operator-approved RBNZ connection."""
+
+    headers = {
+        "Accept-Encoding": "identity",
+        "Accept-Language": "en-NZ,en;q=0.8",
+        "User-Agent": USER_AGENT,
+    }
+    if navigation:
+        headers["Accept"] = "text/html, application/xhtml+xml;q=0.9"
+    else:
+        headers.update(
+            {
+                "Accept": f"{_RBNZ_XLSX_MEDIA_TYPE}, application/octet-stream;q=0.9",
+                "Referer": _RBNZ_B2_PAGE_URI,
+            }
+        )
+    return headers
+
+
+def _validate_rbnz_url(url: str) -> None:
+    """Accept only the two canonical RBNZ HTTPS hostnames and default port."""
+
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"invalid RBNZ response URL: {url!r}") from exc
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if (
+        parsed.scheme != "https"
+        or host not in _RBNZ_ALLOWED_HOSTS
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError(f"RBNZ response left its official HTTPS origin: {url}")
+
+
+async def _read_rbnz_url(
+    client: httpx.AsyncClient,
+    uri: str,
+    headers: dict[str, str],
+) -> tuple[str, str, bytes]:
+    """Perform one bounded request without following a redirect."""
+
+    _validate_rbnz_url(uri)
+    try:
+        async with asyncio.timeout(_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS):
+            async with client.stream(
+                "GET", uri, headers=headers, follow_redirects=False
+            ) as response:
+                final_uri = str(response.url)
+                _validate_rbnz_url(final_uri)
+                if response.status_code != 200:
+                    response.raise_for_status()
+                    raise ValueError(f"HTTP {response.status_code} from {final_uri}")
+                content_encoding = (
+                    response.headers.get("content-encoding", "").strip().lower()
+                )
+                if content_encoding not in {"", "identity"}:
+                    raise ValueError(
+                        "RBNZ response used an unsupported transport content encoding"
+                    )
+                length = response.headers.get("content-length")
+                if length is not None:
+                    declared = int(length)
+                    if declared < 0 or declared > _RBNZ_MAX_BODY_BYTES:
+                        raise ValueError("RBNZ response exceeds the 8 MiB body limit")
+                payload = bytearray()
+                async for chunk in response.aiter_raw():
+                    payload.extend(chunk)
+                    if len(payload) > _RBNZ_MAX_BODY_BYTES:
+                        raise ValueError("RBNZ response exceeds the 8 MiB body limit")
+                return final_uri, _response_media_type(response), bytes(payload)
+    except TimeoutError as exc:
+        raise ValueError("RBNZ response exceeded the total response deadline") from exc
+
+
 def _validate_rbnz_document(document: FetchedDocument) -> None:
     """Prove a candidate can emit the adapter's declared B2 instruments."""
 
@@ -1017,26 +1298,22 @@ async def _fetch_rbnz_document(
 ) -> tuple[FetchedDocument, ...]:
     """Try the official B2 workbook, then its canonical official HTML table."""
 
+    _require_rbnz_access_approval()
     try:
-        response = await client.get(
+        source_uri, media_type, payload = await _read_rbnz_url(
+            client,
             _RBNZ_B2_XLSX_URI,
-            headers={
-                "Accept": f"{_RBNZ_XLSX_MEDIA_TYPE}, application/octet-stream;q=0.9",
-                "Accept-Language": "en-NZ,en;q=0.8",
-                "Referer": _RBNZ_B2_PAGE_URI,
-                "User-Agent": USER_AGENT,
-            },
+            _rbnz_request_headers(navigation=False),
         )
-        response.raise_for_status()
-        if not response.content.startswith(b"PK\x03\x04"):
+        _validate_rbnz_url(source_uri)
+        if not payload.startswith(b"PK\x03\x04"):
             raise ValueError(
-                f"HTTP {response.status_code} from {response.url} returned "
-                f"{_response_media_type(response)} instead of an XLSX workbook"
+                f"{source_uri} returned {media_type} instead of an XLSX workbook"
             )
         document = FetchedDocument(
-            str(response.url),
-            _response_media_type(response, _RBNZ_XLSX_MEDIA_TYPE),
-            response.content,
+            source_uri,
+            media_type or _RBNZ_XLSX_MEDIA_TYPE,
+            payload,
             label,
         )
         _validate_rbnz_document(document)
@@ -1046,19 +1323,16 @@ async def _fetch_rbnz_document(
         return (document,)
 
     try:
-        fallback = await client.get(
+        source_uri, media_type, payload = await _read_rbnz_url(
+            client,
             _RBNZ_B2_PAGE_URI,
-            headers={
-                "Accept": "text/html, application/xhtml+xml;q=0.9",
-                "Accept-Language": "en-NZ,en;q=0.8",
-                "User-Agent": USER_AGENT,
-            },
+            _rbnz_request_headers(navigation=True),
         )
-        fallback.raise_for_status()
+        _validate_rbnz_url(source_uri)
         document = FetchedDocument(
-            str(fallback.url),
-            _response_media_type(fallback, "text/html"),
-            fallback.content,
+            source_uri,
+            media_type or "text/html",
+            payload,
             label,
         )
         _validate_rbnz_document(document)

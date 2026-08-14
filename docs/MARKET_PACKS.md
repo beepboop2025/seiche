@@ -199,12 +199,18 @@ their values are redacted and never feed a local gauge or Global Tide.
 
 ## Current adapter coverage
 
-As of 2026-08-09, live sandbox backfill tests complete for 19 of 21 official
+As of 2026-08-14, live sandbox backfill tests complete for 19 of 21 official
 adapter schedules across USD, EUR, GBP, JPY, CNY, HKD, INR, AUD, and SGD. Both
-RBNZ schedules receive a source-side Cloudflare 403 from this collector
-environment. They fail independently, persist scoped faults, and seal NZD as
-`UNAVAILABLE`; Seiche does not relabel RBNZ's mixed secured/unsecured overnight
-cash rate to manufacture a result.
+RBNZ schedules are unavailable because production has no recorded prior written
+permission for automated RBNZ website access. The adapters fail closed before a
+network request unless a root-controlled approval hash and bounded re-review
+date are installed. A browser-shaped request was useful diagnosis but is not a
+lawful production fallback. The current B2 workbook parser is ready and
+validates exact series IDs without downgrading a changed modern schema to fuzzy
+headings.
+See the [RBNZ access incident runbook](RBNZ_ACCESS_INCIDENT_2026-08-14.md).
+Seiche still does not relabel RBNZ's mixed secured/unsecured overnight cash rate
+to manufacture a result.
 
 Licensed and tenant adapters remain declarations until an entitled deployment
 supplies credentials/data. Their absence is a capability state, never a zero.
@@ -248,16 +254,18 @@ No pack is promoted to `SUPPORTED` by this deployment. Promotion still requires
 all eleven evidence-backed checks: units/schema, calendar/timezone, truncation,
 extra lag, revision leakage, label shuffle, missing-source injection, local
 temporal holdout, leave-one-market-out, forward paper record, and US parity.
-NZ remains explicitly unavailable unless RBNZ access is resolved or an entitled
-licensed/tenant source is supplied. Global Tide remains null until at least two
-aligned, usable `FX_SWAP_BASIS` histories are available; public forward points
-or premia are not silently relabelled as covered-interest-parity basis.
+NZ remains explicitly source-unavailable until RBNZ supplies written automated
+access approval or an entitled licensed/tenant source is configured. Even then,
+source access alone is not a promotion decision. Global Tide remains null until
+at least two aligned, usable `FX_SWAP_BASIS` histories are available; public
+forward points or premia are not silently relabelled as covered-interest-parity
+basis.
 
 The remaining work is real forward evidence accrual, labelled holdout and
 shuffle corpora, leave-one-market-out and calibration review, dated calendar
-maintenance, US parity evidence, RBNZ access, and eligible cross-currency basis
-history. Promote packs individually only after their artifacts pass; only then
-update the public claim to “market-pack agnostic.”
+maintenance, US parity evidence, RBNZ access approval, and eligible
+cross-currency basis history. Promote packs individually only after their
+artifacts pass; only then update the public claim to “market-pack agnostic.”
 
 Revisit partition compaction, queueing, and partial pooling only after observed
 collector volume and leave-one-market-out validation justify the complexity.

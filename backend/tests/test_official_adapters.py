@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import gzip
 import io
 import re
 from datetime import UTC, date, datetime
@@ -185,6 +187,87 @@ def _rbnz_workbook_payload(*, include_b2: bool = True) -> bytes:
     return payload.getvalue()
 
 
+def _rbnz_current_workbook_payload(
+    *,
+    reverse_series_id: str = "INM.DD2.N",
+    duplicate_reverse: bool = False,
+    series_marker: str = "Series Id",
+    add_legacy_candidate: bool = False,
+) -> bytes:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    worksheet.append([None, "Cash rate", "Cash rate", "Cash rate"])
+    worksheet.append(
+        [
+            None,
+            "Official Cash Rate (OCR)",
+            "Overnight Deposit Rate",
+            "Overnight Reverse Repurchase Facility Rate",
+        ]
+    )
+    worksheet.append(["Notes", None, None, None])
+    worksheet.append(["Unit", "%pa", "%pa", "%pa"])
+    worksheet.append([series_marker, "INM.DP1.N", "INM.DD1.N", reverse_series_id])
+    worksheet.append([datetime(2026, 8, 10), 2.50, 2.50, 3.00])
+    if duplicate_reverse:
+        worksheet.cell(
+            row=2,
+            column=5,
+            value="Overnight Reverse Repurchase Facility Rate",
+        )
+        worksheet.cell(row=5, column=5, value="INM.DD2.N")
+        worksheet.cell(row=6, column=5, value=3.00)
+    workbook.create_sheet("Table Description").append(
+        ["Table", "Daily wholesale interest rates (% pa) - B2"]
+    )
+    workbook.create_sheet("Series Definitions").append(
+        ["Group", "Series", "Series Id", "Unit", "Note"]
+    )
+    if add_legacy_candidate:
+        legacy = workbook.create_sheet("Legacy")
+        legacy.append(
+            [
+                "Date",
+                "Official Cash Rate (OCR)",
+                "Overnight Deposit Rate",
+                "Overnight Reverse Repurchase Facility Rate",
+            ]
+        )
+        legacy.append([datetime(2026, 8, 10), 9.99, 9.99, 9.99])
+    payload = io.BytesIO()
+    workbook.save(payload)
+    return payload.getvalue()
+
+
+def _approve_rbnz_access(monkeypatch) -> None:
+    monkeypatch.setattr(official, "_rbnz_access_today", lambda: date(2026, 8, 14))
+    monkeypatch.setenv(official._RBNZ_ACCESS_APPROVAL_SHA256_ENV, "a" * 64)
+    monkeypatch.setenv(
+        official._RBNZ_ACCESS_APPROVAL_VALID_UNTIL_ENV,
+        "2027-08-14",
+    )
+
+
+def _rbnz_mock_transport(handler) -> tuple[httpx.MockTransport, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = handler(request)
+        if response.is_stream_consumed:
+            return httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                stream=httpx.ByteStream(response.content),
+            )
+        return response
+
+    return httpx.MockTransport(wrapped), requests
+
+
 def test_connector_owned_retry_policies_are_not_multiplied_by_supervisor() -> None:
     registry = default_registry()
 
@@ -301,8 +384,10 @@ async def test_hkma_does_not_retry_a_non_server_response(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
-    requests: list[httpx.Request] = []
+async def test_rbnz_uses_canonical_official_html_after_workbook_403(
+    monkeypatch,
+) -> None:
+    _approve_rbnz_access(monkeypatch)
     page = b"""
         <html><body><table>
           <tr><th>Cash rate (%pa)</th></tr>
@@ -321,7 +406,6 @@ async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
         if request.url.path.endswith(".xlsx"):
             return httpx.Response(403, text="forbidden")
         return httpx.Response(
@@ -330,14 +414,15 @@ async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
             content=page,
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         documents = tuple(await _official_adapter("rbnz_wholesale").fetcher(client))
 
     assert [str(request.url) for request in requests] == [
         "https://www.rbnz.govt.nz/-/media/project/sites/rbnz/files/statistics/"
         "series/b/b2/hb2-daily-close.xlsx",
-        "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates/"
-        "wholesale-interest-rates",
+        "https://www.rbnz.govt.nz/en/statistics/series/"
+        "exchange-and-interest-rates/wholesale-interest-rates",
     ]
     assert (
         requests[0]
@@ -348,6 +433,7 @@ async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
     assert all(
         request.headers["user-agent"] == official.USER_AGENT for request in requests
     )
+    assert all("sec-ch-ua" not in request.headers for request in requests)
     assert documents[0].source_uri == str(requests[1].url)
     assert documents[0].media_type == "text/html"
     assert {
@@ -359,11 +445,12 @@ async def test_rbnz_uses_canonical_official_html_after_workbook_403() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> None:
-    requests: list[httpx.Request] = []
+async def test_rbnz_uses_the_official_workbook_without_requesting_fallback(
+    monkeypatch,
+) -> None:
+    _approve_rbnz_access(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
         return httpx.Response(
             200,
             headers={
@@ -374,7 +461,8 @@ async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> 
             content=_rbnz_workbook_payload(),
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         documents = tuple(await _official_adapter("rbnz_policy").fetcher(client))
 
     assert len(requests) == 1
@@ -386,8 +474,224 @@ async def test_rbnz_uses_the_official_workbook_without_requesting_fallback() -> 
 
 
 @pytest.mark.asyncio
-async def test_rbnz_unusable_pk_workbook_gets_one_canonical_html_attempt() -> None:
+async def test_rbnz_never_follows_a_redirect(
+    monkeypatch,
+) -> None:
+    _approve_rbnz_access(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "https://mirror.example.invalid/rbnz-b2.xlsx"},
+        )
+
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert len(requests) == 2
+    assert str(raised.value).count("HTTP 302") == 2
+    assert all(request.url.host == "www.rbnz.govt.nz" for request in requests)
+
+
+def test_rbnz_parses_the_current_series_id_workbook_contract() -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(),
+        "rbnz_wholesale",
+    )
+
+    points = {point.instrument_id: point for point in parse_rbnz(document)}
+
+    assert points["NZ.RBNZ.OVERNIGHT_DEPOSIT"].raw_value == Decimal("2.5")
+    assert points["NZ.RBNZ.OVERNIGHT_REVERSE_REPO"].raw_value == Decimal("3")
+
+
+def test_rbnz_modern_workbook_cannot_downgrade_to_display_headings() -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(reverse_series_id="CHANGED.UPSTREAM.ID"),
+        "rbnz_wholesale",
+    )
+
+    with pytest.raises(ValueError, match="exactly one usable B2 data sheet"):
+        parse_rbnz(document)
+
+
+def test_rbnz_renamed_series_marker_cannot_downgrade_to_display_headings() -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(series_marker="Series identifier"),
+        "rbnz_wholesale",
+    )
+
+    with pytest.raises(ValueError, match="exactly one usable B2 data sheet"):
+        parse_rbnz(document)
+
+
+def test_rbnz_modern_signals_reject_a_separate_legacy_candidate() -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(
+            series_marker="Identifier",
+            add_legacy_candidate=True,
+        ),
+        "rbnz_wholesale",
+    )
+
+    with pytest.raises(ValueError, match="exactly one usable B2 data sheet"):
+        parse_rbnz(document)
+
+
+def test_rbnz_modern_workbook_rejects_duplicate_series_columns() -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(duplicate_reverse=True),
+        "rbnz_wholesale",
+    )
+
+    with pytest.raises(ValueError, match="exactly one usable B2 data sheet"):
+        parse_rbnz(document)
+
+
+def test_rbnz_workbook_archive_row_and_cell_bounds_fail_closed(monkeypatch) -> None:
+    document = FetchedDocument(
+        official._RBNZ_B2_XLSX_URI,
+        official._RBNZ_XLSX_MEDIA_TYPE,
+        _rbnz_current_workbook_payload(),
+        "rbnz_wholesale",
+    )
+
+    monkeypatch.setattr(official, "_RBNZ_MAX_XLSX_EXPANDED_BYTES", 1)
+    with pytest.raises(ValueError, match="XLSX expansion limit"):
+        parse_rbnz(document)
+    monkeypatch.setattr(official, "_RBNZ_MAX_XLSX_EXPANDED_BYTES", 64 * 1024 * 1024)
+    monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_ROWS", 1)
+    with pytest.raises(ValueError, match="row limit"):
+        parse_rbnz(document)
+    monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_ROWS", 50_000)
+    monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_CELLS", 1)
+    with pytest.raises(ValueError, match="cell limit"):
+        parse_rbnz(document)
+
+
+@pytest.mark.asyncio
+async def test_rbnz_access_defaults_off_without_written_approval(monkeypatch) -> None:
+    monkeypatch.delenv(official._RBNZ_ACCESS_APPROVAL_SHA256_ENV, raising=False)
+    monkeypatch.delenv(
+        official._RBNZ_ACCESS_APPROVAL_VALID_UNTIL_ENV,
+        raising=False,
+    )
     requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=_rbnz_workbook_payload())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            RBNZSourceUnavailableError, match="prior written permission"
+        ):
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("valid_until", "message"),
+    (
+        ("2026-08-13", "review has expired"),
+        ("2027-08-16", "reviewed within 366 days"),
+    ),
+)
+def test_rbnz_access_approval_has_a_bounded_review_window(
+    monkeypatch,
+    valid_until: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(official, "_rbnz_access_today", lambda: date(2026, 8, 14))
+    monkeypatch.setenv(official._RBNZ_ACCESS_APPROVAL_SHA256_ENV, "a" * 64)
+    monkeypatch.setenv(
+        official._RBNZ_ACCESS_APPROVAL_VALID_UNTIL_ENV,
+        valid_until,
+    )
+
+    with pytest.raises(RBNZSourceUnavailableError, match=message):
+        official._require_rbnz_access_approval()
+
+
+@pytest.mark.asyncio
+async def test_rbnz_transport_bounds_decoded_response_body(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
+    monkeypatch.setattr(official, "_RBNZ_MAX_BODY_BYTES", 4)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"12345")
+
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert len(requests) == 2
+    assert str(raised.value).count("body limit") == 2
+
+
+@pytest.mark.asyncio
+async def test_rbnz_transport_rejects_compression_before_decoding(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
+    compressed = gzip.compress(b"x" * (official._RBNZ_MAX_BODY_BYTES + 1))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(
+            200,
+            headers={"content-encoding": "gzip"},
+            stream=httpx.ByteStream(compressed),
+        )
+
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert len(requests) == 2
+    assert str(raised.value).count("unsupported transport content encoding") == 2
+
+
+@pytest.mark.asyncio
+async def test_rbnz_transport_enforces_a_total_response_deadline(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
+    monkeypatch.setattr(official, "_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS", 0.01)
+
+    class SlowStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(0.05)
+            yield b"PK\x03\x04"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=SlowStream())
+
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert len(requests) == 2
+    assert str(raised.value).count("total response deadline") == 2
+
+
+@pytest.mark.asyncio
+async def test_rbnz_unusable_pk_workbook_gets_one_canonical_html_attempt(
+    monkeypatch,
+) -> None:
+    _approve_rbnz_access(monkeypatch)
     page = b"""
         <table>
           <tr>
@@ -401,7 +705,6 @@ async def test_rbnz_unusable_pk_workbook_gets_one_canonical_html_attempt() -> No
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
         if request.url.path.endswith(".xlsx"):
             return httpx.Response(
                 200,
@@ -410,7 +713,8 @@ async def test_rbnz_unusable_pk_workbook_gets_one_canonical_html_attempt() -> No
             )
         return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         documents = tuple(await _official_adapter("rbnz_policy").fetcher(client))
 
     assert len(requests) == 2
@@ -453,14 +757,14 @@ def test_rbnz_html_evidence_is_scoped_to_each_instrument_cell() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rbnz_403_exhaustion_reports_both_official_endpoints() -> None:
-    requests: list[httpx.Request] = []
+async def test_rbnz_403_exhaustion_reports_both_official_endpoints(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
         return httpx.Response(403, text="cloudflare challenge")
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(RBNZSourceUnavailableError) as raised:
             await _official_adapter("rbnz_policy").fetcher(client)
 
@@ -472,7 +776,9 @@ async def test_rbnz_403_exhaustion_reports_both_official_endpoints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rbnz_rejects_html_without_the_expected_b2_table() -> None:
+async def test_rbnz_rejects_html_without_the_expected_b2_table(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith(".xlsx"):
             return httpx.Response(403, text="forbidden")
@@ -483,7 +789,8 @@ async def test_rbnz_rejects_html_without_the_expected_b2_table() -> None:
             "<tr><td>08 Aug 2026</td><td>9.99</td></tr></table></html>",
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, _ = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(RBNZSourceUnavailableError) as raised:
             await _official_adapter("rbnz_policy").fetcher(client)
 
@@ -493,7 +800,8 @@ async def test_rbnz_rejects_html_without_the_expected_b2_table() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rbnz_backfill_rejects_the_bounded_html_summary() -> None:
+async def test_rbnz_backfill_rejects_the_bounded_html_summary(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
     page = b"""
         <table>
           <tr>
@@ -511,7 +819,8 @@ async def test_rbnz_backfill_rejects_the_bounded_html_summary() -> None:
             return httpx.Response(403, text="forbidden")
         return httpx.Response(200, headers={"content-type": "text/html"}, content=page)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    transport, _ = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
         with pytest.raises(RBNZSourceUnavailableError) as raised:
             await _official_adapter("rbnz_policy", backfill=True).fetcher(client)
 

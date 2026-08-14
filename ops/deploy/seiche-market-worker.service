@@ -9,6 +9,7 @@ User=seiche
 Group=seiche
 WorkingDirectory=/home/seiche/app
 EnvironmentFile=/etc/seiche/market.env
+EnvironmentFile=-/etc/seiche/rbnz-access.env
 ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker --poll-seconds 30
 Restart=always
 RestartSec=15
