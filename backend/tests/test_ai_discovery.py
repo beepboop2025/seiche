@@ -103,6 +103,17 @@ def test_generated_discovery_indexes_include_the_selection_surface():
         assert url in dispatch_pages._LLMS_PREAMBLE
 
 
+def test_home_exposes_an_attributed_pre_open_daily_letter():
+    today = (ROOT / "frontend" / "src" / "tabs" / "Today.tsx").read_text()
+    telegram = "https://t.me/seiche_desk_bot?start=seiche_home_hero"
+
+    assert telegram in today
+    assert "Get the 11:30 UTC daily letter" in today
+    assert "Pre-US-open · sources attached · /stop any time" in today
+    assert 'target="_blank"' in today
+    assert 'rel="noopener noreferrer"' in today
+
+
 def test_clean_public_urls_match_cloudflare_redirect_targets():
     for path, _, _ in dispatch_pages.BASE_URLS:
         assert not path.endswith(".html")
