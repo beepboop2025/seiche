@@ -80,15 +80,24 @@ jobs:
           git commit -m "dispatch: $TITLE"
           git pull --rebase origin main
           git push origin main
-          echo "PUSHED=1" >> "$GITHUB_ENV"
+          TARGET_SHA=$(git rev-parse --verify "HEAD^{commit}")
+          if ! [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::pushed dispatch target is not a canonical commit SHA"
+            exit 1
+          fi
+          printf 'TARGET_SHA=%s\nPUSHED=1\n' "$TARGET_SHA" >> "$GITHUB_ENV"
 
       - name: Trigger site publish + box deploy
         if: env.PUSHED == '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::exact pushed dispatch target is missing or invalid"
+            exit 1
+          fi
           gh workflow run publish.yml --ref main
-          gh workflow run deploy-hetzner.yml --ref main
+          gh workflow run deploy-hetzner.yml --ref main --raw-field target_sha="$TARGET_SHA"
 
       # Wait for the site to actually carry the letter before telling
       # Telegram about it — an announcement with a dead link is worse
