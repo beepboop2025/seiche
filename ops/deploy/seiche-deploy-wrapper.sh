@@ -50,6 +50,61 @@ valid_activation_token() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
 }
 
+# Snapshot assembly needs several CPU cores before strict health can turn green.
+# Require a stable quiet window before any service is stopped; one low sample is
+# not enough on this shared host because owner-controlled workloads start in
+# phases. The fixed 75 percent ceiling leaves four cores free on the 16-core
+# production host without trusting caller-controlled configuration.
+admit_shared_host() {
+  local cpu_count ceiling sample load_one
+  if ! cpu_count=$(/usr/bin/getconf _NPROCESSORS_ONLN 2>/dev/null) \
+      || [[ ! "$cpu_count" =~ ^[0-9]+$ ]] \
+      || (( cpu_count < 1 || cpu_count > 4096 )); then
+    echo "DEFER: shared-host CPU capacity is unreadable; production unchanged"
+    return 1
+  fi
+  if ! ceiling=$(
+    /usr/bin/awk -v cpus="$cpu_count" \
+      'BEGIN { printf "%.2f", cpus * 0.75 }'
+  ) || [[ ! "$ceiling" =~ ^[0-9]+[.][0-9]{2}$ ]]; then
+    echo "DEFER: shared-host load ceiling is invalid; production unchanged"
+    return 1
+  fi
+  for (( sample = 1; sample <= 3; sample++ )); do
+    if ! IFS=' ' read -r load_one _ </proc/loadavg \
+        || [[ ! "$load_one" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      echo "DEFER: shared-host load is unreadable; production unchanged"
+      return 1
+    fi
+    if ! LC_ALL=C /usr/bin/awk -v observed="$load_one" -v limit="$ceiling" \
+        'BEGIN { exit !(observed <= limit) }'; then
+      printf 'DEFER: shared-host one-minute load %s exceeds %s; production unchanged\n' \
+        "$load_one" "$ceiling"
+      return 1
+    fi
+    if (( sample < 3 )); then
+      sleep 10 || return 1
+    fi
+  done
+  printf 'shared-host admission: three quiet samples at or below %s\n' "$ceiling"
+}
+
+case "${SEICHE_DEPLOY_ADMISSION_ONLY:-0}" in
+  0) ;;
+  1)
+    [ -z "${SSH_ORIGINAL_COMMAND:-}" ] \
+      || { echo "FAIL: forced deploy cannot request admission-only mode"; exit 1; }
+    if admit_shared_host; then
+      exit 0
+    fi
+    exit 75
+    ;;
+  *)
+    echo "FAIL: SEICHE_DEPLOY_ADMISSION_ONLY must be exactly 0 or 1"
+    exit 1
+    ;;
+esac
+
 DEPLOYED_STATE_RENAMED=""
 write_deployed_state() {
   local release_sha="$1" stage=""
@@ -199,6 +254,9 @@ if [ -n "$EXPECTED_TARGET" ]; then
     exit 1
   fi
   TARGET=$EXPECTED_TARGET
+fi
+if ! admit_shared_host; then
+  exit 75
 fi
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_BACKFILL_WAS_ACTIVE=""

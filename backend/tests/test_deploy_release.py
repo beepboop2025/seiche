@@ -1254,10 +1254,70 @@ def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
     assert "exit 1" in checked
 
 
+def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper_start = wrapper.index("admit_shared_host() {")
+    helper_end = wrapper.index("write_deployed_state()", helper_start)
+    helper = wrapper[helper_start:helper_end]
+    target = wrapper.index("TARGET=$LATEST", helper_end)
+    admission = wrapper.index("if ! admit_shared_host; then", target)
+    capture = wrapper.index('MARKET_WORKER_WAS_ACTIVE=""', admission)
+    stop = wrapper.index(
+        "systemctl stop seiche-market-worker.service seiche-market-backfill.service",
+        capture,
+    )
+
+    for marker in (
+        "/usr/bin/getconf _NPROCESSORS_ONLN",
+        "cpus * 0.75",
+        "sample <= 3",
+        "</proc/loadavg",
+        '-v observed="$load_one"',
+        "observed <= limit",
+        "sleep 10",
+        "production unchanged",
+    ):
+        assert marker in helper
+    assert "SEICHE_DEPLOY_MAX" not in helper
+    assert target < admission < capture < stop
+    assert "exit 75" in wrapper[admission:capture]
+    admission_case = wrapper.index(
+        'case "${SEICHE_DEPLOY_ADMISSION_ONLY:-0}" in', helper_start
+    )
+    admission_only = wrapper[
+        admission_case : wrapper.index('DEPLOYED_STATE_RENAMED=""', helper_end)
+    ]
+    assert "SEICHE_DEPLOY_ADMISSION_ONLY" in admission_only
+    assert "forced deploy cannot request admission-only mode" in admission_only
+    forced_request_rejected = admission_only.index(
+        "forced deploy cannot request admission-only mode"
+    )
+    admission_call = admission_only.index("if admit_shared_host; then")
+    admitted = admission_only.index("exit 0", admission_call)
+    deferred = admission_only.index("exit 75", admitted)
+    assert forced_request_rejected < admission_call < admitted < deferred
+
+    comparator = "BEGIN { exit !(observed <= limit) }"
+    for observed, expected in (("11.99", 0), ("12.00", 0), ("12.01", 1)):
+        result = subprocess.run(
+            [
+                "/usr/bin/awk",
+                "-v",
+                f"observed={observed}",
+                "-v",
+                "limit=12.00",
+                comparator,
+            ],
+            check=False,
+        )
+        assert result.returncode == expected
+
+
 def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     poller = RELEASE_POLLER.read_text()
     selected = poller.index('TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)')
     signature = poller.index('verify_target_signature "$TARGET"', selected)
+    admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", signature)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
@@ -1270,31 +1330,41 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
     gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
     gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
+    deploy_status = poller.index("DEPLOY_STATUS=0", gate_only)
     deployed = poller.index(
-        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', gate_only
+        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', deploy_status
     )
 
     assert (
         selected
         < signature
+        < admission
         < detached
         < full_gate
         < refetched
         < superseded
         < gate_receipt
         < gate_only
+        < deploy_status
         < deployed
     )
     assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
     assert 'install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700' in poller
     assert 'exec 8>"$CONTROL_LOCK"' in poller
     assert 'flock --nonblock 8' in poller
+    assert "ADMISSION_STATUS=0" in poller[signature:detached]
+    assert 'case "$ADMISSION_STATUS"' in poller[signature:detached]
+    assert "deferred with production unchanged" in poller[signature:detached]
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
     assert 'as_service "$TIMEOUT"' in gate_slice
     assert "EnvironmentFile" not in gate_slice
     assert "production unchanged" in poller[superseded:gate_receipt]
     assert "gate-only success" in poller[gate_only:deployed]
+    after_deploy = poller[deploy_status:]
+    assert "DEPLOY_STATUS=0" in after_deploy
+    assert 'case "$DEPLOY_STATUS"' in after_deploy
+    assert "shared host became busy" in after_deploy
 
 
 def test_release_signature_boundary_accepts_only_the_pinned_signed_identity(tmp_path):

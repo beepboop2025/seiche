@@ -44,6 +44,13 @@ snapshot activation, Caddy deployment, health gates, and rollback.
 - If `main` advances during the full gate, the tested candidate is discarded.
   The wrapper also checks `SEICHE_EXPECTED_TARGET_SHA` before stopping a unit,
   closing the smaller race between the gate and wrapper hand-off.
+- Before stopping any service, the wrapper requires three one-minute load
+  samples, ten seconds apart, at or below 75 percent of online CPU count. A
+  poller first invokes the same check in admission-only mode, before candidate
+  installation or tests, and the wrapper repeats it before quiescence. A busy
+  host records no release receipt and defers without paging; the timer retries
+  the same signed tip on a later five-minute cycle. Do not lengthen snapshot
+  health deadlines to compensate for unrelated workload pressure.
 
 ## Install without activating
 
@@ -62,6 +69,11 @@ inactive. `SEICHE_CONTROL_GATE_ONLY=1` deliberately bypasses the
 already-deployed fast path, verifies the tip signature, runs the isolated full
 gate, records only its gate receipt, and exits before invoking the deploy
 wrapper. Confirm that receipt and the unchanged deployed SHA before handoff.
+
+The release which first introduces shared-host admission still enters through
+the previously installed wrapper. Bootstrap it only during a manually verified
+quiet window. After that new wrapper is installed, the poller's preflight and
+the wrapper's second check enforce the quiet-host boundary automatically.
 
 Use this handoff order; do not skip directly to timer activation:
 

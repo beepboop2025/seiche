@@ -51,9 +51,9 @@ jobs:
     # hung forever joining a thread blocked on the dead monitor's pipe, AFTER
     # reporting 731 passed in 11m31s. See ops/deploy/box-update.sh.
     #
-    # With the smoke gate a deploy is about two minutes. Thirty is generous
-    # enough for a slow pull or a cold pip install and short enough that a
-    # deploy which wedges again FAILS instead of quietly eating the afternoon.
+    # The wrapper now requires three quiet shared-host samples before stopping
+    # any service. Thirty minutes remains an outer fault ceiling, not extra time
+    # for a candidate to compete with an unrelated CPU-heavy workload.
     #
     # If this fires, do not raise it. Read /tmp/seiche-update.log on the box,
     # and check for orphaned pytest processes: a killed deploy leaves its test
@@ -99,6 +99,8 @@ jobs:
           # Two identical forced-command connections make the first rollout
           # self-bootstrapping: an old wrapper installs the new mirror on pass
           # one, and pass two executes it on the same SHA before route smoke.
+          # A release that first introduces a new preflight must therefore be
+          # started only after the shared host is manually confirmed quiet.
           SEICHE_DEPLOY_HOST="$HOST" \
           SEICHE_DEPLOY_KEY_FILE="$HOME/.ssh/hetzner_key" \
           SEICHE_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts" \

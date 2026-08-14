@@ -197,6 +197,18 @@ if ! valid_sha "$TARGET" \
 fi
 verify_target_signature "$TARGET"
 
+ADMISSION_STATUS=0
+SEICHE_DEPLOY_ADMISSION_ONLY=1 "$DEPLOY_WRAPPER" \
+  || ADMISSION_STATUS=$?
+case "$ADMISSION_STATUS" in
+  0) ;;
+  75)
+    echo "release poll: shared host busy; ${TARGET:0:7} deferred with production unchanged"
+    exit 0
+    ;;
+  *) fail "shared-host admission preflight failed" ;;
+esac
+
 DEPLOYED=""
 if [ -e "$DEPLOY_STATE" ] || [ -L "$DEPLOY_STATE" ]; then
   if [ -L "$DEPLOY_STATE" ] || [ ! -f "$DEPLOY_STATE" ] \
@@ -398,9 +410,17 @@ fi
 # The wrapper owns checkout mutation, service quiescence, exact-candidate
 # readiness, snapshot promotion, Caddy convergence, and automatic rollback.
 # A non-zero result remains non-zero even when its rollback recovered service.
-if ! SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"; then
-  fail "deploy wrapper rejected ${TARGET:0:7}; its rollback path owns recovery"
-fi
+DEPLOY_STATUS=0
+SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER" \
+  || DEPLOY_STATUS=$?
+case "$DEPLOY_STATUS" in
+  0) ;;
+  75)
+    echo "release poll: shared host became busy; ${TARGET:0:7} deferred with production unchanged"
+    exit 0
+    ;;
+  *) fail "deploy wrapper rejected ${TARGET:0:7}; its rollback path owns recovery" ;;
+esac
 if ! IFS= read -r DEPLOYED_AFTER <"$DEPLOY_STATE" \
     || [ "$DEPLOYED_AFTER" != "$TARGET" ] \
     || ! health_matches "$TARGET"; then
