@@ -10,7 +10,9 @@ EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-re
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
 FUNDING_EXPORT_FILE="$FUNDING_EXPORT_DIR/us-usd-funding-core-v1.json"
 DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-delivery.env}"
-RBNZ_ACCESS_ENV_FILE="${SEICHE_RBNZ_ACCESS_ENV_FILE:-$ENV_DIR/rbnz-access.env}"
+# Both market units load this exact root-controlled path. Keep validation and
+# consumption inseparable instead of offering an override that systemd ignores.
+RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env
 DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
 DELIVERY_READER_GROUP=liquilens-world-model-readers
 PROMOTION_REQUEST_DIR=/run/seiche-release

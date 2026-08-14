@@ -732,7 +732,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RandomizedDelaySec=15m" in restore_timer
     assert "Persistent=true" in restore_timer
     assert "/api/v2/*" in caddy
-    assert 'RBNZ_ACCESS_ENV_FILE="${SEICHE_RBNZ_ACCESS_ENV_FILE:-' in installer
+    assert "RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env" in installer
+    assert "SEICHE_RBNZ_ACCESS_ENV_FILE" not in installer
     assert "RBNZ access env ownership/mode is unsafe" in installer
     assert "SEICHE_RBNZ_ACCESS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
     assert "SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL=[0-9]{4}" in installer

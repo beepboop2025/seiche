@@ -65,7 +65,9 @@ _RBNZ_MAX_XLSX_EXPANDED_BYTES = 64 * 1024 * 1024
 _RBNZ_MAX_WORKBOOK_SHEETS = 16
 _RBNZ_MAX_WORKBOOK_ROWS = 50_000
 _RBNZ_MAX_WORKBOOK_COLUMNS = 256
+_RBNZ_MAX_WORKBOOK_CELLS = 400_000
 _RBNZ_MAX_APPROVAL_REVIEW_DAYS = 366
+_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS = 90.0
 
 
 class RBNZSourceUnavailableError(RuntimeError):
@@ -887,6 +889,7 @@ def _bounded_rbnz_worksheets(
             raise ValueError("RBNZ workbook exceeds the worksheet limit")
         worksheets: list[tuple[str, list[tuple]]] = []
         row_count = 0
+        cell_count = 0
         for sheet in workbook.worksheets:
             if (
                 sheet.max_column is not None
@@ -902,6 +905,9 @@ def _bounded_rbnz_worksheets(
             for values in sheet.iter_rows(values_only=True):
                 row = tuple(values)
                 row_count += 1
+                cell_count += len(row)
+                if cell_count > _RBNZ_MAX_WORKBOOK_CELLS:
+                    raise ValueError("RBNZ workbook exceeds the cell limit")
                 if row_count > _RBNZ_MAX_WORKBOOK_ROWS:
                     raise ValueError("RBNZ workbook exceeds the row limit")
                 if len(row) > _RBNZ_MAX_WORKBOOK_COLUMNS:
@@ -1240,30 +1246,36 @@ async def _read_rbnz_url(
     """Perform one bounded request without following a redirect."""
 
     _validate_rbnz_url(uri)
-    async with client.stream(
-        "GET", uri, headers=headers, follow_redirects=False
-    ) as response:
-        final_uri = str(response.url)
-        _validate_rbnz_url(final_uri)
-        if response.status_code != 200:
-            response.raise_for_status()
-            raise ValueError(f"HTTP {response.status_code} from {final_uri}")
-        content_encoding = response.headers.get("content-encoding", "").strip().lower()
-        if content_encoding not in {"", "identity"}:
-            raise ValueError(
-                "RBNZ response used an unsupported transport content encoding"
-            )
-        length = response.headers.get("content-length")
-        if length is not None:
-            declared = int(length)
-            if declared < 0 or declared > _RBNZ_MAX_BODY_BYTES:
-                raise ValueError("RBNZ response exceeds the 8 MiB body limit")
-        payload = bytearray()
-        async for chunk in response.aiter_raw():
-            payload.extend(chunk)
-            if len(payload) > _RBNZ_MAX_BODY_BYTES:
-                raise ValueError("RBNZ response exceeds the 8 MiB body limit")
-        return final_uri, _response_media_type(response), bytes(payload)
+    try:
+        async with asyncio.timeout(_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS):
+            async with client.stream(
+                "GET", uri, headers=headers, follow_redirects=False
+            ) as response:
+                final_uri = str(response.url)
+                _validate_rbnz_url(final_uri)
+                if response.status_code != 200:
+                    response.raise_for_status()
+                    raise ValueError(f"HTTP {response.status_code} from {final_uri}")
+                content_encoding = (
+                    response.headers.get("content-encoding", "").strip().lower()
+                )
+                if content_encoding not in {"", "identity"}:
+                    raise ValueError(
+                        "RBNZ response used an unsupported transport content encoding"
+                    )
+                length = response.headers.get("content-length")
+                if length is not None:
+                    declared = int(length)
+                    if declared < 0 or declared > _RBNZ_MAX_BODY_BYTES:
+                        raise ValueError("RBNZ response exceeds the 8 MiB body limit")
+                payload = bytearray()
+                async for chunk in response.aiter_raw():
+                    payload.extend(chunk)
+                    if len(payload) > _RBNZ_MAX_BODY_BYTES:
+                        raise ValueError("RBNZ response exceeds the 8 MiB body limit")
+                return final_uri, _response_media_type(response), bytes(payload)
+    except TimeoutError as exc:
+        raise ValueError("RBNZ response exceeded the total response deadline") from exc
 
 
 def _validate_rbnz_document(document: FetchedDocument) -> None:

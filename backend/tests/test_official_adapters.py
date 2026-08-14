@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
 import io
 import re
@@ -559,7 +560,7 @@ def test_rbnz_modern_workbook_rejects_duplicate_series_columns() -> None:
         parse_rbnz(document)
 
 
-def test_rbnz_workbook_archive_and_row_bounds_fail_closed(monkeypatch) -> None:
+def test_rbnz_workbook_archive_row_and_cell_bounds_fail_closed(monkeypatch) -> None:
     document = FetchedDocument(
         official._RBNZ_B2_XLSX_URI,
         official._RBNZ_XLSX_MEDIA_TYPE,
@@ -573,6 +574,10 @@ def test_rbnz_workbook_archive_and_row_bounds_fail_closed(monkeypatch) -> None:
     monkeypatch.setattr(official, "_RBNZ_MAX_XLSX_EXPANDED_BYTES", 64 * 1024 * 1024)
     monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_ROWS", 1)
     with pytest.raises(ValueError, match="row limit"):
+        parse_rbnz(document)
+    monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_ROWS", 50_000)
+    monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_CELLS", 1)
+    with pytest.raises(ValueError, match="cell limit"):
         parse_rbnz(document)
 
 
@@ -658,6 +663,28 @@ async def test_rbnz_transport_rejects_compression_before_decoding(monkeypatch) -
 
     assert len(requests) == 2
     assert str(raised.value).count("unsupported transport content encoding") == 2
+
+
+@pytest.mark.asyncio
+async def test_rbnz_transport_enforces_a_total_response_deadline(monkeypatch) -> None:
+    _approve_rbnz_access(monkeypatch)
+    monkeypatch.setattr(official, "_RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS", 0.01)
+
+    class SlowStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(0.05)
+            yield b"PK\x03\x04"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=SlowStream())
+
+    transport, requests = _rbnz_mock_transport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(RBNZSourceUnavailableError) as raised:
+            await _official_adapter("rbnz_policy").fetcher(client)
+
+    assert len(requests) == 2
+    assert str(raised.value).count("total response deadline") == 2
 
 
 @pytest.mark.asyncio
