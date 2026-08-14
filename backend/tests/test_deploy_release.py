@@ -525,6 +525,7 @@ printf '\\n' >> "{calls}"
         "SEICHE_DEPLOY_HOST": "192.0.2.10",
         "SEICHE_DEPLOY_KEY_FILE": str(key),
         "SEICHE_KNOWN_HOSTS_FILE": str(known),
+        "SEICHE_EXPECTED_TARGET_SHA": "a" * 40,
         "SEICHE_SSH_BIN": str(ssh),
     }
     result = subprocess.run(
@@ -533,11 +534,37 @@ printf '\\n' >> "{calls}"
     assert result.returncode == 0, result.stdout + result.stderr
     lines = calls.read_text().splitlines()
     assert len(lines) == 2
-    assert all(line.endswith("<root@192.0.2.10><deploy>") for line in lines)
+    assert all(
+        line.endswith(f"<root@192.0.2.10><deploy {'a' * 40}>") for line in lines
+    )
     workflow = DEPLOY_WORKFLOW.read_text()
+    assert "target_sha:" in workflow
+    assert 'SEICHE_EXPECTED_TARGET_SHA="$TARGET_SHA"' in workflow
     assert workflow.index("trigger-forced-deploy.sh") < workflow.index(
         "external-route-smoke.sh"
     )
+
+
+def test_forced_command_refuses_an_unbound_target(tmp_path):
+    key = tmp_path / "key"
+    known = tmp_path / "known_hosts"
+    key.write_text("test-only")
+    known.write_text("test-only")
+    env = {
+        **os.environ,
+        "SEICHE_DEPLOY_HOST": "192.0.2.10",
+        "SEICHE_DEPLOY_KEY_FILE": str(key),
+        "SEICHE_KNOWN_HOSTS_FILE": str(known),
+        "SEICHE_SSH_BIN": "/usr/bin/false",
+    }
+    env.pop("SEICHE_EXPECTED_TARGET_SHA", None)
+
+    result = subprocess.run(
+        ["bash", str(FORCED_DEPLOY)], env=env, text=True, capture_output=True
+    )
+
+    assert result.returncode != 0
+    assert "SEICHE_EXPECTED_TARGET_SHA is required" in result.stderr
 
 
 def test_box_smoke_installs_its_declared_async_test_plugin():
@@ -566,7 +593,7 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     assert wrapper.index("systemctl stop seiche-market-worker.service") < wrapper.index(
         "bash /home/seiche/update.sh"
     )
-    target = wrapper.index('TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)')
+    target = wrapper.index("TARGET=$LATEST")
     quiesce = wrapper.index("systemctl stop seiche-api", target)
     update = wrapper.index("bash /home/seiche/update.sh", quiesce)
     assert target < quiesce < update
@@ -1139,7 +1166,7 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
 def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
     wrapper = DEPLOY_WRAPPER.read_text()
     resolved = wrapper.index(
-        'TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)'
+        'LATEST=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)'
     )
     constrained = wrapper.index("EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}")
     stopped = wrapper.index(
@@ -1149,8 +1176,10 @@ def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
 
     assert resolved < constrained < stopped
     assert 'valid_release_sha "$EXPECTED_TARGET"' in checked
-    assert '[ "$TARGET" != "$EXPECTED_TARGET" ]' in checked
-    assert "refusing to deploy an untested commit" in checked
+    assert '"$EXPECTED_TARGET" "$LATEST"' in checked
+    assert "reviewed target is not a fetched commit on main" in checked
+    assert "TARGET=$EXPECTED_TARGET" in checked
+    assert "SSH_ORIGINAL_COMMAND" in checked
     assert "exit 1" in checked
 
 

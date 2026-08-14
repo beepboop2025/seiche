@@ -17,8 +17,10 @@ payload hash, and the committed payload hash must reproduce the record hash.
 Any other mismatch remains `FAIL`.
 
 New snapshot and forward-record writers normalize floating zero to `0.0`
-before canonical serialization, hashing, or persistence.  SQLite and
-PostgreSQL therefore commit the same storage-stable bytes.
+before canonical serialization, hashing, or persistence.  Both writers hash
+and pass the same canonical UTF-8 JSON bytes into their persistence boundary.
+SQLite preserves that text; PostgreSQL `JSONB` may store and return its own
+normalized representation.
 
 ## Audited record
 
@@ -69,26 +71,51 @@ into the live checkout.  Before releasing, create a fresh backup and complete
 its scratch restore check:
 
 ```bash
-systemctl start seiche-market-backup.service
+BACKUP_BEFORE=$(find /var/backups/seiche-market -mindepth 1 -maxdepth 1 \
+  -type d -name '20??????T??????Z' -print | LC_ALL=C sort | tail -n 1)
+systemctl reset-failed seiche-market-backup.service
+systemctl restart seiche-market-backup.service
 systemctl show seiche-market-backup.service --property=Result --value | \
   grep -qx success
-systemctl start seiche-market-restore-check.service
+BACKUP_AFTER=$(find /var/backups/seiche-market -mindepth 1 -maxdepth 1 \
+  -type d -name '20??????T??????Z' -print | LC_ALL=C sort | tail -n 1)
+test -n "$BACKUP_AFTER" && test "$BACKUP_AFTER" != "$BACKUP_BEFORE"
+test -f "$BACKUP_AFTER/SHA256SUMS"
+
+RESTORE_STATUS=/var/lib/seiche/validation/backup-restore-check.status
+CHECKED_BEFORE=$(sed -n 's/^checked_at=//p' "$RESTORE_STATUS" 2>/dev/null || true)
+systemctl reset-failed seiche-market-restore-check.service
+systemctl restart seiche-market-restore-check.service
 systemctl show seiche-market-restore-check.service --property=Result --value | \
   grep -qx success
-cat /var/lib/seiche/validation/backup-restore-check.status
+CHECKED_AFTER=$(sed -n 's/^checked_at=//p' "$RESTORE_STATUS")
+test -n "$CHECKED_AFTER" && test "$CHECKED_AFTER" != "$CHECKED_BEFORE"
+grep -Fqx "snapshot=$(basename "$BACKUP_AFTER")" "$RESTORE_STATUS"
+cat "$RESTORE_STATUS"
 ```
+
+If the backup reports that critical counts changed, quiesce the API and market
+writers before repeating this block; do not accept an older successful unit
+result or restore receipt as the release recovery point.
 
 Merge the reviewed change to `main` and use the currently active GitHub Actions
 forced-command deployment.  A push to `main` triggers it automatically; an
 operator may rerun that exact tip from a trusted workstation if necessary:
 
 ```bash
-gh workflow run deploy-hetzner.yml --repo beepboop2025/seiche --ref main
+git fetch origin main
+REVIEWED_SHA=$(git rev-parse origin/main)
+test "${#REVIEWED_SHA}" -eq 40
+gh workflow run deploy-hetzner.yml --repo beepboop2025/seiche --ref main \
+  -f target_sha="$REVIEWED_SHA"
 DEPLOY_RUN_ID=$(gh run list --repo beepboop2025/seiche \
   --workflow deploy-hetzner.yml --branch main --event workflow_dispatch \
+  --commit "$REVIEWED_SHA" \
   --limit 1 --json databaseId --jq '.[0].databaseId')
 gh run watch "$DEPLOY_RUN_ID" --repo beepboop2025/seiche --exit-status
-ssh liquilens-hetzner 'cat /var/lib/seiche-deploy/deployed-sha'
+DEPLOYED_SHA=$(ssh liquilens-hetzner \
+  'cat /var/lib/seiche-deploy/deployed-sha')
+test "$DEPLOYED_SHA" = "$REVIEWED_SHA"
 ssh liquilens-hetzner \
   'systemctl is-active seiche-api.service seiche-market-worker.service'
 ```
@@ -98,7 +125,9 @@ follow `ops/deploy/RELEASE-POLLER.md` instead.  Do not enable it ad hoc while
 the GitHub deployment trigger is active.  On the host, the resulting checks are:
 
 ```bash
-cat /var/lib/seiche-deploy/deployed-sha
+read -r -p 'Reviewed 40-character commit: ' EXPECTED_SHA
+[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+test "$(cat /var/lib/seiche-deploy/deployed-sha)" = "$EXPECTED_SHA"
 systemctl is-active seiche-api.service seiche-market-worker.service
 ```
 

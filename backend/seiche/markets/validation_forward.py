@@ -393,7 +393,8 @@ def verify_forward_chain(
             )
             continue
         signed_zero_pointer = None
-        if record["payload_hash"] != computed_payload_hash:
+        payload_hash_mismatch = record["payload_hash"] != computed_payload_hash
+        if payload_hash_mismatch:
             signed_zero_pointer = _legacy_jsonb_signed_zero_match(
                 record,
                 event_cutoff=canonical_timestamps["event_cutoff"],
@@ -401,10 +402,7 @@ def verify_forward_chain(
                 created_at=canonical_timestamps["created_at"],
                 decoded_payload_hash=computed_payload_hash,
             )
-        if (
-            record["payload_hash"] != computed_payload_hash
-            and not signed_zero_pointer
-        ):
+        if payload_hash_mismatch and not signed_zero_pointer:
             base_metrics["payload_hash_mismatches"] += 1
             issues.append(
                 (

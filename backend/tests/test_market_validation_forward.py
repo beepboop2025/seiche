@@ -235,12 +235,15 @@ def test_audited_hk_jsonb_signed_zero_preimage_is_exact_and_identity_bound() -> 
         previous_record_hash=record["previous_record_hash"],
     ) == record["record_hash"]
 
-    record["product"] = "overview"
+    identity_probe = record | {
+        "product": "overview",
+        "payload": json.loads(payload_path.read_text(encoding="utf-8")),
+    }
     assert validation_forward._legacy_jsonb_signed_zero_match(
-        record,
-        event_cutoff=record["event_cutoff"],
-        knowledge_cutoff=record["knowledge_cutoff"],
-        created_at=record["created_at"],
+        identity_probe,
+        event_cutoff=identity_probe["event_cutoff"],
+        knowledge_cutoff=identity_probe["knowledge_cutoff"],
+        created_at=identity_probe["created_at"],
         decoded_payload_hash=decoded_hash,
     ) is None
 
