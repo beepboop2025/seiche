@@ -12,7 +12,7 @@ import pytest
 from fastapi import Response
 
 from seiche import api, assemble, market_runtime, store
-from seiche.collectors import CollectorRunStatus, CollectorSupervisor
+from seiche.collectors import CollectorRun, CollectorRunStatus, CollectorSupervisor
 from seiche.markets.registry import default_registry
 from seiche.repository import (
     COLLECTOR_WORKER_COMPONENT_ID,
@@ -490,3 +490,212 @@ def test_worker_can_notify_systemd_over_its_unix_datagram_socket(monkeypatch) ->
             market_runtime._systemd_notify("READY=1")
 
             assert listener.recv(64) == b"READY=1"
+
+
+@pytest.mark.asyncio
+async def test_degraded_worker_heartbeat_keeps_systemd_watchdog_alive(
+    monkeypatch,
+) -> None:
+    heartbeat_enabled = asyncio.Event()
+    heartbeat_write_lock = asyncio.Lock()
+    writes = []
+    notifications = []
+
+    async def write_heartbeat(*_args, **_kwargs):
+        writes.append("heartbeat")
+
+    class _CycleComplete(Exception):
+        pass
+
+    async def complete_cycle(_seconds):
+        raise _CycleComplete
+
+    monkeypatch.setattr(market_runtime, "_write_worker_heartbeat", write_heartbeat)
+    monkeypatch.setattr(market_runtime, "_systemd_notify", notifications.append)
+    monkeypatch.setattr(market_runtime.asyncio, "sleep", complete_cycle)
+
+    with pytest.raises(_CycleComplete):
+        await market_runtime._worker_heartbeat_loop(
+            object(),
+            interval_seconds=30,
+            grace_seconds=120,
+            heartbeat_enabled=heartbeat_enabled,
+            heartbeat_write_lock=heartbeat_write_lock,
+        )
+
+    assert writes == []
+    assert notifications == ["WATCHDOG=1"]
+
+    heartbeat_enabled.set()
+    with pytest.raises(_CycleComplete):
+        await market_runtime._worker_heartbeat_loop(
+            object(),
+            interval_seconds=30,
+            grace_seconds=120,
+            heartbeat_enabled=heartbeat_enabled,
+            heartbeat_write_lock=heartbeat_write_lock,
+        )
+
+    assert writes == ["heartbeat"]
+    assert notifications == ["WATCHDOG=1", "WATCHDOG=1"]
+
+
+@pytest.mark.asyncio
+async def test_worker_carries_materialization_fault_until_retry_recovers(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "worker-degradation.sqlite")
+    monkeypatch.setenv("SEICHE_COLLECTOR_HEARTBEAT_INTERVAL_SECONDS", "5")
+    monkeypatch.setenv("SEICHE_COLLECTOR_HEARTBEAT_GRACE_SECONDS", "10")
+    repository = SQLiteMarketRepository()
+    started_at = datetime(2026, 8, 14, 10, tzinfo=UTC)
+
+    def completed_run(market_id: str, adapter_id: str) -> CollectorRun:
+        return CollectorRun(
+            market_id,
+            adapter_id,
+            CollectorRunStatus.SUCCESS,
+            started_at.isoformat(),
+            started_at.isoformat(),
+            1,
+            1,
+            (started_at + timedelta(days=1)).isoformat(),
+        )
+
+    cycles = [
+        [
+            completed_run("IN-INR", "rbi_official"),
+            completed_run("JP-JPY", "boj_rates"),
+        ],
+        [],
+        [completed_run("US-USD", "fred_daily")],
+        [completed_run("US-USD", "fred_daily")],
+    ]
+
+    class _Supervisor:
+        async def run_due(self, *, now):
+            del now
+            return cycles.pop(0)
+
+    market_attempts = []
+    global_attempts = []
+    india_attempts = 0
+
+    def materialize_market(market_id, **_kwargs):
+        nonlocal india_attempts
+        market_attempts.append(market_id)
+        if market_id == "IN-INR":
+            india_attempts += 1
+            if india_attempts < 3:
+                raise ValueError(
+                    "forward chain has no single valid head; "
+                    "postgresql://private-user:private-password@db/seiche"
+                )
+        return {"gauge": f"{market_id}-healthy"}
+
+    def materialize_global(**_kwargs):
+        global_attempts.append("GLOBAL")
+        return {"tide": "healthy"}
+
+    heartbeat_state: dict[str, asyncio.Event] = {}
+    heartbeat_loop_started = asyncio.Event()
+
+    async def parked_heartbeat_loop(
+        _repository,
+        *,
+        interval_seconds,
+        grace_seconds,
+        heartbeat_enabled: asyncio.Event,
+        heartbeat_write_lock: asyncio.Lock,
+    ):
+        del interval_seconds, grace_seconds, heartbeat_write_lock
+        heartbeat_state["enabled"] = heartbeat_enabled
+        heartbeat_loop_started.set()
+        await asyncio.Event().wait()
+
+    heartbeat_times = iter((started_at, started_at + timedelta(minutes=5)))
+    written_heartbeats = []
+    original_write_heartbeat = market_runtime._write_worker_heartbeat
+
+    async def write_heartbeat(_repository, *, grace_seconds, clock=None):
+        del clock
+        heartbeat_at = next(heartbeat_times)
+        written_heartbeats.append(heartbeat_at)
+        await original_write_heartbeat(
+            repository,
+            grace_seconds=grace_seconds,
+            clock=lambda: heartbeat_at,
+        )
+
+    notifications = []
+    sleep_count = 0
+
+    class _StopWorker(Exception):
+        pass
+
+    async def finish_cycle(_seconds):
+        nonlocal sleep_count
+        sleep_count += 1
+        await heartbeat_loop_started.wait()
+        heartbeat_enabled = heartbeat_state["enabled"]
+        if sleep_count == 1:
+            assert not heartbeat_enabled.is_set()
+            assert written_heartbeats == [started_at]
+            assert market_attempts == ["IN-INR", "JP-JPY"]
+            assert global_attempts == ["GLOBAL"]
+            stored = repository.load_worker_heartbeat(COLLECTOR_WORKER_COMPONENT_ID)
+            assert stored["heartbeat_at"] == started_at.isoformat()
+            fault = api._collector_worker_fault(
+                now=started_at + timedelta(seconds=11),
+                repository=repository,
+            )
+            assert fault["status"] == "OVERDUE"
+        elif sleep_count == 2:
+            assert not heartbeat_enabled.is_set()
+            assert market_attempts == ["IN-INR", "JP-JPY"]
+            assert written_heartbeats == [started_at]
+        elif sleep_count == 3:
+            assert not heartbeat_enabled.is_set()
+            assert market_attempts.count("IN-INR") == 2
+            assert written_heartbeats == [started_at]
+            assert "STATUS=collector materialization healthy" not in notifications
+        elif sleep_count == 4:
+            assert heartbeat_enabled.is_set()
+            assert market_attempts.count("IN-INR") == 3
+            assert written_heartbeats == [
+                started_at,
+                started_at + timedelta(minutes=5),
+            ]
+            raise _StopWorker
+
+    monkeypatch.setattr(
+        market_runtime, "build_supervisor", lambda **_kwargs: _Supervisor()
+    )
+    monkeypatch.setattr(market_runtime, "materialize_market", materialize_market)
+    monkeypatch.setattr(market_runtime, "materialize_global_tide", materialize_global)
+    monkeypatch.setattr(
+        market_runtime,
+        "_export_usd_funding_core_after_runs",
+        lambda *_args, **_kwargs: {"status": "DISABLED"},
+    )
+    monkeypatch.setattr(market_runtime, "_worker_heartbeat_loop", parked_heartbeat_loop)
+    monkeypatch.setattr(market_runtime, "_write_worker_heartbeat", write_heartbeat)
+    monkeypatch.setattr(market_runtime, "_systemd_notify", notifications.append)
+    monkeypatch.setattr(market_runtime.asyncio, "sleep", finish_cycle)
+
+    with pytest.raises(_StopWorker):
+        await market_runtime.run_worker(
+            poll_seconds=5,
+            repository=repository,
+        )
+
+    assert cycles == []
+    assert global_attempts == ["GLOBAL", "GLOBAL", "GLOBAL"]
+    assert notifications == [
+        "READY=1",
+        "STATUS=collector materialization degraded; pending=IN-INR",
+        "STATUS=collector materialization healthy",
+        "STOPPING=1",
+    ]
+    assert "private-password" not in caplog.text
+    assert "private-password" not in str(notifications)
