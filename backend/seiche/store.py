@@ -20,6 +20,7 @@ import pandas as pd
 
 from seiche.config import DATA_DIR, DB_PATH
 from seiche.domain.forward_record import (
+    canonical_market_payload_json,
     forward_chain_generation,
     forward_record_hash,
     release_handoff_generated_at,
@@ -759,13 +760,7 @@ def seal_market_snapshot(
     knowledge = _canonical_utc(knowledge_cutoff)
     if event > knowledge:
         raise ValueError("event_cutoff cannot follow knowledge_cutoff")
-    payload_json = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
+    payload_json = canonical_market_payload_json(payload)
     payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     identity = "|".join(
         (normalized_market, product, event, knowledge, calibration_id, payload_hash)
@@ -1218,13 +1213,7 @@ def append_forward_record(
     market = market_id.upper()
     event = _canonical_utc(event_cutoff)
     knowledge = _canonical_utc(knowledge_cutoff)
-    payload_json = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
+    payload_json = canonical_market_payload_json(payload)
     payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     generation = forward_chain_generation(calibration_id)
     with _lock, _conn() as conn:

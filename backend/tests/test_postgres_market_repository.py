@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -258,7 +259,11 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         for item in repository.latest_collector_runs("US-USD")
     )
 
-    payload = {"schema": "seiche.postgres-integration.v1", "value": 42}
+    payload = {
+        "schema": "seiche.postgres-integration.v1",
+        "value": 42,
+        "signed_zero": -0.0,
+    }
     snapshot_id = repository.seal_market_snapshot(
         market_id="US-USD",
         product="postgres-integration",
@@ -268,12 +273,11 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
         evidence_eligible=True,
         payload=payload,
     )
-    assert (
-        repository.load_latest_market_snapshot("US-USD", "postgres-integration")[
-            "payload"
-        ]
-        == payload
+    loaded_snapshot = repository.load_latest_market_snapshot(
+        "US-USD", "postgres-integration"
     )
+    assert loaded_snapshot["payload"] == payload
+    assert math.copysign(1.0, loaded_snapshot["payload"]["signed_zero"]) == 1.0
     assert (
         repository.load_market_snapshot_as_of(
             "US-USD", "postgres-integration", knowledge
@@ -624,6 +628,7 @@ def test_postgres_round_trip_covers_the_complete_market_repository() -> None:
     ]
     assert record["snapshot_id"] == snapshot_id
     assert record["payload"] == payload
+    assert math.copysign(1.0, record["payload"]["signed_zero"]) == 1.0
     assert record["record_hash"] == record_id
     assert [
         (item["created_at"], item["record_id"]) for item in forward_records

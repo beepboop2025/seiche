@@ -8,10 +8,13 @@ forward history accrued on the hash-bound knowledge timeline?
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import hmac
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -39,6 +42,57 @@ _FORWARD_RECORD_FIELDS = (
     "record_hash",
     "payload",
 )
+
+
+@dataclass(frozen=True)
+class _LegacyJsonbSignedZeroCompatibility:
+    """One audited JSONB representation loss in an immutable v1 record."""
+
+    snapshot_id: str
+    market_id: str
+    product: str
+    event_cutoff: str
+    knowledge_cutoff: str
+    calibration_id: str
+    created_at: str
+    payload_hash: str
+    decoded_payload_hash: str
+    previous_record_hash: str
+    json_path: tuple[str | int, ...]
+    json_pointer: str
+
+
+# PostgreSQL JSONB normalized ``components[0].kernel.value`` from ``-0.0`` to
+# ``0.0`` after this record's canonical preimage had already been hashed.  The
+# exact signed-zero candidate reproduces payload_hash, and payload_hash in turn
+# reproduces record_id.  Keep this declaration identity-bound: any future
+# mismatch remains a hard failure until it is independently audited.
+_LEGACY_JSONB_SIGNED_ZERO_COMPATIBILITY = {
+    "35baac2858797c1673f23fcab723b8d40ef31945737a1c18f35753b51b23eb94": (
+        _LegacyJsonbSignedZeroCompatibility(
+            snapshot_id=(
+                "975fc5531c444b4123e058d29633fbecca95cd0100c2774e1b3943aeedc0fb7a"
+            ),
+            market_id="HK-HKD",
+            product="gauge",
+            event_cutoff="2026-08-11T00:00:00+00:00",
+            knowledge_cutoff="2026-08-11T16:41:17+00:00",
+            calibration_id="hk-hkd-local-forward-v1",
+            created_at="2026-08-11T16:41:18.087325+00:00",
+            payload_hash=(
+                "8a68b214f624e63406bdc1005dab46fdd86bca740fb98233b2c8aaf1dfbb61ea"
+            ),
+            decoded_payload_hash=(
+                "c18a56ed0f58a2ff22daa829f8894714f1e104180448aaa10199296ee6a45722"
+            ),
+            previous_record_hash=(
+                "38f929072db4c6cc157ccf5466a02f4967450ff9d8c4fa8fbcb9565a3721640e"
+            ),
+            json_path=("components", 0, "kernel", "value"),
+            json_pointer="/components/0/kernel/value",
+        )
+    )
+}
 
 
 class ForwardRecordReader(Protocol):
@@ -84,6 +138,67 @@ def _payload_hash(payload: object) -> str:
         allow_nan=False,
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _legacy_jsonb_signed_zero_match(
+    record: Mapping[str, object],
+    *,
+    event_cutoff: str,
+    knowledge_cutoff: str,
+    created_at: str,
+    decoded_payload_hash: str,
+) -> str | None:
+    """Return the audited JSON pointer only for the exact known HK record."""
+
+    record_id = str(record.get("record_id", ""))
+    compatibility = _LEGACY_JSONB_SIGNED_ZERO_COMPATIBILITY.get(record_id)
+    if compatibility is None:
+        return None
+    expected_fields = (
+        compatibility.snapshot_id,
+        compatibility.market_id,
+        compatibility.product,
+        compatibility.event_cutoff,
+        compatibility.knowledge_cutoff,
+        compatibility.calibration_id,
+        compatibility.created_at,
+        compatibility.payload_hash,
+        compatibility.previous_record_hash,
+        record_id,
+        compatibility.decoded_payload_hash,
+    )
+    observed_fields = (
+        record.get("snapshot_id"),
+        record.get("market_id"),
+        record.get("product"),
+        event_cutoff,
+        knowledge_cutoff,
+        record.get("calibration_id"),
+        created_at,
+        record.get("payload_hash"),
+        record.get("previous_record_hash"),
+        record.get("record_hash"),
+        decoded_payload_hash,
+    )
+    if observed_fields != expected_fields:
+        return None
+
+    try:
+        candidate = copy.deepcopy(record.get("payload"))
+        parent = candidate
+        for part in compatibility.json_path[:-1]:
+            parent = parent[part]  # type: ignore[index]
+        leaf = compatibility.json_path[-1]
+        value = parent[leaf]  # type: ignore[index]
+        if not isinstance(value, float) or value != 0.0:
+            return None
+        parent[leaf] = -0.0  # type: ignore[index]
+        candidate_hash = _payload_hash(candidate)
+    except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+        return None
+    if not hmac.compare_digest(candidate_hash, compatibility.payload_hash):
+        return None
+    return compatibility.json_pointer
 
 
 def _record_hash(
@@ -146,6 +261,8 @@ def verify_forward_chain(
         "payload_hash_mismatches": 0,
         "record_hash_mismatches": 0,
         "record_id_mismatches": 0,
+        "legacy_jsonb_signed_zero_compatibility_records": 0,
+        "legacy_jsonb_signed_zero_compatibility": [],
         "link_mismatches": 0,
         "fork_defects": 0,
         "missing_predecessor_defects": 0,
@@ -275,7 +392,19 @@ def verify_forward_chain(
                 )
             )
             continue
+        signed_zero_pointer = None
         if record["payload_hash"] != computed_payload_hash:
+            signed_zero_pointer = _legacy_jsonb_signed_zero_match(
+                record,
+                event_cutoff=canonical_timestamps["event_cutoff"],
+                knowledge_cutoff=canonical_timestamps["knowledge_cutoff"],
+                created_at=canonical_timestamps["created_at"],
+                decoded_payload_hash=computed_payload_hash,
+            )
+        if (
+            record["payload_hash"] != computed_payload_hash
+            and not signed_zero_pointer
+        ):
             base_metrics["payload_hash_mismatches"] += 1
             issues.append(
                 (
@@ -283,13 +412,27 @@ def verify_forward_chain(
                     f"{label}: stored payload_hash does not match the payload",
                 )
             )
+        elif signed_zero_pointer:
+            base_metrics["legacy_jsonb_signed_zero_compatibility_records"] += 1
+            base_metrics["legacy_jsonb_signed_zero_compatibility"].append(
+                {
+                    "record_id": record_id,
+                    "json_pointer": signed_zero_pointer,
+                    "stored_payload_hash": record["payload_hash"],
+                    "decoded_payload_hash": computed_payload_hash,
+                }
+            )
 
         try:
             computed_record_hash = _record_hash(
                 record,
                 event_cutoff=canonical_timestamps["event_cutoff"],
                 knowledge_cutoff=canonical_timestamps["knowledge_cutoff"],
-                payload_hash=computed_payload_hash,
+                payload_hash=(
+                    str(record["payload_hash"])
+                    if signed_zero_pointer
+                    else computed_payload_hash
+                ),
             )
         except (TypeError, ValueError) as exc:
             base_metrics["malformed_record_defects"] += 1

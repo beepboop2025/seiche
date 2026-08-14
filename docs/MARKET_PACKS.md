@@ -237,6 +237,13 @@ counts and are never repaired, relinked, or represented as passing. See the
 [forward-chain incident runbook](FORWARD_CHAIN_INCIDENT_2026-08-11.md) for the
 production migration boundary.
 
+HK-HKD retains one audited v1 gauge record whose committed JSON preimage used
+`-0.0` before PostgreSQL `JSONB` returned it as `0.0`. Validation policy v3
+recognizes only that exact identity and preimage reconstruction; new writers
+normalize signed zero before hashing. No row is rewritten or broadly exempted.
+See the [payload-canonicalization incident
+runbook](FORWARD_PAYLOAD_CANONICALIZATION_INCIDENT_2026-08-14.md).
+
 No pack is promoted to `SUPPORTED` by this deployment. Promotion still requires
 all eleven evidence-backed checks: units/schema, calendar/timezone, truncation,
 extra lag, revision leakage, label shuffle, missing-source injection, local
