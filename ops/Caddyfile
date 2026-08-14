@@ -27,7 +27,21 @@
             roll_keep 5
             roll_keep_for 720h
         }
-        format json
+        # URI query values can cross every product route before the application
+        # sees them. Keep the path for fleet accounting, but redact credential-
+        # named values at the edge so neither current nor rotated logs retain
+        # them. This is the Caddy 2.6 query-filter form used by the live host.
+        format filter {
+            wrap json
+            fields {
+                request>uri query {
+                    replace api_key [REDACTED]
+                    replace api-key [REDACTED]
+                    replace access_token [REDACTED]
+                    replace token [REDACTED]
+                }
+            }
+        }
     }
 }
 
@@ -253,7 +267,7 @@ api.seiche.info {
     handle @mcp {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
-        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE"
+        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE, Warning, Deprecation, Sunset"
         header X-Content-Type-Options "nosniff"
         reverse_proxy 127.0.0.1:8787
     }

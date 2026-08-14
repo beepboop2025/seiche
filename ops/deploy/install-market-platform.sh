@@ -397,6 +397,9 @@ cat >"$DROPIN" <<EOF
 EnvironmentFile=-$ENV_DIR/market.env
 EnvironmentFile=-$ENV_DIR/release.env
 EnvironmentFile=-$DELIVERY_ENV_FILE
+# Caddy owns privacy-filtered edge request telemetry; Uvicorn's raw path logger
+# includes the query string and would create a second, unredacted copy.
+Environment=UVICORN_ACCESS_LOG=false
 ReadWritePaths=$STATE_DIR
 EOF
 chmod 0644 "$DROPIN"

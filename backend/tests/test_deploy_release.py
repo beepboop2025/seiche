@@ -375,6 +375,30 @@ def test_equal_caddyfile_is_validated_and_reloaded_to_heal_runtime(tmp_path):
     assert not list(tmp_path.glob("installed.Caddyfile.bak-*"))
 
 
+def test_caddy_access_log_redacts_credential_query_values():
+    caddy = CADDYFILE.read_text()
+    access_log = caddy[caddy.index("(accesslog) {") : caddy.index("api.seiche.info {")]
+
+    assert "format filter {" in access_log
+    assert "wrap json" in access_log
+    assert "request>uri query {" in access_log
+    for name in ("api_key", "api-key", "access_token", "token"):
+        assert f"replace {name} [REDACTED]" in access_log
+    assert "format json" not in access_log
+
+
+def test_api_dropin_disables_unredacted_uvicorn_access_log():
+    installer = MARKET_INSTALLER.read_text()
+    api_dropin = installer[
+        installer.index('cat >"$DROPIN"') : installer.index(
+            'mv -f "$DROPIN"', installer.index('cat >"$DROPIN"')
+        )
+    ]
+
+    assert "Environment=UVICORN_ACCESS_LOG=false" in api_dropin
+    assert "ExecStart=" not in api_dropin
+
+
 def _smoke_env(tmp_path: Path, scenario: str = "success") -> tuple[dict, Path]:
     calls = tmp_path / "curl.log"
     _executable(

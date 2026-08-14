@@ -124,6 +124,65 @@ app = FastAPI(title="Seiche", version=assemble.VERSION,
               redoc_url=None if _PROD else "/redoc",
               openapi_url=None if _PROD else "/openapi.json",
               lifespan=_lifespan)
+
+# Authentication is header-only. Some external MCP cataloguers append their
+# own credential to every URL they probe; FastAPI otherwise ignores that extra
+# query field while access logs retain it. During the compatibility window the
+# request still runs, but the query field never contributes identity. After the
+# published cutoff it is rejected so callers have a bounded migration period.
+_MCP_QUERY_CREDENTIAL_NAMES = frozenset({
+    "api_key", "api-key", "access_token", "token",
+})
+_MCP_QUERY_CREDENTIAL_PATHS = frozenset({"/mcp", "/mcp/usage"})
+_MCP_QUERY_CREDENTIAL_DEPRECATED_AT = 1_786_665_600  # 2026-08-14 00:00:00 UTC
+_MCP_QUERY_CREDENTIAL_REJECT_AT = 1_789_430_400  # 2026-09-15 00:00:00 UTC
+_MCP_QUERY_CREDENTIAL_SUNSET = "Tue, 15 Sep 2026 00:00:00 GMT"
+
+
+def _mcp_query_credential_headers() -> dict[str, str]:
+    return {
+        "Warning": (
+            '299 Seiche "URL credentials are deprecated; use '
+            'Authorization: Bearer"'
+        ),
+        "Deprecation": f"@{_MCP_QUERY_CREDENTIAL_DEPRECATED_AT}",
+        "Sunset": _MCP_QUERY_CREDENTIAL_SUNSET,
+    }
+
+
+@app.middleware("http")
+async def _retire_mcp_query_credentials(request: Request, call_next):
+    if request.url.path not in _MCP_QUERY_CREDENTIAL_PATHS:
+        return await call_next(request)
+    # Inspect names only. Values are neither read nor copied into diagnostics.
+    has_query_credential = any(
+        name in _MCP_QUERY_CREDENTIAL_NAMES
+        for name in request.query_params.keys()
+    )
+    if not has_query_credential:
+        return await call_next(request)
+
+    transition_headers = _mcp_query_credential_headers()
+    if time.time() >= _MCP_QUERY_CREDENTIAL_REJECT_AT:
+        return JSONResponse(
+            {
+                "detail": (
+                    "credentials in URLs are not accepted; use the "
+                    "Authorization header"
+                )
+            },
+            status_code=400,
+            headers={
+                **transition_headers,
+                "WWW-Authenticate": 'Bearer realm="seiche"',
+            },
+        )
+
+    response = await call_next(request)
+    for name, value in transition_headers.items():
+        response.headers[name] = value
+    return response
+
 # Uvicorn's default config gives only its own logger tree an INFO sink. Give
 # this one bounded event stream its own stderr sink instead of raising the root
 # logger (and every application dependency) to INFO. The guard keeps module
