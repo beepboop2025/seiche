@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from seiche import store
 from seiche.domain.forward_record import (
+    canonical_market_payload_json,
     forward_chain_generation,
     forward_record_hash,
     release_handoff_generated_at,
@@ -934,13 +935,7 @@ class PostgresMarketRepository:
         knowledge = _utc(knowledge_cutoff)
         if event > knowledge:
             raise ValueError("event_cutoff cannot follow knowledge_cutoff")
-        payload_json = json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        payload_json = canonical_market_payload_json(payload)
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         identity = "|".join(
             (
@@ -1417,13 +1412,7 @@ class PostgresMarketRepository:
         market = market_id.upper()
         event = _utc(event_cutoff)
         knowledge = _utc(knowledge_cutoff)
-        payload_json = json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
+        payload_json = canonical_market_payload_json(payload)
         payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
         generation = forward_chain_generation(calibration_id)
         chain_key = f"{market}|{product}|{calibration_id}"

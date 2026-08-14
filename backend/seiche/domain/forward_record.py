@@ -35,6 +35,41 @@ MARKET_SNAPSHOT_ROW_FIELDS = (
 _GENERATION_SUFFIX = re.compile(r"-v([1-9][0-9]*)$")
 
 
+def _normalize_signed_json_zero(value: object) -> object:
+    """Return a JSON-equivalent value whose floating zero has one spelling.
+
+    PostgreSQL ``JSONB`` deliberately treats ``-0.0`` and ``0.0`` as the same
+    number and emits the latter when the value is read back.  A forward hash
+    must therefore commit to that storage-stable representation before the
+    payload crosses the database boundary.
+    """
+
+    if isinstance(value, float) and value == 0.0:
+        return 0.0
+    if isinstance(value, dict):
+        return {
+            key: _normalize_signed_json_zero(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_signed_json_zero(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_normalize_signed_json_zero(item) for item in value)
+    return value
+
+
+def canonical_market_payload_json(payload: object) -> str:
+    """Serialize a snapshot/forward payload into storage-stable canonical JSON."""
+
+    normalized = _normalize_signed_json_zero(payload)
+    return json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
 def forward_chain_generation(calibration_id: str) -> int:
     """Return the explicit chain generation bound into ``calibration_id``.
 
@@ -544,6 +579,7 @@ __all__ = [
     "SNAPSHOT_HANDOFF_SCHEMA",
     "ForwardTopology",
     "analyze_forward_topology",
+    "canonical_market_payload_json",
     "forward_chain_generation",
     "forward_record_hash",
     "market_snapshot_row_hash",

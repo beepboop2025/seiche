@@ -160,28 +160,45 @@ if ! runuser -u seiche -- git -C "$APP" fetch -q origin main; then
   echo "FAIL: could not fetch the candidate release"
   exit 1
 fi
-TARGET=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)
-if ! valid_release_sha "$TARGET" \
+LATEST=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)
+if ! valid_release_sha "$LATEST" \
     || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
-      "$TARGET^{commit}" >/dev/null; then
+      "$LATEST^{commit}" >/dev/null; then
   echo "FAIL: origin/main did not resolve to a canonical local commit"
   exit 1
 fi
-# A local candidate controller can spend an hour testing one exact commit while
-# main keeps moving.  It passes that tested identity here; never let this wrapper
-# silently re-resolve and deploy a newer, untested tip.  The forced-command SSH
-# path does not pass this variable and retains its established latest-main
-# behavior.  A malformed constraint fails closed before any service is stopped.
+# A local controller or the forced-command SSH request passes one reviewed
+# identity here. Never let the wrapper silently replace it with a newer main
+# tip. A direct root invocation without either constraint retains the explicit
+# latest-main maintenance behavior.
 EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}
+if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  if [[ "$SSH_ORIGINAL_COMMAND" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+    REQUESTED_TARGET=${BASH_REMATCH[1]}
+  else
+    echo "FAIL: forced deployment command must be deploy plus one commit SHA"
+    exit 1
+  fi
+  if [ -n "$EXPECTED_TARGET" ] && [ "$EXPECTED_TARGET" != "$REQUESTED_TARGET" ]; then
+    echo "FAIL: environment and forced-command deployment targets disagree"
+    exit 1
+  fi
+  EXPECTED_TARGET=$REQUESTED_TARGET
+fi
+TARGET=$LATEST
 if [ -n "$EXPECTED_TARGET" ]; then
   if ! valid_release_sha "$EXPECTED_TARGET"; then
     echo "FAIL: expected target is not a canonical commit SHA"
     exit 1
   fi
-  if [ "$TARGET" != "$EXPECTED_TARGET" ]; then
-    echo "FAIL: tested target ${EXPECTED_TARGET:0:7} was superseded by ${TARGET:0:7}; refusing to deploy an untested commit"
+  if ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+      "$EXPECTED_TARGET^{commit}" >/dev/null \
+      || ! runuser -u seiche -- git -C "$APP" merge-base --is-ancestor \
+        "$EXPECTED_TARGET" "$LATEST"; then
+    echo "FAIL: reviewed target is not a fetched commit on main"
     exit 1
   fi
+  TARGET=$EXPECTED_TARGET
 fi
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_BACKFILL_WAS_ACTIVE=""

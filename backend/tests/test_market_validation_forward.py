@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from seiche import store
-from seiche.domain.forward_record import forward_record_hash
+from seiche.domain.forward_record import (
+    canonical_market_payload_json,
+    forward_record_hash,
+)
+from seiche.markets import validation_forward
 from seiche.markets.validation_forward import (
     GENESIS_HASH,
     verify_forward_chain,
@@ -116,6 +122,130 @@ def test_forward_chain_fails_when_payload_is_tampered(monkeypatch, tmp_path) -> 
     assert "PAYLOAD_HASH_MISMATCH" in result["reason_codes"]
     assert "RECORD_HASH_MISMATCH" in result["reason_codes"]
     assert result["metrics"]["payload_hash_mismatches"] == 1
+
+
+def test_new_snapshot_and_forward_payloads_normalize_signed_zero(
+    monkeypatch, tmp_path
+) -> None:
+    repository = _repository(monkeypatch, tmp_path)
+    payload = {
+        "reading": {"value": -0.0},
+        "positive_control": 0.0,
+    }
+    canonical = canonical_market_payload_json(payload)
+    assert canonical == '{"positive_control":0.0,"reading":{"value":0.0}}'
+    assert math.copysign(1.0, payload["reading"]["value"]) == -1.0
+    expected_payload_hash = hashlib.sha256(canonical.encode()).hexdigest()
+    event = "2026-08-14T00:00:00+00:00"
+    snapshot_id = repository.seal_market_snapshot(
+        market_id="HK-HKD",
+        product="signed-zero-regression",
+        event_cutoff=event,
+        knowledge_cutoff=event,
+        calibration_id="signed-zero-regression-v1",
+        evidence_eligible=False,
+        payload=payload,
+    )
+    record_id = repository.append_forward_record(
+        snapshot_id=snapshot_id,
+        market_id="HK-HKD",
+        product="signed-zero-regression",
+        event_cutoff=event,
+        knowledge_cutoff=event,
+        calibration_id="signed-zero-regression-v1",
+        payload=payload,
+    )
+
+    snapshot = repository.load_latest_market_snapshot(
+        "HK-HKD", "signed-zero-regression"
+    )
+    record = repository.load_forward_records(
+        "HK-HKD", "signed-zero-regression"
+    )[0]
+    assert snapshot is not None
+    assert snapshot["payload_hash"] == expected_payload_hash
+    assert record["payload_hash"] == expected_payload_hash
+    assert record["record_id"] == record_id
+    for stored in (snapshot["payload"], record["payload"]):
+        value = stored["reading"]["value"]
+        assert value == 0.0
+        assert math.copysign(1.0, value) == 1.0
+
+    result = verify_forward_chain(
+        (record,), minimum_records=1, minimum_span_days=0
+    )
+    assert result["status"] == "PASS"
+    assert result["metrics"]["legacy_jsonb_signed_zero_compatibility_records"] == 0
+
+
+def test_audited_hk_jsonb_signed_zero_preimage_is_exact_and_identity_bound() -> None:
+    payload_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "hk_hkd_jsonb_signed_zero_payload.json"
+    )
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    record = {
+        "record_id": (
+            "35baac2858797c1673f23fcab723b8d40ef31945737a1c18f35753b51b23eb94"
+        ),
+        "snapshot_id": (
+            "975fc5531c444b4123e058d29633fbecca95cd0100c2774e1b3943aeedc0fb7a"
+        ),
+        "market_id": "HK-HKD",
+        "product": "gauge",
+        "event_cutoff": "2026-08-11T00:00:00+00:00",
+        "knowledge_cutoff": "2026-08-11T16:41:17+00:00",
+        "calibration_id": "hk-hkd-local-forward-v1",
+        "chain_generation": 1,
+        "created_at": "2026-08-11T16:41:18.087325+00:00",
+        "payload_hash": (
+            "8a68b214f624e63406bdc1005dab46fdd86bca740fb98233b2c8aaf1dfbb61ea"
+        ),
+        "previous_record_hash": (
+            "38f929072db4c6cc157ccf5466a02f4967450ff9d8c4fa8fbcb9565a3721640e"
+        ),
+        "record_hash": (
+            "35baac2858797c1673f23fcab723b8d40ef31945737a1c18f35753b51b23eb94"
+        ),
+        "payload": payload,
+    }
+    decoded_hash = validation_forward._payload_hash(payload)
+    assert decoded_hash == (
+        "c18a56ed0f58a2ff22daa829f8894714f1e104180448aaa10199296ee6a45722"
+    )
+    assert validation_forward._legacy_jsonb_signed_zero_match(
+        record,
+        event_cutoff=record["event_cutoff"],
+        knowledge_cutoff=record["knowledge_cutoff"],
+        created_at=record["created_at"],
+        decoded_payload_hash=decoded_hash,
+    ) == "/components/0/kernel/value"
+
+    payload["components"][0]["kernel"]["value"] = -0.0
+    assert validation_forward._payload_hash(payload) == record["payload_hash"]
+    assert forward_record_hash(
+        snapshot_id=record["snapshot_id"],
+        market_id=record["market_id"],
+        product=record["product"],
+        event_cutoff=record["event_cutoff"],
+        knowledge_cutoff=record["knowledge_cutoff"],
+        calibration_id=record["calibration_id"],
+        payload_hash=record["payload_hash"],
+        previous_record_hash=record["previous_record_hash"],
+    ) == record["record_hash"]
+
+    identity_probe = record | {
+        "product": "overview",
+        "payload": json.loads(payload_path.read_text(encoding="utf-8")),
+    }
+    assert validation_forward._legacy_jsonb_signed_zero_match(
+        identity_probe,
+        event_cutoff=identity_probe["event_cutoff"],
+        knowledge_cutoff=identity_probe["knowledge_cutoff"],
+        created_at=identity_probe["created_at"],
+        decoded_payload_hash=decoded_hash,
+    ) is None
 
 
 def test_forward_chain_fails_when_an_internal_link_is_missing(monkeypatch, tmp_path) -> None:
@@ -265,6 +395,85 @@ def _synthetic_record(
         "record_hash": record_hash,
         "payload": payload,
     }
+
+
+def test_validator_uses_only_an_exact_signed_zero_compatibility_declaration(
+    monkeypatch,
+) -> None:
+    record = _synthetic_record(
+        "synthetic-jsonb-signed-zero",
+        GENESIS_HASH,
+        market_id="HK-HKD",
+        calibration_id="hk-hkd-test-forward-v1",
+    )
+    committed_payload = {"reading": {"value": -0.0}, "control": 0.0}
+    decoded_payload = {"reading": {"value": 0.0}, "control": 0.0}
+    committed_hash = validation_forward._payload_hash(committed_payload)
+    decoded_hash = validation_forward._payload_hash(decoded_payload)
+    record_hash = forward_record_hash(
+        snapshot_id=record["snapshot_id"],
+        market_id=record["market_id"],
+        product=record["product"],
+        event_cutoff=record["event_cutoff"],
+        knowledge_cutoff=record["knowledge_cutoff"],
+        calibration_id=record["calibration_id"],
+        payload_hash=committed_hash,
+        previous_record_hash=record["previous_record_hash"],
+    )
+    record.update(
+        {
+            "record_id": record_hash,
+            "record_hash": record_hash,
+            "payload_hash": committed_hash,
+            "payload": decoded_payload,
+        }
+    )
+    declaration = validation_forward._LegacyJsonbSignedZeroCompatibility(
+        snapshot_id=record["snapshot_id"],
+        market_id=record["market_id"],
+        product=record["product"],
+        event_cutoff=record["event_cutoff"],
+        knowledge_cutoff=record["knowledge_cutoff"],
+        calibration_id=record["calibration_id"],
+        created_at=record["created_at"],
+        payload_hash=committed_hash,
+        decoded_payload_hash=decoded_hash,
+        previous_record_hash=record["previous_record_hash"],
+        json_path=("reading", "value"),
+        json_pointer="/reading/value",
+    )
+    monkeypatch.setattr(
+        validation_forward,
+        "_LEGACY_JSONB_SIGNED_ZERO_COMPATIBILITY",
+        {record_hash: declaration},
+    )
+
+    result = verify_forward_chain(
+        (record,), minimum_records=1, minimum_span_days=0
+    )
+    assert result["status"] == "PASS"
+    assert result["metrics"]["payload_hash_mismatches"] == 0
+    assert result["metrics"]["record_hash_mismatches"] == 0
+    assert result["metrics"]["legacy_jsonb_signed_zero_compatibility_records"] == 1
+    assert result["metrics"]["legacy_jsonb_signed_zero_compatibility"] == [
+        {
+            "record_id": record_hash,
+            "json_pointer": "/reading/value",
+            "stored_payload_hash": committed_hash,
+            "decoded_payload_hash": decoded_hash,
+        }
+    ]
+
+    tampered = record | {
+        "payload": {"reading": {"value": 0.0}, "control": 0.0, "extra": True}
+    }
+    failed = verify_forward_chain(
+        (tampered,), minimum_records=1, minimum_span_days=0
+    )
+    assert failed["status"] == "FAIL"
+    assert {"PAYLOAD_HASH_MISMATCH", "RECORD_HASH_MISMATCH"} <= set(
+        failed["reason_codes"]
+    )
 
 
 def test_topology_not_hash_sorting_orders_same_timestamp_links() -> None:

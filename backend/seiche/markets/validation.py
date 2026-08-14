@@ -43,7 +43,7 @@ from seiche.repository import MarketRepository, get_repository
 
 
 VALIDATION_RUNNER_ID = "market-validate"
-VALIDATION_RUNNER_VERSION = "market-validation-policy-v2"
+VALIDATION_RUNNER_VERSION = "market-validation-policy-v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -848,7 +848,7 @@ def _forward_paper_record(
         minimum_span_days=minimum_span_days or 0,
     )
     metrics = {
-        "implementation": "forward-topology-and-generation-v2",
+        "implementation": "forward-topology-and-canonical-payload-v3",
         "chain_integrity_status": result["status"],
         "maturity_policy_frozen": policy_frozen,
         **result["metrics"],
