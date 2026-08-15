@@ -6,6 +6,7 @@ Exercises the /mcp endpoint through FastAPI's TestClient with a canned snapshot
 
 import json
 import logging
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,6 +55,20 @@ def test_initialize_returns_session_header(client):
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "seiche"
     assert r.headers.get("Mcp-Session-Id")
+
+
+def test_edge_allows_undertow_modern_mcp_headers():
+    caddy = (Path(__file__).resolve().parents[2] / "ops" / "Caddyfile").read_text(
+        encoding="utf-8"
+    )
+    undertow = caddy.split("handle /undertow/mcp* {", 1)[1].split("\n    }", 1)[0]
+    allow_headers = next(
+        line for line in undertow.splitlines()
+        if "Access-Control-Allow-Headers" in line
+    )
+    assert "MCP-Protocol-Version" in allow_headers
+    assert "Mcp-Method" in allow_headers
+    assert "Mcp-Name" in allow_headers
 
 
 def test_public_api_discovery_is_curated(client):

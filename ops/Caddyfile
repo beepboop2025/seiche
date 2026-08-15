@@ -92,7 +92,7 @@ api.seiche.info {
     handle /undertow/mcp* {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID"
         header Access-Control-Expose-Headers "X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
         header X-Content-Type-Options "nosniff"
         @mcp_opts method OPTIONS
