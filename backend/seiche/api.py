@@ -1702,6 +1702,30 @@ async def brief_text(_ident: dict | None = Depends(require_board)):
     return brief_mod.render_markdown(snap)
 
 
+class EventAnalysisBody(BaseModel):
+    question: str
+
+
+@app.post("/api/event-analysis")
+async def event_analysis(body: EventAnalysisBody, request: Request):
+    """Connect an unverified event to the live fleet readings, and no more.
+
+    POST keeps the supplied event text out of query strings and routine access
+    logs. It shares the existing assistant rate bucket because both routes can
+    spend an LLM call.
+    """
+    from seiche import event_analysis as event_analysis_mod
+
+    if not _ask_limiter.allow(_client_ip(request)):
+        raise HTTPException(429, "too many questions — slow down",
+                            headers={"Retry-After": "60"})
+    question = body.question.strip()
+    if not question or len(question) > 1200:
+        raise HTTPException(422, "question must be 1-1200 characters")
+    snap = await assemble.snapshot()
+    return await event_analysis_mod.analyze(question, snap)
+
+
 @app.get("/api/ask")
 async def ask(q: str, request: Request):
     """Desk assistant: answers grounded strictly in the live board.
