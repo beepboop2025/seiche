@@ -1,0 +1,76 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-15-the-calendar-is-carrying-the-strain-call-the-price-of-overnight-cash-sti",
+  "product": "seiche",
+  "slug": "2026-08-15-the-calendar-is-carrying-the-strain-call-the-price-of-overnight-cash-sti",
+  "date": "2026-08-15",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "The calendar is carrying the strain call; the price of overnight cash still says abundance",
+  "dek": "The board reads 45 out of 100, STRAIN; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.6%; plumbing leads market pricing by +37 percentile points.",
+  "canonical_url": "https://seiche.info/articles/2026-08-15-the-calendar-is-carrying-the-strain-call-the-price-of-overnight-cash-sti/",
+  "published_at": "2026-08-15T05:48:44Z",
+  "evidence_as_of": "2026-08-14",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-15-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1166,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "generation": {
+    "mode": "deterministic_fallback",
+    "model": null,
+    "passes": 0,
+    "dossier_sha256": "410c7d105cc08f02bf5d522fb613ed3a305c25ed83efe8c6166880a539e6a2d1",
+    "fallback_reason": "editorial model is not configured"
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
