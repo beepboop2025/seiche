@@ -19,13 +19,14 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
+from pydantic import BaseModel, ConfigDict
 
 from seiche import (
     accounts,
@@ -1412,9 +1413,6 @@ async def engine(name: str, _ident: dict | None = Depends(require_board)):
     return snap["engines"][name]
 
 
-from pydantic import BaseModel
-
-
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -1703,6 +1701,8 @@ async def brief_text(_ident: dict | None = Depends(require_board)):
 
 
 class EventAnalysisBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str
 
 

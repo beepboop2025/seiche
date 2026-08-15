@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from seiche import event_analysis
@@ -107,6 +108,24 @@ def _raw_fleet() -> dict:
     }
 
 
+def _valid_layer(name: str) -> dict:
+    payloads = {
+        "failure_radar": {"rows": [], "tiers": {}},
+        "rails": {"rows": [], "aggregate": {}},
+        "bondholders": {"us": {}, "uk": {}},
+        "deposit_migration": {"channels": {}, "coverage": {}},
+        "bond_book": {
+            "rows": [], "aggregate": {}, "counts": {}, "nowcast": {},
+        },
+        "short_pressure": {"us_rows": [], "uk_rows": [], "eu_rows": []},
+        "market_makers": {"live": {}},
+        "leverage": {"markets": [], "breadth": {}},
+        "tbtf": {"rows": [], "flagged": {}},
+        "crypto_exposure": {"rows": [], "compound_flags": []},
+    }
+    return {"as_of": "2026-08-14", "available": True, **payloads[name]}
+
+
 def test_compaction_preserves_official_partial_and_unavailable():
     raw = _raw_fleet()
     undertow = event_analysis.compact_undertow(raw["undertow"])
@@ -163,6 +182,61 @@ def test_entity_join_rejects_live_like_one_word_collisions():
     assert event_analysis.row_matches_question(chase, "What happened to JPMorgan?")
 
 
+def test_entity_join_canonicalizes_jpmorgan_spelling_without_prefix_leakage():
+    row = {
+        "name": "JPMorgan Chase Bank, National Association",
+        "ticker": "JPM",
+    }
+    for spelling in ("JPMorgan", "JP Morgan", "J.P. Morgan"):
+        assert event_analysis.row_matches_question(
+            row, f"What do the readings show for {spelling}?"
+        )
+
+    live_crypto_row = {
+        "slug": "jpmorgan",
+        "name": "JPMorgan Chase (Kinexys/JPMD)",
+        "status": "active",
+    }
+    payload = _valid_layer("crypto_exposure")
+    payload["rows"] = [live_crypto_row]
+    for spelling in ("JPMorgan", "JP Morgan", "J.P. Morgan"):
+        layer = event_analysis.compact_liquilens_layer(
+            "crypto_exposure", payload,
+            f"What do the readings show for {spelling}?",
+        )
+        assert [row["slug"] for row in layer["entity_matches"]] == ["jpmorgan"]
+    generic = event_analysis.compact_liquilens_layer(
+        "crypto_exposure", payload, "What do the readings show for Morgan?"
+    )
+    assert generic["entity_matches"] == []
+
+
+def test_exact_deutsche_bank_does_not_join_deutsche_pfandbriefbank():
+    payload = _valid_layer("failure_radar")
+    payload["rows"] = [
+        {"name": "Deutsche Pfandbriefbank AG", "tier": "WATCH"},
+        {"name": "Deutsche Bank AG", "tier": "BASELINE"},
+    ]
+    layer = event_analysis.compact_liquilens_layer(
+        "failure_radar", payload, "What do the readings show for Deutsche Bank?"
+    )
+    assert [row["name"] for row in layer["entity_matches"]] == [
+        "Deutsche Bank AG"
+    ]
+
+
+def test_exact_entity_row_outranks_and_suppresses_weak_single_token_row():
+    payload = _valid_layer("failure_radar")
+    payload["rows"] = [
+        {"name": "Barclays UK", "tier": "WATCH"},
+        {"name": "Barclays PLC", "tier": "BASELINE"},
+    ]
+    layer = event_analysis.compact_liquilens_layer(
+        "failure_radar", payload, "What do the readings show for Barclays?"
+    )
+    assert [row["name"] for row in layer["entity_matches"]] == ["Barclays PLC"]
+
+
 def test_short_pressure_keeps_non_us_entity_identity_and_state():
     layer = event_analysis.compact_liquilens_layer(
         "short_pressure",
@@ -214,11 +288,54 @@ def test_schema_drift_becomes_unavailable_instead_of_raising():
     assert empty["available"] is False
     malformed_rows = event_analysis.compact_liquilens_layer(
         "short_pressure",
-        {"as_of": "2026-08-14", "us_rows": {"not": "a list"}},
+        {
+            "as_of": "2026-08-14", "us_rows": {"not": "a list"},
+            "uk_rows": [], "eu_rows": [],
+        },
         "What happened at JPMorgan?",
     )
-    assert malformed_rows["available"] is True
-    assert malformed_rows["entity_matches"] == []
+    assert malformed_rows["available"] is False
+    assert "short_pressure.us_rows" in malformed_rows["reason"]
+    assert malformed_rows["source"].endswith("/public-signals/short-pressure")
+
+
+def test_every_liquilens_required_collection_fails_closed_on_schema_drift():
+    for name, fields in event_analysis._LIQUILENS_REQUIRED_TYPES.items():
+        for field, required_type in fields.items():
+            payload = _valid_layer(name)
+            payload[field] = {} if required_type is list else []
+            layer = event_analysis.compact_liquilens_layer(
+                name, payload, "What happened?"
+            )
+            assert layer["available"] is False
+            assert f"{name}.{field}" in layer["reason"]
+            assert layer["source"].endswith(
+                event_analysis._LIQUILENS_PATHS[name]
+            )
+
+            status = event_analysis.source_status({
+                "seiche": {}, "undertow": {},
+                "liquilens": {"layers": {name: layer}},
+            })[-1]
+            assert name in status["layers_unavailable"]
+            assert f"{name}.{field}" in status["layer_reasons"][name]
+
+        missing = _valid_layer(name)
+        missing_field = next(iter(fields))
+        missing.pop(missing_field)
+        layer = event_analysis.compact_liquilens_layer(
+            name, missing, "What happened?"
+        )
+        assert layer["available"] is False
+        assert f"{name}.{missing_field} is missing" in layer["reason"]
+
+
+def test_valid_sparse_liquilens_contracts_remain_available():
+    for name in event_analysis._LIQUILENS_PATHS:
+        layer = event_analysis.compact_liquilens_layer(
+            name, _valid_layer(name), "What happened?"
+        )
+        assert layer["available"] is True
 
 
 def test_upstream_response_body_has_a_hard_byte_budget():
@@ -234,17 +351,101 @@ def test_upstream_response_body_has_a_hard_byte_budget():
     assert result["_error"] == "response exceeded byte budget"
 
 
+class _ChunkedModelStream(httpx.AsyncByteStream):
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+@pytest.mark.parametrize("route", ["free", "env"])
+def test_both_model_routes_reject_oversized_chunked_wire_responses(
+        monkeypatch, route):
+    chunks = [b'{"choices":[{"message":{"content":"'] + [
+        b"x" * 8_192
+        for _ in range(event_analysis.MAX_MODEL_HTTP_RESPONSE_BYTES // 8_192 + 1)
+    ]
+    transport = httpx.MockTransport(lambda _request: httpx.Response(
+        200,
+        headers={"Transfer-Encoding": "chunked"},
+        stream=_ChunkedModelStream(chunks),
+    ))
+    real_client = httpx.AsyncClient
+
+    def bounded_test_client(*_args, **kwargs):
+        return real_client(
+            transport=transport,
+            timeout=kwargs.get("timeout"),
+            follow_redirects=kwargs.get("follow_redirects", False),
+        )
+
+    monkeypatch.setattr(event_analysis.httpx, "AsyncClient", bounded_test_client)
+    messages = [{"role": "user", "content": "bounded"}]
+    if route == "free":
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-free-key")
+        call = event_analysis._via_event_free_router(messages)
+    else:
+        monkeypatch.setenv("SEICHE_LLM_BASE_URL", "https://configured.test/v1")
+        monkeypatch.setenv("SEICHE_LLM_API_KEY", "test-explicit-key")
+        call = event_analysis._via_event_env(messages)
+
+    with pytest.raises(event_analysis._ModelTransportError,
+                       match="wire byte budget"):
+        asyncio.run(call)
+    assert event_analysis.MAX_PROVIDER_OUTPUT_BYTES < \
+        event_analysis.MAX_MODEL_HTTP_RESPONSE_BYTES
+
+
+def test_free_model_route_is_fixed_to_capped_free_failover(monkeypatch):
+    seen = {}
+    contract = _provider_contract()
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["headers"] = request.headers
+        seen["body"] = json.loads(request.content)
+        response_body = json.dumps({
+            "choices": [{"message": {"content": contract}}],
+        }).encode()
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            stream=_ChunkedModelStream([response_body]),
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.AsyncClient
+
+    def bounded_test_client(*_args, **kwargs):
+        return real_client(
+            transport=transport,
+            timeout=kwargs.get("timeout"),
+            follow_redirects=kwargs.get("follow_redirects", False),
+        )
+
+    monkeypatch.setattr(event_analysis.httpx, "AsyncClient", bounded_test_client)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-free-key")
+    result = asyncio.run(event_analysis._via_event_free_router([
+        {"role": "user", "content": "bounded"},
+    ]))
+
+    assert result == contract
+    assert seen["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert seen["headers"]["accept-encoding"] == "identity"
+    assert seen["body"]["model"] == "openrouter/free"
+    assert seen["body"]["provider"]["allow_fallbacks"] is True
+
+
 def test_final_pack_prunes_deterministically_to_hard_budget():
     huge = {f"field_{index:02d}": "x" * 2_000 for index in range(64)}
     raw = _raw_fleet()
     for name in event_analysis._LIQUILENS_PATHS:
         raw[name] = {
-            "as_of": "2026-08-14",
-            "available": True,
+            **_valid_layer(name),
             "regime": "WATCH",
             "regime_reasons": huge,
-            "aggregate": huge,
-            "rows": [],
         }
     snapshot = _snapshot()
     snapshot["headline"] = huge
@@ -269,8 +470,8 @@ def test_analyze_sends_only_event_and_reading_pack(monkeypatch):
     async def no_env(_messages):
         raise AssertionError("the second route should not run after success")
 
-    monkeypatch.setattr(event_analysis.ai, "_via_router", fake_router)
-    monkeypatch.setattr(event_analysis.ai, "_via_env", no_env)
+    monkeypatch.setattr(event_analysis, "_via_event_free_router", fake_router)
+    monkeypatch.setattr(event_analysis, "_via_event_env", no_env)
     result = asyncio.run(event_analysis.analyze(
         "JPMorgan ended its relationship with Polymarket", _snapshot(),
         raw_fleet=_raw_fleet(),
@@ -305,8 +506,8 @@ def test_event_identity_markers_are_redacted_before_provider(monkeypatch):
     async def no_env(_messages):
         raise AssertionError("valid contract should stop routing")
 
-    monkeypatch.setattr(event_analysis.ai, "_via_router", fake_router)
-    monkeypatch.setattr(event_analysis.ai, "_via_env", no_env)
+    monkeypatch.setattr(event_analysis, "_via_event_free_router", fake_router)
+    monkeypatch.setattr(event_analysis, "_via_event_env", no_env)
     result = asyncio.run(event_analysis.analyze(
         "Forwarded from: Alice @alice123\nSee https://t.me/alice123/42 for the event",
         _snapshot(), raw_fleet=_raw_fleet(),
@@ -353,12 +554,12 @@ def test_hostile_or_uncited_provider_output_is_rejected(monkeypatch):
     async def no_env(_messages):
         return None
 
-    monkeypatch.setattr(event_analysis.ai, "_via_env", no_env)
+    monkeypatch.setattr(event_analysis, "_via_event_env", no_env)
     for attack in attacks:
         async def hostile(_messages, answer=attack):
             return answer
 
-        monkeypatch.setattr(event_analysis.ai, "_via_router", hostile)
+        monkeypatch.setattr(event_analysis, "_via_event_free_router", hostile)
         result = asyncio.run(event_analysis.analyze(
             "an unverified event", _snapshot(), raw_fleet=_raw_fleet()
         ))
@@ -372,8 +573,8 @@ def test_no_llm_returns_readings_without_inventing_connection(monkeypatch):
     async def unavailable(_messages):
         return None
 
-    monkeypatch.setattr(event_analysis.ai, "_via_router", unavailable)
-    monkeypatch.setattr(event_analysis.ai, "_via_env", unavailable)
+    monkeypatch.setattr(event_analysis, "_via_event_free_router", unavailable)
+    monkeypatch.setattr(event_analysis, "_via_event_env", unavailable)
     result = asyncio.run(event_analysis.analyze(
         "an unverified event", _snapshot(), raw_fleet=_raw_fleet()
     ))
@@ -411,3 +612,15 @@ def test_event_analysis_api_is_post_only_and_rate_limited_like_ask(monkeypatch):
     assert client.get("/api/event-analysis").status_code == 405
     assert client.post("/api/event-analysis", json={"question": " "},
                        headers={"x-forwarded-for": "198.51.100.82"}).status_code == 422
+    assert client.post(
+        "/api/event-analysis",
+        json={"question": "valid", "telegram_user_id": "123456"},
+        headers={"x-forwarded-for": "198.51.100.83"},
+    ).status_code == 422
+
+    utf8_response = client.post(
+        "/api/event-analysis",
+        json={"question": "水" * 1_200},
+        headers={"x-forwarded-for": "198.51.100.84"},
+    )
+    assert utf8_response.status_code == 200

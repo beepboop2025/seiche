@@ -1043,15 +1043,28 @@ def test_release_health_capability_is_loopback_only():
 def test_event_analysis_edge_is_post_only_and_excluded_from_public_get():
     caddy = CADDYFILE.read_text()
     route = "/api/event-analysis"
-    public_matcher = caddy[caddy.index("@public {") : caddy.index("@login {")]
-    post_matcher = caddy[
+    public_matcher = caddy[
+        caddy.index("@public {") : caddy.index("@event_analysis {")
+    ]
+    event_handler = caddy[
+        caddy.index("@event_analysis {") : caddy.index("@login {")
+    ]
+    other_post_matcher = caddy[
         caddy.index("@login {") : caddy.index("handle @public {")
     ]
 
     assert "method GET HEAD" in public_matcher
     assert route not in public_matcher
-    assert "method POST" in post_matcher
-    assert route in post_matcher
+    assert "method POST" in event_handler
+    assert route in event_handler
+    assert "request_body" in event_handler
+    assert "max_size 8KiB" in event_handler
+    assert "max_size 8KB" not in event_handler
+    assert "reverse_proxy 127.0.0.1:8787" in event_handler
+    assert "/api/auth/login" not in event_handler
+    assert route not in other_post_matcher
+    assert "/api/auth/login" in other_post_matcher
+    assert caddy.count(route) == 1
 
 
 def test_deploy_smoke_runs_private_delivery_contracts():

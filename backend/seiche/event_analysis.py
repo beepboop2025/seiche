@@ -42,6 +42,10 @@ FLEET_CACHE_TTL_S = max(
 MAX_UPSTREAM_RESPONSE_BYTES = 512 * 1024
 MAX_READING_PACK_BYTES = 48 * 1024
 MAX_MODEL_ENVELOPE_BYTES = 64 * 1024
+# Wire bytes are capped independently from the much smaller structured
+# contract accepted below.  The cap is enforced while streaming, before JSON
+# decoding or joining response chunks.
+MAX_MODEL_HTTP_RESPONSE_BYTES = 64 * 1024
 MAX_PROVIDER_OUTPUT_BYTES = 8 * 1024
 MAX_EVENT_TEXT_CHARS = 1_200
 MAX_ENTITY_MATCHES = 4
@@ -58,6 +62,35 @@ _LIQUILENS_PATHS = {
     "leverage": "/public-signals/leverage",
     "tbtf": "/public-signals/tbtf",
     "crypto_exposure": "/public-signals/crypto-exposure",
+}
+
+# Required fields come from each public LiquiLens endpoint's actual response
+# contract.  Optional fields are validated when present so that a sibling
+# schema change cannot be silently rendered as an empty/healthy reading.
+_LIQUILENS_REQUIRED_TYPES = {
+    "failure_radar": {"rows": list, "tiers": dict},
+    "rails": {"rows": list, "aggregate": dict},
+    "bondholders": {"us": dict, "uk": dict},
+    "deposit_migration": {"channels": dict, "coverage": dict},
+    "bond_book": {
+        "rows": list, "aggregate": dict, "counts": dict, "nowcast": dict,
+    },
+    "short_pressure": {"us_rows": list, "uk_rows": list, "eu_rows": list},
+    "market_makers": {"live": dict},
+    "leverage": {"markets": list, "breadth": dict},
+    "tbtf": {"rows": list, "flagged": dict},
+    "crypto_exposure": {"rows": list, "compound_flags": list},
+}
+_LIQUILENS_OPTIONAL_TYPES = {
+    "failure_radar": {"excluded_stale": list},
+    "deposit_migration": {"cannot_see": list},
+    "short_pressure": {
+        "compound_flags": list, "coverage": dict, "form_sho": dict,
+    },
+    "market_makers": {"regime_notes": list, "break_mismatch": bool},
+    "leverage": {
+        "leverage": dict, "stale_detail": dict, "countries": list,
+    },
 }
 
 _RAW_CACHE: dict[str, Any] = {"at": 0.0, "payload": None}
@@ -271,7 +304,8 @@ _AMBIGUOUS_SINGLE_TOKENS = {
 _EXPLICIT_IDENTIFIER_KEYS = {"ticker", "isin", "slug"}
 _LEGAL_SUFFIX_WORDS = {
     "national", "association", "limited", "ltd", "plc", "inc",
-    "company", "corporation", "holdings", "holding",
+    "company", "corporation", "holdings", "holding", "corp", "llc",
+    "ag", "sa", "nv", "se",
 }
 
 
@@ -303,12 +337,52 @@ def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
                for index in range(len(haystack) - len(needle) + 1))
 
 
-def row_matches_question(row: dict, question: str) -> bool:
-    """Conservative join: full names, strong aliases, or explicit identifiers."""
+def _compact_sequences(words: list[str], max_words: int = 4) -> set[str]:
+    """Contiguous compact forms, e.g. JP Morgan/J.P. Morgan -> jpmorgan."""
+    forms = set(words)
+    for start in range(len(words)):
+        for width in range(2, min(max_words, len(words) - start) + 1):
+            forms.add("".join(words[start:start + width]))
+    return forms
+
+
+def _brand_forms(alias_words: list[str]) -> list[tuple[list[str], int]]:
+    """Return full and clearly bounded brand forms with match strengths."""
+    core = list(alias_words)
+    while core and core[-1] in _LEGAL_SUFFIX_WORDS:
+        core.pop()
+    forms = [(core, 100)] if core else []
+
+    # Long legal display names commonly append "Bank" and an ambiguous brand
+    # component (JPMorgan Chase Bank, N.A.).  Removing them is safe only when a
+    # distinctive brand remains; it must never turn "Deutsche Bank" into the
+    # weak token "Deutsche".
+    brand = list(core)
+    if len(brand) > 2 and brand[-1] in {"bank", "banks", "group"}:
+        brand.pop()
+    while (len(brand) > 1
+           and brand[-1] in _AMBIGUOUS_SINGLE_TOKENS
+           and any(word not in _AMBIGUOUS_SINGLE_TOKENS
+                   for word in brand[:-1])):
+        brand.pop()
+    if brand and brand != core:
+        forms.append((brand, 95))
+    return forms
+
+
+def _entity_match_score(row: dict, question: str) -> int:
+    """Rank only exact/strong aliases and explicit identifiers.
+
+    A score is used rather than a boolean so exact names and compact spelling
+    variants outrank a fallback distinctive-token match.  A caller may then
+    drop weak candidates whenever an exact candidate exists.
+    """
     if not isinstance(row, dict) or not isinstance(question, str):
-        return False
+        return 0
     q_words = re.findall(r"[a-z0-9]+", question.lower())
+    q_compact = _compact_sequences(q_words)
     q_tokens = _tokens(question) - _ENTITY_STOP
+    best = 0
     for kind, alias in _alias_items(row):
         alias_words = re.findall(r"[a-z0-9]+", alias.lower())
         if not alias_words:
@@ -325,39 +399,60 @@ def row_matches_question(row: dict, question: str) -> bool:
                              or re.search(
                                  rf"(?<![A-Za-z0-9]){re.escape(alias.upper())}"
                                  rf"(?![A-Za-z0-9])", question)):
-                return True
+                best = max(best, 90)
+            # Slugs are already sibling-published canonical identifiers. Match
+            # their full compact form so `jpmorgan` also recognizes JP Morgan
+            # and J.P. Morgan, without introducing prefix/substr matching.
+            if (kind == "slug" and len("".join(alias_words)) >= 6
+                    and "".join(alias_words) in q_compact):
+                best = max(best, 90)
             continue
 
-        # A complete display name/alias is always strong.  Word-token matching
-        # avoids the old "ally" in "really" style substring joins.
-        core_words = list(alias_words)
-        while core_words and core_words[-1] in _LEGAL_SUFFIX_WORDS:
-            core_words.pop()
-        if len(core_words) >= 2 and _contains_token_sequence(q_words, core_words):
-            return True
+        # Full names and compact punctuation/spacing variants are strongest.
+        # Exact compact equality, not substring containment, is what makes
+        # JPMorgan, JP Morgan, and J.P. Morgan equivalent.
+        for brand_words, score in _brand_forms(alias_words):
+            single_is_distinctive = (
+                len(brand_words) == 1
+                and brand_words[0] not in _AMBIGUOUS_SINGLE_TOKENS
+                and len(brand_words[0]) >= 4
+            )
+            if ((len(brand_words) >= 2 or single_is_distinctive)
+                    and (_contains_token_sequence(q_words, brand_words)
+                         or "".join(brand_words) in q_compact)):
+                best = max(best, score)
 
         significant = _tokens(alias) - _ENTITY_STOP
         overlap = significant & q_tokens
         if len(overlap) >= 2:
-            return True
+            best = max(best, 80)
 
         # One token is accepted only when it is genuinely distinctive.  This
         # keeps "JPMorgan"/"Barclays" useful while rejecting America, city,
-        # first, capital, Chase, and other ordinary one-word collisions.
-        if len(overlap) == 1:
-            token = next(iter(overlap))
-            if token not in _AMBIGUOUS_SINGLE_TOKENS and (
-                    len(token) >= 7
+        # first, capital, Chase, and other ordinary one-word collisions.  It is
+        # also allowed through a compact question form (JP Morgan -> JPMorgan),
+        # but only when it is the alias's sole distinctive token.  Thus an
+        # exact Deutsche Bank row cannot drag in Deutsche Pfandbriefbank.
+        distinctive = significant - _AMBIGUOUS_SINGLE_TOKENS
+        compact_overlap = {token for token in distinctive if token in q_compact}
+        if len(distinctive) == 1 and compact_overlap:
+            token = next(iter(distinctive))
+            if (len(token) >= 7
                     or re.search(rf"(?<![A-Za-z0-9]){re.escape(token.upper())}"
                                  rf"(?![A-Za-z0-9])", question)):
-                return True
+                best = max(best, 70)
 
     cert = row.get("cert")
     if isinstance(cert, (int, str)) and str(cert).isdigit() and re.search(
             rf"\b(?:cert|certificate)\s*(?:number|no\.?|#)?\s*{re.escape(str(cert))}\b",
             question, flags=re.IGNORECASE):
-        return True
-    return False
+        best = max(best, 90)
+    return best
+
+
+def row_matches_question(row: dict, question: str) -> bool:
+    """Conservative public predicate for entity-to-question joins."""
+    return _entity_match_score(row, question) > 0
 
 
 _ROW_FIELDS = {
@@ -374,8 +469,9 @@ _ROW_FIELDS = {
         "ugl_coverage", "notes",
     ),
     "short_pressure": (
-        "bank", "issuer", "cert", "holdco", "ticker", "isin", "country",
-        "exchange", "pressure_state", "state", "reasons", "short_interest",
+        "name", "slug", "bank", "issuer", "cert", "holdco", "ticker",
+        "isin", "country", "exchange", "pressure_state", "state", "reasons",
+        "short_interest",
         "short_volume", "panic_volume_marker", "undertow_score_v02",
         "compound_flag", "compound_note", "run_risk_note", "named",
         "named_total_pct", "n_holders", "new_entrants_30d", "position_date",
@@ -405,19 +501,42 @@ def _matched_rows(name: str, data: dict, question: str) -> list[dict]:
         value = data.get("rows")
         rows = value if isinstance(value, list) else []
     fields = _ROW_FIELDS.get(name, _ENTITY_KEYS)
+    ranked = []
+    for index, row in enumerate(rows):
+        score = _entity_match_score(row, question) if isinstance(row, dict) else 0
+        if score:
+            ranked.append((score, index, row))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    if ranked and ranked[0][0] >= 80:
+        ranked = [item for item in ranked if item[0] >= 80]
+
     out = []
-    for row in rows:
-        if isinstance(row, dict) and row_matches_question(row, question):
-            picked = _pick(row, fields)
-            identity = "|".join(_aliases(row)) or json.dumps(
-                _pick(row, ("cert", "isin")), sort_keys=True, default=str,
-            )
-            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
-            picked["evidence_id"] = f"liquilens:{name}:entity:{digest}"
-            out.append(picked)
-            if len(out) >= MAX_ENTITY_MATCHES:
-                break
+    for _, _, row in ranked[:MAX_ENTITY_MATCHES]:
+        picked = _pick(row, fields)
+        identity = "|".join(_aliases(row)) or json.dumps(
+            _pick(row, ("cert", "isin")), sort_keys=True, default=str,
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+        picked["evidence_id"] = f"liquilens:{name}:entity:{digest}"
+        out.append(picked)
     return out
+
+
+def _liquilens_schema_reason(name: str, data: dict) -> str | None:
+    expected = {
+        **_LIQUILENS_REQUIRED_TYPES[name],
+        **_LIQUILENS_OPTIONAL_TYPES.get(name, {}),
+    }
+    required = _LIQUILENS_REQUIRED_TYPES[name]
+    for field in required:
+        if field not in data:
+            return f"invalid reading schema: {name}.{field} is missing"
+    for field, field_type in expected.items():
+        if field in data and not isinstance(data[field], field_type):
+            kind = "array" if field_type is list else (
+                "object" if field_type is dict else field_type.__name__)
+            return f"invalid reading schema: {name}.{field} must be an {kind}"
+    return None
 
 
 def _without_history(row: Any) -> Any:
@@ -447,10 +566,9 @@ def compact_liquilens_layer(name: str, data: dict | None,
                            evidence_id=evidence_id),
             **_pick(data, ("as_of", "stale", "regime", "badge")),
         }
-    if not data or not any(key in data for key in (
-            "as_of", "data_asof", "regime", "badge", "rows", "aggregate",
-            "channels", "live", "markets", "tiers", "us", "uk")):
-        return _unavailable(source, "invalid reading schema",
+    schema_reason = _liquilens_schema_reason(name, data)
+    if schema_reason:
+        return _unavailable(source, schema_reason,
                             evidence_id=evidence_id)
 
     out = {
@@ -542,6 +660,125 @@ async def _fetch_json(client: httpx.AsyncClient, url: str) -> dict:
         return body
     except (httpx.HTTPError, TimeoutError, OSError) as exc:
         return {"_error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
+class _ModelTransportError(RuntimeError):
+    """The event-specific model transport rejected an unsafe response."""
+
+
+# OpenRouter's free meta-model selects and fails over only among models whose
+# price is zero.  Other providers are deliberately not inferred from ambient
+# keys: a potentially billable endpoint is eligible only through the explicit
+# SEICHE_LLM_BASE_URL route below.
+_FREE_EVENT_ROUTES = (
+    {
+        "name": "openrouter-free",
+        "base_url": "https://openrouter.ai/api/v1",
+        "key_env": "OPENROUTER_API_KEY",
+        "model": "openrouter/free",
+        "extra_body": {"provider": {"allow_fallbacks": True}},
+    },
+)
+
+
+async def _capped_openai_chat(
+        *, base_url: str, api_key: str, model: str,
+        messages: list[dict], extra_body: dict | None = None) -> str:
+    """Stream one OpenAI-compatible reply under a hard wire-byte ceiling."""
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 700,
+    }
+    if extra_body:
+        payload.update(extra_body)
+    headers = {"Accept-Encoding": "identity"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    timeout = httpx.Timeout(60.0, connect=10.0)
+    async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False) as client:
+        async with client.stream(
+                "POST", f"{base_url.rstrip('/')}/chat/completions",
+                headers=headers, json=payload) as response:
+            encoding = response.headers.get("content-encoding", "identity")
+            if encoding.lower().strip() not in {"", "identity"}:
+                raise _ModelTransportError(
+                    "compressed model response was not accepted")
+            length = response.headers.get("content-length")
+            try:
+                declared_length = int(length) if length is not None else None
+            except ValueError as exc:
+                raise _ModelTransportError(
+                    "model response content-length was invalid") from exc
+            if (declared_length is not None
+                    and declared_length > MAX_MODEL_HTTP_RESPONSE_BYTES):
+                raise _ModelTransportError(
+                    "model response exceeded wire byte budget")
+
+            chunks = []
+            size = 0
+            async for chunk in response.aiter_raw(chunk_size=8 * 1024):
+                size += len(chunk)
+                if size > MAX_MODEL_HTTP_RESPONSE_BYTES:
+                    raise _ModelTransportError(
+                        "model response exceeded wire byte budget")
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+            response.raise_for_status()
+
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise _ModelTransportError("model response was not JSON") from exc
+    if not isinstance(body, dict):
+        raise _ModelTransportError("model response was not an object")
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise _ModelTransportError("model response choices were invalid")
+    choice = choices[0]
+    message = choice.get("message") if isinstance(choice, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        raise _ModelTransportError("model response content was not text")
+    return content
+
+
+async def _via_event_free_router(messages: list[dict]) -> str | None:
+    """Use only reviewed free routes; OpenRouter performs free-model failover."""
+    last_error: Exception | None = None
+    attempted = False
+    for route in _FREE_EVENT_ROUTES:
+        key = os.environ.get(route["key_env"], "")
+        if not key:
+            continue
+        attempted = True
+        try:
+            return await _capped_openai_chat(
+                base_url=route["base_url"], api_key=key,
+                model=route["model"], messages=messages,
+                extra_body=route.get("extra_body"),
+            )
+        except Exception as exc:  # noqa: BLE001 - try the next reviewed route
+            last_error = exc
+    if attempted and last_error:
+        raise last_error
+    return None
+
+
+async def _via_event_env(messages: list[dict]) -> str | None:
+    """Use the explicitly configured OpenAI-compatible endpoint, if any."""
+    base_url = os.environ.get("SEICHE_LLM_BASE_URL")
+    if not base_url:
+        return None
+    return await _capped_openai_chat(
+        base_url=base_url,
+        api_key=os.environ.get("SEICHE_LLM_API_KEY", ""),
+        model=os.environ.get("SEICHE_LLM_MODEL", "gpt-4o-mini"),
+        messages=messages,
+    )
 
 
 async def _raw_fleet() -> dict[str, dict]:
@@ -986,11 +1223,21 @@ def source_status(pack: dict) -> list[dict]:
     unavailable = [name for name, row in layers.items()
                    if not isinstance(row, dict)
                    or row.get("available", True) is False]
+    layer_reasons = {
+        name: _safe_text(
+            (row.get("reason") if isinstance(row, dict) else None)
+            or "invalid compact reading", 160,
+        )
+        for name, row in sorted(layers.items())
+        if not isinstance(row, dict)
+        or row.get("available", True) is False
+    }
     as_of = max((str(row.get("as_of")) for row in layers.values()
                  if isinstance(row, dict) and row.get("as_of")), default=None)
     rows.append({"product": "liquilens", "available": bool(available),
                  "as_of": as_of, "layers_available": available,
-                 "layers_unavailable": unavailable})
+                 "layers_unavailable": unavailable,
+                 "layer_reasons": layer_reasons})
     return rows
 
 
@@ -1067,8 +1314,8 @@ async def analyze(question: str, snapshot: dict,
         {"role": "user", "content": envelope_bytes.decode("utf-8")},
     ]
     errors = []
-    for route, fn in (("free-llm-router", ai._via_router),
-                      ("env-endpoint", ai._via_env)):
+    for route, fn in (("free-llm-router", _via_event_free_router),
+                      ("env-endpoint", _via_event_env)):
         try:
             raw_answer = await fn(messages)
             if raw_answer:

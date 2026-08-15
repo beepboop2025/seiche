@@ -250,11 +250,27 @@ api.seiche.info {
     # the form. Event analysis is POST-only so an unverified question stays out
     # of URLs and routine access logs.
     #
-    # This is not an auth route. It is grouped with @login purely because that
-    # is where POST lives; the handler takes no token and gates no content.
+    # Event analysis has its own edge handler so its request body is rejected
+    # before FastAPI parsing/validation. 8 KiB comfortably contains the API's
+    # 1,200-character UTF-8 contract plus JSON framing.
+    @event_analysis {
+        method POST
+        path /api/event-analysis
+    }
+    handle @event_analysis {
+        request_body {
+            max_size 8KiB
+        }
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header X-Content-Type-Options "nosniff"
+        reverse_proxy 127.0.0.1:8787
+    }
+    # Remaining public POST routes share the normal uncapped application
+    # contract; the event-specific ceiling must not affect their payloads.
     @login {
         method POST
-        path /api/auth/login /api/alerts/prefs /api/subscribe /api/event-analysis
+        path /api/auth/login /api/alerts/prefs /api/subscribe
     }
     handle @public {
         header Access-Control-Allow-Origin "*"
