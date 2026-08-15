@@ -1,0 +1,55 @@
+The new change in the dollar-funding picture is a reserve drain meeting a dated settlement—not a spike in the price of overnight cash.
+
+Reserves fell $49.3B in the week through 2026-08-12 to $2,944B. The Treasury General Account rebuilt $56.6B and foreign RRP parking rose $39.7B. Seiche’s board reads 45.2, STRAIN, led by the dated reserve path, which contributes 11.0 points and is pinned near its ceiling. The immediate observable test is the $266B auction settlement on 2026-08-20.
+
+The thesis is narrow: dollar-funding capacity may be tightening through the timing and location of balances before an aggregate overnight-cash shortage appears in market prices. The evidence does not establish a funding event. Indeed, the current price of overnight cash argues against one.
+
+## The mechanism or historical setup
+
+The weekly reserve ledger shows the immediate path of the drain. The TGA rebuild and increase in foreign RRP parking were partly offset by a $36.5B release from the residual, producing the $49.3B decline in reserves. Six legs sum to the reserve change to the dollar, although $18.9B of the balance sheet, or 0.28% of assets, remains in an unnamed residual. The [data overview](https://seiche.info/data/overview.json) therefore identifies the accounting movements without fully resolving every balance-sheet shift.
+
+A separate official-sector measure points in the same direction. Foreign officials cut Fed custody Treasuries by $90.2B over 13 weeks while foreign RRP parking rose $34.8B. The combined official footprint nevertheless fell $55.5B to $2,954B. Seiche calculates that 62% of the custody decline left the official sector rather than moving within it. That is evidence of a smaller official footprint, not proof of a funding shortage.
+
+The mechanism becomes relevant at settlement. Seiche’s reserve-path model places reserves below its estimated demand-curve kink as the $266B settlement arrives. Its central path for 2026-08-20 is $2,935.2B, while its lower error-band outcome is $2,882.1B. A settlement must be financed through dealer and bank balance sheets; the question is whether deploying those balance sheets changes the price or availability of secured funding.
+
+## Quantified evidence with as-of context
+
+The STRAIN label is a Seiche derivation, not an observed market price. The board has full input coverage, but its largest contribution comes from the dated reserve path rather than a live funding-rate dislocation.
+
+The reserve-demand model estimates a kink at $3,703.1B as of 2026-08-12, putting reserves $759B below that estimate. Its fit has an R-squared of 0.62. Yet the contemporaneous secured-rate evidence diverges: SOFR was 1.7bp below IORB as of 2026-08-12, compared with a model-predicted spread of negative 0.4bp. A negative SOFR-IORB spread is an abundance signal, not a scarcity print.
+
+The same split appears in Seiche’s plumbing-versus-market comparison. Plumbing was at the 64th percentile and market stress at the 27th percentile as of 2026-08-13, a gap of 37 percentile points. The market inputs included VIX at 14.63, high-yield OAS at 2.71%, investment-grade OAS at 0.79%, and 10-year realized volatility at 5.32bp per day. The percentile gap is a Seiche calculation: it says plumbing leads price; it does not say market stress has begun.
+
+The calendar lens is similarly bounded. Its read for a SOFR-IORB pop of at least 10bp within five business days was 9.5% as of 2026-08-13. The model reports that its curve beats climatology out of sample, but also cautions that multi-week cumulative figures are upper bounds because funding pops cluster. The five-business-day reading is a monitored calendar risk, not literal odds.
+
+## The strongest counter-case
+
+The strongest counter-case is that funding capacity is not currently tight where a binding constraint should first appear: in the price of overnight cash and use of the official backstop.
+
+SOFR was 3.62% and EFFR was 3.63% as of 2026-08-13, while IORB was 3.65% as of 2026-08-17. Secured overnight cash was trading below the administered rate. Standing Repo Facility accepted take-up was $0.00B as of 2026-08-14. Market stress was at only the 27th percentile of its own history.
+
+This case can defeat the thesis. Reserves can fall, their distribution can shift, and large settlements can clear without a meaningful rise in funding costs if banks and dealers retain enough balance-sheet elasticity. The strain case rests primarily on a modelled reserve path and slow-moving ledger structure; the counter-case rests on current rates and facility use. Seiche’s confidence is therefore guarded.
+
+## A falsifiable next test
+
+The test is the settlement window around 2026-08-20. The tightening thesis gains support only if the $266B settlement is followed within five business days by a SOFR-IORB pop of at least 10bp relative to its trailing five-business-day median—the dossier’s defined funding-event statistic—or by Standing Repo Facility accepted take-up above $0.00B.
+
+If neither condition occurs, the claim that this dated reserve drain is currently constraining system dollar-funding capacity fails this test. That outcome would not erase the reserve decline, official-sector changes, or calendar pressure. It would show that private balance sheets absorbed them without observable funding stress.
+
+Later watch dates remain 2026-08-31, with a $24B settlement and a lower-band reserve estimate of $2,849.6B, and 2026-09-15, with a lower-band estimate of $2,831.1B. These are reserve-path scenarios, not forecasts of a dislocation.
+
+## Follow the pressure chain
+
+Follow the sequence rather than a single print: TGA rebuilding and foreign RRP parking remove or redirect balances; lower reserves meet settlement needs; banks and dealers decide whether to deploy balance sheets; secured rates and official-facility use reveal whether that deployment has become costly.
+
+For now, the chain breaks at the final link. The ledger and calendar describe pressure, while SOFR and SRF usage describe accommodation. That permits a STRAIN reading without a claim that a funding event is under way.
+
+## Sources, method, and limits
+
+Observed inputs and series are available in Seiche’s [data overview](https://seiche.info/data/overview.json) and [series index](https://api.seiche.info/api/series/index.json). The current board is published in the [daily dispatch](https://seiche.info/dispatches/2026-08-15-daily), with prior publications in the [dispatch archive](https://seiche.info/dispatches/). Definitions for the composite, reserve path, kink estimate, and calendar tools are in the [methodology](https://seiche.info/methodology). Desk updates are available through the [Liquidity Lab Desk channel](https://t.me/LiquidityLabDesk).
+
+**Research boundary:** Seiche’s composite is a deterministic synthesis, not a market price, and its confidence measure reflects agreement among independent signals rather than the probability of a market outcome. The reserve path uses trailing balance-sheet drift and seasonal Treasury-account assumptions with error bands. Historical transforms used in related tools rely on final or current-vintage history, do not reconstruct what was publicly knowable on each historical date, and are not eligible as publication-vintage backtests or real-money evidence.
+
+Seiche covers system dollar-funding capacity. For institution and lender balance-sheet risk, see [LiquiLens](https://liquilens.in/). For market liquidity, crowding, and exit capacity, see [Undertow](https://liquilens-undertow.com/).
+
+Research and market data, not investment advice.
