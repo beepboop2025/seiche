@@ -609,7 +609,10 @@ def test_event_analysis_api_is_post_only_and_rate_limited_like_ask(monkeypatch):
     assert response.status_code == 200
     assert seen == {"question": "What do the readings say?",
                     "snapshot": _snapshot()}
-    assert client.get("/api/event-analysis").status_code == 405
+    wrong_method = client.get("/api/event-analysis")
+    assert wrong_method.status_code == 405
+    assert wrong_method.headers["allow"] == "POST"
+    assert client.put("/api/event-analysis").status_code == 405
     assert client.post("/api/event-analysis", json={"question": " "},
                        headers={"x-forwarded-for": "198.51.100.82"}).status_code == 422
     assert client.post(

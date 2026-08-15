@@ -1726,6 +1726,20 @@ async def event_analysis(body: EventAnalysisBody, request: Request):
     return await event_analysis_mod.analyze(question, snap)
 
 
+@app.api_route(
+    "/api/event-analysis",
+    methods=["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def event_analysis_method_not_allowed():
+    """Keep the POST-only contract ahead of the root static-file mount."""
+    return JSONResponse(
+        status_code=405,
+        content={"detail": "method not allowed"},
+        headers={"Allow": "POST"},
+    )
+
+
 @app.get("/api/ask")
 async def ask(q: str, request: Request):
     """Desk assistant: answers grounded strictly in the live board.
