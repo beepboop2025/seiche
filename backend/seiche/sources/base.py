@@ -87,6 +87,10 @@ class SourceFault(Exception):
         super().__init__(f"{source}: {detail}")
 
 
+class SourcePolicyUnavailableError(RuntimeError):
+    """A source request was deliberately withheld by an access policy."""
+
+
 @dataclass(frozen=True, slots=True)
 class RawCapture:
     """Exact immutable response bytes retained before parsing."""

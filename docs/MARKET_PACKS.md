@@ -125,6 +125,16 @@ Collector outcomes and local snapshots publish in completion order, so a slow
 or retrying foreign adapter cannot delay a finished market. The Global Tide is
 sealed at the end of the due cycle because it is inherently cross-market.
 
+Collector outcomes have four explicit states. `SUCCESS` means observations
+were durably written. `UNAVAILABLE` means a local access policy deliberately
+withheld the request, so it performs no retry and does not increment or open a
+source circuit. `FAILED` means a real acquisition, parsing, or persistence
+fault. `CIRCUIT_OPEN` means repeated real failures are cooling down. Every
+non-`SUCCESS` state remains a product fault and prevents the affected inputs
+from being treated as fresh. An all-`UNAVAILABLE` backfill exits successfully
+as an operational abstention, but writes no completion marker and therefore
+does not claim that source history was imported.
+
 ## Artifact-backed validation
 
 `market-validate` now executes the gates that can be tested from canonical

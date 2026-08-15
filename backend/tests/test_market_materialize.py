@@ -28,6 +28,7 @@ from seiche.markets.china_cny import PACK as CHINA_PACK
 from seiche.markets.india_inr import PACK as INDIA_PACK
 from seiche.markets.materialize import (
     PUBLIC_SNAPSHOT_VISIBILITY,
+    _source_state,
     materialize_global_tide,
     materialize_market,
 )
@@ -91,6 +92,26 @@ def _save_success_run(market_id: str, adapter_id: str, cutoff: datetime) -> None
             "fault": None,
         }
     )
+
+
+def test_policy_unavailable_collector_never_marks_inputs_fresh() -> None:
+    cutoff = datetime(2026, 8, 14, 10, tzinfo=UTC)
+    runs = {
+        "rbi_official": {
+            "status": "UNAVAILABLE",
+            "finished_at": cutoff.isoformat(),
+        }
+    }
+
+    state = _source_state(
+        INDIA_PACK,
+        "IN.RBI.POLICY_REPO",
+        runs,
+        cutoff,
+        cutoff,
+    )
+
+    assert state is StalenessState.STALE
 
 
 def _registry_with_non_derivable_instruments() -> tuple[MarketRegistry, MarketPack]:

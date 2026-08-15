@@ -82,15 +82,33 @@ confirming that the approval, public IP, terms, and collection cadence still
 match. The installer validates the file's exact shape and permissions. The
 worker and backfill units load it optionally; if it is absent, malformed,
 expired, or more than 366 days ahead, both RBNZ adapters stop before network
-access and record source unavailability.
+access and append an explicit `UNAVAILABLE` collector outcome. This policy
+outcome has zero acquisition attempts, clears legacy failure-circuit state,
+and does not count as source instability. It still appears in market fault
+payloads, keeps affected inputs stale or unavailable, and never creates a
+backfill completion marker.
+
+If a backfill invocation has no remaining adapter except policy-unavailable
+RBNZ sources, the oneshot exits successfully because it enforced the legal
+boundary correctly. That green unit state is not evidence of NZ data coverage.
+RBNZ HTTP, parser, persistence, and unexpected preflight faults remain
+`FAILED`; repeated real source failures can still become `CIRCUIT_OPEN` and
+fail the oneshot.
 
 ## Regression and recovery checks
 
 ```bash
 cd backend
-.venv/bin/pytest -q tests/test_official_adapters.py
-ruff check seiche/sources/official.py tests/test_official_adapters.py
-ruff format --check seiche/sources/official.py tests/test_official_adapters.py
+.venv/bin/pytest -q tests/test_official_adapters.py \
+  tests/test_collector_reliability.py tests/test_market_materialize.py
+ruff check seiche/sources/base.py seiche/sources/canonical.py \
+  seiche/sources/official.py seiche/collectors.py seiche/cli.py \
+  tests/test_official_adapters.py tests/test_collector_reliability.py \
+  tests/test_market_materialize.py
+ruff format --check seiche/sources/base.py seiche/sources/canonical.py \
+  seiche/sources/official.py seiche/collectors.py seiche/cli.py \
+  tests/test_official_adapters.py tests/test_collector_reliability.py \
+  tests/test_market_materialize.py
 ```
 
 Deploy only through the reviewed Seiche release workflow. The deploy wrapper

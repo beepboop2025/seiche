@@ -7,11 +7,12 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import Response
 
-from seiche import api, assemble, market_runtime, store
+from seiche import api, assemble, cli, market_runtime, store
 from seiche.collectors import CollectorRun, CollectorRunStatus, CollectorSupervisor
 from seiche.markets.registry import default_registry
 from seiche.repository import (
@@ -19,7 +20,7 @@ from seiche.repository import (
     _POSTGRES_SCHEMA,
     SQLiteMarketRepository,
 )
-from seiche.sources.base import ObservationBatch
+from seiche.sources.base import ObservationBatch, SourcePolicyUnavailableError
 from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
@@ -115,6 +116,93 @@ async def test_latest_run_restores_schedule_and_circuit_across_supervisors(
     assert circuit.status is CollectorRunStatus.CIRCUIT_OPEN
     assert circuit.consecutive_failures == 5
     assert restarted_adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_policy_unavailable_preflight_supersedes_restored_circuit() -> None:
+    now = datetime(2026, 8, 14, 10, tzinfo=UTC)
+
+    class _PolicyUnavailableAdapter(_Adapter):
+        checks = 0
+
+        def check_availability(self) -> None:
+            self.checks += 1
+            raise SourcePolicyUnavailableError("written approval is absent")
+
+        async def collect(self) -> ObservationBatch:
+            raise AssertionError("policy-unavailable adapter must not connect")
+
+    adapter = _PolicyUnavailableAdapter()
+    supervisor = CollectorSupervisor(
+        restored_runs=(
+            _run_state(
+                now,
+                next_due=now + timedelta(days=1),
+                consecutive_failures=5,
+                circuit_open_until=now + timedelta(minutes=15),
+            ),
+        ),
+        sleep=_no_sleep,
+    )
+    supervisor.register(adapter)
+
+    run = (await supervisor.run_due(now=now, force=True))[0]
+
+    assert run.status is CollectorRunStatus.UNAVAILABLE
+    assert run.attempts == 0
+    assert run.consecutive_failures == 0
+    assert run.circuit_open_until is None
+    assert run.next_due == (now + timedelta(days=1)).isoformat()
+    assert "written approval is absent" in str(run.fault)
+    assert adapter.checks == 1
+
+
+@pytest.mark.asyncio
+async def test_policy_unavailable_during_collection_is_not_retried() -> None:
+    now = datetime(2026, 8, 14, 10, tzinfo=UTC)
+
+    class _PolicyChangesAfterPreflight(_Adapter):
+        def check_availability(self) -> None:
+            return None
+
+        async def collect(self) -> ObservationBatch:
+            self.calls += 1
+            raise SourcePolicyUnavailableError("approval expired before request")
+
+    adapter = _PolicyChangesAfterPreflight()
+    supervisor = CollectorSupervisor(sleep=_no_sleep)
+    supervisor.register(adapter)
+
+    run = (await supervisor.run_due(now=now, force=True))[0]
+
+    assert run.status is CollectorRunStatus.UNAVAILABLE
+    assert run.attempts == 1
+    assert run.consecutive_failures == 0
+    assert adapter.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    (
+        ((), 0),
+        (("UNAVAILABLE", "UNAVAILABLE"), 0),
+        (("FAILED",), 1),
+        (("CIRCUIT_OPEN",), 1),
+        (("UNAVAILABLE", "FAILED"), 1),
+        (("SUCCESS", "FAILED"), 0),
+    ),
+)
+def test_market_backfill_exit_code_distinguishes_policy_abstention(
+    statuses, expected, monkeypatch, capsys
+) -> None:
+    async def collect_once(**_kwargs):
+        return {"runs": [{"status": status} for status in statuses]}
+
+    monkeypatch.setattr(market_runtime, "collect_once", collect_once)
+    args = SimpleNamespace(market=(), no_materialize=True)
+
+    assert cli.cmd_market_backfill(args) == expected
+    capsys.readouterr()
 
 
 def test_legacy_run_history_fills_only_missing_durable_scheduler_state() -> None:

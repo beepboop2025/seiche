@@ -26,7 +26,12 @@ import pandas as pd
 from seiche.markets.base import SourceAdapterSpec
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.repository import get_repository
-from seiche.sources.base import CanonicalSourceAdapter, ObservationBatch, RawCapture
+from seiche.sources.base import (
+    CanonicalSourceAdapter,
+    ObservationBatch,
+    RawCapture,
+    SourcePolicyUnavailableError,
+)
 
 
 _T = TypeVar("_T")
@@ -34,6 +39,7 @@ _T = TypeVar("_T")
 
 class CollectorRunStatus(StrEnum):
     SUCCESS = "SUCCESS"
+    UNAVAILABLE = "UNAVAILABLE"
     FAILED = "FAILED"
     CIRCUIT_OPEN = "CIRCUIT_OPEN"
 
@@ -371,6 +377,43 @@ class CollectorSupervisor:
         state = self._states[key]
         started = datetime.now(UTC).replace(microsecond=0)
         cadence = cadence_delta(task.spec.expected_cadence)
+
+        def unavailable_run(
+            fault: SourcePolicyUnavailableError,
+            *,
+            attempts: int,
+        ) -> CollectorRun:
+            # A deterministic access-policy abstention is not source
+            # instability. It clears any legacy circuit state while remaining
+            # visible to materialization and public fault reporting.
+            state.consecutive_failures = 0
+            state.open_until = None
+            state.next_due = now + cadence
+            finished = datetime.now(UTC).replace(microsecond=0)
+            detail = f"{type(fault).__name__}: {fault}"
+            return CollectorRun(
+                key[0],
+                key[1],
+                CollectorRunStatus.UNAVAILABLE,
+                started.isoformat(),
+                finished.isoformat(),
+                0,
+                attempts,
+                state.next_due.isoformat(),
+                detail,
+                0,
+                None,
+            )
+
+        availability_fault: Exception | None = None
+        availability_check = getattr(task.adapter, "check_availability", None)
+        if callable(availability_check):
+            try:
+                availability_check()
+            except SourcePolicyUnavailableError as exc:
+                return unavailable_run(exc, attempts=0)
+            except Exception as exc:  # noqa: BLE001 - isolate adapter preflight
+                availability_fault = exc
         if state.open_until is not None and state.open_until > now:
             return CollectorRun(
                 key[0],
@@ -386,14 +429,18 @@ class CollectorSupervisor:
                 state.open_until.isoformat(),
             )
 
-        fault: Exception | None = None
+        fault: Exception | None = availability_fault
         batch: ObservationBatch | None = None
         attempts = 0
         try:
             # The timeout is one total acquisition budget: source calls,
             # connector-owned retries, supervisor retries, and their backoff.
             async with asyncio.timeout(self.adapter_deadline_seconds):
-                for attempt in range(task.spec.retry_limit + 1):
+                for attempt in (
+                    range(task.spec.retry_limit + 1)
+                    if availability_fault is None
+                    else range(0)
+                ):
                     attempts = attempt + 1
                     try:
                         batch = await task.adapter.collect()
@@ -401,6 +448,8 @@ class CollectorSupervisor:
                             raise ValueError(
                                 "collector returned a batch outside its registered scope"
                             )
+                    except SourcePolicyUnavailableError as exc:
+                        return unavailable_run(exc, attempts=attempts)
                     except Exception as exc:  # noqa: BLE001 — isolation boundary
                         fault = exc
                         batch = None

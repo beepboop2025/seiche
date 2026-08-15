@@ -65,6 +65,7 @@ class DocumentFetcher(Protocol):
 
 DocumentParser = Callable[[FetchedDocument], Iterable[ParsedPoint]]
 Clock = Callable[[], datetime]
+AvailabilityCheck = Callable[[], None]
 
 
 def _as_utc(value: datetime, field: str) -> datetime:
@@ -181,6 +182,7 @@ class FunctionalCanonicalAdapter:
         clock: Clock | None = None,
         timeout_seconds: float = 60.0,
         historical_backfill: bool = False,
+        availability_check: AvailabilityCheck | None = None,
     ) -> None:
         if adapter_id not in pack.adapter_map:
             raise ValueError(f"{adapter_id!r} is not declared by {pack.market_id}")
@@ -194,8 +196,16 @@ class FunctionalCanonicalAdapter:
         self.clock = clock or (lambda: datetime.now(UTC).replace(microsecond=0))
         self.timeout_seconds = timeout_seconds
         self.historical_backfill = historical_backfill
+        self._availability_check = availability_check
+
+    def check_availability(self) -> None:
+        """Run a local policy preflight before any source connection."""
+
+        if self._availability_check is not None:
+            self._availability_check()
 
     async def collect(self) -> ObservationBatch:
+        self.check_availability()
         headers = {
             "User-Agent": "Seiche/0.9 (+https://seiche.info; research collector)",
             "Accept": "*/*",

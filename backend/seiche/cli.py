@@ -833,9 +833,14 @@ def cmd_market_backfill(args) -> int:
     )
     print(json.dumps(payload, indent=2, sort_keys=True))
     # One blocked source must not make successful sibling backfills disappear.
-    # Per-adapter markers cause only failures to retry on the next invocation.
+    # Per-adapter markers leave every non-successful source eligible to retry.
     runs = payload["runs"]
-    return 0 if not runs or any(run["status"] == "SUCCESS" for run in runs) else 1
+    if not runs or any(run["status"] == "SUCCESS" for run in runs):
+        return 0
+    # A policy-unavailable-only pass made the correct fail-closed decision and
+    # left an explicit collector outcome. Real failures and open circuits still
+    # fail the oneshot unit.
+    return 0 if all(run["status"] == "UNAVAILABLE" for run in runs) else 1
 
 
 def cmd_market_worker(args) -> int:

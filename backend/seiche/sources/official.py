@@ -28,6 +28,7 @@ import httpx
 
 from seiche.markets.registry import MarketRegistry, default_registry
 from seiche.repository import MarketRepository
+from seiche.sources.base import SourcePolicyUnavailableError
 from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
@@ -72,6 +73,13 @@ _RBNZ_TOTAL_RESPONSE_TIMEOUT_SECONDS = 90.0
 
 class RBNZSourceUnavailableError(RuntimeError):
     """Both official RBNZ representations were unavailable or unusable."""
+
+
+class RBNZAccessPolicyUnavailableError(
+    RBNZSourceUnavailableError,
+    SourcePolicyUnavailableError,
+):
+    """RBNZ access was withheld locally before any source request."""
 
 
 def bounded_date_windows(
@@ -1181,7 +1189,7 @@ def _require_rbnz_access_approval() -> None:
     except ValueError:
         valid_until = None
     if not re.fullmatch(r"[0-9a-f]{64}", approval_hash) or valid_until is None:
-        raise RBNZSourceUnavailableError(
+        raise RBNZAccessPolicyUnavailableError(
             "RBNZ automated access is disabled before any request: prior written "
             f"permission is required by {_RBNZ_TERMS_URI}; configure an approval "
             "artifact SHA-256 and ISO valid-until date only after approval"
@@ -1189,11 +1197,11 @@ def _require_rbnz_access_approval() -> None:
     today = _rbnz_access_today()
     review_days = (valid_until - today).days
     if review_days < 0:
-        raise RBNZSourceUnavailableError(
+        raise RBNZAccessPolicyUnavailableError(
             "RBNZ automated-access approval review has expired; no request was made"
         )
     if review_days > _RBNZ_MAX_APPROVAL_REVIEW_DAYS:
-        raise RBNZSourceUnavailableError(
+        raise RBNZAccessPolicyUnavailableError(
             "RBNZ automated-access approval must be reviewed within 366 days; "
             "no request was made"
         )
@@ -1375,7 +1383,13 @@ def build_official_adapters(
     adapters: list[FunctionalCanonicalAdapter] = []
 
     def add(
-        market_id: str, adapter_id: str, source: str, fetcher, parser, timeout=60.0
+        market_id: str,
+        adapter_id: str,
+        source: str,
+        fetcher,
+        parser,
+        timeout=60.0,
+        availability_check=None,
     ):
         adapters.append(
             FunctionalCanonicalAdapter(
@@ -1388,6 +1402,7 @@ def build_official_adapters(
                 clock=clock,
                 timeout_seconds=timeout,
                 historical_backfill=backfill,
+                availability_check=availability_check,
             )
         )
 
@@ -1723,6 +1738,7 @@ def build_official_adapters(
         rbnz_fetcher("rbnz_policy"),
         parse_rbnz,
         90,
+        availability_check=_require_rbnz_access_approval,
     )
     add(
         "NZ-NZD",
@@ -1731,6 +1747,7 @@ def build_official_adapters(
         rbnz_fetcher("rbnz_wholesale"),
         parse_rbnz,
         90,
+        availability_check=_require_rbnz_access_approval,
     )
 
     mas_start_year = configured_start.year if backfill else now.year

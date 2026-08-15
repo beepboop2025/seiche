@@ -14,6 +14,7 @@ from seiche import store
 from seiche.domain.observation import QualityState
 from seiche.markets.registry import default_registry
 from seiche.repository import SQLiteMarketRepository
+from seiche.sources.base import SourcePolicyUnavailableError
 from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
@@ -594,11 +595,15 @@ async def test_rbnz_access_defaults_off_without_written_approval(monkeypatch) ->
         requests.append(request)
         return httpx.Response(200, content=_rbnz_workbook_payload())
 
+    adapter = _official_adapter("rbnz_policy")
+    with pytest.raises(SourcePolicyUnavailableError, match="prior written permission"):
+        adapter.check_availability()
+
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(
             RBNZSourceUnavailableError, match="prior written permission"
         ):
-            await _official_adapter("rbnz_policy").fetcher(client)
+            await adapter.fetcher(client)
 
     assert requests == []
 
