@@ -245,16 +245,16 @@ api.seiche.info {
         method GET HEAD
         path /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
-    # The Week Ahead list. GET is in @public above (the front door asks whether
-    # the list is wired up before it draws a form); POST needs its own name here
-    # because @public is GET/HEAD only. Without both, the subscribe field would
-    # deploy green and 404 at the edge, which is this file's oldest bug.
+    # Public POST endpoints live here because @public is GET/HEAD only. The
+    # Week Ahead list also keeps GET in @public so the front door can discover
+    # the form. Event analysis is POST-only so an unverified question stays out
+    # of URLs and routine access logs.
     #
     # This is not an auth route. It is grouped with @login purely because that
     # is where POST lives; the handler takes no token and gates no content.
     @login {
         method POST
-        path /api/auth/login /api/alerts/prefs /api/subscribe
+        path /api/auth/login /api/alerts/prefs /api/subscribe /api/event-analysis
     }
     handle @public {
         header Access-Control-Allow-Origin "*"
