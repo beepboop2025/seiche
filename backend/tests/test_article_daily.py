@@ -138,6 +138,10 @@ def test_article_archive_feed_sitemap_and_llms_are_built(fake_snap, tmp_path):
     assert article["headline"] in page and article["headline"] in archive
     assert f'https://seiche.info/articles/{article["slug"]}/' in page
     assert (article_dir / "feed.xml").exists()
+    json_feed = json.loads((article_dir / "feed.json").read_text())
+    assert json_feed["version"] == "https://jsonfeed.org/version/1.1"
+    assert json_feed["items"][0]["content_text"] == article["body_md"].strip()
+    assert json_feed["items"][0]["_liquidity_lab"]["quality_gate"]["status"] == "PASS"
     assert f"<loc>https://seiche.info/articles/{article['slug']}/</loc>" in (
         tmp_path / "frontend" / "public" / "sitemap.xml"
     ).read_text()

@@ -31,6 +31,7 @@ Commands
   /analogs         historical analogs from the wreck ledger
   /proof           historical evidence status, misses included
   /letter          today's dispatch: title, summary, link
+  /article         today's evidence-led editorial, full text on the site
   /institutions    the other desk: LiquiLens Failure Radar summary
   /tandem          the cross-desk read: plumbing × institutions quadrant
   /ask <question>  desk assistant, grounded strictly in the live board
@@ -71,6 +72,7 @@ TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
 API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
 SITE = "https://seiche.info"
+ARTICLE_FEED_URL = f"{SITE}/articles/feed.json"
 STATE_DIR = os.environ.get("SEICHE_BOT_STATE", "/var/lib/seiche-bot")
 TG = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -989,6 +991,42 @@ def fmt_letter(index: list | None) -> str:
     return "\n".join(lines) + FOOT
 
 
+def latest_article(feed: dict | None) -> dict | None:
+    """Validate the shared JSON Feed receipt before Telegram quotes it."""
+    if not isinstance(feed, dict) or feed.get("version") != "https://jsonfeed.org/version/1.1":
+        return None
+    items = feed.get("items")
+    item = items[0] if isinstance(items, list) and items else None
+    receipt = (item or {}).get("_liquidity_lab") or {}
+    if (
+        not isinstance(item, dict)
+        or not item.get("title")
+        or not item.get("summary")
+        or not item.get("url")
+        or not item.get("content_text")
+        or (receipt.get("quality_gate") or {}).get("status") != "PASS"
+        or (receipt.get("authority") or {}).get("factual_authority")
+        != "published_article_only"
+    ):
+        return None
+    return item
+
+
+def fmt_article(feed: dict | None) -> str:
+    article = latest_article(feed)
+    if article is None:
+        return ("Today's article feed did not answer or failed its publication "
+                f"receipt. Nothing is reconstructed in Telegram; use {SITE}/articles/.")
+    receipt = article.get("_liquidity_lab") or {}
+    kind = str(receipt.get("article_type") or "analysis").replace("_", " ")
+    return "\n".join([
+        f"📰 <b>{esc(article['title'])}</b>",
+        f"{esc(str(article.get('date_published') or '')[:10])} · {esc(kind)}", "",
+        esc(article["summary"]),
+        f"\nRead the full article: {esc(article['url'])}",
+    ]) + FOOT
+
+
 def fmt_ask(res) -> str:
     if res is ASK_BUSY:
         return ("The desk assistant is at its shared answer limit right now, "
@@ -1130,6 +1168,7 @@ HELP = (
     "/analogs — the wreck ledger: past storms on this board\n"
     "/proof — historical evidence status, flags and misses\n"
     "/letter — today's dispatch\n"
+    "/article — today's evidence-led editorial\n"
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
@@ -1201,10 +1240,21 @@ def fmt_daily_letter() -> str:
         lines.append("\n🏦 Institutions (LiquiLens): did not answer — absence "
                      "is not calm; demo.liquilens.in has the board.")
 
+    article = latest_article(board_get(ARTICLE_FEED_URL))
+    if article:
+        receipt = article.get("_liquidity_lab") or {}
+        kind = str(receipt.get("article_type") or "analysis").replace("_", " ")
+        lines.append(f"\n📰 <b>Today's editorial ({esc(kind)}):</b> "
+                     f"{esc(article.get('title'))}\n{esc(article.get('summary'))}\n"
+                     f"{esc(article.get('url'))}")
+    else:
+        lines.append(f"\n📰 Today's editorial did not clear its public feed "
+                     f"receipt; nothing was reconstructed here. {SITE}/articles/")
+
     idx = board_get(f"{SITE}/dispatches/index.json")
     if isinstance(idx, list) and idx:
         d = idx[0]
-        lines.append(f"\n✉️ Today's letter: <b>{esc(d.get('title'))}</b>\n"
+        lines.append(f"\n✉️ Fixed-order dispatch: <b>{esc(d.get('title'))}</b>\n"
                      f"{SITE}/dispatches/{urllib.parse.quote(d.get('slug', ''))}.md")
     return "\n".join(lines) + FOOT
 
@@ -1238,12 +1288,14 @@ def keyboard_for(cmd: str) -> list | None:
     """Inline keyboard rows per command. A button tap IS a command."""
     if cmd == "/start":
         return [[_btn("🌡 Full gauge", "/now"),
-                 _btn("📨 Today's letter", "/letter")],
+                 _btn("📰 Today's article", "/article")],
+                [_btn("📨 Fixed-order letter", "/letter")],
                 [{"text": "📡 Liquidity Lab channel", "url": LAB_LINK},
                  {"text": "📤 Share Seiche", "url": SHARE_URL}]]
     if cmd == "/help":
         return [[_btn("🌡 Full gauge", "/now"),
-                 _btn("📨 Today's letter", "/letter")], LAB_ROW]
+                 _btn("📰 Today's article", "/article")],
+                [_btn("📨 Fixed-order letter", "/letter")], LAB_ROW]
     if cmd == "/now":
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
@@ -1256,7 +1308,7 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd == "/snap":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL},
                  _btn("\U0001f321 Gauge now", "/now")], FLEET_ROW]
-    if cmd in ("/odds", "/turns", "/analogs", "/proof", "/letter",
+    if cmd in ("/odds", "/turns", "/analogs", "/proof", "/letter", "/article",
                "/institutions", "/tandem", "/ask"):
         return [[_btn("\U0001f321 Gauge now", "/now"),
                  _btn("\U0001f5bc Card", "/snap"),
@@ -1418,6 +1470,9 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/letter":
         send(chat_id, fmt_letter(board_get(f"{SITE}/dispatches/index.json")),
              keyboard_for("/letter"))
+    elif cmd == "/article":
+        send(chat_id, fmt_article(board_get(ARTICLE_FEED_URL)),
+             keyboard_for("/article"))
     elif cmd == "/institutions":
         send(chat_id, fmt_institutions(ll_get("/failure-radar/board")), keyboard_for("/institutions"))
     elif cmd == "/tandem":
@@ -1701,6 +1756,7 @@ BOT_COMMANDS = [
     {"command": "analogs", "description": "The wreck ledger: past storms"},
     {"command": "proof", "description": "Evidence status, flags and misses"},
     {"command": "letter", "description": "Today's dispatch"},
+    {"command": "article", "description": "Today's evidence-led editorial"},
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "share", "description": "Send this free desk to someone"},
     {"command": "help", "description": "Full command list and desk guide"},

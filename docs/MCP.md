@@ -89,15 +89,15 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → eight tools, named so you can check this against the
+- **Anonymous** (no token) → nine tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `oil_funding_context` and
-  `fx_materials_passage`. The conclusion, precedent, track record with its
+  `fx_materials_passage`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, and
   cross-market oil/FX/material context. Capped per IP per day. Zero setup, and
   it stays free.
-- **Subscriber** (bearer token) → the same eight plus the five that read the
+- **Subscriber** (bearer token) → the same nine plus the five that read the
   derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
   `desk_brief`, `ask_desk`. At your tier's quota.
 
@@ -192,6 +192,7 @@ recorded in the `provisions` table for audit.
 
 | Tool | What it answers | Surface |
 |------|-----------------|---------|
+| `latest_article` | Exact full-text daily editorial, evidence clock and passing publication receipt | public |
 | `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | public |
 | `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
@@ -237,7 +238,7 @@ returned in `X-PAYMENT-RESPONSE`.
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same eight the hosted endpoint gives an anonymous caller, so a local run and a
+the same nine the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -246,6 +247,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 
 | tool | public | why |
 |---|---|---|
+| `latest_article` | yes | the exact published editorial; no downstream regeneration |
 | `funding_stress_now` | yes | the conclusion, which is the free good |
 | `historical_analogs` | yes | precedent from the public record |
 | `proof_backtest` | yes | the track record, misses included |

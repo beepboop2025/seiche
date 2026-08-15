@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Seiche daily funding analysis</title>
+  <subtitle>Current funding analysis when the evidence moves; historical replay when it does not.</subtitle>
+  <link rel="alternate" type="text/html" href="https://seiche.info/articles/"/>
+  <link rel="self" type="application/atom+xml" href="https://seiche.info/articles/feed.xml"/>
+  <id>https://seiche.info/articles/</id>
+  <updated>2026-08-15T05:48:44Z</updated>
+  <author><name>Seiche</name><uri>https://seiche.info</uri></author>
+  <entry>
+    <title>The calendar is carrying the strain call; the price of overnight cash still says abundance</title>
+    <link rel="alternate" type="text/html" href="https://seiche.info/articles/2026-08-15-the-calendar-is-carrying-the-strain-call-the-price-of-overnight-cash-sti/"/>
+    <id>https://seiche.info/articles/2026-08-15-the-calendar-is-carrying-the-strain-call-the-price-of-overnight-cash-sti/</id>
+    <published>2026-08-15T05:48:44Z</published>
+    <updated>2026-08-15T05:48:44Z</updated>
+    <summary>The board reads 45 out of 100, STRAIN; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.6%; plumbing leads market pricing by +37 percentile points.</summary>
+    <category term="current_analysis"/>
+    <content type="html">&lt;p&gt;The daily dispatch records every section of the board. This article makes one narrower argument: &lt;strong&gt;The calendar is carrying the strain call; the price of overnight cash still says abundance.&lt;/strong&gt; The distinction matters because a market funnel should earn attention with a mechanism and a test, not with a louder adjective. Today&amp;#x27;s editorial confidence is &lt;strong&gt;guarded&lt;/strong&gt;. The read is led by modelled or slow-moving structure while current market plumbing has not broadly confirmed it.&lt;/p&gt;
+&lt;h2&gt;The mechanism&lt;/h2&gt;
+&lt;p&gt;The reserve path is a balance-sheet calendar, not a price forecast. Treasury settlements and tax dates move cash into the Treasury General Account; unless another balance-sheet leg offsets them, reserve balances at commercial banks fall. The useful question is therefore dated: how much capacity may leave the system, on which day, and what does the overnight tape say when that day arrives?&lt;/p&gt;
+&lt;p&gt;The dominant contribution today is &lt;strong&gt;the dated reserve path&lt;/strong&gt;, scored at 100.0 with 11.0 composite points. That is the board&amp;#x27;s attribution, not an observed security price. The independent question is whether the traded funding tape and official backstops confirm it.&lt;/p&gt;
+&lt;p&gt;That sequencing prevents a common category error. Capacity can deteriorate before the marginal price of cash moves, because aggregate reserves, their distribution, and the willingness to intermediate are not the same thing. But a capacity model can also be early or simply wrong. The article therefore treats attribution as a hypothesis about transmission and gives the live market tape veto power over the dramatic version of the story.&lt;/p&gt;
+&lt;h2&gt;What the evidence actually says&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;Balance-sheet identity.&lt;/strong&gt; Reserves fell $49.3B on the week to $2,944B, and the ledger says where from: the TGA rebuilt $56.6B, the foreign RRP pool absorbed $39.7B, the residual released $36.5B, six legs summing to the reserve change to the dollar with $18.9B of the balance sheet, 0.28% of assets, still sitting in the unnamed residual. The observation is dated 2026-08-12; source: Federal Reserve H.4.1.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Official-sector footprint.&lt;/strong&gt; Foreign officials cut their Fed custody Treasuries by $90.2B over 13 weeks while foreign RRP parking rose by $34.8B, only a partial rotation because the combined official footprint still fell $55.5B to $2,954B, 62% of the custody drop leaving the official sector rather than moving inside it. The observation is dated 2026-08-12; source: Federal Reserve custody and foreign RRP.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Reserve-demand curve.&lt;/strong&gt; Reserves are $759B below the fitted kink, but SOFR is -1.7bp versus IORB; fit R-squared is 0.62. The observation is dated 2026-08-12; source: FRED, NY Fed secured rates, BEA GDP.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Dated forcing.&lt;/strong&gt; $266B auction settlement while reserves sit below the estimated kink. The observation is dated 2026-08-20; source: Treasury auction calendar and Seiche reserve path.&lt;/p&gt;
+&lt;p&gt;Read together, these rows describe a chain rather than a pile of indicators. The reserve identity says where cash moved. The fitted demand curve says how much structural room the model sees. The overnight spread says whether scarcity is being priced now. The calendar supplies a date on which the disagreement can close. None of those steps is allowed to borrow certainty from the others.&lt;/p&gt;
+&lt;h2&gt;The strongest counter-case&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;NY Fed secured rates and Federal Reserve IORB, 2026-08-12.&lt;/strong&gt; SOFR is 1.7bp below IORB, a current abundance signal rather than a scarcity print.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;New York Fed operations, 2026-08-14.&lt;/strong&gt; Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;VIX, credit spreads and rates volatility, 2026-08-13.&lt;/strong&gt; Market stress sits at only the 27th percentile of its own history.&lt;/p&gt;
+&lt;p&gt;That counter-case is load-bearing. If overnight cash continues to trade comfortably below the administered rate, the backstop remains unused, and broad market stress stays low, then a high structural contribution is a warning about capacity, not evidence that a squeeze is underway. The article changes its mind when the tape changes, not when the prose needs drama.&lt;/p&gt;
+&lt;h2&gt;The historical echo&lt;/h2&gt;
+&lt;p&gt;Today&amp;#x27;s closest named episode is &lt;strong&gt;the March 2020 dash for cash&lt;/strong&gt;. The shock began outside money markets, but the scramble for dollars and the sale of normally liquid securities pushed the funding system into the centre of the event. Treasury-market depth deteriorated, cash became the asset everyone wanted at once, and official facilities had to replace private intermediation at extraordinary scale.&lt;/p&gt;
+&lt;p&gt;Echo reports a trajectory similarity of 0.680; the comparison window sits 21 days from the registered episode date; the matched Tide Tables window was followed by a maximum five-business-day spread move of +2.0bp; across all 25 current neighbours, 12.0% had a registered funding event within five business days. These are construction-PIT comparisons, not a forecast.&lt;/p&gt;
+&lt;p&gt;The lesson is bounded: Funding monitors are strongest on propagation, not omniscience. They may not predict an external shock, but they can show whether the shock is turning into a balance-sheet and market-liquidity problem. Similarity is a question generator. It does not turn one old path into today&amp;#x27;s destiny, and Seiche&amp;#x27;s own Tide Tables verdict stays attached to the comparison.&lt;/p&gt;
+&lt;h2&gt;The test ahead&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;2026-08-20:&lt;/strong&gt; $266B auction settlement while reserves sit below the estimated kink; published settlement amount $266B; scenario low $2,882B of reserves.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2026-08-31:&lt;/strong&gt; calendar pressure date while reserves sit below the estimated kink; published settlement amount $24B; scenario low $2,850B of reserves.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;2026-09-15:&lt;/strong&gt; calendar pressure date while reserves sit below the estimated kink; scenario low $2,831B of reserves.&lt;/p&gt;
+&lt;p&gt;The test is simple enough to falsify. Watch the published date, then read SOFR against IORB, repo-tail pressure, backstop usage, and the reserve ledger after the cash movement lands. If those independent checks remain calm, the structural thesis did not transmit. If several turn together, the story graduates from capacity risk to observed funding stress.&lt;/p&gt;
+&lt;h2&gt;Follow the pressure chain&lt;/h2&gt;
+&lt;p&gt;Seiche answers the system question: &lt;strong&gt;is dollar funding capacity tightening?&lt;/strong&gt; If that answer matters to a lender or counterparty decision, &lt;a href=&quot;https://liquilens.in/&quot;&gt;see which institutions should feel it first&lt;/a&gt;. If the concern is whether a position can be sold without moving the market, &lt;a href=&quot;https://liquilens-undertow.com/exit/&quot;&gt;price the exit on Undertow&lt;/a&gt;. To receive one reviewed read across all three layers, &lt;a href=&quot;https://t.me/LiquidityLabDesk&quot;&gt;join the Liquidity Lab daily channel&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Those are three different jobs. Cross-linking them is useful only when the boundary stays visible: system liquidity does not identify a weak bank, and a weak bank does not tell you the cost of exiting a market position.&lt;/p&gt;
+&lt;h2&gt;Sources, method, and limits&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https://seiche.info/data/overview.json&quot;&gt;Today&amp;#x27;s full Seiche snapshot&lt;/a&gt;, including the evidence rows, counter-case, and dated watch list quoted above.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://seiche.info/methodology&quot;&gt;Seiche methodology&lt;/a&gt;, including component definitions, validation status, and change log.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://api.seiche.info/api/series/index.json&quot;&gt;Public series catalog&lt;/a&gt;, with source, native cadence, as-of date, and freshness for each raw series.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://seiche.info/dispatches/2026-08-15-daily&quot;&gt;The daily dispatch&lt;/a&gt;, which preserves the complete fixed-order reading behind this article.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The composite is a Seiche derivation, not an observed price. Historical comparisons use final or current-vintage data constrained chronologically and are labelled construction-PIT; they are not publication-vintage backtests and are not real-money eligible. Source publication time is not collected uniformly. Related LiquiLens and Undertow readings are handoffs, not inputs to the Seiche composite. Research and market data, not investment advice.&lt;/p&gt;</content>
+  </entry>
+</feed>

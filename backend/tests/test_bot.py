@@ -224,6 +224,27 @@ def test_fmt_proof_fails_closed_when_api_omits_evidence_boundary():
     assert "Validated-backtest eligible: <b>NO</b>" in txt
 
 
+def test_latest_article_requires_complete_published_receipt():
+    item = {
+        "title": "A bounded thesis",
+        "summary": "The evidence supports one narrow claim.",
+        "url": "https://seiche.info/articles/test/",
+        "content_text": "The complete reviewed article body.",
+        "_liquidity_lab": {
+            "quality_gate": {"status": "PASS"},
+            "authority": {"factual_authority": "published_article_only"},
+        },
+    }
+    feed = {"version": "https://jsonfeed.org/version/1.1", "items": [item]}
+    assert bot.latest_article(feed) is item
+
+    item["content_text"] = ""
+    assert bot.latest_article(feed) is None
+    item["content_text"] = "The complete reviewed article body."
+    item["_liquidity_lab"]["authority"]["factual_authority"] = "training_output"
+    assert bot.latest_article(feed) is None
+
+
 def test_fmt_odds_ok_and_down():
     assert "did not answer" in bot.fmt_odds(None)
     assert "did not answer" in bot.fmt_odds({"navigator": {"ok": False}})

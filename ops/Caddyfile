@@ -136,7 +136,7 @@ api.seiche.info {
         header Cache-Control "public, max-age=300"
         header Content-Type "application/json"
         header X-Content-Type-Options "nosniff"
-        respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for eight public tools","first_tool":"exit_cost"},"rest":{"free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
+        respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for nine public tools","first_tool":"latest_article"},"rest":{"article_json_feed":"/undertow/articles-feed.json","free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
     }
 
     # Undertow published packs — static public mirror (board + retail

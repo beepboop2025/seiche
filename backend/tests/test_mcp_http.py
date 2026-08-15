@@ -60,7 +60,7 @@ def test_public_api_discovery_is_curated(client):
     r = client.get("/api")
     assert r.status_code == 200
     payload = r.json()
-    assert payload["mcp"]["first_tool"] == "funding_stress_now"
+    assert payload["mcp"]["first_tool"] == "latest_article"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
@@ -219,7 +219,7 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
                "funding_stress_forecast", "ask_desk")
     public_good = ("funding_stress_now", "historical_analogs",
                    "proof_backtest", "data_health", "oil_funding_context",
-                   "fx_materials_passage")
+                   "fx_materials_passage", "latest_article")
 
     for gate in ("1", None):
         if gate is None:
@@ -278,7 +278,7 @@ def test_anonymous_flows_carries_the_reading_but_not_the_engine(client,
 def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    assert names == {"funding_stress_now", "historical_analogs",
+    assert names == {"latest_article", "funding_stress_now", "historical_analogs",
                      "proof_backtest", "data_health", "crypto_stress_record",
                      "institutional_flows", "oil_funding_context",
                      "fx_materials_passage"}

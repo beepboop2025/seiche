@@ -162,7 +162,7 @@ _refreshing = False  # one background rebuild at a time; readers never wait on i
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 

@@ -5,6 +5,7 @@ suite never touches the network — same discipline as the rest of the gate.
 """
 
 import json
+from io import BytesIO
 
 import pytest
 
@@ -34,6 +35,35 @@ def _payload(resp):
         return json.loads(text)
     except json.JSONDecodeError:
         return text
+
+
+def test_latest_article_returns_the_canonical_published_revision(monkeypatch):
+    item = {
+        "id": "seiche:article:test",
+        "url": "https://seiche.info/articles/test/",
+        "title": "A bounded thesis",
+        "summary": "The evidence supports one narrow claim.",
+        "content_text": "Full published Markdown.",
+        "date_published": "2026-08-15T11:00:00Z",
+        "_liquidity_lab": {
+            "quality_gate": {"status": "PASS"},
+            "authority": {"factual_authority": "published_article_only"},
+        },
+    }
+    encoded = json.dumps({
+        "version": "https://jsonfeed.org/version/1.1", "items": [item],
+    }).encode()
+
+    class Response(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setattr(mcp.urllib.request, "urlopen",
+                        lambda *_args, **_kwargs: Response(encoded))
+    assert _payload(_call("latest_article")) == item
 
 
 def test_mcp_cache_immediately_adopts_a_completed_assembler_rebuild(monkeypatch):
@@ -216,7 +246,7 @@ def test_tools_list_has_valid_schemas():
         assert t["description"] and t["inputSchema"]["type"] == "object"
 
 
-PUBLIC_TOOLS = {"funding_stress_now", "historical_analogs", "proof_backtest",
+PUBLIC_TOOLS = {"latest_article", "funding_stress_now", "historical_analogs", "proof_backtest",
                 "data_health", "crypto_stress_record", "institutional_flows",
                 "oil_funding_context", "fx_materials_passage"}
 PAID_TOOLS = {"funding_stress_forecast", "replay_asof", "desk_brief",

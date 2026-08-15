@@ -56,7 +56,8 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 8
+    assert len(mcp["capabilities"]) == 9
+    assert "latest_article" in mcp["capabilities"]
     assert catalog["host"]["documentationUrl"] == (
         "https://seiche.info/developers")
     assert all(".html" not in json.dumps(entry)
@@ -101,6 +102,7 @@ def test_generated_discovery_indexes_include_the_selection_surface():
     for url in ("https://seiche.info/use-cases",
                 "https://seiche.info/product-card.json"):
         assert url in dispatch_pages._LLMS_PREAMBLE
+    assert "https://seiche.info/articles/feed.json" in dispatch_pages._LLMS_PREAMBLE
 
 
 def test_home_exposes_an_attributed_pre_open_daily_letter():

@@ -1,6 +1,6 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-08-09",
+  "updated": "2026-08-15",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
@@ -98,6 +98,9 @@
     "openapi": "https://api.seiche.info/api/openapi.json",
     "ai_catalog": "https://seiche.info/.well-known/ai-catalog.json",
     "rest_example": "https://api.seiche.info/api/gauge",
+    "daily_articles": "https://seiche.info/articles/",
+    "article_json_feed": "https://seiche.info/articles/feed.json",
+    "article_atom_feed": "https://seiche.info/articles/feed.xml",
     "market_pack_catalog": "https://api.seiche.info/api/v2/markets",
     "market_pack_coverage": "https://api.seiche.info/api/v2/coverage",
     "global_tide": "https://api.seiche.info/api/v2/global/tide",
@@ -106,7 +109,7 @@
     "mcp": "https://api.seiche.info/mcp",
     "telegram_bot": "https://t.me/seiche_desk_bot",
     "telegram_channel": "https://t.me/LiquidityLabDesk",
-    "authentication": "Eight public MCP tools require no token; five additional subscriber tools require a bearer token."
+    "authentication": "Nine public MCP tools, including latest_article, require no token; five additional subscriber tools require a bearer token."
   },
   "siblings": [
     {

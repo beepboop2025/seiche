@@ -202,7 +202,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Eight tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Nine tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -215,6 +215,7 @@ The copy-paste quickstart and live tool runner are at
 
 | tool | what it answers |
 |---|---|
+| `latest_article` | today's exact full-text editorial with its evidence clock and publication receipt |
 | `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |
 | `historical_analogs` | the closest days in the record, and what followed them |
 | `proof_backtest` | the track record with its misses and its confidence intervals |

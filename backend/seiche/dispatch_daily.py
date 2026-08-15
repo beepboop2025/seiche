@@ -67,6 +67,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FREE_DIR = REPO_ROOT / "frontend" / "public" / "dispatches"
 PAID_DIR = REPO_ROOT / "backend" / "seiche" / "dispatches"
 INDEX = FREE_DIR / "index.json"
+ARTICLE_INDEX = REPO_ROOT / "frontend" / "public" / "articles" / "index.json"
 STATE = PAID_DIR / "state.json"
 
 
@@ -2013,7 +2014,16 @@ def write_dispatch(d: dict, repo_root: Path | None = None) -> list[str]:
 # ---------------------------------------------------------------------------
 # Telegram announcement — a digest with the numbers, then the link
 # ---------------------------------------------------------------------------
-def build_telegram_digest(d: dict, snap: dict | None = None) -> str:
+def _published_article(date: str) -> dict | None:
+    try:
+        rows = json.loads(ARTICLE_INDEX.read_text())
+    except (OSError, ValueError):
+        return None
+    return next((row for row in rows if row.get("date") == date), None)
+
+
+def build_telegram_digest(d: dict, snap: dict | None = None,
+                          article: dict | None = None) -> str:
     """A Telegram-sized digest of the letter: the reading, the hook numbers,
     the next date, the link. Plain text, no markup surprises, no dashes."""
     lines = [
@@ -2030,7 +2040,18 @@ def build_telegram_digest(d: dict, snap: dict | None = None) -> str:
         if crunches:
             c = crunches[0]
             lines += ["", f"Next date that matters: {c.get('date')} ({c.get('reason', 'flagged window')})."]
-    lines += ["", f"Full letter: https://seiche.info/#dispatches/{d['slug']}"]
+    if article:
+        kind = str(article.get("article_type") or "analysis").replace("_", " ")
+        lines += [
+            "",
+            f"TODAY'S EDITORIAL · {kind}",
+            str(article.get("headline") or ""),
+            str(article.get("dek") or ""),
+            str(article.get("canonical_url") or "https://seiche.info/articles/"),
+        ]
+    else:
+        lines += ["", "Today's editorial did not clear the published article index; nothing was reconstructed here."]
+    lines += ["", f"Fixed-order letter: https://seiche.info/#dispatches/{d['slug']}"]
     return "\n".join(lines)
 
 
@@ -2045,7 +2066,7 @@ def announce_telegram(d: dict, snap: dict | None = None) -> None:
         raise SystemExit("announce needs SEICHE_TELEGRAM_BOT_TOKEN and SEICHE_TELEGRAM_CHAT_ID")
     body = json.dumps({
         "chat_id": chat_id,
-        "text": build_telegram_digest(d, snap),
+        "text": build_telegram_digest(d, snap, _published_article(d["date"])),
         "disable_web_page_preview": False,
     }).encode()
     req = urllib.request.Request(

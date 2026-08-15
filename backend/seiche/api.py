@@ -547,8 +547,8 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the eight public tools",
-            "first_tool": "funding_stress_now",
+            "authentication": "none for the nine public tools",
+            "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
         "rest": {

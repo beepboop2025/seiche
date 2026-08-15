@@ -73,6 +73,7 @@ Allow: /
 # Machine-readable index of this site for LLMs: https://seiche.info/llms.txt
 # Full-text corpus of the daily letters:        https://seiche.info/llms-full.txt
 # Atom feed of the daily letters:               https://seiche.info/dispatches/feed.xml
+# Full-text daily article JSON Feed:             https://seiche.info/articles/feed.json
 # Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
 Agentmap: https://seiche.info/.well-known/ai-catalog.json

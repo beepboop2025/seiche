@@ -446,6 +446,7 @@ def render_article_page(meta: dict, article_md: str) -> str:
         extra_head=(
             f'<meta property="article:published_time" content="{_esc(str(meta.get("published_at") or date))}">\n'
             f'<link rel="alternate" type="text/markdown" href="/articles/{_esc(slug)}.md" title="This article as markdown">\n'
+            '<link rel="alternate" type="application/feed+json" href="/articles/feed.json" title="Seiche articles JSON Feed">\n'
             '<link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche articles">\n'
         ),
     )
@@ -500,7 +501,10 @@ def render_article_archive(entries: list[dict]) -> str:
         jsonld=jsonld,
         body=intro + f'<div class="cards">{"".join(cards)}</div>',
         og_type="website",
-        extra_head='<link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche articles">\n',
+        extra_head=(
+            '<link rel="alternate" type="application/feed+json" href="/articles/feed.json" title="Seiche articles JSON Feed">\n'
+            '<link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche articles">\n'
+        ),
     )
 
 
@@ -535,6 +539,63 @@ def render_article_feed(entries: list[dict], bodies: dict[str, str]) -> str:
         + "\n".join(items)
         + "\n</feed>\n"
     )
+
+
+def render_article_json_feed(entries: list[dict], texts: dict[str, str],
+                             metadata: dict[str, dict]) -> str:
+    """JSON Feed 1.1 view of the exact published article revisions.
+
+    Atom remains the broad syndication surface. JSON Feed is the canonical
+    machine contract used by the fleet's Telegram and MCP adapters because it
+    preserves the full Markdown article and its publication receipt without
+    asking either downstream surface to scrape HTML or regenerate prose.
+    """
+    items = []
+    for row in entries[:50]:
+        slug = row["slug"]
+        meta = metadata.get(slug) or {}
+        generation = meta.get("generation") or {}
+        quality = meta.get("quality_gate") or {}
+        url = f"{SITE}{article_path(slug)}"
+        items.append({
+            "id": str(meta.get("id") or f"seiche:article:{slug}"),
+            "url": url,
+            "title": row["headline"],
+            "summary": row["dek"],
+            "content_text": texts.get(slug, ""),
+            "date_published": str(row.get("published_at") or f"{row['date']}T11:00:00Z"),
+            "tags": [str(row.get("article_type") or "analysis"), "funding liquidity"],
+            "_liquidity_lab": {
+                "schema": "liquidity-lab.editorial-item.v1",
+                "product": "seiche",
+                "article_type": row.get("article_type"),
+                "evidence_as_of": row.get("evidence_as_of"),
+                "word_count": row.get("word_count"),
+                "evidence_fingerprint": generation.get("dossier_sha256"),
+                "generation_mode": generation.get("mode"),
+                "quality_gate": {
+                    "status": quality.get("status"),
+                    "checks": list(quality.get("checks") or []),
+                },
+                "authority": {
+                    "factual_authority": "published_article_only",
+                    "training_allowed": False,
+                },
+            },
+        })
+    feed = {
+        "version": "https://jsonfeed.org/version/1.1",
+        "title": "Seiche daily funding analysis",
+        "home_page_url": f"{SITE}/articles/",
+        "feed_url": f"{SITE}/articles/feed.json",
+        "description": (
+            "Current funding analysis when the evidence moves; historical "
+            "replay when it does not."
+        ),
+        "authors": [{"name": "Seiche", "url": SITE}],
+        "items": items,
+    }
+    return json.dumps(feed, indent=2, ensure_ascii=False) + "\n"
 
 
 def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
@@ -595,8 +656,8 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Eight tools answer with no auth at all:
-funding_stress_now, historical_analogs, proof_backtest, data_health,
+over MCP at https://api.seiche.info/mcp. Nine tools answer with no auth at all:
+latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health,
 crypto_stress_record, institutional_flows, oil_funding_context and
 fx_materials_passage, metered per IP per day. Five more
 read the derived engines and want a bearer token: funding_stress_forecast,
@@ -655,7 +716,7 @@ same product; the callable contract remains the MCP server above.
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
 - [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
-- [Daily article Atom feed]({SITE}/articles/feed.xml): full-text current analysis and historical replays
+- [Daily article feeds]({SITE}/articles/feed.json): JSON Feed 1.1 with exact Markdown, publication receipt and provenance; Atom is at {SITE}/articles/feed.xml
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
@@ -829,6 +890,7 @@ def build_all(repo_root: Path | None = None) -> list[str]:
     articles: list[dict] = []
     article_bodies: dict[str, str] = {}
     article_texts: dict[str, str] = {}
+    article_metadata: dict[str, dict] = {}
     if article_index.exists():
         articles = json.loads(article_index.read_text())
         articles.sort(key=lambda row: row.get("date", ""), reverse=True)
@@ -851,6 +913,7 @@ def build_all(repo_root: Path | None = None) -> list[str]:
             written.append(str(out))
             article_texts[slug] = article_md.strip()
             article_bodies[slug] = md_to_html(article_md.strip())
+            article_metadata[slug] = meta
 
         article_archive = article_dir / "index.html"
         article_archive.write_text(render_article_archive(articles))
@@ -858,6 +921,11 @@ def build_all(repo_root: Path | None = None) -> list[str]:
         article_feed = article_dir / "feed.xml"
         article_feed.write_text(render_article_feed(articles, article_bodies))
         written.append(str(article_feed))
+        article_json_feed = article_dir / "feed.json"
+        article_json_feed.write_text(
+            render_article_json_feed(articles, article_texts, article_metadata)
+        )
+        written.append(str(article_json_feed))
 
     public = root / "frontend" / "public"
     for name, content in (

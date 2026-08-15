@@ -20,10 +20,11 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the eight tools flagged ``is_public`` in
-``TOOLS``: ``funding_stress_now``, ``historical_analogs``, ``proof_backtest``,
-``data_health``, ``crypto_stress_record``, ``institutional_flows``,
-``oil_funding_context`` and ``fx_materials_passage``. That is the conclusion,
+Surface: the *public* surface is the nine tools flagged ``is_public`` in
+``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
+``proof_backtest``, ``data_health``, ``crypto_stress_record``,
+``institutional_flows``, ``oil_funding_context`` and
+``fx_materials_passage``. That is the published editorial, the conclusion,
 the precedent, the honest record, the freshness of the inputs, and cross-market
 transmission context; it is free to everyone with no token. The *full* surface
 adds the five that read the gated derived engines:
@@ -48,6 +49,8 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
@@ -63,6 +66,8 @@ SUPPORTED_PROTOCOL_VERSIONS = (
 )
 SERVER_NAME = "seiche"
 AGENT_MCP_TELEGRAM_URL = "https://t.me/seiche_desk_bot?start=agent_mcp"
+ARTICLE_FEED_URL = "https://seiche.info/articles/feed.json"
+ARTICLE_FEED_MAX_BYTES = 512 * 1024
 
 # Default surface for the stdio transport. HTTP overrides this per request.
 PUBLIC_ONLY = os.getenv("SEICHE_MCP_PUBLIC", "0") == "1"
@@ -204,6 +209,48 @@ def telegram_delivery(ref: str = "agent_mcp") -> dict[str, str]:
         ),
         "control": "/stop unsubscribes at any time",
     }
+
+
+def _latest_article_from_feed(url: str = ARTICLE_FEED_URL) -> dict:
+    """Read the canonical full-text edition; never reconstruct it in MCP."""
+    if url != ARTICLE_FEED_URL:
+        raise ToolError("article feed URL is not allowlisted")
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/feed+json, application/json",
+                 "User-Agent": "seiche-mcp/0.10"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed URL
+            body = response.read(ARTICLE_FEED_MAX_BYTES + 1)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ToolError(f"the published article feed is unreachable: {exc}") from exc
+    if len(body) > ARTICLE_FEED_MAX_BYTES:
+        raise ToolError("the published article feed exceeded its byte budget")
+    try:
+        feed = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ToolError("the published article feed returned invalid JSON") from exc
+    if feed.get("version") != "https://jsonfeed.org/version/1.1":
+        raise ToolError("the published article feed has an unknown contract")
+    items = feed.get("items")
+    item = items[0] if isinstance(items, list) and items else None
+    receipt = (item or {}).get("_liquidity_lab") or {}
+    if (
+        not isinstance(item, dict)
+        or not isinstance(item.get("content_text"), str)
+        or not item["content_text"].strip()
+        or (receipt.get("quality_gate") or {}).get("status") != "PASS"
+        or (receipt.get("authority") or {}).get("factual_authority")
+        != "published_article_only"
+    ):
+        raise ToolError("the latest article lacks a passing publication receipt")
+    return item
+
+
+def tool_latest_article(_args: dict, _public: bool) -> Any:
+    """Return the exact full article revision distributed by every surface."""
+    return _latest_article_from_feed()
 
 
 def tool_stress_now(_args: dict, public: bool) -> Any:
@@ -542,6 +589,17 @@ def _is_iso_date(s: str) -> bool:
 
 # name -> (title, description, input JSON Schema, handler, is_public)
 TOOLS: dict[str, tuple] = {
+    "latest_article": (
+        "Latest evidence-led article",
+        "The exact full-text Seiche editorial published today: current funding "
+        "analysis when the evidence moved, or a clearly labelled historical "
+        "replay on a quiet day. Returns the canonical headline, dek, Markdown, "
+        "evidence clock, generation mode and passing publication receipt. Use "
+        "this for 'what did Seiche write today?' and quote it without regenerating facts.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_latest_article,
+        True,
+    ),
     "funding_stress_now": (
         "Current funding-stress read",
         "The live money-market funding-stress reading: a 0-100 composite index, "
