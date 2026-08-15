@@ -22,6 +22,7 @@ SYSTEMCTL="${SEICHE_CONTROL_SYSTEMCTL:-systemctl}"
 CURL="${SEICHE_CONTROL_CURL:-curl}"
 SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
 TIMEOUT="${SEICHE_CONTROL_TIMEOUT:-timeout}"
+SLEEP="${SEICHE_CONTROL_SLEEP:-sleep}"
 SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
 SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
 ALLOWED_SIGNERS="${SEICHE_CONTROL_ALLOWED_SIGNERS:-/etc/seiche-release.allowed-signers}"
@@ -31,6 +32,8 @@ SIGNER_GID="${SEICHE_CONTROL_SIGNER_GID:-0}"
 SIGNER_MODE="${SEICHE_CONTROL_SIGNER_MODE:-444}"
 SSH_KEYGEN="${SEICHE_CONTROL_SSH_KEYGEN:-/usr/bin/ssh-keygen}"
 GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
+ADMISSION_WAIT_SECONDS="${SEICHE_CONTROL_ADMISSION_WAIT_SECONDS:-900}"
+ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
 TEST_COMMAND="python -m pytest backend/tests -q --memray --pystack-threshold=300"
 STARTED_AT=$(date -u +%FT%TZ)
@@ -125,6 +128,27 @@ verify_target_signature() {
   fi
 }
 
+wait_for_post_gate_admission() {
+  local deadline=$((SECONDS + ADMISSION_WAIT_SECONDS)) status=0
+  while true; do
+    status=0
+    SEICHE_DEPLOY_ADMISSION_ONLY=1 "$DEPLOY_WRAPPER" \
+      || status=$?
+    case "$status" in
+      0) return 0 ;;
+      75)
+        if (( SECONDS >= deadline )); then
+          return 75
+        fi
+        printf 'release poll: shared host still busy after the full gate; retrying admission in %ss\n' \
+          "$ADMISSION_RETRY_SECONDS"
+        "$SLEEP" "$ADMISSION_RETRY_SECONDS" || return 1
+        ;;
+      *) return "$status" ;;
+    esac
+  done
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
@@ -160,6 +184,14 @@ case "$GATE_ONLY" in
   0|1) ;;
   *) fail "SEICHE_CONTROL_GATE_ONLY must be exactly 0 or 1" ;;
 esac
+if [[ ! "$ADMISSION_WAIT_SECONDS" =~ ^[0-9]+$ ]] \
+    || (( ADMISSION_WAIT_SECONDS > 3600 )); then
+  fail "SEICHE_CONTROL_ADMISSION_WAIT_SECONDS must be an integer from 0 to 3600"
+fi
+if [[ ! "$ADMISSION_RETRY_SECONDS" =~ ^[0-9]+$ ]] \
+    || (( ADMISSION_RETRY_SECONDS < 1 || ADMISSION_RETRY_SECONDS > 300 )); then
+  fail "SEICHE_CONTROL_ADMISSION_RETRY_SECONDS must be an integer from 1 to 300"
+fi
 for path in "$STATE_DIR" "$RECEIPT_DIR" "$CANDIDATE_PARENT" "$RUNTIME_DIR"; do
   if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
     fail "$path is not a real directory"
@@ -404,6 +436,36 @@ GATE_DIGEST=$("$SHA256SUM" "$GATE_RECEIPT" | awk '{print $1}') \
 [[ "$GATE_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "candidate gate receipt digest is invalid"
 if [ "$GATE_ONLY" = 1 ]; then
   echo "release poll: gate-only success for ${TARGET:0:7}; production unchanged"
+  exit 0
+fi
+
+# The full memory-instrumented suite is allowed to consume the host capacity
+# that the deploy wrapper deliberately reserves during checkout mutation and
+# snapshot assembly. Let its one- and five-minute load windows cool without
+# weakening that boundary. A bounded wait remains a normal deferral, while an
+# admission-probe error is a real controller failure.
+POST_GATE_ADMISSION_STATUS=0
+wait_for_post_gate_admission || POST_GATE_ADMISSION_STATUS=$?
+case "$POST_GATE_ADMISSION_STATUS" in
+  0) ;;
+  75)
+    echo "release poll: shared host remained busy after the bounded post-gate wait; ${TARGET:0:7} deferred with production unchanged"
+    exit 0
+    ;;
+  *) fail "shared-host post-gate admission failed" ;;
+esac
+
+# Waiting widens the branch-movement window. Re-fetch immediately before the
+# wrapper handoff and keep the original rule: never deploy a tested candidate
+# after a newer main tip has superseded it.
+if ! as_service git -C "$APP_DIR" fetch -q origin main; then
+  fail "could not re-fetch origin/main after post-gate admission"
+fi
+LATEST=$(as_service git -C "$APP_DIR" rev-parse origin/main) \
+  || fail "could not re-resolve origin/main after post-gate admission"
+valid_sha "$LATEST" || fail "origin/main became invalid after post-gate admission"
+if [ "$LATEST" != "$TARGET" ]; then
+  echo "release poll: tested ${TARGET:0:7} was superseded by ${LATEST:0:7} during post-gate admission; production unchanged"
   exit 0
 fi
 

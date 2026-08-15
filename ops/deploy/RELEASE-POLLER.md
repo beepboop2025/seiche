@@ -6,7 +6,8 @@ workspace. Before executing any candidate code, the controller requires the
 exact tip's author email and SSH signature to match the host-pinned release
 identity. It then creates a detached candidate, installs an isolated virtual
 environment, runs the same full suite as `publish.yml`, re-checks that
-`origin/main` did not move, and hands the exact tested SHA to the existing root
+`origin/main` did not move, waits for the test-induced host load to cool,
+re-checks `origin/main`, and hands the exact tested SHA to the existing root
 deploy wrapper. That wrapper remains the sole owner of service quiescence,
 snapshot activation, Caddy deployment, health gates, and rollback.
 
@@ -49,10 +50,13 @@ snapshot activation, Caddy deployment, health gates, and rollback.
   The longer average prevents a brief dip from admitting immediately after a
   sustained sibling workload. A poller first invokes the same check in
   admission-only mode, before candidate installation or tests, and the wrapper
-  repeats it before quiescence. A busy host records no release receipt and
-  defers without paging; the timer retries the same signed tip on a later
-  five-minute cycle. Do not lengthen snapshot health deadlines to compensate
-  for unrelated workload pressure.
+  repeats it before quiescence. After a successful full gate, the poller waits
+  up to 15 minutes for the gate's own load window to cool, then re-fetches
+  `origin/main` so a candidate superseded during that wait remains inert. A
+  still-busy host records no release receipt and defers without paging; the
+  timer retries the same signed tip on a later five-minute cycle. Admission
+  probe errors remain failures. Do not raise the load ceiling or lengthen
+  snapshot health deadlines to compensate for unrelated workload pressure.
 
 ## Install without activating
 

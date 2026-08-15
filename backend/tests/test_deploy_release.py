@@ -1376,7 +1376,16 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
     gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
     gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
-    deploy_status = poller.index("DEPLOY_STATUS=0", gate_only)
+    post_gate_admission = poller.index(
+        "wait_for_post_gate_admission", gate_only
+    )
+    post_gate_refetch = poller.index(
+        'as_service git -C "$APP_DIR" fetch -q origin main', post_gate_admission
+    )
+    post_gate_superseded = poller.index(
+        'if [ "$LATEST" != "$TARGET" ]', post_gate_refetch
+    )
+    deploy_status = poller.index("DEPLOY_STATUS=0", post_gate_superseded)
     deployed = poller.index(
         'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', deploy_status
     )
@@ -1391,6 +1400,9 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < superseded
         < gate_receipt
         < gate_only
+        < post_gate_admission
+        < post_gate_refetch
+        < post_gate_superseded
         < deploy_status
         < deployed
     )
@@ -1407,10 +1419,91 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "EnvironmentFile" not in gate_slice
     assert "production unchanged" in poller[superseded:gate_receipt]
     assert "gate-only success" in poller[gate_only:deployed]
+    post_gate_slice = poller[post_gate_admission:deploy_status]
+    assert "POST_GATE_ADMISSION_STATUS" in post_gate_slice
+    assert "bounded post-gate wait" in post_gate_slice
+    assert "after post-gate admission" in post_gate_slice
+    assert "during post-gate admission" in post_gate_slice
+    assert "production unchanged" in post_gate_slice
     after_deploy = poller[deploy_status:]
     assert "DEPLOY_STATUS=0" in after_deploy
     assert 'case "$DEPLOY_STATUS"' in after_deploy
     assert "shared host became busy" in after_deploy
+
+
+def _post_gate_admission(
+    tmp_path: Path,
+    wrapper_body: str,
+    *,
+    wait_seconds: int,
+    sleep: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    wrapper = _executable(tmp_path / "admission-wrapper", wrapper_body)
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_DEPLOY_WRAPPER": str(wrapper),
+        "SEICHE_CONTROL_ADMISSION_WAIT_SECONDS": str(wait_seconds),
+        "SEICHE_CONTROL_ADMISSION_RETRY_SECONDS": "1",
+    }
+    if sleep is not None:
+        env["SEICHE_CONTROL_SLEEP"] = str(sleep)
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; wait_for_post_gate_admission',
+            "seiche-admission-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_post_gate_admission_retries_a_safe_deferral(tmp_path):
+    counter = tmp_path / "counter"
+    counter.write_text("0\n")
+    true = Path(shutil.which("true") or "/usr/bin/true")
+    result = _post_gate_admission(
+        tmp_path,
+        (
+            f'count=$(cat "{counter}")\n'
+            'count=$((count + 1))\n'
+            f'printf "%s\\n" "$count" >"{counter}"\n'
+            '[ "$count" -gt 1 ] || exit 75\n'
+        ),
+        wait_seconds=10,
+        sleep=true,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert counter.read_text() == "2\n"
+    assert "retrying admission" in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_status", [1, 42])
+def test_post_gate_admission_preserves_real_probe_failures(
+    tmp_path, wrapper_status
+):
+    result = _post_gate_admission(
+        tmp_path,
+        f"exit {wrapper_status}\n",
+        wait_seconds=0,
+    )
+
+    assert result.returncode == wrapper_status
+
+
+def test_post_gate_admission_returns_deferred_at_its_bound(tmp_path):
+    result = _post_gate_admission(
+        tmp_path,
+        "exit 75\n",
+        wait_seconds=0,
+    )
+
+    assert result.returncode == 75
 
 
 def test_release_signature_boundary_accepts_only_the_pinned_signed_identity(tmp_path):
