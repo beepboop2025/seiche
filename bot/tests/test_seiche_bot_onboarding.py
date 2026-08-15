@@ -191,14 +191,15 @@ def test_stop_names_every_delivery_class_it_disables(tmp_path, monkeypatch):
 def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch):
     sent = []
 
-    def fake_send(chat_id, text, keyboard=None):
+    def fake_send(chat_id, text, keyboard=None, *, _return_first=False):
+        assert _return_first is True
         sent.append((chat_id, text, keyboard))
-        return {"ok": True}
+        return {"ok": True, "result": {"message_id": 123}}
 
     monkeypatch.setattr(bot, "LAB_CHANNEL", "-100123")
     monkeypatch.setattr(bot, "send", fake_send)
 
-    assert bot.post_channel("A served funding read.", "lab_alert") is True
+    assert bot.post_channel("A served funding read.", "lab_alert") == 123
     _, text, keyboard = sent[0]
     destination = keyboard[0][0]["url"]
     subscribing_buttons = [

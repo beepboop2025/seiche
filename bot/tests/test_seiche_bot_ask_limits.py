@@ -56,6 +56,16 @@ def _bodies(sent):
     return [p.get("text", "") for m, p in sent if m == "sendMessage"]
 
 
+def test_remote_json_reader_accepts_normal_envelopes():
+    assert bot._read_json_response(io.BytesIO(b'{"ok":true}')) == {"ok": True}
+
+
+def test_remote_json_reader_rejects_oversized_bodies():
+    body = b" " * (bot.MAX_JSON_RESPONSE_BYTES + 1)
+    with pytest.raises(ValueError, match="byte limit"):
+        bot._read_json_response(io.BytesIO(body))
+
+
 # ------------------------------------------------ the property: one chat
 # cannot spend another chat's answers
 

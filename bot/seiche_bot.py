@@ -92,6 +92,7 @@ PRIVATE_SUBSCRIPTION_KEYBOARD = [
 ]
 
 POLL_TIMEOUT = 50
+MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
 
 # The backend keys its /api/ask limiter on the client IP, and this bot reaches
 # the backend over loopback, so every Telegram user shares one server-side
@@ -108,6 +109,14 @@ FOOT = ("\n<i>Free public good: no paywall, no sign-in. Every number is on "
 
 
 # ---------------------------------------------------------------- plumbing --
+def _read_json_response(stream):
+    """Parse one bounded response so a remote peer cannot exhaust memory."""
+    raw = stream.read(MAX_JSON_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_JSON_RESPONSE_BYTES:
+        raise ValueError("JSON response exceeds the byte limit")
+    return json.loads(raw)
+
+
 def tg_call(method: str, payload: dict) -> dict | None:
     req = urllib.request.Request(
         f"{TG}/{method}",
@@ -116,28 +125,33 @@ def tg_call(method: str, payload: dict) -> dict | None:
     )
     try:
         with urllib.request.urlopen(req, timeout=POLL_TIMEOUT + 10) as r:
-            return json.load(r)
+            return _read_json_response(r)
     except urllib.error.HTTPError as exc:
         # Telegram answers errors with a JSON body (error_code/description);
         # surface it so callers can react (403 blocked → prune, 400 → retry
         # without parse_mode) instead of losing the distinction.
         try:
-            body = json.load(exc)
+            body = _read_json_response(exc)
         except Exception:
             body = {"ok": False, "error_code": exc.code}
         print(f"tg {method} failed: {exc.code} "
               f"{body.get('description', '')}", file=sys.stderr)
         return body
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         print(f"tg {method} failed: {exc}", file=sys.stderr)
         return None
 
 
-def send(chat_id: int, text: str, keyboard: list | None = None) -> dict | None:
+def send(chat_id: int, text: str, keyboard: list | None = None, *,
+         _return_first: bool = False) -> dict | None:
     """Send, chunked at line seams (Telegram caps at 4096 and HTML must never
     be cut mid-tag). Returns the last Telegram reply so timer loops can spot
-    blocked chats (error_code 403) and prune them."""
+    blocked chats (error_code 403) and prune them, unless a channel publisher
+    explicitly needs the first post's message ID."""
     res = None
+    first_res = None
+    first_seen = False
+    all_ok = True
     while text:
         cut = len(text)
         if cut > 4000:
@@ -160,7 +174,10 @@ def send(chat_id: int, text: str, keyboard: list | None = None) -> dict | None:
             # HTML Telegram refuses to parse: deliver the words anyway
             res = tg_call("sendMessage",
                           {k: v for k, v in payload.items() if k != "parse_mode"})
-    return res
+        if not first_seen:
+            first_res, first_seen = res, True
+        all_ok = all_ok and isinstance(res, dict) and res.get("ok") is True
+    return (first_res if all_ok else None) if _return_first else res
 
 
 def _send_all(subs: dict, text: str, keyboard: list | None = None) -> int:
@@ -183,7 +200,29 @@ def _send_all(subs: dict, text: str, keyboard: list | None = None) -> int:
     return delivered
 
 
-def post_channel(text: str, ref: str) -> bool:
+def _channel_message_id(res: object) -> int | None:
+    if not isinstance(res, dict) or res.get("ok") is not True:
+        return None
+    result = res.get("result")
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    if (not isinstance(message_id, int) or isinstance(message_id, bool)
+            or message_id <= 0):
+        return None
+    return message_id
+
+
+def _discussion_keyboard(keyboard: list | None,
+                         message_id: int | None) -> list | None:
+    if (not isinstance(message_id, int) or isinstance(message_id, bool)
+            or message_id <= 0):
+        return keyboard
+    return [*(keyboard or []), [{
+        "text": "💬 Discuss this post",
+        "url": f"{LAB_LINK.rstrip('/')}/{message_id}",
+    }]]
+
+
+def post_channel(text: str, ref: str) -> int | None:
     """Publish a read to the free Liquidity Lab channel.
 
     `ref` rides the desk deep link as `?start=<ref>`, so `record_lead` can
@@ -195,7 +234,7 @@ def post_channel(text: str, ref: str) -> bool:
     letter.
     """
     if not LAB_CHANNEL:
-        return False
+        return None
     desk_url = f"{BOT_URL}?start={urllib.parse.quote(ref, safe='')}"
     body = text + (
         f"\n\n<i>Want the next funding-stress turn before the US open? "
@@ -209,14 +248,14 @@ def post_channel(text: str, ref: str) -> bool:
         [{"text": "📨 Follow: next Seiche letter", "url": desk_url}],
     ]
     try:
-        res = send(int(LAB_CHANNEL), body, keyboard)
+        res = send(int(LAB_CHANNEL), body, keyboard, _return_first=True)
     except Exception as exc:                      # noqa: BLE001 - see docstring
         print(f"channel post failed: {exc}", file=sys.stderr)
-        return False
-    ok = isinstance(res, dict) and res.get("ok")
-    if not ok:
+        return None
+    message_id = _channel_message_id(res)
+    if message_id is None:
         print(f"channel post rejected: {res}", file=sys.stderr)
-    return bool(ok)
+    return message_id
 
 
 def _get_json(url: str, timeout: int = 25,
@@ -226,7 +265,7 @@ def _get_json(url: str, timeout: int = 25,
     for attempt in range(tries):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.load(r)
+                return _read_json_response(r)
         except urllib.error.HTTPError as exc:
             # HTTPError subclasses URLError, so this arm has to come first or
             # the one below swallows the status code. A 429 is the backend's
@@ -238,7 +277,7 @@ def _get_json(url: str, timeout: int = 25,
                 print(f"GET {url} failed: {exc.code}", file=sys.stderr)
             else:
                 time.sleep(1.5)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             if attempt == tries - 1:
                 print(f"GET {url} failed: {exc}", file=sys.stderr)
             else:
@@ -579,8 +618,9 @@ def send_photo(chat_id: int, png: bytes, caption: str,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            return bool(json.load(r).get("ok"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            response = _read_json_response(r)
+            return isinstance(response, dict) and bool(response.get("ok"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         print(f"sendPhoto failed: {exc}", file=sys.stderr)
         return False
 
@@ -1612,7 +1652,9 @@ def run_letter() -> None:
     if not subs:
         print(f"no subscribers yet; letter published to channel={published}")
         return
-    n = _send_all(subs, text)
+    subscriber_keyboard = _discussion_keyboard(None, published)
+    n = (_send_all(subs, text, subscriber_keyboard) if subscriber_keyboard
+         else _send_all(subs, text))
     print(f"letter sent to {n} subscriber(s), published to channel={published}")
 
 
@@ -1639,7 +1681,10 @@ def run_tandem() -> None:
         head = "🟢 <b>Cross-desk de-escalation.</b>"
     text = head + "\n\n" + fmt_tandem(gauge, board)
     published = post_channel(text, "lab_tandem")
-    n = _send_all(load_state("subscribers.json", {}), text)
+    subs = load_state("subscribers.json", {})
+    subscriber_keyboard = _discussion_keyboard(None, published)
+    n = (_send_all(subs, text, subscriber_keyboard) if subscriber_keyboard
+         else _send_all(subs, text))
     print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s), "
           f"published to channel={published}")
 
@@ -1723,7 +1768,8 @@ def run_alert_scan() -> None:
            "\n\n/now for the full gauge · /turns for what's on the calendar"
     published = post_channel(text, "lab_alert")
     subs = load_state("subscribers.json", {})
-    delivered = _send_all(subs, text, keyboard_for("/now")) if subs else 0
+    subscriber_keyboard = _discussion_keyboard(keyboard_for("/now"), published)
+    delivered = _send_all(subs, text, subscriber_keyboard) if subs else 0
     if delivered or not subs:
         new_state["alerted"] = {"regime": gauge.get("regime"),
                                 "index": gauge.get("index"), "ts": time.time()}

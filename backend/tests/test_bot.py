@@ -31,8 +31,12 @@ def sent(monkeypatch):
 
     def fake_tg_call(method, payload):
         out.append((method, payload))
-        result = {"id": 1, "is_bot": True, "username": "seiche_test_bot"} \
-            if method == "getMe" else True
+        if method == "getMe":
+            result = {"id": 1, "is_bot": True, "username": "seiche_test_bot"}
+        elif method == "sendMessage":
+            result = {"message_id": 123}
+        else:
+            result = True
         return {"ok": True, "result": result}
 
     monkeypatch.setattr(bot, "tg_call", fake_tg_call)
@@ -672,13 +676,13 @@ def test_post_channel_is_off_without_env(monkeypatch, sent):
     """No LAB_CHANNEL_ID means no publishing. Guards every laptop run and
     every timer on a box that has not opted in."""
     monkeypatch.setattr(bot, "LAB_CHANNEL", "")
-    assert bot.post_channel("hello", "lab_letter") is False
+    assert bot.post_channel("hello", "lab_letter") is None
     assert sent == []
 
 
 def test_post_channel_carries_deep_links_with_ref(monkeypatch, sent):
     monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
-    assert bot.post_channel("the read", "lab_letter") is True
+    assert bot.post_channel("the read", "lab_letter") == 123
     m, p = sent[-1]
     assert m == "sendMessage"
     assert p["chat_id"] == -1004297805949
@@ -696,7 +700,7 @@ def test_post_channel_survives_a_rejection(monkeypatch):
     monkeypatch.setattr(bot, "tg_call",
                         lambda m, p: {"ok": False, "error_code": 403,
                                       "description": "bot is not a member"})
-    assert bot.post_channel("x", "lab_alert") is False
+    assert bot.post_channel("x", "lab_alert") is None
 
 
 def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
