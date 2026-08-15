@@ -157,6 +157,17 @@ def test_gate_feedback_can_repair_copy(fake_snap, monkeypatch):
     assert article["generation"]["passes"] == 3
 
 
+def test_boundary_overlay_adds_only_fixed_disclosures():
+    candidate = {"headline": "Held", "dek": "Held", "body_md": "Evidence-led copy."}
+    overlaid, applied = article_daily._apply_boundary_overlay(
+        candidate, article_type="historical_replay",
+    )
+    assert applied == ["historical_non_forecast", "not_investment_advice"]
+    assert overlaid["headline"] == candidate["headline"]
+    assert "not a forecast" in overlaid["body_md"].lower()
+    assert "not investment advice" in overlaid["body_md"].lower()
+
+
 def test_article_archive_feed_sitemap_and_llms_are_built(fake_snap, tmp_path):
     dispatch = build_dispatch(fake_snap, prev_value=38.0)
     write_dispatch(dispatch, repo_root=tmp_path)

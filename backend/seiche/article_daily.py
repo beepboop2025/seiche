@@ -1103,6 +1103,21 @@ def _candidate_publish_issues(candidate: dict, dossier: dict, *,
     return issues
 
 
+def _apply_boundary_overlay(candidate: dict, *, article_type: str) -> tuple[dict, list[str]]:
+    """Add only fixed, non-factual publication disclosures."""
+    overlaid = copy.deepcopy(candidate)
+    body = str(overlaid.get("body_md") or "").strip()
+    applied = []
+    if article_type == "historical_replay" and "not a forecast" not in body.lower():
+        body = "This historical replay is not a forecast.\n\n" + body
+        applied.append("historical_non_forecast")
+    if "not investment advice" not in body.lower():
+        body += "\n\nResearch and market data, not investment advice."
+        applied.append("not_investment_advice")
+    overlaid["body_md"] = body
+    return overlaid, applied
+
+
 def build_article(snap: dict, story: dict, *, date: str,
                   recent_topics: list[str] | None = None,
                   model_config: dict[str, str] | None | bool = False,
@@ -1148,6 +1163,9 @@ def build_article(snap: dict, story: dict, *, date: str,
         try:
             candidate = _draft_with_model(dossier, config)
             passes = 2
+            candidate, boundary_overlay = _apply_boundary_overlay(
+                candidate, article_type=article_type,
+            )
             gate_issues = _candidate_publish_issues(
                 candidate, dossier, article_type=article_type,
                 editorial_memory=editorial_memory,
@@ -1157,6 +1175,13 @@ def build_article(snap: dict, story: dict, *, date: str,
                     break
                 candidate = _repair_with_model(dossier, candidate, gate_issues, config)
                 passes += 1
+                candidate, added_boundaries = _apply_boundary_overlay(
+                    candidate, article_type=article_type,
+                )
+                boundary_overlay.extend(
+                    boundary for boundary in added_boundaries
+                    if boundary not in boundary_overlay
+                )
                 gate_issues = _candidate_publish_issues(
                     candidate, dossier, article_type=article_type,
                     editorial_memory=editorial_memory,
@@ -1170,6 +1195,7 @@ def build_article(snap: dict, story: dict, *, date: str,
                 "passes": passes,
                 "dossier_sha256": generation["dossier_sha256"],
                 "fallback_reason": None,
+                "deterministic_boundary_overlay": boundary_overlay,
                 "review_notes": candidate.get("review_notes") or [],
                 "editorial_memory": generation["editorial_memory"],
             }
