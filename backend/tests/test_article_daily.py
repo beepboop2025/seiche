@@ -92,6 +92,10 @@ def test_unsupported_model_number_forces_safe_fallback(fake_snap, monkeypatch):
         }
 
     monkeypatch.setattr(article_daily, "_draft_with_model", bad_copy)
+    monkeypatch.setattr(
+        article_daily, "_repair_with_model",
+        lambda _dossier, candidate, _failures, _config: candidate,
+    )
     article = build_article(
         fake_snap, story, date="2026-07-10",
         model_config={"key": "test", "base_url": "https://invalid", "model": "test-model"},
@@ -121,6 +125,36 @@ def test_two_pass_copy_can_clear_grounding_gate(fake_snap, monkeypatch):
     assert article["generation"]["mode"] == "model_assisted"
     assert article["generation"]["passes"] == 2
     assert article["generation"]["model"] == "test-model"
+
+
+def test_gate_feedback_can_repair_copy(fake_snap, monkeypatch):
+    story = _story(fake_snap)
+    fallback = build_article(fake_snap, story, date="2026-07-10", model_config=None)
+    rejected = {
+        "headline": fallback["headline"],
+        "dek": fallback["dek"],
+        "body_md": fallback["body_md"] + "\nThe unsupported balance was $987654321B.",
+        "review_notes": [],
+    }
+    observed_failures = []
+
+    monkeypatch.setattr(article_daily, "_draft_with_model", lambda *_args: rejected)
+
+    def repair(_dossier, _candidate, failures, _config):
+        observed_failures.extend(failures)
+        return {
+            "headline": fallback["headline"], "dek": fallback["dek"],
+            "body_md": fallback["body_md"], "review_notes": ["Removed unsupported copy."],
+        }
+
+    monkeypatch.setattr(article_daily, "_repair_with_model", repair)
+    article = build_article(
+        fake_snap, story, date="2026-07-10",
+        model_config={"key": "test", "base_url": "https://invalid", "model": "test-model"},
+    )
+    assert any("unsupported numbers" in issue for issue in observed_failures)
+    assert article["generation"]["mode"] == "model_assisted"
+    assert article["generation"]["passes"] == 3
 
 
 def test_article_archive_feed_sitemap_and_llms_are_built(fake_snap, tmp_path):

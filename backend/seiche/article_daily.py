@@ -94,12 +94,17 @@ Hard rules:
 3. A historical replay must say near the top that it is not breaking news and
    not a forecast. Similarity never means recurrence.
 4. Write 900 to 1,300 words of finished Markdown. Do not pad. Do not use tables.
-5. Link only to URLs in allowed_source_urls. End with the required product
-   handoff, but never turn the article into an advertisement.
+   Use every exact heading listed in required_sections.
+5. Include at least six Markdown source links, all drawn verbatim from
+   allowed_source_urls. End with the required product handoff, but never turn
+   the article into an advertisement.
 6. Return JSON only with three string fields: headline, dek, body_md.
 7. Output only reader-facing copy. No reasoning, planning, or AI disclosure.
 8. Treat editorial_memory directives as structural standards only. They are not
    evidence and cannot supply a fact, number, event, source, or conclusion.
+9. Before returning, scan every numeral in the copy against the dossier and
+   delete any unsupported one. The body must contain the exact phrase "not
+   investment advice"; historical mode must also contain "not a forecast".
 """
 
 _EDITORIAL_REVIEW_SYSTEM = """You are Seiche's sceptical standards editor.
@@ -108,6 +113,9 @@ EVIDENCE DOSSIER as the only source of fact. Delete anything unsupported; never
 repair a weak sentence by inventing context. Tighten the lede, strengthen the
 mechanism, make the counter-case genuinely capable of defeating the thesis, and
 make the final test observable. Preserve every evidence boundary and source URL.
+Return publish only after the copy includes every required heading, at least six
+allowed Markdown links, the required research boundary, and no numeral absent
+from the dossier. If any check fails, repair it in the returned article.
 
 Return JSON only with: verdict (the literal string publish), headline, dek,
 body_md, and notes (a short list of material edits). Do not return commentary
@@ -637,6 +645,46 @@ def _draft_with_model(dossier: dict, config: dict[str, str]) -> dict:
     }
 
 
+def _repair_with_model(dossier: dict, candidate: dict, failures: list[str],
+                       config: dict[str, str]) -> dict:
+    """Give the standards model one gate-directed repair attempt."""
+    repair_config = {**config, "model": config.get("review_model") or config["model"]}
+    repaired = _complete_json(
+        repair_config,
+        [
+            {"role": "system", "content": _EDITORIAL_REVIEW_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    "The deterministic publication gate rejected this copy. Repair every "
+                    "listed failure using only the dossier; do not argue with or weaken the "
+                    "gate. Return the complete article, not a patch.\n\n"
+                    "GATE FAILURES:\n" + json.dumps(failures, ensure_ascii=False)
+                    + "\n\nEVIDENCE DOSSIER:\n" + json.dumps(dossier, ensure_ascii=False)
+                    + "\n\nREJECTED COPY:\n" + json.dumps(candidate, ensure_ascii=False)
+                ),
+            },
+        ],
+        max_tokens=4400,
+    )
+    if str(repaired.get("verdict") or "").lower() != "publish":
+        raise ValueError("repair editor did not return a publish verdict")
+    for field in ("headline", "dek", "body_md"):
+        if not isinstance(repaired.get(field), str) or not repaired[field].strip():
+            raise ValueError(f"repair editor omitted {field}")
+    prior_notes = candidate.get("review_notes")
+    repair_notes = repaired.get("notes")
+    return {
+        "headline": repaired["headline"].strip(),
+        "dek": repaired["dek"].strip(),
+        "body_md": repaired["body_md"].strip(),
+        "review_notes": (
+            (prior_notes if isinstance(prior_notes, list) else [])
+            + (repair_notes if isinstance(repair_notes, list) else [])
+        ),
+    }
+
+
 _URL_RE = re.compile(r"https?://[^\s)>\]]+")
 _NUMBER_RE = re.compile(r"(?<![A-Za-z])[-+]?\$?\d[\d,]*(?:\.\d+)?(?:%|bps?|bp|bn|tn|[BMK])?", re.I)
 
@@ -1040,6 +1088,21 @@ def article_quality_issues(article: dict) -> list[str]:
     return issues
 
 
+def _candidate_publish_issues(candidate: dict, dossier: dict, *,
+                              article_type: str,
+                              editorial_memory: dict | None) -> list[str]:
+    """Run the same immutable grounding and editorial gates after each pass."""
+    issues = model_grounding_issues(candidate, dossier)
+    issues.extend(article_quality_issues({
+        "headline": candidate["headline"],
+        "dek": candidate["dek"],
+        "body_md": candidate["body_md"],
+        "article_type": article_type,
+        "editorial_memory": editorial_memory or {},
+    }))
+    return issues
+
+
 def build_article(snap: dict, story: dict, *, date: str,
                   recent_topics: list[str] | None = None,
                   model_config: dict[str, str] | None | bool = False,
@@ -1083,22 +1146,25 @@ def build_article(snap: dict, story: dict, *, date: str,
     if isinstance(config, dict):
         try:
             candidate = _draft_with_model(dossier, config)
-            grounding = model_grounding_issues(candidate, dossier)
-            provisional = {
-                "headline": candidate["headline"],
-                "dek": candidate["dek"],
-                "body_md": candidate["body_md"],
-                "article_type": article_type,
-                "editorial_memory": editorial_memory or {},
-            }
-            grounding.extend(article_quality_issues(provisional))
-            if grounding:
-                raise ValueError("; ".join(grounding))
+            passes = 2
+            gate_issues = _candidate_publish_issues(
+                candidate, dossier, article_type=article_type,
+                editorial_memory=editorial_memory,
+            )
+            if gate_issues:
+                candidate = _repair_with_model(dossier, candidate, gate_issues, config)
+                passes = 3
+                gate_issues = _candidate_publish_issues(
+                    candidate, dossier, article_type=article_type,
+                    editorial_memory=editorial_memory,
+                )
+            if gate_issues:
+                raise ValueError("; ".join(gate_issues))
             model_copy = candidate
             generation = {
                 "mode": "model_assisted",
                 "model": config["model"],
-                "passes": 2,
+                "passes": passes,
                 "dossier_sha256": generation["dossier_sha256"],
                 "fallback_reason": None,
                 "review_notes": candidate.get("review_notes") or [],
