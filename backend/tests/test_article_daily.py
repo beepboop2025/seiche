@@ -6,6 +6,7 @@ archives, and crawlable publication artifacts.
 """
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 
 from seiche import article_daily
@@ -145,6 +146,10 @@ def test_article_archive_feed_sitemap_and_llms_are_built(fake_snap, tmp_path):
     ).read_text()
     sidecar = json.loads((article_dir / f"{article['slug']}.json").read_text())
     assert sidecar["quality_gate"]["status"] == "PASS"
+    learning = json.loads((article_dir / "learning.json").read_text())
+    assert learning["schema"] == "editorial.learning-feed.v1"
+    assert learning["authority"]["training_allowed"] is False
+    assert learning["articles"][0]["body_markdown"] == article["body_md"]
 
 
 def test_same_day_rewrite_removes_obsolete_slug_artifacts(fake_snap, tmp_path):
@@ -179,3 +184,45 @@ def test_repeat_selection_ignores_the_edition_being_replaced(tmp_path):
     assert article_daily._recent_topics(
         index_path=index, exclude_date="2026-07-10"
     ) == ["prior-episode"]
+
+
+def test_tag_only_editorial_memory_is_bound_and_applied(fake_snap):
+    identity = {
+        "schema": "mqdnse.editorial-memory.v1",
+        "generated_at": "2026-07-10T08:00:00Z",
+        "source_run_id": "sha256:" + "a" * 64,
+        "source_manifest_sha256": "sha256:" + "b" * 64,
+        "rubric_version": "mqdnse.editorial-rubric.v1",
+        "global_directives": ["show_mechanism"],
+        "products": {
+            "seiche": {
+                "articleId": "seiche:article:prior",
+                "articleRevisionSha256": "sha256:" + "c" * 64,
+                "criticStatus": "validated_shadow_critique",
+                "verdict": "publishable",
+                "score": 12,
+                "directives": ["strengthen_thesis"],
+            }
+        },
+        "authority": article_daily.EDITORIAL_MEMORY_AUTHORITY,
+    }
+    payload = {
+        **identity,
+        "memory_fingerprint": article_daily._memory_sha(identity),
+    }
+    memory = article_daily.validate_editorial_memory(
+        payload,
+        now=datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc),
+    )
+    story = _story(fake_snap)
+    article = build_article(
+        fake_snap,
+        story,
+        date="2026-07-10",
+        model_config=None,
+        editorial_memory=memory,
+    )
+
+    assert memory["directives"] == ["strengthen_thesis", "show_mechanism"]
+    assert article["generation"]["editorial_memory"] == memory
+    assert article["quality_gate"]["status"] == "PASS"

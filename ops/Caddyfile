@@ -71,6 +71,19 @@ api.seiche.info {
         file_server
     }
 
+    # MyQuant's public editorial memory is a rebuildable, tag-only projection.
+    # Expose exactly one file; the private critique ledger remains on the data
+    # volume and is never readable by Caddy.
+    @editorial_memory path /editorial/memory.json
+    handle @editorial_memory {
+        header Access-Control-Allow-Origin "*"
+        header Cache-Control "public, max-age=300, no-transform"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /editorial
+        root * /var/lib/myquant-editorial-public
+        file_server
+    }
+
     # Undertow MCP remote (agent tools; bearer-token subscriber tier
     # verified in-process against the bot entitlement state). Must sit
     # ABOVE the static /undertow/* mirror — handle blocks match in

@@ -387,6 +387,21 @@ def test_caddy_access_log_redacts_credential_query_values():
     assert "format json" not in access_log
 
 
+def test_caddy_exposes_only_the_sanitized_editorial_memory_projection():
+    caddy = CADDYFILE.read_text(encoding="utf-8")
+    marker = "@editorial_memory path /editorial/memory.json"
+    start = caddy.index(marker)
+    end = caddy.index("\n    }", start)
+    block = caddy[start:end]
+
+    assert "root * /var/lib/myquant-editorial-public" in block
+    assert "uri strip_prefix /editorial" in block
+    assert "file_server" in block
+    assert 'Cache-Control "public, max-age=300, no-transform"' in block
+    assert "handle_path /editorial/*" not in caddy
+    assert "/mnt/HC_Volume_106588294/myquant-intelligence" not in block
+
+
 def test_api_dropin_disables_unredacted_uvicorn_access_log():
     installer = MARKET_INSTALLER.read_text()
     api_dropin = installer[
