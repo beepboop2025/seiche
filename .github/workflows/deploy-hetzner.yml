@@ -101,10 +101,14 @@ jobs:
           # one, and pass two executes it on the same SHA before route smoke.
           # A release that first introduces a new preflight must therefore be
           # started only after the shared host is manually confirmed quiet.
+          # A normal admission defer (75) is retried for at most ten minutes;
+          # every other nonzero status remains an immediate workflow failure.
           SEICHE_DEPLOY_HOST="$HOST" \
           SEICHE_DEPLOY_KEY_FILE="$HOME/.ssh/hetzner_key" \
           SEICHE_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts" \
           SEICHE_EXPECTED_TARGET_SHA="$TARGET_SHA" \
+          SEICHE_DEPLOY_DEFER_WAIT_SECONDS=600 \
+          SEICHE_DEPLOY_DEFER_RETRY_SECONDS=30 \
             bash ops/deploy/trigger-forced-deploy.sh
 
       # The wrapper proves localhost health and deploys Caddy safely. This

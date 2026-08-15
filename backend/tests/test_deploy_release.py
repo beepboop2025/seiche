@@ -579,9 +579,91 @@ printf '\\n' >> "{calls}"
     workflow = DEPLOY_WORKFLOW.read_text()
     assert "target_sha:" in workflow
     assert 'SEICHE_EXPECTED_TARGET_SHA="$TARGET_SHA"' in workflow
+    assert "SEICHE_DEPLOY_DEFER_WAIT_SECONDS=600" in workflow
+    assert "SEICHE_DEPLOY_DEFER_RETRY_SECONDS=30" in workflow
     assert workflow.index("trigger-forced-deploy.sh") < workflow.index(
         "external-route-smoke.sh"
     )
+
+
+def _forced_deploy_result(
+    tmp_path: Path,
+    ssh_body: str,
+    *,
+    wait_seconds: int,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    calls = tmp_path / "ssh-calls"
+    ssh = _executable(
+        tmp_path / "ssh",
+        f'printf "call\\n" >>"{calls}"\n{ssh_body}',
+    )
+    key = tmp_path / "key"
+    known = tmp_path / "known_hosts"
+    key.write_text("test-only")
+    known.write_text("test-only")
+    env = os.environ | {
+        "SEICHE_DEPLOY_HOST": "192.0.2.10",
+        "SEICHE_DEPLOY_KEY_FILE": str(key),
+        "SEICHE_KNOWN_HOSTS_FILE": str(known),
+        "SEICHE_EXPECTED_TARGET_SHA": "a" * 40,
+        "SEICHE_SSH_BIN": str(ssh),
+        "SEICHE_DEPLOY_SLEEP_BIN": str(Path(shutil.which("true") or "/usr/bin/true")),
+        "SEICHE_DEPLOY_DEFER_WAIT_SECONDS": str(wait_seconds),
+        "SEICHE_DEPLOY_DEFER_RETRY_SECONDS": "1",
+    }
+    return (
+        subprocess.run(
+            ["bash", str(FORCED_DEPLOY)],
+            env=env,
+            text=True,
+            capture_output=True,
+        ),
+        calls,
+    )
+
+
+def test_forced_command_retries_only_a_safe_defer(tmp_path):
+    counter = tmp_path / "counter"
+    counter.write_text("0\n")
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        (
+            f'count=$(cat "{counter}")\n'
+            'count=$((count + 1))\n'
+            f'printf "%s\\n" "$count" >"{counter}"\n'
+            '[ "$count" -gt 1 ] || exit 75\n'
+        ),
+        wait_seconds=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == ["call", "call", "call"]
+    assert "safely deferred; retrying" in result.stdout
+
+
+@pytest.mark.parametrize("status", [1, 42, 255])
+def test_forced_command_preserves_real_failures(tmp_path, status):
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        f"exit {status}\n",
+        wait_seconds=10,
+    )
+
+    assert result.returncode == status
+    assert calls.read_text().splitlines() == ["call"]
+    assert "retrying" not in result.stdout
+
+
+def test_forced_command_returns_deferred_at_its_bound(tmp_path):
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        "exit 75\n",
+        wait_seconds=0,
+    )
+
+    assert result.returncode == 75
+    assert calls.read_text().splitlines() == ["call"]
+    assert "remained safely deferred after 0s" in result.stderr
 
 
 def test_forced_command_refuses_an_unbound_target(tmp_path):

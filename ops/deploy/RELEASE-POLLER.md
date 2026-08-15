@@ -104,3 +104,11 @@ systemctl status seiche-release-poll.timer --no-pager
 Do not enable both controllers. Two triggers cannot corrupt the checkout—the
 deploy wrapper has its own lock—but duplicate release attempts obscure which
 control plane owns an incident.
+
+While the hosted `deploy-hetzner` workflow remains the active controller, its
+forced-deploy client retries only wrapper exit `75` for a bounded ten-minute
+window. Each retry remains pinned to the same reviewed SHA and repeats the
+host's admission check. Other SSH or wrapper failures stop immediately, and a
+host that stays busy through the bound leaves production unchanged and the
+workflow red. External route checks run only after both forced-deploy passes
+complete successfully.
