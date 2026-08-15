@@ -243,6 +243,7 @@ def _latest_article_from_feed(url: str = ARTICLE_FEED_URL) -> dict:
         or (receipt.get("quality_gate") or {}).get("status") != "PASS"
         or (receipt.get("authority") or {}).get("factual_authority")
         != "published_article_only"
+        or (receipt.get("authority") or {}).get("training_allowed") is not False
     ):
         raise ToolError("the latest article lacks a passing publication receipt")
     return item

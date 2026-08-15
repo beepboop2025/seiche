@@ -232,7 +232,10 @@ def test_latest_article_requires_complete_published_receipt():
         "content_text": "The complete reviewed article body.",
         "_liquidity_lab": {
             "quality_gate": {"status": "PASS"},
-            "authority": {"factual_authority": "published_article_only"},
+            "authority": {
+                "factual_authority": "published_article_only",
+                "training_allowed": False,
+            },
         },
     }
     feed = {"version": "https://jsonfeed.org/version/1.1", "items": [item]}
@@ -241,6 +244,9 @@ def test_latest_article_requires_complete_published_receipt():
     item["content_text"] = ""
     assert bot.latest_article(feed) is None
     item["content_text"] = "The complete reviewed article body."
+    item["_liquidity_lab"]["authority"]["training_allowed"] = True
+    assert bot.latest_article(feed) is None
+    item["_liquidity_lab"]["authority"]["training_allowed"] = False
     item["_liquidity_lab"]["authority"]["factual_authority"] = "training_output"
     assert bot.latest_article(feed) is None
 

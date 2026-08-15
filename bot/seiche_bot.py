@@ -1007,6 +1007,7 @@ def latest_article(feed: dict | None) -> dict | None:
         or (receipt.get("quality_gate") or {}).get("status") != "PASS"
         or (receipt.get("authority") or {}).get("factual_authority")
         != "published_article_only"
+        or (receipt.get("authority") or {}).get("training_allowed") is not False
     ):
         return None
     return item

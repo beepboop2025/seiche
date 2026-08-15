@@ -47,7 +47,10 @@ def test_latest_article_returns_the_canonical_published_revision(monkeypatch):
         "date_published": "2026-08-15T11:00:00Z",
         "_liquidity_lab": {
             "quality_gate": {"status": "PASS"},
-            "authority": {"factual_authority": "published_article_only"},
+            "authority": {
+                "factual_authority": "published_article_only",
+                "training_allowed": False,
+            },
         },
     }
     encoded = json.dumps({
@@ -64,6 +67,12 @@ def test_latest_article_returns_the_canonical_published_revision(monkeypatch):
     monkeypatch.setattr(mcp.urllib.request, "urlopen",
                         lambda *_args, **_kwargs: Response(encoded))
     assert _payload(_call("latest_article")) == item
+
+    item["_liquidity_lab"]["authority"]["training_allowed"] = True
+    encoded = json.dumps({
+        "version": "https://jsonfeed.org/version/1.1", "items": [item],
+    }).encode()
+    assert _call("latest_article")["result"]["isError"] is True
 
 
 def test_mcp_cache_immediately_adopts_a_completed_assembler_rebuild(monkeypatch):
