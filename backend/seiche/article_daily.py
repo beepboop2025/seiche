@@ -1144,6 +1144,7 @@ def build_article(snap: dict, story: dict, *, date: str,
 
     model_copy: dict | None = None
     if isinstance(config, dict):
+        passes = 0
         try:
             candidate = _draft_with_model(dossier, config)
             passes = 2
@@ -1151,9 +1152,11 @@ def build_article(snap: dict, story: dict, *, date: str,
                 candidate, dossier, article_type=article_type,
                 editorial_memory=editorial_memory,
             )
-            if gate_issues:
+            for _repair_attempt in range(2):
+                if not gate_issues:
+                    break
                 candidate = _repair_with_model(dossier, candidate, gate_issues, config)
-                passes = 3
+                passes += 1
                 gate_issues = _candidate_publish_issues(
                     candidate, dossier, article_type=article_type,
                     editorial_memory=editorial_memory,
@@ -1171,6 +1174,7 @@ def build_article(snap: dict, story: dict, *, date: str,
                 "editorial_memory": generation["editorial_memory"],
             }
         except Exception as exc:  # noqa: BLE001 - publication must fall back, with receipt
+            generation["passes"] = passes
             generation["fallback_reason"] = f"{type(exc).__name__}: {str(exc)[:240]}"
 
     if model_copy:
