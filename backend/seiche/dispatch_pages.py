@@ -1,4 +1,4 @@
-"""Static HTML pages for the dispatches — the SEO surface of the daily letter.
+"""Static HTML pages for Seiche's dispatches and daily articles.
 
 The SPA renders dispatches at #dispatches/{slug}, which search engines cannot
 index as separate pages. This module renders every dispatch to a standalone
@@ -8,6 +8,9 @@ index page, and regenerates sitemap.xml so each letter is a first-class URL:
   frontend/public/dispatches/{slug}.html     one page per letter
   frontend/public/dispatches/index.html      the archive
   frontend/public/dispatches/feed.xml        Atom feed of the letters
+  frontend/public/articles/{slug}/index.html one crawlable analytical article
+  frontend/public/articles/index.html        daily article archive
+  frontend/public/articles/feed.xml          Atom feed of articles
   frontend/public/sitemap.xml                base pages + archive + letters
   frontend/public/llms.txt                   llmstxt.org index for LLMs
   frontend/public/llms-full.txt              full text of every letter
@@ -54,6 +57,7 @@ BASE_URLS = [
     ("/referee", "daily", "0.8"),
     ("/investigations/", "weekly", "0.9"),
     ("/investigations/the-282-billion-settlement-test/", "monthly", "0.8"),
+    ("/articles/", "daily", "0.9"),
     ("/dispatches/", "daily", "0.8"),
     ("/support", "monthly", "0.5"),
     ("/privacy", "yearly", "0.2"),
@@ -64,6 +68,11 @@ BASE_URLS = [
 def dispatch_path(slug: str) -> str:
     """Return the public clean URL while keeping the on-disk .html artifact."""
     return f"/dispatches/{slug}"
+
+
+def article_path(slug: str) -> str:
+    """Daily articles use directory URLs so every brand shares one shape."""
+    return f"/articles/{slug}/"
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +243,8 @@ _FONTS = (
 
 _HEADER = (
     '<div class="top"><a class="wordmark" href="/">SEI<span>CHE</span></a>'
-    '<span class="crumb"><a href="/dispatches/">dispatches</a> &middot; <a href="/">live board</a></span></div>'
+    '<span class="crumb"><a href="/articles/">articles</a> &middot; '
+    '<a href="/dispatches/">dispatches</a> &middot; <a href="/">live board</a></span></div>'
 )
 
 # Cookieless aggregate page counts (Cloudflare Web Analytics); the site CSP in
@@ -247,8 +257,8 @@ _BEACON = (
 )
 
 _FOOTER = (
-    '<div class="foot">Written by the terminal from the live board, no model in the loop; '
-    'every number is checkable on the <a href="/">free board</a>. '
+    '<div class="foot">Reported from the point-in-time live board; every number is '
+    'checked against the article dossier and remains inspectable on the <a href="/">free board</a>. '
     'Seiche is free open source software (<a href="https://github.com/beepboop2025/seiche">AGPL-3.0, source</a>). '
     '<a href="/guide">Plain English guide</a> &middot; <a href="/support">Support</a> &middot; '
     'Not investment advice.</div>'
@@ -392,6 +402,141 @@ def render_archive(entries: list[dict]) -> str:
     )
 
 
+def render_article_page(meta: dict, article_md: str) -> str:
+    """Render one daily argument or historical replay as a first-class page."""
+    slug = meta["slug"]
+    date = meta["date"]
+    path = article_path(slug)
+    mode = str(meta.get("article_type") or "analysis").replace("_", " ")
+    body_html = md_to_html(article_md.strip())
+    jsonld = {
+        "@context": "https://schema.org",
+        "@type": "AnalysisNewsArticle",
+        "@id": f"{SITE}{path}#article",
+        "headline": meta["headline"],
+        "description": meta["dek"],
+        "datePublished": meta.get("published_at") or date,
+        "dateModified": meta.get("published_at") or date,
+        "articleSection": "Dollar funding analysis",
+        "about": [
+            {"@type": "Thing", "name": "US dollar funding markets"},
+            {"@type": "Thing", "name": "Money market liquidity"},
+        ],
+        "isAccessibleForFree": True,
+        "wordCount": meta.get("word_count"),
+        "author": {"@type": "Organization", "name": "Seiche", "url": SITE},
+        "publisher": {"@type": "Organization", "name": "Seiche", "url": SITE},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": f"{SITE}{path}"},
+        "isPartOf": {"@type": "WebSite", "@id": f"{SITE}/#website"},
+        "image": f"{SITE}/og.png",
+    }
+    inner = (
+        f'<div class="date">{_esc(date)} &middot; {_esc(mode)} &middot; '
+        f'{_esc(str(meta.get("word_count") or "?"))} words</div>'
+        f"<h1>{_esc(meta['headline'])}</h1>"
+        f'<p class="lede">{_esc(meta["dek"])}</p>'
+        f'<div class="body">{body_html}</div>'
+    )
+    return _page(
+        title=f"{meta['headline']} · Seiche",
+        description=meta["dek"],
+        canonical_path=path,
+        jsonld=jsonld,
+        body=inner,
+        extra_head=(
+            f'<meta property="article:published_time" content="{_esc(str(meta.get("published_at") or date))}">\n'
+            f'<link rel="alternate" type="text/markdown" href="/articles/{_esc(slug)}.md" title="This article as markdown">\n'
+            '<link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche articles">\n'
+        ),
+    )
+
+
+def render_article_archive(entries: list[dict]) -> str:
+    cards = []
+    for row in entries:
+        mode = str(row.get("article_type") or "analysis").replace("_", " ")
+        cards.append(
+            f'<a class="card" href="{article_path(_esc(row["slug"]))}">'
+            f'<div class="date" style="margin-top:0">{_esc(row["date"])} &middot; {_esc(mode)}</div>'
+            f'<div class="card-title">{_esc(row["headline"])}</div>'
+            f'<div class="card-sum">{_esc(row["dek"])}</div>'
+            '<div class="read">read the analysis</div></a>'
+        )
+    jsonld = {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "@id": f"{SITE}/articles/#archive",
+        "name": "Seiche daily funding analysis",
+        "description": (
+            "One evidence-led article every day: current analysis when the board "
+            "changes materially, historical funding replays when it does not."
+        ),
+        "isPartOf": {"@type": "WebSite", "@id": f"{SITE}/#website"},
+        "hasPart": [
+            {
+                "@type": "AnalysisNewsArticle",
+                "headline": row["headline"],
+                "url": f"{SITE}{article_path(row['slug'])}",
+                "datePublished": row.get("published_at") or row["date"],
+            }
+            for row in entries
+        ],
+    }
+    intro = (
+        "<h1>Funding analysis, every day</h1>"
+        '<p class="lede">When the board finds a material change, the article explains '
+        "the mechanism, evidence, counter-case, and next test. When it does not, the "
+        "desk opens one historical episode and shows what happened without manufacturing "
+        "a breaking-news claim. Follow the system into LiquiLens for institution risk and "
+        "Undertow for market exits.</p>"
+    )
+    return _page(
+        title="Daily funding analysis · Seiche",
+        description=(
+            "Evidence-led daily analysis of dollar funding plumbing, with historical "
+            "replays on quiet days and explicit links to institution and market risk."
+        ),
+        canonical_path="/articles/",
+        jsonld=jsonld,
+        body=intro + f'<div class="cards">{"".join(cards)}</div>',
+        og_type="website",
+        extra_head='<link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche articles">\n',
+    )
+
+
+def render_article_feed(entries: list[dict], bodies: dict[str, str]) -> str:
+    newest = max((row.get("published_at") or f"{row.get('date')}T00:00:00Z" for row in entries), default="")
+    items = []
+    for row in entries[:50]:
+        url = f"{SITE}{article_path(row['slug'])}"
+        published = row.get("published_at") or f"{row['date']}T11:00:00Z"
+        items.append(
+            "  <entry>\n"
+            f"    <title>{_esc(row['headline'])}</title>\n"
+            f'    <link rel="alternate" type="text/html" href="{url}"/>\n'
+            f"    <id>{url}</id>\n"
+            f"    <published>{_esc(str(published))}</published>\n"
+            f"    <updated>{_esc(str(published))}</updated>\n"
+            f"    <summary>{_esc(row['dek'])}</summary>\n"
+            f'    <category term="{_esc(str(row.get("article_type") or "analysis"))}"/>\n'
+            f'    <content type="html">{_esc(bodies.get(row["slug"], ""))}</content>\n'
+            "  </entry>"
+        )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<feed xmlns="http://www.w3.org/2005/Atom">\n'
+        "  <title>Seiche daily funding analysis</title>\n"
+        "  <subtitle>Current funding analysis when the evidence moves; historical replay when it does not.</subtitle>\n"
+        f'  <link rel="alternate" type="text/html" href="{SITE}/articles/"/>\n'
+        f'  <link rel="self" type="application/atom+xml" href="{SITE}/articles/feed.xml"/>\n'
+        f"  <id>{SITE}/articles/</id>\n"
+        f"  <updated>{_esc(str(newest))}</updated>\n"
+        f"  <author><name>Seiche</name><uri>{SITE}</uri></author>\n"
+        + "\n".join(items)
+        + "\n</feed>\n"
+    )
+
+
 def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     """Atom feed of the letters, full HTML content inline. AI search crawlers
     and aggregators consume feeds; the letters are small, so ship them whole."""
@@ -509,16 +654,24 @@ same product; the callable contract remains the MCP server above.
 - [Live board]({SITE}/): the current funding stress reading
 - [Reviewed investigations]({SITE}/investigations/): long-form reporting with reproducible charts, explicit counter-cases and falsifiers
 - [The $282 billion settlement test]({SITE}/investigations/the-282-billion-settlement-test/): calm overnight cash versus a dated reserve-capacity test
+- [Daily articles]({SITE}/articles/): one evidence-led argument every day, with historical replays when the tape is quiet
+- [Daily article Atom feed]({SITE}/articles/feed.xml): full-text current analysis and historical replays
 - [Dispatch archive]({SITE}/dispatches/): every daily letter as an HTML page
 - [Atom feed]({SITE}/dispatches/feed.xml): the letters as a feed
 - [Full letter corpus]({SITE}/llms-full.txt): every letter's complete text in one file
 
-## Daily dispatches (markdown)
+## Daily articles (markdown)
 """
 
 
-def render_llms_txt(entries: list[dict]) -> str:
+def render_llms_txt(entries: list[dict], articles: list[dict] | None = None) -> str:
     lines = [_LLMS_PREAMBLE]
+    for row in articles or []:
+        lines.append(
+            f"- [{row['headline']}]({SITE}/articles/{row['slug']}.md): "
+            f"{row['date']}, {str(row.get('article_type') or 'analysis').replace('_', ' ')}. {row['dek']}"
+        )
+    lines.append("\n## Daily dispatches (markdown)")
     for e in entries:
         lines.append(
             f"- [{e['title']}]({SITE}/dispatches/{e['slug']}.md): {e['date']}, regime {e.get('tag', '?')}. {e['summary']}"
@@ -526,9 +679,21 @@ def render_llms_txt(entries: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_llms_full(entries: list[dict], texts: dict[str, str]) -> str:
+def render_llms_full(entries: list[dict], texts: dict[str, str],
+                     articles: list[dict] | None = None,
+                     article_texts: dict[str, str] | None = None) -> str:
     parts = [_LLMS_PREAMBLE.split("## Docs")[0].strip(), ""]
-    parts.append("Below is the complete text of every daily letter, newest first.")
+    parts.append("Below is the complete text of every daily article, then every fixed-order letter, newest first.")
+    for row in articles or []:
+        parts += [
+            "",
+            "---",
+            "",
+            f"# {row['headline']}",
+            f"Date: {row['date']} · Type: {row.get('article_type', 'analysis')} · Canonical: {SITE}{article_path(row['slug'])}",
+            "",
+            (article_texts or {}).get(row["slug"], "").strip(),
+        ]
     for e in entries:
         parts += [
             "",
@@ -542,8 +707,13 @@ def render_llms_full(entries: list[dict], texts: dict[str, str]) -> str:
     return "\n".join(parts) + "\n"
 
 
-def render_sitemap(entries: list[dict]) -> str:
-    newest = max((e.get("date", "") for e in entries), default="")
+def render_sitemap(entries: list[dict], articles: list[dict] | None = None) -> str:
+    articles = articles or []
+    newest = max(
+        [str(e.get("date") or "") for e in entries]
+        + [str(row.get("date") or "") for row in articles],
+        default="",
+    )
     rows = []
     for path, freq, prio in BASE_URLS:
         lastmod = f"\n    <lastmod>{newest}</lastmod>" if newest and freq == "daily" else ""
@@ -556,6 +726,12 @@ def render_sitemap(entries: list[dict]) -> str:
             f"  <url>\n    <loc>{SITE}{dispatch_path(e['slug'])}</loc>\n"
             f"    <lastmod>{e['date']}</lastmod>\n"
             f"    <changefreq>monthly</changefreq>\n    <priority>0.6</priority>\n  </url>"
+        )
+    for row in articles:
+        rows.append(
+            f"  <url>\n    <loc>{SITE}{article_path(row['slug'])}</loc>\n"
+            f"    <lastmod>{row['date']}</lastmod>\n"
+            f"    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>\n  </url>"
         )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -645,11 +821,49 @@ def build_all(repo_root: Path | None = None) -> list[str]:
     }, indent=2, ensure_ascii=False) + "\n")
     written.append(str(news))
 
+    # Articles are generated by the daily editorial job from the exact same
+    # snapshot as the dispatch.  The first deployment may legitimately have
+    # no article index yet; once one exists, every row is fail-loud.
+    article_dir = root / "frontend" / "public" / "articles"
+    article_index = article_dir / "index.json"
+    articles: list[dict] = []
+    article_bodies: dict[str, str] = {}
+    article_texts: dict[str, str] = {}
+    if article_index.exists():
+        articles = json.loads(article_index.read_text())
+        articles.sort(key=lambda row: row.get("date", ""), reverse=True)
+        for row in articles:
+            slug = str(row.get("slug") or "")
+            if not re.fullmatch(r"[a-z0-9-]+", slug):
+                raise SystemExit(f"unsafe article slug in {article_index}: {slug!r}")
+            md_path = article_dir / f"{slug}.md"
+            sidecar = article_dir / f"{slug}.json"
+            if not md_path.exists() or not sidecar.exists():
+                raise SystemExit(f"article index lists {slug} but its markdown or sidecar is missing")
+            meta = json.loads(sidecar.read_text())
+            if meta.get("slug") != slug or meta.get("quality_gate", {}).get("status") != "PASS":
+                raise SystemExit(f"article sidecar failed identity/quality verification at {sidecar}")
+            article_md = md_path.read_text()
+            out_dir = article_dir / slug
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / "index.html"
+            out.write_text(render_article_page(row, article_md))
+            written.append(str(out))
+            article_texts[slug] = article_md.strip()
+            article_bodies[slug] = md_to_html(article_md.strip())
+
+        article_archive = article_dir / "index.html"
+        article_archive.write_text(render_article_archive(articles))
+        written.append(str(article_archive))
+        article_feed = article_dir / "feed.xml"
+        article_feed.write_text(render_article_feed(articles, article_bodies))
+        written.append(str(article_feed))
+
     public = root / "frontend" / "public"
     for name, content in (
-        ("sitemap.xml", render_sitemap(entries)),
-        ("llms.txt", render_llms_txt(entries)),
-        ("llms-full.txt", render_llms_full(entries, texts)),
+        ("sitemap.xml", render_sitemap(entries, articles)),
+        ("llms.txt", render_llms_txt(entries, articles)),
+        ("llms-full.txt", render_llms_full(entries, texts, articles, article_texts)),
     ):
         p = public / name
         p.write_text(content)

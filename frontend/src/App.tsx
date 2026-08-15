@@ -378,7 +378,7 @@ function AppInner() {
       </aside>}
 
       <nav className="tabs">
-        <a href="/investigations/" aria-label="Seiche articles, daily analysis and reviewed investigations">
+        <a href="/articles/" aria-label="Seiche daily articles and reviewed investigations">
           ARTICLES
         </a>
         {TABS.map((t) => (

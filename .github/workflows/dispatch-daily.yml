@@ -67,11 +67,31 @@ jobs:
           if [ "$FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
           PYTHONPATH=backend python -m seiche.dispatch_daily $ARGS
 
+      # The dispatch is the fixed-format tape; the article is the argument.
+      # A material newsroom change produces current analysis. A quiet day
+      # produces a historical replay from Echo/Tide Tables instead of turning
+      # persistence into fake breaking news.
+      - name: Write today's article
+        env:
+          FORCE: ${{ inputs.force }}
+          # The edition still publishes when this secret is absent, using the
+          # deterministic evidence writer. Configure the shared editorial key
+          # to enable the writer + standards-editor passes.
+          EDITORIAL_LLM_API_KEY: ${{ secrets.EDITORIAL_LLM_API_KEY }}
+          EDITORIAL_LLM_BASE_URL: ${{ vars.EDITORIAL_LLM_BASE_URL }}
+          EDITORIAL_LLM_MODEL: ${{ vars.EDITORIAL_LLM_MODEL }}
+          EDITORIAL_REVIEW_MODEL: ${{ vars.EDITORIAL_REVIEW_MODEL }}
+          EDITORIAL_REASONING_EFFORT: ${{ vars.EDITORIAL_REASONING_EFFORT }}
+        run: |
+          ARGS="--snapshot /tmp/overview.json"
+          if [ "$FORCE" = "true" ]; then ARGS="$ARGS --force"; fi
+          PYTHONPATH=backend python -m seiche.article_daily $ARGS
+
       - name: Commit and push
         run: |
           git config user.name "seiche-desk"
           git config user.email "desk@seiche.info"
-          git add frontend/public/dispatches backend/seiche/dispatches
+          git add frontend/public/dispatches frontend/public/articles backend/seiche/dispatches
           if git diff --cached --quiet; then
             echo "nothing new to publish today"
             exit 0
