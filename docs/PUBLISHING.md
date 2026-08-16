@@ -12,8 +12,11 @@ listed here as a runbook rather than automated blind.
    curl -sX POST https://api.seiche.info/mcp -H 'content-type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'
    ```
-2. **Publish the package to PyPI** (needed for the stdio listing; the remote
-   listing works without it). `seiche` is free on PyPI as of writing.
+2. **Publish the package to PyPI when the stdio implementation changes.** The
+   registry may advertise a newer hosted server while keeping its optional
+   package entry pinned to the latest version that actually exists on PyPI.
+   Seiche currently pins `seiche==0.9.1`; do not point the card at a future
+   package version until that artifact is visible from PyPI.
    ```bash
    cd backend
    python -m pip install build twine
@@ -33,7 +36,10 @@ catalogue (below) aggregates from it.
 brew install mcp-publisher            # or the prebuilt binary from the registry releases
 
 # validate the manifest without publishing
-mcp-publisher publish --dry-run
+curl --fail --show-error --silent \
+  -H 'content-type: application/json' \
+  --data-binary @server.json \
+  https://registry.modelcontextprotocol.io/v0.1/validate
 
 # authenticate to the io.github.beepboop2025/* namespace (opens a browser)
 mcp-publisher login github
@@ -48,9 +54,9 @@ alternative is the DNS-verified `info.seiche` namespace (you own seiche.info and
 have the Cloudflare API token): add a TXT record and
 `mcp-publisher login dns --domain seiche.info …`. See the runbook comments.
 
-**Automate later:** the registry supports GitHub Actions publishing via OIDC
-(no interactive login) — worth wiring once the manual publish works. A scaffold
-is at `.github/workflows/publish-mcp.yml`.
+The normal path is already automated: `.github/workflows/registry-publish.yml`
+uses GitHub OIDC and a checksum-pinned publisher, so it needs no stored registry
+credential. The manual commands above are a recovery path.
 
 ## 2. Aggregator registries (submit after the official listing)
 
@@ -77,9 +83,9 @@ so the crawlers find it.
 - **ChatGPT / Codex connector** — the remote `https://api.seiche.info/mcp`
   endpoint is the connector URL.
 
-## What needs your hands (can't be automated for you)
+## Operations that still need an owner
 
-1. Merge + deploy (production change).
-2. PyPI API token (`twine upload`).
-3. `mcp-publisher login github` (browser OAuth as beepboop2025).
-4. The aggregator submission forms.
+1. Publish a new PyPI artifact when the stdio implementation changes.
+2. Merge and deploy hosted runtime changes before advertising their version.
+3. Use browser OAuth only if the OIDC workflow is unavailable.
+4. Submit to any aggregator that does not ingest the official registry.
