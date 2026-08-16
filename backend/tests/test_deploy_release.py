@@ -1940,7 +1940,10 @@ def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
         'header Access-Control-Allow-Origin "https://palimpsest.info"'
     ) == 3
     assert block.count('header Cache-Control "no-store, no-transform"') == 3
-    assert 'header Content-Type "application/x-ndjson"' in block
+    assert block.count('header Content-Type "application/json"') == 2
+    assert block.count('header Content-Type "application/x-ndjson"') == 1
+    assert block.count('header Content-Disposition "inline"') == 3
+    assert block.count('header X-Content-Type-Options "nosniff"') == 3
     assert block.count("uri strip_prefix /palimpsest/social-observations") == 3
     assert block.count("root * /var/lib/scamshield/social-export/current") == 3
     assert block.count("file_server") == 3
