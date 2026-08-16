@@ -180,56 +180,54 @@ api.seiche.info {
     # ScamShield publishes one atomic, HMAC-authenticated social-observation
     # generation. Expose only its three fixed importer aliases; the private
     # spool and the generations parent never receive an edge route.
-    route {
-        @palimpsest_social_latest {
-            method GET HEAD
-            path /palimpsest/social-observations/latest.json
-        }
-        handle @palimpsest_social_latest {
-            header Access-Control-Allow-Origin "https://palimpsest.info"
-            header Cache-Control "no-store, no-transform"
-            header Content-Disposition "inline"
-            header Content-Type "application/json"
-            header X-Content-Type-Options "nosniff"
-            uri strip_prefix /palimpsest/social-observations
-            root * /var/lib/scamshield/social-export/current
-            file_server
-        }
+    @palimpsest_social_latest {
+        method GET HEAD
+        path /palimpsest/social-observations/latest.json
+    }
+    handle @palimpsest_social_latest {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header Content-Type "application/json"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/social-observations
+        root * /var/lib/scamshield/social-export/current
+        file_server
+    }
 
-        @palimpsest_social_versions {
-            method GET HEAD
-            path /palimpsest/social-observations/versions.jsonl
-        }
-        handle @palimpsest_social_versions {
-            header Access-Control-Allow-Origin "https://palimpsest.info"
-            header Cache-Control "no-store, no-transform"
-            header Content-Disposition "inline"
-            header Content-Type "application/x-ndjson"
-            header X-Content-Type-Options "nosniff"
-            uri strip_prefix /palimpsest/social-observations
-            root * /var/lib/scamshield/social-export/current
-            file_server
-        }
+    @palimpsest_social_versions {
+        method GET HEAD
+        path /palimpsest/social-observations/versions.jsonl
+    }
+    handle @palimpsest_social_versions {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header Content-Type "application/x-ndjson"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/social-observations
+        root * /var/lib/scamshield/social-export/current
+        file_server
+    }
 
-        @palimpsest_social_hmac {
-            method GET HEAD
-            path /palimpsest/social-observations/hmac.json
-        }
-        handle @palimpsest_social_hmac {
-            header Access-Control-Allow-Origin "https://palimpsest.info"
-            header Cache-Control "no-store, no-transform"
-            header Content-Disposition "inline"
-            header Content-Type "application/json"
-            header X-Content-Type-Options "nosniff"
-            uri strip_prefix /palimpsest/social-observations
-            root * /var/lib/scamshield/social-export/current
-            file_server
-        }
+    @palimpsest_social_hmac {
+        method GET HEAD
+        path /palimpsest/social-observations/hmac.json
+    }
+    handle @palimpsest_social_hmac {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header Content-Type "application/json"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/social-observations
+        root * /var/lib/scamshield/social-export/current
+        file_server
+    }
 
-        @palimpsest_social_other path /palimpsest/social-observations /palimpsest/social-observations/ /palimpsest/social-observations/*
-        handle @palimpsest_social_other {
-            respond "not here" 404
-        }
+    @palimpsest_social_other path /palimpsest/social-observations /palimpsest/social-observations/ /palimpsest/social-observations/*
+    handle @palimpsest_social_other {
+        respond "not here" 404
     }
 
     # Palimpsest MCP (censorship signals). This is its permanent home: a
