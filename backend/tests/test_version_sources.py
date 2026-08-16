@@ -1,11 +1,9 @@
-"""One version, four places that must agree.
+"""Explicit version contracts for Seiche's hosted and packaged surfaces.
 
-The MCP handshake, the registry listing, the installable package and the
-build metadata each carry the version separately, and nothing until now
-compared them. A release cut while they disagree fails in the worst order:
-twine uploads a version PyPI already has, rejects it, and the registry job
-(needs: pypi) never runs, so the registry keeps advertising a server whose
-installable package is a version behind, missing whatever the bump added.
+The MCP handshake, hosted registry listing, and build metadata describe the
+deployed server and must agree. The optional PyPI transport has its own version:
+it may lag the hosted endpoint, but it must name an actually published package
+and describe that package's smaller tool surface truthfully.
 """
 
 import json
@@ -26,15 +24,28 @@ def _pyproject() -> dict:
     return tomllib.loads((REPO / "backend" / "pyproject.toml").read_text())
 
 
-def test_all_version_sources_agree():
+def test_hosted_version_sources_agree():
     server = _server_json()
     versions = {
         "assemble.VERSION": assemble.VERSION,
         "server.json version": server["version"],
-        "server.json packages[0].version": server["packages"][0]["version"],
         "backend/pyproject.toml version": _pyproject()["project"]["version"],
     }
     assert len(set(versions.values())) == 1, versions
+
+
+def test_registry_stdio_package_describes_published_legacy_surface():
+    """0.9.1 is the latest package on PyPI; the hosted server is newer."""
+    server = _server_json()
+    package = server["packages"][0]
+    description = package["environmentVariables"][0]["description"]
+
+    assert package["registryType"] == "pypi"
+    assert package["identifier"] == "seiche"
+    assert package["version"] == "0.9.1"
+    assert package["transport"] == {"type": "stdio"}
+    assert "eight free public tools" in description
+    assert "hosted 0.10.0 endpoint adds latest_article" in description
 
 
 def test_version_is_bare_semver():

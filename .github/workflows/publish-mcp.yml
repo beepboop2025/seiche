@@ -60,8 +60,8 @@ jobs:
       id-token: write        # lets mcp-publisher prove the namespace via OIDC
       contents: read
     env:
-      MCP_PUBLISHER_VERSION: "1.8.0"
-      MCP_PUBLISHER_SHA256: "1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf"
+      MCP_PUBLISHER_VERSION: "1.8.1"
+      MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install mcp-publisher (pinned + checksum-verified)
