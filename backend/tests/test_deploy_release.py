@@ -1912,3 +1912,36 @@ def test_palimpsest_bleedthrough_edge_is_an_exact_sanitized_allowlist():
     assert "root * /var/lib/palimpsest/readings" in block
     assert "file_server" in block
     assert "reverse_proxy" not in block
+
+
+def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
+    caddy = CADDYFILE.read_text()
+    block = caddy[
+        caddy.index("# ScamShield publishes one atomic") : caddy.index(
+            "# Palimpsest MCP"
+        )
+    ]
+
+    fallback = block.index("@palimpsest_social_other path")
+    for name in ("latest.json", "versions.jsonl", "hmac.json"):
+        route = f"path /palimpsest/social-observations/{name}"
+        assert route in block
+        assert block.index(route) < fallback
+    assert "route {" in block
+    assert block.count("method GET HEAD") == 3
+    assert "handle_path /palimpsest/social-observations/*" not in block
+    assert (
+        "@palimpsest_social_other path /palimpsest/social-observations "
+        "/palimpsest/social-observations/ "
+        "/palimpsest/social-observations/*"
+    ) in block
+    assert 'respond "not here" 404' in block
+    assert block.count(
+        'header Access-Control-Allow-Origin "https://palimpsest.info"'
+    ) == 3
+    assert block.count('header Cache-Control "no-store, no-transform"') == 3
+    assert 'header Content-Type "application/x-ndjson"' in block
+    assert block.count("uri strip_prefix /palimpsest/social-observations") == 3
+    assert block.count("root * /var/lib/scamshield/social-export/current") == 3
+    assert block.count("file_server") == 3
+    assert "reverse_proxy" not in block
