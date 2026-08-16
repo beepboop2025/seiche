@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -1927,7 +1928,6 @@ def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
         route = f"path /palimpsest/social-observations/{name}"
         assert route in block
         assert block.index(route) < fallback
-    assert "route {" in block
     assert block.count("method GET HEAD") == 3
     assert "handle_path /palimpsest/social-observations/*" not in block
     assert (
@@ -1945,3 +1945,62 @@ def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
     assert block.count("root * /var/lib/scamshield/social-export/current") == 3
     assert block.count("file_server") == 3
     assert "reverse_proxy" not in block
+
+
+def test_adapted_social_routes_are_reachable_before_the_site_catch_all():
+    caddy = shutil.which("caddy")
+    assert caddy is not None, "Caddy is required to validate adapted route reachability"
+    result = subprocess.run(  # noqa: S603 - fixed argv invokes the pinned adapter
+        [caddy, "adapt", "--config", str(CADDYFILE), "--adapter", "caddyfile"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    document = json.loads(result.stdout)
+    servers = document["apps"]["http"]["servers"]
+    api_route = next(
+        route
+        for server in servers.values()
+        for route in server["routes"]
+        if any(
+            "api.seiche.info" in matcher.get("host", [])
+            for matcher in route.get("match", [])
+        )
+    )
+    api_subroute = next(
+        handler for handler in api_route["handle"] if handler["handler"] == "subroute"
+    )
+    routes = api_subroute["routes"]
+
+    def paths(route: dict) -> set[str]:
+        return {
+            path
+            for matcher in route.get("match", [])
+            for path in matcher.get("path", [])
+        }
+
+    expected = {
+        f"/palimpsest/social-observations/{name}"
+        for name in ("latest.json", "versions.jsonl", "hmac.json")
+    }
+    exact_indexes = {
+        path: next(index for index, route in enumerate(routes) if path in paths(route))
+        for path in expected
+    }
+    deny_index = next(
+        index
+        for index, route in enumerate(routes)
+        if "/palimpsest/social-observations/*" in paths(route)
+    )
+    group = routes[deny_index]["group"]
+    catch_all_index = next(
+        index
+        for index, route in enumerate(routes)
+        if index > deny_index and route.get("group") == group and not route.get("match")
+    )
+
+    assert max(exact_indexes.values()) < deny_index < catch_all_index
+    for index in exact_indexes.values():
+        assert routes[index]["group"] == group
+        matcher = routes[index]["match"]
+        assert any(set(item.get("method", [])) == {"GET", "HEAD"} for item in matcher)
