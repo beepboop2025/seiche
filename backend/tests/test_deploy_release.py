@@ -1950,7 +1950,7 @@ def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
 def test_adapted_social_routes_are_reachable_before_the_site_catch_all():
     caddy = shutil.which("caddy")
     assert caddy is not None, "Caddy is required to validate adapted route reachability"
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 - fixed argv invokes the pinned adapter
         [caddy, "adapt", "--config", str(CADDYFILE), "--adapter", "caddyfile"],
         check=True,
         text=True,
