@@ -1,10 +1,9 @@
 {
-  "date": "2026-08-15",
+  "date": "2026-08-16",
   "reported_prev": {
     "Reverse repo with foreign official accounts": "2026-08-12",
     "Canadian dollars per USD (H.10)": "2026-08-07",
-    "2y Treasury constant maturity yield": "2026-08-12",
-    "S&P 500 index": "2026-08-13"
+    "S&P 500 index": "2026-08-14"
   },
   "reported": {
     "Reverse repo with foreign official accounts": "2026-08-12",
@@ -29,10 +28,10 @@
     },
     "crunch": {
       "date": "2026-08-20",
-      "worst_case_b": 2879.3,
+      "worst_case_b": 2882.1,
       "settlement_b": 266.0
     },
-    "tell": 38.8
+    "tell": 37.1
   },
   "letter": {
     "regime": "STRAIN",
