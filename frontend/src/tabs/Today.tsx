@@ -93,12 +93,12 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
             <p className="today-standfirst">{editorial.standfirst}</p>
             <a
               className="today-follow"
-              href="https://t.me/seiche_desk_bot?start=seiche_home_hero"
+              href="https://t.me/LiquidityLabDesk"
               target="_blank"
               rel="noopener noreferrer"
             >
               <span>Get the 11:30 UTC daily letter →</span>
-              <small>Pre-US-open · sources attached · /stop any time</small>
+              <small>Free channel. Public data. Misses kept.</small>
             </a>
           </div>
           <aside className="today-reading" aria-label="Current Seiche reading">

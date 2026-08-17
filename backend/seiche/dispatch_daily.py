@@ -2060,6 +2060,11 @@ def announce_telegram(d: dict, snap: dict | None = None) -> None:
     refused credentials is an error, not a silent skip."""
     import os
 
+    if os.environ.get("SEICHE_DISPATCH_TELEGRAM", "").strip().lower() not in (
+            "1", "true", "on", "yes"):
+        print("telegram announce skipped: the Seiche bot letter owns the "
+              "lab channel")
+        return
     token = os.environ.get("SEICHE_TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("SEICHE_TELEGRAM_CHAT_ID")
     if not token or not chat_id:

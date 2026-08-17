@@ -111,11 +111,20 @@ def test_telegram_digest_carries_numbers_and_link(fake_snap):
 def test_announce_fails_loud_without_credentials(fake_snap, monkeypatch):
     from seiche.dispatch_daily import announce_telegram
 
+    monkeypatch.setenv("SEICHE_DISPATCH_TELEGRAM", "on")
     monkeypatch.delenv("SEICHE_TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("SEICHE_TELEGRAM_CHAT_ID", raising=False)
     d = build_dispatch(fake_snap)
     with pytest.raises(SystemExit):
         announce_telegram(d, fake_snap)
+
+
+def test_announce_defaults_to_the_bot_letter(fake_snap, monkeypatch, capsys):
+    from seiche.dispatch_daily import announce_telegram
+
+    monkeypatch.delenv("SEICHE_DISPATCH_TELEGRAM", raising=False)
+    announce_telegram(build_dispatch(fake_snap), fake_snap)
+    assert "bot letter owns the lab channel" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

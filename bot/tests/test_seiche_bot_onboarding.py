@@ -133,7 +133,7 @@ def test_start_is_one_truthful_message_with_live_gauge_and_lab_cta(
     assert "/help" in text and "/stop" in text
     assert "not investment advice or an execution instruction" in text
     assert "/odds" not in text and "/turns" not in text
-    assert keyboard is not None and len(keyboard) <= 3
+    assert keyboard is not None and len(keyboard) <= 2
     assert any(
         button.get("url") == bot.LAB_LINK
         for row in keyboard
@@ -218,3 +218,55 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
                for button in subscribing_buttons)
     assert "11:30 UTC" in text
     assert "state-change alerts" in text
+
+
+def test_lab_channel_about_fits_telegram():
+    assert len(bot.LAB_CHANNEL_ABOUT) <= 255
+    assert "Daily funding" in bot.LAB_CHANNEL_ABOUT
+
+
+def test_channel_letter_stays_short_and_names_the_gap(monkeypatch):
+    monkeypatch.setattr(
+        bot,
+        "api_get",
+        lambda path: {
+            "/api/gauge": {
+                "regime": "STRAIN",
+                "index": 61,
+                "next_turn": {},
+                "crunch_windows": [],
+            },
+            "/api/public": {
+                "conclusion": {"line": "Reserve pressure is leading price."},
+            },
+        }.get(path),
+    )
+    monkeypatch.setattr(bot, "ll_get", lambda _path: None)
+    text = bot.fmt_channel_letter()
+    assert "Seiche daily letter" in text
+    assert "Reserve pressure is leading price." in text
+    assert "seiche.info" in text
+    assert text.count("\n") <= 12
+
+
+def test_set_channel_profile_refuses_an_empty_channel(monkeypatch):
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "")
+    with pytest.raises(SystemExit, match="LAB_CHANNEL_ID is empty"):
+        bot.set_channel_profile()
+
+
+def test_set_channel_profile_rewrites_about_and_pins(monkeypatch):
+    monkeypatch.setattr(bot, "LAB_CHANNEL", "-1001")
+    calls = []
+
+    def fake_call(method, payload):
+        calls.append((method, payload))
+        return {"ok": True, "result": True}
+
+    monkeypatch.setattr(bot, "tg_call", fake_call)
+    monkeypatch.setattr(bot, "post_channel", lambda _text, _ref: 42)
+    bot.set_channel_profile()
+    methods = [method for method, _payload in calls]
+    assert methods == ["setChatDescription", "pinChatMessage"]
+    assert calls[0][1]["description"] == bot.LAB_CHANNEL_ABOUT
+    assert calls[1][1]["message_id"] == 42

@@ -486,7 +486,10 @@ function AppInner() {
           <small>Every destination is opt-in. The website shares no visitor data with Telegram.</small>
         </div>
         <div className="telegram-rail__links">
-          <a className="primary" href="https://t.me/seiche_desk_bot?start=site_ecosystem" target="_blank" rel="noopener noreferrer">
+          <a className="primary" href="https://t.me/LiquidityLabDesk" target="_blank" rel="noopener noreferrer">
+            <b>FREE DAILY CHANNEL</b><span>@LiquidityLabDesk</span><small>One reviewed read across the whole stress chain.</small>
+          </a>
+          <a href="https://t.me/seiche_desk_bot?start=site_ecosystem" target="_blank" rel="noopener noreferrer">
             <b>THIS INSTRUMENT</b><span>@seiche_desk_bot</span><small>Funding regime, week ahead, sources, and the public record.</small>
           </a>
           <a href="https://t.me/LiquiLens_bot?start=seiche_ecosystem" target="_blank" rel="noopener noreferrer">
@@ -494,9 +497,6 @@ function AppInner() {
           </a>
           <a href="https://t.me/undertow_LiquiLens_bot?start=ref_seiche_ecosystem" target="_blank" rel="noopener noreferrer">
             <b>MARKET EXITS</b><span>@undertow_LiquiLens_bot</span><small>What could a position-sized exit cost?</small>
-          </a>
-          <a href="https://t.me/LiquidityLabDesk" target="_blank" rel="noopener noreferrer">
-            <b>FREE DAILY CHANNEL</b><span>@LiquidityLabDesk</span><small>One reviewed read across the whole stress chain.</small>
           </a>
         </div>
       </aside>

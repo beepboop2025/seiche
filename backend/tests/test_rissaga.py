@@ -724,6 +724,34 @@ def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
     )
 
 
+def test_shared_channel_excludes_side_desks_and_junk_crypto_titles():
+    marked = rz.rank([
+        mk("Weibo hot search deletions rise after a new directive",
+           key="cdt", tier=1.0, source="China Digital Times"),
+        mk("Aventus Crypto Price Prediction 2026-2030: Can AVT Recover to $1?",
+           tier=1.0),
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC"),
+    ], {}, NOW, persist_seen=False)
+    payload = rz.latest_payload(marked, {}, NOW_DT)
+    selected_desks = [
+        next(route["desk"] for route in payload["items"][index]["routes"]
+             if route["channel_candidate"])
+        for index in payload["channel_candidates"]
+    ]
+    assert selected_desks == ["LIQUILENS"]
+    assert all(
+        route["desk"] not in rz.SHARED_CHANNEL_EXCLUDED_DESKS
+        for item in payload["items"]
+        for route in item["routes"]
+        if route["channel_candidate"]
+    )
+    assert rz.crypto_channel_title_ok("US Treasury proposes GENIUS Act rule")
+    assert not rz.crypto_channel_title_ok(
+        "Aventus Crypto Price Prediction 2026-2030: Can AVT Recover to $1?"
+    )
+
+
 def test_crypto_outbox_keeps_dedicated_flag_without_shared_authorization():
     marked = rz.rank([
         mk("Bitcoin ETF inflows accelerate after a new SEC filing", tier=1.0),
@@ -849,8 +877,8 @@ def test_legacy_outbox_migration_bridge_expires_after_48_hours():
 
 def test_outbox_is_durable_world_readable_and_idempotent():
     marked = rz.rank([
-        mk("Repo market margin calls trigger a liquidation cascade and risk-off volatility spike",
-           key="fed_press", tier=1.0, source="Federal Reserve"),
+        mk("FDIC seizes First Valley Bank as regulators begin receivership",
+           key="fdic", tier=1.0, source="FDIC"),
     ], {}, NOW, persist_seen=False)
     payload = rz.latest_payload(marked, {}, NOW_DT)
     assert rz.append_outbox(payload, NOW_DT) == 1

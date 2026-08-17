@@ -81,6 +81,20 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # that is only meant to DM subscribers should never accidentally publish.
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
+LAB_CHANNEL_ABOUT = (
+    "Daily funding, bank, and market-depth reads from public data. "
+    "Gaps named, misses kept. Start with today's letter, then open one desk."
+)
+LAB_CHANNEL_PIN = (
+    "<b>Start here</b>\n\n"
+    "This channel is one daily funding letter, plus a post only when "
+    "banks or market depth actually move.\n\n"
+    "Today's letter: @seiche_desk_bot\n"
+    "Banks: @LiquiLens_bot\n"
+    "Exit cost: @undertow_LiquiLens_bot\n"
+    "Crypto rails: @LiquidityCryptoDesk\n\n"
+    "Public data. Misses kept. Not investment advice."
+)
 BOT_USERNAME = "seiche_desk_bot"
 BOT_URL = f"https://t.me/{BOT_USERNAME}"
 PRIVATE_SUBSCRIPTION_PROMPT = (
@@ -256,6 +270,31 @@ def post_channel(text: str, ref: str) -> int | None:
     if message_id is None:
         print(f"channel post rejected: {res}", file=sys.stderr)
     return message_id
+
+
+def set_channel_profile() -> None:
+    """Rewrite the public About and pin a start-here post. Admin only."""
+    if not LAB_CHANNEL:
+        raise SystemExit("LAB_CHANNEL_ID is empty; refusing to edit a channel")
+    if len(LAB_CHANNEL_ABOUT) > 255:
+        raise SystemExit("LAB_CHANNEL_ABOUT exceeds Telegram's 255-character About")
+    about = tg_call("setChatDescription", {
+        "chat_id": int(LAB_CHANNEL),
+        "description": LAB_CHANNEL_ABOUT,
+    })
+    if not isinstance(about, dict) or not about.get("ok"):
+        raise SystemExit(f"setChatDescription failed: {about}")
+    message_id = post_channel(LAB_CHANNEL_PIN, "lab_start")
+    if message_id is None:
+        raise SystemExit("start-here post was not accepted")
+    pinned = tg_call("pinChatMessage", {
+        "chat_id": int(LAB_CHANNEL),
+        "message_id": message_id,
+        "disable_notification": True,
+    })
+    if not isinstance(pinned, dict) or not pinned.get("ok"):
+        raise SystemExit(f"pinChatMessage failed: {pinned}")
+    print(f"channel profile updated; pinned message_id={message_id}")
 
 
 def _get_json(url: str, timeout: int = 25,
@@ -1300,6 +1339,42 @@ def fmt_daily_letter() -> str:
     return "\n".join(lines) + FOOT
 
 
+def fmt_channel_letter() -> str:
+    """Short public letter. The long editorial stays on seiche.info."""
+    today = date.today().strftime("%d %b %Y")
+    gauge = api_get("/api/gauge")
+    pub = api_get("/api/public")
+    lines = [f"🌊 <b>Seiche daily letter</b> {today}"]
+    if not gauge:
+        lines.append("The board did not answer this morning. No number is "
+                     f"shown rather than a stale one. {SITE}")
+        return "\n".join(lines)
+    line = ((pub or {}).get("conclusion") or {}).get("line")
+    lines.append(f"{_regime_icon(gauge.get('regime'))} "
+                 + (esc(line) if line else
+                    f"Regime <b>{esc(gauge.get('regime'))}</b>, composite "
+                    f"{gauge.get('index')}/100."))
+    nt = gauge.get("next_turn") or {}
+    if nt.get("date"):
+        lines.append(f"Next turn {esc(nt['date'])}: forecast "
+                     f"{nt.get('forecast_bp')}bp, severity "
+                     f"{nt.get('severity')}/5.")
+    windows = (gauge.get("crunch_windows") or [])[:1]
+    for window in windows:
+        lines.append(f"Watch {esc(window.get('date'))}: "
+                     f"{esc(window.get('reason'))}")
+    board = ll_get("/failure-radar/board")
+    inst = _inst_level(board)
+    plumb = _plumb_level(gauge.get("regime"))
+    if inst is not None and plumb is not None:
+        cls = _tandem_class(plumb, inst)
+        if cls >= 2:
+            lines.append("Cross-desk: funding stress with institutions on "
+                         "watch. /tandem")
+    lines.append(f"Full letter and sources: {SITE}")
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------ wiring --
 
 
@@ -1328,9 +1403,7 @@ def _btn(text: str, data: str) -> dict:
 def keyboard_for(cmd: str) -> list | None:
     """Inline keyboard rows per command. A button tap IS a command."""
     if cmd == "/start":
-        return [[_btn("🌡 Full gauge", "/now"),
-                 _btn("📰 Today's article", "/article")],
-                [_btn("📨 Fixed-order letter", "/letter")],
+        return [[_btn("🌡 Full gauge", "/now")],
                 [{"text": "📡 Liquidity Lab channel", "url": LAB_LINK},
                  {"text": "📤 Share Seiche", "url": SHARE_URL}]]
     if cmd == "/help":
@@ -1648,7 +1721,7 @@ def run_letter() -> None:
     # Publish BEFORE the subscriber check. The channel is the top of the
     # funnel, so it has to work at zero subscribers; gating it behind a
     # non-empty subscriber list would silence it exactly when it matters most.
-    published = post_channel(text, "lab_letter")
+    published = post_channel(fmt_channel_letter(), "lab_letter")
     if not subs:
         print(f"no subscribers yet; letter published to channel={published}")
         return
@@ -1896,5 +1969,7 @@ if __name__ == "__main__":
         run_alert_scan()
     elif "--setup" in sys.argv:
         run_setup()
+    elif "--channel-profile" in sys.argv:
+        set_channel_profile()
     else:
         poll_loop()

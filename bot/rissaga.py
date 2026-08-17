@@ -11,8 +11,10 @@ board or authority line.
 WHAT IT IS NOT. It runs no generative model and changes no product score,
 tier or regime. It emits linked facts, grounded board lines and bounded
 fallback commentary for eight desk routes. The shared channel receives at
-most two selected non-Crypto primary routes per sweep, ref tagged lab_rissaga.
-Crypto routes remain eligible only for the dedicated Crypto channel handoff.
+most one selected funding, bank, or market-depth primary route per sweep,
+ref tagged lab_rissaga. Palimpsest, corporate, real-economy, Riptide and
+Crypto routes stay off that shared feed. Crypto remains eligible only for
+the dedicated Crypto channel handoff, and only when the title is not junk.
 
 SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
 protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
@@ -69,7 +71,7 @@ CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "off").strip().lower()
 ALLOWED_CHANNEL_MODES = frozenset({"hermes", "off"})
 LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
 OUTBOX_EXPORT = "outbox.jsonl"   # durable multi-desk subscriber handoff
-MAX_CHANNEL_POSTS = 2
+MAX_CHANNEL_POSTS = 1
 OUTBOX_TTL_H = float(os.environ.get("RISSAGA_OUTBOX_TTL_H", "24"))
 STATE_DIR = os.environ.get("RISSAGA_STATE", "/var/lib/rissaga")
 SEICHE_API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
@@ -95,9 +97,16 @@ ROUTE_BAR = float(os.environ.get("RISSAGA_ROUTE_BAR", "3.0"))
 MAX_MARKED = 5
 MAX_DESK_COVERAGE = 2
 DESK_COVERAGE_CAPS = {"CRYPTO": 5}
-DESK_CHANNEL_CAPS = {"CRYPTO": 3}
+DESK_CHANNEL_CAPS = {"CRYPTO": 1}
 DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
-SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({"CRYPTO"})
+SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({
+    "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
+})
+CRYPTO_CHANNEL_JUNK = re.compile(
+    r"price prediction|who leads|can \w+ recover|launchpad comparison|"
+    r"golden cross|traders bet|memetoro|four\.meme|aventus",
+    re.I,
+)
 MAX_AGE_H = 36.0      # external items older than this never rank
 FEED_ITEM_CAP = 40
 SEEN_TTL_H = 48.0     # a marked story stays suppressed this long
@@ -1657,6 +1666,11 @@ def compose(marked: list[dict], boards: dict, health: dict,
     return "\n".join(head + [b for b in body if b] + foot)
 
 
+def crypto_channel_title_ok(title: str) -> bool:
+    """Keep rails and venue stress. Drop prediction and launchpad filler."""
+    return not CRYPTO_CHANNEL_JUNK.search(title or "")
+
+
 def _route_payloads(cl: dict, boards: dict) -> list[dict]:
     routes = []
     for matched in cl.get("route_beats") or []:
@@ -1754,6 +1768,9 @@ def latest_payload(marked: list[dict], boards: dict, now: datetime) -> dict:
                 None,
             )
             if route is None:
+                continue
+            if desk == "CRYPTO" and not crypto_channel_title_ok(
+                    cl["rep"].get("title", "")):
                 continue
             route["desk_channel_candidate"] = True
             selected.append(index)

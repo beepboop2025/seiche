@@ -90,6 +90,7 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
     page = (PUBLIC / "developers.html").read_text()
     script = (PUBLIC / "developers.js").read_text()
 
+    assert "https://t.me/LiquidityLabDesk" in page
     assert "https://t.me/seiche_desk_bot?start=agent_developers" in page
     assert "11:30 UTC" in page
     assert 'id="toolHandoff" hidden' in page
@@ -105,13 +106,12 @@ def test_generated_discovery_indexes_include_the_selection_surface():
     assert "https://seiche.info/articles/feed.json" in dispatch_pages._LLMS_PREAMBLE
 
 
-def test_home_exposes_an_attributed_pre_open_daily_letter():
+def test_home_exposes_the_pre_open_daily_letter():
     today = (ROOT / "frontend" / "src" / "tabs" / "Today.tsx").read_text()
-    telegram = "https://t.me/seiche_desk_bot?start=seiche_home_hero"
 
-    assert telegram in today
+    assert "https://t.me/LiquidityLabDesk" in today
     assert "Get the 11:30 UTC daily letter" in today
-    assert "Pre-US-open · sources attached · /stop any time" in today
+    assert "Free channel. Public data. Misses kept." in today
     assert 'target="_blank"' in today
     assert 'rel="noopener noreferrer"' in today
 
