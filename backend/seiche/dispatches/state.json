@@ -1,5 +1,5 @@
 {
-  "date": "2026-08-16",
+  "date": "2026-08-17",
   "reported_prev": {
     "Reverse repo with foreign official accounts": "2026-08-12",
     "Canadian dollars per USD (H.10)": "2026-08-07",
@@ -35,25 +35,24 @@
   },
   "letter": {
     "regime": "STRAIN",
-    "value": 45.2,
+    "value": 47.0,
     "decomp": {
-      "weather": 11.0,
-      "kink": 6.9,
-      "resonance": 6.7,
-      "rvxray": 6.2,
-      "confession": 3.1,
-      "buffers": 3.0,
-      "undertow": 2.9,
-      "warehouse": 2.4,
-      "tails": 1.9,
-      "auctions": 1.0,
+      "weather": 11.7,
+      "kink": 7.4,
+      "resonance": 7.1,
+      "rvxray": 6.6,
+      "confession": 3.3,
+      "buffers": 3.2,
+      "undertow": 3.0,
+      "warehouse": 2.6,
+      "tails": 2.0,
       "hydrophone": 0.0
     },
     "crunch": {
-      "date": "2026-08-20",
-      "worst_case_b": 2882.1,
-      "settlement_b": 266.0
+      "date": "2026-08-31",
+      "worst_case_b": 2849.6,
+      "settlement_b": null
     },
-    "tell": 37.1
+    "tell": 37.3
   }
 }
