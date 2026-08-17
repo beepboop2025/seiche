@@ -708,6 +708,7 @@ def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
     nobody has subscribed yet, which is precisely when it earns subscribers."""
     monkeypatch.setattr(bot, "LAB_CHANNEL", "-1004297805949")
     monkeypatch.setattr(bot, "fmt_daily_letter", lambda: "today's letter")
+    monkeypatch.setattr(bot, "fmt_channel_letter", lambda: "today's letter")
     bot.run_letter()
     channel_posts = [p for _, p in sent if p.get("chat_id") == -1004297805949]
     assert len(channel_posts) == 1, "conversion work must not increase post volume"
