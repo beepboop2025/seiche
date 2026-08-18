@@ -311,6 +311,13 @@ def test_fmt_ask_variants():
     assert "did not answer" in bot.fmt_ask(None)
     txt = bot.fmt_ask({"answer": "Reserves fell.", "citations": ["h41"]})
     assert "Reserves fell." in txt and "h41" in txt
+    assert "joint score" not in txt
+    chips = bot.fmt_ask({
+        "answer": "Reserves fell.",
+        "liquilens": {"available": False, "reading": "UNAVAILABLE"},
+    })
+    assert "LiquiLens: UNAVAILABLE" in chips
+    assert "Not a joint score" in chips
     assert bot.fmt_ask("plain") == "plain"
 
 
@@ -323,19 +330,95 @@ def test_html_escaping_of_served_text():
 
 # --------------------------------------------------------------- cross-desk --
 
-def test_tandem_class_grid():
-    assert bot._tandem_class(2, 3) == 3
-    assert bot._tandem_class(2, 2) == 2
-    assert bot._tandem_class(2, 0) == 1
-    assert bot._tandem_class(0, 2) == 1
-    assert bot._tandem_class(0, 0) == 0
+def test_tandem_reads_are_independent_labels():
+    assert bot._tandem_reads(
+        {"regime": "STRAIN"}, _ll_board("red")
+    ) == {"seiche": "STRAIN", "liquilens": "red"}
+    assert bot._tandem_reads(
+        {"regime": "CALM"}, _ll_board("green")
+    ) == {"seiche": "CALM", "liquilens": "green"}
+    assert bot._tandem_reads(None, _ll_board("red")) is None
+    assert bot._tandem_reads({"regime": "STRAIN"}, None) is None
+    assert not hasattr(bot, "_tandem_class")
+    assert not hasattr(bot, "_quadrant_verdict")
 
 
 def test_fmt_tandem_partial_desks():
     both = bot.fmt_tandem(_gauge(regime="STRAIN"), _ll_board("red"))
-    assert "dangerous quadrant" in both
+    assert "Seiche (funding)" in both
+    assert "LiquiLens (institutions)" in both
+    assert "Seiche reads STRAIN" in both
+    assert "LiquiLens worst tier is red" in both
+    assert "Not a joint score" in both
+    assert "dangerous quadrant" not in both
+    assert "quadrant" not in both.lower()
     assert "did not answer" in bot.fmt_tandem(None, _ll_board())
     assert "Neither desk answered" in bot.fmt_tandem(None, None)
+
+
+def test_run_tandem_alerts_on_either_labeled_read(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "STRAIN", "index": 70, "tell": 8},
+    )
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("red"))
+    monkeypatch.setattr(
+        bot, "post_channel",
+        lambda *args, **kwargs: sent.append(("channel", args)),
+    )
+    monkeypatch.setattr(
+        bot, "_send_all",
+        lambda subs, text, keyboard=None: sent.append(("dm", text)) or 1,
+    )
+    bot.save_state("subscribers.json", {"7": {"since": "now"}})
+
+    bot.run_tandem()
+    assert sent == []
+    assert bot.load_state("tandem_reads.json", None) == {
+        "seiche": "STRAIN", "liquilens": "red",
+    }
+
+    bot.run_tandem()
+    assert sent == []
+
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("orange"))
+    bot.run_tandem()
+    assert [kind for kind, _ in sent] == ["dm"]
+    assert "Not a joint score" in sent[0][1]
+    assert "dangerous quadrant" not in sent[0][1]
+    assert "quadrant" not in sent[0][1].lower()
+
+    sent.clear()
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "CALM", "index": 12, "tell": -1},
+    )
+    bot.run_tandem()
+    assert [kind for kind, _ in sent] == ["dm"]
+    assert "Seiche reads CALM" in sent[0][1]
+
+
+def test_run_tandem_ignores_legacy_fused_class_file(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "STRAIN", "index": 70, "tell": 8},
+    )
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("red"))
+    monkeypatch.setattr(
+        bot, "_send_all",
+        lambda subs, text, keyboard=None: sent.append(text) or 1,
+    )
+    bot.save_state("subscribers.json", {"7": {"since": "now"}})
+    bot.save_state("tandem_class.json", 0)
+
+    bot.run_tandem()
+    assert sent == []
+    assert bot.load_state("tandem_reads.json", None) == {
+        "seiche": "STRAIN", "liquilens": "red",
+    }
+    assert bot.load_state("tandem_class.json", None) == 0
 
 
 # ------------------------------------------------------ history + sparkline --
@@ -560,8 +643,12 @@ def test_context_commands_use_the_compact_public_routes(
 
 
 def test_start_subscribes_and_records_ref(monkeypatch, sent):
-    monkeypatch.setattr(bot, "api_get",
-                        lambda p: _gauge() if "gauge" in p else _pub())
+    monkeypatch.setattr(bot, "board_get", lambda _url: [{
+        "title": "Reserve pressure is leading price.",
+        "date": "2026-08-18",
+        "summary": "The board reads STRAIN.",
+        "slug": "2026-08-18-daily",
+    }])
     bot.handle(9, "/start ref_hnwave", "private")
     assert "9" in bot.load_state("subscribers.json", {})
     with open(bot._state_path("leads.jsonl"), encoding="utf-8") as fh:
@@ -583,27 +670,32 @@ def test_keyboard_shapes():
     assert bot.keyboard_for("/nope") is None
 
 
-def test_where_card_names_the_three_public_doors():
+def test_where_card_names_the_locked_storefront():
     assert "t.me/LiquidityLabDesk" in bot.WHERE_CARD
     assert "@seiche_desk_bot" in bot.WHERE_CARD
     assert "@LiquiLens_bot" in bot.WHERE_CARD
     assert "@undertow_LiquiLens_bot" in bot.WHERE_CARD
     assert "liquilens.in/access/" in bot.WHERE_CARD
-    assert "Public-good bots" in bot.WHERE_CARD
-    assert "not the morning channel" in bot.WHERE_CARD
-    assert "@palimpsest_watch_bot" in bot.WHERE_CARD
-    assert "@EvidenceSignalDesk" in bot.WHERE_CARD
-    assert "@NarcoScopeEvidenceBot" in bot.WHERE_CARD
-    assert bot.PUBLIC_GOOD_FUND in bot.WHERE_CARD
-    assert "LiquidityCryptoDesk" not in bot.WHERE_CARD
+    assert "@LiquidityCryptoDesk" in bot.WHERE_CARD
+    assert "@liquilens_crypto_bot" in bot.WHERE_CARD
+    assert "not the Lab card" in bot.WHERE_CARD
+    assert "Public-good bots" not in bot.WHERE_CARD
+    assert "@palimpsest_watch_bot" not in bot.WHERE_CARD
+    assert "@EvidenceSignalDesk" not in bot.WHERE_CARD
+    assert "@NarcoScopeEvidenceBot" not in bot.WHERE_CARD
+    assert "LiquidityLabTalk" not in bot.WHERE_CARD
+    assert "creator-intel" not in bot.WHERE_CARD.lower()
     assert "—" not in bot.WHERE_CARD
     assert "–" not in bot.WHERE_CARD
     assert "@real_economy_desk_bot" not in bot.LAB_CHANNEL_PIN
     assert "@EvidenceSignalDesk" not in bot.LAB_CHANNEL_PIN
     assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
+    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
+    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
+    assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_PIN
+    assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_ABOUT
+    assert "joint score" in bot.LAB_CHANNEL_PIN
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
 
 
@@ -617,31 +709,19 @@ def test_where_command_sends_the_three_door_card(sent):
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
     )
-    assert any(
-        button.get("url") == bot.PUBLIC_GOOD_FUND
+    urls = [
+        button.get("url") or ""
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
-    )
-    assert any(
-        button.get("url") == bot.PALIMPSEST_BOT
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert any(
-        button.get("url") == bot.NARCOSCOPE_BOT
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert any(
-        button.get("url") == bot.EVIDENCE_CHANNEL
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert not any(
-        "LiquidityCryptoDesk" in (button.get("url") or "")
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
+    ]
+    assert bot.CRYPTO_CHANNEL in urls
+    assert bot.CRYPTO_BOT in urls
+    assert bot.LAB_LINK in urls
+    assert not any("palimpsest_watch_bot" in url for url in urls)
+    assert not any("EvidenceSignalDesk" in url for url in urls)
+    assert not any("NarcoScopeEvidenceBot" in url for url in urls)
+    assert not any("LiquidityLabTalk" in url for url in urls)
+    assert not any("creator" in url.lower() for url in urls)
 
 
 # ---------------------------------------------------------------- letter ----
@@ -660,9 +740,13 @@ def test_daily_letter_carries_scuttlebutt_flag(monkeypatch):
 
     monkeypatch.setattr(bot, "api_get", fake_api)
     monkeypatch.setattr(bot, "ll_get", lambda p: _ll_board())
+    monkeypatch.setattr(bot, "ut_get", lambda _path: None)
     monkeypatch.setattr(bot, "_get_json", lambda url, timeout=25, tries=2: [])
     txt = bot.fmt_daily_letter()
     assert "chatter surging" in txt and "display only" in txt
+    assert "🌊 Undertow: board dark" in txt
+    assert "Not a joint score" in txt
+    assert "dangerous quadrant" not in txt
 
 
 # ------------------------------------------------------------- image card ---
@@ -711,13 +795,17 @@ def test_answer_inline_serves_filters_and_caches(monkeypatch):
     assert [r["id"] for r in calls[-1][1]["results"]] == ["proof"]
 
 
-def test_setup_registers_cross_market_commands(sent):
+def test_setup_registers_the_short_command_tray(sent):
     bot.run_setup()
 
     command_call = next(payload for method, payload in sent
                         if method == "setMyCommands")
-    commands = {item["command"] for item in command_call["commands"]}
-    assert {"oil", "estuary"} <= commands
+    commands = [item["command"] for item in command_call["commands"]]
+    assert commands == [
+        "now", "snap", "ask", "letter", "tandem", "where", "help", "start",
+        "stop",
+    ]
+    assert 8 <= len(commands) <= 10
 
 
 def test_setup_discovery_metadata_respects_telegram_limits(sent):
@@ -775,3 +863,10 @@ def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
     channel_posts = [p for _, p in sent if p.get("chat_id") == -1004297805949]
     assert len(channel_posts) == 1, "conversion work must not increase post volume"
     assert "today's letter" in channel_posts[0].get("text", "")
+    urls = [b["url"] for row in channel_posts[0]["reply_markup"]["inline_keyboard"]
+            for b in row]
+    assert urls == [
+        "https://t.me/seiche_desk_bot?start=lab_letter",
+        "https://t.me/LiquiLens_bot?start=lab_letter",
+        "https://t.me/undertow_LiquiLens_bot?start=lab_letter",
+    ]

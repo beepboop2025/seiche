@@ -476,6 +476,8 @@ def test_compose_carries_board_line_angle_and_footer():
                       {"fed_press": "ok"}, NOW_DT)
     assert "Rissaga" in text and "Seiche desk:" in text and "Angle:" in text
     assert "Pangram" in text
+    assert not text.startswith("<b>Liquidity Lab</b>")
+    assert "Screens, not a joint score" not in text
 
 
 def test_low_signal_run_is_honest():
@@ -510,22 +512,43 @@ def test_invalid_channel_mode_exits_before_fetch_or_state_mutation(
     assert os.listdir(rz.STATE_DIR) == []
 
 
-def test_lab_channel_helper_exposes_all_eight_desks():
+def test_lab_channel_helper_defaults_to_three_core_desks():
     helper = runpy.run_path(os.path.join(
         _ROOT, "bot", "deploy", "lab-channel-post"))
     urls = json.dumps(helper["KEYBOARD"])
     for handle in ("seiche_desk_bot", "LiquiLens_bot",
+                   "undertow_LiquiLens_bot"):
+        assert handle in urls
+    for handle in ("riptide_anake_bot", "palimpsest_watch_bot",
+                   "corporate_stress_bot", "real_economy_desk_bot",
+                   "liquilens_crypto_bot"):
+        assert handle not in urls
+    assert "t.me/share/url?" in urls
+    operator = json.dumps(helper["OPERATOR_KEYBOARD"])
+    for handle in ("seiche_desk_bot", "LiquiLens_bot",
                    "undertow_LiquiLens_bot", "riptide_anake_bot",
                    "palimpsest_watch_bot", "corporate_stress_bot",
                    "real_economy_desk_bot", "liquilens_crypto_bot"):
-        assert handle in urls
-    contextual = helper["contextual_keyboard"](
-        "\U0001f30a <b>Rissaga</b> [CRYPTO \u00b7 policy and flows]"
+        assert handle in operator
+    for tag in (
+        "[CRYPTO \u00b7 policy and flows]",
+        "[PALIMPSEST \u00b7 information controls]",
+        "[CREATOR_INTEL \u00b7 supervisor tape]",
+    ):
+        assert helper["contextual_keyboard"](
+            f"\U0001f30a <b>Rissaga</b> {tag}"
+        ) == helper["KEYBOARD"]
+    seiche = helper["contextual_keyboard"](
+        "\U0001f30a <b>Rissaga</b> [SEICHE \u00b7 plumbing]"
     )
-    buttons = [button for row in contextual for button in row]
-    assert len(buttons) == 2
-    assert any(button["text"] == "Open + follow Crypto" for button in buttons)
+    buttons = [button for row in seiche for button in row]
+    assert any(button["text"] == "Open + follow Seiche" for button in buttons)
     assert any("t.me/share/url?" in button["url"] for button in buttons)
+    fallback = helper["contextual_keyboard"]("an untagged morning card")
+    assert fallback == helper["KEYBOARD"]
+    public = json.dumps(helper["KEYBOARD"])
+    assert "LiquidityLabTalk" not in public
+    assert "creator" not in public.lower()
 
 
 def test_rissaga_scans_hourly_and_shared_fallback_runs_four_times_daily():
@@ -722,6 +745,14 @@ def test_crypto_product_channel_gets_its_own_ranked_hourly_slice():
         for route in item["routes"]
         if route["desk"] == "CRYPTO"
     )
+
+
+def test_rissaga_reserves_creator_intel_off_the_lab_and_invents_no_desk():
+    reserved = {"CREATOR", "CREATOR_INTEL", "INFLUENCER"}
+    assert reserved <= rz.SHARED_CHANNEL_EXCLUDED_DESKS
+    assert reserved.isdisjoint(rz.DESK_NICE)
+    assert reserved.isdisjoint(rz.DESK_PERSONAS)
+    assert all(spec["desk"] not in reserved for spec in rz.BEATS.values())
 
 
 def test_shared_channel_excludes_side_desks_and_junk_crypto_titles():

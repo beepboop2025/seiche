@@ -9,12 +9,17 @@ timing and information controls. Each item is paired with the relevant live
 board or authority line.
 
 WHAT IT IS NOT. It runs no generative model and changes no product score,
-tier or regime. It emits linked facts, grounded board lines and bounded
-fallback commentary for eight desk routes. The shared channel receives at
-most one selected funding, bank, or market-depth primary route per sweep,
-ref tagged lab_rissaga. Palimpsest, corporate, real-economy, Riptide and
-Crypto routes stay off that shared feed. Crypto remains eligible only for
-the dedicated Crypto channel handoff, and only when the title is not junk.
+tier or regime. Headlines never become a score. It emits linked facts,
+grounded board lines and bounded fallback commentary for desk routes. The
+shared channel (@LiquidityLabDesk) receives at most one selected funding,
+bank, or market-depth primary route per sweep, ref tagged lab_rissaga.
+That post is Hermes news, not a second morning essay: Seiche's
+fmt_channel_letter owns the daily Lab card. Palimpsest, corporate,
+real-economy, Riptide, Crypto and creator-intel stay off that shared
+feed. Crypto remains eligible only for the dedicated Crypto brand
+handoff, and only when the title is not junk. Creator-intel is not a
+Rissaga desk and must not get a fourth daily essay, a new bot, or
+influencer posts on the Lab channel.
 
 SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
 protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
@@ -99,8 +104,15 @@ MAX_DESK_COVERAGE = 2
 DESK_COVERAGE_CAPS = {"CRYPTO": 5}
 DESK_CHANNEL_CAPS = {"CRYPTO": 1}
 DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
+# @LiquidityLabDesk's morning card is Seiche's fmt_channel_letter, not this
+# radar. Palimpsest/China, Riptide, corporate, real-econ, crypto and
+# creator-intel never occupy the shared slot and must never ship as if
+# they were the Lab letter. Crypto still uses the dedicated brand
+# handoff below. Creator-intel has no desk here; the names are reserved
+# so a future beat cannot leak onto the Lab channel.
 SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({
     "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
+    "CREATOR", "CREATOR_INTEL", "INFLUENCER",
 })
 CRYPTO_CHANNEL_JUNK = re.compile(
     r"price prediction|who leads|can \w+ recover|launchpad comparison|"
