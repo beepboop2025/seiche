@@ -56,7 +56,8 @@ Hard rules:
 4. Plain prose, tight, desk-note voice. No headers unless asked. Max ~180 words unless asked for more.
 5. You describe readings and mechanics; you do not give investment advice. If asked for a trade, restate what the Playbook table shows (with n) and say the decision is the operator's.
 6. Respect the tool's honesty: mention coverage %, DEAD inputs, staleness or backtest caveats when they materially qualify the answer.
-7. Output ONLY the final answer. No reasoning preamble, no "we need to", no meta-commentary about the task."""
+7. If liquilens_evidence_markets is in the pack, repeat the served validated_backtest_eligible and real_money_eligible flags. Do not promote construction-PIT diagnostics to validated-backtest or real-money evidence.
+8. Output ONLY the final answer. No reasoning preamble, no "we need to", no meta-commentary about the task."""
 
 
 def _fp(deep: dict) -> dict:
@@ -283,7 +284,21 @@ _INSTITUTION_WORDS = ("bank", "nbfc", "lender", "mfi", "microfinance", "sfb",
                       "northern rock", "esaf", "indusind", "counterparty")
 
 
-async def _liquilens_board() -> dict | None:
+def _mcp_payload(result: dict) -> dict | None:
+    """Accept either structuredContent or the text-content fallback."""
+    if result.get("isError"):
+        return None
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    content = result.get("content") or []
+    if content and isinstance(content[0], dict) and content[0].get("text"):
+        parsed = json.loads(content[0]["text"])
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+async def _liquilens_mcp(tool: str, args: dict | None = None) -> dict | None:
     """Sibling MCP in the fleet: LiquiLens watches the INSTITUTIONS the way
     Seiche watches the plumbing. Fail-soft — an unreachable sibling just
     means a leaner pack."""
@@ -292,25 +307,37 @@ async def _liquilens_board() -> dict | None:
             r = await client.post(
                 "https://api.liquilens.in/mcp",
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                      "params": {"name": "failure_radar_board", "arguments": {}}})
+                      "params": {"name": tool, "arguments": args or {}}})
             r.raise_for_status()
-            result = r.json().get("result", {})
-            if result.get("isError"):
-                return None
-            return result.get("structuredContent")
+            return _mcp_payload(r.json().get("result") or {})
     except Exception:
+        # Isolation boundary: sibling MCP is optional context, never a
+        # Seiche board input. Absence stays absent.
         return None
+
+
+async def _liquilens_board() -> dict | None:
+    """Compatibility wrapper — prefer ``_liquilens_mcp`` for new callers."""
+    return await _liquilens_mcp("failure_radar_board")
 
 
 async def ask(question: str, snap: dict) -> dict:
     pack = context_pack(snap)
     if any(w in question.lower() for w in _INSTITUTION_WORDS):
-        board = await _liquilens_board()
+        board = await _liquilens_mcp("failure_radar_board")
         if board is not None:
             pack["liquilens_failure_radar"] = board
             pack["liquilens_note"] = ("institution-level failure screens from the "
                                       "sibling server api.liquilens.in/mcp — cite "
                                       "as (liquilens failure-radar, as_of)")
+        evidence = await _liquilens_mcp("evidence_markets")
+        if evidence is not None:
+            pack["liquilens_evidence_markets"] = evidence
+            pack["liquilens_evidence_note"] = (
+                "historical diagnostics retain their served eligibility flags; "
+                "do not treat them as validated-backtest or real-money evidence "
+                "unless the cited payload says so"
+            )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "CONTEXT PACK:\n" + json.dumps(pack, default=str)
