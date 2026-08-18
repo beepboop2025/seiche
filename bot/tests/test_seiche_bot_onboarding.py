@@ -390,7 +390,7 @@ def test_tandem_alert_stays_off_the_public_funding_channel(
     assert "dangerous quadrant" not in sent[0][1]
     assert "quadrant" not in sent[0][1].lower()
     assert "Not a joint score" in sent[0][1]
-    assert bot.load_state("tandem_reads.json") == {
+    assert bot.load_state("tandem_reads.json", None) == {
         "seiche": "STRAIN", "liquilens": "red",
     }
 

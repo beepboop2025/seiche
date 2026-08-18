@@ -375,7 +375,7 @@ def test_run_tandem_alerts_on_either_labeled_read(monkeypatch):
 
     bot.run_tandem()
     assert sent == []
-    assert bot.load_state("tandem_reads.json") == {
+    assert bot.load_state("tandem_reads.json", None) == {
         "seiche": "STRAIN", "liquilens": "red",
     }
 
@@ -415,10 +415,10 @@ def test_run_tandem_ignores_legacy_fused_class_file(monkeypatch):
 
     bot.run_tandem()
     assert sent == []
-    assert bot.load_state("tandem_reads.json") == {
+    assert bot.load_state("tandem_reads.json", None) == {
         "seiche": "STRAIN", "liquilens": "red",
     }
-    assert bot.load_state("tandem_class.json") == 0
+    assert bot.load_state("tandem_class.json", None) == 0
 
 
 # ------------------------------------------------------ history + sparkline --
