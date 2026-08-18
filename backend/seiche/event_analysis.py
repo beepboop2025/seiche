@@ -178,6 +178,7 @@ def _unavailable(source: str, reason: str, *, evidence_id: str,
         "evidence_id": evidence_id,
         "source": source,
         "available": False,
+        "reading": "UNAVAILABLE",
         "reason": _safe_text(reason, 240),
     }
     if isinstance(status, int):
@@ -561,10 +562,12 @@ def compact_liquilens_layer(name: str, data: dict | None,
             evidence_id=evidence_id, status=data.get("_status"),
         )
     if data.get("available") is False:
+        # Keep dates/staleness, but do not copy a live regime word. An
+        # unavailable sibling is UNAVAILABLE, never CALM.
         return {
             **_unavailable(source, data.get("reason") or "reading unavailable",
                            evidence_id=evidence_id),
-            **_pick(data, ("as_of", "stale", "regime", "badge")),
+            **_pick(data, ("as_of", "stale")),
         }
     schema_reason = _liquilens_schema_reason(name, data)
     if schema_reason:
@@ -947,6 +950,39 @@ async def event_context(question: str, snapshot: dict,
         },
     }
     return _fit_reading_pack(pack)
+
+
+async def liquilens_desk_sibling(
+        question: str,
+        raw_fleet: dict[str, dict] | None = None) -> dict:
+    """Fail-closed LiquiLens screens for institution or tandem desk questions.
+
+    Reuses the same REST paths and schema compaction as event analysis. A
+    missing or drifted sibling is UNAVAILABLE. This is not a joint score.
+    """
+    raw = raw_fleet if raw_fleet is not None else await _raw_fleet()
+    layers = {
+        name: compact_liquilens_layer(name, raw.get(name), question)
+        for name in _LIQUILENS_PATHS
+    }
+    status = source_status({
+        "seiche": {},
+        "undertow": {},
+        "liquilens": {"layers": layers},
+    })[-1]
+    return {
+        "scope": "institution and transmission screens; screens, not ratings",
+        "sibling_rule": "unavailable is UNAVAILABLE, never CALM; no joint score",
+        "layers": layers,
+        "source_status": {
+            "product": "liquilens",
+            "available": status["available"],
+            "as_of": status.get("as_of"),
+            "layers_available": status["layers_available"],
+            "layers_unavailable": status["layers_unavailable"],
+            "layer_reasons": status.get("layer_reasons") or {},
+        },
+    }
 
 
 _TELEGRAM_LINK = re.compile(r"https?://(?:www\.)?t\.me/[^\s]+", re.IGNORECASE)

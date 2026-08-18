@@ -56,7 +56,7 @@ Hard rules:
 4. Plain prose, tight, desk-note voice. No headers unless asked. Max ~180 words unless asked for more.
 5. You describe readings and mechanics; you do not give investment advice. If asked for a trade, restate what the Playbook table shows (with n) and say the decision is the operator's.
 6. Respect the tool's honesty: mention coverage %, DEAD inputs, staleness or backtest caveats when they materially qualify the answer.
-7. If liquilens_evidence_markets is in the pack, repeat the served validated_backtest_eligible and real_money_eligible flags. Do not promote construction-PIT diagnostics to validated-backtest or real-money evidence.
+7. If liquilens layers or liquilens_evidence_markets are in the pack, repeat the served available / cannot_see / validated_backtest_eligible / real_money_eligible flags. An unavailable sibling is UNAVAILABLE, never CALM. Do not invent a joint Seiche+LiquiLens+Undertow score. Do not promote construction-PIT diagnostics to validated-backtest or real-money evidence.
 8. Output ONLY the final answer. No reasoning preamble, no "we need to", no meta-commentary about the task."""
 
 
@@ -281,7 +281,54 @@ async def _via_env(messages: list[dict]) -> str | None:
 
 _INSTITUTION_WORDS = ("bank", "nbfc", "lender", "mfi", "microfinance", "sfb",
                       "institution", "credit suisse", "svb", "silicon valley",
-                      "northern rock", "esaf", "indusind", "counterparty")
+                      "northern rock", "esaf", "indusind", "counterparty",
+                      "tandem")
+
+
+def wants_liquilens_sibling(question: str) -> bool:
+    """Institution or tandem questions attach fail-closed LiquiLens screens."""
+    q = (question or "").lower()
+    return any(word in q for word in _INSTITUTION_WORDS)
+
+
+def compact_liquilens_evidence_markets(data: dict | None) -> dict:
+    """Fail-closed eligibility surface. Missing or drifted payload is UNAVAILABLE."""
+    evidence_id = "liquilens:evidence_markets"
+    unavailable = {
+        "evidence_id": evidence_id,
+        "available": False,
+        "reading": "UNAVAILABLE",
+        "validated_backtest_eligible": False,
+        "real_money_eligible": False,
+    }
+    if not isinstance(data, dict):
+        return {**unavailable, "reason": "reading unavailable"}
+    markets = data.get("markets")
+    if not isinstance(markets, list):
+        return {
+            **unavailable,
+            "reason": "invalid reading schema: evidence_markets.markets must be an array",
+        }
+    compact_markets = []
+    for row in markets[:16]:
+        if not isinstance(row, dict):
+            continue
+        hist = row.get("historical_evidence")
+        hist = hist if isinstance(hist, dict) else {}
+        compact_markets.append({
+            "name": row.get("name"),
+            "historical_evidence": {
+                "validated_backtest_eligible": hist.get("validated_backtest_eligible") is True,
+                "real_money_eligible": hist.get("real_money_eligible") is True,
+            },
+        })
+    return {
+        "evidence_id": evidence_id,
+        "available": True,
+        "markets": compact_markets,
+        "validated_backtest_eligible": data.get("validated_backtest_eligible") is True,
+        "real_money_eligible": data.get("real_money_eligible") is True,
+    }
 
 
 def _mcp_payload(result: dict) -> dict | None:
@@ -299,9 +346,8 @@ def _mcp_payload(result: dict) -> dict | None:
 
 
 async def _liquilens_mcp(tool: str, args: dict | None = None) -> dict | None:
-    """Sibling MCP in the fleet: LiquiLens watches the INSTITUTIONS the way
-    Seiche watches the plumbing. Fail-soft — an unreachable sibling just
-    means a leaner pack."""
+    """Optional LiquiLens MCP read. Callers must fail-close the result;
+    a missing sibling is UNAVAILABLE, not omitted-as-calm."""
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.post(
@@ -311,8 +357,8 @@ async def _liquilens_mcp(tool: str, args: dict | None = None) -> dict | None:
             r.raise_for_status()
             return _mcp_payload(r.json().get("result") or {})
     except Exception:
-        # Isolation boundary: sibling MCP is optional context, never a
-        # Seiche board input. Absence stays absent.
+        # Isolation boundary: sibling MCP is never a Seiche board input.
+        # Absence is returned as None so the caller can render UNAVAILABLE.
         return None
 
 
@@ -323,21 +369,24 @@ async def _liquilens_board() -> dict | None:
 
 async def ask(question: str, snap: dict) -> dict:
     pack = context_pack(snap)
-    if any(w in question.lower() for w in _INSTITUTION_WORDS):
-        board = await _liquilens_mcp("failure_radar_board")
-        if board is not None:
-            pack["liquilens_failure_radar"] = board
-            pack["liquilens_note"] = ("institution-level failure screens from the "
-                                      "sibling server api.liquilens.in/mcp — cite "
-                                      "as (liquilens failure-radar, as_of)")
-        evidence = await _liquilens_mcp("evidence_markets")
-        if evidence is not None:
-            pack["liquilens_evidence_markets"] = evidence
-            pack["liquilens_evidence_note"] = (
-                "historical diagnostics retain their served eligibility flags; "
-                "do not treat them as validated-backtest or real-money evidence "
-                "unless the cited payload says so"
-            )
+    if wants_liquilens_sibling(question):
+        from seiche import event_analysis
+
+        pack["liquilens"] = await event_analysis.liquilens_desk_sibling(question)
+        pack["liquilens_evidence_markets"] = compact_liquilens_evidence_markets(
+            await _liquilens_mcp("evidence_markets")
+        )
+        pack["liquilens_note"] = (
+            "LiquiLens institution screens use the same fail-closed REST "
+            "compaction as event_analysis; unavailable layers are UNAVAILABLE, "
+            "never CALM; cite as (liquilens <layer>, as_of); do not invent a "
+            "joint score"
+        )
+        pack["liquilens_evidence_note"] = (
+            "historical diagnostics retain their served eligibility flags; "
+            "do not treat them as validated-backtest or real-money evidence "
+            "unless the cited payload says so"
+        )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "CONTEXT PACK:\n" + json.dumps(pack, default=str)
