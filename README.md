@@ -151,7 +151,7 @@ Africa — are stated as out of scope, not faked in).
 ## Run it
 
 ```bash
-# backend (Python 3.11+)
+# backend (Python 3.12+)
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/uvicorn seiche.api:app --port 8787

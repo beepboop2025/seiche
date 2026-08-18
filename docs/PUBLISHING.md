@@ -15,8 +15,10 @@ listed here as a runbook rather than automated blind.
 2. **Publish the package to PyPI when the stdio implementation changes.** The
    registry may advertise a newer hosted server while keeping its optional
    package entry pinned to the latest version that actually exists on PyPI.
-   Seiche currently pins `seiche==0.9.1`; do not point the card at a future
-   package version until that artifact is visible from PyPI.
+   Seiche currently pins `seiche==0.10.0` to match the hosted estuary product
+   and the nine public tools (including `latest_article`). That package is not
+   on PyPI until a human cuts a GitHub release or publishes the artifact; do
+   not advertise a newer package version than the next intended release.
    ```bash
    cd backend
    python -m pip install build twine
