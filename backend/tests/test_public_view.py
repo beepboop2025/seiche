@@ -65,3 +65,30 @@ def test_public_proof_preserves_a_served_verified_boundary(fake_snap):
     assert evidence["status"] == "VERIFIED_AS_PUBLISHED_DATA_CUT"
     assert evidence["validated_backtest_eligible"] is True
     assert evidence["real_money_eligible"] is False
+
+
+def test_public_proof_names_a_withheld_backtest(fake_snap):
+    from copy import deepcopy
+
+    snap = deepcopy(fake_snap)
+    snap["deep"]["backtest"] = {
+        "ok": False,
+        "status": "UNVERIFIED",
+        "reason": (
+            "historical inputs are construction-PIT/current-vintage; "
+            "a validated replay requires ALFRED or as-published captures"
+        ),
+    }
+    proof = public_payload(snap)["proof"]
+    assert proof["withheld"] is True
+    assert proof["recall"] is None
+    assert proof["n_events"] is None
+    assert "validated-backtest eligible" in proof["reason"] or "construction-PIT" in proof["reason"]
+    assert proof["historical_evidence"]["validated_backtest_eligible"] is False
+
+
+def test_public_proof_marks_a_served_backtest_as_not_withheld(fake_snap):
+    proof = public_payload(fake_snap)["proof"]
+    assert proof["withheld"] is False
+    assert proof["reason"] is None
+    assert proof["recall"] == 0.79

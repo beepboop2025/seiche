@@ -37,8 +37,14 @@ def public_payload(snap: dict) -> dict:
     composite = engines.get("composite") or {}
     tell = deep.get("tell") or {}
     bt = deep.get("backtest") or {}
-    ec = bt.get("event_capture") or {}
+    bt_ok = bool(bt.get("ok"))
+    ec = (bt.get("event_capture") or {}) if bt_ok else {}
     evidence = historical_evidence(snap)
+    withheld = not bt_ok
+    reason = None if bt_ok else (
+        bt.get("reason")
+        or "PROOF backtest is withheld; this vintage is not validated-backtest eligible"
+    )
 
     return {
         "schema": "seiche.public.v2",
@@ -67,6 +73,8 @@ def public_payload(snap: dict) -> dict:
             ],
             "caveats": bt.get("caveats") or [],
             "historical_evidence": evidence,
+            "withheld": withheld,
+            "reason": reason,
         },
         # The argument, evidence and countercase travel together. These are
         # derived slices, not the underlying engine payloads.
