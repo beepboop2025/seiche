@@ -226,6 +226,21 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
     assert "state-change alerts" in text
 
 
+_LAB_AD_FORBIDDEN = (
+    "LiquidityLabTalk",
+    "creator-intel",
+    "creator_intel",
+    "LiquidityCryptoDesk",
+    "liquilens_crypto_bot",
+    "palimpsest_watch_bot",
+    "riptide_anake_bot",
+    "corporate_stress_bot",
+    "real_economy_desk_bot",
+    "EvidenceSignalDesk",
+    "NarcoScopeEvidenceBot",
+)
+
+
 def test_lab_channel_about_fits_telegram():
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
     assert "daily card" in bot.LAB_CHANNEL_ABOUT
@@ -238,6 +253,30 @@ def test_lab_channel_about_fits_telegram():
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@palimpsest_watch_bot" not in bot.LAB_CHANNEL_PIN
     assert "@riptide_anake_bot" not in bot.LAB_CHANNEL_PIN
+
+
+def test_public_storefront_keeps_talk_crypto_and_creator_intel_off_the_lab():
+    doors = json.dumps(bot.lab_card_keyboard())
+    ad_copy = "\n".join([
+        bot.LAB_CHANNEL_ABOUT,
+        bot.LAB_CHANNEL_PIN,
+        bot.HELP,
+        bot.BOT_SHORT_DESCRIPTION,
+        bot.BOT_DESCRIPTION,
+        doors,
+    ])
+    for needle in _LAB_AD_FORBIDDEN:
+        assert needle not in ad_copy
+    assert "https://t.me/seiche_desk_bot" in doors
+    assert "https://t.me/LiquiLens_bot" in doors
+    assert "https://t.me/undertow_LiquiLens_bot" in doors
+    assert "LiquidityLabTalk" not in bot.WHERE_CARD
+    assert "creator-intel" not in bot.WHERE_CARD.lower()
+    assert "creator_intel" not in bot.WHERE_CARD
+    assert "@LiquidityCryptoDesk" in bot.WHERE_CARD
+    assert "@liquilens_crypto_bot" in bot.WHERE_CARD
+    assert "not the Lab card" in bot.WHERE_CARD
+    assert "@palimpsest_watch_bot" not in bot.WHERE_CARD
 
 
 def test_channel_letter_is_the_six_line_fail_closed_lab_card(monkeypatch):

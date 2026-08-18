@@ -82,21 +82,28 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # which is how every offline test and every laptop run must behave: a timer
 # that is only meant to DM subscribers should never accidentally publish.
 #
-# Channel constitution:
-# 1. Seiche owns the one daily card. fmt_channel_letter is that card.
-#    Six-line shape, three named fail-closed lanes, no joint score.
-# 2. Move-only extras (a regime flip, a material state change) may post.
-#    They are not a second morning essay.
-# 3. Hermes / Rissaga news is news. It must not rewrite or replace the
-#    daily Lab card.
-# 4. Corporate, RealEcon, Palimpsest / China, Riptide and Crypto never
-#    post to @LiquidityLabDesk as if they were the morning letter.
+# Public storefront (ad-facing only):
+# 1. @LiquidityLabDesk — Seiche owns the one daily card
+#    (fmt_channel_letter). Three named fail-closed lines: Seiche /
+#    LiquiLens / Undertow. Move-only extras only. Hermes / Rissaga news
+#    is news, not a second morning essay.
+# 2. @LiquiLens_bot — Institution Desk.
+# 3. @seiche_desk_bot — Dollar Funding Desk.
+# 4. @undertow_LiquiLens_bot — exit cost.
+# 5. @LiquidityCryptoDesk + @liquilens_crypto_bot — separate brand.
+#    Cross-link only. Never dump into the Lab card or its keyboards.
+#
+# Hidden until there is a real crowd: @LiquidityLabTalk. Never in
+# ad-facing copy (About, pin, daily card, Hermes default keyboard).
+#
+# Never on the Lab channel: Corporate, RealEcon, Palimpsest, Riptide,
+# Crypto, creator-intel. Creator-intel is Lab/Demo UI when it lands; it
+# must not get a fourth daily essay, a new bot, or influencer posts here.
+# Headlines never become a score.
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
-PUBLIC_GOOD_FUND = "https://palimpsest.info/fund.html"
-EVIDENCE_CHANNEL = "https://t.me/EvidenceSignalDesk"
-PALIMPSEST_BOT = "https://t.me/palimpsest_watch_bot"
-NARCOSCOPE_BOT = "https://t.me/NarcoScopeEvidenceBot"
+CRYPTO_CHANNEL = "https://t.me/LiquidityCryptoDesk"
+CRYPTO_BOT = "https://t.me/liquilens_crypto_bot"
 LAB_CHANNEL_ABOUT = (
     "One daily card: Seiche, LiquiLens, Undertow. Three named "
     "lanes, fail-closed. Move-only extras. Public data. Research only."
@@ -1292,18 +1299,15 @@ def _labeled_tandem_line(reads: dict) -> str:
 
 WHERE_CARD = (
     "<b>Where the lab publishes</b>\n\n"
-    "Morning card:\n"
+    "One daily card:\n"
     "https://t.me/LiquidityLabDesk\n\n"
-    "Plumbing: @seiche_desk_bot\n"
-    "Banks: @LiquiLens_bot\n"
+    "Dollar funding: @seiche_desk_bot\n"
+    "Institutions: @LiquiLens_bot\n"
     "Exit cost: @undertow_LiquiLens_bot\n\n"
+    "Crypto is a separate brand, not the Lab card:\n"
+    "@LiquidityCryptoDesk · @liquilens_crypto_bot\n\n"
     "Named-list software: https://liquilens.in/access/\n\n"
-    "Public-good bots (grants, not the morning channel):\n"
-    "Palimpsest: @palimpsest_watch_bot\n"
-    "Evidence Signal: @EvidenceSignalDesk\n"
-    "NarcoScope: @NarcoScopeEvidenceBot\n"
-    f"{PUBLIC_GOOD_FUND}\n\n"
-    "One lab, three desks. Public data. Misses kept."
+    "Three desks, one daily card. Screens, not a joint score."
 )
 
 
@@ -1537,10 +1541,8 @@ def keyboard_for(cmd: str) -> list | None:
             FLEET_ROW,
             [{"text": "Named-list software",
               "url": "https://liquilens.in/access/"}],
-            [{"text": "Palimpsest bot", "url": PALIMPSEST_BOT},
-             {"text": "NarcoScope bot", "url": NARCOSCOPE_BOT}],
-            [{"text": "Evidence Signal", "url": EVIDENCE_CHANNEL},
-             {"text": "Fund the house", "url": PUBLIC_GOOD_FUND}],
+            [{"text": "Crypto channel", "url": CRYPTO_CHANNEL},
+             {"text": "Crypto bot", "url": CRYPTO_BOT}],
         ]
     return None
 

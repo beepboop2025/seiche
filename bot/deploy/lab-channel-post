@@ -2,14 +2,16 @@
 """lab-channel-post: publish ONE Hermes news item to @LiquidityLabDesk.
 
 This is news, not the daily Lab card. Seiche's fmt_channel_letter owns that
-morning essay. Palimpsest, China, Riptide, Corporate, RealEcon and Crypto
-must not arrive here as if they were the letter.
+morning essay. Palimpsest, China, Riptide, Corporate, RealEcon, Crypto and
+creator-intel must not arrive here as if they were the letter. Crypto is a
+separate brand (cross-link only). @LiquidityLabTalk stays hidden.
 
 The bot token is read by THIS script (from the gateway's own .env), never
 passed via argv or a URL. Message text arrives via --text-file PATH or
 stdin (HTML). The Rissaga footer and the stranger-facing keyboard (three
 core desks plus Share) are appended here. The eight-desk dump stays on
-OPERATOR_KEYBOARD for operators.
+OPERATOR_KEYBOARD for operators. Contextual keyboards for excluded desks
+fall back to the three-door row; this script invents no creator-intel bot.
 
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
 """
@@ -47,7 +49,12 @@ SHARE_URL = "https://t.me/share/url?" + urllib.parse.urlencode({
              "state-change alerts. Research only."),
 })
 # First-time readers of @LiquidityLabDesk see the three live FI desks.
-# Palimpsest, Riptide, corporate, real-econ and crypto stay off this row.
+# Palimpsest, Riptide, corporate, real-econ, crypto and creator-intel
+# stay off this row. Talk is hidden.
+LAB_EXCLUDED_DESKS = frozenset({
+    "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
+    "CREATOR", "CREATOR_INTEL", "INFLUENCER",
+})
 KEYBOARD = [
     [{"text": "\U0001f30a Seiche",
       "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
@@ -79,10 +86,10 @@ OPERATOR_KEYBOARD = [
 
 
 def contextual_keyboard(text: str) -> list:
-    """Offer one relevant desk action instead of eight competing choices."""
+    """Offer one relevant core-desk action, never an excluded-desk dump."""
     match = re.search(r"\[([A-Z]+)\s*\u00b7", text)
     desk = match.group(1) if match else ""
-    if desk not in DESK_BOTS:
+    if desk not in DESK_BOTS or desk in LAB_EXCLUDED_DESKS:
         return KEYBOARD
     label, bot_link = DESK_BOTS[desk]
     ref = f"lab_rissaga_{desk.lower()}"

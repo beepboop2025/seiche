@@ -670,19 +670,21 @@ def test_keyboard_shapes():
     assert bot.keyboard_for("/nope") is None
 
 
-def test_where_card_names_the_three_public_doors():
+def test_where_card_names_the_locked_storefront():
     assert "t.me/LiquidityLabDesk" in bot.WHERE_CARD
     assert "@seiche_desk_bot" in bot.WHERE_CARD
     assert "@LiquiLens_bot" in bot.WHERE_CARD
     assert "@undertow_LiquiLens_bot" in bot.WHERE_CARD
     assert "liquilens.in/access/" in bot.WHERE_CARD
-    assert "Public-good bots" in bot.WHERE_CARD
-    assert "not the morning channel" in bot.WHERE_CARD
-    assert "@palimpsest_watch_bot" in bot.WHERE_CARD
-    assert "@EvidenceSignalDesk" in bot.WHERE_CARD
-    assert "@NarcoScopeEvidenceBot" in bot.WHERE_CARD
-    assert bot.PUBLIC_GOOD_FUND in bot.WHERE_CARD
-    assert "LiquidityCryptoDesk" not in bot.WHERE_CARD
+    assert "@LiquidityCryptoDesk" in bot.WHERE_CARD
+    assert "@liquilens_crypto_bot" in bot.WHERE_CARD
+    assert "not the Lab card" in bot.WHERE_CARD
+    assert "Public-good bots" not in bot.WHERE_CARD
+    assert "@palimpsest_watch_bot" not in bot.WHERE_CARD
+    assert "@EvidenceSignalDesk" not in bot.WHERE_CARD
+    assert "@NarcoScopeEvidenceBot" not in bot.WHERE_CARD
+    assert "LiquidityLabTalk" not in bot.WHERE_CARD
+    assert "creator-intel" not in bot.WHERE_CARD.lower()
     assert "—" not in bot.WHERE_CARD
     assert "–" not in bot.WHERE_CARD
     assert "@real_economy_desk_bot" not in bot.LAB_CHANNEL_PIN
@@ -691,6 +693,8 @@ def test_where_card_names_the_three_public_doors():
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
     assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
+    assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_PIN
+    assert "LiquidityCryptoDesk" not in bot.LAB_CHANNEL_ABOUT
     assert "joint score" in bot.LAB_CHANNEL_PIN
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
 
@@ -705,31 +709,19 @@ def test_where_command_sends_the_three_door_card(sent):
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
     )
-    assert any(
-        button.get("url") == bot.PUBLIC_GOOD_FUND
+    urls = [
+        button.get("url") or ""
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
-    )
-    assert any(
-        button.get("url") == bot.PALIMPSEST_BOT
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert any(
-        button.get("url") == bot.NARCOSCOPE_BOT
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert any(
-        button.get("url") == bot.EVIDENCE_CHANNEL
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
-    assert not any(
-        "LiquidityCryptoDesk" in (button.get("url") or "")
-        for row in payload["reply_markup"]["inline_keyboard"]
-        for button in row
-    )
+    ]
+    assert bot.CRYPTO_CHANNEL in urls
+    assert bot.CRYPTO_BOT in urls
+    assert bot.LAB_LINK in urls
+    assert not any("palimpsest_watch_bot" in url for url in urls)
+    assert not any("EvidenceSignalDesk" in url for url in urls)
+    assert not any("NarcoScopeEvidenceBot" in url for url in urls)
+    assert not any("LiquidityLabTalk" in url for url in urls)
+    assert not any("creator" in url.lower() for url in urls)
 
 
 # ---------------------------------------------------------------- letter ----
