@@ -99,6 +99,9 @@ MAX_DESK_COVERAGE = 2
 DESK_COVERAGE_CAPS = {"CRYPTO": 5}
 DESK_CHANNEL_CAPS = {"CRYPTO": 1}
 DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
+# @LiquidityLabDesk is the dollar-funding FI face. Palimpsest/China, Riptide,
+# corporate, real-econ and crypto never occupy that shared slot. Crypto still
+# uses the dedicated channel handoff below; the others stay on their own bots.
 SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({
     "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
 })

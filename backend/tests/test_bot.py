@@ -560,8 +560,12 @@ def test_context_commands_use_the_compact_public_routes(
 
 
 def test_start_subscribes_and_records_ref(monkeypatch, sent):
-    monkeypatch.setattr(bot, "api_get",
-                        lambda p: _gauge() if "gauge" in p else _pub())
+    monkeypatch.setattr(bot, "board_get", lambda _url: [{
+        "title": "Reserve pressure is leading price.",
+        "date": "2026-08-18",
+        "summary": "The board reads STRAIN.",
+        "slug": "2026-08-18-daily",
+    }])
     bot.handle(9, "/start ref_hnwave", "private")
     assert "9" in bot.load_state("subscribers.json", {})
     with open(bot._state_path("leads.jsonl"), encoding="utf-8") as fh:
@@ -602,8 +606,9 @@ def test_where_card_names_the_three_public_doors():
     assert "@EvidenceSignalDesk" not in bot.LAB_CHANNEL_PIN
     assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
-    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
+    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
+    assert "@LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
+    assert "joint score" in bot.LAB_CHANNEL_PIN
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
 
 

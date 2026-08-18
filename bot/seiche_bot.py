@@ -71,6 +71,7 @@ from datetime import date, datetime, timezone
 TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
 API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
 LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip("/")
+UT_API = os.environ.get("UNDERTOW_API", "https://api.seiche.info/undertow").rstrip("/")
 SITE = "https://seiche.info"
 ARTICLE_FEED_URL = f"{SITE}/articles/feed.json"
 STATE_DIR = os.environ.get("SEICHE_BOT_STATE", "/var/lib/seiche-bot")
@@ -86,19 +87,19 @@ EVIDENCE_CHANNEL = "https://t.me/EvidenceSignalDesk"
 PALIMPSEST_BOT = "https://t.me/palimpsest_watch_bot"
 NARCOSCOPE_BOT = "https://t.me/NarcoScopeEvidenceBot"
 LAB_CHANNEL_ABOUT = (
-    "One morning card: funding, banks, exit cost. Public data. "
-    "Gaps named, misses kept. Talk: @LiquidityLabTalk"
+    "Dollar-funding desk: Seiche, LiquiLens, Undertow. One morning "
+    "card, three named lanes, fail-closed. Public data. Research only."
 )
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
-    "This channel is one morning card, plus a post only when "
-    "banks, funding, or exit cost actually move.\n\n"
-    "Plumbing: @seiche_desk_bot\n"
-    "Banks: @LiquiLens_bot\n"
-    "Exit cost: @undertow_LiquiLens_bot\n\n"
-    "Named-list software: https://liquilens.in/access/\n"
-    "Talk: @LiquidityLabTalk\n\n"
-    "Public data. Misses kept. Not investment advice."
+    "This channel is the dollar-funding desk: one morning card "
+    "with three independent lanes, plus a post only when funding, "
+    "banks, or exit cost actually move.\n\n"
+    "Seiche (funding): @seiche_desk_bot\n"
+    "LiquiLens (institutions): @LiquiLens_bot\n"
+    "Undertow (exit cost): @undertow_LiquiLens_bot\n\n"
+    "Each lane fails closed. No joint score. "
+    "Public data. Research only — not investment advice."
 )
 BOT_USERNAME = "seiche_desk_bot"
 BOT_URL = f"https://t.me/{BOT_USERNAME}"
@@ -354,6 +355,11 @@ def ask_desk(question: str):
 def ll_get(path: str):
     """The other desk: LiquiLens's public institutions API, read verbatim."""
     return board_get(f"{LL_API}{path}")
+
+
+def ut_get(path: str):
+    """Exit-cost desk: Undertow's public board, read verbatim and fail-closed."""
+    return board_get(f"{UT_API}{path}")
 
 
 def _state_path(name: str) -> str:
@@ -1260,7 +1266,7 @@ WHERE_CARD = (
 
 
 HELP = (
-    "🌊 <b>Seiche</b> — US funding-stress early warning, from free public data.\n\n"
+    "🌊 <b>Seiche</b> — public US dollar-funding desk, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
     "/snap — the forwardable card (meter, trend, next turn)\n"
     "/odds — forward event odds (Navigator)\n"
@@ -1275,7 +1281,7 @@ HELP = (
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
     "/where — the three public desks and the public-good bots\n"
-    "/start — follow in DM: daily letter + state/cross-desk alerts + news\n"
+    "/start — follow in DM: daily 11:30 UTC letter + state-change alerts\n"
     "/stop — unsubscribe in DM\n\n"
     "In a private chat, just type a question — no slash needed; the desk "
     "answers, grounded in the live board. Type @seiche_desk_bot in any other "
@@ -1362,45 +1368,70 @@ def fmt_daily_letter() -> str:
     return "\n".join(lines) + FOOT
 
 
-def fmt_channel_letter() -> str:
-    """Six-line lab card. The long editorial stays on seiche.info."""
-    today = date.today().strftime("%d %b %Y")
-    gauge = api_get("/api/gauge")
-    pub = api_get("/api/public")
-    lines = [f"🌊 <b>Liquidity Lab</b> {today}"]
+def _seiche_lane(gauge: dict | None, pub: dict | None) -> str:
     if not gauge:
-        lines.append("The board did not answer this morning. No number is "
-                     f"shown rather than a stale one. {SITE}")
-        return "\n".join(lines)
+        return "Seiche (funding): cannot see Seiche."
     line = ((pub or {}).get("conclusion") or {}).get("line")
     tell = gauge.get("tell")
-    tell_s = ""
-    if isinstance(tell, (int, float)):
-        tell_s = f" · Tell {tell:+.0f}"
+    tell_s = f" · Tell {tell:+.0f}" if isinstance(tell, (int, float)) else ""
     if line:
-        lines.append(f"{_regime_icon(gauge.get('regime'))} {esc(line)}{tell_s}")
-    else:
-        lines.append(f"{_regime_icon(gauge.get('regime'))} "
-                     f"<b>{esc(gauge.get('regime'))}</b> "
-                     f"{gauge.get('index')}/100{tell_s}")
-    board = ll_get("/failure-radar/board")
-    if board and board.get("rows"):
-        watch = [esc(row.get("name") or row.get("slug") or "unnamed")
-                 for row in board["rows"]
-                 if row.get("tier") in ("red", "orange", "yellow")][:3]
-        n = len(board["rows"])
-        if watch:
-            lines.append(f"Banks: {n} scored. On watch: {', '.join(watch)}.")
-        else:
-            lines.append(f"Banks: {n} scored. No yellow-or-worse names.")
-    else:
-        lines.append("Banks: LiquiLens did not answer. Absence is not calm.")
-    inst = _inst_level(board)
-    plumb = _plumb_level(gauge.get("regime"))
-    if inst is not None and plumb is not None and _tandem_class(plumb, inst) >= 2:
-        lines.append("Cross-desk: funding stress with institutions on watch.")
-    lines.append("Screens, not ratings. 15 names: https://liquilens.in/access/")
-    lines.append(f"Sources: {SITE}")
+        return (f"Seiche (funding): {_regime_icon(gauge.get('regime'))} "
+                f"{esc(line)}{tell_s}")
+    idx = gauge.get("index")
+    return (f"Seiche (funding): {_regime_icon(gauge.get('regime'))} "
+            f"<b>{esc(gauge.get('regime'))}</b> "
+            f"{'?' if idx is None else idx}/100{tell_s}")
+
+
+def _liquilens_lane(board: dict | None) -> str:
+    if not board or not board.get("rows"):
+        return "LiquiLens (institutions): cannot see LiquiLens."
+    watch = [esc(row.get("name") or row.get("slug") or "unnamed")
+             for row in board["rows"]
+             if row.get("tier") in ("red", "orange", "yellow")][:3]
+    n = len(board["rows"])
+    if watch:
+        return (f"LiquiLens (institutions): {n} scored. "
+                f"On watch: {', '.join(watch)}.")
+    return f"LiquiLens (institutions): {n} scored. No yellow-or-worse names."
+
+
+_UT_CALM_TIERS = frozenset({
+    "NORMAL", "PARTIAL", "NO_DATA", "NODATA", "NA", "N/A", "UNKNOWN", "",
+})
+
+
+def _undertow_lane(board: dict | None) -> str:
+    segs = (board or {}).get("segments") if isinstance(board, dict) else None
+    if not isinstance(segs, dict) or not segs:
+        return "Undertow (exit cost): cannot see Undertow."
+    off = []
+    for name, seg in segs.items():
+        if not isinstance(seg, dict):
+            continue
+        tier = str(seg.get("tier") or "").upper()
+        if tier not in _UT_CALM_TIERS:
+            off.append(f"{esc(name)} {esc(tier)}")
+    n = len(segs)
+    if off:
+        return (f"Undertow (exit cost): {len(off)} of {n} segments stressed "
+                f"({', '.join(off[:3])}).")
+    return f"Undertow (exit cost): {n} segments tracked, none stressed."
+
+
+def fmt_channel_letter() -> str:
+    """Three named lanes. Each fails closed. No fused quadrant score."""
+    today = date.today().strftime("%d %b %Y")
+    lines = [
+        f"🌊 <b>Seiche | Dollar Funding Desk</b> {today}",
+        "",
+        _seiche_lane(api_get("/api/gauge"), api_get("/api/public")),
+        _liquilens_lane(ll_get("/failure-radar/board")),
+        _undertow_lane(ut_get("/board.json")),
+        "",
+        "Three independent reads. No joint score. Research only.",
+        f"Sources: {SITE}",
+    ]
     return "\n".join(lines)
 
 
@@ -1432,9 +1463,7 @@ def _btn(text: str, data: str) -> dict:
 def keyboard_for(cmd: str) -> list | None:
     """Inline keyboard rows per command. A button tap IS a command."""
     if cmd == "/start":
-        return [[_btn("🌡 Full gauge", "/now")],
-                [{"text": "📡 Liquidity Lab channel", "url": LAB_LINK},
-                 {"text": "📤 Share Seiche", "url": SHARE_URL}]]
+        return [[{"text": "✉️ Read today's letter", "url": f"{SITE}/dispatches/"}]]
     if cmd == "/help":
         return [[_btn("🌡 Full gauge", "/now"),
                  _btn("📰 Today's article", "/article")],
@@ -1490,49 +1519,53 @@ def fmt_share(gauge: dict | None) -> str:
             f"send them {BOT_URL}")
 
 
-def fmt_welcome(gauge: dict | None, pub: dict | None) -> str:
-    """One-screen onboarding: promise, delivery contract and served gauge.
+def _clip(value, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
-    The full command catalogue deliberately stays in HELP. A first response
-    should establish why the desk is useful and what following it will send,
-    while the live artifact proves that the promise is already operational.
+
+def fmt_welcome(index: list | None) -> str:
+    """One-screen onboarding: live letter glance, then follow.
+
+    The full command catalogue stays in HELP. A first response has one job:
+    show today's letter and confirm the daily follow. Under 1200 characters.
     """
     lines = [
-        "🌊 <b>Seiche | US funding stress</b>",
-        "Early warning for strain in dollar funding, built from public Fed, "
-        "NY Fed, OFR and Treasury records.",
+        "🌊 <b>Seiche | Dollar Funding Desk</b>",
+        "Public US dollar-funding board. One daily letter at 11:30 UTC, "
+        "plus state-change alerts. Research only.",
         "",
-        "<b>Following this desk:</b> one daily letter at 11:30 UTC, plus "
-        "relevant funding-state alerts, cross-desk change alerts and sourced "
-        "desk news when they occur.",
+        "You are following the letter. /stop any time.",
         "",
     ]
-    if gauge:
-        idx = gauge.get("index")
-        current = (f"{_regime_icon(gauge.get('regime'))} <b>Live gauge:</b> "
-                   f"{esc(gauge.get('regime'))} · "
-                   f"{'?' if idx is None else idx}/100")
-        if gauge.get("generated_at"):
-            current += f" · as of {esc(gauge.get('generated_at'))}"
-        lines.append(current)
-        conclusion = ((pub or {}).get("conclusion") or {}).get("line")
-        if conclusion:
-            lines.append(esc(conclusion))
-        else:
-            tell = gauge.get("tell")
-            if isinstance(tell, (int, float)):
-                lines.append(f"The Tell: {tell:+.0f}.")
+    if isinstance(index, list) and index and isinstance(index[0], dict):
+        letter = index[0]
+        slug = letter.get("slug") or ""
+        lines.extend([
+            f"✉️ <b>Today's letter:</b> {esc(_clip(letter.get('title'), 160))}",
+            esc(str(letter.get("date") or "")),
+            esc(_clip(letter.get("summary"), 280)),
+        ])
+        if slug:
+            lines.append(
+                f"Read it: {SITE}/dispatches/{urllib.parse.quote(str(slug))}.md"
+            )
     else:
-        lines.append("<b>Live gauge:</b> the board did not answer. Absence is "
-                     f"not calm; check {SITE} directly.")
+        lines.append(
+            f"Today's letter is on the board: {SITE}/dispatches/"
+        )
     lines.extend([
         "",
-        "/help opens the full desk · /stop unsubscribes at any time.",
+        "/help opens the full desk · /stop unsubscribes.",
         "",
-        "<i>Public data, timestamped where available. Research context only — "
-        "not investment advice or an execution instruction.</i>",
+        "<i>Public data. Research context only — not investment advice.</i>",
     ])
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if len(text) > 1200:
+        text = text[:1197].rstrip() + "..."
+    return text
 
 
 def record_lead(chat_id: int, ref: str) -> None:
@@ -1574,15 +1607,15 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         if arg.strip():
             record_lead(chat_id, arg.strip()[:64])
         send(chat_id,
-             fmt_welcome(api_get("/api/gauge"), api_get("/api/public")),
+             fmt_welcome(board_get(f"{SITE}/dispatches/index.json")),
              keyboard_for("/start"))
     elif cmd == "/stop":
         subs = load_state("subscribers.json", {})
         subs.pop(str(chat_id), None)
         save_state("subscribers.json", subs)
-        send(chat_id, "Unsubscribed. This stops the daily letter, funding-state "
-                      "and cross-desk alerts, and sourced desk news. /start "
-                      "follows the desk again any time.")
+        send(chat_id, "Unsubscribed. This stops the daily letter and "
+                      "state-change alerts. /start follows the letter again "
+                      "any time.")
     elif cmd == "/help":
         send(chat_id, HELP, keyboard_for("/help"))
     elif cmd == "/now":
@@ -1795,13 +1828,12 @@ def run_tandem() -> None:
     else:
         head = "🟢 <b>Cross-desk de-escalation.</b>"
     text = head + "\n\n" + fmt_tandem(gauge, board)
-    published = post_channel(text, "lab_tandem")
+    # The public channel is the funding desk. A fused quadrant post is not
+    # a stranger-facing lane; tandem stays a subscriber DM.
     subs = load_state("subscribers.json", {})
-    subscriber_keyboard = _discussion_keyboard(None, published)
-    n = (_send_all(subs, text, subscriber_keyboard) if subscriber_keyboard
-         else _send_all(subs, text))
+    n = _send_all(subs, text)
     print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s), "
-          f"published to channel={published}")
+          f"channel skipped")
 
 
 ALERT_JUMP_PTS = 8          # composite move (points) worth an intraday ping
@@ -1894,17 +1926,16 @@ def run_alert_scan() -> None:
           f"subscriber(s), published to channel={published}")
 
 
-BOT_DISPLAY_NAME = "Seiche | US Funding Stress"
+BOT_DISPLAY_NAME = "Seiche | Dollar Funding Desk"
 BOT_SHORT_DESCRIPTION = (
-    "US funding-stress gauge, daily letter, state/cross-desk alerts and news "
-    "from public data. Research context only."
+    "Public US dollar-funding board, one daily 11:30 UTC letter, "
+    "state-change alerts. Research only."
 )
 BOT_DESCRIPTION = (
-    "US dollar-funding stress from public Fed, NY Fed, OFR and Treasury "
-    "records. Live gauge, daily 11:30 UTC letter, relevant funding-state "
-    "alerts, cross-desk change alerts and sourced desk news. Research context "
-    "only; not investment advice or an execution instruction. Free, no "
-    "sign-in: seiche.info"
+    "Public US dollar-funding board from Fed, NY Fed, OFR and Treasury "
+    "records. One daily letter at 11:30 UTC, plus state-change alerts. "
+    "Research context only; not investment advice. Free, no sign-in: "
+    "seiche.info"
 )
 BOT_COMMANDS = [
     {"command": "now", "description": "The gauge: regime, composite, the Tell"},
@@ -1923,7 +1954,7 @@ BOT_COMMANDS = [
     {"command": "share", "description": "Send this free desk to someone"},
     {"command": "where", "description": "Specialised channels and desks"},
     {"command": "help", "description": "Full command list and desk guide"},
-    {"command": "start", "description": "Follow privately: letter + state/cross-desk alerts/news"},
+    {"command": "start", "description": "Follow privately: daily 11:30 UTC letter + state-change alerts"},
     {"command": "stop", "description": "Unsubscribe in private chat"},
 ]
 

@@ -5,8 +5,9 @@ Built for the Hermes rissaga-desk-reads lane. The bot token is read by THIS
 script (from the gateway's own .env), never passed via argv or a URL: the
 fleet already paid for that lesson when a logged sendMessage URL leaked a
 token. Message text arrives via --text-file PATH or stdin (HTML). The
-standard Rissaga footer and the eight desk deep link buttons (ref
-lab_rissaga) are appended here so the caller cannot get them wrong.
+standard Rissaga footer and the stranger-facing keyboard (three core desks
+plus Share, ref lab_rissaga) are appended here so the caller cannot get
+them wrong. The eight-desk dump stays on OPERATOR_KEYBOARD for operators.
 
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
 """
@@ -38,7 +39,24 @@ DESK_BOTS = {
     "CRYPTO": ("Crypto", "https://t.me/liquilens_crypto_bot"),
 }
 TAG_RE = re.compile(r"<[^>]+>")
+SHARE_URL = "https://t.me/share/url?" + urllib.parse.urlencode({
+    "url": CHANNEL_LINK,
+    "text": ("Public US dollar-funding board. One daily letter, "
+             "state-change alerts. Research only."),
+})
+# First-time readers of @LiquidityLabDesk see the three live FI desks.
+# Palimpsest, Riptide, corporate, real-econ and crypto stay off this row.
 KEYBOARD = [
+    [{"text": "\U0001f30a Seiche",
+      "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
+    [{"text": "\U0001f3e6 LiquiLens",
+      "url": f"https://t.me/LiquiLens_bot?start={REF}"},
+     {"text": "\U0001f300 Undertow",
+      "url": f"https://t.me/undertow_LiquiLens_bot?start={REF}"}],
+    [{"text": "\U0001f4e4 Share", "url": SHARE_URL}],
+]
+# Operator dump of the eight routed desks. Not the public default.
+OPERATOR_KEYBOARD = [
     [{"text": "\U0001f321 Plumbing desk",
       "url": f"https://t.me/seiche_desk_bot?start={REF}"}],
     [{"text": "\U0001f3e6 Failure radar",

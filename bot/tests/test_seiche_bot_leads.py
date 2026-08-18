@@ -25,6 +25,7 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "LAB_CHANNEL", "")
     monkeypatch.setattr(bot, "send", lambda *a, **k: None)
     monkeypatch.setattr(bot, "api_get", lambda path: {})
+    monkeypatch.setattr(bot, "board_get", lambda url: [])
     monkeypatch.setattr(bot, "fmt_now", lambda *a, **k: "board")
     yield tmp_path
 
