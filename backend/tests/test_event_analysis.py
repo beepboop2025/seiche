@@ -139,7 +139,9 @@ def test_compaction_preserves_official_partial_and_unavailable():
     )
     assert rails["available"] is False
     assert rails["status"] == 503
+    assert rails["reading"] == "UNAVAILABLE"
     assert "stale" in rails["reason"]
+    assert rails.get("regime") != "CALM"
 
 
 def test_entity_join_is_specific_not_generic_or_numeric():
@@ -336,6 +338,42 @@ def test_valid_sparse_liquilens_contracts_remain_available():
             name, _valid_layer(name), "What happened?"
         )
         assert layer["available"] is True
+
+
+def test_unavailable_layer_does_not_copy_a_calm_regime():
+    layer = event_analysis.compact_liquilens_layer(
+        "failure_radar",
+        {
+            "available": False,
+            "reason": "board did not answer",
+            "regime": "CALM",
+            "badge": "green",
+            "as_of": "2026-08-18",
+        },
+        "What is the tandem read?",
+    )
+    assert layer["available"] is False
+    assert layer["reading"] == "UNAVAILABLE"
+    assert layer.get("regime") != "CALM"
+    assert "badge" not in layer
+
+
+def test_liquilens_desk_sibling_fail_closes_schema_drift():
+    raw = {name: _valid_layer(name) for name in event_analysis._LIQUILENS_PATHS}
+    raw["rails"] = {"as_of": "2026-08-18", "available": True, "rows": []}
+    sibling = asyncio.run(event_analysis.liquilens_desk_sibling(
+        "why is this bank on the radar?", raw_fleet=raw,
+    ))
+    assert sibling["sibling_rule"].startswith("unavailable is UNAVAILABLE")
+    assert "joint score" in sibling["sibling_rule"]
+    assert set(sibling["layers"]) == set(event_analysis._LIQUILENS_PATHS)
+    rails = sibling["layers"]["rails"]
+    assert rails["available"] is False
+    assert rails["reading"] == "UNAVAILABLE"
+    assert "rails" in sibling["source_status"]["layers_unavailable"]
+    deposit = sibling["layers"]["deposit_migration"]
+    assert deposit["available"] is True
+    assert "cannot_see" in event_analysis._LIQUILENS_OPTIONAL_TYPES["deposit_migration"]
 
 
 def test_upstream_response_body_has_a_hard_byte_budget():

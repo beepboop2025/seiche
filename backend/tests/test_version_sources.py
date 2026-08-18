@@ -1,9 +1,9 @@
 """Explicit version contracts for Seiche's hosted and packaged surfaces.
 
 The MCP handshake, hosted registry listing, and build metadata describe the
-deployed server and must agree. The optional PyPI transport has its own version:
-it may lag the hosted endpoint, but it must name an actually published package
-and describe that package's smaller tool surface truthfully.
+deployed server and must agree. The optional PyPI transport advertises the same
+0.10.0 estuary version and nine-tool public surface so a human release publishes
+the right artifact. PyPI itself still carries 0.9.1 until that release is cut.
 """
 
 import json
@@ -34,18 +34,20 @@ def test_hosted_version_sources_agree():
     assert len(set(versions.values())) == 1, versions
 
 
-def test_registry_stdio_package_describes_published_legacy_surface():
-    """0.9.1 is the latest package on PyPI; the hosted server is newer."""
+def test_registry_stdio_package_matches_hosted_surface():
+    """The registry card pins the running 0.10.0 / nine-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
+    hosted = server["version"]
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == "0.9.1"
+    assert package["version"] == hosted == "0.10.0"
     assert package["transport"] == {"type": "stdio"}
-    assert "eight free public tools" in description
-    assert "hosted 0.10.0 endpoint adds latest_article" in description
+    assert "nine free public tools" in description
+    assert "latest_article" in description
+    assert "0.10.0" in description
 
 
 def test_version_is_bare_semver():
