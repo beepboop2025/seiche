@@ -30,6 +30,11 @@ dedicated Crypto channel and are never valid shared-channel candidates.
    * If any selected route's trimmed, case-insensitive `desk` is `CRYPTO`,
      reply exactly `crypto route belongs to its dedicated channel, nothing posted`
      and stop the entire run before locking or publishing.
+   * If any selected route's trimmed, case-insensitive `desk` is `PALIMPSEST`,
+     `RIPTIDE`, `CORPORATE`, or `REALECON`, reply exactly
+     `side desk is not a shared-channel candidate, nothing posted`
+     and stop the entire run before locking or publishing.
+     The lab channel only carries Seiche, LiquiLens, and Undertow.
    * Refuse the run if more than two routes are selected globally or more than
      one route is selected on one item. Reply
      `handoff route cap invalid, nothing posted` and stop.

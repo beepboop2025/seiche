@@ -222,7 +222,7 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
 
 def test_lab_channel_about_fits_telegram():
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
-    assert "Daily funding" in bot.LAB_CHANNEL_ABOUT
+    assert "morning card" in bot.LAB_CHANNEL_ABOUT
 
 
 def test_channel_letter_stays_short_and_names_the_gap(monkeypatch):
@@ -243,9 +243,10 @@ def test_channel_letter_stays_short_and_names_the_gap(monkeypatch):
     )
     monkeypatch.setattr(bot, "ll_get", lambda _path: None)
     text = bot.fmt_channel_letter()
-    assert "Seiche daily letter" in text
+    assert "Liquidity Lab" in text
     assert "Reserve pressure is leading price." in text
     assert "seiche.info" in text
+    assert "liquilens.in/access/" in text
     assert text.count("\n") <= 12
 
 

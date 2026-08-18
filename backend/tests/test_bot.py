@@ -583,27 +583,62 @@ def test_keyboard_shapes():
     assert bot.keyboard_for("/nope") is None
 
 
-def test_where_card_names_specialist_surfaces():
+def test_where_card_names_the_three_public_doors():
     assert "t.me/LiquidityLabDesk" in bot.WHERE_CARD
-    assert "t.me/LiquidityCryptoDesk" in bot.WHERE_CARD
-    assert "t.me/EvidenceSignalDesk" in bot.WHERE_CARD
+    assert "@seiche_desk_bot" in bot.WHERE_CARD
     assert "@LiquiLens_bot" in bot.WHERE_CARD
-    assert "@real_economy_desk_bot" in bot.WHERE_CARD
+    assert "@undertow_LiquiLens_bot" in bot.WHERE_CARD
+    assert "liquilens.in/access/" in bot.WHERE_CARD
+    assert "Public-good bots" in bot.WHERE_CARD
+    assert "not the morning channel" in bot.WHERE_CARD
+    assert "@palimpsest_watch_bot" in bot.WHERE_CARD
+    assert "@EvidenceSignalDesk" in bot.WHERE_CARD
+    assert "@NarcoScopeEvidenceBot" in bot.WHERE_CARD
+    assert bot.PUBLIC_GOOD_FUND in bot.WHERE_CARD
+    assert "LiquidityCryptoDesk" not in bot.WHERE_CARD
     assert "—" not in bot.WHERE_CARD
     assert "–" not in bot.WHERE_CARD
-    assert "@EvidenceSignalDesk" in bot.LAB_CHANNEL_PIN
-    assert "@real_economy_desk_bot" in bot.LAB_CHANNEL_PIN
+    assert "@real_economy_desk_bot" not in bot.LAB_CHANNEL_PIN
+    assert "@EvidenceSignalDesk" not in bot.LAB_CHANNEL_PIN
+    assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN
+    assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
     assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
+    assert len(bot.LAB_CHANNEL_ABOUT) <= 255
 
 
-def test_where_command_sends_the_specialist_card(sent):
+def test_where_command_sends_the_three_door_card(sent):
     bot.handle(9, "/where", "private")
     method, payload = sent[-1]
     assert method == "sendMessage"
     assert "LiquidityLabDesk" in payload["text"]
     assert any(
-        button.get("url") == "https://t.me/LiquidityCryptoDesk"
+        button.get("url") == "https://liquilens.in/access/"
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert any(
+        button.get("url") == bot.PUBLIC_GOOD_FUND
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert any(
+        button.get("url") == bot.PALIMPSEST_BOT
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert any(
+        button.get("url") == bot.NARCOSCOPE_BOT
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert any(
+        button.get("url") == bot.EVIDENCE_CHANNEL
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert not any(
+        "LiquidityCryptoDesk" in (button.get("url") or "")
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
     )
