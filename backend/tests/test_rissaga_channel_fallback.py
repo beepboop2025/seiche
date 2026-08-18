@@ -130,6 +130,18 @@ def test_crypto_shared_candidate_refused_before_first_send(isolated, monkeypatch
     assert not marker_path.exists()
 
 
+def test_side_desk_shared_candidate_refused_before_first_send(isolated, monkeypatch):
+    latest, marker_path = isolated
+    write_json(latest, payload([item(1, "PALIMPSEST")]))
+    monkeypatch.setattr(
+        fb, "publish", lambda _message: pytest.fail("partial run published")
+    )
+
+    with pytest.raises(fb.HandoffError, match="side desk"):
+        fb.run(now=NOW)
+    assert not marker_path.exists()
+
+
 def test_compose_is_scannable_escaped_and_uses_only_safe_links():
     raw = item()
     raw["title"] = "A <tag> & quoted \u2014 second line\njoined"
@@ -350,6 +362,7 @@ def test_units_schedule_hardening_and_prose_rules():
     assert "one logical channel owner" in script
     assert "CRYPTO routes belong exclusively" in skill
     assert "crypto route belongs to its dedicated channel, nothing posted" in skill
+    assert "side desk is not a shared-channel candidate, nothing posted" in skill
     assert "handoff channel mode invalid, nothing posted" in skill
     assert "flock -x 9" in skill
     for heading in (

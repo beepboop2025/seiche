@@ -113,9 +113,14 @@ def select_candidates(payload: dict) -> list[dict]:
             if not isinstance(route, dict):
                 raise HandoffError("route must be an object")
             if route.get("channel_candidate") is True:
-                if _required_string(route, "desk").strip().upper() == "CRYPTO":
+                desk = _required_string(route, "desk").strip().upper()
+                if desk == "CRYPTO":
                     raise HandoffError(
                         "crypto route belongs to its dedicated channel"
+                    )
+                if desk in {"PALIMPSEST", "RIPTIDE", "CORPORATE", "REALECON"}:
+                    raise HandoffError(
+                        "side desk is not a shared-channel candidate"
                     )
                 flagged.append(route)
         if len(flagged) > 1:

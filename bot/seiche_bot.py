@@ -82,19 +82,17 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 LAB_CHANNEL_ABOUT = (
-    "Daily funding, bank, and market-depth reads from public data. "
+    "One morning card: funding, banks, exit cost. Public data. "
     "Gaps named, misses kept. Talk: @LiquidityLabTalk"
 )
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
-    "This channel is one daily funding letter, plus a post only when "
-    "banks or market depth actually move.\n\n"
-    "Today's letter: @seiche_desk_bot\n"
+    "This channel is one morning card, plus a post only when "
+    "banks, funding, or exit cost actually move.\n\n"
+    "Plumbing: @seiche_desk_bot\n"
     "Banks: @LiquiLens_bot\n"
-    "India economy: @real_economy_desk_bot\n"
-    "Exit cost: @undertow_LiquiLens_bot\n"
-    "Crypto rails: @LiquidityCryptoDesk\n"
-    "Evidence: @EvidenceSignalDesk\n"
+    "Exit cost: @undertow_LiquiLens_bot\n\n"
+    "Named-list software: https://liquilens.in/access/\n"
     "Talk: @LiquidityLabTalk\n\n"
     "Public data. Misses kept. Not investment advice."
 )
@@ -1242,23 +1240,13 @@ def _tandem_class(p: int, i: int) -> int:
 
 WHERE_CARD = (
     "<b>Where the lab publishes</b>\n\n"
-    "Funding stress, daily letter:\n"
-    "https://t.me/LiquidityLabDesk\n"
-    "Desk: @seiche_desk_bot\n\n"
-    "Bank failure radar:\n"
-    "@LiquiLens_bot\n\n"
-    "India prices, GST, monsoon, RBI:\n"
-    "@real_economy_desk_bot\n\n"
-    "Crypto rails and liquid breadth:\n"
-    "https://t.me/LiquidityCryptoDesk\n"
-    "Desk: @liquilens_crypto_bot\n\n"
-    "Exit cost at your size:\n"
-    "@undertow_LiquiLens_bot\n\n"
-    "Censorship and evidence:\n"
-    "https://t.me/EvidenceSignalDesk\n"
-    "Desk: @palimpsest_watch_bot\n\n"
-    "Talk: @LiquidityLabTalk · @LiquidityCryptoTalk · @EvidenceSignalTalk\n\n"
-    "One lab, specialised desks. Public data. Misses kept."
+    "Morning card:\n"
+    "https://t.me/LiquidityLabDesk\n\n"
+    "Plumbing: @seiche_desk_bot\n"
+    "Banks: @LiquiLens_bot\n"
+    "Exit cost: @undertow_LiquiLens_bot\n\n"
+    "Named-list software: https://liquilens.in/access/\n\n"
+    "One lab, three desks. Public data. Misses kept."
 )
 
 
@@ -1277,7 +1265,7 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/where — the specialised channels and desks\n"
+    "/where — the three public desks\n"
     "/start — follow in DM: daily letter + state/cross-desk alerts + news\n"
     "/stop — unsubscribe in DM\n\n"
     "In a private chat, just type a question — no slash needed; the desk "
@@ -1366,38 +1354,44 @@ def fmt_daily_letter() -> str:
 
 
 def fmt_channel_letter() -> str:
-    """Short public letter. The long editorial stays on seiche.info."""
+    """Six-line lab card. The long editorial stays on seiche.info."""
     today = date.today().strftime("%d %b %Y")
     gauge = api_get("/api/gauge")
     pub = api_get("/api/public")
-    lines = [f"🌊 <b>Seiche daily letter</b> {today}"]
+    lines = [f"🌊 <b>Liquidity Lab</b> {today}"]
     if not gauge:
         lines.append("The board did not answer this morning. No number is "
                      f"shown rather than a stale one. {SITE}")
         return "\n".join(lines)
     line = ((pub or {}).get("conclusion") or {}).get("line")
-    lines.append(f"{_regime_icon(gauge.get('regime'))} "
-                 + (esc(line) if line else
-                    f"Regime <b>{esc(gauge.get('regime'))}</b>, composite "
-                    f"{gauge.get('index')}/100."))
-    nt = gauge.get("next_turn") or {}
-    if nt.get("date"):
-        lines.append(f"Next turn {esc(nt['date'])}: forecast "
-                     f"{nt.get('forecast_bp')}bp, severity "
-                     f"{nt.get('severity')}/5.")
-    windows = (gauge.get("crunch_windows") or [])[:1]
-    for window in windows:
-        lines.append(f"Watch {esc(window.get('date'))}: "
-                     f"{esc(window.get('reason'))}")
+    tell = gauge.get("tell")
+    tell_s = ""
+    if isinstance(tell, (int, float)):
+        tell_s = f" · Tell {tell:+.0f}"
+    if line:
+        lines.append(f"{_regime_icon(gauge.get('regime'))} {esc(line)}{tell_s}")
+    else:
+        lines.append(f"{_regime_icon(gauge.get('regime'))} "
+                     f"<b>{esc(gauge.get('regime'))}</b> "
+                     f"{gauge.get('index')}/100{tell_s}")
     board = ll_get("/failure-radar/board")
+    if board and board.get("rows"):
+        watch = [esc(row.get("name") or row.get("slug") or "unnamed")
+                 for row in board["rows"]
+                 if row.get("tier") in ("red", "orange", "yellow")][:3]
+        n = len(board["rows"])
+        if watch:
+            lines.append(f"Banks: {n} scored. On watch: {', '.join(watch)}.")
+        else:
+            lines.append(f"Banks: {n} scored. No yellow-or-worse names.")
+    else:
+        lines.append("Banks: LiquiLens did not answer. Absence is not calm.")
     inst = _inst_level(board)
     plumb = _plumb_level(gauge.get("regime"))
-    if inst is not None and plumb is not None:
-        cls = _tandem_class(plumb, inst)
-        if cls >= 2:
-            lines.append("Cross-desk: funding stress with institutions on "
-                         "watch. /tandem")
-    lines.append(f"Full letter and sources: {SITE}")
+    if inst is not None and plumb is not None and _tandem_class(plumb, inst) >= 2:
+        lines.append("Cross-desk: funding stress with institutions on watch.")
+    lines.append("Screens, not ratings. 15 names: https://liquilens.in/access/")
+    lines.append(f"Sources: {SITE}")
     return "\n".join(lines)
 
 
@@ -1465,8 +1459,8 @@ def keyboard_for(cmd: str) -> list | None:
         return [
             LAB_ROW,
             FLEET_ROW,
-            [{"text": "Crypto rails", "url": "https://t.me/LiquidityCryptoDesk"},
-             {"text": "Evidence", "url": "https://t.me/EvidenceSignalDesk"}],
+            [{"text": "Named-list software",
+              "url": "https://liquilens.in/access/"}],
         ]
     return None
 
