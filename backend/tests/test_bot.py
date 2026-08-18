@@ -311,6 +311,13 @@ def test_fmt_ask_variants():
     assert "did not answer" in bot.fmt_ask(None)
     txt = bot.fmt_ask({"answer": "Reserves fell.", "citations": ["h41"]})
     assert "Reserves fell." in txt and "h41" in txt
+    assert "joint score" not in txt
+    chips = bot.fmt_ask({
+        "answer": "Reserves fell.",
+        "liquilens": {"available": False, "reading": "UNAVAILABLE"},
+    })
+    assert "LiquiLens: UNAVAILABLE" in chips
+    assert "Not a joint score" in chips
     assert bot.fmt_ask("plain") == "plain"
 
 
@@ -333,7 +340,10 @@ def test_tandem_class_grid():
 
 def test_fmt_tandem_partial_desks():
     both = bot.fmt_tandem(_gauge(regime="STRAIN"), _ll_board("red"))
-    assert "dangerous quadrant" in both
+    assert "Seiche (funding)" in both
+    assert "LiquiLens (institutions)" in both
+    assert "Not a joint score" in both
+    assert "dangerous quadrant" not in both
     assert "did not answer" in bot.fmt_tandem(None, _ll_board())
     assert "Neither desk answered" in bot.fmt_tandem(None, None)
 
@@ -665,9 +675,13 @@ def test_daily_letter_carries_scuttlebutt_flag(monkeypatch):
 
     monkeypatch.setattr(bot, "api_get", fake_api)
     monkeypatch.setattr(bot, "ll_get", lambda p: _ll_board())
+    monkeypatch.setattr(bot, "ut_get", lambda _path: None)
     monkeypatch.setattr(bot, "_get_json", lambda url, timeout=25, tries=2: [])
     txt = bot.fmt_daily_letter()
     assert "chatter surging" in txt and "display only" in txt
+    assert "🌊 Undertow: board dark" in txt
+    assert "Not a joint score" in txt
+    assert "dangerous quadrant" not in txt
 
 
 # ------------------------------------------------------------- image card ---
@@ -716,13 +730,17 @@ def test_answer_inline_serves_filters_and_caches(monkeypatch):
     assert [r["id"] for r in calls[-1][1]["results"]] == ["proof"]
 
 
-def test_setup_registers_cross_market_commands(sent):
+def test_setup_registers_the_short_command_tray(sent):
     bot.run_setup()
 
     command_call = next(payload for method, payload in sent
                         if method == "setMyCommands")
-    commands = {item["command"] for item in command_call["commands"]}
-    assert {"oil", "estuary"} <= commands
+    commands = [item["command"] for item in command_call["commands"]]
+    assert commands == [
+        "now", "snap", "ask", "letter", "tandem", "where", "help", "start",
+        "stop",
+    ]
+    assert 8 <= len(commands) <= 10
 
 
 def test_setup_discovery_metadata_respects_telegram_limits(sent):
@@ -780,3 +798,10 @@ def test_letter_publishes_at_zero_subscribers(monkeypatch, sent):
     channel_posts = [p for _, p in sent if p.get("chat_id") == -1004297805949]
     assert len(channel_posts) == 1, "conversion work must not increase post volume"
     assert "today's letter" in channel_posts[0].get("text", "")
+    urls = [b["url"] for row in channel_posts[0]["reply_markup"]["inline_keyboard"]
+            for b in row]
+    assert urls == [
+        "https://t.me/seiche_desk_bot?start=lab_letter",
+        "https://t.me/LiquiLens_bot?start=lab_letter",
+        "https://t.me/undertow_LiquiLens_bot?start=lab_letter",
+    ]

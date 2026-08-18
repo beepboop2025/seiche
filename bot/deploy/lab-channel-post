@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""lab-channel-post: publish ONE message to the free Liquidity Lab channel.
+"""lab-channel-post: publish ONE Hermes news item to @LiquidityLabDesk.
 
-Built for the Hermes rissaga-desk-reads lane. The bot token is read by THIS
-script (from the gateway's own .env), never passed via argv or a URL: the
-fleet already paid for that lesson when a logged sendMessage URL leaked a
-token. Message text arrives via --text-file PATH or stdin (HTML). The
-standard Rissaga footer and the stranger-facing keyboard (three core desks
-plus Share, ref lab_rissaga) are appended here so the caller cannot get
-them wrong. The eight-desk dump stays on OPERATOR_KEYBOARD for operators.
+This is news, not the daily Lab card. Seiche's fmt_channel_letter owns that
+morning essay. Palimpsest, China, Riptide, Corporate, RealEcon and Crypto
+must not arrive here as if they were the letter.
+
+The bot token is read by THIS script (from the gateway's own .env), never
+passed via argv or a URL. Message text arrives via --text-file PATH or
+stdin (HTML). The Rissaga footer and the stranger-facing keyboard (three
+core desks plus Share) are appended here. The eight-desk dump stays on
+OPERATOR_KEYBOARD for operators.
 
 Exit 0 with {"ok": true, "message_id": N} on stdout, nonzero otherwise.
 """

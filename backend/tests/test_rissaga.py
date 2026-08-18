@@ -476,6 +476,8 @@ def test_compose_carries_board_line_angle_and_footer():
                       {"fed_press": "ok"}, NOW_DT)
     assert "Rissaga" in text and "Seiche desk:" in text and "Angle:" in text
     assert "Pangram" in text
+    assert not text.startswith("<b>Liquidity Lab</b>")
+    assert "Screens, not a joint score" not in text
 
 
 def test_low_signal_run_is_honest():

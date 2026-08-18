@@ -60,6 +60,12 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     ]
     assert calls[0][1] == {"name": bot.BOT_DISPLAY_NAME}
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
+    names = [command["command"] for command in calls[1][1]["commands"]]
+    assert names == [
+        "now", "snap", "ask", "letter", "tandem", "where", "help", "start",
+        "stop",
+    ]
+    assert 8 <= len(names) <= 10
     assert any(
         command == {"command": "help",
                     "description": "Full command list and desk guide"}
@@ -222,7 +228,7 @@ def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch)
 
 def test_lab_channel_about_fits_telegram():
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
-    assert "morning card" in bot.LAB_CHANNEL_ABOUT
+    assert "daily card" in bot.LAB_CHANNEL_ABOUT
     assert "fail-closed" in bot.LAB_CHANNEL_ABOUT
     assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
     assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
@@ -234,35 +240,30 @@ def test_lab_channel_about_fits_telegram():
     assert "@riptide_anake_bot" not in bot.LAB_CHANNEL_PIN
 
 
-def test_channel_letter_stays_short_and_names_the_gap(monkeypatch):
+def test_channel_letter_is_the_six_line_fail_closed_lab_card(monkeypatch):
     monkeypatch.setattr(
         bot,
         "api_get",
         lambda path: {
             "/api/gauge": {
                 "regime": "STRAIN",
-                "index": 61,
-                "next_turn": {},
-                "crunch_windows": [],
-            },
-            "/api/public": {
-                "conclusion": {"line": "Reserve pressure is leading price."},
+                "index": 42,
+                "tell": 6,
             },
         }.get(path),
     )
     monkeypatch.setattr(bot, "ll_get", lambda _path: None)
     monkeypatch.setattr(bot, "ut_get", lambda _path: None)
     text = bot.fmt_channel_letter()
-    assert "Dollar Funding Desk" in text
-    assert "Seiche (funding)" in text
-    assert "Reserve pressure is leading price." in text
-    assert "cannot see LiquiLens" in text
-    assert "cannot see Undertow" in text
-    assert "No joint score" in text
+    lines = text.splitlines()
+    assert len(lines) == 6
+    assert lines[0].startswith("<b>Liquidity Lab</b> ")
+    assert lines[2] == "🌊 Seiche: STRAIN 42 · Tell +6"
+    assert lines[3] == "🏦 LiquiLens: board did not answer"
+    assert lines[4] == "🌊 Undertow: board dark"
+    assert lines[5] == "Screens, not a joint score. Three doors below."
     assert "dangerous quadrant" not in text
-    assert "seiche.info" in text
-    assert "liquilens.in/access/" not in text
-    assert text.count("\n") <= 12
+    assert "joint score" in text
 
 
 def test_welcome_clips_a_long_letter_under_telegram_onboarding_budget():
@@ -282,10 +283,7 @@ def test_channel_letter_keeps_three_named_lanes_and_never_fuses(monkeypatch):
     monkeypatch.setattr(
         bot,
         "api_get",
-        lambda path: {
-            "/api/gauge": {"regime": "STRAIN", "index": 61, "tell": 8},
-            "/api/public": {"conclusion": {"line": "Reserve pressure is leading price."}},
-        }.get(path),
+        lambda path: {"/api/gauge": {"regime": "STRAIN", "index": 42, "tell": 6}}.get(path),
     )
     monkeypatch.setattr(
         bot,
@@ -301,21 +299,59 @@ def test_channel_letter_keeps_three_named_lanes_and_never_fuses(monkeypatch):
         bot,
         "ut_get",
         lambda _path: {
-            "segments": {
-                "BANKS": {"tier": "WATCH"},
-                "TREASURIES": {"tier": "NORMAL"},
+            "segments": {"EQUITY": {"tier": "DEFICIENT"}},
+            "informational": {
+                "exit_cost": {
+                    "buckets": {
+                        "large": {
+                            "costs": {
+                                "bands": [{
+                                    "position_usd": 100_000_000,
+                                    "impact_band_bp": "1-10bp",
+                                }],
+                            },
+                        },
+                    },
+                },
             },
         },
     )
     text = bot.fmt_channel_letter()
-    assert "Seiche (funding)" in text
-    assert "LiquiLens (institutions)" in text
-    assert "Undertow (exit cost)" in text
-    assert "ESAF SFB" in text
-    assert "BANKS WATCH" in text
-    assert "No joint score" in text
+    assert "🌊 Seiche: STRAIN 42 · Tell +6" in text
+    assert "🏦 LiquiLens: 2 scored · on watch: ESAF SFB" in text
+    assert "🌊 Undertow: large-cap $100M exit 1-10bp / DEFICIENT" in text
+    assert "Screens, not a joint score." in text
     assert "dangerous quadrant" not in text
     assert "quadrant" not in text.lower()
+
+
+def test_fmt_tandem_is_labeled_reads_not_a_blended_alarm():
+    both = bot.fmt_tandem(
+        {"regime": "STRAIN", "index": 70, "tell": 8},
+        {"rows": [{"name": "ESAF", "tier": "red"}], "tiers": {"red": 1}},
+    )
+    assert "Seiche (funding)" in both
+    assert "LiquiLens (institutions)" in both
+    assert "Not a joint score" in both
+    assert "dangerous quadrant" not in both
+    assert "quadrant" not in both.lower()
+    assert "did not answer" in bot.fmt_tandem(None, {"rows": [{"tier": "green"}]})
+    assert "Neither desk answered" in bot.fmt_tandem(None, None)
+
+
+def test_fmt_ask_adds_sibling_chips_and_refuses_a_joint_score():
+    text = bot.fmt_ask({
+        "answer": "Reserves fell.",
+        "liquilens": {"available": False, "reading": "UNAVAILABLE"},
+        "undertow": {"available": True},
+        "seiche": {"regime": "STRAIN"},
+    })
+    assert "Reserves fell." in text
+    assert "Seiche: STRAIN" in text
+    assert "LiquiLens: UNAVAILABLE" in text
+    assert "Undertow: attached" in text
+    assert "Not a joint score" in text
+    assert "joint score" in text.lower()
 
 
 def test_tandem_alert_stays_off_the_public_funding_channel(
@@ -344,7 +380,9 @@ def test_tandem_alert_stays_off_the_public_funding_channel(
     bot.run_tandem()
 
     assert published == []
-    assert sent and "dangerous quadrant" in sent[0][1]
+    assert sent
+    assert "dangerous quadrant" not in sent[0][1]
+    assert "Not a joint score" in sent[0][1]
 
 
 def test_set_channel_profile_refuses_an_empty_channel(monkeypatch):

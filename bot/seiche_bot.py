@@ -80,6 +80,16 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # The free Liquidity Lab channel (@LiquidityLabDesk). Empty = publishing off,
 # which is how every offline test and every laptop run must behave: a timer
 # that is only meant to DM subscribers should never accidentally publish.
+#
+# Channel constitution:
+# 1. Seiche owns the one daily card. fmt_channel_letter is that card.
+#    Six-line shape, three named fail-closed lanes, no joint score.
+# 2. Move-only extras (a regime flip, a material state change) may post.
+#    They are not a second morning essay.
+# 3. Hermes / Rissaga news is news. It must not rewrite or replace the
+#    daily Lab card.
+# 4. Corporate, RealEcon, Palimpsest / China, Riptide and Crypto never
+#    post to @LiquidityLabDesk as if they were the morning letter.
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 PUBLIC_GOOD_FUND = "https://palimpsest.info/fund.html"
@@ -87,18 +97,18 @@ EVIDENCE_CHANNEL = "https://t.me/EvidenceSignalDesk"
 PALIMPSEST_BOT = "https://t.me/palimpsest_watch_bot"
 NARCOSCOPE_BOT = "https://t.me/NarcoScopeEvidenceBot"
 LAB_CHANNEL_ABOUT = (
-    "Dollar-funding desk: Seiche, LiquiLens, Undertow. One morning "
-    "card, three named lanes, fail-closed. Public data. Research only."
+    "One daily card: Seiche, LiquiLens, Undertow. Three named "
+    "lanes, fail-closed. Move-only extras. Public data. Research only."
 )
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
-    "This channel is the dollar-funding desk: one morning card "
-    "with three independent lanes, plus a post only when funding, "
-    "banks, or exit cost actually move.\n\n"
+    "This channel is one daily Liquidity Lab card: three "
+    "independent lanes, fail-closed. Extra posts only when "
+    "funding, banks, or exit cost actually move.\n\n"
     "Seiche (funding): @seiche_desk_bot\n"
     "LiquiLens (institutions): @LiquiLens_bot\n"
     "Undertow (exit cost): @undertow_LiquiLens_bot\n\n"
-    "Each lane fails closed. No joint score. "
+    "Screens, not a joint score. "
     "Public data. Research only — not investment advice."
 )
 BOT_USERNAME = "seiche_desk_bot"
@@ -242,7 +252,24 @@ def _discussion_keyboard(keyboard: list | None,
     }]]
 
 
-def post_channel(text: str, ref: str) -> int | None:
+def _follow_keyboard(ref: str) -> list:
+    desk_url = f"{BOT_URL}?start={urllib.parse.quote(ref, safe='')}"
+    return [[{"text": "📨 Follow: next Seiche letter", "url": desk_url}]]
+
+
+def lab_card_keyboard(ref: str = "lab_letter") -> list:
+    """Three doors under the daily card. Not a fused score."""
+    q = urllib.parse.quote(ref, safe='')
+    return [
+        [{"text": "🌊 Seiche", "url": f"{BOT_URL}?start={q}"}],
+        [{"text": "🏦 LiquiLens",
+          "url": f"https://t.me/LiquiLens_bot?start={q}"},
+         {"text": "🌊 Undertow",
+          "url": f"https://t.me/undertow_LiquiLens_bot?start={q}"}],
+    ]
+
+
+def post_channel(text: str, ref: str, keyboard: list | None = None) -> int | None:
     """Publish a read to the free Liquidity Lab channel.
 
     `ref` rides the desk deep link as `?start=<ref>`, so `record_lead` can
@@ -261,12 +288,7 @@ def post_channel(text: str, ref: str) -> int | None:
         f"Follow Seiche for one 11:30 UTC letter plus material state-change "
         f"alerts; /stop any time: {desk_url}</i>"
     )
-    # A letter has one conversion job.  The sibling desks remain discoverable
-    # from the on-demand desk keyboards through FLEET_ROW, where they do not
-    # compete with the decision to follow the desk that produced this read.
-    keyboard = [
-        [{"text": "📨 Follow: next Seiche letter", "url": desk_url}],
-    ]
+    keyboard = keyboard if keyboard is not None else _follow_keyboard(ref)
     try:
         res = send(int(LAB_CHANNEL), body, keyboard, _return_first=True)
     except Exception as exc:                      # noqa: BLE001 - see docstring
@@ -1118,6 +1140,43 @@ def fmt_article(feed: dict | None) -> str:
     ]) + FOOT
 
 
+def _ask_sibling_chips(res: dict) -> list[str]:
+    """Labeled sibling reads already on the payload. Never a fused score."""
+    pack = res.get("context_pack") if isinstance(res.get("context_pack"), dict) else res
+    if not isinstance(pack, dict):
+        return []
+    chips = []
+    seiche = pack.get("seiche") if isinstance(pack.get("seiche"), dict) else None
+    if seiche:
+        composite = seiche.get("composite") if isinstance(seiche.get("composite"), dict) else seiche
+        regime = (composite or {}).get("regime") or seiche.get("regime")
+        if seiche.get("available") is False:
+            chips.append("Seiche: UNAVAILABLE")
+        elif regime:
+            chips.append(f"Seiche: {esc(regime)}")
+    liquilens = pack.get("liquilens") if isinstance(pack.get("liquilens"), dict) else None
+    if liquilens:
+        if (liquilens.get("available") is False
+                or str(liquilens.get("reading") or "").upper() == "UNAVAILABLE"):
+            chips.append("LiquiLens: UNAVAILABLE")
+        else:
+            chips.append("LiquiLens: attached")
+    undertow = pack.get("undertow") if isinstance(pack.get("undertow"), dict) else None
+    if undertow:
+        if undertow.get("available") is False:
+            chips.append("Undertow: UNAVAILABLE")
+        else:
+            chips.append("Undertow: attached")
+    siblings = pack.get("siblings")
+    if isinstance(siblings, list):
+        for row in siblings[:4]:
+            if not isinstance(row, dict) or not row.get("label"):
+                continue
+            state = row.get("state") or row.get("reading") or row.get("status") or "attached"
+            chips.append(f"{esc(row['label'])}: {esc(state)}")
+    return chips
+
+
 def fmt_ask(res) -> str:
     if res is ASK_BUSY:
         return ("The desk assistant is at its shared answer limit right now, "
@@ -1134,6 +1193,11 @@ def fmt_ask(res) -> str:
         cites = res.get("citations") or res.get("sources") or []
         if cites:
             lines.append("\n<i>Sources: " + esc(" · ".join(str(c) for c in cites)) + "</i>")
+        chips = _ask_sibling_chips(res)
+        if chips:
+            lines.append("")
+            lines.append(" · ".join(chips))
+            lines.append("<i>Labeled sibling reads. Not a joint score.</i>")
         return "\n".join(lines) or "The desk assistant returned an empty answer."
     return esc(str(res))
 
@@ -1182,58 +1246,48 @@ def fmt_institutions(board: dict | None) -> str:
 
 
 def fmt_tandem(gauge: dict | None, board: dict | None) -> str:
-    """The joint read — identical logic to the LiquiLens bot's /tandem, both
-    recomputed from the two public APIs so neither trusts a summary."""
+    """Two labeled public-API reads. Not a fused quadrant alarm."""
     p = _plumb_level((gauge or {}).get("regime"))
     i = _inst_level(board)
-    lines = ["🔀 <b>Cross-desk read: plumbing × institutions</b>", ""]
+    lines = ["🔀 <b>Labeled reads: Seiche and LiquiLens</b>", ""]
     if p is None and i is None:
         return "\n".join(lines + ["Neither desk answered. Absence is not calm — "
                                   "check seiche.info and demo.liquilens.in directly."])
     if p is not None:
-        lines.append(f"Plumbing (this desk): <b>{esc(gauge.get('regime'))}</b> "
+        lines.append(f"Seiche (funding): <b>{esc(gauge.get('regime'))}</b> "
                      f"{gauge.get('index')}/100 · Tell {gauge.get('tell')}")
     else:
-        lines.append("Plumbing (this desk): did not answer — absence is not calm.")
+        lines.append("Seiche (funding): did not answer — absence is not calm.")
     if i is not None:
         t = {v: k for k, v in INST_LEVEL.items()}[i]
         n_watch = sum(1 for r in board["rows"] if r.get("tier") != "green")
-        lines.append(f"Institutions (LiquiLens): worst tier "
+        lines.append(f"LiquiLens (institutions): worst tier "
                      f"{TIER_ICON.get(t, '')} <b>{t.upper()}</b> · "
                      f"{n_watch} of {len(board['rows'])} on watch")
     else:
-        lines.append("Institutions (LiquiLens): board did not answer.")
+        lines.append("LiquiLens (institutions): board did not answer.")
     lines.append("")
     if p is not None and i is not None:
         lines.append(_quadrant_verdict(p, i))
-    lines.append("\n<i>Two desks, two public APIs, one read: seiche.info × "
-                 "liquilens.in.</i>")
+    lines.append("\n<i>Two desks, two public APIs. Not a joint score.</i>")
     return "\n".join(lines)
 
 
 def _quadrant_verdict(p: int, i: int) -> str:
-    """Shared quadrant language (kept in lockstep with the LiquiLens bot).
-    The 🚨 word is reserved for RED institutions under stressed plumbing."""
-    if p >= 2 and i >= 3:
-        return ("🚨 <b>The dangerous quadrant.</b> Systemic funding stress while "
-                "named institutions sit in the red tier — transmission is live. "
-                "Historically this is when idiosyncratic trouble goes systemic; "
-                "funding lines fail first.")
-    if p >= 2 and i == 2:
-        return ("⚠️ <b>One notch off the dangerous quadrant.</b> Funding stress "
-                "with orange-tier institutions on the board. If any name turns "
-                "red while plumbing stays stressed, transmission risk is live — "
-                "watch those funding lenses first.")
+    """Name each desk's read. Do not invent a blended alarm."""
     if p >= 2:
-        return ("Plumbing-led stress; the institutions board is contained so "
-                "far. The order to watch: new names appearing on the radar "
-                "with funding flags.")
-    if i >= 2:
-        return ("Institution weakness inside calm plumbing — this configuration "
-                "historically stays idiosyncratic. Watch the weak names' "
-                "funding lenses, not the system.")
-    return ("Both desks read contained. The quadrant to fear is stressed "
-            "plumbing × weak institutions; today is not it.")
+        seiche = "Seiche reads stressed plumbing."
+    else:
+        seiche = "Seiche reads contained plumbing."
+    if i >= 3:
+        liquilens = "LiquiLens worst tier is red."
+    elif i == 2:
+        liquilens = "LiquiLens worst tier is orange."
+    elif i == 1:
+        liquilens = "LiquiLens worst tier is yellow."
+    else:
+        liquilens = "LiquiLens board is contained."
+    return f"{seiche} {liquilens} Labeled reads only. Not a joint score."
 
 
 def _tandem_class(p: int, i: int) -> int:
@@ -1268,24 +1322,16 @@ WHERE_CARD = (
 HELP = (
     "🌊 <b>Seiche</b> — public US dollar-funding desk, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
-    "/snap — the forwardable card (meter, trend, next turn)\n"
-    "/odds — forward event odds (Navigator)\n"
-    "/turns — next calendar turn + crunch windows\n"
-    "/oil — Oil × Funding: spot, cash spreads, coupling, scenarios\n"
-    "/estuary — FX/material pressure + holdout-tested Passage\n"
-    "/analogs — the wreck ledger: past storms on this board\n"
-    "/proof — historical evidence status, flags and misses\n"
-    "/letter — today's dispatch\n"
-    "/article — today's evidence-led editorial\n"
-    "/institutions — the other desk: LiquiLens Failure Radar\n"
-    "/tandem — cross-desk read: plumbing × institutions\n"
+    "/snap — the forwardable card\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/where — the three public desks and the public-good bots\n"
-    "/start — follow in DM: daily 11:30 UTC letter + state-change alerts\n"
+    "/letter — today's dispatch\n"
+    "/tandem — labeled Seiche and LiquiLens reads (not a joint score)\n"
+    "/where — the three public desks\n"
+    "/help — this list\n"
+    "/start — follow the 11:30 UTC letter + state-change alerts\n"
     "/stop — unsubscribe in DM\n\n"
-    "In a private chat, just type a question — no slash needed; the desk "
-    "answers, grounded in the live board. Type @seiche_desk_bot in any other "
-    "chat to drop the live gauge card there.\n\n"
+    "In a private chat, just type a question — no slash needed. Type "
+    "@seiche_desk_bot in any other chat to drop the live gauge card there.\n\n"
     "Free public good: no paywall, no sign-in. Institutions are "
     "@LiquiLens_bot's desk."
 )
@@ -1324,30 +1370,19 @@ def fmt_daily_letter() -> str:
         lines.append(f"🗞 {esc(flags[0])} (press attention; display only, "
                      "feeds no score).")
 
-    # the other desk — institutions, read verbatim
+    # Sibling desks, labeled and fail-closed. No fused quadrant.
     board = ll_get("/failure-radar/board")
     i = _inst_level(board)
     if i is not None:
         t = {v: k for k, v in INST_LEVEL.items()}[i]
         n_watch = sum(1 for r in board["rows"] if r.get("tier") != "green")
-        lines.append(f"\n🏦 <b>Institutions (LiquiLens):</b> worst tier "
-                     f"{TIER_ICON.get(t, '')} {t.upper()} · {n_watch} of "
-                     f"{len(board['rows'])} on watch · /institutions")
-        p = _plumb_level(gauge.get("regime"))
-        if p is not None:
-            cls = _tandem_class(p, i)
-            if cls == 3:
-                lines.append("🚨 <b>Cross-desk: the dangerous quadrant</b> — "
-                             "funding stress while institutions sit red. /tandem")
-            elif cls == 2:
-                lines.append("⚠️ Cross-desk: one notch off the dangerous quadrant "
-                             "— funding stress with orange institutions. /tandem")
-            elif cls == 1:
-                lines.append("Cross-desk: one desk stressed, the other contained. "
-                             "/tandem")
+        lines.append(f"\n🏦 <b>LiquiLens:</b> {len(board['rows'])} scored · "
+                     f"worst {TIER_ICON.get(t, '')} {t.upper()} · "
+                     f"{n_watch} on watch")
     else:
-        lines.append("\n🏦 Institutions (LiquiLens): did not answer — absence "
-                     "is not calm; demo.liquilens.in has the board.")
+        lines.append("\n🏦 LiquiLens: board did not answer.")
+    lines.append(_undertow_lane(ut_get("/board.json")))
+    lines.append("Labeled sibling reads. Not a joint score.")
 
     article = latest_article(board_get(ARTICLE_FEED_URL))
     if article:
@@ -1368,71 +1403,87 @@ def fmt_daily_letter() -> str:
     return "\n".join(lines) + FOOT
 
 
-def _seiche_lane(gauge: dict | None, pub: dict | None) -> str:
+def _seiche_lane(gauge: dict | None) -> str:
     if not gauge:
-        return "Seiche (funding): cannot see Seiche."
-    line = ((pub or {}).get("conclusion") or {}).get("line")
+        return "🌊 Seiche: unavailable — not calm"
+    idx = gauge.get("index")
+    idx_s = "?" if idx is None else idx
     tell = gauge.get("tell")
     tell_s = f" · Tell {tell:+.0f}" if isinstance(tell, (int, float)) else ""
-    if line:
-        return (f"Seiche (funding): {_regime_icon(gauge.get('regime'))} "
-                f"{esc(line)}{tell_s}")
-    idx = gauge.get("index")
-    return (f"Seiche (funding): {_regime_icon(gauge.get('regime'))} "
-            f"<b>{esc(gauge.get('regime'))}</b> "
-            f"{'?' if idx is None else idx}/100{tell_s}")
+    return (f"🌊 Seiche: {esc(gauge.get('regime') or '?')} "
+            f"{idx_s}{tell_s}")
 
 
 def _liquilens_lane(board: dict | None) -> str:
     if not board or not board.get("rows"):
-        return "LiquiLens (institutions): cannot see LiquiLens."
+        return "🏦 LiquiLens: board did not answer"
     watch = [esc(row.get("name") or row.get("slug") or "unnamed")
              for row in board["rows"]
              if row.get("tier") in ("red", "orange", "yellow")][:3]
     n = len(board["rows"])
     if watch:
-        return (f"LiquiLens (institutions): {n} scored. "
-                f"On watch: {', '.join(watch)}.")
-    return f"LiquiLens (institutions): {n} scored. No yellow-or-worse names."
+        return f"🏦 LiquiLens: {n} scored · on watch: {', '.join(watch)}"
+    return f"🏦 LiquiLens: {n} scored · on watch: none"
 
 
-_UT_CALM_TIERS = frozenset({
-    "NORMAL", "PARTIAL", "NO_DATA", "NODATA", "NA", "N/A", "UNKNOWN", "",
-})
+def _undertow_exit_band(board: dict) -> str | None:
+    """Free $100M large-cap exit band. Absence is dark, never invented."""
+    info = board.get("informational")
+    exit_cost = info.get("exit_cost") if isinstance(info, dict) else None
+    buckets = exit_cost.get("buckets") if isinstance(exit_cost, dict) else None
+    large = buckets.get("large") if isinstance(buckets, dict) else None
+    if not isinstance(large, dict):
+        return None
+    costs = large.get("costs") if isinstance(large.get("costs"), dict) else {}
+    if isinstance(costs.get("impact_bp"), (int, float)):
+        return f"{costs['impact_bp']:g}bp"
+    for row in costs.get("bands") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            position = float(row.get("position_usd"))
+        except (TypeError, ValueError):
+            continue
+        if position != 100_000_000:
+            continue
+        exact = row.get("impact_bp")
+        if isinstance(exact, (int, float)):
+            return f"{exact:g}bp"
+        band = row.get("impact_band_bp")
+        if isinstance(band, str) and band.strip():
+            return band.strip()
+    return None
 
 
 def _undertow_lane(board: dict | None) -> str:
-    segs = (board or {}).get("segments") if isinstance(board, dict) else None
-    if not isinstance(segs, dict) or not segs:
-        return "Undertow (exit cost): cannot see Undertow."
-    off = []
-    for name, seg in segs.items():
-        if not isinstance(seg, dict):
-            continue
-        tier = str(seg.get("tier") or "").upper()
-        if tier not in _UT_CALM_TIERS:
-            off.append(f"{esc(name)} {esc(tier)}")
-    n = len(segs)
-    if off:
-        return (f"Undertow (exit cost): {len(off)} of {n} segments stressed "
-                f"({', '.join(off[:3])}).")
-    return f"Undertow (exit cost): {n} segments tracked, none stressed."
+    if not isinstance(board, dict):
+        return "🌊 Undertow: board dark"
+    band = _undertow_exit_band(board)
+    if not band:
+        return "🌊 Undertow: board dark"
+    segs = board.get("segments") if isinstance(board.get("segments"), dict) else {}
+    equity = segs.get("EQUITY") if isinstance(segs.get("EQUITY"), dict) else {}
+    tier = equity.get("tier")
+    if not tier:
+        info = board.get("informational") if isinstance(board.get("informational"), dict) else {}
+        exit_cost = info.get("exit_cost") if isinstance(info.get("exit_cost"), dict) else {}
+        tier = exit_cost.get("status")
+    if tier:
+        return f"🌊 Undertow: large-cap $100M exit {esc(band)} / {esc(tier)}"
+    return f"🌊 Undertow: large-cap $100M exit {esc(band)}"
 
 
 def fmt_channel_letter() -> str:
-    """Three named lanes. Each fails closed. No fused quadrant score."""
+    """The only daily @LiquidityLabDesk card. Six-line, fail-closed, no quadrant."""
     today = date.today().strftime("%d %b %Y")
-    lines = [
-        f"🌊 <b>Seiche | Dollar Funding Desk</b> {today}",
+    return "\n".join([
+        f"<b>Liquidity Lab</b> {today}",
         "",
-        _seiche_lane(api_get("/api/gauge"), api_get("/api/public")),
+        _seiche_lane(api_get("/api/gauge")),
         _liquilens_lane(ll_get("/failure-radar/board")),
         _undertow_lane(ut_get("/board.json")),
-        "",
-        "Three independent reads. No joint score. Research only.",
-        f"Sources: {SITE}",
-    ]
-    return "\n".join(lines)
+        "Screens, not a joint score. Three doors below.",
+    ])
 
 
 # ------------------------------------------------------------------ wiring --
@@ -1796,7 +1847,8 @@ def run_letter() -> None:
     # Publish BEFORE the subscriber check. The channel is the top of the
     # funnel, so it has to work at zero subscribers; gating it behind a
     # non-empty subscriber list would silence it exactly when it matters most.
-    published = post_channel(fmt_channel_letter(), "lab_letter")
+    published = post_channel(
+        fmt_channel_letter(), "lab_letter", lab_card_keyboard("lab_letter"))
     if not subs:
         print(f"no subscribers yet; letter published to channel={published}")
         return
@@ -1821,12 +1873,7 @@ def run_tandem() -> None:
     if prev is None or cls == prev:
         print(f"tandem: class {cls} (unchanged); nothing sent")
         return
-    if cls == 3:
-        head = "🚨 <b>Cross-desk escalation: the dangerous quadrant.</b>"
-    elif cls > prev:
-        head = "⚠️ <b>Cross-desk escalation.</b>"
-    else:
-        head = "🟢 <b>Cross-desk de-escalation.</b>"
+    head = "<b>Cross-desk change.</b> Independent labeled reads below."
     text = head + "\n\n" + fmt_tandem(gauge, board)
     # The public channel is the funding desk. A fused quadrant post is not
     # a stranger-facing lane; tandem stays a subscriber DM.
@@ -1940,19 +1987,10 @@ BOT_DESCRIPTION = (
 BOT_COMMANDS = [
     {"command": "now", "description": "The gauge: regime, composite, the Tell"},
     {"command": "snap", "description": "The forwardable gauge card"},
-    {"command": "odds", "description": "Forward event odds (Navigator)"},
-    {"command": "turns", "description": "Next turn + crunch windows"},
-    {"command": "oil", "description": "Oil × Funding transmission context"},
-    {"command": "estuary", "description": "FX/material pressure + Passage"},
-    {"command": "tandem", "description": "Cross-desk read: plumbing × institutions"},
-    {"command": "institutions", "description": "The LiquiLens Failure Radar"},
-    {"command": "analogs", "description": "The wreck ledger: past storms"},
-    {"command": "proof", "description": "Evidence status, flags and misses"},
-    {"command": "letter", "description": "Today's dispatch"},
-    {"command": "article", "description": "Today's evidence-led editorial"},
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
-    {"command": "share", "description": "Send this free desk to someone"},
-    {"command": "where", "description": "Specialised channels and desks"},
+    {"command": "letter", "description": "Today's dispatch"},
+    {"command": "tandem", "description": "Labeled Seiche and LiquiLens reads"},
+    {"command": "where", "description": "The three public desks"},
     {"command": "help", "description": "Full command list and desk guide"},
     {"command": "start", "description": "Follow privately: daily 11:30 UTC letter + state-change alerts"},
     {"command": "stop", "description": "Unsubscribe in private chat"},

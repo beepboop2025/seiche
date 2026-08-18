@@ -99,9 +99,10 @@ MAX_DESK_COVERAGE = 2
 DESK_COVERAGE_CAPS = {"CRYPTO": 5}
 DESK_CHANNEL_CAPS = {"CRYPTO": 1}
 DESK_CHANNEL_BARS = {"CRYPTO": 3.0}
-# @LiquidityLabDesk is the dollar-funding FI face. Palimpsest/China, Riptide,
-# corporate, real-econ and crypto never occupy that shared slot. Crypto still
-# uses the dedicated channel handoff below; the others stay on their own bots.
+# @LiquidityLabDesk's morning card is Seiche's fmt_channel_letter, not this
+# radar. Palimpsest/China, Riptide, corporate, real-econ and crypto never
+# occupy the shared slot and must never ship as if they were the Lab letter.
+# Crypto still uses the dedicated channel handoff below.
 SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({
     "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
 })
