@@ -83,7 +83,7 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 LAB_CHANNEL_ABOUT = (
     "Daily funding, bank, and market-depth reads from public data. "
-    "Gaps named, misses kept. Start with today's letter, then open one desk."
+    "Gaps named, misses kept. Talk: @LiquidityLabTalk"
 )
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
@@ -91,8 +91,11 @@ LAB_CHANNEL_PIN = (
     "banks or market depth actually move.\n\n"
     "Today's letter: @seiche_desk_bot\n"
     "Banks: @LiquiLens_bot\n"
+    "India economy: @real_economy_desk_bot\n"
     "Exit cost: @undertow_LiquiLens_bot\n"
-    "Crypto rails: @LiquidityCryptoDesk\n\n"
+    "Crypto rails: @LiquidityCryptoDesk\n"
+    "Evidence: @EvidenceSignalDesk\n"
+    "Talk: @LiquidityLabTalk\n\n"
     "Public data. Misses kept. Not investment advice."
 )
 BOT_USERNAME = "seiche_desk_bot"
@@ -1237,6 +1240,28 @@ def _tandem_class(p: int, i: int) -> int:
     return 0
 
 
+WHERE_CARD = (
+    "<b>Where the lab publishes</b>\n\n"
+    "Funding stress, daily letter:\n"
+    "https://t.me/LiquidityLabDesk\n"
+    "Desk: @seiche_desk_bot\n\n"
+    "Bank failure radar:\n"
+    "@LiquiLens_bot\n\n"
+    "India prices, GST, monsoon, RBI:\n"
+    "@real_economy_desk_bot\n\n"
+    "Crypto rails and liquid breadth:\n"
+    "https://t.me/LiquidityCryptoDesk\n"
+    "Desk: @liquilens_crypto_bot\n\n"
+    "Exit cost at your size:\n"
+    "@undertow_LiquiLens_bot\n\n"
+    "Censorship and evidence:\n"
+    "https://t.me/EvidenceSignalDesk\n"
+    "Desk: @palimpsest_watch_bot\n\n"
+    "Talk: @LiquidityLabTalk · @LiquidityCryptoTalk · @EvidenceSignalTalk\n\n"
+    "One lab, specialised desks. Public data. Misses kept."
+)
+
+
 HELP = (
     "🌊 <b>Seiche</b> — US funding-stress early warning, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
@@ -1252,6 +1277,7 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
+    "/where — the specialised channels and desks\n"
     "/start — follow in DM: daily letter + state/cross-desk alerts + news\n"
     "/stop — unsubscribe in DM\n\n"
     "In a private chat, just type a question — no slash needed; the desk "
@@ -1435,6 +1461,13 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd == "/share":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}],
                 LAB_ROW, FLEET_ROW]
+    if cmd == "/where":
+        return [
+            LAB_ROW,
+            FLEET_ROW,
+            [{"text": "Crypto rails", "url": "https://t.me/LiquidityCryptoDesk"},
+             {"text": "Evidence", "url": "https://t.me/EvidenceSignalDesk"}],
+        ]
     return None
 
 
@@ -1607,6 +1640,8 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/share":
         record_lead(chat_id, "share-open")
         send(chat_id, fmt_share(api_get("/api/gauge")), keyboard_for("/share"))
+    elif cmd == "/where":
+        send(chat_id, WHERE_CARD, keyboard_for("/where"))
     else:
         send(chat_id, HELP)
 
@@ -1879,6 +1914,7 @@ BOT_COMMANDS = [
     {"command": "article", "description": "Today's evidence-led editorial"},
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "share", "description": "Send this free desk to someone"},
+    {"command": "where", "description": "Specialised channels and desks"},
     {"command": "help", "description": "Full command list and desk guide"},
     {"command": "start", "description": "Follow privately: letter + state/cross-desk alerts/news"},
     {"command": "stop", "description": "Unsubscribe in private chat"},

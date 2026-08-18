@@ -575,11 +575,38 @@ def test_stop_unsubscribes(sent):
 
 
 def test_keyboard_shapes():
-    for cmd in ("/start", "/now", "/snap", "/odds", "/oil", "/estuary", "/share"):
+    for cmd in ("/start", "/now", "/snap", "/odds", "/oil", "/estuary", "/share",
+                "/where"):
         kb = bot.keyboard_for(cmd)
         assert kb and all(("callback_data" in b) or ("url" in b)
                           for row in kb for b in row)
     assert bot.keyboard_for("/nope") is None
+
+
+def test_where_card_names_specialist_surfaces():
+    assert "t.me/LiquidityLabDesk" in bot.WHERE_CARD
+    assert "t.me/LiquidityCryptoDesk" in bot.WHERE_CARD
+    assert "t.me/EvidenceSignalDesk" in bot.WHERE_CARD
+    assert "@LiquiLens_bot" in bot.WHERE_CARD
+    assert "@real_economy_desk_bot" in bot.WHERE_CARD
+    assert "—" not in bot.WHERE_CARD
+    assert "–" not in bot.WHERE_CARD
+    assert "@EvidenceSignalDesk" in bot.LAB_CHANNEL_PIN
+    assert "@real_economy_desk_bot" in bot.LAB_CHANNEL_PIN
+    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_PIN
+    assert "@LiquidityLabTalk" in bot.LAB_CHANNEL_ABOUT
+
+
+def test_where_command_sends_the_specialist_card(sent):
+    bot.handle(9, "/where", "private")
+    method, payload = sent[-1]
+    assert method == "sendMessage"
+    assert "LiquidityLabDesk" in payload["text"]
+    assert any(
+        button.get("url") == "https://t.me/LiquidityCryptoDesk"
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
 
 
 # ---------------------------------------------------------------- letter ----
