@@ -330,22 +330,95 @@ def test_html_escaping_of_served_text():
 
 # --------------------------------------------------------------- cross-desk --
 
-def test_tandem_class_grid():
-    assert bot._tandem_class(2, 3) == 3
-    assert bot._tandem_class(2, 2) == 2
-    assert bot._tandem_class(2, 0) == 1
-    assert bot._tandem_class(0, 2) == 1
-    assert bot._tandem_class(0, 0) == 0
+def test_tandem_reads_are_independent_labels():
+    assert bot._tandem_reads(
+        {"regime": "STRAIN"}, _ll_board("red")
+    ) == {"seiche": "STRAIN", "liquilens": "red"}
+    assert bot._tandem_reads(
+        {"regime": "CALM"}, _ll_board("green")
+    ) == {"seiche": "CALM", "liquilens": "green"}
+    assert bot._tandem_reads(None, _ll_board("red")) is None
+    assert bot._tandem_reads({"regime": "STRAIN"}, None) is None
+    assert not hasattr(bot, "_tandem_class")
+    assert not hasattr(bot, "_quadrant_verdict")
 
 
 def test_fmt_tandem_partial_desks():
     both = bot.fmt_tandem(_gauge(regime="STRAIN"), _ll_board("red"))
     assert "Seiche (funding)" in both
     assert "LiquiLens (institutions)" in both
+    assert "Seiche reads STRAIN" in both
+    assert "LiquiLens worst tier is red" in both
     assert "Not a joint score" in both
     assert "dangerous quadrant" not in both
+    assert "quadrant" not in both.lower()
     assert "did not answer" in bot.fmt_tandem(None, _ll_board())
     assert "Neither desk answered" in bot.fmt_tandem(None, None)
+
+
+def test_run_tandem_alerts_on_either_labeled_read(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "STRAIN", "index": 70, "tell": 8},
+    )
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("red"))
+    monkeypatch.setattr(
+        bot, "post_channel",
+        lambda *args, **kwargs: sent.append(("channel", args)),
+    )
+    monkeypatch.setattr(
+        bot, "_send_all",
+        lambda subs, text, keyboard=None: sent.append(("dm", text)) or 1,
+    )
+    bot.save_state("subscribers.json", {"7": {"since": "now"}})
+
+    bot.run_tandem()
+    assert sent == []
+    assert bot.load_state("tandem_reads.json") == {
+        "seiche": "STRAIN", "liquilens": "red",
+    }
+
+    bot.run_tandem()
+    assert sent == []
+
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("orange"))
+    bot.run_tandem()
+    assert [kind for kind, _ in sent] == ["dm"]
+    assert "Not a joint score" in sent[0][1]
+    assert "dangerous quadrant" not in sent[0][1]
+    assert "quadrant" not in sent[0][1].lower()
+
+    sent.clear()
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "CALM", "index": 12, "tell": -1},
+    )
+    bot.run_tandem()
+    assert [kind for kind, _ in sent] == ["dm"]
+    assert "Seiche reads CALM" in sent[0][1]
+
+
+def test_run_tandem_ignores_legacy_fused_class_file(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot, "api_get",
+        lambda _path: {"regime": "STRAIN", "index": 70, "tell": 8},
+    )
+    monkeypatch.setattr(bot, "ll_get", lambda _path: _ll_board("red"))
+    monkeypatch.setattr(
+        bot, "_send_all",
+        lambda subs, text, keyboard=None: sent.append(text) or 1,
+    )
+    bot.save_state("subscribers.json", {"7": {"since": "now"}})
+    bot.save_state("tandem_class.json", 0)
+
+    bot.run_tandem()
+    assert sent == []
+    assert bot.load_state("tandem_reads.json") == {
+        "seiche": "STRAIN", "liquilens": "red",
+    }
+    assert bot.load_state("tandem_class.json") == 0
 
 
 # ------------------------------------------------------ history + sparkline --

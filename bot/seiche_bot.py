@@ -12,8 +12,8 @@ Modes
   (no args)     long-poll command loop (systemd service)
   --letter      compose and send the daily letter to all subscribers
                 (systemd timer, 11:30 UTC = pre-US-open)
-  --tandem      cross-desk check (plumbing × institutions): message subscribers
-                ONLY when the joint quadrant changes class (systemd timer, 6h)
+  --tandem      labeled Seiche + LiquiLens check: message subscribers ONLY
+                when either named read changes (systemd timer, 6h)
   --alert-scan  between-letter flip detector (systemd timer, ~30min): pings
                 subscribers when the regime flips or the composite jumps;
                 silence when nothing moved. Also accrues the bot's own daily
@@ -33,7 +33,7 @@ Commands
   /letter          today's dispatch: title, summary, link
   /article         today's evidence-led editorial, full text on the site
   /institutions    the other desk: LiquiLens Failure Radar summary
-  /tandem          the cross-desk read: plumbing × institutions quadrant
+  /tandem          labeled Seiche and LiquiLens reads (not a joint score)
   /ask <question>  desk assistant, grounded strictly in the live board
   /help            this list
 
@@ -45,8 +45,9 @@ inline mode for the bot in BotFather once).
 Following and unfollowing are private-chat only so one member cannot change a
 shared room's deliveries. Read-only desk commands remain available in groups.
 
-Tandem: both bots read each other's PUBLIC APIs and recompute the joint
-quadrant from source — no shared state, no trust in the other's summary.
+Tandem: both bots read each other's PUBLIC APIs and name each desk's
+read from source — no shared state, no fused score, no trust in the
+other's summary.
 
 Stdlib only (urllib) so deployment is: copy file, set env, start unit.
 Env: SEICHE_BOT_TOKEN (required) · SEICHE_API (default
@@ -1214,15 +1215,6 @@ def _plumb_level(regime) -> int | None:
     return PLUMB_LEVEL.get(str(regime).upper(), 3)
 
 
-def _inst_level(board) -> int | None:
-    rows = (board or {}).get("rows") or []
-    if not rows:
-        return None
-    # unknown tiers read as WORST, mirroring _plumb_level — schema drift must
-    # never degrade the cross-desk read toward "contained"
-    return max(INST_LEVEL.get(r.get("tier"), 3) for r in rows)
-
-
 def fmt_institutions(board: dict | None) -> str:
     if not board or not board.get("rows"):
         return ("LiquiLens's desk did not answer — the institutions board is at "
@@ -1245,12 +1237,30 @@ def fmt_institutions(board: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _worst_tier(board) -> str | None:
+    """LiquiLens worst published tier. Unknown tiers rank as worst."""
+    rows = (board or {}).get("rows") or []
+    if not rows:
+        return None
+    row = max(rows, key=lambda r: INST_LEVEL.get(r.get("tier"), 3))
+    return str(row.get("tier") or "unknown")
+
+
+def _tandem_reads(gauge: dict | None, board: dict | None) -> dict | None:
+    """Independent labeled snapshots. None if either public API is missing."""
+    regime = (gauge or {}).get("regime")
+    tier = _worst_tier(board)
+    if not regime or not tier:
+        return None
+    return {"seiche": str(regime).upper(), "liquilens": str(tier).lower()}
+
+
 def fmt_tandem(gauge: dict | None, board: dict | None) -> str:
-    """Two labeled public-API reads. Not a fused quadrant alarm."""
+    """Two labeled public-API reads. Not a fused alarm."""
     p = _plumb_level((gauge or {}).get("regime"))
-    i = _inst_level(board)
+    tier = _worst_tier(board)
     lines = ["🔀 <b>Labeled reads: Seiche and LiquiLens</b>", ""]
-    if p is None and i is None:
+    if p is None and tier is None:
         return "\n".join(lines + ["Neither desk answered. Absence is not calm — "
                                   "check seiche.info and demo.liquilens.in directly."])
     if p is not None:
@@ -1258,48 +1268,26 @@ def fmt_tandem(gauge: dict | None, board: dict | None) -> str:
                      f"{gauge.get('index')}/100 · Tell {gauge.get('tell')}")
     else:
         lines.append("Seiche (funding): did not answer — absence is not calm.")
-    if i is not None:
-        t = {v: k for k, v in INST_LEVEL.items()}[i]
+    if tier is not None:
         n_watch = sum(1 for r in board["rows"] if r.get("tier") != "green")
         lines.append(f"LiquiLens (institutions): worst tier "
-                     f"{TIER_ICON.get(t, '')} <b>{t.upper()}</b> · "
+                     f"{TIER_ICON.get(tier, '')} <b>{tier.upper()}</b> · "
                      f"{n_watch} of {len(board['rows'])} on watch")
     else:
         lines.append("LiquiLens (institutions): board did not answer.")
     lines.append("")
-    if p is not None and i is not None:
-        lines.append(_quadrant_verdict(p, i))
+    reads = _tandem_reads(gauge, board)
+    if reads is not None:
+        lines.append(_labeled_tandem_line(reads))
     lines.append("\n<i>Two desks, two public APIs. Not a joint score.</i>")
     return "\n".join(lines)
 
 
-def _quadrant_verdict(p: int, i: int) -> str:
+def _labeled_tandem_line(reads: dict) -> str:
     """Name each desk's read. Do not invent a blended alarm."""
-    if p >= 2:
-        seiche = "Seiche reads stressed plumbing."
-    else:
-        seiche = "Seiche reads contained plumbing."
-    if i >= 3:
-        liquilens = "LiquiLens worst tier is red."
-    elif i == 2:
-        liquilens = "LiquiLens worst tier is orange."
-    elif i == 1:
-        liquilens = "LiquiLens worst tier is yellow."
-    else:
-        liquilens = "LiquiLens board is contained."
-    return f"{seiche} {liquilens} Labeled reads only. Not a joint score."
-
-
-def _tandem_class(p: int, i: int) -> int:
-    """3 = dangerous quadrant (stress × red), 2 = one notch off (stress ×
-    orange), 1 = one desk stressed, 0 = contained."""
-    if p >= 2 and i >= 3:
-        return 3
-    if p >= 2 and i == 2:
-        return 2
-    if p >= 2 or i >= 2:
-        return 1
-    return 0
+    return (f"Seiche reads {esc(reads['seiche'])}. "
+            f"LiquiLens worst tier is {esc(reads['liquilens'])}. "
+            "Labeled reads only. Not a joint score.")
 
 
 WHERE_CARD = (
@@ -1370,11 +1358,10 @@ def fmt_daily_letter() -> str:
         lines.append(f"🗞 {esc(flags[0])} (press attention; display only, "
                      "feeds no score).")
 
-    # Sibling desks, labeled and fail-closed. No fused quadrant.
+    # Sibling desks, labeled and fail-closed.
     board = ll_get("/failure-radar/board")
-    i = _inst_level(board)
-    if i is not None:
-        t = {v: k for k, v in INST_LEVEL.items()}[i]
+    t = _worst_tier(board)
+    if t is not None:
         n_watch = sum(1 for r in board["rows"] if r.get("tier") != "green")
         lines.append(f"\n🏦 <b>LiquiLens:</b> {len(board['rows'])} scored · "
                      f"worst {TIER_ICON.get(t, '')} {t.upper()} · "
@@ -1474,7 +1461,7 @@ def _undertow_lane(board: dict | None) -> str:
 
 
 def fmt_channel_letter() -> str:
-    """The only daily @LiquidityLabDesk card. Six-line, fail-closed, no quadrant."""
+    """The only daily @LiquidityLabDesk card. Six-line, fail-closed lanes."""
     today = date.today().strftime("%d %b %Y")
     return "\n".join([
         f"<b>Liquidity Lab</b> {today}",
@@ -1859,27 +1846,26 @@ def run_letter() -> None:
 
 
 def run_tandem() -> None:
-    """Cross-desk escalation check — mirror of the LiquiLens bot's --tandem.
-    Sends ONLY when the joint quadrant changes class; silence otherwise."""
+    """Labeled Seiche + LiquiLens check. Message subscribers ONLY when
+    either named read changes. First run (no prior snapshot) stays silent.
+    Never a fused class. The public channel is not a tandem surface."""
     gauge = api_get("/api/gauge")
     board = ll_get("/failure-radar/board")
-    p, i = _plumb_level((gauge or {}).get("regime")), _inst_level(board)
-    if p is None or i is None:
+    reads = _tandem_reads(gauge, board)
+    if reads is None:
         print("tandem: a desk did not answer; no state change recorded")
         return
-    cls = _tandem_class(p, i)
-    prev = load_state("tandem_class.json", None)
-    save_state("tandem_class.json", cls)
-    if prev is None or cls == prev:
-        print(f"tandem: class {cls} (unchanged); nothing sent")
+    prev = load_state("tandem_reads.json", None)
+    save_state("tandem_reads.json", reads)
+    if not isinstance(prev, dict) or prev == reads:
+        print(f"tandem: {reads} (unchanged); nothing sent")
         return
     head = "<b>Cross-desk change.</b> Independent labeled reads below."
     text = head + "\n\n" + fmt_tandem(gauge, board)
-    # The public channel is the funding desk. A fused quadrant post is not
-    # a stranger-facing lane; tandem stays a subscriber DM.
+    # The public channel is the funding desk. Tandem stays a subscriber DM.
     subs = load_state("subscribers.json", {})
     n = _send_all(subs, text)
-    print(f"tandem: class {prev} → {cls}, alerted {n} subscriber(s), "
+    print(f"tandem: {prev} → {reads}, alerted {n} subscriber(s), "
           f"channel skipped")
 
 

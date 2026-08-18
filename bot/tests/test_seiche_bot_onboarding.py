@@ -332,11 +332,17 @@ def test_fmt_tandem_is_labeled_reads_not_a_blended_alarm():
     )
     assert "Seiche (funding)" in both
     assert "LiquiLens (institutions)" in both
+    assert "Seiche reads STRAIN" in both
+    assert "LiquiLens worst tier is red" in both
     assert "Not a joint score" in both
     assert "dangerous quadrant" not in both
     assert "quadrant" not in both.lower()
     assert "did not answer" in bot.fmt_tandem(None, {"rows": [{"tier": "green"}]})
     assert "Neither desk answered" in bot.fmt_tandem(None, None)
+    assert not hasattr(bot, "_tandem_class")
+    assert not hasattr(bot, "_quadrant_verdict")
+    assert "quadrant" not in (bot.__doc__ or "").lower()
+    assert "quadrant" not in bot.HELP.lower()
 
 
 def test_fmt_ask_adds_sibling_chips_and_refuses_a_joint_score():
@@ -375,14 +381,18 @@ def test_tandem_alert_stays_off_the_public_funding_channel(
         lambda subs, text, keyboard=None: sent.append((subs, text)) or 1,
     )
     bot.save_state("subscribers.json", {"7": {"since": "now"}})
-    bot.save_state("tandem_class.json", 0)
+    bot.save_state("tandem_reads.json", {"seiche": "CALM", "liquilens": "green"})
 
     bot.run_tandem()
 
     assert published == []
     assert sent
     assert "dangerous quadrant" not in sent[0][1]
+    assert "quadrant" not in sent[0][1].lower()
     assert "Not a joint score" in sent[0][1]
+    assert bot.load_state("tandem_reads.json") == {
+        "seiche": "STRAIN", "liquilens": "red",
+    }
 
 
 def test_set_channel_profile_refuses_an_empty_channel(monkeypatch):
