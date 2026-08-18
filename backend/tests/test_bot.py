@@ -589,8 +589,11 @@ def test_where_card_names_the_three_public_doors():
     assert "@LiquiLens_bot" in bot.WHERE_CARD
     assert "@undertow_LiquiLens_bot" in bot.WHERE_CARD
     assert "liquilens.in/access/" in bot.WHERE_CARD
+    assert "Public goods for grants" in bot.WHERE_CARD
+    assert "not this channel" in bot.WHERE_CARD
+    assert bot.PUBLIC_GOOD_FUND in bot.WHERE_CARD
+    assert bot.EVIDENCE_CHANNEL in bot.WHERE_CARD
     assert "LiquidityCryptoDesk" not in bot.WHERE_CARD
-    assert "EvidenceSignalDesk" not in bot.WHERE_CARD
     assert "—" not in bot.WHERE_CARD
     assert "–" not in bot.WHERE_CARD
     assert "@real_economy_desk_bot" not in bot.LAB_CHANNEL_PIN
@@ -609,6 +612,11 @@ def test_where_command_sends_the_three_door_card(sent):
     assert "LiquidityLabDesk" in payload["text"]
     assert any(
         button.get("url") == "https://liquilens.in/access/"
+        for row in payload["reply_markup"]["inline_keyboard"]
+        for button in row
+    )
+    assert any(
+        button.get("url") == bot.PUBLIC_GOOD_FUND
         for row in payload["reply_markup"]["inline_keyboard"]
         for button in row
     )

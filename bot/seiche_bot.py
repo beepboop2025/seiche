@@ -81,6 +81,8 @@ TG = f"https://api.telegram.org/bot{TOKEN}"
 # that is only meant to DM subscribers should never accidentally publish.
 LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
+PUBLIC_GOOD_FUND = "https://palimpsest.info/fund.html"
+EVIDENCE_CHANNEL = "https://t.me/EvidenceSignalDesk"
 LAB_CHANNEL_ABOUT = (
     "One morning card: funding, banks, exit cost. Public data. "
     "Gaps named, misses kept. Talk: @LiquidityLabTalk"
@@ -1246,6 +1248,10 @@ WHERE_CARD = (
     "Banks: @LiquiLens_bot\n"
     "Exit cost: @undertow_LiquiLens_bot\n\n"
     "Named-list software: https://liquilens.in/access/\n\n"
+    "Public goods for grants (not this channel):\n"
+    "Palimpsest, Evidence Signal, NarcoScope\n"
+    f"{PUBLIC_GOOD_FUND}\n"
+    f"{EVIDENCE_CHANNEL}\n\n"
     "One lab, three desks. Public data. Misses kept."
 )
 
@@ -1461,6 +1467,7 @@ def keyboard_for(cmd: str) -> list | None:
             FLEET_ROW,
             [{"text": "Named-list software",
               "url": "https://liquilens.in/access/"}],
+            [{"text": "Public goods for grants", "url": PUBLIC_GOOD_FUND}],
         ]
     return None
 
