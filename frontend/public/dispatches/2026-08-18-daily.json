@@ -1,0 +1,142 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-08-18-daily",
+  "product": "seiche",
+  "slug": "2026-08-18-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-08-18-daily",
+  "headline": "2y Treasury constant maturity yield sits at 4.17 %, +2.5 sigma from its own median: a level, not a move",
+  "dek": "The board reads 45 out of 100, STRAIN; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.8%; plumbing leads market pricing by +39 percentile points. The index is +0.0 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "full_story",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-08-18T11:15:47Z",
+  "clocks": {
+    "event_time": "2026-08-14T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-08-18T11:15:47Z",
+    "publication_time": "2026-08-18T11:15:47Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "fresh_longitudinal_delta",
+      "cross_signal_divergence",
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 45.3 in STRAIN.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 45.3,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh 2y Treasury constant maturity yield print entered the mover set.",
+      "metric": {
+        "label": "2y Treasury constant maturity yield",
+        "value": null,
+        "unit": "%",
+        "robust_z": 2.52,
+        "as_of": "2026-08-14"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-08-18",
+        "backtestable": false,
+        "status_note": "ACCRUING — 45/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 0.59,
+            "unit": "score",
+            "as_of": "2026-08-18",
+            "observations": 45,
+            "change_vs_prior_10_median": -0.46
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 11.0,
+            "unit": "terms/day",
+            "as_of": "2026-08-18",
+            "observations": 45,
+            "change_vs_prior_10_median": -4.0
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 15.0,
+            "unit": "0-100",
+            "as_of": "2026-08-17",
+            "observations": 42,
+            "change_vs_prior_10_median": -5.5
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 1.7bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-08-12",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-08-17",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 24th percentile of its own history.",
+      "asof": "2026-08-14",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "claim_fingerprint": "08df5434330244d46ed71e89460441f86f4e99f810342b87c3921f971ac00898"
+}
