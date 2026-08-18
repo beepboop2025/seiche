@@ -114,6 +114,14 @@ api.seiche.info {
         reverse_proxy 127.0.0.1:8792
     }
 
+    # Undertow PayPal webhook (card rail). Loopback :8798. Must sit
+    # ABOVE the static /undertow/* mirror. Handle blocks match in
+    # source order. The canonical hook is
+    # https://api.seiche.info/undertow/paypal/hook
+    handle /undertow/paypal/* {
+        reverse_proxy 127.0.0.1:8798
+    }
+
     # Undertow LIVE relay snapshots (undertow-liverelay.service writes
     # /var/lib/undertow-relay every ~1.5s; quotes.json + klines.json).
     # no-store: the mirror 10-minute cache header would defeat a live
