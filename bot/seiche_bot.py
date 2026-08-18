@@ -83,6 +83,8 @@ LAB_CHANNEL = os.environ.get("LAB_CHANNEL_ID", "")
 LAB_LINK = "https://t.me/LiquidityLabDesk"
 PUBLIC_GOOD_FUND = "https://palimpsest.info/fund.html"
 EVIDENCE_CHANNEL = "https://t.me/EvidenceSignalDesk"
+PALIMPSEST_BOT = "https://t.me/palimpsest_watch_bot"
+NARCOSCOPE_BOT = "https://t.me/NarcoScopeEvidenceBot"
 LAB_CHANNEL_ABOUT = (
     "One morning card: funding, banks, exit cost. Public data. "
     "Gaps named, misses kept. Talk: @LiquidityLabTalk"
@@ -1248,10 +1250,11 @@ WHERE_CARD = (
     "Banks: @LiquiLens_bot\n"
     "Exit cost: @undertow_LiquiLens_bot\n\n"
     "Named-list software: https://liquilens.in/access/\n\n"
-    "Public goods for grants (not this channel):\n"
-    "Palimpsest, Evidence Signal, NarcoScope\n"
-    f"{PUBLIC_GOOD_FUND}\n"
-    f"{EVIDENCE_CHANNEL}\n\n"
+    "Public-good bots (grants, not the morning channel):\n"
+    "Palimpsest: @palimpsest_watch_bot\n"
+    "Evidence Signal: @EvidenceSignalDesk\n"
+    "NarcoScope: @NarcoScopeEvidenceBot\n"
+    f"{PUBLIC_GOOD_FUND}\n\n"
     "One lab, three desks. Public data. Misses kept."
 )
 
@@ -1271,7 +1274,7 @@ HELP = (
     "/institutions — the other desk: LiquiLens Failure Radar\n"
     "/tandem — cross-desk read: plumbing × institutions\n"
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
-    "/where — the three public desks\n"
+    "/where — the three public desks and the public-good bots\n"
     "/start — follow in DM: daily letter + state/cross-desk alerts + news\n"
     "/stop — unsubscribe in DM\n\n"
     "In a private chat, just type a question — no slash needed; the desk "
@@ -1467,7 +1470,10 @@ def keyboard_for(cmd: str) -> list | None:
             FLEET_ROW,
             [{"text": "Named-list software",
               "url": "https://liquilens.in/access/"}],
-            [{"text": "Public goods for grants", "url": PUBLIC_GOOD_FUND}],
+            [{"text": "Palimpsest bot", "url": PALIMPSEST_BOT},
+             {"text": "NarcoScope bot", "url": NARCOSCOPE_BOT}],
+            [{"text": "Evidence Signal", "url": EVIDENCE_CHANNEL},
+             {"text": "Fund the house", "url": PUBLIC_GOOD_FUND}],
         ]
     return None
 
