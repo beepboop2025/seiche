@@ -64,6 +64,18 @@ def test_ard_catalog_matches_the_registered_mcp_card():
                for entry in catalog["entries"])
 
 
+def test_security_txt_is_present_and_not_stale():
+    text = (PUBLIC / ".well-known" / "security.txt").read_text()
+    assert "Contact: https://github.com/beepboop2025/seiche/security/advisories/new" in text
+    assert "Canonical: https://seiche.info/.well-known/security.txt" in text
+    assert "Expires: 2027-08-19T00:00:00.000Z" in text
+    assert "—" not in text
+    assert "–" not in text
+    headers = (PUBLIC / "_headers").read_text()
+    assert "/.well-known/security.txt" in headers
+    assert "text/plain" in headers
+
+
 def test_ard_catalog_is_advertised_on_every_discovery_surface():
     canonical = "https://seiche.info/.well-known/ai-catalog.json"
     assert f"Agentmap: {canonical}" in (PUBLIC / "robots.txt").read_text()
