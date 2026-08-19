@@ -238,7 +238,8 @@ def test_palimpsest_and_riptide_beats_and_source_coverage():
         "VIX jumps in a volatility spike as an equity selloff turns risk-off")
     assert beat == "risk_timing" and base >= 9
     keys = {key for key, _, _ in rz.all_feeds()}
-    assert {"ooni", "citizen_lab", "china_digital_times", "rbi_press"} <= keys
+    assert {"ooni", "citizen_lab", "china_digital_times", "rbi_press",
+            "boe_press"} <= keys
     assert {"gnews_information_controls", "gnews_risk_timing"} <= keys
 
 
@@ -408,10 +409,56 @@ def test_parse_gnews_extracts_publisher_and_strips_title():
     assert items[0]["source_name"] == "Reuters"
 
 
+def test_parse_gnews_prefers_publisher_href_for_identity():
+    raw = (b'<?xml version="1.0"?><rss version="2.0"><channel>'
+           b"<item><title>Repo squeeze deepens - Reuters</title>"
+           b"<link>https://news.google.com/articles/abc</link>"
+           b"<description>&lt;a href=&quot;https://www.reuters.com/markets/repo&quot;&gt;"
+           b"Repo squeeze&lt;/a&gt;</description>"
+           b"</item></channel></rss>")
+    items = rz.parse_feed(raw, "gnews_plumbing", 0.65, NOW)
+    assert items[0]["title"] == "Repo squeeze deepens"
+    assert items[0]["source_name"] == "Reuters"
+    assert items[0]["link"] == "https://www.reuters.com/markets/repo"
+    assert rz.canonical_story_url(items[0]["link"]) == "https://reuters.com/markets/repo"
+
+
 def test_parse_atom():
     items = rz.parse_feed(ATOM_FEED, "occ", 1.0, NOW)
     assert items[0]["title"] == "Bank reserves fall"
     assert items[0]["link"] == "https://example.org/e"
+
+
+def test_parse_atom_prefers_alternate_link_and_content():
+    raw = (b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">'
+           b"<entry><title>Bank reserves fall</title>"
+           b'<link rel="self" href="https://example.org/e.xml"/>'
+           b'<link rel="alternate" href="https://example.org/e"/>'
+           b"<content>Standing repo facility usage jumped</content>"
+           b"</entry></feed>")
+    items = rz.parse_feed(raw, "blockworks", 0.6, NOW)
+    assert items[0]["link"] == "https://example.org/e"
+    assert "Standing repo facility" in items[0]["snippet"]
+
+
+def test_parse_namespaced_rss_items():
+    raw = (b'<?xml version="1.0"?>'
+           b'<rss xmlns="http://purl.org/rss/1.0/" version="2.0">'
+           b"<channel><item>"
+           b"<title>Discount window climbs</title>"
+           b"<link>https://example.org/dw</link>"
+           b"</item></channel></rss>")
+    items = rz.parse_feed(raw, "fed_press", 1.0, NOW)
+    assert items[0]["title"] == "Discount window climbs"
+    assert items[0]["link"] == "https://example.org/dw"
+
+
+def test_parse_guid_permalink_when_link_missing():
+    raw = (b"<rss><channel><item><title>Discount window climbs</title>"
+           b"<guid>https://example.org/dw-guid</guid>"
+           b"</item></channel></rss>")
+    items = rz.parse_feed(raw, "fed_press", 1.0, NOW)
+    assert items[0]["link"] == "https://example.org/dw-guid"
 
 
 def test_lenient_parser_fixes_bare_ampersand():
@@ -424,8 +471,17 @@ def test_lenient_parser_fixes_bare_ampersand():
 def test_dtd_and_entity_documents_rejected():
     evil = (b'<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY a "b">]>'
             b"<rss><channel><item><title>x</title></item></channel></rss>")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="DTD"):
         rz._lenient_root(evil)
+    bombed = b"\xef\xbb\xbf" + evil
+    with pytest.raises(ValueError, match="DTD"):
+        rz._lenient_root(bombed)
+
+
+def test_html_body_is_rejected_as_a_feed():
+    raw = b"<!DOCTYPE html><html><title>ECB press</title></html>"
+    with pytest.raises(ValueError, match="html or non-feed"):
+        rz.parse_feed(raw, "ecb", 1.0, NOW)
 
 
 def test_undated_items_do_not_read_as_fresh():
@@ -443,8 +499,9 @@ def test_conditional_get_304_serves_cache(monkeypatch):
                                  "items": [cached_item]}})
     monkeypatch.setattr(rz, "all_feeds",
                         lambda: [("fed_press", "https://fed/x", 1.0)])
-    monkeypatch.setattr(rz, "_http_get", lambda url, headers=None, timeout=20:
-                        (304, {}, b""))
+    monkeypatch.setattr(
+        rz, "_http_get",
+        lambda url, headers=None, timeout=20, allowed_hosts=None: (304, {}, b""))
     items, health = rz.fetch_feeds(NOW)
     assert health["fed_press"] == "ok (304)"
     assert items and items[0]["title"] == "Reserves debate returns"
@@ -454,7 +511,7 @@ def test_feed_failure_is_isolated_and_declared(monkeypatch):
     good = (b"<rss><channel><item><title>SOFR prints high</title>"
             b"<link>https://x</link></item></channel></rss>")
 
-    def fake(url, headers=None, timeout=20):
+    def fake(url, headers=None, timeout=20, allowed_hosts=None):
         if "bad" in url:
             raise rz.urllib.error.URLError("boom")
         return 200, {}, good
@@ -466,6 +523,93 @@ def test_feed_failure_is_isolated_and_declared(monkeypatch):
     assert health["fed_press"] == "ok"
     assert health["occ"].startswith("unavailable")
     assert len(items) == 1
+
+
+def test_html_and_oversize_and_host_pin_are_named_unavailable(monkeypatch):
+    def fake(url, headers=None, timeout=20, allowed_hosts=None):
+        if "html" in url:
+            return 200, {}, b"<!DOCTYPE html><html><p>not a feed</p></html>"
+        if "huge" in url:
+            return 200, {}, b"x" * (rz.MAX_FEED_BYTES + 8)
+        raise ValueError("redirect left allow-listed hosts")
+
+    monkeypatch.setattr(rz, "all_feeds", lambda: [
+        ("ecb", "https://ecb/html", 1.0),
+        ("fdic", "https://fdic/huge", 1.0),
+        ("fed_press", "https://fed/pin", 1.0),
+    ])
+    monkeypatch.setattr(rz, "_http_get", fake)
+    _, health = rz.fetch_feeds(NOW)
+    assert health["ecb"].startswith("unavailable: parse html")
+    assert health["fdic"] == "unavailable: oversized"
+    assert "allow-listed" in health["fed_press"]
+    text = rz.compose([], {}, health, NOW_DT)
+    assert "0 of 3 feeds answered" in text
+    assert "ecb" in text and "fdic" in text and "fed_press" in text
+
+
+def test_feed_host_pin_admits_publisher_aliases_only():
+    bbg = rz.feed_allowed_hosts(
+        "bbg_markets", "https://feeds.bloomberg.com/markets/news.rss")
+    assert rz.host_allowed("www.bloomberg.com", bbg)
+    assert rz.host_allowed("feeds.bloomberg.com", bbg)
+    assert not rz.host_allowed("evil.example", bbg)
+    assert not rz.host_allowed("notbloomberg.com", bbg)
+    gnews = rz.feed_allowed_hosts(
+        "gnews_plumbing",
+        "https://news.google.com/rss/search?q=SOFR&hl=en-US&gl=US&ceid=US:en")
+    assert rz.host_allowed("news.google.com", gnews)
+    assert not rz.host_allowed("news.example", gnews)
+    with pytest.raises(ValueError, match="allow-listed"):
+        rz.assert_redirect_allowed(
+            "https://evil.example/x", frozenset({"federalreserve.gov"}))
+    with pytest.raises(ValueError, match="https"):
+        rz.assert_redirect_allowed(
+            "http://www.federalreserve.gov/x",
+            frozenset({"federalreserve.gov"}))
+    rz.assert_redirect_allowed(
+        "https://www.federalreserve.gov/feeds/press_all.xml",
+        frozenset({"federalreserve.gov"}))
+
+
+def test_catalog_pins_official_urls_and_source_names():
+    keys = [key for key, _, _ in rz.FEEDS]
+    assert len(keys) == len(set(keys)) == 34
+    assert set(rz.SOURCE_NICE) == set(keys)
+    assert "boe_press" in keys
+    by_key = {key: url for key, url, _ in rz.FEEDS}
+    assert by_key["solana_news"].endswith("/news/rss.xml")
+    assert by_key["ethereum_blog"].endswith("/en/feed.xml")
+    assert by_key["boe_press"] == "https://www.bankofengland.co.uk/rss/news"
+    assert all(url.startswith("https://") for url in by_key.values())
+    for key, url, _tier in rz.FEEDS:
+        host = rz.urllib.parse.urlsplit(url).hostname
+        assert rz.host_allowed(host, rz.feed_allowed_hosts(key, url))
+
+
+def test_liquilens_watch_name_uses_tier_not_letter_grade(monkeypatch):
+    raw = {
+        "tiers": {"red": 1, "orange": 0, "yellow": 2, "green": 9},
+        "rows": [
+            {"name": "ESAF SFB", "tier": "red", "grade": "CCC"},
+            {"name": "Quiet Bank", "tier": "green", "grade": "A"},
+        ],
+    }
+
+    def fake_get(url, timeout=20):
+        if url.endswith("/failure-radar/board"):
+            return raw
+        return None
+
+    monkeypatch.setattr(rz, "get_json", fake_get)
+    assert rz._watch_color({"tier": "red", "grade": "CCC"}) == "red"
+    assert rz._watch_color({"grade": "CCC"}) == ""
+    assert rz._watch_color({"grade": "orange"}) == "orange"
+    boards = rz.read_boards()
+    assert boards["ll"]["top"] == "ESAF SFB"
+    assert boards["ll"]["red"] == 1
+    line = rz.board_line("bank_stress", boards)
+    assert "1 red" in line and "watch ESAF SFB" in line
 
 
 # -------------------------------------------------------------- compose ----
@@ -628,6 +772,7 @@ def test_config_shape():
     assert set(rz.DESK_NICE) == desks
     assert set(rz.DESK_PERSONAS) == desks
     assert set(rz.FALLBACK_COMMENTARY) == set(rz.BEATS)
+    assert set(rz.SOURCE_NICE) == {key for key, _, _ in rz.FEEDS}
     assert len(rz.lexicon_version()) == 12
 
 

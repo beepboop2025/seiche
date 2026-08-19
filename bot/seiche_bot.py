@@ -117,7 +117,7 @@ LAB_CHANNEL_PIN = (
     "LiquiLens (institutions): @LiquiLens_bot\n"
     "Undertow (exit cost): @undertow_LiquiLens_bot\n\n"
     "Screens, not a joint score. "
-    "Public data. Research only — not investment advice."
+    "Public data. Research only, not investment advice."
 )
 BOT_USERNAME = "seiche_desk_bot"
 BOT_URL = f"https://t.me/{BOT_USERNAME}"
@@ -1396,7 +1396,7 @@ def fmt_daily_letter() -> str:
 
 def _seiche_lane(gauge: dict | None) -> str:
     if not gauge:
-        return "🌊 Seiche: unavailable — not calm"
+        return "🌊 Seiche: unavailable, not calm"
     idx = gauge.get("index")
     idx_s = "?" if idx is None else idx
     tell = gauge.get("tell")
