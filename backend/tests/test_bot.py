@@ -687,6 +687,11 @@ def test_where_card_names_the_locked_storefront():
     assert "creator-intel" not in bot.WHERE_CARD.lower()
     assert "—" not in bot.WHERE_CARD
     assert "–" not in bot.WHERE_CARD
+    assert "—" not in bot.LAB_CHANNEL_PIN
+    assert "–" not in bot.LAB_CHANNEL_PIN
+    assert "—" not in bot._seiche_lane(None)
+    assert "–" not in bot._seiche_lane(None)
+    assert "unavailable, not calm" in bot._seiche_lane(None)
     assert "@real_economy_desk_bot" not in bot.LAB_CHANNEL_PIN
     assert "@EvidenceSignalDesk" not in bot.LAB_CHANNEL_PIN
     assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN

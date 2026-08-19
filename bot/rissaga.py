@@ -21,9 +21,10 @@ handoff, and only when the title is not junk. Creator-intel is not a
 Rissaga desk and must not get a fourth daily essay, a new bot, or
 influencer posts on the Lab channel.
 
-SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
+SOURCES, all quota free: 34 live verified RSS feeds (official regulators and
 protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
-query feeds across 19 beats. Zero GDELT calls: attention context is read from the lab's own
+query feeds across 19 beats. Official supervisor URLs are host pinned.
+Zero GDELT calls: attention context is read from the lab's own
 already published packs. Board context comes from the product APIs, with an
 explicit authority boundary where Riptide has no public board.
 
@@ -124,6 +125,7 @@ FEED_ITEM_CAP = 40
 SEEN_TTL_H = 48.0     # a marked story stays suppressed this long
 SEEN_ESCALATE = 1.3   # unless its score grows by this factor
 FEED_CACHE_TTL_H = 24.0
+MAX_FEED_BYTES = 2 * 1024 * 1024
 
 # ================================================================= BEATS ===
 # THE TUNING SURFACE. Each beat: which desk owns it, weighted terms (word
@@ -514,14 +516,17 @@ FALLBACK_COMMENTARY = {
 }
 
 # ================================================================= FEEDS ===
-# (key, url, tier). Live verified 2026-08-03; a feed that rots reports
-# unavailable in the dispatch footer instead of failing silently.
+# (key, url, tier). Live verified 2026-08-19. A feed that rots reports
+# unavailable in the dispatch footer instead of failing silently. Official
+# supervisor hosts are pinned; commercial feeds may follow only the
+# documented publisher aliases below. Paywalls and captchas are not bypassed.
 FEEDS: list[tuple[str, str, float]] = [
     ("fed_press", "https://www.federalreserve.gov/feeds/press_all.xml", 1.0),
     ("fdic", "https://public.govdelivery.com/topics/USFDIC_26/feed.rss", 1.0),
     ("occ", "https://www.occ.gov/rss/occ_news.xml", 1.0),
     ("rbi_press", "https://rbi.org.in/pressreleases_rss.xml", 1.0),
     ("ecb", "https://www.ecb.europa.eu/rss/press.html", 1.0),
+    ("boe_press", "https://www.bankofengland.co.uk/rss/news", 1.0),
     ("sec", "https://www.sec.gov/news/pressreleases.rss", 0.95),
     ("cftc_press", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", 1.0),
     ("cftc_enforcement", "https://www.cftc.gov/RSS/RSSENF/rssenf.xml", 1.0),
@@ -542,8 +547,8 @@ FEEDS: list[tuple[str, str, float]] = [
     ("decrypt", "https://decrypt.co/feed", 0.55),
     ("blockworks", "https://blockworks.co/feed", 0.6),
     ("the_defiant", "https://thedefiant.io/feed", 0.6),
-    ("ethereum_blog", "https://blog.ethereum.org/feed.xml", 0.95),
-    ("solana_news", "https://solana.com/rss.xml", 0.9),
+    ("ethereum_blog", "https://blog.ethereum.org/en/feed.xml", 0.95),
+    ("solana_news", "https://solana.com/news/rss.xml", 0.9),
     ("kraken_blog", "https://blog.kraken.com/feed", 0.85),
     ("chainalysis", "https://www.chainalysis.com/blog/feed/", 0.8),
     ("ooni", "https://ooni.org/index.xml", 0.9),
@@ -555,11 +560,27 @@ FEEDS: list[tuple[str, str, float]] = [
     ("zerohedge", "https://feeds.feedburner.com/zerohedge/feed", 0.35),
 ]
 
+# Extra hosts a named feed may land on after a same-publisher redirect.
+# www and bare hostname variants of the catalog URL are always admitted.
+FEED_REDIRECT_ALIASES: dict[str, frozenset[str]] = {
+    "bbg_markets": frozenset({"bloomberg.com", "feeds.bloomberg.com"}),
+    "bbg_econ": frozenset({"bloomberg.com", "feeds.bloomberg.com"}),
+    "blockworks": frozenset({"blockworks.com", "blockworks.co"}),
+    "zerohedge": frozenset({"feeds.feedburner.com", "feedburner.com",
+                            "zerohedge.com"}),
+    "occ": frozenset({"occ.gov", "occ.treas.gov"}),
+    "rbi_press": frozenset({"rbi.org.in"}),
+    "fdic": frozenset({"public.govdelivery.com", "govdelivery.com"}),
+    "ethereum_blog": frozenset({"blog.ethereum.org"}),
+    "the_defiant": frozenset({"thedefiant.io"}),
+}
+
 GNEWS_TIER = 0.65
 
 SOURCE_NICE = {
     "fed_press": "Federal Reserve", "fdic": "FDIC", "occ": "OCC",
-    "rbi_press": "Reserve Bank of India", "ecb": "ECB", "sec": "SEC",
+    "rbi_press": "Reserve Bank of India", "ecb": "ECB",
+    "boe_press": "Bank of England", "sec": "SEC",
     "cftc_press": "CFTC", "cftc_enforcement": "CFTC Enforcement",
     "fsb": "FSB", "bbg_markets": "Bloomberg",
     "bbg_econ": "Bloomberg Econ", "wsj_markets": "WSJ", "ft_home": "FT",
@@ -590,6 +611,59 @@ def gnews_feeds() -> list[tuple[str, str, float]]:
 
 def all_feeds() -> list[tuple[str, str, float]]:
     return FEEDS + gnews_feeds()
+
+
+def _bare_host(host: str) -> str:
+    host = (host or "").casefold().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def host_variants(host: str) -> frozenset[str]:
+    bare = _bare_host(host)
+    if not bare:
+        return frozenset()
+    return frozenset({bare, f"www.{bare}", host.casefold().rstrip(".")})
+
+
+def host_allowed(host: str, allowed: frozenset[str]) -> bool:
+    """Exact host match after stripping a leading www. No suffix tricks."""
+    target = _bare_host(host)
+    if not target:
+        return False
+    return any(_bare_host(candidate) == target for candidate in allowed)
+
+
+def feed_allowed_hosts(key: str, url: str) -> frozenset[str]:
+    """Hosts this catalog entry may fetch or follow a redirect onto."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    allowed = set(host_variants(host))
+    if key.startswith("gnews_"):
+        allowed.update(host_variants("news.google.com"))
+    allowed.update(FEED_REDIRECT_ALIASES.get(key, ()))
+    return frozenset(h for h in allowed if h)
+
+
+def assert_redirect_allowed(newurl: str, allowed: frozenset[str]) -> None:
+    parsed = urllib.parse.urlsplit(newurl)
+    if parsed.scheme != "https":
+        raise ValueError("redirect left https")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("redirect carried credentials")
+    host = parsed.hostname or ""
+    if not host_allowed(host, allowed):
+        raise ValueError("redirect left allow-listed hosts")
+
+
+class HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse a hop that leaves the catalog host (or its documented aliases)."""
+
+    def __init__(self, allowed: frozenset[str]):
+        super().__init__()
+        self.allowed = frozenset(_bare_host(h) or h for h in allowed)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        assert_redirect_allowed(newurl, self.allowed)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def lexicon_version() -> str:
@@ -681,16 +755,28 @@ def esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
-def _http_get(url: str, headers: dict | None = None, timeout: int = 20):
+def _http_get(url: str, headers: dict | None = None, timeout: int = 20,
+              allowed_hosts: frozenset[str] | None = None):
     """One raw GET: (status, headers, body bytes). 304 returns empty body.
-    The single seam every offline test stubs."""
+    The single seam every offline test stubs. Feed pulls pass an allow-list
+    and are HTTPS plus host pinned. Board JSON reads omit that pin."""
     hdrs = {"User-Agent": UA, "Accept": "application/rss+xml, application/atom+xml, "
                                         "application/json, application/xml, */*"}
     hdrs.update(headers or {})
     req = urllib.request.Request(url, headers=hdrs)
+    if allowed_hosts is not None:
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme != "https":
+            raise ValueError("refusing non-https feed URL")
+        if not host_allowed(parsed.hostname or "", allowed_hosts):
+            raise ValueError("feed host is not allow-listed")
+        opener = urllib.request.build_opener(HostPinnedRedirect(allowed_hosts))
+        opener_open = opener.open
+    else:
+        opener_open = urllib.request.urlopen
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, dict(r.headers), r.read(2 * 1024 * 1024)
+        with opener_open(req, timeout=timeout) as r:
+            return r.status, dict(r.headers), r.read(MAX_FEED_BYTES + 1)
     except urllib.error.HTTPError as exc:
         if exc.code == 304:
             return 304, dict(exc.headers or {}), b""
@@ -716,9 +802,53 @@ _ATOM = "{http://www.w3.org/2005/Atom}"
 _TAGSTRIP = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 _DTD = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)", re.I)
+_HREF = re.compile(r"""href=["'](https://[^"']+)["']""", re.I)
+_BOM = b"\xef\xbb\xbf"
+_GNEWS_TITLE_SEPS = (" - ", " | ", " \u2013 ", " \u2014 ")
 
 
-def _lenient_root(data: bytes):
+def _local_tag(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if tag.startswith("{") else tag
+
+
+def _iter_local(root, name: str):
+    for el in root.iter():
+        if _local_tag(el.tag) == name:
+            yield el
+
+
+def _child_text(node, *names: str) -> str:
+    wanted = set(names)
+    for child in node:
+        if _local_tag(child.tag) in wanted:
+            text = "".join(child.itertext()) if child.text or list(child) else ""
+            if text and text.strip():
+                return text
+    return ""
+
+
+def _child_el(node, name: str):
+    for child in node:
+        if _local_tag(child.tag) == name:
+            return child
+    return None
+
+
+def _looks_like_xml_feed(data: bytes) -> bool:
+    head = data.lstrip()[:480].lower()
+    if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
+        return False
+    return (head.startswith(b"<?xml") or b"<rss" in head or b"<feed" in head
+            or b"<rdf" in head)
+
+
+def _prepare_feed_bytes(data: bytes) -> bytes:
+    if data.startswith(_BOM):
+        data = data[3:]
+    if not data.strip():
+        raise ValueError("empty feed body")
+    if not _looks_like_xml_feed(data):
+        raise ValueError("html or non-feed body")
     # Stdlib ElementTree never resolves external entities, but entity
     # expansion (billion laughs) depends on the system expat. No legitimate
     # RSS or Atom feed ships a DTD, so any document that declares one is
@@ -726,6 +856,11 @@ def _lenient_root(data: bytes):
     # the fleet's single file stdlib deploy contract.
     if _DTD.search(data[:4096]):
         raise ValueError("DTD or entity declaration rejected")
+    return data
+
+
+def _lenient_root(data: bytes):
+    data = _prepare_feed_bytes(data)
     try:
         return ET.fromstring(data)
     except ET.ParseError:
@@ -754,38 +889,96 @@ def _clean_text(s: str) -> str:
     return _WS.sub(" ", html.unescape(_TAGSTRIP.sub(" ", s or ""))).strip()
 
 
+def _split_gnews_title(title: str) -> tuple[str, str]:
+    for sep in _GNEWS_TITLE_SEPS:
+        if sep in title:
+            left, _, right = title.rpartition(sep)
+            left, right = left.strip(), right.strip()
+            if left and right:
+                return left, right
+    return title, ""
+
+
+def _gnews_origin_url(raw_description: str) -> str:
+    """First non-Google https href in the Google News description HTML."""
+    for href in _HREF.findall(raw_description or ""):
+        host = (urllib.parse.urlsplit(href).hostname or "").casefold()
+        if host and "google." not in host:
+            return href
+    return ""
+
+
+def _rss_link(node) -> str:
+    link_el = _child_el(node, "link")
+    if link_el is not None:
+        href = (link_el.get("href") or "").strip()
+        text = (link_el.text or "").strip()
+        if href or text:
+            return href or text
+    guid = _child_text(node, "guid", "id").strip()
+    if guid and canonical_story_url(guid):
+        return guid
+    return ""
+
+
+def _atom_link(node) -> str:
+    preferred = ""
+    for child in node:
+        if _local_tag(child.tag) != "link":
+            continue
+        href = (child.get("href") or "").strip()
+        if not href:
+            continue
+        rel = (child.get("rel") or "alternate").casefold()
+        if rel in {"alternate", ""}:
+            return href
+        if not preferred:
+            preferred = href
+    if preferred:
+        return preferred
+    ident = _child_text(node, "id").strip()
+    if ident and canonical_story_url(ident):
+        return ident
+    return ""
+
+
 def parse_feed(data: bytes, key: str, tier: float, now_ts: float) -> list[dict]:
     """RSS2 or Atom bytes to item dicts. An undated item is treated as 12h
     old rather than fresh, so a feed without dates cannot dominate."""
     root = _lenient_root(data)
     fallback_ts = now_ts - 12 * 3600
     items = []
-    for it in root.iter("item"):
-        title = _clean_text(it.findtext("title") or "")
-        link = (it.findtext("link") or "").strip()
-        src_el = it.find("source")
+    for it in _iter_local(root, "item"):
+        title = _clean_text(_child_text(it, "title"))
+        raw_desc = _child_text(it, "description", "summary", "encoded", "content")
+        link = _rss_link(it)
+        src_el = _child_el(it, "source")
         source_name = (_clean_text(src_el.text if src_el is not None else "")
                        or SOURCE_NICE.get(key, key))
-        if key.startswith("gnews_") and " - " in title:
-            title, _, tail = title.rpartition(" - ")
-            source_name = _clean_text(tail) or source_name
+        if key.startswith("gnews_"):
+            title, publisher = _split_gnews_title(title)
+            if publisher:
+                source_name = publisher
+            origin = _gnews_origin_url(raw_desc)
+            if origin:
+                link = origin
         items.append({
             "key": key, "tier": tier, "title": title, "link": link,
-            "snippet": _clean_text(it.findtext("description") or "")[:300],
+            "snippet": _clean_text(raw_desc)[:300],
             "source_name": source_name,
-            "ts": _parse_ts(it.findtext("pubDate") or "", fallback_ts),
+            "ts": _parse_ts(_child_text(it, "pubDate", "date", "updated",
+                                        "published"), fallback_ts),
         })
     if not items:
-        for e in root.iter(f"{_ATOM}entry"):
-            link_el = e.find(f"{_ATOM}link")
+        for e in _iter_local(root, "entry"):
             items.append({
                 "key": key, "tier": tier,
-                "title": _clean_text(e.findtext(f"{_ATOM}title") or ""),
-                "link": (link_el.get("href") if link_el is not None else "") or "",
-                "snippet": _clean_text(e.findtext(f"{_ATOM}summary") or "")[:300],
+                "title": _clean_text(_child_text(e, "title")),
+                "link": _atom_link(e),
+                "snippet": _clean_text(_child_text(e, "summary", "content"))[:300],
                 "source_name": SOURCE_NICE.get(key, key),
-                "ts": _parse_ts(e.findtext(f"{_ATOM}updated")
-                                or e.findtext(f"{_ATOM}published") or "", fallback_ts),
+                "ts": _parse_ts(_child_text(e, "updated", "published", "date"),
+                                fallback_ts),
             })
     return [it for it in items if it["title"]][:FEED_ITEM_CAP]
 
@@ -804,21 +997,31 @@ def fetch_feeds(now_ts: float) -> tuple[list[dict], dict]:
             hdrs["If-None-Match"] = entry["etag"]
         if entry.get("last_modified"):
             hdrs["If-Modified-Since"] = entry["last_modified"]
+        allowed = feed_allowed_hosts(key, url)
         try:
-            status, rh, body = _http_get(url, headers=hdrs)
+            status, rh, body = _http_get(url, headers=hdrs,
+                                        allowed_hosts=allowed)
+        except ValueError as exc:
+            return key, f"unavailable: {exc}", entry, None
         except Exception as exc:
             return key, f"unavailable: {type(exc).__name__}", entry, None
         if status == 304 and entry.get("items"):
             return key, "ok (304)", entry, entry["items"]
         if status != 200:
             return key, f"unavailable: http {status}", entry, None
+        if len(body) > MAX_FEED_BYTES:
+            return key, "unavailable: oversized", entry, None
         try:
             parsed = parse_feed(body, key, tier, now_ts)
+        except ValueError as exc:
+            reason = str(exc).split(":", 1)[0].strip() or type(exc).__name__
+            return key, f"unavailable: parse {reason}", entry, None
         except Exception as exc:
             return key, f"unavailable: parse {type(exc).__name__}", entry, None
         fresh = {"etag": rh.get("ETag") or rh.get("Etag"),
                  "last_modified": rh.get("Last-Modified"),
-                 "fetched_ts": now_ts, "items": parsed}
+                 "fetched_ts": now_ts, "last_ok_ts": now_ts,
+                 "items": parsed}
         return key, "ok", fresh, parsed
 
     feeds = all_feeds()
@@ -843,6 +1046,16 @@ def fetch_feeds(now_ts: float) -> tuple[list[dict], dict]:
 
 
 # ----------------------------------------------------------- board reads ---
+def _watch_color(row: dict) -> str:
+    """LiquiLens watchlist color. Prefer `tier`; accept `grade` only when
+    it is itself a published color, never a registry letter."""
+    for key in ("tier", "grade"):
+        val = str(row.get(key) or "").lower()
+        if val in ("red", "orange", "yellow", "green"):
+            return val
+    return ""
+
+
 def read_boards() -> dict:
     """The lab's own surfaces, each independent, absence declared."""
     def grab(name, url, dig):
@@ -863,15 +1076,17 @@ def read_boards() -> dict:
                 "loudest_attention": latest.get("loudest_attention")}
 
     def d_ll_board(d):
-        # live shape 2026-08-03: top level tiers counts, rows carry grade
+        # live shape 2026-08-19: top-level tiers counts, rows carry the
+        # published watchlist `tier` (red/orange/yellow/green). `grade` is
+        # the registry letter and must not hide a watch color.
         tiers = d.get("tiers") if isinstance(d.get("tiers"), dict) else {}
         counts = {str(k).lower(): int(v) for k, v in tiers.items()
                   if isinstance(v, (int, float))}
         rows = d.get("rows") or []
         top = None
         for r in rows if isinstance(rows, list) else []:
-            g = str(r.get("grade") or r.get("tier") or "").lower()
-            if g in ("red", "orange"):
+            color = _watch_color(r)
+            if color in ("red", "orange"):
                 top = r.get("name") or r.get("slug")
                 break
         total = sum(counts.values()) or (len(rows) if isinstance(rows, list) else 0)
