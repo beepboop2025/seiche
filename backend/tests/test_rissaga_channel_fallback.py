@@ -130,9 +130,14 @@ def test_crypto_shared_candidate_refused_before_first_send(isolated, monkeypatch
     assert not marker_path.exists()
 
 
-def test_side_desk_shared_candidate_refused_before_first_send(isolated, monkeypatch):
+@pytest.mark.parametrize("desk", [
+    "PALIMPSEST", "RIPTIDE", "CORPORATE", "REALECON",
+    "CREATOR", "CREATOR_INTEL", "INFLUENCER",
+])
+def test_side_desk_shared_candidate_refused_before_first_send(
+        isolated, monkeypatch, desk):
     latest, marker_path = isolated
-    write_json(latest, payload([item(1, "PALIMPSEST")]))
+    write_json(latest, payload([item(1, desk)]))
     monkeypatch.setattr(
         fb, "publish", lambda _message: pytest.fail("partial run published")
     )
@@ -380,6 +385,12 @@ def test_units_schedule_hardening_and_prose_rules():
         "ExecStart=/usr/bin/env RISSAGA_CHANNEL_MODE=hermes "
         "/usr/bin/python3 /opt/rissaga/rissaga.py --run"
     ) in producer
+    assert "RISSAGA_NEWS_CHANNEL_ID" in producer
+    assert "Do not set RISSAGA_NEWS_CHANNEL_ID" in producer
+    assert fb.SHARED_CHANNEL_EXCLUDED_DESKS == {
+        "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
+        "CREATOR", "CREATOR_INTEL", "INFLUENCER",
+    }
     for name in (
         "seiche-bot-alert.service",
         "seiche-bot-letter.service",

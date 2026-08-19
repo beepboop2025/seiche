@@ -16,4 +16,6 @@ StateDirectory=rissaga
 StateDirectoryMode=0755
 # EnvironmentFile settings override Environment settings in systemd. Pin the
 # sole publisher at the process boundary so a stale file cannot restore direct.
+# Do not set RISSAGA_NEWS_CHANNEL_ID. Hermes owns news. Seiche owns the
+# one daily Lab card. A leftover value is refused at process start.
 ExecStart=/usr/bin/env RISSAGA_CHANNEL_MODE=hermes /usr/bin/python3 /opt/rissaga/rissaga.py --run

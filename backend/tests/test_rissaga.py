@@ -238,8 +238,7 @@ def test_palimpsest_and_riptide_beats_and_source_coverage():
         "VIX jumps in a volatility spike as an equity selloff turns risk-off")
     assert beat == "risk_timing" and base >= 9
     keys = {key for key, _, _ in rz.all_feeds()}
-    assert {"ooni", "citizen_lab", "china_digital_times", "rbi_press",
-            "boe_press"} <= keys
+    assert {"ooni", "citizen_lab", "china_digital_times", "rbi_press"} <= keys
     assert {"gnews_information_controls", "gnews_risk_timing"} <= keys
 
 
@@ -574,13 +573,12 @@ def test_feed_host_pin_admits_publisher_aliases_only():
 
 def test_catalog_pins_official_urls_and_source_names():
     keys = [key for key, _, _ in rz.FEEDS]
-    assert len(keys) == len(set(keys)) == 34
+    assert len(keys) == len(set(keys)) == 33
     assert set(rz.SOURCE_NICE) == set(keys)
-    assert "boe_press" in keys
+    assert "boe_press" not in keys
     by_key = {key: url for key, url, _ in rz.FEEDS}
     assert by_key["solana_news"].endswith("/news/rss.xml")
     assert by_key["ethereum_blog"].endswith("/en/feed.xml")
-    assert by_key["boe_press"] == "https://www.bankofengland.co.uk/rss/news"
     assert all(url.startswith("https://") for url in by_key.values())
     for key, url, _tier in rz.FEEDS:
         host = rz.urllib.parse.urlsplit(url).hostname
@@ -653,6 +651,27 @@ def test_invalid_channel_mode_exits_before_fetch_or_state_mutation(
 
     assert rz.main(["rissaga.py", "--run"]) == 2
     assert "RISSAGA_CHANNEL_MODE must be hermes or off" in capsys.readouterr().err
+    assert os.listdir(rz.STATE_DIR) == []
+
+
+@pytest.mark.parametrize("news_channel", [
+    "-1004297805949",
+    "@LiquidityLabDesk",
+    "12345",
+])
+def test_retired_news_channel_id_exits_before_fetch(
+        monkeypatch, capsys, news_channel):
+    monkeypatch.setattr(rz, "CHANNEL_MODE", "hermes")
+    monkeypatch.setattr(rz, "NEWS_CHANNEL_ID", news_channel)
+    monkeypatch.setattr(rz, "TOKEN", "test-token")
+    monkeypatch.setattr(
+        rz, "gather", lambda *_args, **_kwargs: pytest.fail("fetch attempted")
+    )
+
+    assert rz.main(["rissaga.py", "--run"]) == 2
+    err = capsys.readouterr().err
+    assert "RISSAGA_NEWS_CHANNEL_ID must stay unset" in err
+    assert "one Lab card" in err
     assert os.listdir(rz.STATE_DIR) == []
 
 
@@ -898,6 +917,8 @@ def test_rissaga_reserves_creator_intel_off_the_lab_and_invents_no_desk():
     assert reserved.isdisjoint(rz.DESK_NICE)
     assert reserved.isdisjoint(rz.DESK_PERSONAS)
     assert all(spec["desk"] not in reserved for spec in rz.BEATS.values())
+    import rissaga_channel_fallback as fb
+    assert fb.SHARED_CHANNEL_EXCLUDED_DESKS == rz.SHARED_CHANNEL_EXCLUDED_DESKS
 
 
 def test_shared_channel_excludes_side_desks_and_junk_crypto_titles():

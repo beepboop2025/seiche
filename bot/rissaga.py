@@ -21,7 +21,7 @@ handoff, and only when the title is not junk. Creator-intel is not a
 Rissaga desk and must not get a fourth daily essay, a new bot, or
 influencer posts on the Lab channel.
 
-SOURCES, all quota free: 34 live verified RSS feeds (official regulators and
+SOURCES, all quota free: 33 live verified RSS feeds (official regulators and
 protocol publishers tier 1.0 down to market blogs 0.35) plus 18 Google News
 query feeds across 19 beats. Official supervisor URLs are host pinned.
 Zero GDELT calls: attention context is read from the lab's own
@@ -75,6 +75,9 @@ OWNER_CHAT = os.environ.get("RISSAGA_OWNER_CHAT", "8727818928")
 # A missing deployment setting fails quiet. Every other value is invalid.
 CHANNEL_MODE = os.environ.get("RISSAGA_CHANNEL_MODE", "off").strip().lower()
 ALLOWED_CHANNEL_MODES = frozenset({"hermes", "off"})
+# Retired direct publisher. A leftover value, especially the Lab chat,
+# would turn Hermes news into a second morning essay. Refuse to run.
+NEWS_CHANNEL_ID = os.environ.get("RISSAGA_NEWS_CHANNEL_ID", "").strip()
 LATEST_EXPORT = "latest.json"    # world readable handoff for the Hermes lane
 OUTBOX_EXPORT = "outbox.jsonl"   # durable multi-desk subscriber handoff
 MAX_CHANNEL_POSTS = 1
@@ -526,7 +529,6 @@ FEEDS: list[tuple[str, str, float]] = [
     ("occ", "https://www.occ.gov/rss/occ_news.xml", 1.0),
     ("rbi_press", "https://rbi.org.in/pressreleases_rss.xml", 1.0),
     ("ecb", "https://www.ecb.europa.eu/rss/press.html", 1.0),
-    ("boe_press", "https://www.bankofengland.co.uk/rss/news", 1.0),
     ("sec", "https://www.sec.gov/news/pressreleases.rss", 0.95),
     ("cftc_press", "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", 1.0),
     ("cftc_enforcement", "https://www.cftc.gov/RSS/RSSENF/rssenf.xml", 1.0),
@@ -579,8 +581,7 @@ GNEWS_TIER = 0.65
 
 SOURCE_NICE = {
     "fed_press": "Federal Reserve", "fdic": "FDIC", "occ": "OCC",
-    "rbi_press": "Reserve Bank of India", "ecb": "ECB",
-    "boe_press": "Bank of England", "sec": "SEC",
+    "rbi_press": "Reserve Bank of India", "ecb": "ECB", "sec": "SEC",
     "cftc_press": "CFTC", "cftc_enforcement": "CFTC Enforcement",
     "fsb": "FSB", "bbg_markets": "Bloomberg",
     "bbg_econ": "Bloomberg Econ", "wsj_markets": "WSJ", "ft_home": "FT",
@@ -2205,6 +2206,11 @@ def validate_channel_mode() -> None:
     if CHANNEL_MODE not in ALLOWED_CHANNEL_MODES:
         raise ConfigurationError(
             "RISSAGA_CHANNEL_MODE must be hermes or off"
+        )
+    if NEWS_CHANNEL_ID:
+        raise ConfigurationError(
+            "RISSAGA_NEWS_CHANNEL_ID must stay unset: Hermes owns news, "
+            "Seiche owns the one Lab card"
         )
 
 
