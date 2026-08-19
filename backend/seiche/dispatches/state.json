@@ -1,37 +1,16 @@
 {
-  "date": "2026-08-18",
+  "date": "2026-08-19",
   "reported_prev": {
-    "Reverse repo with foreign official accounts": "2026-08-12",
-    "Canadian dollars per USD (H.10)": "2026-08-07",
-    "S&P 500 index": "2026-08-14"
-  },
-  "reported": {
     "Reverse repo with foreign official accounts": "2026-08-12",
     "2y Treasury constant maturity yield": "2026-08-14"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 47.0,
-    "decomp": {
-      "weather": 11.7,
-      "kink": 7.4,
-      "resonance": 7.1,
-      "rvxray": 6.6,
-      "confession": 3.3,
-      "buffers": 3.2,
-      "undertow": 3.0,
-      "warehouse": 2.6,
-      "tails": 2.0,
-      "hydrophone": 0.0
-    },
-    "crunch": {
-      "date": "2026-08-31",
-      "worst_case_b": 2849.6,
-      "settlement_b": null
-    },
-    "tell": 37.3
+  "reported": {
+    "Reverse repo with foreign official accounts": "2026-08-12",
+    "DVP repo total volume (preliminary)": "2026-08-17",
+    "2y Treasury constant maturity yield": "2026-08-17",
+    "30y Treasury constant maturity yield": "2026-08-17"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "STRAIN",
     "value": 45.3,
     "decomp": {
@@ -53,5 +32,28 @@
       "settlement_b": 95.0
     },
     "tell": 38.7
+  },
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.6,
+    "decomp": {
+      "weather": 11.0,
+      "kink": 6.9,
+      "resonance": 6.7,
+      "rvxray": 6.2,
+      "confession": 3.1,
+      "buffers": 3.0,
+      "undertow": 2.8,
+      "warehouse": 2.4,
+      "tails": 2.3,
+      "auctions": 1.0,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-25",
+      "worst_case_b": 2897.6,
+      "settlement_b": 282.0
+    },
+    "tell": 35.4
   }
 }
