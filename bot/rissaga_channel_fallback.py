@@ -33,6 +33,11 @@ HELPER_PATH = os.environ.get(
 )
 MAX_AGE = timedelta(hours=8)
 MAX_CANDIDATES = 2
+# Same shared-slot denylist as rissaga.py. News is not the Lab letter.
+SHARED_CHANNEL_EXCLUDED_DESKS = frozenset({
+    "CRYPTO", "PALIMPSEST", "CORPORATE", "REALECON", "RIPTIDE",
+    "CREATOR", "CREATOR_INTEL", "INFLUENCER",
+})
 
 
 class HandoffError(ValueError):
@@ -118,7 +123,7 @@ def select_candidates(payload: dict) -> list[dict]:
                     raise HandoffError(
                         "crypto route belongs to its dedicated channel"
                     )
-                if desk in {"PALIMPSEST", "RIPTIDE", "CORPORATE", "REALECON"}:
+                if desk in SHARED_CHANNEL_EXCLUDED_DESKS:
                     raise HandoffError(
                         "side desk is not a shared-channel candidate"
                     )
