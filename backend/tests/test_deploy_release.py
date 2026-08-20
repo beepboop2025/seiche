@@ -1827,6 +1827,54 @@ def test_release_poller_units_are_inert_until_an_explicit_handoff():
     assert "WantedBy=timers.target" in timer
 
 
+def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
+    service = RELEASE_POLLER_SERVICE.read_text()
+    market_installer = MARKET_INSTALLER.read_text()
+    writable_paths = {
+        path
+        for line in service.splitlines()
+        if line.startswith("ReadWritePaths=")
+        for path in line.removeprefix("ReadWritePaths=").split()
+    }
+    capabilities = next(
+        line.removeprefix("CapabilityBoundingSet=").split()
+        for line in service.splitlines()
+        if line.startswith("CapabilityBoundingSet=")
+    )
+
+    # The production failure this contract guards: systemd must not reject the
+    # installer's reviewed 2750 export chmod before candidate health can run.
+    assert 'chmod 2750 "$FUNDING_EXPORT_DIR"' in market_installer
+    assert "RestrictSUIDSGID=false" in service
+    assert "CAP_FSETID" in capabilities
+    assert "/var/lib/seiche" in writable_paths
+
+    # Allowing that one setgid collaboration directory does not reopen the
+    # controller's host namespace or privilege-escalation surfaces.
+    assert "NoNewPrivileges=true" in service
+    assert "ProtectSystem=strict" in service
+    assert "ProtectHome=read-only" in service
+    assert "AmbientCapabilities=" in service
+    assert capabilities == [
+        "CAP_AUDIT_WRITE",
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_DAC_READ_SEARCH",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_SETGID",
+        "CAP_SETUID",
+    ]
+    assert "/etc/seiche" in writable_paths
+    assert "/etc/systemd/system" in writable_paths
+    assert "/etc/caddy" in writable_paths
+    assert "/" not in writable_paths
+    assert "/opt" not in writable_paths
+    assert "/usr" not in writable_paths
+    assert "/usr/local" not in writable_paths
+
+
 def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     wrapper = DEPLOY_WRAPPER.read_text()
     promotion = wrapper[

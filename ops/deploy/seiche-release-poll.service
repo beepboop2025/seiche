@@ -16,6 +16,30 @@ UMask=0077
 Nice=10
 CPUWeight=10
 IOWeight=10
+NoNewPrivileges=true
+# The root wrapper deliberately applies mode 2750 to the one exported funding
+# directory shared with the Lab reader group. RestrictSUIDSGID=yes blocks that
+# reviewed chmod before the candidate can even restart. Keep the capability
+# narrow instead: CAP_FSETID is present, executable/config roots remain
+# read-only except for the exact deployment paths, and the signer pin has its
+# own explicit read-only mount below.
+RestrictSUIDSGID=false
+CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_KILL CAP_SETGID CAP_SETUID
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+# Candidate checkout, controller state, the market repository/export, and the
+# rollback-owned acceptance marker are the only application data this root
+# controller may change. /opt, /usr/local (including ExecStart), other homes,
+# and unrelated /var state stay read-only in the service mount namespace.
+ReadWritePaths=/home/seiche /root
+ReadWritePaths=/var/lib/seiche-control /var/lib/seiche-deploy /var/lib/seiche /var/backups/seiche-market
+ReadWritePaths=/run/seiche-control /run/seiche-deploy /run/seiche-release /run/lock
+# These roots contain only root-owned release configuration. The rc paths are
+# needed because Debian's `systemctl enable postgresql` synchronizes its SysV
+# compatibility links even when the native unit is already enabled.
+ReadWritePaths=/etc/seiche /etc/systemd/system /etc/caddy
+ReadWritePaths=-/etc/rc0.d -/etc/rc1.d -/etc/rc2.d -/etc/rc3.d -/etc/rc4.d -/etc/rc5.d -/etc/rc6.d -/etc/rcS.d
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -24,7 +48,6 @@ ProtectClock=true
 ProtectHostname=true
 PrivateTmp=true
 PrivateDevices=true
-RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
 RestrictNamespaces=true
