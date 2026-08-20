@@ -46,11 +46,13 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import date as calendar_date
 from typing import Any
 
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
@@ -651,6 +653,7 @@ TOOLS: dict[str, tuple] = {
                     "type": "string",
                     "description": "Calendar date as YYYY-MM-DD (e.g. 2019-09-17).",
                     "pattern": r"^\d{4}-\d{2}-\d{2}$",
+                    "format": "date",
                 }
             },
             "required": ["date"],
@@ -767,6 +770,9 @@ TOOLS: dict[str, tuple] = {
                 "question": {
                     "type": "string",
                     "description": "Your question about funding conditions (1-600 chars).",
+                    "minLength": 1,
+                    "maxLength": 600,
+                    "pattern": r"\S",
                 }
             },
             "required": ["question"],
@@ -947,6 +953,118 @@ def _error(msg_id: Any, code: int, message: str, data: Any = None) -> dict:
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": msg_id, "error": err}
+
+
+def _schema_type_matches(value: Any, expected: str) -> bool:
+    """The small JSON-Schema type surface used by MCP tool arguments."""
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return False
+
+
+def _schema_error(value: Any, schema: dict, path: str) -> str | None:
+    """Validate the bounded JSON-Schema subset published by ``TOOLS``.
+
+    This is deliberately stdlib-only. Tool schemas currently need object,
+    scalar and array types, required/properties/additionalProperties, string
+    bounds/pattern/date, enums and array items. Unknown schema keywords remain
+    annotations rather than silently widening one of these enforced bounds.
+    """
+    expected = schema.get("type")
+    if isinstance(expected, str) and not _schema_type_matches(value, expected):
+        return f"{path} must be {expected}"
+
+    choices = schema.get("enum")
+    if isinstance(choices, list) and value not in choices:
+        return f"{path} must be one of {choices}"
+
+    if expected == "object":
+        properties = schema.get("properties") or {}
+        required = schema.get("required") or []
+        missing = [name for name in required if name not in value]
+        if missing:
+            return f"missing required argument(s): {', '.join(missing)}"
+        if schema.get("additionalProperties") is False:
+            extras = sorted(str(name) for name in value if name not in properties)
+            if extras:
+                return f"unknown argument(s): {', '.join(extras)}"
+        for name, child_schema in properties.items():
+            if name in value and isinstance(child_schema, dict):
+                error = _schema_error(value[name], child_schema, f"{path}.{name}")
+                if error:
+                    return error
+
+    if expected == "array" and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(value):
+            error = _schema_error(item, schema["items"], f"{path}[{index}]")
+            if error:
+                return error
+
+    if expected == "string":
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return f"{path} must be at least {minimum} character(s)"
+        if isinstance(maximum, int) and len(value) > maximum:
+            return f"{path} must be at most {maximum} character(s)"
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            return f"{path} does not match its required pattern"
+        if schema.get("format") == "date":
+            try:
+                parsed = calendar_date.fromisoformat(value)
+            except ValueError:
+                return f"{path} must be a real calendar date as YYYY-MM-DD"
+            if parsed.isoformat() != value:
+                return f"{path} must be a real calendar date as YYYY-MM-DD"
+
+    return None
+
+
+def preflight_tool_call(msg: Any, public: bool | None = None) -> dict | None:
+    """Purely validate a paid ``tools/call`` before money can settle.
+
+    No handler runs here: the check is safe before payment verification and
+    covers the JSON-RPC envelope, request semantics, tool visibility and the
+    exact input schema advertised for that tool. ``None`` means dispatch may
+    proceed; otherwise the returned JSON-RPC error is safe to send as-is.
+    """
+    if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
+        msg_id = msg.get("id") if isinstance(msg, dict) else None
+        return _error(msg_id, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
+    msg_id = msg.get("id")
+    if "id" not in msg:
+        return _error(None, INVALID_REQUEST,
+                      "paid tools/call must be a request, not a notification")
+    if msg.get("method") != "tools/call":
+        return _error(msg_id, METHOD_NOT_FOUND,
+                      f"method not found: {msg.get('method')}")
+    params = msg.get("params")
+    if not isinstance(params, dict):
+        return _error(msg_id, INVALID_PARAMS, "tools/call params must be an object")
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        return _error(msg_id, INVALID_PARAMS, "tools/call name must be a string")
+    entry = _visible_tools(public).get(name)
+    if entry is None:
+        return _error(msg_id, INVALID_PARAMS, f"unknown tool '{name}'")
+    arguments = params.get("arguments", {})
+    error = _schema_error(arguments, entry[2], "arguments")
+    if error:
+        return _error(msg_id, INVALID_PARAMS, error)
+    return None
 
 
 def _server_version() -> str:

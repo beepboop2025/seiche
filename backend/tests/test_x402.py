@@ -28,9 +28,10 @@ def client(tmp_path, monkeypatch, fake_snap):
     return TestClient(api.app)
 
 
-def _call(tool, msg_id=1):
+def _call(tool, msg_id=1, arguments=None):
     return {"jsonrpc": "2.0", "id": msg_id, "method": "tools/call",
-            "params": {"name": tool, "arguments": {}}}
+            "params": {"name": tool,
+                       "arguments": {} if arguments is None else arguments}}
 
 
 def _payment_header(payload=None):
@@ -67,6 +68,13 @@ def test_anon_priced_tool_gets_402_with_requirements(client, monkeypatch):
     assert req["maxAmountRequired"] == "20000"   # $0.02 in USDC atomic units
 
 
+def test_unpaid_priced_tool_keeps_402_before_argument_disclosure(client, monkeypatch):
+    _enable(monkeypatch)
+    r = client.post("/mcp", json=_call("replay_asof"))
+    assert r.status_code == 402
+    assert r.json()["accepts"][0]["description"].endswith("replay_asof")
+
+
 def test_public_tools_stay_free(client, monkeypatch):
     _enable(monkeypatch)
     r = client.post("/mcp", json=_call("funding_stress_now"))
@@ -97,6 +105,84 @@ def test_tools_list_advertises_paid_tools(client, monkeypatch):
 
 
 # ---- paid path (facilitator mocked) ------------------------------------------
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {
+            "jsonrpc": "1.0", "id": 1, "method": "tools/call",
+            "params": {"name": PAID_TOOL, "arguments": {}},
+        },
+        {
+            "jsonrpc": "2.0", "method": "tools/call",
+            "params": {"name": PAID_TOOL, "arguments": {}},
+        },
+        _call("replay_asof"),
+        _call("replay_asof", arguments={"date": "2026-02-30"}),
+        _call("ask_desk", arguments={"question": "   "}),
+        _call(PAID_TOOL, arguments={"unexpected": True}),
+        _call(PAID_TOOL, arguments=[]),
+        {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["not", "an", "object"],
+        },
+        {
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": [PAID_TOOL], "arguments": {}},
+        },
+        {
+            "jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+            "params": {"name": PAID_TOOL, "arguments": {}},
+        },
+        _call("no_such_tool"),
+    ],
+    ids=[
+        "jsonrpc-version", "notification", "missing-required",
+        "invalid-calendar-date", "blank-required", "unknown-argument",
+        "arguments-not-object", "params-not-object", "name-not-string",
+        "wrong-method", "unknown-tool",
+    ],
+)
+def test_invalid_dispatch_preconditions_never_reach_facilitator(
+        client, monkeypatch, body):
+    _enable(monkeypatch)
+    calls = []
+
+    def fake_post(path, payload):
+        calls.append((path, payload))
+        return {"isValid": True, "success": True,
+                "transaction": "must-not-settle", "network": "base"}
+
+    monkeypatch.setattr(x402, "_facilitator_post", fake_post)
+    r = client.post("/mcp", json=body,
+                    headers={"X-PAYMENT": _payment_header()})
+
+    assert r.status_code == 400
+    assert calls == []
+    assert "X-PAYMENT-RESPONSE" not in r.headers
+
+
+def test_invalid_bearer_never_falls_through_to_wallet_charge(client, monkeypatch):
+    _enable(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        x402, "_facilitator_post",
+        lambda path, body: calls.append((path, body)) or {"isValid": True},
+    )
+
+    r = client.post(
+        "/mcp",
+        json=_call(PAID_TOOL),
+        headers={
+            "Authorization": "Bearer expired-or-invalid",
+            "X-PAYMENT": _payment_header(),
+        },
+    )
+
+    assert r.status_code == 401
+    assert r.headers["WWW-Authenticate"] == 'Bearer realm="seiche"'
+    assert calls == []
+
 
 def test_valid_payment_serves_tool_and_returns_receipt(client, monkeypatch):
     _enable(monkeypatch)
@@ -169,6 +255,10 @@ def test_payment_on_batch_or_free_tool_is_rejected(client, monkeypatch):
     r = client.post("/mcp", json=[_call(PAID_TOOL, 1), _call(PAID_TOOL, 2)],
                     headers={"X-PAYMENT": _payment_header()})
     assert r.status_code == 400
+    # A one-message JSON-RPC batch is still a batch and cannot carry x402.
+    r = client.post("/mcp", json=[_call(PAID_TOOL)],
+                    headers={"X-PAYMENT": _payment_header()})
+    assert r.status_code == 400
     # payment attached to a free tool: also refused (nothing to buy)
     r = client.post("/mcp", json=_call("funding_stress_now"),
                     headers={"X-PAYMENT": _payment_header()})
@@ -184,3 +274,29 @@ def test_paid_call_does_not_burn_anon_quota(client, monkeypatch):
                     headers={"X-PAYMENT": _payment_header()})
     assert r.status_code == 200
     assert "X-MCP-Usage-Used" not in r.headers
+
+
+def test_post_settlement_tool_failure_keeps_receipt_for_reconciliation(
+        client, monkeypatch):
+    _enable(monkeypatch)
+    calls = []
+
+    def fake_post(path, body):
+        calls.append(path)
+        if path == "/verify":
+            return {"isValid": True}
+        return {"success": True, "transaction": "0xsettled", "network": "base"}
+
+    def fail_snapshot(force=False):
+        raise RuntimeError("snapshot failed after settlement")
+
+    monkeypatch.setattr(x402, "_facilitator_post", fake_post)
+    monkeypatch.setattr(mcp_server, "_get_snapshot", fail_snapshot)
+    r = client.post("/mcp", json=_call(PAID_TOOL),
+                    headers={"X-PAYMENT": _payment_header()})
+
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is True
+    assert calls == ["/verify", "/settle"]
+    receipt = json.loads(base64.b64decode(r.headers["X-PAYMENT-RESPONSE"]))
+    assert receipt["transaction"] == "0xsettled"
