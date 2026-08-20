@@ -114,12 +114,16 @@ api.seiche.info {
         reverse_proxy 127.0.0.1:8792
     }
 
-    # Undertow PayPal webhook (card rail). Loopback :8798. Must sit
-    # ABOVE the static /undertow/* mirror. Handle blocks match in
-    # source order. The canonical hook is
-    # https://api.seiche.info/undertow/paypal/hook
+    # Undertow PayPal webhook (card rail) is DORMANT. Keep an intentional,
+    # bounded response above the static mirror instead of proxying to the
+    # absent :8798 service and leaking a generic 502. Activation requires the
+    # recorded readiness preflight in docs/PAYPAL.md before this may proxy.
     handle /undertow/paypal/* {
-        reverse_proxy 127.0.0.1:8798
+        header Cache-Control "no-store"
+        header Content-Type "application/json; charset=utf-8"
+        header Retry-After "86400"
+        header X-Content-Type-Options "nosniff"
+        respond `{"product":"Undertow","rail":"paypal","status":"DORMANT","detail":"PayPal webhook is not active; activation requires the documented readiness preflight."}` 503
     }
 
     # Undertow LIVE relay snapshots (undertow-liverelay.service writes

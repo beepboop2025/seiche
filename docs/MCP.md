@@ -235,6 +235,24 @@ tools accept support and how much; a `tools/call` carrying a valid
 `X-PAYMENT` header runs on the full surface, with the settlement receipt
 returned in `X-PAYMENT-RESPONSE`.
 
+With a payment header present, Seiche validates bearer-token state, the
+JSON-RPC request shape, method, tool, request ID and the tool's published input
+schema before calling the facilitator. Invalid arguments therefore cannot
+settle. The initial request without a payment header still receives the normal
+HTTP 402 requirements document.
+
+Settlement and tool execution are not atomic across the facilitator boundary.
+If a snapshot, upstream dependency or tool handler fails after settlement, the
+JSON-RPC result is an error and the response still carries the settlement
+receipt. Seiche has no application-level idempotency key, automatic rollback or
+automatic refund for that case. A client must not blindly repay or auto-retry;
+it should retain `X-PAYMENT-RESPONSE` and the transaction reference for manual
+operator reconciliation and, where appropriate, a refund.
+
+The separate Undertow PayPal webhook placeholder is also dormant. Its edge
+contract and mandatory activation checklist are documented in
+[`PAYPAL.md`](PAYPAL.md); it is not an active alternative payment rail.
+
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is

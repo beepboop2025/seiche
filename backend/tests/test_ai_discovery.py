@@ -4,6 +4,10 @@ from pathlib import Path
 import json
 from urllib.parse import urlparse
 
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.testclient import TestClient
+
 from seiche import dispatch_pages
 
 
@@ -62,6 +66,31 @@ def test_ard_catalog_matches_the_registered_mcp_card():
         "https://seiche.info/developers")
     assert all(".html" not in json.dumps(entry)
                for entry in catalog["entries"])
+
+
+def test_security_txt_is_present_and_not_stale():
+    text = (PUBLIC / ".well-known" / "security.txt").read_text()
+    assert "Contact: https://github.com/beepboop2025/seiche/security/advisories/new" in text
+    assert "Canonical: https://seiche.info/.well-known/security.txt" in text
+    assert "Expires: 2027-08-19T00:00:00.000Z" in text
+    assert "—" not in text
+    assert "–" not in text
+    headers = (PUBLIC / "_headers").read_text()
+    assert "/.well-known/security.txt" in headers
+    assert "text/plain" in headers
+
+
+def test_security_txt_is_served_on_the_well_known_route():
+    static_site = FastAPI()
+    static_site.mount("/", StaticFiles(directory=PUBLIC), name="public")
+
+    with TestClient(static_site) as client:
+        response = client.get("/.well-known/security.txt")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text.startswith("Contact: https://github.com/")
+    assert "Canonical: https://seiche.info/.well-known/security.txt" in response.text
 
 
 def test_ard_catalog_is_advertised_on_every_discovery_surface():

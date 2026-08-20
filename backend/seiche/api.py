@@ -2163,9 +2163,17 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     # it is fail-closed — no verified-and-settled payment, no tool result.
     if x402.enabled() and public:
         pay_header = request.headers.get("X-PAYMENT")
-        single = msgs[0] if len(msgs) == 1 and isinstance(msgs[0], dict) else None
-        tool = ((single or {}).get("params") or {}).get("name") \
-            if (single or {}).get("method") == "tools/call" else None
+        # x402 is a single-request transport extension, not a batch payment.
+        # Keep malformed params/name values away from dict/hash lookups so the
+        # pre-settlement rejection path itself cannot raise.
+        single = body if isinstance(body, dict) else None
+        params = (single or {}).get("params")
+        params = params if isinstance(params, dict) else {}
+        candidate_tool = params.get("name")
+        tool = candidate_tool if (
+            (single or {}).get("method") == "tools/call"
+            and isinstance(candidate_tool, str)
+        ) else None
         priced = x402.price_usd(tool)
         if pay_header is not None and priced is None:
             return JSONResponse(
@@ -2176,12 +2184,31 @@ def mcp_http(request: Request, body: Any = Body(default=None),
         if priced is not None:
             resource = "https://api.seiche.info/mcp"
             reqs = x402.requirements(tool, resource)
+            # A presented bearer token is an attempt to use subscriber auth,
+            # not permission to silently fall back to a wallet charge. Refuse
+            # a malformed/expired token before touching the facilitator.
+            if authorization is not None and ident is None:
+                return JSONResponse(
+                    mcp_server._error(
+                        single.get("id"), MCP_SERVER_ERROR,
+                        "invalid Authorization bearer token",
+                    ),
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
+                )
             if pay_header is None:
                 return JSONResponse(
                     x402.payment_required(tool, resource,
                                           f"{tool} is a paid tool on the anonymous surface"),
                     status_code=402,
                 )
+            # Payment cannot make an invalid request valid. Run the pure MCP
+            # envelope/tool/input-schema preflight before verify or settle so
+            # malformed calls and deterministic dispatch preconditions cost
+            # the caller nothing.
+            preflight = mcp_server.preflight_tool_call(single, public=False)
+            if preflight is not None:
+                return JSONResponse(preflight, status_code=400)
             payment = x402.decode_payment(pay_header)
             if payment is None:
                 return JSONResponse(
@@ -2200,7 +2227,9 @@ def mcp_http(request: Request, body: Any = Body(default=None),
                         str(receipt.get("errorReason") or "settlement failed")),
                     status_code=402,
                 )
-            # paid: this one call runs on the full surface, no quota charged
+            # Paid: this one call runs on the full surface, no quota charged.
+            # Settlement and handler execution cannot be one atomic operation;
+            # docs/MCP.md states the receipt/retry/refund boundary explicitly.
             try:
                 resp = mcp_server.dispatch(single, public=False)
             except Exception:
