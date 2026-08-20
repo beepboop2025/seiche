@@ -1,39 +1,16 @@
 {
-  "date": "2026-08-19",
+  "date": "2026-08-20",
   "reported_prev": {
-    "Reverse repo with foreign official accounts": "2026-08-12",
-    "2y Treasury constant maturity yield": "2026-08-14"
-  },
-  "reported": {
     "Reverse repo with foreign official accounts": "2026-08-12",
     "DVP repo total volume (preliminary)": "2026-08-17",
     "2y Treasury constant maturity yield": "2026-08-17",
     "30y Treasury constant maturity yield": "2026-08-17"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.3,
-    "decomp": {
-      "weather": 11.0,
-      "kink": 6.9,
-      "resonance": 6.7,
-      "rvxray": 6.2,
-      "confession": 3.1,
-      "buffers": 3.0,
-      "undertow": 2.9,
-      "warehouse": 2.4,
-      "tails": 1.9,
-      "auctions": 1.0,
-      "hydrophone": 0.0
-    },
-    "crunch": {
-      "date": "2026-08-20",
-      "worst_case_b": 2886.4,
-      "settlement_b": 95.0
-    },
-    "tell": 38.7
+  "reported": {
+    "Reverse repo with foreign official accounts": "2026-08-12",
+    "2y Treasury constant maturity yield": "2026-08-18"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "STRAIN",
     "value": 45.6,
     "decomp": {
@@ -55,5 +32,28 @@
       "settlement_b": 282.0
     },
     "tell": 35.4
+  },
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.3,
+    "decomp": {
+      "weather": 11.0,
+      "kink": 6.9,
+      "resonance": 6.7,
+      "rvxray": 6.2,
+      "confession": 3.1,
+      "buffers": 3.0,
+      "undertow": 2.8,
+      "warehouse": 2.4,
+      "tails": 2.1,
+      "auctions": 1.0,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-25",
+      "worst_case_b": 2897.5,
+      "settlement_b": 210.0
+    },
+    "tell": 32.5
   }
 }
