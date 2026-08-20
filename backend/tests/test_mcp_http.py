@@ -57,15 +57,25 @@ def test_initialize_returns_session_header(client):
     assert r.headers.get("Mcp-Session-Id")
 
 
-def test_edge_proxies_undertow_paypal_above_the_static_mirror():
-    caddy = (Path(__file__).resolve().parents[2] / "ops" / "Caddyfile").read_text(
+def test_edge_serves_bounded_dormant_undertow_paypal_response():
+    root = Path(__file__).resolve().parents[2]
+    caddy = (root / "ops" / "Caddyfile").read_text(
         encoding="utf-8"
     )
     paypal_at = caddy.index("handle /undertow/paypal/*")
     mirror_at = caddy.index("handle_path /undertow/*")
     assert paypal_at < mirror_at
     block = caddy.split("handle /undertow/paypal/* {", 1)[1].split("\n    }", 1)[0]
-    assert "127.0.0.1:8798" in block
+    assert "reverse_proxy" not in block
+    assert "127.0.0.1:8798" not in block
+    assert 'header Content-Type "application/json; charset=utf-8"' in block
+    assert 'header Cache-Control "no-store"' in block
+    assert 'header Retry-After "86400"' in block
+    assert '"status":"DORMANT"' in block
+    assert "readiness preflight" in block
+    readiness = (root / "docs" / "PAYPAL.md").read_text(encoding="utf-8")
+    assert "Mandatory readiness preflight" in readiness
+    assert "all six checks pass" in readiness
 
 
 def test_edge_allows_undertow_modern_mcp_headers():
