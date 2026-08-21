@@ -7,6 +7,7 @@ import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
 type FetchMode = "live" | "usd-fallback" | "unavailable";
+type DeskView = "briefing" | "world" | "lab" | "china" | "notes";
 
 interface MoneyMarketMetric {
   id: string;
@@ -41,6 +42,8 @@ interface MoneyMarketMetric {
   change_3m?: number | null;
   change_12m?: number | null;
   robust_z_1y?: number | null;
+  change_vol_20_annualized?: number | null;
+  change_vol_unit?: string | null;
   robust_z?: number | null;
   own_history_z?: number | null;
   percentile_3y?: number | null;
@@ -183,6 +186,16 @@ interface UsdSource {
   source_url?: string | null;
 }
 
+interface UsdChart {
+  id?: string;
+  label?: string;
+  cadence?: string;
+  columns?: string[];
+  rows?: unknown;
+  sampling?: string;
+  no_forward_fill?: boolean;
+}
+
 interface UsdMoneyMarketEngine {
   ok?: boolean;
   schema?: string;
@@ -221,6 +234,7 @@ interface UsdMoneyMarketEngine {
     status_counts?: Record<string, number>;
   };
   sections: UsdSection[];
+  charts?: Record<string, UsdChart>;
   methodology?: Record<string, unknown>;
   formulas?: Array<{ id?: string; expression?: string; alignment?: string; unit?: string }>;
   caveats?: string[];
@@ -240,8 +254,50 @@ interface Props {
     generated_at?: string;
     engines?: {
       money_market?: unknown;
+      harbors?: unknown;
     };
   };
+}
+
+interface HarborReading {
+  harbor?: string;
+  cadence?: string;
+  stress?: number | null;
+  stress_coverage?: number | null;
+  regime?: string | null;
+  rate?: {
+    label?: string;
+    last_pct?: number | null;
+    asof?: string | null;
+    chg_6m_bp?: number | null;
+    chg_1y_bp?: number | null;
+    n_obs?: number | null;
+  } | null;
+  rate2?: {
+    label?: string;
+    last_pct?: number | null;
+    asof?: string | null;
+  } | null;
+  fx?: {
+    label?: string;
+    last?: number | null;
+    asof?: string | null;
+    chg_60d_pct?: number | null;
+    vol10_ann_pct?: number | null;
+  } | null;
+  note?: string | null;
+}
+
+interface HarborsEngine {
+  ok?: boolean;
+  asof?: string;
+  harbors?: HarborReading[];
+  rate_rows?: unknown;
+  rate_labels?: string[];
+  fx_rows?: unknown;
+  fx_labels?: string[];
+  caveats?: string[];
+  method?: string;
 }
 
 const isRecord = (value: unknown): value is UnknownRecord =>
@@ -295,25 +351,6 @@ function urlOrNull(value: unknown): string | null {
   }
 }
 
-function usdSourceUrl(source: UsdSource): string | null {
-  const supplied = urlOrNull(source.source_url);
-  if (supplied) return supplied;
-  const id = (source.id || "").toLowerCase();
-  if (id.startsWith("fred_") && source.series && /^[A-Z0-9-]+$/.test(source.series)) {
-    return "https://fred.stlouisfed.org/series/" + encodeURIComponent(source.series);
-  }
-  if (id.startsWith("nyfed_")) {
-    return id === "nyfed_srf"
-      ? "https://www.newyorkfed.org/markets/desk-operations/repo"
-      : "https://www.newyorkfed.org/markets/reference-rates";
-  }
-  if (id.startsWith("ofr_")) return "https://www.financialresearch.gov/short-term-funding-monitor/";
-  if (id === "fiscal_tga") {
-    return "https://fiscaldata.treasury.gov/datasets/daily-treasury-statement/operating-cash-balance";
-  }
-  return null;
-}
-
 function readLegalNotices(value: unknown): LegalNotice[] {
   const notices: LegalNotice[] = [];
   const visit = (item: unknown, fallbackTitle = "Source terms") => {
@@ -360,7 +397,7 @@ const NY_FED_FALLBACK_NOTICE: LegalNotice = {
 
 const GENERAL_INDEPENDENCE_NOTICE: LegalNotice = {
   title: "Source attribution is not endorsement",
-  text: "Authority names and links identify the origin of public evidence. Seiche is independent; no listed central bank, treasury, statistical office or benchmark administrator sponsors or endorses this product or Seiche’s derived analysis.",
+  text: "Authority names identify the origin of public evidence. Seiche is independent; no listed central bank, treasury, statistical office or benchmark administrator sponsors or endorses this product or Seiche’s derived analysis.",
   url: null,
 };
 
@@ -381,8 +418,8 @@ function isDerivedContext(metric: MoneyMarketMetric | null | undefined): boolean
 
 function hasCurrentClock(metric: MoneyMarketMetric | null | undefined): boolean {
   if (!metric || !isPublicValue(metric)) return false;
-  const clock = (metric.freshness || "").toLowerCase();
-  return clock === "fresh" || clock === "aging";
+  const clock = (metric.freshness || metric.status || "").toLowerCase();
+  return clock === "fresh" || clock === "aging" || clock === "available" || clock === "live";
 }
 
 function mayShowStatistics(metric: MoneyMarketMetric | null | undefined): boolean {
@@ -391,6 +428,12 @@ function mayShowStatistics(metric: MoneyMarketMetric | null | undefined): boolea
   const redistribution = (metric.redistribution_status || "allowed").toLowerCase();
   return (availability === "AVAILABLE" || availability === "DERIVED_CONTEXT")
     && redistribution !== "prohibited";
+}
+
+function hasCurrentStatistics(metric: MoneyMarketMetric | null | undefined): boolean {
+  if (!mayShowStatistics(metric)) return false;
+  const clock = (metric?.freshness || metric?.status || "").toLowerCase();
+  return clock === "fresh" || clock === "aging" || clock === "available" || clock === "live";
 }
 
 function comparisonBenchmark(market: MoneyMarket): MoneyMarketMetric | null {
@@ -612,7 +655,7 @@ function LegalNoticePanel({ notices, title = "Source terms and independence" }: 
           <article key={notice.title + String(index)}>
             <b>{notice.title}</b>
             <p>{notice.text}</p>
-            {notice.url && <a href={notice.url} target="_blank" rel="noopener noreferrer">Read official terms ↗</a>}
+            {notice.url && <small>Reference terms retained in Seiche’s evidence registry.</small>}
           </article>
         ))}
       </div>
@@ -737,7 +780,6 @@ function MetricTable({ metrics, caption }: { metrics: MoneyMarketMetric[]; capti
             const change = nativeChange(metric);
             const redistribution = (metric.redistribution_status || "allowed").toLowerCase();
             const sourceVisible = redistribution !== "prohibited";
-            const sourceUrl = sourceVisible ? urlOrNull(metric.source_url) : null;
             const ageAtEvaluation = finite(metric.age_days_vs_evaluation_asof);
             return (
               <tr key={metric.id}>
@@ -770,9 +812,7 @@ function MetricTable({ metrics, caption }: { metrics: MoneyMarketMetric[]; capti
                   <strong>{formatCadence(metric.cadence)}</strong>
                   <span>as of {shortDate(metric.asof)}</span>
                   {ageAtEvaluation !== null && <small>{ageAtEvaluation}d old when evaluated</small>}
-                  {sourceVisible && (sourceUrl
-                    ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{metric.source || "primary source"} ↗</a>
-                    : <small>{metric.source || "source metadata unavailable"}</small>)}
+                  {sourceVisible && <small>{metric.source || "source metadata unavailable"}</small>}
                   {derivedContext && <small>non-reversible statistic only · raw quote/history withheld</small>}
                   {!sourceVisible && <small>source detail withheld by the redistribution policy</small>}
                 </td>
@@ -781,6 +821,467 @@ function MetricTable({ metrics, caption }: { metrics: MoneyMarketMetric[]; capti
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const CHART_COLORS = [P.calm, P.accentSoft, P.erosion, P.slate, P.stress, P.gold];
+
+function chartRows(value: unknown): (string | number | null)[][] {
+  if (!Array.isArray(value)) return [];
+  const rows: (string | number | null)[][] = [];
+  for (const item of value) {
+    if (!Array.isArray(item) || typeof item[0] !== "string" || Number.isNaN(Date.parse(item[0]))) continue;
+    rows.push([
+      item[0],
+      ...item.slice(1).map((cell) => cell === null ? null : finite(cell)),
+    ]);
+  }
+  return rows.sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+}
+
+function humanSeries(value: string): string {
+  const known: Record<string, string> = {
+    sofr_pct: "SOFR",
+    effr_pct: "EFFR",
+    iorb_pct: "IORB",
+    bgcr_pct: "BGCR",
+    tgcr_pct: "TGCR",
+    dvp_pct: "DVP repo",
+    tri_pct: "Tri-party repo",
+    gcf_pct: "GCF repo",
+    p01_pct: "SOFR p01",
+    rate_pct: "SOFR",
+    p99_pct: "SOFR p99",
+    sofr_minus_iorb_bp: "SOFR − IORB",
+    effr_minus_iorb_bp: "EFFR − IORB",
+    p99_minus_rate_bp: "SOFR upper tail",
+    displayed_total_b: "Comparable total",
+    total_assets_b: "Total MMF assets",
+    total_repo_b: "Total MMF repo",
+    ficc_repo_b: "FICC repo",
+    fed_repo_b: "Fed repo",
+    other_repo_b: "Other repo",
+  };
+  return known[value] || value
+    .replace(/_(pct|bp|b)$/i, "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+type ChartFamily = "rate" | "spread" | "stock" | "other";
+
+function chartFamily(column: string): ChartFamily {
+  if (column.endsWith("_pct")) return "rate";
+  if (column.endsWith("_bp")) return "spread";
+  if (column.endsWith("_b")) return "stock";
+  return "other";
+}
+
+function chartFamilyLabel(family: ChartFamily): string {
+  if (family === "rate") return "rate (%)";
+  if (family === "spread") return "spread (bp)";
+  if (family === "stock") return "amount ($B)";
+  return "native units";
+}
+
+function splitUsdChart(chart: UsdChart): Array<{
+  key: string;
+  rows: (string | number | null)[][];
+  series: Array<{ label: string; color: string }>;
+  yLabel: string;
+}> {
+  const columns = Array.isArray(chart.columns) ? chart.columns.slice(1) : [];
+  const sourceRows = chartRows(chart.rows);
+  const families = Array.from(new Set(columns.map(chartFamily)));
+  return families.flatMap((family) => {
+    const indexes = columns
+      .map((column, index) => ({ column, index }))
+      .filter((item) => chartFamily(item.column) === family);
+    if (indexes.length === 0) return [];
+    const rows = sourceRows.map((row) => [row[0], ...indexes.map((item) => row[item.index + 1] ?? null)]);
+    if (!rows.some((row) => row.slice(1).some((value) => finite(value) !== null))) return [];
+    return [{
+      key: (chart.id || chart.label || "chart") + ":" + family,
+      rows,
+      series: indexes.map((item, index) => ({
+        label: humanSeries(item.column),
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      })),
+      yLabel: chartFamilyLabel(family),
+    }];
+  });
+}
+
+const USD_SECTION_CHARTS: Record<string, string[]> = {
+  policy_corridor: ["policy"],
+  secured_distributions: ["sofr_distribution"],
+  repo_segments: ["repo_rates", "repo_volumes"],
+  unsecured_funding: ["unsecured"],
+  bills_cash_curve: ["bills"],
+  liquidity_buffers: ["liquidity"],
+  mmf_plumbing: ["mmf"],
+};
+
+function UsdChartShelf({ engine, sectionId }: { engine: UsdMoneyMarketEngine; sectionId: string }) {
+  const charts = engine.charts || {};
+  const panes = (USD_SECTION_CHARTS[sectionId] || [])
+    .flatMap((id) => {
+      const chart = charts[id];
+      return chart ? splitUsdChart(chart).map((pane) => ({ ...pane, chart })) : [];
+    });
+  if (panes.length === 0) return null;
+  return (
+    <div className="mm-usd-charts" aria-label="USD section charts">
+      {panes.map((pane) => (
+        <article key={pane.key}>
+          <header>
+            <span>{pane.chart.cadence || "native cadence"}</span>
+            <h3>{pane.chart.label || "USD money-market history"}</h3>
+          </header>
+          <Chart
+            rows={pane.rows}
+            series={pane.series}
+            height={220}
+            yLabel={pane.yLabel}
+            source="Seiche point-in-time USD desk"
+            note={`${pane.chart.sampling || "native observations"}; units split into separate axes`}
+          />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function benchmarkPercentile(market: MoneyMarket): number | null {
+  const benchmark = comparisonBenchmark(market);
+  return hasCurrentStatistics(benchmark) ? ownPercentile(benchmark) : null;
+}
+
+function pressureTone(percentile: number | null): string {
+  if (percentile === null) return "unknown";
+  if (percentile >= 90) return "stress";
+  if (percentile >= 75) return "watch";
+  if (percentile <= 25) return "low";
+  return "normal";
+}
+
+function PressureSonar({
+  markets,
+  selectedId,
+  onOpen,
+}: {
+  markets: MoneyMarket[];
+  selectedId?: string;
+  onOpen: (marketId: string) => void;
+}) {
+  const ranked = markets
+    .filter((market) => benchmarkPercentile(market) !== null)
+    .sort((left, right) => (benchmarkPercentile(right) || 0) - (benchmarkPercentile(left) || 0));
+  const unrankedIds = markets
+    .filter((market) => benchmarkPercentile(market) === null)
+    .map((market) => market.market_id);
+  return (
+    <figure className="mm-sonar" aria-labelledby="mm-sonar-title">
+      <figcaption>
+        <div><span>GLOBAL CASH SONAR</span><h2 id="mm-sonar-title">Pressure against evidence coverage</h2></div>
+        <p>Higher means dearer cash versus that market’s own history. Farther right means more of its declared instrument set is public.</p>
+      </figcaption>
+      <div className="mm-sonar__body">
+        <div className="mm-sonar__plot" role="group" aria-label="Markets plotted by own-history percentile and public coverage">
+          <div className="mm-sonar__bands" aria-hidden="true"><i /><i /><i /><i /></div>
+          <span className="mm-sonar__axis mm-sonar__axis--y">own-history pressure ↑</span>
+          <span className="mm-sonar__axis mm-sonar__axis--x">public evidence coverage →</span>
+          <span className="mm-sonar__threshold mm-sonar__threshold--90" aria-hidden="true">p90</span>
+          <span className="mm-sonar__threshold mm-sonar__threshold--75" aria-hidden="true">p75</span>
+          <span className="mm-sonar__threshold mm-sonar__threshold--50" aria-hidden="true">p50</span>
+          {markets.map((market, index) => {
+            const percentile = benchmarkPercentile(market);
+            const coverage = clamp(finite(market.coverage.coverage_pct) ?? 0, 0, 100);
+            const baseLeft = 10 + coverage * .8;
+            const unrankedIndex = unrankedIds.indexOf(market.market_id);
+            const collisionX = percentile === null
+              ? ((unrankedIndex % 6) - 2.5) * 2.6
+              : ((index % 3) - 1) * 1.2;
+            const collisionY = percentile === null
+              ? Math.floor(unrankedIndex / 6) * 7
+              : (((index * 2) % 5) - 2) * .65;
+            const left = clamp(baseLeft + collisionX, 7, 93);
+            const top = percentile === null
+              ? 82 + collisionY
+              : clamp(8 + (100 - clamp(percentile, 0, 100)) * .72 + collisionY, 7, 81);
+            return (
+              <button
+                type="button"
+                key={market.market_id}
+                className={`mm-sonar__point mm-sonar__point--${pressureTone(percentile)}${market.market_id === selectedId ? " is-selected" : ""}`}
+                style={{ left: left + "%", top: top + "%", zIndex: 20 + markets.length - index }}
+                onClick={() => onOpen(market.market_id)}
+                aria-label={`${market.display_name}: ${percentile === null ? "history building" : `own-history percentile ${percentile.toFixed(1)}`}, ${coverage.toFixed(1)} percent coverage`}
+              >
+                <b>{market.currency}</b><span>{percentile === null ? "n/a" : "p" + percentile.toFixed(0)}</span>
+              </button>
+            );
+          })}
+          <span className="mm-sonar__dock">history building / unavailable rank</span>
+        </div>
+        <ol className="mm-sonar__ranking" aria-label="Ranked market pressure">
+          {ranked.slice(0, 6).map((market, index) => {
+            const percentile = benchmarkPercentile(market);
+            return (
+              <li key={market.market_id}>
+                <button type="button" onClick={() => onOpen(market.market_id)}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <b>{market.currency}</b>
+                  <i>{percentile === null ? "—" : "p" + percentile.toFixed(1)}</i>
+                  <small>{pressureLabel(percentile)}</small>
+                </button>
+              </li>
+            );
+          })}
+          {ranked.length === 0 && <li className="mm-sonar__none">No non-stale benchmark has enough history to rank.</li>}
+        </ol>
+      </div>
+    </figure>
+  );
+}
+
+function CoverageLanes({ markets }: { markets: MoneyMarket[] }) {
+  return (
+    <section className="mm-lanes" aria-labelledby="mm-lanes-title">
+      <header><span>EVIDENCE DEPTH</span><h2 id="mm-lanes-title">What Seiche can actually see</h2></header>
+      <div>
+        {markets.map((market) => {
+          const total = Math.max(market.coverage.declared_instruments || market.metrics.length, 1);
+          const available = market.coverage.public_available || 0;
+          const derived = market.coverage.derived_context || 0;
+          const restricted = (market.coverage.restricted || 0) + (market.coverage.unavailable || 0);
+          return (
+            <div className="mm-lane" key={market.market_id}>
+              <b>{market.currency}</b>
+              <div className="mm-lane__bar" aria-label={`${market.display_name}: ${available} public, ${derived} derived, ${restricted} missing or restricted`}>
+                <i className="is-public" style={{ width: `${100 * available / total}%` }} />
+                <i className="is-derived" style={{ width: `${100 * derived / total}%` }} />
+                <i className="is-gap" style={{ width: `${100 * restricted / total}%` }} />
+              </div>
+              <span>{available}/{total}</span>
+            </div>
+          );
+        })}
+      </div>
+      <footer><span><i className="is-public" /> public</span><span><i className="is-derived" /> derived context</span><span><i className="is-gap" /> restricted / unavailable</span></footer>
+    </section>
+  );
+}
+
+function parseHarbors(value: unknown): HarborsEngine | null {
+  if (!isRecord(value)) return null;
+  return value as unknown as HarborsEngine;
+}
+
+function HarborPressure({
+  engine,
+  excludedHarbors = [],
+}: {
+  engine: HarborsEngine | null;
+  excludedHarbors?: string[];
+}) {
+  const harbors = (engine?.harbors || [])
+    .filter((harbor) => !excludedHarbors.includes(harbor.harbor || ""))
+    .filter((harbor) => finite(harbor.stress) !== null)
+    .sort((left, right) => (finite(right.stress) || 0) - (finite(left.stress) || 0));
+  return (
+    <section className="mm-harbor-pressure" aria-labelledby="mm-harbor-pressure-title">
+      <header><span>TRANSMISSION CHECK</span><h2 id="mm-harbor-pressure-title">Local tightening, FX and volatility</h2></header>
+      {harbors.length > 0 ? (
+        <div>
+          {harbors.map((harbor) => {
+            const stress = clamp(finite(harbor.stress) || 0, 0, 100);
+            return (
+              <article key={harbor.harbor}>
+                <div><b>{harbor.harbor}</b><span>{harbor.regime || "history building"}</span></div>
+                <div className="mm-harbor-pressure__bar"><i style={{ width: stress + "%" }} /></div>
+                <strong>{stress.toFixed(0)}</strong>
+                <small>{harbor.rate?.chg_6m_bp == null ? "rate change unavailable" : fmt(harbor.rate.chg_6m_bp, "bp", true)} · {harbor.fx?.chg_60d_pct == null ? "FX unavailable" : fmt(harbor.fx.chg_60d_pct, "%", true) + " FX / 60d"}</small>
+              </article>
+            );
+          })}
+        </div>
+      ) : <p className="mm-inline-gap">The global transmission engine is still accruing enough local history.</p>}
+      <footer>Each score is a blend of that harbor’s own FX volatility, FX direction and six-month rate change. Missing components reweight the blend; they never count as calm.</footer>
+    </section>
+  );
+}
+
+function joinedRateHistory(market: MoneyMarket): {
+  rows: (string | number | null)[][];
+  metrics: MoneyMarketMetric[];
+} {
+  const metrics = market.metrics
+    .filter((metric) => metric.unit === "%" && historyRows(metric).length >= 2)
+    .slice(0, 5);
+  const byDate = new Map<string, Map<string, number>>();
+  for (const metric of metrics) {
+    for (const row of historyRows(metric)) {
+      const date = String(row[0]);
+      const value = finite(row[1]);
+      if (value === null) continue;
+      const values = byDate.get(date) || new Map<string, number>();
+      values.set(metric.id, value);
+      byDate.set(date, values);
+    }
+  }
+  const rows = [...byDate.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, values]) => [date, ...metrics.map((metric) => values.get(metric.id) ?? null)]);
+  return { rows, metrics };
+}
+
+function DistributionPlot({ metric }: { metric: MoneyMarketMetric | null | undefined }) {
+  const rows = historyRows(metric);
+  const values = rows.map((row) => finite(row[1])).filter((value): value is number => value !== null);
+  if (values.length < 5) {
+    return <div className="mm-chart-gap mm-chart-gap--compact"><b>Distribution still forming</b><span>At least five public native observations are needed for a shape read.</span></div>;
+  }
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const span = Math.max(high - low, Math.abs(high || 1) * .001);
+  const binCount = Math.min(14, Math.max(6, Math.round(Math.sqrt(values.length))));
+  const bins = Array.from({ length: binCount }, () => 0);
+  values.forEach((value) => {
+    const index = Math.min(binCount - 1, Math.floor((value - low) / span * binCount));
+    bins[index] += 1;
+  });
+  const maxBin = Math.max(...bins, 1);
+  const latest = values[values.length - 1];
+  const latestX = 34 + (latest - low) / span * 532;
+  return (
+    <figure className="mm-distribution" aria-labelledby="mm-distribution-title">
+      <figcaption><span>EMPIRICAL SHAPE</span><h3 id="mm-distribution-title">Where the current print sits</h3><p>{values.length} public native observations; bars count observations, not probability.</p></figcaption>
+      <svg viewBox="0 0 600 210" role="img" aria-label={`${metric?.label || "Benchmark"} distribution from ${fmt(low, metric?.unit)} to ${fmt(high, metric?.unit)}; latest ${fmt(latest, metric?.unit)}`}>
+        <line x1="34" y1="176" x2="566" y2="176" className="mm-distribution__axis" />
+        {bins.map((count, index) => {
+          const width = 532 / binCount - 4;
+          const height = 132 * count / maxBin;
+          return <rect key={index} x={36 + index * (532 / binCount)} y={176 - height} width={width} height={height} rx="2" className="mm-distribution__bar" />;
+        })}
+        <line x1={latestX} y1="30" x2={latestX} y2="183" className="mm-distribution__latest" />
+        <text x={latestX} y="20" textAnchor="middle" className="mm-distribution__label">LATEST</text>
+        <text x="34" y="202" className="mm-distribution__tick">{fmt(low, metric?.unit)}</text>
+        <text x="566" y="202" textAnchor="end" className="mm-distribution__tick">{fmt(high, metric?.unit)}</text>
+      </svg>
+    </figure>
+  );
+}
+
+function MomentumTable({ market }: { market: MoneyMarket }) {
+  const rows = market.metrics.filter((metric) => mayShowStatistics(metric));
+  return (
+    <div className="mm-momentum">
+      <header><span>MULTI-HORIZON READ</span><h3>Level, movement and instability</h3></header>
+      <div className="mm-table-wrap">
+        <table className="mm-table">
+          <caption>Momentum and distribution diagnostics for {market.display_name}</caption>
+          <thead><tr><th scope="col">Instrument</th><th scope="col">1 obs</th><th scope="col">5 obs</th><th scope="col">20 obs</th><th scope="col">Robust z</th><th scope="col">Percentile</th><th scope="col">20-observation volatility</th></tr></thead>
+          <tbody>
+            {rows.map((metric) => (
+              <tr key={metric.id}>
+                <th scope="row"><b>{metric.label}</b><span>{formatCadence(metric.cadence)}</span></th>
+                <td>{fmt(metric.change_1_observation, metric.change_unit || metric.unit, true)}</td>
+                <td>{fmt(metric.change_5_observations, metric.change_unit || metric.unit, true)}</td>
+                <td>{fmt(metric.change_20_observations, metric.change_unit || metric.unit, true)}</td>
+                <td>{fmt(ownZ(metric), "z", true)}</td>
+                <td>{ownPercentile(metric) === null ? "—" : "p" + ownPercentile(metric)?.toFixed(1)}</td>
+                <td>{fmt(metric.change_vol_20_annualized, metric.change_vol_unit)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function labeledSeriesRows(
+  rowsValue: unknown,
+  labels: string[] | undefined,
+  label: string,
+): (string | number | null)[][] {
+  const rows = chartRows(rowsValue);
+  const index = (labels || []).findIndex((item) => item.toUpperCase() === label.toUpperCase());
+  if (index < 0) return [];
+  return rows.map((row) => [row[0], row[index + 1] ?? null]);
+}
+
+function ChinaDesk({
+  engine,
+  market,
+  onOpenLab,
+}: {
+  engine: HarborsEngine | null;
+  market: MoneyMarket | null;
+  onOpenLab: () => void;
+}) {
+  const china = engine?.harbors?.find((item) => item.harbor === "CHINA") || null;
+  const fxRows = labeledSeriesRows(engine?.fx_rows, engine?.fx_labels, "CHINA");
+  const benchmark = market ? comparisonBenchmark(market) : null;
+  const unsecuredRate = market?.metrics.find((metric) => metric.id.includes("SHIBOR")) || null;
+  const securedRate = market?.metrics.find((metric) => metric.id.includes("DR007")) || null;
+  const canonicalCoverage = clamp(finite(market?.coverage.coverage_pct) || 0, 0, 100);
+  return (
+    <div className="mm-china-desk">
+      <section className="mm-china-thesis">
+        <div>
+          <span>CHINA CASH / SEICHE SPECIAL SITUATION</span>
+          <h2>China is a three-valve system.</h2>
+          <p>Read unsecured cash, secured funding and the currency together. No one line is allowed to impersonate the whole market.</p>
+        </div>
+        <div className="mm-china-thesis__mark" aria-hidden="true"><i /><i /><i /><b>CNY</b></div>
+      </section>
+
+      <section className="mm-china-pulse" aria-label="Latest China money-market readings">
+        <article><span>UNSECURED CASH</span><strong>{isPublicValue(unsecuredRate) ? fmt(unsecuredRate?.value, unsecuredRate?.unit) : "WITHHELD"}</strong><p>{unsecuredRate?.label || "SHIBOR overnight"}</p><small>{statusLabel(unsecuredRate)}</small></article>
+        <article><span>SECURED 7-DAY</span><strong>{isPublicValue(securedRate) ? fmt(securedRate?.value, securedRate?.unit) : "WITHHELD"}</strong><p>{securedRate?.label || "DR007"}</p><small>{statusLabel(securedRate)}</small></article>
+        <article><span>RATE EVIDENCE</span><strong>{[unsecuredRate, securedRate].filter((metric) => (metric?.availability || "").toUpperCase() === "RESTRICTED").length} / 2</strong><p>fixings rights-restricted</p><small>metadata only · never treated as calm</small></article>
+        <article><span>CNY / 60 DAYS</span><strong>{fmt(china?.fx?.chg_60d_pct, "%", true)}</strong><p>{china?.fx?.vol10_ann_pct == null ? "volatility unavailable" : fmt(china.fx.vol10_ann_pct, "%") + " 10d annualized vol"}</p><small>{shortDate(china?.fx?.asof)}</small></article>
+        <article><span>COMPOSITE PRESSURE</span><strong>WITHHELD</strong><p>rights-cleared projection pending</p><small>no legacy rate blend reused</small></article>
+      </section>
+
+      <div className="mm-china-chart-grid">
+        <article className="mm-analysis-panel mm-analysis-panel--wide">
+          <header><span>VALVE 01 / COMPOSITE PRESSURE</span><h3>A score needs a rights-cleared rate leg</h3><p>The legacy Harbor blend can incorporate restricted CFETS changes. Seiche does not reuse that blend here; this slot remains empty until the server publishes an approved projection.</p></header>
+          <div className="mm-china-pressure-plot is-missing" role="img" aria-label={`China composite pressure is not published; canonical public raw coverage is ${canonicalCoverage.toFixed(0)} percent`}>
+            <div className="mm-china-pressure-plot__scale"><i /><em className="at-25">25</em><em className="at-50">50</em><em className="at-75">75</em><strong>NOT PUBLISHED</strong></div>
+            <div className="mm-china-pressure-plot__coverage"><span>CANONICAL RAW COVERAGE</span><i><b style={{ width: canonicalCoverage + "%" }} /></i><strong>{canonicalCoverage.toFixed(0)}%</strong></div>
+            <p>Restricted evidence is not converted into an apparently calm score. The CNY valve below remains available because it comes from a separate public series.</p>
+          </div>
+        </article>
+        <article className="mm-analysis-panel">
+          <header><span>VALVE 02 / CURRENCY</span><h3>The currency pressure release</h3><p>CNY per USD indexed to 100 one year earlier. Up means a weaker renminbi.</p></header>
+          {fxRows.length >= 2 ? <Chart rows={fxRows} series={[{ label: "CNY per USD, 1y ago = 100", color: P.erosion }]} height={230} yLabel="CNY index" refLine={{ value: 100, color: P.ghost, label: "one-year anchor" }} source="Seiche global FX cache" note="daily fixes; indexed only for direction and scale" /> : <div className="mm-chart-gap mm-chart-gap--compact"><b>FX history unavailable</b><span>No direction is inferred from a missing currency series.</span></div>}
+        </article>
+        <article className="mm-analysis-panel">
+          <header><span>VALVE 03 / EVIDENCE RIGHTS</span><h3>The canonical China pack stays deliberately sparse</h3><p>Availability is a data fact. Restricted or missing instruments cannot be turned into a calm reading.</p></header>
+          <div className="mm-rights-map" aria-label="China canonical instrument availability">
+            {(market?.metrics || []).map((metric) => <div key={metric.id}><b>{metric.label}</b><i className={`is-${(metric.availability || "unavailable").toLowerCase()}`} /><span>{statusLabel(metric)}</span></div>)}
+            {(market?.metrics.length || 0) === 0 && <p>No canonical China instrument register reached this snapshot.</p>}
+          </div>
+        </article>
+      </div>
+
+      <section className="mm-china-interpretation">
+        <article><span>01 / PRICE</span><h3>Is unsecured cash repricing?</h3><p>{isPublicValue(unsecuredRate) ? `${unsecuredRate?.label || "The unsecured fixing"} is public in the canonical pack; its native changes appear in the Market Lab.` : "The exact fixing and its rate changes stay withheld under the canonical source terms, so Seiche leaves the direction open."}</p></article>
+        <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The secured fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "DR007 is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing—not as an easy collateral market."}</p></article>
+        <article><span>03 / EXTERNAL VALVE</span><h3>Is pressure escaping through CNY?</h3><p>{china?.fx?.chg_60d_pct == null ? "The currency leg is unavailable." : `CNY moved ${fmt(china.fx.chg_60d_pct, "%", true)} versus USD over 60 days, with ${fmt(china.fx.vol10_ann_pct, "%")} annualized 10-day volatility.`}</p></article>
+        <article className="mm-counter"><span>COUNTERCASE</span><h3>Policy and calendar can dominate.</h3><p>Tax dates, holiday liquidity operations, reserve requirements and benchmark changes can move one valve without producing broad funding stress.</p></article>
+      </section>
+
+      {market && (
+        <section className="mm-china-atlas">
+          <div><span>CANONICAL CNY PACK</span><h3>{market.display_name}</h3><p>{market.plain_language || "The canonical pack is still building a rights-cleared history."}</p></div>
+          <div><strong>{benchmarkPercentile(market) === null ? "rank pending" : "p" + benchmarkPercentile(market)?.toFixed(1)}</strong><small>{fmt(market.coverage.coverage_pct, "%")} public raw coverage</small><button type="button" onClick={onOpenLab}>Open the CNY market lab →</button></div>
+        </section>
+      )}
     </div>
   );
 }
@@ -864,6 +1365,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
         <div><StatusPill value={section.status} /><strong>{section.label}</strong></div>
         <p>{section.plain_language || "Each card keeps its native clock and exact-date alignment."}</p>
       </div>
+      <UsdChartShelf engine={engine} sectionId={section.id} />
       <MetricTable metrics={section.metrics} caption={section.label + " metrics"} />
       <details className="mm-disclosure" open>
         <summary>USD source clock, formulas and guardrails</summary>
@@ -876,9 +1378,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
                 {sources.map((source, index) => (
                   <tr key={source.id || String(index)}>
                     <th scope="row">
-                      {usdSourceUrl(source)
-                        ? <a href={usdSourceUrl(source) || undefined} target="_blank" rel="noopener noreferrer">{source.label || source.id || "source"} ↗</a>
-                        : <b>{source.label || source.id || "source"}</b>}
+                      <b>{source.label || source.id || "source"}</b>
                       <span>{source.publisher || source.series || ""}</span>
                     </th>
                     <td>{formatCadence(source.cadence)}</td>
@@ -914,6 +1414,7 @@ function UsdDesk({ engine }: { engine: UsdMoneyMarketEngine }) {
 
 export default function MoneyMarkets({ snap }: Props) {
   const usdEngine = useMemo(() => parseUsdEngine(snap.engines?.money_market), [snap.engines?.money_market]);
+  const harborsEngine = useMemo(() => parseHarbors(snap.engines?.harbors), [snap.engines?.harbors]);
   const usdFallback = useMemo(
     () => usdEngine ? fallbackAtlas(usdEngine, snap.generated_at) : null,
     [usdEngine, snap.generated_at],
@@ -923,9 +1424,11 @@ export default function MoneyMarkets({ snap }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [view, setView] = useState<DeskView>("briefing");
   const [region, setRegion] = useState("ALL");
   const [marketId, setMarketId] = useState("");
   const [expansionQuery, setExpansionQuery] = useState("");
+  const hasChinaDesk = mode === "live" && Boolean(atlas?.markets.some((market) => market.market_id === "CN-CNY"));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -990,6 +1493,10 @@ export default function MoneyMarkets({ snap }: Props) {
     }
   }, [atlas, region]);
 
+  useEffect(() => {
+    if (view === "china" && !hasChinaDesk) setView("briefing");
+  }, [hasChinaDesk, view]);
+
   const regions = useMemo(
     () => atlas ? Array.from(new Set(atlas.markets.map((market) => market.region))).sort() : [],
     [atlas],
@@ -1039,17 +1546,37 @@ export default function MoneyMarkets({ snap }: Props) {
     if (dates.length === 1) return "verified " + dates[0];
     return "verification dates " + dates[0] + " to " + dates[dates.length - 1];
   }, [atlas?.expansion_ledger]);
+  const spreadRows = historyRows(selected?.policy_relative_spread);
+  const rateHistory = selected ? joinedRateHistory(selected) : { rows: [], metrics: [] };
+  const chinaMarket = atlas?.markets.find((market) => market.market_id === "CN-CNY") || null;
+  const openMarket = (nextMarketId: string) => {
+    setRegion("ALL");
+    setMarketId(nextMarketId);
+    setView("lab");
+  };
+  const viewItems: Array<{ id: DeskView; label: string; note: string }> = [
+    { id: "briefing", label: "Briefing", note: "what matters now" },
+    { id: "world", label: "World map", note: "compare clearing systems" },
+    { id: "lab", label: "Market lab", note: selected?.currency || "one market at a time" },
+    ...(hasChinaDesk ? [{ id: "china" as DeskView, label: "China desk", note: "SHIBOR · DR007 · CNY" }] : []),
+    { id: "notes", label: "Data notes", note: "methods and coverage" },
+  ];
+  const declaredMarketCount = atlas?.coverage?.declared_markets ?? atlas?.markets.length;
+  const clearingScope = declaredMarketCount === 1
+    ? "One clearing system"
+    : declaredMarketCount
+      ? `${declaredMarketCount} clearing systems`
+      : "Global clearing systems";
 
   return (
-    <div className="mm-shell">
+    <div className={`mm-shell mm-shell--${view}`}>
       <header className="mm-hero">
-        <div className="mm-hero__index" aria-hidden="true">MM / 01</div>
+        <div className="mm-hero__index" aria-hidden="true">CASH / MM</div>
         <div className="mm-hero__copy">
-          <span>GLOBAL MONEY MARKETS / PUBLIC EVIDENCE DESK</span>
-          <h1>The price of cash, market by market.</h1>
+          <span>SEICHE MONEY MARKETS / GLOBAL CASH INTELLIGENCE</span>
+          <h1>Where cash is tightening—and why.</h1>
           <p>
-            Local overnight benchmarks, policy anchors, repo plumbing and liquidity clocks—kept in their native conventions,
-            then normalized only against each market’s own history.
+            {clearingScope}, one evidence discipline. Seiche reads rates, collateral, liquidity and currency pressure in local conventions, then compares every market only with its own history.
           </p>
         </div>
         <div className="mm-hero__status">
@@ -1062,6 +1589,22 @@ export default function MoneyMarkets({ snap }: Props) {
           </small>
         </div>
       </header>
+
+      <nav className={`mm-view-nav mm-view-nav--${viewItems.length}`} aria-label="Money-market analysis views">
+        {viewItems.map((item, index) => (
+          <button
+            type="button"
+            key={item.id}
+            className={view === item.id ? "is-active" : ""}
+            aria-current={view === item.id ? "page" : undefined}
+            onClick={() => setView(item.id)}
+          >
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <b>{item.label}</b>
+            <small>{item.note}</small>
+          </button>
+        ))}
+      </nav>
 
       {mode === "usd-fallback" && (
         <div className="mm-mode-note" role="status">
@@ -1081,22 +1624,36 @@ export default function MoneyMarkets({ snap }: Props) {
 
       {atlas && selected && (
         <>
-          <section className="mm-global-read" aria-labelledby="mm-global-title">
-            <div>
-              <span>THE GLOBAL READ</span>
-              <h2 id="mm-global-title">{atlas.plain_language || "The declared markets remain visible, including their evidence gaps."}</h2>
+          {view === "briefing" && (
+            <div className="mm-view-stage" role="region" aria-label="Money-market briefing">
+              <section className="mm-global-read" aria-labelledby="mm-global-title">
+                <div>
+                  <span>THE GLOBAL READ</span>
+                  <h2 id="mm-global-title">{atlas.plain_language || "The declared markets remain visible, including their evidence gaps."}</h2>
+                </div>
+                <div className="mm-global-read__detail">
+                  <article><b>QUANT BOUNDARY</b><p>{atlas.quant_read || "Comparisons use each benchmark’s own historical distribution."}</p></article>
+                  <article><b>STRONGEST DIVERGENCE</b><p>{strongest || "No benchmark has enough native history for a scaled divergence."}</p></article>
+                  <article className="mm-counter"><b>COUNTERCASE</b><p>{globalCountercase || "A policy move or calendar turn can explain a local outlier."}</p></article>
+                </div>
+              </section>
+              <PressureSonar markets={atlas.markets} selectedId={selected.market_id} onOpen={openMarket} />
+              <div className="mm-brief-grid">
+                <CoverageLanes markets={atlas.markets} />
+                {mode === "live" && <HarborPressure engine={harborsEngine} excludedHarbors={["CHINA"]} />}
+              </div>
+              <section className="mm-brief-actions" aria-label="Continue the analysis">
+                <button type="button" onClick={() => setView("world")}><span>COMPARE</span><b>See every clearing system</b><small>Pressure, coverage and native clock →</small></button>
+                <button type="button" onClick={() => openMarket(selected.market_id)}><span>DIAGNOSE</span><b>Open {selected.currency}</b><small>History, spread and distribution →</small></button>
+                {hasChinaDesk && <button type="button" onClick={() => setView("china")}><span>SPECIAL SITUATION</span><b>Read China’s three valves</b><small>SHIBOR, DR007 and CNY →</small></button>}
+              </section>
             </div>
-            <div className="mm-global-read__detail">
-              <article><b>QUANT BOUNDARY</b><p>{atlas.quant_read || "Comparisons use each benchmark’s own historical distribution."}</p></article>
-              <article><b>STRONGEST DIVERGENCE</b><p>{strongest || "No benchmark has enough native history for a scaled divergence."}</p></article>
-              <article className="mm-counter"><b>COUNTERCASE</b><p>{globalCountercase || "A policy move or calendar turn can explain a local outlier."}</p></article>
-            </div>
-          </section>
+          )}
 
-          <section className="mm-selector" aria-labelledby="mm-selector-title">
+          {(view === "world" || view === "lab") && <section className={`mm-selector${view === "lab" ? " mm-selector--lab" : ""}`} aria-labelledby="mm-selector-title">
             <div className="mm-selector__lead">
-              <span id="mm-selector-title">CHOOSE A CLEARING BASIN</span>
-              <p>Tiles share a 0–100 own-history ladder. Their raw rates remain local quotes and are never ranked as universal stress.</p>
+              <span id="mm-selector-title">{view === "lab" ? "MARKET LAB SELECTOR" : "CHOOSE A CLEARING BASIN"}</span>
+              <p>{view === "lab" ? "Change the local market without leaving the analytical workspace." : "Tiles share a 0–100 own-history ladder. Raw rates remain local quotes and are never ranked as universal stress."}</p>
             </div>
             <div className="mm-region-tabs" role="group" aria-label="Filter markets by region">
               {["ALL", ...regions].map((item) => (
@@ -1125,11 +1682,41 @@ export default function MoneyMarkets({ snap }: Props) {
                   key={market.market_id}
                   market={market}
                   selected={market.market_id === selected.market_id}
-                  onSelect={() => setMarketId(market.market_id)}
+                  onSelect={() => view === "world" ? openMarket(market.market_id) : setMarketId(market.market_id)}
                 />
               ))}
             </div>
-          </section>
+          </section>}
+
+          {view === "world" && (
+            <div className="mm-view-stage" role="region" aria-label="Global money-market map">
+              <PressureSonar markets={visibleMarkets} selectedId={selected.market_id} onOpen={openMarket} />
+              <CoverageLanes markets={visibleMarkets} />
+              <section className="mm-ledger mm-ledger--world" aria-labelledby="mm-world-register-title">
+                <SectionHead eyebrow="REGISTERED CLEARING SYSTEMS" title="The live atlas, without unlike-rate ranking" note="Coverage and local-history pressure are comparable; raw levels and unlike tenors are not." titleId="mm-world-register-title" />
+                <div className="mm-table-wrap">
+                  <table className="mm-table mm-table--ledger">
+                    <caption>Registered global money-market packs</caption>
+                    <thead><tr><th scope="col">Market</th><th scope="col">Benchmark</th><th scope="col">Own history</th><th scope="col">Public evidence</th><th scope="col">Clock</th><th scope="col">Open</th></tr></thead>
+                    <tbody>{visibleMarkets.map((market) => {
+                      const benchmark = comparisonBenchmark(market);
+                      const percentile = benchmarkPercentile(market);
+                      return <tr key={market.market_id}>
+                        <th scope="row"><b>{market.currency} · {market.display_name}</b><span>{market.region} · {market.market_id}</span></th>
+                        <td><b>{benchmark?.label || "declared gap"}</b><span>{formatCadence(benchmark?.cadence)}</span></td>
+                        <td><b>{percentile === null ? "building" : "p" + percentile.toFixed(1)}</b><span>{pressureLabel(percentile)}</span></td>
+                        <td><b>{fmt(market.coverage.coverage_pct, "%")}</b><span>{market.coverage.public_available || 0}/{market.coverage.declared_instruments || market.metrics.length} public</span></td>
+                        <td><StatusPill value={market.status} /></td>
+                        <td><button type="button" className="mm-open-button" onClick={() => openMarket(market.market_id)}>Analyse →</button></td>
+                      </tr>;
+                    })}</tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {view === "lab" && <>
 
           <section className="mm-local" aria-labelledby="mm-local-title">
             <header className="mm-local__head">
@@ -1167,36 +1754,26 @@ export default function MoneyMarkets({ snap }: Props) {
             </div>
           </section>
 
-          <section className="mm-history" aria-labelledby="mm-history-title">
-            <SectionHead
-              eyebrow="NATIVE HISTORY"
-              title={selectedComparison?.label || "Benchmark history unavailable"}
-              note="No interpolation, upsampling or cross-market level comparison."
-              titleId="mm-history-title"
-            />
-            {rows.length >= 2 ? (
-              <Chart
-                key={selected.market_id + ":" + selected.benchmark?.id}
-                rows={rows}
-                series={[{ label: selected.benchmark?.label || selected.currency, color: P.calm }]}
-                height={250}
-                yLabel={(selected.benchmark?.label || "local benchmark") + " (" + (selected.benchmark?.unit || "native") + ")"}
-                source={selected.benchmark?.source || "official local authority"}
-                asOf={selected.benchmark?.asof}
-                note={formatCadence(selected.benchmark?.cadence) + " observations; local convention only"}
-              />
-            ) : (
-              <div className="mm-chart-gap">
-                <b>History not yet drawable</b>
-                <span>
-                  {isPublicValue(selected.benchmark)
-                    ? "The live print is available, but fewer than two redistributable observations reached this payload."
-                    : selectedDerivedOnly
-                      ? "Only non-reversible own-history statistics may be shown. The raw licensed quote, changes, volatility and history remain withheld."
-                      : "The benchmark is restricted, unavailable or stale beyond a safe public reading."}
-                </span>
-              </div>
-            )}
+          <section className="mm-lab-charts" aria-labelledby="mm-history-title">
+            <SectionHead eyebrow="MARKET DIAGNOSTICS" title="Level, policy gap, curve and distribution" note="Every chart keeps one unit and one native clock. Missing history remains an explicit gap." titleId="mm-history-title" />
+            <div className="mm-lab-chart-grid">
+              <article className="mm-analysis-panel mm-analysis-panel--wide">
+                <header><span>01 / BENCHMARK</span><h3>{selectedComparison?.label || "Benchmark history unavailable"}</h3><p>No interpolation, upsampling or cross-market level comparison.</p></header>
+                {rows.length >= 2 ? (
+                  <Chart key={selected.market_id + ":" + selected.benchmark?.id} rows={rows} series={[{ label: selected.benchmark?.label || selected.currency, color: P.calm }]} height={260} yLabel={(selected.benchmark?.label || "local benchmark") + " (" + (selected.benchmark?.unit || "native") + ")"} source={selected.benchmark?.source || "Seiche official-source cache"} asOf={selected.benchmark?.asof} note={formatCadence(selected.benchmark?.cadence) + " observations; local convention only"} />
+                ) : <div className="mm-chart-gap"><b>History not yet drawable</b><span>{isPublicValue(selected.benchmark) ? "The live print is available, but fewer than two public observations reached this payload." : selectedDerivedOnly ? "Only non-reversible statistics may be shown; the raw level and history remain withheld." : "The benchmark is restricted, unavailable or stale beyond a safe public reading."}</span></div>}
+              </article>
+              <article className="mm-analysis-panel">
+                <header><span>02 / POLICY GAP</span><h3>{selected.policy_relative_spread?.label || "Same-date policy gap"}</h3><p>Exact event-date intersection only; no forward fill.</p></header>
+                {spreadRows.length >= 2 ? <Chart rows={spreadRows} series={[{ label: selected.policy_relative_spread?.label || "Policy-relative spread", color: P.accentSoft }]} height={230} yLabel="policy-relative spread (bp)" refLine={{ value: 0, color: P.ghost, label: "at anchor" }} source="Seiche exact-date derivation" asOf={selected.policy_relative_spread?.asof} note={selected.policy_relative_spread?.alignment || "no forward fill"} /> : <div className="mm-chart-gap mm-chart-gap--compact"><b>Compatible policy gap unavailable</b><span>A missing exact-date intersection is not filled or inferred.</span></div>}
+              </article>
+              <article className="mm-analysis-panel"><DistributionPlot metric={selected.benchmark} /></article>
+              <article className="mm-analysis-panel mm-analysis-panel--wide">
+                <header><span>03 / LOCAL RATE SET</span><h3>Which part of the curve is moving?</h3><p>Only public rates quoted in percent share this axis; stocks, volumes and basis-point spreads stay out.</p></header>
+                {rateHistory.rows.length >= 2 && rateHistory.metrics.length >= 2 ? <Chart rows={rateHistory.rows} series={rateHistory.metrics.map((metric, index) => ({ label: metric.label, color: CHART_COLORS[index % CHART_COLORS.length] }))} height={250} yLabel="local rates (%)" source="Seiche local instrument register" note="outer date grid with null gaps; no interpolation" /> : <div className="mm-chart-gap"><b>Multi-rate curve unavailable</b><span>At least two public local-rate histories are required. One line is never dressed up as a curve.</span></div>}
+              </article>
+            </div>
+            <MomentumTable market={selected} />
           </section>
 
           <section className="mm-metrics" aria-labelledby="mm-metrics-title">
@@ -1211,6 +1788,17 @@ export default function MoneyMarkets({ snap }: Props) {
             </div>
           </section>
 
+          {selected.market_id === "US-USD" && usdEngine && <UsdDesk engine={usdEngine} />}
+          </>}
+
+          {view === "china" && hasChinaDesk && <ChinaDesk engine={harborsEngine} market={chinaMarket} onOpenLab={() => openMarket("CN-CNY")} />}
+
+          {view === "notes" && <>
+          <section className="mm-notes-intro">
+            <div><span>THE EVIDENCE ROOM</span><h2>Trust the analysis without leaving Seiche.</h2></div>
+            <p>Publishers, clocks, rights limits, formulas and missing observations live here as product data—not as outbound reading assignments.</p>
+            <label><span>INSPECT MARKET</span><select value={selected.market_id} onChange={(event) => setMarketId(event.target.value)}>{atlas.markets.map((market) => <option value={market.market_id} key={market.market_id}>{market.currency} · {market.display_name}</option>)}</select></label>
+          </section>
           <section className="mm-evidence" aria-labelledby="mm-evidence-title">
             <SectionHead
               eyebrow="PUBLICATION CONTROL"
@@ -1225,13 +1813,10 @@ export default function MoneyMarkets({ snap }: Props) {
                   <thead><tr><th scope="col">Adapter</th><th scope="col">Native clock</th><th scope="col">Run state</th><th scope="col">Next due</th></tr></thead>
                   <tbody>
                     {adapters.length > 0 ? adapters.map((adapter, index) => {
-                      const sourceUrl = urlOrNull(adapter.source_url);
                       return (
                         <tr key={adapter.adapter_id || String(index)}>
                           <th scope="row">
-                            {sourceUrl
-                              ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{adapter.adapter_id || "official source"} ↗</a>
-                              : <b>{adapter.adapter_id || "official source"}</b>}
+                            <b>{adapter.adapter_id || "official source"}</b>
                             <span>{adapter.classification?.replaceAll("_", " ") || "public adapter"}</span>
                           </th>
                           <td>{formatCadence(adapter.expected_cadence)}</td>
@@ -1270,8 +1855,6 @@ export default function MoneyMarkets({ snap }: Props) {
               <LegalNoticePanel notices={atlasLegalNotices} title="Rights, terms and independence" />
             </div>
           </section>
-
-          {selected.market_id === "US-USD" && usdEngine && <UsdDesk engine={usdEngine} />}
 
           <section className="mm-ledger" aria-labelledby="mm-ledger-title">
             <SectionHead
@@ -1335,7 +1918,6 @@ export default function MoneyMarkets({ snap }: Props) {
                     <thead><tr><th scope="col">Market</th><th scope="col">Region</th><th scope="col">Candidate benchmark</th><th scope="col">Official source</th><th scope="col">Rights / integration limit</th><th scope="col">Stage</th></tr></thead>
                     <tbody>
                       {visibleExpansion.map((row, index) => {
-                        const sourceUrl = urlOrNull(row.source_url);
                         return (
                           <tr key={row.market_id || String(index)}>
                             <th scope="row">
@@ -1348,9 +1930,7 @@ export default function MoneyMarkets({ snap }: Props) {
                               <span>{row.benchmark_kind || "benchmark taxonomy pending"}</span>
                             </td>
                             <td>
-                              {sourceUrl
-                                ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{row.authority || "official authority"} ↗</a>
-                                : row.authority || "to validate"}
+                              {row.authority || "to validate"}
                               <span>{row.access?.replaceAll("_", " ").toLowerCase() || "access review pending"}</span>
                             </td>
                             <td>{row.access_note || "Methodology, endpoint and rights review pending."}</td>
@@ -1381,6 +1961,7 @@ export default function MoneyMarkets({ snap }: Props) {
               ))}
             </div>
           </details>
+          </>}
         </>
       )}
     </div>
