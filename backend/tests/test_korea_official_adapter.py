@@ -279,7 +279,7 @@ async def test_bok_call_collection_preserves_kst_publication_bound_and_knowledge
     assert observation.value == Decimal("278.900")
     assert observation.day_count is DayCountConvention.ACT_365
     assert observation.connector_classification is ConnectorClassification.OFFICIAL_OPEN
-    assert observation.redistribution_status is RedistributionStatus.ALLOWED
+    assert observation.redistribution_status is RedistributionStatus.METADATA_ONLY
     assert observation.quality is QualityState.ESTIMATED
 
 

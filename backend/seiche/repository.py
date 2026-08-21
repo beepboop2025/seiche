@@ -31,6 +31,7 @@ from seiche.domain.observation import Observation, RedistributionStatus, Semanti
 _MIN_POSTGRES_SERVER_VERSION = 110000
 _RELEASE_HANDOFF_ACTIVATION_LOCK = 0x534549434845
 COLLECTOR_WORKER_COMPONENT_ID = "official-market-collector"
+LEGACY_SOURCE_WORKER_COMPONENT_ID = "legacy-source-worker"
 
 
 class MarketRepository(Protocol):

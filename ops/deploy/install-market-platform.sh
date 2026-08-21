@@ -5,6 +5,7 @@ set -euo pipefail
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
+API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-readers}"
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
@@ -25,6 +26,12 @@ PROMOTION_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
 WORKER_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-market-worker.service"
 WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-market-worker.service
+SOURCE_WORKER_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-source-worker.service"
+SOURCE_WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-source-worker.service
+READINESS_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.service"
+READINESS_SERVICE_DESTINATION=/etc/systemd/system/seiche-data-readiness.service
+READINESS_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.timer"
+READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
 LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
 
 PACKAGES=()
@@ -120,6 +127,7 @@ if [ "$FORWARD_TABLE_EXISTS" = "t" ]; then
         | tr -d '[:space:]')
     if [ "$FORWARD_MIGRATION_MARKERS" != "1|1|1" ]; then
         for unit in seiche-api.service seiche-market-worker.service \
+                seiche-source-worker.service \
                 seiche-market-backfill.service seiche-market-validation.service; do
             state=$(systemctl show "$unit" --property=ActiveState --value \
                 2>/dev/null || true)
@@ -131,7 +139,7 @@ if [ "$FORWARD_TABLE_EXISTS" = "t" ]; then
                     ;;
             esac
         done
-        if pgrep -f '/home/seiche/app/backend/.venv/bin/seiche (market-worker|market-backfill|market-collect)' \
+        if pgrep -f '/home/seiche/app/backend/.venv/bin/seiche (market-worker|market-backfill|market-collect|source-worker|source-collect)' \
                 >/dev/null; then
             echo "market platform: an ad-hoc forward writer is still running" >&2
             exit 1
@@ -204,8 +212,16 @@ BACKUP_STAGE=""
 RESTORE_STAGE=""
 PROMOTION_UNIT_STAGE_DIR=""
 WORKER_UNIT_STAGE_DIR=""
+DATA_UNIT_STAGE_DIR=""
 cleanup() {
     rm -f -- "$ENV_STAGE" "$VALIDATION_STAGE" "$BACKUP_STAGE" "$RESTORE_STAGE"
+    if [ -n "$DATA_UNIT_STAGE_DIR" ]; then
+        rm -f -- \
+            "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
+            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
+            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+        rmdir "$DATA_UNIT_STAGE_DIR" 2>/dev/null || true
+    fi
     if [ -n "$WORKER_UNIT_STAGE_DIR" ]; then
         rm -f -- "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"
         rmdir "$WORKER_UNIT_STAGE_DIR" 2>/dev/null || true
@@ -297,6 +313,34 @@ mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service" \
     "$WORKER_UNIT_DESTINATION"
 rmdir "$WORKER_UNIT_STAGE_DIR"
 WORKER_UNIT_STAGE_DIR=""
+
+# The legacy source sweep and readiness monitor are one operational boundary:
+# validate their exact canonical names together so timer ordering and every
+# referenced service are checked before any host unit is replaced.
+DATA_UNIT_STAGE_DIR=$(mktemp -d \
+    /etc/systemd/system/.seiche-data-units-stage.XXXXXX)
+install -m 0644 "$SOURCE_WORKER_UNIT_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service"
+install -m 0644 "$READINESS_SERVICE_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service"
+install -m 0644 "$READINESS_TIMER_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+if ! systemd-analyze verify \
+        "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
+        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
+        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"; then
+    echo "market platform: source worker/readiness units failed verification" >&2
+    exit 1
+fi
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
+    "$SOURCE_WORKER_UNIT_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
+    "$READINESS_SERVICE_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
+    "$READINESS_TIMER_DESTINATION"
+rmdir "$DATA_UNIT_STAGE_DIR"
+DATA_UNIT_STAGE_DIR=""
+
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
     /etc/systemd/system/seiche-market-backfill.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
@@ -354,9 +398,10 @@ cat >"$BACKUP_STAGE" <<EOF
 [Service]
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
+Environment=SEICHE_API_DATA_DIR=$API_DATA_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 ReadOnlyPaths=
-ReadOnlyPaths=$APP_DIR $STATE_DIR
+ReadOnlyPaths=$APP_DIR $STATE_DIR $API_DATA_DIR
 ReadWritePaths=
 ReadWritePaths=$BACKUP_DIR /run/lock
 EOF
@@ -457,7 +502,8 @@ chmod 0644 "$DROPIN"
 mv -f "$DROPIN" /etc/systemd/system/seiche-api.service.d/market-platform.conf
 
 systemctl daemon-reload
-systemctl enable seiche-market-worker.service
+systemctl enable \
+    seiche-market-worker.service seiche-source-worker.service
 # Validation is an independent read/audit schedule. Starting the timer does not
 # wait for a run and must not participate in the API/collector deploy gate.
 systemctl enable --now seiche-market-validation.timer
@@ -466,11 +512,42 @@ systemctl enable --now seiche-market-validation.timer
 # release remains behind the deploy health gate.
 systemctl enable --now \
     seiche-market-backup.timer seiche-market-restore-check.timer
-# Submit both jobs together so the worker's After= relationship holds on the
-# first rollout. A failed source can make the backfill unit red, but cannot
-# prevent the persistent worker or other packs from starting afterward.
+# The source worker is Type=notify and reports READY only after its first
+# durable sweep. Keep the persistent readiness timer stopped until that gate
+# succeeds and backup/restore readiness has been proven, so an overdue
+# Persistent run cannot page during planned startup.
+DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
+DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+run_data_readiness_preflight() {
+    SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
+        /usr/bin/bash "$DATA_READINESS_SCRIPT"
+}
+activate_data_readiness_after_proof() {
+    if ! run_data_readiness_preflight; then
+        echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
+        if ! systemctl start seiche-market-backup.service; then
+            echo "market platform: v2 readiness bootstrap backup failed; timer remains stopped" >&2
+            return 1
+        fi
+        if ! systemctl start seiche-market-restore-check.service; then
+            echo "market platform: v2 readiness bootstrap restore check failed; timer remains stopped" >&2
+            return 1
+        fi
+        if ! run_data_readiness_preflight; then
+            echo "market platform: v2 readiness bootstrap failed; timer remains stopped" >&2
+            return 1
+        fi
+    fi
+    if ! systemctl enable --now seiche-data-readiness.timer; then
+        echo "market platform: proven readiness timer could not be activated" >&2
+        return 1
+    fi
+}
 if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then
-    systemctl start --no-block seiche-market-backfill.service seiche-market-worker.service
+    systemctl start --no-block \
+        seiche-market-backfill.service seiche-market-worker.service
+    systemctl start seiche-source-worker.service
+    activate_data_readiness_after_proof
 fi
 
-echo "market platform: PostgreSQL on socket port $POSTGRES_PORT, narrow funding export ACL, evidence directories, backups and collector units ready"
+echo "market platform: PostgreSQL on socket port $POSTGRES_PORT, narrow funding export ACL, evidence directories, backups, source collection and readiness units ready"

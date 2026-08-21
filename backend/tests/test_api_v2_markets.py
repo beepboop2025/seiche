@@ -543,10 +543,17 @@ def test_korea_series_distinguishes_public_values_derived_context_and_restrictio
         for item in payload["observations"]
         if item["instrument_id"] == "KR.KOFIA.CD_91D"
     )
+    bok = next(
+        item
+        for item in payload["observations"]
+        if item["instrument_id"] == "KR.BOK.BASE_RATE"
+    )
 
-    assert availability["KR.BOK.BASE_RATE"] == "READY"
+    assert availability["KR.BOK.BASE_RATE"] == "RESTRICTED"
     assert availability["KR.KOFIA.CD_91D"] == "DERIVED_CONTEXT"
     assert availability["KR.KSD.KOFR"] == "RESTRICTED"
+    assert bok["value"] is None
+    assert bok["value_status"] == "REDACTED_BY_LICENCE"
     assert cd["value"] is None
     assert cd["value_status"] == "REDACTED_BY_LICENCE"
     assert payload["status"] == "PARTIAL"

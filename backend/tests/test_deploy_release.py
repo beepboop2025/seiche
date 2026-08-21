@@ -31,6 +31,10 @@ RELEASE_POLLER_SERVICE = ROOT / "ops" / "deploy" / "seiche-release-poll.service"
 RELEASE_POLLER_TIMER = ROOT / "ops" / "deploy" / "seiche-release-poll.timer"
 RELEASE_ALLOWED_SIGNERS = ROOT / "ops" / "deploy" / "release-allowed-signers"
 MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
+MARKET_WORKER = ROOT / "ops" / "deploy" / "seiche-market-worker.service"
+SOURCE_WORKER = ROOT / "ops" / "deploy" / "seiche-source-worker.service"
+DATA_READINESS_SERVICE = ROOT / "ops" / "deploy" / "seiche-data-readiness.service"
+DATA_READINESS_TIMER = ROOT / "ops" / "deploy" / "seiche-data-readiness.timer"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
 LEGACY_UPDATE_RETIRER = ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
@@ -813,6 +817,101 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     )
 
 
+def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    admission = wrapper.index("if ! admit_shared_host; then")
+    source_capture = wrapper.index('SOURCE_WORKER_WAS_ACTIVE=""', admission)
+    source_enabled_capture = wrapper.index(
+        'SOURCE_WORKER_WAS_ENABLED=""', source_capture
+    )
+    timer_capture = wrapper.index(
+        'READINESS_TIMER_WAS_ACTIVE=""', source_enabled_capture
+    )
+    enabled_capture = wrapper.index('READINESS_TIMER_WAS_ENABLED=""', timer_capture)
+    unit_capture = wrapper.index(
+        "if ! capture_preupdate_data_units; then", enabled_capture
+    )
+    timer_stop = wrapper.index(
+        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service",
+        unit_capture,
+    )
+    writer_stop = wrapper.index(
+        "systemctl stop seiche-market-worker.service seiche-market-backfill.service",
+        timer_stop,
+    )
+    update = wrapper.index("bash /home/seiche/update.sh", writer_stop)
+
+    assert (
+        source_capture
+        < source_enabled_capture
+        < timer_capture
+        < enabled_capture
+        < unit_capture
+        < timer_stop
+        < writer_stop
+        < update
+    )
+    assert "seiche-source-worker.service" in wrapper[writer_stop:update]
+
+    restore = wrapper[
+        wrapper.index("restore_market_services() {") : wrapper.index(
+            "start_market_services() {"
+        )
+    ]
+    assert 'SOURCE_WORKER_WAS_ACTIVE" ]' in restore
+    assert 'READINESS_TIMER_WAS_ACTIVE" ]' in restore
+    restore_source = restore.index("systemctl start seiche-source-worker.service")
+    restore_timer = restore.index(
+        "systemctl start --no-block seiche-data-readiness.timer"
+    )
+    assert restore_source < restore_timer
+    assert "systemctl start --no-block seiche-source-worker.service" not in restore
+
+    start = wrapper[
+        wrapper.index("start_market_services() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    assert "systemctl reset-failed" in start
+    assert "seiche-market-worker.service seiche-source-worker.service" in start
+    assert "seiche-market-backfill.service seiche-market-worker.service" in start
+    candidate_source = start.index("ensure_source_worker_ready")
+    candidate_timer = start.index("activate_data_readiness_after_proof")
+    assert candidate_source < candidate_timer
+    assert "systemctl start --no-block seiche-source-worker.service" not in start
+    assert "seiche-source-worker.service seiche-data-readiness.timer" not in start
+
+    rollback = wrapper[wrapper.index("# A red warm-up") :]
+    rollback_timer_stop = rollback.index(
+        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service"
+    )
+    rollback_writer_stop = rollback.index(
+        "systemctl stop seiche-market-worker.service seiche-market-backfill.service"
+    )
+    reset = rollback.index('reset -q --hard "$DEPLOYED"')
+    restored = rollback.index("restore_market_services", reset)
+    assert rollback_timer_stop < rollback_writer_stop < reset < restored
+    assert "seiche-source-worker.service" in rollback[rollback_writer_stop:reset]
+
+
+def test_wrapper_starts_source_worker_before_strict_candidate_health():
+    wrapper = DEPLOY_WRAPPER.read_text()
+
+    accepted_branch = wrapper.index(
+        'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
+    )
+    normal_branch = wrapper.index('HEALTHY=""', accepted_branch)
+    accepted_body = wrapper[accepted_branch:normal_branch]
+    assert accepted_body.index("ensure_source_worker_ready") < accepted_body.index(
+        'candidate_health_wait 900 "$AFTER"'
+    )
+
+    normal_body = wrapper[normal_branch:]
+    assert normal_body.index("ensure_source_worker_ready") < normal_body.index(
+        'candidate_health_wait 900 "$AFTER"'
+    )
+
+
 def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
     wrapper = DEPLOY_WRAPPER.read_text()
     helper = wrapper[
@@ -841,20 +940,244 @@ def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
     assert (
         recovery.index("restore_quiesced_api")
         < recovery.index("restore_preupdate_market_worker_unit")
+        < recovery.index("restore_preupdate_data_units")
         < recovery.index("restore_market_services")
     )
 
     rollback = wrapper[wrapper.index("rolling the service back to") :]
     assert (
         rollback.index("restore_preupdate_market_worker_unit")
+        < rollback.index("restore_preupdate_data_units")
         < rollback.index("systemctl restart seiche-api")
         < rollback.index("restore_market_services")
     )
 
 
+def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    capture = wrapper[
+        wrapper.index("capture_preupdate_data_units() {") : wrapper.index(
+            "cleanup_data_unit_restore_stage() {"
+        )
+    ]
+    restore = wrapper[
+        wrapper.index("restore_preupdate_data_units() {") : wrapper.index(
+            "trap 'cleanup_preupdate_data_units || true' EXIT"
+        )
+    ]
+    unit_names_start = wrapper.index("DATA_UNIT_NAMES=(")
+    unit_names = wrapper[
+        unit_names_start : wrapper.index("DATA_UNIT_ROLLBACK_DIR", unit_names_start)
+    ]
+
+    for unit in (
+        "seiche-source-worker.service",
+        "seiche-data-readiness.service",
+        "seiche-data-readiness.timer",
+    ):
+        assert unit in unit_names
+    assert 'mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX"' in capture
+    assert '[ -L "$destination" ] || [ ! -f "$destination" ]' in capture
+    assert 'cp -p -- "$destination"' in capture
+    assert '"$DATA_UNIT_ROLLBACK_DIR/$unit.present"' in capture
+    assert '"$DATA_UNIT_ROLLBACK_DIR/$unit.absent"' in capture
+
+    assert 'systemd-analyze verify "${candidates[@]}"' in restore
+    assert 'mv -f "$stage/$unit" "$destination"' in restore
+    assert 'rm -f -- "$destination"' in restore
+    assert restore.index('mv -f "$stage/$unit" "$destination"') < restore.index(
+        "systemctl daemon-reload"
+    )
+    assert "SOURCE_WORKER_WAS_ENABLED" in restore
+    assert "READINESS_TIMER_WAS_ENABLED" in restore
+    assert "systemctl enable seiche-source-worker.service" in restore
+    assert "systemctl disable seiche-source-worker.service" in restore
+    assert "systemctl is-enabled --quiet seiche-source-worker.service" in restore
+    assert "systemctl enable seiche-data-readiness.timer" in restore
+    assert "systemctl disable seiche-data-readiness.timer" in restore
+    assert "systemctl is-enabled --quiet seiche-data-readiness.timer" in restore
+
+    capture_call = wrapper.index("if ! capture_preupdate_data_units; then")
+    quiesce = wrapper.index(
+        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service",
+        capture_call,
+    )
+    provision_flag = wrapper.index("DATA_UNITS_MAY_HAVE_CHANGED=1", quiesce)
+    provision = wrapper.index("deploy_market_platform ||", provision_flag)
+    assert capture_call < quiesce < provision_flag < provision
+
+    recovery = wrapper[wrapper.index("restore_pre_restart_services() {") : quiesce]
+    assert (
+        recovery.index("restore_quiesced_api")
+        < recovery.index("restore_preupdate_market_worker_unit")
+        < recovery.index("restore_preupdate_data_units")
+        < recovery.index("restore_market_services")
+    )
+
+    rollback = wrapper[wrapper.index("rolling the service back to") :]
+    assert (
+        rollback.index("restore_preupdate_market_worker_unit")
+        < rollback.index("restore_preupdate_data_units")
+        < rollback.index("systemctl restart seiche-api")
+        < rollback.index("rollback_health_wait 480")
+        < rollback.index("restore_market_services")
+    )
+
+
+def _run_readiness_activation_helper(
+    script_path: Path,
+    tmp_path: Path,
+    *,
+    readiness_mode: str,
+    fail_command: str = "",
+) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
+    script = script_path.read_text()
+    helper_start = script.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
+    if script_path == DEPLOY_WRAPPER:
+        helper_end = script.index("start_market_services() {", helper_start)
+    else:
+        helper_end = script.index(
+            'if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then',
+            helper_start,
+        )
+    helper = script[helper_start:helper_end]
+    local_bash = shutil.which("bash")
+    assert local_bash is not None
+    helper = helper.replace("/usr/bin/bash", local_bash)
+
+    app = tmp_path / "app"
+    readiness = app / "ops" / "deploy" / "seiche-data-readiness.sh"
+    readiness.parent.mkdir(parents=True)
+    _executable(
+        readiness,
+        """
+state=${FAKE_DATA_STATE:?}
+count_file=$state/readiness-count
+count=0
+[ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s\n' "$count" >"$count_file"
+printf 'readiness %s\n' "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
+case "${FAKE_READINESS_MODE:?}" in
+  current) exit 0 ;;
+  fresh) [ "$count" -gt 1 ] ;;
+  always-fail) exit 1 ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+state=${FAKE_DATA_STATE:?}
+printf 'systemctl %s\n' "$*" >>"$state/calls.log"
+if [ "$*" = "${FAKE_FAIL_COMMAND:-}" ]; then
+  exit 1
+fi
+if [ "$*" = "enable --now seiche-data-readiness.timer" ]; then
+  touch "$state/readiness-timer.enabled"
+fi
+""",
+    )
+    environment = os.environ | {
+        "APP": str(app),
+        "APP_DIR": str(app),
+        "FAKE_DATA_STATE": str(state),
+        "FAKE_READINESS_MODE": readiness_mode,
+        "FAKE_FAIL_COMMAND": fail_command,
+        "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+    }
+    result = subprocess.run(
+        ["bash", "-c", f"{helper}\nactivate_data_readiness_after_proof"],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    calls = (state / "calls.log").read_text().splitlines()
+    return result, calls, state
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
+    script_path: Path, tmp_path: Path
+):
+    result, calls, state = _run_readiness_activation_helper(
+        script_path, tmp_path, readiness_mode="fresh"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert [call.split()[0] for call in calls] == [
+        "readiness",
+        "systemctl",
+        "systemctl",
+        "readiness",
+        "systemctl",
+    ]
+    assert calls[1:] == [
+        "systemctl start seiche-market-backup.service",
+        "systemctl start seiche-market-restore-check.service",
+        calls[3],
+        "systemctl enable --now seiche-data-readiness.timer",
+    ]
+    assert "seiche-data-readiness.timer" not in calls[0]
+    assert calls[0] == calls[3]
+    assert (state / "readiness-timer.enabled").is_file()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
+    script_path: Path, tmp_path: Path
+):
+    result, calls, state = _run_readiness_activation_helper(
+        script_path, tmp_path, readiness_mode="current"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 2
+    assert calls[0].startswith("readiness ")
+    assert calls[1] == "systemctl enable --now seiche-data-readiness.timer"
+    assert (state / "readiness-timer.enabled").is_file()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize(
+    ("readiness_mode", "fail_command"),
+    [
+        ("fresh", "start seiche-market-backup.service"),
+        ("fresh", "start seiche-market-restore-check.service"),
+        ("always-fail", ""),
+        ("current", "enable --now seiche-data-readiness.timer"),
+    ],
+)
+def test_readiness_bootstrap_failures_leave_timer_disabled(
+    script_path: Path,
+    tmp_path: Path,
+    readiness_mode: str,
+    fail_command: str,
+):
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode=readiness_mode,
+        fail_command=fail_command,
+    )
+
+    assert result.returncode != 0
+    assert calls[0].startswith("readiness ")
+    assert not (state / "readiness-timer.enabled").exists()
+    if fail_command != "enable --now seiche-data-readiness.timer":
+        assert "systemctl enable --now seiche-data-readiness.timer" not in calls
+
+
 def test_market_platform_units_are_independent_and_postgres_backed():
     installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
-    worker = (ROOT / "ops" / "deploy" / "seiche-market-worker.service").read_text()
+    worker = MARKET_WORKER.read_text()
+    source_worker = SOURCE_WORKER.read_text()
+    readiness_service = DATA_READINESS_SERVICE.read_text()
+    readiness_timer = DATA_READINESS_TIMER.read_text()
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
     validation = (
         ROOT / "ops" / "deploy" / "seiche-market-validation.service"
@@ -889,14 +1212,36 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "SEICHE_VALIDATION_DIR=$STATE_DIR/validation" in installer
     assert "seiche-market-validation.service" in installer
     assert "seiche-market-validation.timer" in installer
+    assert "seiche-source-worker.service" in installer
+    assert "seiche-data-readiness.service" in installer
+    assert "seiche-data-readiness.timer" in installer
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
+    early_enable = installer[
+        installer.index("systemctl daemon-reload") : installer.index(
+            "DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="
+        )
+    ]
+    assert "seiche-data-readiness.timer" not in early_enable.split(
+        "systemctl enable --now seiche-market-validation.timer", 1
+    )[0]
     assert "SEICHE_DEFER_MARKET_START:-0}" in installer
     worker_verify = installer.index("worker unit failed verification")
     worker_install = installer.index(
         'mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"'
     )
     assert installer.index("systemd-analyze verify", 0, worker_verify) < worker_install
+    data_verify = installer.index("source worker/readiness units failed verification")
+    source_install = installer.index(
+        'mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service"'
+    )
+    readiness_install = installer.index(
+        'mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"'
+    )
+    assert installer.index("systemd-analyze verify", worker_install, data_verify) < (
+        source_install
+    )
+    assert data_verify < source_install < readiness_install
     assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
     assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
     assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer
@@ -908,11 +1253,53 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "usermod" not in funding_acl
     assert 'FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"' in installer
     assert "SEICHE_USD_FUNDING_CORE_EXPORT_DIR=$FUNDING_EXPORT_DIR" in installer
-    assert "systemctl start --no-block seiche-market-backfill.service" in installer
+    assert "seiche-market-backfill.service seiche-market-worker.service" in installer
+    installer_start = installer[
+        installer.index('if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then') :
+    ]
+    installer_source = installer_start.index(
+        "systemctl start seiche-source-worker.service"
+    )
+    installer_timer = installer_start.index("activate_data_readiness_after_proof")
+    assert installer_source < installer_timer
+    assert (
+        "systemctl start --no-block seiche-source-worker.service" not in installer_start
+    )
+    assert (
+        "seiche-source-worker.service seiche-data-readiness.timer"
+        not in installer_start
+    )
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in worker
     assert "EnvironmentFile=-/etc/seiche/bok-ecos.env" in worker
     assert "Restart=always" in worker
+    assert "OnFailure=undertow-failure-alert@%n.service" in worker
+    assert "StartLimitIntervalSec=15min" in worker
+    assert "StartLimitBurst=5" in worker
+    assert (
+        "ExecStart=/home/seiche/app/backend/.venv/bin/seiche "
+        "source-worker --poll-seconds 300"
+    ) in source_worker
+    assert "Type=notify" in source_worker
+    assert "NotifyAccess=main" in source_worker
+    assert "WatchdogSec=180" in source_worker
+    assert "TimeoutStartSec=15min" in source_worker
+    assert "Restart=always" in source_worker
+    assert "OnFailure=undertow-failure-alert@%n.service" in source_worker
+    assert "StartLimitIntervalSec=15min" in source_worker
+    assert "StartLimitBurst=5" in source_worker
+    assert "CapabilityBoundingSet=\n" in source_worker
+    assert "ProtectSystem=strict" in source_worker
+    assert "ProtectHome=read-only" in source_worker
+    assert "MemoryMax=2G" in source_worker
+    assert "TasksMax=128" in source_worker
+    assert "ReadWritePaths=/home/seiche/app/backend/data" in source_worker
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in source_worker
+    assert "OnFailure=undertow-failure-alert@%n.service" in readiness_service
+    assert (
+        "After=seiche-market-worker.service seiche-source-worker.service"
+        in readiness_timer
+    )
     assert "Type=oneshot" in backfill
     assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in backfill
     assert "EnvironmentFile=-/etc/seiche/bok-ecos.env" in backfill

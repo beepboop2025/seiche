@@ -77,7 +77,11 @@ from seiche.public_faults import (
     sanitize_fault_record,
     sanitize_public_fault_payload,
 )
-from seiche.repository import COLLECTOR_WORKER_COMPONENT_ID, get_repository
+from seiche.repository import (
+    COLLECTOR_WORKER_COMPONENT_ID,
+    LEGACY_SOURCE_WORKER_COMPONENT_ID,
+    get_repository,
+)
 
 # In production (SEICHE_ENV=production, set in the systemd unit) the interactive
 # API docs and the machine-readable schema are turned off — they enumerate every
@@ -2322,16 +2326,19 @@ def _health_response(
         )
     response.headers["Cache-Control"] = "no-store"
     faults = project_public_faults(snap["faults"])
-    required_setting = (
-        os.getenv("SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", "").strip().lower()
+    worker_checks = (
+        ("SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", _collector_worker_fault),
+        ("SEICHE_SOURCE_HEARTBEAT_REQUIRED", _legacy_source_worker_fault),
     )
-    heartbeat_required = (
-        required_setting in {"1", "true", "yes"} if required_setting else _PROD
-    )
-    if heartbeat_required:
-        worker_fault = _collector_worker_fault()
-        if worker_fault is not None:
-            faults.append(project_public_fault(worker_fault))
+    for setting_name, fault_reader in worker_checks:
+        required_setting = os.getenv(setting_name, "").strip().lower()
+        heartbeat_required = (
+            required_setting in {"1", "true", "yes"} if required_setting else _PROD
+        )
+        if heartbeat_required:
+            worker_fault = fault_reader()
+            if worker_fault is not None:
+                faults.append(project_public_fault(worker_fault))
     content = {
         "generated_at": snap["generated_at"],
         "version": snap.get("version"),
@@ -2350,22 +2357,52 @@ def _collector_worker_fault(
 ) -> dict[str, Any] | None:
     """Return only public liveness state; never storage or host diagnostics."""
 
+    return _worker_heartbeat_fault(
+        component_id=COLLECTOR_WORKER_COMPONENT_ID,
+        worker_label="official collector worker",
+        now=now,
+        repository=repository,
+    )
+
+
+def _legacy_source_worker_fault(
+    *,
+    now: datetime | None = None,
+    repository=None,
+) -> dict[str, Any] | None:
+    """Return the broad source worker's privacy-safe durable health state."""
+
+    return _worker_heartbeat_fault(
+        component_id=LEGACY_SOURCE_WORKER_COMPONENT_ID,
+        worker_label="legacy source worker",
+        now=now,
+        repository=repository,
+    )
+
+
+def _worker_heartbeat_fault(
+    *,
+    component_id: str,
+    worker_label: str,
+    now: datetime | None = None,
+    repository=None,
+) -> dict[str, Any] | None:
+    """Project one durable worker heartbeat through the public health boundary."""
+
     try:
         source_repository = repository if repository is not None else get_repository()
-        heartbeat = source_repository.load_worker_heartbeat(
-            COLLECTOR_WORKER_COMPONENT_ID
-        )
+        heartbeat = source_repository.load_worker_heartbeat(component_id)
     except Exception:  # noqa: BLE001 - public boundary intentionally redacts details
         return {
-            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "source": component_id,
             "status": "UNKNOWN",
-            "detail": "official collector worker health is unavailable",
+            "detail": f"{worker_label} health is unavailable",
         }
     if heartbeat is None:
         return {
-            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "source": component_id,
             "status": "MISSING",
-            "detail": "official collector worker has not reported a heartbeat",
+            "detail": f"{worker_label} has not reported a heartbeat",
         }
     try:
         heartbeat_at = datetime.fromisoformat(
@@ -2385,9 +2422,9 @@ def _collector_worker_fault(
         expected_by = expected_by.astimezone(UTC).replace(microsecond=0)
     except (KeyError, TypeError, ValueError):
         return {
-            "source": COLLECTOR_WORKER_COMPONENT_ID,
+            "source": component_id,
             "status": "UNKNOWN",
-            "detail": "official collector worker health is unavailable",
+            "detail": f"{worker_label} health is unavailable",
         }
     current = now or datetime.now(UTC)
     if current.tzinfo is None or current.utcoffset() is None:
@@ -2396,9 +2433,9 @@ def _collector_worker_fault(
     if current <= expected_by:
         return None
     return {
-        "source": COLLECTOR_WORKER_COMPONENT_ID,
+        "source": component_id,
         "status": "OVERDUE",
-        "detail": "official collector worker heartbeat is overdue",
+        "detail": f"{worker_label} heartbeat is overdue",
         "heartbeat_at": heartbeat_at.isoformat(),
         "expected_by": expected_by.isoformat(),
     }

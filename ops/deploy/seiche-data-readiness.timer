@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Seiche data-plane readiness every five minutes
+After=seiche-market-worker.service seiche-source-worker.service
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00
+AccuracySec=30s
+Persistent=true
+Unit=seiche-data-readiness.service
+
+[Install]
+WantedBy=timers.target

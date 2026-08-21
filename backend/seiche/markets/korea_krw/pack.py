@@ -71,6 +71,13 @@ _KOFR_CLOCK = PublicationClock(
     CALENDAR.calendar_id,
 )
 
+# ECOS requires an individually issued, non-transferable key.  The public
+# documentation establishes automated access, but the 2026-08-22 rights review
+# did not find a stable affirmative grant to republish the returned values.
+# Continue collecting provenance internally while the review is open, but do
+# not let either raw values or a derived public gauge cross the API boundary.
+_BOK_REVIEW_PENDING = RedistributionStatus.METADATA_ONLY
+
 
 PACK = MarketPack(
     market_id="KR-KRW",
@@ -97,21 +104,21 @@ PACK = MarketPack(
             ConnectorClassification.OFFICIAL_OPEN,
             "P1D",
             _BOK_POLICY_CLOCK,
-            RedistributionStatus.ALLOWED,
+            _BOK_REVIEW_PENDING,
         ),
         SourceAdapterSpec(
             "bok_ecos_money_market",
             ConnectorClassification.OFFICIAL_OPEN,
             "P1D",
             _BOK_MARKET_CLOCK,
-            RedistributionStatus.ALLOWED,
+            _BOK_REVIEW_PENDING,
         ),
         SourceAdapterSpec(
             "bok_facilities",
             ConnectorClassification.OFFICIAL_OPEN,
             "P1D",
             _BOK_POLICY_CLOCK,
-            RedistributionStatus.ALLOWED,
+            _BOK_REVIEW_PENDING,
         ),
         # KSD publishes KOFR openly, but its legal notice does not grant raw
         # republication rights.  Keep it descriptive and out of calculations

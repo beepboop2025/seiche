@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from seiche.domain.observation import (
+    RATE_ROLES,
     CanonicalUnit,
     ConnectorClassification,
     DayCountConvention,
@@ -87,4 +88,43 @@ def test_rate_units_and_licensed_redistribution_are_enforced() -> None:
         _rate_observation(
             connector_classification=ConnectorClassification.LICENSED,
             redistribution_status=RedistributionStatus.ALLOWED,
+        )
+
+
+def test_compounded_overnight_averages_are_rates_but_index_is_not() -> None:
+    average_roles = {
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_30D,
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
+        SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_180D,
+    }
+
+    assert average_roles <= RATE_ROLES
+    assert SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX not in RATE_ROLES
+    average = _rate_observation(
+        semantic_role=SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_30D,
+        rate_compounding=RateCompounding.COMPOUNDED,
+    )
+    index = _rate_observation(
+        instrument_id="US.TEST.RATE_INDEX",
+        semantic_role=SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX,
+        canonical_unit=CanonicalUnit.INDEX_POINTS,
+        rate_compounding=None,
+        day_count=None,
+    )
+
+    assert average.rate_compounding is RateCompounding.COMPOUNDED
+    assert average.canonical_unit is CanonicalUnit.BASIS_POINTS
+    assert index.canonical_unit is CanonicalUnit.INDEX_POINTS
+    assert index.rate_compounding is None
+    assert Observation.from_record(index.to_record()) == index
+
+    with pytest.raises(ValueError, match="basis points"):
+        _rate_observation(
+            semantic_role=SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
+            canonical_unit=CanonicalUnit.INDEX_POINTS,
+        )
+    with pytest.raises(ValueError, match="non-rate observations"):
+        _rate_observation(
+            semantic_role=SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX,
+            canonical_unit=CanonicalUnit.INDEX_POINTS,
         )

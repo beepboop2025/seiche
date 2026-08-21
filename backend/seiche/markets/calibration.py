@@ -269,6 +269,31 @@ _CALIBRATIONS = {
             ),
         ),
     ),
+    "KR-KRW": LocalCalibration(
+        "kr-krw-local-forward-v1",
+        "KR-KRW",
+        (
+            _component(
+                "policy_relative_overnight",
+                EngineKind.POLICY_RELATIVE,
+                0.65,
+                required=True,
+                scale=15,
+                history=20,
+                overnight=SemanticRole.UNSECURED_OVERNIGHT,
+                anchor=SemanticRole.POLICY_TARGET,
+            ),
+            _component(
+                "corridor_pressure",
+                EngineKind.CORRIDOR,
+                0.35,
+                center=50,
+                scale=25,
+                history=20,
+                overnight=SemanticRole.UNSECURED_OVERNIGHT,
+            ),
+        ),
+    ),
     "CN-CNY": LocalCalibration(
         "cn-cny-local-forward-v1",
         "CN-CNY",

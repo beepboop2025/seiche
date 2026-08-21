@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
+import sys
 import textwrap
-
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-backup.sh"
@@ -89,17 +91,27 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         args = sys.argv[1:]
         if "--create" in args:
             target = Path(args[args.index("--file") + 1])
-            target.write_bytes(b"state-archive-payload")
+            prefix = b"api-data-archive" if target.name == "api-data.tgz" else b"state-archive"
+            target.write_bytes(prefix + b"-payload")
         elif "--list" in args:
             target = Path(args[args.index("--file") + 1])
-            if not target.read_bytes().startswith(b"state-archive"):
+            payload = target.read_bytes()
+            if not payload.startswith((b"state-archive", b"api-data-archive")):
                 raise SystemExit(10)
-            print("seiche/")
+            print("api-data/" if payload.startswith(b"api-data-archive") else "seiche/")
         elif "--extract" in args:
+            archive = Path(args[args.index("--file") + 1])
             target = Path(args[args.index("--directory") + 1])
-            restored = target / "seiche" / "raw"
-            restored.mkdir(parents=True)
-            (restored / "capture.json").write_text("official evidence\\n")
+            if archive.read_bytes().startswith(b"api-data-archive"):
+                restored = target / "api-data"
+                restored.mkdir(parents=True)
+                import sqlite3
+                with sqlite3.connect(restored / "seiche.sqlite") as database:
+                    database.execute("CREATE TABLE restored (value TEXT)")
+            else:
+                restored = target / "seiche" / "raw"
+                restored.mkdir(parents=True)
+                (restored / "capture.json").write_text("official evidence\\n")
         """,
     )
     sha256sum = _executable(
@@ -170,6 +182,7 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "SEICHE_SHA256SUM_BIN": str(sha256sum),
         "SEICHE_SYNC_BIN": str(sync),
         "SEICHE_DATE_BIN": str(date),
+        "SEICHE_PYTHON_BIN": sys.executable,
         "SEICHE_BACKUP_MIN_DUMP_BYTES": "1",
         "FAKE_CALLS": str(calls),
     }
@@ -183,12 +196,19 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     (state / "exports").mkdir()
     (state / "validation").mkdir()
     (state / "raw" / "capture.json").write_text("official evidence\n")
+    api_data = tmp_path / "app" / "backend" / "data"
+    api_data.mkdir(parents=True)
+    with sqlite3.connect(api_data / "seiche.sqlite") as database:
+        database.execute("CREATE TABLE accounts (username TEXT PRIMARY KEY)")
+        database.execute("INSERT INTO accounts VALUES ('researcher')")
+    (api_data / "brief-cache.json").write_text('{"status":"real"}\n')
     backup = tmp_path / "backups"
     marker = tmp_path / "deployed-sha"
     marker.write_text("a" * 40 + "\n")
     env.update(
         {
             "SEICHE_MARKET_STATE_DIR": str(state),
+            "SEICHE_API_DATA_DIR": str(api_data),
             "SEICHE_MARKET_BACKUP_DIR": str(backup),
             "SEICHE_DEPLOYED_SHA_PATH": str(marker),
             "SEICHE_BACKUP_STAMP": "20260810T020000Z",
@@ -204,6 +224,22 @@ def _run(script: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _rewrite_manifest_and_inventory(
+    snapshot: Path,
+    transform,
+) -> None:
+    """Model a recomputed, internally consistent but untrusted snapshot."""
+
+    manifest = snapshot / "manifest.env"
+    manifest.write_text(transform(manifest.read_text()))
+    inventory = []
+    for line in (snapshot / "SHA256SUMS").read_text().splitlines():
+        _, name = line.split("  ", 1)
+        digest = hashlib.sha256((snapshot / name).read_bytes()).hexdigest()
+        inventory.append(f"{digest}  {name}")
+    (snapshot / "SHA256SUMS").write_text("\n".join(inventory) + "\n")
+
+
 def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     env, calls = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
@@ -216,12 +252,14 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
         "SHA256SUMS",
         "deployed-sha.txt",
         "manifest.env",
+        "api-data.tgz",
         "seiche.dump",
         "table-counts.txt",
         "var-lib-seiche.tgz",
     }
     manifest = (snapshot / "manifest.env").read_text()
-    assert "schema=seiche.market-backup.v1" in manifest
+    assert "schema=seiche.market-backup.v2" in manifest
+    assert f"api_data_root={env['SEICHE_API_DATA_DIR']}" in manifest
     assert "postgres_port=5544" in manifest
     assert "research_only=true" in manifest
     assert "can_publish=false" in manifest
@@ -238,7 +276,7 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     assert "--port=5544" in log
 
 
-def test_backup_rejects_a_database_that_changes_during_snapshot(tmp_path: Path):
+def test_backup_accepts_append_only_writes_during_snapshot(tmp_path: Path):
     env, _ = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
     env["FAKE_COUNTS_CALLS"] = str(tmp_path / "count-calls")
@@ -246,10 +284,13 @@ def test_backup_rejects_a_database_that_changes_during_snapshot(tmp_path: Path):
 
     result = _run(BACKUP_SCRIPT, env)
 
-    assert result.returncode != 0
-    assert "counts changed during snapshot" in result.stderr
-    assert not (backup / "20260810T020000Z").exists()
-    assert not list(backup.glob(".stage-*"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    snapshot = backup / "20260810T020000Z"
+    assert (snapshot / "table-counts.txt").read_text() == "11|12|13|14\n"
+    assert (
+        "critical_table_count_semantics=pre_dump_lower_bound"
+        in (snapshot / "manifest.env").read_text()
+    )
 
 
 def test_backup_failure_preserves_committed_snapshot_and_cleans_stage(tmp_path: Path):
@@ -282,15 +323,90 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     status = (state / "validation" / "backup-restore-check.status").read_text()
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
+    assert "critical_table_count_floor=11|12|13|14" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
+    assert "api_data_archive_restore=pass" in status
     assert not list((state / "validation").glob(".backup-state-restore.*"))
+    assert not list((state / "validation").glob(".backup-api-data-restore.*"))
     assert "can_publish=false" in status
     log = calls.read_text()
     assert "setpriv " in log
     assert "createdb --template=template0" in log
     assert sum(line.startswith("dropdb ") for line in log.splitlines()) == 1
     assert "--port=5544" in log
+
+
+def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
+    tmp_path: Path,
+) -> None:
+    env, calls = _tools(tmp_path)
+    state, backup, _ = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+
+    _rewrite_manifest_and_inventory(
+        snapshot,
+        lambda manifest: manifest.replace(
+            "schema=seiche.market-backup.v2\n",
+            "schema=untrusted.foreign.snapshot\n",
+        ).replace(
+            "research_only=true\ncan_publish=false\ncan_execute=false\n",
+            "research_only=false\ncan_publish=true\ncan_execute=true\n",
+        ),
+    )
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert result.stderr == (
+        "seiche market restore check: snapshot manifest contract is invalid\n"
+    )
+    assert not (state / "validation" / "backup-restore-check.status").exists()
+    assert not any(line.startswith("createdb ") for line in calls.read_text().splitlines())
+
+
+def test_restore_rejects_duplicate_or_unknown_manifest_fields(tmp_path: Path) -> None:
+    env, _ = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+    _rewrite_manifest_and_inventory(
+        snapshot,
+        lambda manifest: manifest + "schema=seiche.market-backup.v2\nunknown=x\n",
+    )
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "snapshot manifest contract is invalid" in result.stderr
+
+
+def test_restore_rejects_manifest_for_wrong_database_or_unsafe_roots(
+    tmp_path: Path,
+) -> None:
+    env, _ = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+    _rewrite_manifest_and_inventory(
+        snapshot,
+        lambda manifest: manifest.replace("database=seiche", "database=foreign").replace(
+            f"state_root={env['SEICHE_MARKET_STATE_DIR']}",
+            "state_root=/",
+        ).replace(
+            f"api_data_root={env['SEICHE_API_DATA_DIR']}",
+            "api_data_root=relative/data",
+        ),
+    )
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "snapshot manifest contract is invalid" in result.stderr
 
 
 def test_failed_restore_drops_scratch_and_preserves_last_good_status(tmp_path: Path):
@@ -301,12 +417,12 @@ def test_failed_restore_drops_scratch_and_preserves_last_good_status(tmp_path: P
     assert _run(RESTORE_SCRIPT, env).returncode == 0
     status_path = state / "validation" / "backup-restore-check.status"
     before = status_path.read_bytes()
-    env["FAKE_COUNTS"] = "99|12|13|14"
+    env["FAKE_COUNTS"] = "1|12|13|14"
 
     failed = _run(RESTORE_SCRIPT, env)
 
     assert failed.returncode != 0
-    assert "counts do not match" in failed.stderr
+    assert "counts fall below the snapshot floor" in failed.stderr
     assert status_path.read_bytes() == before
     assert (
         sum(line.startswith("dropdb ") for line in calls.read_text().splitlines()) == 2

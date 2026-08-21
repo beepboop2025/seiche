@@ -37,13 +37,16 @@ Every run:
    assuming `5432` or `5433`;
 2. writes a custom-format `pg_dump` of database `seiche`;
 3. archives `/var/lib/seiche` with numeric ownership, ACLs, and xattrs;
-4. records exact counts for all four market tables and the deployed Git SHA;
-5. rejects the staged snapshot if critical table counts changed around the
-   dump, validates both restore catalogues, then writes research-only/no-
+4. copies the API/legacy data directory and replaces its live SQLite files
+   with a transactionally consistent online backup verified by
+   `PRAGMA quick_check`;
+5. records a pre-dump lower bound for all four append-only/upsert-only market
+   tables and the deployed Git SHA;
+6. validates all dump/archive catalogues, then writes research-only/no-
    authority metadata and a `SHA256SUMS` inventory;
-6. verifies that inventory, flushes the staged filesystem, and atomically renames the
+7. verifies that inventory, flushes the staged filesystem, and atomically renames the
    staging directory to `/var/backups/seiche-market/<UTC stamp>`; and
-7. only after that commit, removes timestamped local snapshots older than the
+8. only after that commit, removes timestamped local snapshots older than the
    configured retention (21 days by default).
 
 A failed run removes its hidden staging directory and cannot replace a prior
@@ -62,9 +65,12 @@ journalctl -u seiche-market-backup.service -n 100 --no-pager
 `seiche-market-restore-check.timer` runs Sundays at 07:30 UTC with up to fifteen
 minutes of jitter. It selects the newest committed snapshot, verifies every
 checksum, extracts the state tar archive into a temporary directory under the
-validation root, and restores the dump into a uniquely named scratch database.
-Exact critical-table counts must match the snapshot before the filesystem
-scratch tree and scratch database are removed.
+validation root, verifies the restored API SQLite database with
+`PRAGMA quick_check`, and restores the dump into a uniquely named scratch
+database. Every restored critical-table count must meet or exceed the recorded
+pre-dump floor before the filesystem scratch trees and scratch database are
+removed. This lets continuous ingestion proceed during `pg_dump` without
+turning ordinary appends into false backup failures.
 
 The production `seiche` database and live state tree are never restore targets.
 A trap drops the scratch database after either success or failure. A successful
@@ -84,6 +90,41 @@ Operator checks:
 systemctl start seiche-market-restore-check.service
 journalctl -u seiche-market-restore-check.service -n 100 --no-pager
 cat /var/lib/seiche/validation/backup-restore-check.status
+```
+
+## Continuous collection and data readiness
+
+`seiche-source-worker.service` refreshes the broad legacy/engine source cache
+every five minutes. Source-native TTLs still govern upstream requests, so the
+poll loop does not bypass publisher limits. The `Type=notify` service becomes
+ready only after its first durable source sweep. Its systemd watchdog proves
+process liveness, while the repository heartbeat expires when acquisition can
+no longer complete; these are deliberately different signals.
+
+`seiche-data-readiness.timer` runs every five minutes and fails closed when:
+
+- the API snapshot is older than 15 minutes, future-dated beyond five minutes
+  of clock skew, or contains collector/critical faults;
+- either collector heartbeat is missing or overdue;
+- the newest backup is older than 36 hours or implausibly future-dated;
+- the exact v2 restore receipt is missing, invalid, older than eight days, or
+  future-dated;
+- a required service/timer is inactive, or a required timer is disabled for
+  the next boot; or
+- block or inode use reaches 90 percent on a monitored filesystem.
+
+On a fresh host or the first v2 rollout, installation does not enable the
+readiness timer immediately. It starts the source worker, runs a real backup,
+restores and checks that snapshot in isolation, executes readiness once without
+requiring its not-yet-active timer, and enables the timer only after that proof
+passes. Any failed stage leaves the timer disabled and the deployment nonzero.
+
+Operator checks:
+
+```sh
+systemctl status seiche-source-worker.service seiche-data-readiness.timer
+systemctl start seiche-data-readiness.service
+journalctl -u seiche-data-readiness.service -n 100 --no-pager
 ```
 
 ## Durability boundary

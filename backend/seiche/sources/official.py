@@ -19,7 +19,7 @@ import os
 import re
 import urllib.parse
 import zipfile
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from typing import Any
@@ -511,29 +511,64 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     rows = payload.get("refRates")
     if not isinstance(rows, list):
         raise ValueError("NY Fed response has no refRates list")
-    mapping = {
+    sofr_mapping = {
         # ``percentRate`` is the published transaction-weighted median.  P25
         # is a different distribution point and must never stand in for it.
         "percentRate": "US.NYFED.SOFR_MEDIAN",
         "percentPercentile99": "US.NYFED.SOFR_P99",
         "volumeInBillions": "US.NYFED.SOFR_VOLUME",
     }
+    sofrai_mapping = {
+        "average30day": "US.NYFED.SOFR_AVERAGE_30D",
+        "average90day": "US.NYFED.SOFR_AVERAGE_90D",
+        "average180day": "US.NYFED.SOFR_AVERAGE_180D",
+        "index": "US.NYFED.SOFR_INDEX",
+    }
     points: list[ParsedPoint] = []
+    sofrai_seen: set[tuple[date, str]] = set()
     for row in rows:
-        if not isinstance(row, dict) or row.get("type") != "SOFR":
+        if not isinstance(row, dict):
             continue
+        rate_type = str(row.get("type") or "").strip().upper()
         event_day = _date(row.get("effectiveDate"), "%Y-%m-%d")
         if event_day is None:
             continue
         revision = str(row.get("revisionIndicator") or "").strip()
+        revision_token = re.sub(
+            r"[^A-Za-z0-9._-]+", "-", revision or "unrevised"
+        ).strip("-")
+        if rate_type == "SOFR":
+            mapping = sofr_mapping
+            publication_time = None
+            lineage_prefix = "nyfed"
+        elif rate_type == "SOFRAI":
+            mapping = sofrai_mapping
+            # SOFR itself is labelled with the prior business day's effective
+            # date, while the Averages and Index are labelled with their same-
+            # day value date. They are published shortly after 08:00 ET on
+            # that value date, so the adapter's T+1 SOFR clock cannot be used.
+            publication_time = datetime.combine(
+                event_day,
+                time(8, 0),
+                tzinfo=ZoneInfo("America/New_York"),
+            ).astimezone(UTC)
+            lineage_prefix = "nyfed:SOFRAI"
+        else:
+            continue
         for field, instrument in mapping.items():
             value = _number(row.get(field))
             if value is None:
+                # Missing is unknown: never copy another horizon or emit zero.
                 continue
+            if rate_type == "SOFRAI":
+                identity = (event_day, field)
+                if identity in sofrai_seen:
+                    raise ValueError(
+                        "NY Fed response contains duplicate SOFRAI "
+                        f"{field} for {event_day.isoformat()}"
+                    )
+                sofrai_seen.add(identity)
             row_evidence = _row_evidence(field, row)
-            revision_token = re.sub(
-                r"[^A-Za-z0-9._-]+", "-", revision or "unrevised"
-            ).strip("-")
             content_token = hashlib.sha256(row_evidence).hexdigest()[:16]
             points.append(
                 ParsedPoint(
@@ -541,21 +576,109 @@ def parse_nyfed_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
                     event_day,
                     value,
                     row_evidence,
+                    source_publication_time=publication_time,
                     # Bind the semantic source field and event explicitly even
-                    # when upstream supplies no revision indicator.  This lets
-                    # downstream profiles prove that corrected median rows came
-                    # from percentRate while retaining the former P25-derived
-                    # rows as ordinary earlier revisions in the append-only
-                    # canonical store.
+                    # when upstream supplies no revision indicator. This keeps
+                    # the median, tail, averaging horizons, and index distinct
+                    # while retaining earlier values as ordinary revisions in
+                    # the append-only canonical store.
                     revision_id=(
-                        f"nyfed:{field}:{event_day.isoformat()}:"
+                        f"{lineage_prefix}:{field}:{event_day.isoformat()}:"
                         f"{revision_token or 'unrevised'}-{content_token}"
                     ),
                 )
             )
     if not points:
-        raise ValueError("NY Fed response contains no SOFR distribution rows")
-    return tuple(points)
+        raise ValueError(
+            "NY Fed response contains no SOFR distribution or averages/index rows"
+        )
+    return tuple(
+        sorted(
+            points,
+            key=lambda point: (point.event_time, point.instrument_id),
+        )
+    )
+
+
+def parse_nyfed_unsecured_rates(
+    document: FetchedDocument,
+) -> tuple[ParsedPoint, ...]:
+    """Parse the canonical EFFR and OBFR distribution fields we can name.
+
+    The NY Fed also publishes the 1st, 25th, and 75th percentiles and volumes.
+    The canonical observation vocabulary does not yet have honest semantic
+    roles for those fields, so they remain in the immutable raw capture rather
+    than being mislabeled or coerced into a repo-volume series.
+    """
+
+    payload = json.loads(document.payload)
+    rows = payload.get("refRates")
+    if not isinstance(rows, list):
+        raise ValueError("NY Fed unsecured response has no refRates list")
+    mappings = {
+        "EFFR": {
+            "percentRate": "US.NYFED.EFFR_MEDIAN",
+            "percentPercentile99": "US.NYFED.EFFR_P99",
+        },
+        "OBFR": {
+            "percentRate": "US.NYFED.OBFR_MEDIAN",
+            "percentPercentile99": "US.NYFED.OBFR_P99",
+        },
+    }
+    points: list[ParsedPoint] = []
+    seen: set[tuple[str, date, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rate_type = str(row.get("type") or "").strip().upper()
+        mapping = mappings.get(rate_type)
+        if mapping is None:
+            continue
+        event_day = _date(row.get("effectiveDate"), "%Y-%m-%d")
+        if event_day is None:
+            continue
+        revision = str(row.get("revisionIndicator") or "").strip()
+        revision_token = re.sub(
+            r"[^A-Za-z0-9._-]+", "-", revision or "unrevised"
+        ).strip("-")
+        for field, instrument in mapping.items():
+            value = _number(row.get(field))
+            if value is None:
+                # An absent distribution statistic is unknown, never zero and
+                # never copied from another percentile.
+                continue
+            identity = (rate_type, event_day, field)
+            if identity in seen:
+                raise ValueError(
+                    "NY Fed unsecured response contains duplicate "
+                    f"{rate_type} {field} for {event_day.isoformat()}"
+                )
+            seen.add(identity)
+            row_evidence = _row_evidence(f"{rate_type}.{field}", row)
+            content_token = hashlib.sha256(row_evidence).hexdigest()[:16]
+            points.append(
+                ParsedPoint(
+                    instrument,
+                    event_day,
+                    value,
+                    row_evidence,
+                    revision_id=(
+                        f"nyfed:{rate_type}:{field}:{event_day.isoformat()}:"
+                        f"{revision_token or 'unrevised'}-{content_token}"
+                    ),
+                )
+            )
+    if not points:
+        raise ValueError(
+            "NY Fed unsecured response contains no canonical EFFR or OBFR "
+            "distribution rows"
+        )
+    return tuple(
+        sorted(
+            points,
+            key=lambda point: (point.event_time, point.instrument_id),
+        )
+    )
 
 
 def parse_nyfed_facilities(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
@@ -1617,6 +1740,19 @@ def build_official_adapters(
             ),
         )
 
+    async def fetch_nyfed_unsecured_rates(client):
+        end = now.date().isoformat()
+        return await get_documents(
+            client,
+            (
+                (
+                    "nyfed_unsecured_rates",
+                    "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
+                    {"startDate": start.isoformat(), "endDate": end},
+                ),
+            ),
+        )
+
     async def fetch_nyfed_facilities(client):
         # The public endpoint accepts at most 500 results (1,000/1,200 return
         # HTTP 400). This reaches roughly one year of standing-facility
@@ -1635,6 +1771,13 @@ def build_official_adapters(
         )
 
     add("US-USD", "nyfed_rates", "nyfed_rates", fetch_nyfed_rates, parse_nyfed_rates)
+    add(
+        "US-USD",
+        "nyfed_unsecured_rates",
+        "nyfed_unsecured_rates",
+        fetch_nyfed_unsecured_rates,
+        parse_nyfed_unsecured_rates,
+    )
     add(
         "US-USD",
         "nyfed_facilities",
@@ -2044,6 +2187,7 @@ PRODUCTION_ADAPTER_KEYS = frozenset(
         ("US-USD", "fred_daily"),
         ("US-USD", "fred_weekly"),
         ("US-USD", "nyfed_rates"),
+        ("US-USD", "nyfed_unsecured_rates"),
         ("US-USD", "nyfed_facilities"),
         ("US-USD", "fiscaldata"),
         ("EA-EUR", "ecb_benchmark"),

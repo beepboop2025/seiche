@@ -1,0 +1,60 @@
+[Unit]
+Description=Seiche broad official-source collection worker
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+OnFailure=undertow-failure-alert@%n.service
+StartLimitIntervalSec=15min
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app
+EnvironmentFile=/etc/seiche/market.env
+EnvironmentFile=-/etc/seiche/rbnz-access.env
+EnvironmentFile=-/etc/seiche/bok-ecos.env
+ExecStart=/home/seiche/app/backend/.venv/bin/seiche source-worker --poll-seconds 300
+Restart=always
+RestartSec=30
+WatchdogSec=180
+# Readiness follows the first durable full-source sweep, which can span
+# multiple bounded upstream requests under ordinary network degradation.
+TimeoutStartSec=15min
+TimeoutStopSec=45
+CPUWeight=20
+IOWeight=20
+Nice=5
+MemoryHigh=1G
+MemoryMax=2G
+MemorySwapMax=0
+TasksMax=128
+UMask=0027
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/home/seiche/app/backend/data
+
+[Install]
+WantedBy=multi-user.target
