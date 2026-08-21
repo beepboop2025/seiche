@@ -1,0 +1,106 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-21-bitcoin-s-jump-is-fresh-the-dollar-funding-warning-still-needs-a-cash-ma",
+  "product": "seiche",
+  "slug": "2026-08-21-bitcoin-s-jump-is-fresh-the-dollar-funding-warning-still-needs-a-cash-ma",
+  "date": "2026-08-21",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "Bitcoin’s jump is fresh; the dollar-funding warning still needs a cash-market confirmation",
+  "dek": "Seiche’s board reads STRAIN because a dated reserve path is carrying the signal. The test is whether Treasury settlements move secured funding toward or above the administered rate.",
+  "canonical_url": "https://seiche.info/articles/2026-08-21-bitcoin-s-jump-is-fresh-the-dollar-funding-warning-still-needs-a-cash-ma/",
+  "published_at": "2026-08-21T11:17:20Z",
+  "evidence_as_of": "2026-08-20",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-21-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1023,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:358a5891f53c6652d1373f0dc58ac46729fdfc0be8059e8f4ad1bf2746d7094c",
+    "memory_fingerprint": "sha256:bdc027833fe72a3679372ddfe493a459b0b6aa40c83ce66895cbac0599aef879",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "3adc03781c2aa4de3a30641a99077eccd7bb7e92780d1de9c61db5ed3a8ce66e",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Removed the unsupported claim that Bitcoin caused the board reading and separated the fresh market print from the funding thesis.",
+      "Made current SOFR, facility-use, and market-stress evidence capable of falsifying the calendar-led case.",
+      "Converted the forward reserve path into a dated, observable test and retained its scenario status.",
+      "Added the required research boundary, product boundaries, and source links.",
+      "Removed standalone date numerals flagged by the gate while retaining latest-observation context.",
+      "Kept the reserve path explicitly as a Seiche scenario and made cash-market confirmation the decisive test.",
+      "Retained the required evidence boundaries, product boundaries, and allowed source links."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:358a5891f53c6652d1373f0dc58ac46729fdfc0be8059e8f4ad1bf2746d7094c",
+      "memory_fingerprint": "sha256:bdc027833fe72a3679372ddfe493a459b0b6aa40c83ce66895cbac0599aef879",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
