@@ -7,6 +7,8 @@ ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+RECOVERY_PROOF_DIR=/var/lib/seiche-recovery-proof
+RESTORE_STATUS_PATH=$RECOVERY_PROOF_DIR/backup-restore-check.status
 EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-readers}"
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
 FUNDING_EXPORT_FILE="$FUNDING_EXPORT_DIR/us-usd-funding-core-v1.json"
@@ -183,6 +185,7 @@ install -d -o seiche -g seiche -m 0750 \
     "$FUNDING_EXPORT_DIR"
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
+install -d -o root -g seiche -m 0750 "$RECOVERY_PROOF_DIR"
 install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"
 
 # Give the future Lab runtime access to only the stable funding-core export.
@@ -224,7 +227,8 @@ cleanup() {
         rm -f -- \
             "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
-            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
+            "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
         rmdir "$DATA_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
     if [ -n "$WORKER_UNIT_STAGE_DIR" ]; then
@@ -415,11 +419,14 @@ install -m 0644 "$READINESS_SERVICE_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service"
 install -m 0644 "$READINESS_TIMER_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
+    "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
 if ! systemd-analyze verify \
         "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
-        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"; then
-    echo "market platform: source worker/readiness units failed verification" >&2
+        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
+        "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"; then
+    echo "market platform: data-plane units failed verification" >&2
     exit 1
 fi
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
@@ -428,11 +435,11 @@ mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
     "$READINESS_SERVICE_DESTINATION"
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
     "$READINESS_TIMER_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
+    /etc/systemd/system/seiche-market-backfill.service
 rmdir "$DATA_UNIT_STAGE_DIR"
 DATA_UNIT_STAGE_DIR=""
 
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
-    /etc/systemd/system/seiche-market-backfill.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
     /etc/systemd/system/seiche-market-validation.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.timer" \
@@ -508,10 +515,11 @@ cat >"$RESTORE_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
+Environment=SEICHE_RESTORE_STATUS_PATH=$RESTORE_STATUS_PATH
 ReadOnlyPaths=
 ReadOnlyPaths=$APP_DIR $BACKUP_DIR
 ReadWritePaths=
-ReadWritePaths=$STATE_DIR/validation /run/lock
+ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock
 EOF
 chmod 0644 "$RESTORE_STAGE"
 mv -f "$RESTORE_STAGE" \
@@ -608,12 +616,17 @@ systemctl enable --now \
 # Persistent run cannot page during planned startup.
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+run_recovery_proof_preflight() {
+    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+        SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
+        /usr/bin/bash "$DATA_READINESS_SCRIPT"
+}
 run_data_readiness_preflight() {
     SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
         /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
 activate_data_readiness_after_proof() {
-    if ! run_data_readiness_preflight; then
+    if ! run_recovery_proof_preflight; then
         echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
         if ! systemctl start seiche-market-backup.service; then
             echo "market platform: v2 readiness bootstrap backup failed; timer remains stopped" >&2
@@ -623,10 +636,14 @@ activate_data_readiness_after_proof() {
             echo "market platform: v2 readiness bootstrap restore check failed; timer remains stopped" >&2
             return 1
         fi
-        if ! run_data_readiness_preflight; then
+        if ! run_recovery_proof_preflight; then
             echo "market platform: v2 readiness bootstrap failed; timer remains stopped" >&2
             return 1
         fi
+    fi
+    if ! run_data_readiness_preflight; then
+        echo "market platform: operational readiness failed; timer remains stopped" >&2
+        return 1
     fi
     if ! systemctl enable --now seiche-data-readiness.timer; then
         echo "market platform: proven readiness timer could not be activated" >&2

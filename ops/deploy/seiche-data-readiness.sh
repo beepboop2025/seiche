@@ -11,8 +11,11 @@ readonly DEFAULT_DISK_PATHS="/ /var/lib/seiche /var/backups/seiche-market"
 HEALTH_URL="${SEICHE_DATA_READINESS_HEALTH_URL:-http://127.0.0.1:8787/api/health}"
 BACKUP_DIR="${SEICHE_DATA_READINESS_BACKUP_DIR:-/var/backups/seiche-market}"
 BACKUP_ARTIFACT="${SEICHE_DATA_READINESS_BACKUP_ARTIFACT:-}"
-RESTORE_RECEIPT="${SEICHE_DATA_READINESS_RESTORE_RECEIPT:-/var/lib/seiche/validation/backup-restore-check.status}"
+RESTORE_RECEIPT="${SEICHE_DATA_READINESS_RESTORE_RECEIPT:-/var/lib/seiche-recovery-proof/backup-restore-check.status}"
 DEPLOYED_SHA_PATH="${SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+RECEIPT_UID="${SEICHE_DATA_READINESS_RECEIPT_UID:-0}"
+RECEIPT_GROUP="${SEICHE_DATA_READINESS_RECEIPT_GROUP:-seiche}"
+PROOF_ONLY="${SEICHE_DATA_READINESS_PROOF_ONLY:-0}"
 MAX_GENERATED_AGE="${SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS:-900}"
 MAX_BACKUP_AGE="${SEICHE_DATA_READINESS_BACKUP_MAX_AGE_SECONDS:-129600}"
 MAX_RESTORE_AGE="${SEICHE_DATA_READINESS_RESTORE_MAX_AGE_SECONDS:-691200}"
@@ -78,6 +81,16 @@ if [ -n "$NOW_EPOCH" ]; then
         *[!0-9]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
     esac
 fi
+case "$PROOF_ONLY" in
+    0|1) ;;
+    *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
+case "$RECEIPT_UID" in
+    ''|*[!0-9]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
+case "$RECEIPT_GROUP" in
+    ''|*[!A-Za-z0-9_.-]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
 case "$BACKUP_DIR" in
     /*) ;;
     *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
@@ -111,6 +124,8 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
         || HEALTH_FILE=""
     if [ -z "$HEALTH_FILE" ]; then
         add_failure "temporary health check unavailable"
+    elif [ "$PROOF_ONLY" -eq 1 ]; then
+        :
     elif ! "$CURL_BIN" --fail --silent --show-error \
         --proto '=http,https' --connect-timeout "$CURL_TIMEOUT" \
         --max-time "$CURL_TIMEOUT" --output "$HEALTH_FILE" \
@@ -123,11 +138,13 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
     VALIDATION_OUTPUT=$(
         "$PYTHON_BIN" - "$HEALTH_FILE" "$HEALTH_AVAILABLE" "$BACKUP_DIR" \
             "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$DEPLOYED_SHA_PATH" \
+            "$RECEIPT_UID" "$RECEIPT_GROUP" \
             "$MAX_GENERATED_AGE" "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" \
             "$MAX_FUTURE_SKEW" "$NOW_EPOCH" 2>/dev/null <<'PY'
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import grp
 import json
 from pathlib import Path
 import re
@@ -143,6 +160,8 @@ import time
     backup_artifact_raw,
     restore_receipt_raw,
     deployed_sha_path_raw,
+    receipt_uid_raw,
+    receipt_group,
     max_generated_raw,
     max_backup_raw,
     max_restore_raw,
@@ -155,6 +174,7 @@ max_backup = int(max_backup_raw)
 max_restore = int(max_restore_raw)
 max_future_skew = int(max_future_skew_raw)
 now = float(now_raw) if now_raw else time.time()
+receipt_uid = int(receipt_uid_raw)
 reasons: list[str] = []
 
 
@@ -236,6 +256,26 @@ def safe_regular(path: Path) -> bool:
     return stat.S_ISREG(mode)
 
 
+def secure_restore_receipt(path: Path) -> bool:
+    try:
+        expected_gid = grp.getgrnam(receipt_group).gr_gid
+        parent = path.parent.lstat()
+        receipt = path.lstat()
+    except (KeyError, OSError):
+        return False
+    return (
+        stat.S_ISDIR(parent.st_mode)
+        and parent.st_uid == receipt_uid
+        and parent.st_gid == expected_gid
+        and stat.S_IMODE(parent.st_mode) == 0o750
+        and stat.S_ISREG(receipt.st_mode)
+        and receipt.st_uid == receipt_uid
+        and receipt.st_gid == expected_gid
+        and stat.S_IMODE(receipt.st_mode) == 0o640
+        and receipt.st_nlink == 1
+    )
+
+
 current_deployed_sha: str | None = None
 deployed_sha_path = Path(deployed_sha_path_raw)
 if safe_regular(deployed_sha_path):
@@ -302,7 +342,7 @@ elif now - backup_epoch > max_backup:
 
 restore_receipt = Path(restore_receipt_raw)
 checked_at: float | None = None
-if safe_regular(restore_receipt):
+if secure_restore_receipt(restore_receipt):
     try:
         if restore_receipt.stat().st_size > 64 * 1024:
             raise ValueError
@@ -384,6 +424,7 @@ PY
         fi
     fi
 
+    if [ "$PROOF_ONLY" -eq 0 ]; then
     for unit in $REQUIRED_UNITS; do
         case "$unit" in
             *[!A-Za-z0-9_.@:-]*|'')
@@ -442,6 +483,7 @@ PY
             fi
         done
     done
+    fi
 fi
 
 if [ "${#FAILURES[@]}" -gt 0 ]; then

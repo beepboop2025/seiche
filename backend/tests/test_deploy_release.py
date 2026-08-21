@@ -977,6 +977,49 @@ start_market_services
     ]
 
 
+def test_wrapper_never_activates_readiness_after_source_start_failure(
+    tmp_path: Path,
+) -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("start_market_services() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+case "$*" in
+  "reset-failed seiche-market-worker.service seiche-source-worker.service") exit 0 ;;
+  "start seiche-market-backfill.service seiche-market-worker.service") exit 0 ;;
+  *) exit 92 ;;
+esac
+""",
+    )
+    harness = f"""
+ensure_source_worker_ready() {{ return 83; }}
+activate_data_readiness_after_proof() {{ touch "$FAKE_ACTIVATED"; }}
+{helper}
+start_market_services
+"""
+    activated = tmp_path / "activated"
+
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        env=os.environ
+        | {
+            "FAKE_ACTIVATED": str(activated),
+            "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert not activated.exists()
+
+
 def test_wrapper_starts_source_worker_before_strict_candidate_health():
     wrapper = DEPLOY_WRAPPER.read_text()
 
@@ -1054,6 +1097,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     ]
 
     for unit in (
+        "seiche-market-backfill.service",
         "seiche-source-worker.service",
         "seiche-data-readiness.service",
         "seiche-data-readiness.timer",
@@ -1140,10 +1184,13 @@ count=0
 [ ! -f "$count_file" ] || count=$(cat "$count_file")
 count=$((count + 1))
 printf '%s\n' "$count" >"$count_file"
-printf 'readiness %s\n' "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
+kind=full
+[ "${SEICHE_DATA_READINESS_PROOF_ONLY:-0}" != "1" ] || kind=proof
+printf 'readiness %s %s\n' "$kind" "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
 case "${FAKE_READINESS_MODE:?}" in
   current) exit 0 ;;
-  fresh) [ "$count" -gt 1 ] ;;
+  fresh) [ "$kind" = full ] || [ "$count" -gt 1 ] ;;
+  operational-fail) [ "$kind" = proof ] ;;
   always-fail) exit 1 ;;
   *) exit 64 ;;
 esac
@@ -1197,16 +1244,20 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
         "systemctl",
         "systemctl",
         "readiness",
+        "readiness",
         "systemctl",
     ]
     assert calls[1:] == [
         "systemctl start seiche-market-backup.service",
         "systemctl start seiche-market-restore-check.service",
         calls[3],
+        calls[4],
         "systemctl enable --now seiche-data-readiness.timer",
     ]
-    assert "seiche-data-readiness.timer" not in calls[0]
+    assert calls[0].startswith("readiness proof ")
     assert calls[0] == calls[3]
+    assert calls[4].startswith("readiness full ")
+    assert "seiche-data-readiness.timer" not in calls[4]
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1219,9 +1270,10 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     )
 
     assert result.returncode == 0, result.stderr
-    assert len(calls) == 2
-    assert calls[0].startswith("readiness ")
-    assert calls[1] == "systemctl enable --now seiche-data-readiness.timer"
+    assert len(calls) == 3
+    assert calls[0].startswith("readiness proof ")
+    assert calls[1].startswith("readiness full ")
+    assert calls[2] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1232,6 +1284,7 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
         ("fresh", "start seiche-market-backup.service"),
         ("fresh", "start seiche-market-restore-check.service"),
         ("always-fail", ""),
+        ("operational-fail", ""),
         ("current", "enable --now seiche-data-readiness.timer"),
     ],
 )
@@ -1249,8 +1302,14 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
     )
 
     assert result.returncode != 0
-    assert calls[0].startswith("readiness ")
+    assert calls[0].startswith("readiness proof ")
     assert not (state / "readiness-timer.enabled").exists()
+    if readiness_mode == "operational-fail":
+        assert len(calls) == 2
+        assert calls[1].startswith("readiness full ")
+        assert not any(
+            call.startswith("systemctl start seiche-market-backup") for call in calls
+        )
     if fail_command != "enable --now seiche-data-readiness.timer":
         assert "systemctl enable --now seiche-data-readiness.timer" not in calls
 
@@ -1298,7 +1357,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-source-worker.service" in installer
     assert "seiche-data-readiness.service" in installer
     assert "seiche-data-readiness.timer" in installer
-    assert "ReadWritePaths=$STATE_DIR/validation" in installer
+    assert "ReadWritePaths=$RECOVERY_PROOF_DIR" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     early_enable = installer[
         installer.index("systemctl daemon-reload") : installer.index(
@@ -1317,17 +1376,24 @@ def test_market_platform_units_are_independent_and_postgres_backed():
         'mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"'
     )
     assert installer.index("systemd-analyze verify", 0, worker_verify) < worker_install
-    data_verify = installer.index("source worker/readiness units failed verification")
+    data_verify = installer.index("data-plane units failed verification")
     source_install = installer.index(
         'mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service"'
     )
     readiness_install = installer.index(
         'mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"'
     )
+    backfill_install = installer.index(
+        'mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"'
+    )
+    assert (
+        '"$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"'
+        in installer[installer.index("cleanup() {") : data_verify]
+    )
     assert installer.index("systemd-analyze verify", worker_install, data_verify) < (
         source_install
     )
-    assert data_verify < source_install < readiness_install
+    assert data_verify < source_install < readiness_install < backfill_install
     assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
     assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
     assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer
@@ -1441,7 +1507,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in restore
     assert "seiche-market-restore-check.sh" in restore
     assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
-    assert "ReadWritePaths=/var/lib/seiche/validation /run/lock" in restore
+    assert "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock" in restore
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
     assert "NoNewPrivileges=true" in restore
