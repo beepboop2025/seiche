@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-
 from seiche import api, assemble, store
 from seiche.domain.observation import (
     CanonicalUnit,
@@ -54,9 +53,7 @@ def _legacy_snapshot() -> dict:
                 "value": 42.0,
                 "regime": "EROSION",
                 "coverage_pct": 90.0,
-                "decomposition": [
-                    {"component": "repo", "score": 45.0, "status": "OK"}
-                ],
+                "decomposition": [{"component": "repo", "score": 45.0, "status": "OK"}],
             }
         },
         "deep": {
@@ -141,11 +138,17 @@ def test_v2_catalog_does_not_collect_at_request_time(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(assemble, "snapshot", forbidden_collection)
     payload = api.markets_v2(Response())
 
-    assert payload["count"] == 10
-    assert {item["market_id"] for item in payload["markets"]} >= {"US-USD", "IN-INR", "EA-EUR"}
+    assert payload["count"] == 11
+    assert {item["market_id"] for item in payload["markets"]} >= {
+        "US-USD",
+        "IN-INR",
+        "EA-EUR",
+    }
 
 
-def test_market_without_snapshot_is_explicitly_unavailable(tmp_path, monkeypatch) -> None:
+def test_market_without_snapshot_is_explicitly_unavailable(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "empty-v2.sqlite")
     response = api.market_gauge_v2("IN-INR", Response())
 
@@ -163,9 +166,7 @@ def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) 
     ids = seal_legacy_snapshot(_legacy_snapshot())
     assert store.load_latest_market_snapshot("US-USD", "overview") is None
     assert store.load_latest_market_snapshot("US-USD", "gauge") is None
-    store.promote_market_snapshots(
-        binding["snapshot_id"] for binding in ids.values()
-    )
+    store.promote_market_snapshots(binding["snapshot_id"] for binding in ids.values())
 
     gauge = api.market_gauge_v2("US-USD", Response())
     assert gauge["schema"] == "seiche.local-gauge.v2"
@@ -173,12 +174,11 @@ def test_us_materializer_filters_unrelated_market_faults(tmp_path, monkeypatch) 
     assert gauge["reading"]["p_event_5bd_members"] == {"model": 0.2}
     assert gauge["evidence_eligibility"]["eligible"] is False
     assert [fault["source"] for fault in gauge["faults"]] == ["fred"]
-    assert ids["gauge"]["snapshot_id"] == store.load_latest_market_snapshot(
-        "US-USD", "gauge"
-    )["snapshot_id"]
-    records = store.load_forward_records(
-        "US-USD", "gauge", "us-usd-legacy-parity-v1"
+    assert (
+        ids["gauge"]["snapshot_id"]
+        == store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
     )
+    records = store.load_forward_records("US-USD", "gauge", "us-usd-legacy-parity-v1")
     assert ids["gauge"]["forward_record_id"] == records[-1]["record_hash"]
 
 
@@ -214,32 +214,38 @@ def test_us_materializer_partial_append_retries_idempotently(
         seal_legacy_snapshot(candidate)
     # Both candidate snapshots were staged, but public readers retain the
     # previously promoted pair until the full forward bundle verifies.
-    assert store.load_latest_market_snapshot("US-USD", "overview")[
-        "snapshot_id"
-    ] == previous_receipt["overview"]["snapshot_id"]
-    assert store.load_latest_market_snapshot("US-USD", "gauge")[
-        "snapshot_id"
-    ] == previous_receipt["gauge"]["snapshot_id"]
+    assert (
+        store.load_latest_market_snapshot("US-USD", "overview")["snapshot_id"]
+        == previous_receipt["overview"]["snapshot_id"]
+    )
+    assert (
+        store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
+        == previous_receipt["gauge"]["snapshot_id"]
+    )
     assert len(store.load_forward_records("US-USD", "overview")) == 2
     assert len(store.load_forward_records("US-USD", "gauge")) == 1
 
     receipt = seal_legacy_snapshot(candidate)
     assert set(receipt) == {"overview", "gauge"}
-    assert store.load_latest_market_snapshot("US-USD", "overview")[
-        "snapshot_id"
-    ] == previous_receipt["overview"]["snapshot_id"]
-    assert store.load_latest_market_snapshot("US-USD", "gauge")[
-        "snapshot_id"
-    ] == previous_receipt["gauge"]["snapshot_id"]
+    assert (
+        store.load_latest_market_snapshot("US-USD", "overview")["snapshot_id"]
+        == previous_receipt["overview"]["snapshot_id"]
+    )
+    assert (
+        store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
+        == previous_receipt["gauge"]["snapshot_id"]
+    )
     store.promote_market_snapshots(
         binding["snapshot_id"] for binding in receipt.values()
     )
-    assert store.load_latest_market_snapshot("US-USD", "overview")[
-        "snapshot_id"
-    ] == receipt["overview"]["snapshot_id"]
-    assert store.load_latest_market_snapshot("US-USD", "gauge")[
-        "snapshot_id"
-    ] == receipt["gauge"]["snapshot_id"]
+    assert (
+        store.load_latest_market_snapshot("US-USD", "overview")["snapshot_id"]
+        == receipt["overview"]["snapshot_id"]
+    )
+    assert (
+        store.load_latest_market_snapshot("US-USD", "gauge")["snapshot_id"]
+        == receipt["gauge"]["snapshot_id"]
+    )
     assert len(store.load_forward_records("US-USD", "overview")) == 2
     assert len(store.load_forward_records("US-USD", "gauge")) == 2
 
@@ -302,9 +308,7 @@ def test_market_asof_reads_sealed_history_and_global_tide_stays_separate(
         binding["snapshot_id"] for binding in receipt.values()
     )
 
-    historical = api.market_asof_v2(
-        "US-USD", "2026-08-09T10:00:00+00:00", Response()
-    )
+    historical = api.market_asof_v2("US-USD", "2026-08-09T10:00:00+00:00", Response())
     tide = api.global_tide_v2(Response())
 
     assert historical["market_id"] == "US-USD"
@@ -318,6 +322,7 @@ def test_public_openapi_advertises_all_v2_contracts() -> None:
     paths = api._public_openapi_document()["paths"]
     assert {
         "/api/v2/markets",
+        "/api/v2/money-markets",
         "/api/v2/markets/{market_id}/overview",
         "/api/v2/markets/{market_id}/gauge",
         "/api/v2/markets/{market_id}/asof/{timestamp}",
@@ -325,6 +330,126 @@ def test_public_openapi_advertises_all_v2_contracts() -> None:
         "/api/v2/global/tide",
         "/api/v2/coverage",
     } <= set(paths)
+
+
+def test_global_money_market_atlas_reads_canonical_rows_without_collecting(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "money-market-atlas.sqlite")
+
+    async def forbidden_collection(*args, **kwargs):
+        raise AssertionError("money-market atlas attempted request-time collection")
+
+    monkeypatch.setattr(assemble, "snapshot", forbidden_collection)
+    observed_at = datetime.now(UTC).replace(microsecond=0) - timedelta(days=1)
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=observed_at,
+                instrument_id="US.NYFED.SOFR",
+                role=SemanticRole.SECURED_OVERNIGHT,
+                value="531",
+                source="nyfed_rates",
+            ),
+            _rate_observation(
+                event_time=observed_at,
+                instrument_id="US.FED.IORB",
+                role=SemanticRole.POLICY_TARGET,
+                value="540",
+                source="fred_daily",
+            ),
+        ]
+    )
+
+    response = Response()
+    payload = api.global_money_markets_v2(response)
+    us = next(item for item in payload["markets"] if item["market_id"] == "US-USD")
+
+    assert payload["schema"] == "seiche.global-money-markets.v1"
+    assert payload["coverage"]["declared_markets"] == 11
+    assert us["benchmark"]["value"] == 5.31
+    assert us["policy_relative_spread"]["value"] == -9.0
+    assert not any(
+        item["market_id"] == "KR-KRW" for item in payload["expansion_ledger"]
+    )
+    assert payload["coverage"]["expansion_markets"] >= 50
+    assert payload["coverage"]["global_discovery_universe"] >= 60
+    canada = next(
+        item for item in payload["expansion_ledger"] if item["market_id"] == "CA-CAD"
+    )
+    assert canada["benchmark"] == "CORRA"
+    assert canada["benchmark_kind"] == "secured overnight transaction rate"
+    assert canada["source_url"].startswith("https://www.bankofcanada.ca/")
+    assert canada["verified_on"] == "2026-08-21"
+    assert response.headers["Cache-Control"].startswith("public, max-age=60")
+
+
+def test_global_money_market_atlas_omits_prohibited_source_metadata(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "money-market-policy.sqlite")
+    finished_at = datetime.now(UTC).replace(microsecond=0) - timedelta(days=1)
+    secret = "private tenant endpoint and credential detail"
+    store.save_collector_run(
+        {
+            "market_id": "EA-EUR",
+            "adapter_id": "tenant_market_data",
+            "status": "FAILED",
+            "started_at": finished_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            "observations_written": 0,
+            "attempts": 1,
+            "next_due": (finished_at + timedelta(days=1)).isoformat(),
+            "fault": secret,
+        }
+    )
+
+    payload = api.global_money_markets_v2(Response())
+    euro = next(item for item in payload["markets"] if item["market_id"] == "EA-EUR")
+    serialized = json.dumps(payload, sort_keys=True)
+
+    assert "tenant_market_data" not in serialized
+    assert secret not in serialized
+    assert euro["coverage"]["declared_adapters"] == 4
+    assert euro["coverage"]["public_projected_adapters"] == 3
+    assert euro["coverage"]["omitted_adapters_by_policy"] == 1
+
+
+def test_global_money_market_atlas_derives_context_without_redistributing_level(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "money-market-derived.sqlite")
+    start = datetime.now(UTC).replace(microsecond=0) - timedelta(days=70)
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=start + timedelta(days=index),
+                market_id="UK-GBP",
+                monetary_area_id="UK",
+                jurisdiction="GB",
+                currency="GBP",
+                instrument_id="GB.BOE.SONIA",
+                role=SemanticRole.UNSECURED_OVERNIGHT,
+                value=str(420 + (index % 11) * 2 + index / 10),
+                source="boe_sonia",
+                redistribution=RedistributionStatus.DERIVED_ONLY,
+            )
+            for index in range(60)
+        ]
+    )
+
+    payload = api.global_money_markets_v2(Response())
+    uk = next(item for item in payload["markets"] if item["market_id"] == "UK-GBP")
+    sonia = next(metric for metric in uk["metrics"] if metric["id"] == "GB.BOE.SONIA")
+
+    assert uk["status"] == "DERIVED_CONTEXT"
+    assert uk["benchmark"] is None
+    assert uk["derived_benchmark"]["id"] == "GB.BOE.SONIA"
+    assert sonia["value"] is None
+    assert sonia["canonical_value"] is None
+    assert sonia["history"] == []
+    assert sonia["robust_z_1y"] is not None
+    assert sonia["percentile_3y"] is not None
 
 
 def test_market_series_redacts_licensed_values_but_keeps_evidence_metadata(
@@ -369,6 +494,61 @@ def test_market_series_redacts_licensed_values_but_keeps_evidence_metadata(
         "no publicly redistributable observation values are available"
         in payload["evidence_eligibility"]["reasons"]
     )
+
+
+def test_korea_series_distinguishes_public_values_derived_context_and_restriction(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "korea-rights-v2.sqlite")
+    observed_at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=observed_at,
+                market_id="KR-KRW",
+                monetary_area_id="KR",
+                jurisdiction="KR",
+                currency="KRW",
+                instrument_id="KR.BOK.BASE_RATE",
+                role=SemanticRole.POLICY_TARGET,
+                value="250",
+                revision_id="bok-public-v1",
+                source="bok_ecos_policy",
+            ),
+            _rate_observation(
+                event_time=observed_at,
+                market_id="KR-KRW",
+                monetary_area_id="KR",
+                jurisdiction="KR",
+                currency="KRW",
+                instrument_id="KR.KOFIA.CD_91D",
+                role=SemanticRole.CD_3M,
+                value="271",
+                revision_id="licensed-derived-v1",
+                source="licensed_krw_market",
+                connector=ConnectorClassification.LICENSED,
+                redistribution=RedistributionStatus.DERIVED_ONLY,
+            ),
+        ]
+    )
+
+    payload = api.market_series_v2("KR-KRW", _request(), Response())
+    availability = {
+        item["instrument_id"]: item["availability"]
+        for item in payload["instruments"]
+    }
+    cd = next(
+        item
+        for item in payload["observations"]
+        if item["instrument_id"] == "KR.KOFIA.CD_91D"
+    )
+
+    assert availability["KR.BOK.BASE_RATE"] == "READY"
+    assert availability["KR.KOFIA.CD_91D"] == "DERIVED_CONTEXT"
+    assert availability["KR.KSD.KOFR"] == "RESTRICTED"
+    assert cd["value"] is None
+    assert cd["value_status"] == "REDACTED_BY_LICENCE"
+    assert payload["status"] == "PARTIAL"
 
 
 def test_market_series_applies_adapter_policy_when_row_policy_is_stale(
@@ -432,6 +612,7 @@ def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
     assert first["evidence_eligibility"]["reasons"] == [
         "pack validation status is not SUPPORTED",
         "calibration is forward-only",
+        "one or more latest observations are stale or unavailable",
     ]
 
 
@@ -506,14 +687,91 @@ def test_market_series_quality_reason_is_explicit(tmp_path, monkeypatch) -> None
         ]
     )
 
-    eligibility = api.market_series_v2(
-        "US-USD", _request(), Response()
-    )["evidence_eligibility"]
+    eligibility = api.market_series_v2("US-USD", _request(), Response())[
+        "evidence_eligibility"
+    ]
 
     assert eligibility["eligible"] is False
-    assert "observation quality is not evidence-eligible: provisional" in eligibility[
-        "reasons"
-    ]
+    assert (
+        "observation quality is not evidence-eligible: provisional"
+        in eligibility["reasons"]
+    )
+
+
+def test_market_series_readiness_is_page_independent_and_ages_at_read_time(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "current-series-state.sqlite")
+    cutoff = datetime(2026, 8, 21, 12, tzinfo=UTC)
+
+    class FrozenDateTime(datetime):
+        current = cutoff
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current if tz is None else cls.current.astimezone(tz)
+
+    monkeypatch.setattr(api, "datetime", FrozenDateTime)
+    store.save_observations(
+        [
+            _rate_observation(
+                event_time=cutoff - timedelta(days=1),
+                instrument_id="US.NYFED.SOFR",
+                role=SemanticRole.SECURED_OVERNIGHT,
+                source="nyfed_rates",
+                revision_id="current-sofr",
+            ),
+            _rate_observation(
+                event_time=cutoff - timedelta(days=2),
+                instrument_id="US.FED.IORB",
+                role=SemanticRole.POLICY_TARGET,
+                source="fred_daily",
+                revision_id="current-iorb",
+            ),
+        ]
+    )
+
+    first = api.market_series_v2("US-USD", _request(), Response(), n=1)
+    second = api.market_series_v2(
+        "US-USD", _request(), Response(), n=1, cursor=first["next_cursor"]
+    )
+
+    assert first["observations"][0]["instrument_id"] == "US.NYFED.SOFR"
+    assert second["observations"][0]["instrument_id"] == "US.FED.IORB"
+    for payload in (first, second):
+        availability = {
+            item["instrument_id"]: item["availability"]
+            for item in payload["instruments"]
+        }
+        assert availability["US.NYFED.SOFR"] == "READY"
+        assert availability["US.FED.IORB"] == "READY"
+        # Other declared public instruments have no current row, so a mixed
+        # pack is honest PARTIAL rather than READY.
+        assert payload["status"] == "PARTIAL"
+        assert payload["readiness_scope"] == (
+            "latest_public_observation_per_instrument"
+        )
+        assert payload["stale_inputs"] == []
+    assert first["evidence_eligibility"] == second["evidence_eligibility"]
+
+    FrozenDateTime.current = cutoff + timedelta(days=20)
+    aged = api.market_series_v2("US-USD", _request(), Response(), n=1)
+    aged_availability = {
+        item["instrument_id"]: item["availability"] for item in aged["instruments"]
+    }
+
+    assert aged["observations"][0]["staleness"] == "dead"
+    assert aged_availability["US.NYFED.SOFR"] == "STALE"
+    assert aged_availability["US.FED.IORB"] == "STALE"
+    assert aged["status"] == "PARTIAL"
+    assert {item["instrument_id"] for item in aged["stale_inputs"]} == {
+        "US.NYFED.SOFR",
+        "US.FED.IORB",
+    }
+    assert (
+        "one or more latest observations are stale or unavailable"
+        in aged["evidence_eligibility"]["reasons"]
+    )
 
 
 def test_market_series_rate_limit_is_per_client_ip(tmp_path, monkeypatch) -> None:

@@ -16,7 +16,8 @@ listed here as a runbook rather than automated blind.
    registry may advertise a newer hosted server while keeping its optional
    package entry pinned to the latest version that actually exists on PyPI.
    Seiche currently pins `seiche==0.10.0` to match the hosted estuary product
-   and the nine public tools (including `latest_article`). That package is not
+   and the ten public tools (including `latest_article` and
+   `money_market_context`). That package is not
    on PyPI until a human cuts a GitHub release or publishes the artifact; do
    not advertise a newer package version than the next intended release.
    ```bash

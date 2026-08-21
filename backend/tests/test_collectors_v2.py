@@ -191,7 +191,7 @@ async def test_persistence_retry_exhaustion_does_not_refetch_source() -> None:
     assert writer_calls == 3
     assert runs[0].status is CollectorRunStatus.FAILED
     assert runs[0].attempts == 1
-    assert "observation store remains unavailable" in str(runs[0].fault)
+    assert runs[0].fault == "PERSISTENCE_ERROR: collector persistence failed"
 
 
 @pytest.mark.asyncio
@@ -225,9 +225,7 @@ async def test_deterministic_persistence_error_is_not_retried() -> None:
     assert writer_calls == 1
     assert delays == []
     assert runs[0].status is CollectorRunStatus.FAILED
-    assert "observation writer persistence failed after 1 attempt" in str(
-        runs[0].fault
-    )
+    assert runs[0].fault == "PERSISTENCE_ERROR: collector persistence failed"
 
 
 @pytest.mark.asyncio

@@ -35,9 +35,11 @@ USER_AGENT = "seiche/0.2 (open-source funding-stress monitor)"
 # Global basins (v2): the dollar system is one connected body of water.
 # EUR basin from the ECB Data Portal (keyless CSV), UK from FRED's SONIA
 # mirror, channels from H.4.1 (swap lines, foreign official RRP) + the broad
-# dollar index. Basins we can NOT source keyless-and-reliable (Japan TONA,
-# China, Russia, African markets) are stated as out of scope, not faked —
-# the engine takes new basins here when a qualifying feed exists.
+# dollar index. This legacy coupling panel is narrower than the Money Market
+# Atlas. Japan and China now have registered packs there; markets without a
+# qualifying coupling feed remain visible as unavailable instead of being
+# synthesized. The engine takes new basin inputs here when an eligible feed
+# exists.
 ECB_SERIES = [
     SeriesSpec("ESTR", "ecb", "EST/B.EU000A2X2A25.WT", "Euro short-term rate (€STR)", "%", "D", 360),
 ]

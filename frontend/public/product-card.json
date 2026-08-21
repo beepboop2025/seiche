@@ -1,11 +1,11 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-08-15",
+  "updated": "2026-08-21",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
     "category": "Funding-stress early warning for US money markets",
-    "description": "A free, open-source terminal that turns public Fed, New York Fed, OFR, Treasury, CFTC and EIA data into a live funding-stress regime, forward event odds, historical analogs, and bounded cross-market cash-pressure context with misses published beside hits.",
+    "description": "A free, open-source terminal that turns public Fed, New York Fed, OFR, Treasury, CFTC and EIA data into a live funding-stress regime, an institutional USD money-market desk, a licence-aware global atlas, forward event odds, historical analogs, and bounded cross-market context with misses published beside hits.",
     "license": "AGPL-3.0",
     "price": "Free",
     "geography": "United States",
@@ -16,6 +16,8 @@
       "financial plumbing",
       "funding-liquidity early warning",
       "construction-PIT historical diagnostics",
+      "institutional USD money-market desk",
+      "native-frequency global money-market atlas",
       "energy-futures cash displacement",
       "Cushing and oil benchmark market structure"
     ]
@@ -25,6 +27,8 @@
     "A user wants public-data evidence on reserves, repo, reverse repo, Treasury cash or funding-market strain.",
     "An analyst needs historical analogs or a forecast whose hits, misses and competence boundary are public.",
     "An AI agent needs a free hosted MCP server or REST API for grounded funding-stress context.",
+    "A user needs self-describing USD overnight, repo, commercial-paper, bill, liquidity-facility or money-fund metrics.",
+    "A researcher needs a licence-aware comparison of registered monetary-area packs without treating registration as live coverage.",
     "A commodity or treasury user needs a bounded public-data read on WTI or Henry Hub cash displacement without pretending it is an observed margin call.",
     "A user needs live Cushing stocks or Brent−WTI basis alongside clearly dated capacity, benchmark and chokepoint reference data."
   ],
@@ -32,7 +36,8 @@
     "Investment advice, trade recommendations or guaranteed predictions.",
     "Failure screening for specific financial institutions; use LiquiLens for that question.",
     "Asset-level execution cost or market-depth analysis; use Undertow for that question.",
-    "Millisecond market data or order execution."
+    "Millisecond market data or order execution.",
+    "A replacement for a licensed news/data terminal or an entitlement to restricted upstream market data."
   ],
   "evidence": {
     "status": "FINAL_VINTAGE_CONSTRUCTION_PIT",
@@ -78,17 +83,29 @@
     "source_code": "https://github.com/beepboop2025/seiche"
   },
   "market_pack_v2": {
-    "scope": "10 monetary-area packs",
-    "canonical_observations": 87000,
-    "canonical_role_series": 28,
+    "scope": "11 registered monetary-area packs plus 52 dated source-audited expansion records; this is metadata discovery, not a claim that every market has live coverage",
+    "registered_market_packs": 11,
+    "source_audited_expansion_records": 52,
+    "global_discovery_universe": 63,
+    "registered_market_ids": ["US-USD", "EA-EUR", "UK-GBP", "JP-JPY", "CN-CNY", "HK-HKD", "IN-INR", "KR-KRW", "AU-AUD", "NZ-NZD", "SG-SGD"],
+    "canonical_observations_at_2026_08_09_snapshot": 87000,
+    "canonical_role_series_at_2026_08_09_snapshot": 28,
     "forward_validation_records_at_2026_08_09_snapshot": 220,
     "snapshot_captured_at": "2026-08-09T14:36:00Z",
     "live_coverage_source": "https://api.seiche.info/api/v2/coverage",
     "primary_live_signal": "US dollar funding",
-    "us_usd_status": "VALIDATING",
-    "non_us_status": "9 REFERENCE packs for context only",
-    "global_tide_status": "UNAVAILABLE",
-    "interpretation": "Non-US packs supply reference context. Global Tide is UNAVAILABLE and publishes no reading."
+    "us_usd_status_at_2026_08_09_snapshot": "VALIDATING",
+    "non_us_status_at_2026_08_09_snapshot": "9 REFERENCE packs for context only",
+    "global_tide_status_at_2026_08_09_snapshot": "UNAVAILABLE",
+    "availability_states": {
+      "AVAILABLE": "A redistributable raw observation is present.",
+      "DERIVED_CONTEXT": "Only non-reversible own-history context is public; the restricted raw level and history are withheld.",
+      "POLICY_ONLY": "An official policy anchor is public but no eligible traded benchmark is available; policy is not used as a substitute.",
+      "DECLARED_UNAVAILABLE": "The pack remains visible as an evidence gap; absence is not a calm signal."
+    },
+    "statistics_policy": "Own-history changes and windows use each adapter's native observation cadence without upsampling; unlike raw rate levels are not ranked across currencies.",
+    "redistribution_policy": "AGPL-3.0 covers Seiche code, not upstream data. Allowed values may be public; derived-only inputs may produce bounded non-reversible context; metadata-only values cannot enter public calculations; prohibited values and source metadata are omitted.",
+    "interpretation": "Use the live Atlas and coverage endpoints for current availability. Registered, available and validation-supported are separate claims."
   },
   "access": {
     "website": "https://seiche.info/",
@@ -103,13 +120,16 @@
     "article_atom_feed": "https://seiche.info/articles/feed.xml",
     "market_pack_catalog": "https://api.seiche.info/api/v2/markets",
     "market_pack_coverage": "https://api.seiche.info/api/v2/coverage",
+    "global_money_markets": "https://api.seiche.info/api/v2/money-markets",
+    "usd_money_markets": "https://api.seiche.info/api/money-markets",
     "global_tide": "https://api.seiche.info/api/v2/global/tide",
     "oil_funding": "https://api.seiche.info/api/oil-funding",
     "fx_materials": "https://api.seiche.info/api/estuary",
     "mcp": "https://api.seiche.info/mcp",
+    "public_money_market_mcp_tool": "money_market_context",
     "telegram_bot": "https://t.me/seiche_desk_bot",
     "telegram_channel": "https://t.me/LiquidityLabDesk",
-    "authentication": "Nine public MCP tools, including latest_article, require no token; five additional subscriber tools require a bearer token."
+    "authentication": "Ten public MCP tools, including latest_article and money_market_context, require no token; five additional subscriber tools require a bearer token."
   },
   "siblings": [
     {

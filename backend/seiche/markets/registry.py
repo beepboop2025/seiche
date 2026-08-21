@@ -47,6 +47,7 @@ def default_registry() -> MarketRegistry:
     from seiche.markets.hong_kong_hkd import PACK as hong_kong_hkd
     from seiche.markets.india_inr import PACK as india_inr
     from seiche.markets.japan_jpy import PACK as japan_jpy
+    from seiche.markets.korea_krw import PACK as korea_krw
     from seiche.markets.new_zealand_nzd import PACK as new_zealand_nzd
     from seiche.markets.singapore_sgd import PACK as singapore_sgd
     from seiche.markets.uk_gbp import PACK as uk_gbp
@@ -61,6 +62,7 @@ def default_registry() -> MarketRegistry:
             china_cny,
             hong_kong_hkd,
             india_inr,
+            korea_krw,
             australia_aud,
             new_zealand_nzd,
             singapore_sgd,

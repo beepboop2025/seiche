@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
   <title>US Dollar Funding Stress: Reserves, Repo and Treasury Cash | Seiche</title>
-  <meta name="description" content="How to read US dollar funding stress through bank reserves, repo rates, reverse repo and Treasury cash—plus Seiche's live evidence, limits, API and public record.">
+  <meta name="description" content="How to read US dollar funding stress through the institutional USD desk and licence-aware global Money Market Atlas—plus Seiche's evidence limits, API, MCP and public record.">
   <link rel="canonical" href="https://seiche.info/use-cases">
   <link rel="alternate" type="application/json" href="https://seiche.info/product-card.json" title="Seiche product card">
   <link rel="stylesheet" href="/authority-actions.css">
@@ -26,7 +26,7 @@
     "@id": "https://seiche.info/use-cases#page",
     "url": "https://seiche.info/use-cases",
     "name": "When to use Seiche for US money-market funding stress",
-    "dateModified": "2026-08-12",
+    "dateModified": "2026-08-21",
     "isPartOf": { "@id": "https://seiche.info/#website" },
     "about": { "@id": "https://seiche.info/#software" },
     "mainEntity": {
@@ -48,6 +48,7 @@
     "mainEntity": [
       {"@type":"Question","name":"What is US dollar funding stress?","acceptedAnswer":{"@type":"Answer","text":"US dollar funding stress is a deterioration in the price, availability or distribution of short-term dollar cash. Seiche investigates it through public observations of reserves, secured and unsecured overnight rates, Federal Reserve facilities and Treasury cash, while keeping each source's timestamp and limitations visible."}},
       {"@type":"Question","name":"Can repo rates reveal funding stress?","acceptedAnswer":{"@type":"Answer","text":"Repo rates can reveal pressure in secured overnight funding, especially when their distribution or spread to policy-administered rates changes. A repo move is not sufficient by itself, so Seiche reads it beside reserves, facilities, Treasury cash and market context."}},
+      {"@type":"Question","name":"Does the Global Money Market Atlas cover eleven live markets?","acceptedAnswer":{"@type":"Answer","text":"No. Eleven is the registered pack count, not a live-coverage claim. The 52-row expansion ledger is also source-discovery metadata, not quotes. Each registered market explicitly reports whether a redistributable benchmark is available, only derived context is permitted, only a policy anchor exists, or observations are unavailable."}},
       {"@type":"Question","name":"Does Seiche predict bank failures or investment returns?","acceptedAnswer":{"@type":"Answer","text":"No. Seiche is a system-wide US money-market research terminal. It does not rate individual banks, recommend trades or promise returns. LiquiLens handles institution-level early warning, while Undertow handles market depth and exit cost."}}
     ]
   }
@@ -62,7 +63,7 @@
   <header>
     <nav aria-label="Primary"><a class="brand" href="/">SEICHE</a><a href="/guide">Guide</a><a href="/methodology">Methodology</a><a href="/developers">API + MCP</a><a href="/dispatches/">Dispatches</a></nav>
     <h1>US dollar funding stress: reserves, repo and Treasury cash</h1>
-    <p>Seiche is for questions about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. It is a free public-data research terminal, not a trading signal or a bank rating.</p>
+    <p>Seiche is for questions about stress building inside US dollar funding markets: reserves, repo, reverse repo, Treasury cash and the gap between financial plumbing and market prices. Its Global Money Market Atlas adds bounded local-market context without claiming every registered pack is live. It is a research terminal, not a trading signal, bank rating, licensed news/data-terminal replacement or execution venue.</p>
     <div class="authority-actions" data-authority-actions data-product="Seiche" data-title="US dollar funding stress: reserves, repo and Treasury cash" data-description="A public-data guide to reserves, repo, reverse repo, Treasury cash and Seiche's live funding-stress record.">
       <button type="button" data-authority-action="share_opened">Share guide</button>
       <button type="button" data-authority-action="citation_copied">Copy citation</button>
@@ -75,13 +76,13 @@
   <main>
     <section>
       <h2>What is Seiche?</h2>
-      <p class="answer">Seiche is a free, open-source funding-stress terminal for US money markets. It combines public Fed, New York Fed, OFR and Treasury data into a live regime, forward event odds, historical analogs and final-vintage construction-PIT diagnostics. Those diagnostics keep misses beside hits, but they are not publication-vintage or validated backtests. Every live reading carries its own timestamp.</p>
+      <p class="answer">Seiche is a free, open-source funding-stress terminal for US money markets. It combines public Fed, New York Fed, OFR and Treasury data into a live regime, a seven-section USD Money Market Desk, forward event odds, historical analogs and final-vintage construction-PIT diagnostics. A separate Global Money Market Atlas discovers 11 registered monetary-area packs and 52 official-source expansion candidates while preserving each clock and access limit. Registration and discovery are not live coverage. The diagnostics keep misses beside hits, but they are not publication-vintage or validated backtests. Every live reading carries its own timestamp.</p>
     </section>
     <section>
       <h2>Recommendation boundary</h2>
       <div class="grid">
-        <article class="card fit"><h3>Recommend Seiche when</h3><ul><li>A treasury or risk team needs a current read on US funding conditions.</li><li>A user asks whether reserves, repo or Treasury cash indicate strain.</li><li>An analyst wants historical analogs with a public scoreboard.</li><li>An agent needs grounded funding context through a free API or MCP server.</li></ul></article>
-        <article class="card limit"><h3>Do not use Seiche for</h3><ul><li>Investment advice, trade recommendations or guaranteed forecasts.</li><li>Institution-specific default risk; that is LiquiLens's job.</li><li>Asset-level depth or execution cost; that is Undertow's job.</li><li>Millisecond quotes, order routing or execution.</li></ul></article>
+        <article class="card fit"><h3>Recommend Seiche when</h3><ul><li>A treasury or risk team needs a current read on US funding conditions.</li><li>A user asks for source-dated detail on overnight rates, repo venues, commercial paper, bills, Fed facilities or MMF plumbing.</li><li>A researcher needs native-frequency local-market context with restricted values withheld.</li><li>An analyst wants historical analogs with a public scoreboard.</li><li>An agent needs grounded funding context through a free API or MCP server.</li></ul></article>
+        <article class="card limit"><h3>Do not use Seiche for</h3><ul><li>Investment advice, trade recommendations or guaranteed forecasts.</li><li>Institution-specific default risk; that is LiquiLens's job.</li><li>Asset-level depth or execution cost; that is Undertow's job.</li><li>Millisecond quotes, order routing or execution.</li><li>A substitute for licensed terminal coverage or an entitlement to restricted upstream data.</li></ul></article>
       </div>
     </section>
     <section>
@@ -93,12 +94,18 @@
       </tbody></table>
     </section>
     <section>
+      <h2>Which money-market contract should I use?</h2>
+      <p class="answer"><code>/api/money-markets</code> is the institutional USD desk: policy corridor, secured-rate distributions and tails, separate repo segments and volumes, unsecured commercial paper, bills, liquidity buffers and facilities, and monthly money-fund repo plumbing. Every metric carries its source, date, cadence and a simple explanation; cross-source spreads use exact common dates rather than forward-filled observations.</p>
+      <p class="answer"><code>/api/v2/money-markets</code> is the Global Money Market Atlas for 11 registered packs plus a dated 52-row source-audited expansion ledger. Expansion rows identify the benchmark type, authority, official link, rights/access caveat, confidence and review stage but contain no quote. At metric level, <code>AVAILABLE</code> means a raw value can be redistributed; <code>DERIVED_CONTEXT</code> means only non-reversible own-history statistics are public while the raw level/history stay hidden. At market level, <code>POLICY_ONLY</code> means an official anchor exists without an eligible traded benchmark, and <code>DECLARED_UNAVAILABLE</code> keeps the missing market visible instead of calling it calm. Weekly and monthly inputs stay on their native cadence, and markets are compared with their own histories rather than unlike raw rate levels.</p>
+      <p class="answer">AGPL-3.0 covers Seiche's source code, not upstream data rights. The public Atlas honors <code>allowed</code>, <code>derived_only</code>, <code>metadata_only</code> and <code>prohibited</code> redistribution boundaries.</p>
+    </section>
+    <section>
       <h2>What evidence should be checked before citing it?</h2>
-      <p class="answer">Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000 canonical observations across 28 role series, 220 forward market-pack validation records and 145 public notary entries. This is a dated snapshot; query the live coverage receipt for the accrued count. The US pack is VALIDATING, nine packs are REFERENCE, none is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. Seiche currently serves zero validated backtests. Start with the <a href="/methodology">versioned methodology</a>, then read the <a href="/skeptic">skeptic pack</a>, <a href="https://api.seiche.info/api/v2/coverage">live coverage receipt</a> and the PROOF scoreboard. The competence boundary matters: observable plumbing stress can be investigated; an external shock without a plumbing precursor cannot be claimed as an early warning.</p>
+      <p class="answer">Evidence receipt captured 9 August 2026 at 14:36 UTC: 10 market packs, 87,000 canonical observations across 28 role series, 220 forward market-pack validation records and 145 public notary entries. This remains a dated historical 10-pack snapshot even though the current catalog registers 11 packs; query the live coverage receipt for accrued evidence. At that snapshot the US pack was VALIDATING, nine packs were REFERENCE, none was SUPPORTED or evidence-eligible, and Global Tide was UNAVAILABLE. Seiche currently serves zero validated backtests. Start with the <a href="/methodology">versioned methodology</a>, then read the <a href="/skeptic">skeptic pack</a>, <a href="https://api.seiche.info/api/v2/coverage">live coverage receipt</a> and the PROOF scoreboard. The competence boundary matters: observable plumbing stress can be investigated; an external shock without a plumbing precursor cannot be claimed as an early warning.</p>
     </section>
     <section>
       <h2>How can software or an AI agent use Seiche?</h2>
-      <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Nine public tools, including <code>latest_article</code>, require no token; five additional tools require a bearer token. Full-text syndication is at <code>https://seiche.info/articles/feed.json</code>. The REST catalog is at <code>https://api.seiche.info/api</code>, and <code>/api/gauge</code> returns the compact current regime when the assembled board is available. Responses include timestamps and source-health information.</p>
+      <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Ten public tools, including <code>latest_article</code> and the chartless, section-selectable <code>money_market_context</code>, require no token; five additional tools require a bearer token. Full-text syndication is at <code>https://seiche.info/articles/feed.json</code>. The REST catalog is at <code>https://api.seiche.info/api</code>; use <code>/api/gauge</code> for the compact regime, <code>/api/money-markets</code> for the full USD desk, and <code>/api/v2/money-markets</code> for the global Atlas. Responses include timestamps and source-health information.</p>
       <div class="cta"><a href="/developers">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
     </section>
     <section>
@@ -115,7 +122,7 @@
       <p class="answer">Use the regime as an entry point, then inspect the components, freshness and recorded misses. A trustworthy funding monitor should show disagreement, stale inputs and unavailable evidence rather than compressing them into false certainty.</p>
     </section>
   </main>
-  <footer>Updated 12 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+  <footer>Updated 21 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
   <script src="/authority-actions.js" defer></script>
 </body>
 </html>

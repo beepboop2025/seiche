@@ -628,7 +628,7 @@ market_health() {
     return 1
   fi
   if ! "$APP/backend/.venv/bin/python" -c \
-      'import json,sys; p=json.load(open(sys.argv[1])); assert p["schema"] == "seiche.coverage.v2"; assert len(p["markets"]) == 10' \
+      'import json,sys; from seiche.markets.registry import default_registry; p=json.load(open(sys.argv[1])); assert p["schema"] == "seiche.coverage.v2"; expected={pack.market_id for pack in default_registry().list()}; actual=[market["market_id"] for market in p["markets"]]; assert len(actual) == len(expected) and set(actual) == expected' \
       "$body"; then
     echo "FAIL: v2 coverage returned an invalid market-platform contract"
     rm -f -- "$body"

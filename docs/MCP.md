@@ -5,9 +5,10 @@ any MCP-capable agent — Claude Code, Codex, or your own — can read the live
 funding-stress board the same way a human reads the terminal.
 
 Where a raw data feed hands an agent macro numbers, Seiche hands it the
-**conclusion**: a regime read, a forward probability, the nearest historical
-analogs, and a historical diagnostic whose status, misses, and eligibility
-flags stay attached. It is the judgment layer, exposed as tools.
+**conclusion and bounded context**: a regime read, a granular USD money-market
+desk, a forward probability, the nearest historical analogs, and a historical
+diagnostic whose status, misses, and eligibility flags stay attached. It is the
+judgment layer, exposed as tools.
 
 The server is **stdlib-only** (JSON-RPC 2.0 over stdio) — no new dependencies
 beyond what Seiche already installs, and nothing to run but the command you
@@ -89,15 +90,15 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → nine tools, named so you can check this against the
+- **Anonymous** (no token) → ten tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
-  `institutional_flows`, plus `oil_funding_context` and
+  `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
   `fx_materials_passage`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
-  misses, freshness, crypto transmission record, positioning read, and
-  cross-market oil/FX/material context. Capped per IP per day. Zero setup, and
-  it stays free.
-- **Subscriber** (bearer token) → the same nine plus the five that read the
+  misses, freshness, crypto transmission record, positioning read, granular USD
+  money-market evidence, and cross-market oil/FX/material context. Capped per IP
+  per day. Zero setup, and it stays free.
+- **Subscriber** (bearer token) → the same ten plus the five that read the
   derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
   `desk_brief`, `ask_desk`. At your tier's quota.
 
@@ -109,15 +110,47 @@ that flag is the boundary, and this page is downstream of it.
 The endpoint lives on the existing FastAPI app behind the same Caddy reverse
 proxy as the rest of the API — no separate service to run or deploy.
 
-The two cross-market contracts are also available as compact anonymous REST
+The money-market and cross-market contracts are also available as anonymous REST
 reads when an integration does not speak MCP:
 
 ```bash
+curl https://api.seiche.info/api/money-markets
+curl https://api.seiche.info/api/v2/money-markets
 curl https://api.seiche.info/api/oil-funding
 curl https://api.seiche.info/api/estuary
 ```
 
-Those payloads are the same chartless contracts returned by
+`/api/money-markets` is the full seven-section USD desk. The public
+`money_market_context` MCP tool projects that already assembled engine without
+collecting data or performing a full rebuild. It deterministically re-evaluates
+freshness and the regime at request time, then returns no chart history. Its optional `section` is bounded to
+`summary`, `policy_corridor`, `secured_distributions`, `repo_segments`,
+`unsecured_funding`, `bills_cash_curve`, `liquidity_buffers`, `mmf_plumbing`,
+`sources`, `methodology`, or `all`.
+
+The USD regime exposes both the raw most-extreme eligible channel and a
+Bonferroni-adjusted family-wise rank. Its label is descriptive context, not an
+event probability; stale cards and slow reserve/ON-RRP stock levels cannot set
+the headline.
+
+`/api/v2/money-markets` is the Global Money Market Atlas over the 11 registered
+monetary-area packs and a 52-row source-audited expansion ledger spanning nine
+regions. Registration and ledger discovery are not proof of a live benchmark:
+each market may be `LIVE_REFERENCE`/`STALE_REFERENCE`, `DERIVED_CONTEXT`,
+`POLICY_ONLY`, or `DECLARED_UNAVAILABLE`. At metric level, `AVAILABLE` exposes a
+redistributable value; `DERIVED_CONTEXT` exposes only non-reversible own-history
+statistics while the restricted raw level/history remain withheld. Policy-only
+coverage is never promoted into a traded benchmark, and unavailable is never
+read as calm. Changes and statistical windows follow the source's native cadence
+without upsampling; comparisons are against each market's own history, not raw
+rate levels across currencies.
+
+The AGPL-3.0 license applies to Seiche's code, not upstream data rights. Public
+projections admit `allowed` values and bounded `derived_only` calculations;
+`metadata_only` values cannot enter a public calculation, while `prohibited`
+values and their source metadata are omitted.
+
+The oil and Estuary payloads are the same chartless contracts returned by
 `oil_funding_context` and `fx_materials_passage`; the oil contract also carries
 Ballast plus a chartless market-structure block (live Cushing stocks and
 Brent−WTI spread separated from dated capacity and chokepoint references).
@@ -199,6 +232,7 @@ recorded in the `provisions` table for audit.
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
 | `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | public |
 | `institutional_flows` | Hedge-fund, pension and sovereign positioning from public prints; implementation version tags withheld anonymously | public |
+| `money_market_context` | Chartless projection of the assembled USD desk: compact summary, one of seven granular sections, sources, methodology, or all; exact-date/native-cadence context and explicit unavailability stay attached | public |
 | `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | public |
 | `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | public |
 | `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
@@ -208,13 +242,16 @@ recorded in the `provisions` table for audit.
 | `ask_desk` | Natural-language Q&A grounded strictly in the live board (needs an LLM endpoint) | subscriber |
 
 The free tier gives the **conclusion, credibility, and contextual transmission
-read** (regime, analogs, PROOF, data health, positioning, oil, FX and materials)
+read** (regime, analogs, PROOF, data health, positioning, the USD desk, oil, FX
+and materials)
 — enough to be genuinely useful and to spread.
 The **edge** (forward odds, the Time Machine, positioning, the assistant) is the
 subscription. The split is one `is_public` flag per tool in `mcp_server.py`.
 
-Every tool returns structured JSON (or markdown, for `desk_brief`) with a short
-`reading` field that tells the agent how to interpret the numbers.
+Every tool returns structured JSON (or markdown, for `desk_brief`) with explicit
+interpretation fields. The money-market tool keeps `plain_language`,
+`quant_read`, regime, strongest signal, countercase, coverage, freshness and
+caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
@@ -256,7 +293,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same nine the hosted endpoint gives an anonymous caller, so a local run and a
+the same ten the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -272,6 +309,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `data_health` | yes | you should be able to check freshness before trusting a number |
 | `crypto_stress_record` | yes | labelled episodes replayed against the board |
 | `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
+| `money_market_context` | yes | compact chartless USD desk context; selector limits payload while formulas, provenance and caveats remain requestable |
 | `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
 | `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
 | `funding_stress_forecast` | no | six modelled views of forward event odds |
@@ -283,8 +321,9 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 The rule behind the column: what Seiche gives away is the **conclusion**; what
 it keeps is the **gated engine that produced a forecast, replay, position or
 LLM answer**. That is why `institutional_flows` is public but drops its
-`method_versions`, while the two cross-market tools return chartless contextual
-views and keep scenario arithmetic visibly separate from observations.
+`method_versions`, while the USD desk and two cross-market tools return chartless
+contextual views and keep calculations, restricted evidence and scenarios visibly
+separate from observations.
 
 `is_public` on each `TOOLS` entry in `backend/seiche/mcp_server.py` is the one
 place this is decided. Before commit `82d5700` the HTTP layer disagreed with it

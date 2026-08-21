@@ -40,6 +40,7 @@ const runWhenIdle = (task: () => void, timeout: number): (() => void) => {
 const Dispatches = lazy(() => import("./tabs/Dispatches"));
 const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
+const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
 const Physics = lazy(() => import("./tabs/Physics"));
 const Helm = lazy(() => import("./tabs/Helm"));
@@ -65,14 +66,14 @@ const Account = lazy(() => import("./tabs/Account"));
 // continues to resolve by name.
 // DISPATCHES sits second because the frozen letters are the public record of
 // what the desk said before outcomes arrived.
-// GLOBAL, FX×MATERIALS and OIL×FUNDING follow the core board: offshore-dollar
+// MONEY MARKETS follows the core board as the native-frequency global cash
+// desk. GLOBAL, FX×MATERIALS and OIL×FUNDING then carry offshore-dollar
 // coupling, the physical-cash transmission channel and the barrel's
-// bidirectional funding loop are context surfaces, never hidden composite
-// inputs. SCARCITY and SUPPLY then carry the two forward-looking Fed plumbing
-// views. Digit shortcuts index TABS positionally; hash routes remain name-based
-// and therefore stable.
+// bidirectional funding loop as context surfaces, never hidden composite
+// inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
+// Digit shortcuts index TABS positionally; hash routes remain name-based.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -141,7 +142,17 @@ function AppInner() {
   const switchTab = (t: Tab) => {
     const doc = document as Any;
     if (doc.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      doc.startViewTransition(() => flushSync(() => setTab(t)));
+      const transition = doc.startViewTransition(() => flushSync(() => setTab(t))) as ViewTransition;
+      // A newer navigation may legitimately supersede this animation. Chrome
+      // rejects ready with AbortError("Transition was skipped") in that case;
+      // consuming only that expected rejection keeps it out of the error
+      // channel while preserving visibility for real transition failures.
+      void transition.ready.catch((reason: unknown) => {
+        const skipped = reason instanceof DOMException
+          && reason.name === "AbortError"
+          && /transition was skipped/i.test(reason.message);
+        if (!skipped) console.error("view transition failed before animation readiness", reason);
+      });
     } else {
       setTab(t);
     }
@@ -149,7 +160,8 @@ function AppInner() {
 
   const goTab = (t: Tab, sub?: string) => {
     window.location.hash = sub ? `${t.toLowerCase()}/${sub}` : t.toLowerCase();
-    switchTab(t);
+    // The hashchange listener below is the single state-transition path.
+    // Calling switchTab here too started two overlapping transitions.
   };
 
   const onCommand = (cmd: Command) => {
@@ -168,7 +180,9 @@ function AppInner() {
   const liveUpgradeTimer = useRef<number | null>(null);
 
   const loadSnapshot = () =>
-    fetch("/data/overview.json", { credentials: "omit" })
+    // Match the HTML `crossorigin="anonymous"` preload's same-origin
+    // credentials mode so the browser can reuse the preloaded response.
+    fetch("/data/overview.json", { credentials: "same-origin" })
       .then((r) => {
         const ct = r.headers.get("content-type") ?? "";
         if (!r.ok || !(ct.includes("json") || ct.includes("octet"))) throw new Error("snapshot unavailable");
@@ -279,7 +293,7 @@ function AppInner() {
         stepDepth(e.key === "[" ? -1 : 1);
       } else if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         const t = TABS[parseInt(e.key, 10) - 1];
-        if (t) { e.preventDefault(); window.location.hash = t.toLowerCase(); setTab(t); }
+        if (t) { e.preventDefault(); window.location.hash = t.toLowerCase(); }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -435,6 +449,7 @@ function AppInner() {
           {tab === "TODAY" && <Today snap={snap} live={live} />}
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
+          {tab === "MONEY MARKETS" && <MoneyMarkets snap={snap} />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}
           {tab === "SUPPLY" && <Supply snap={snap} />}
           {tab === "FORECAST" && <Forecast snap={snap} />}
@@ -503,7 +518,7 @@ function AppInner() {
 
       <div className="footer">
         SEICHE — a standing wave in an enclosed basin, invisible until it sloshes over the edge. ·
-        Not investment advice. All data from free public APIs with their native lags (COT is T+3 by construction; that lag is shown, never hidden). ·
+        Not investment advice. The core board uses public APIs with their native lags (COT is T+3 by construction); global coverage labels credentialed, licensed, derived-only and unavailable inputs instead of hiding them. ·
         Composite weights are editorial and live in backend/seiche/config.py.
         <br />
         <a href="mailto:desk@seiche.info" style={{ color: "var(--dim)" }}>desk@seiche.info</a> ·{" "}

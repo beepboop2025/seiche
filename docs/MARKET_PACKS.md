@@ -222,6 +222,13 @@ See the [RBNZ access incident runbook](RBNZ_ACCESS_INCIDENT_2026-08-14.md).
 Seiche still does not relabel RBNZ's mixed secured/unsecured overnight cash rate
 to manufacture a result.
 
+That 19-of-21 statement is a dated validation receipt, not the current catalog
+count. The 2026-08-21 factory declares 23 deployable official schedules across
+11 packs after adding Korea's BOK policy and overnight-call adapters. Those two
+adapters require an individually issued `SEICHE_BOK_ECOS_API_KEY` and fail
+closed when it is absent; KOFR remains metadata-only until its redistribution
+and operational contract can be promoted safely.
+
 Licensed and tenant adapters remain declarations until an entitled deployment
 supplies credentials/data. Their absence is a capability state, never a zero.
 

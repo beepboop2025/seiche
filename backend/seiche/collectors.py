@@ -25,6 +25,7 @@ import pandas as pd
 
 from seiche.markets.base import SourceAdapterSpec
 from seiche.markets.registry import MarketRegistry, default_registry
+from seiche.public_faults import sanitize_fault
 from seiche.repository import get_repository
 from seiche.sources.base import (
     CanonicalSourceAdapter,
@@ -76,7 +77,10 @@ class CollectorRun:
             "observations_written": self.observations_written,
             "attempts": self.attempts,
             "next_due": self.next_due,
-            "fault": self.fault,
+            # Collector runs are a durable/publicly projected boundary.  Never
+            # persist arbitrary exception text, even when a caller manually
+            # constructs a CollectorRun instead of using this supervisor.
+            "fault": sanitize_fault(self.fault, status=self.status.value),
             "consecutive_failures": self.consecutive_failures,
             "circuit_open_until": self.circuit_open_until,
         }
@@ -119,9 +123,7 @@ def cadence_delta(value: str) -> timedelta:
 
 def _state_timestamp(value: object, field: str) -> datetime:
     if not isinstance(value, (str, datetime)):
-        raise ValueError(
-            f"persisted collector {field} must be an ISO-8601 timestamp"
-        )
+        raise ValueError(f"persisted collector {field} must be an ISO-8601 timestamp")
     parsed = (
         datetime.fromisoformat(value.replace("Z", "+00:00"))
         if isinstance(value, str)
@@ -194,7 +196,9 @@ class ParquetPartitionSink:
         for observation in batch.observations:
             record = observation.to_record()
             record["jurisdiction_codes"] = ",".join(record["jurisdiction_codes"])
-            grouped.setdefault(observation.event_time.date().isoformat(), []).append(record)
+            grouped.setdefault(observation.event_time.date().isoformat(), []).append(
+                record
+            )
         outputs = []
         for event_date, records in grouped.items():
             canonical = json.dumps(
@@ -256,7 +260,9 @@ class CollectorSupervisor:
         self.registry = registry or default_registry()
         self.raw_sink = raw_sink
         self.normalized_sink = normalized_sink
-        self.observation_writer = observation_writer or get_repository().save_observations
+        self.observation_writer = (
+            observation_writer or get_repository().save_observations
+        )
         self.run_writer = run_writer
         self.sleep = sleep
         self.persistence_retry_limit = persistence_retry_limit
@@ -333,8 +339,7 @@ class CollectorSupervisor:
             if force or self._states[key].next_due <= current
         ]
         pending = [
-            asyncio.create_task(self._run_one(key, task, current))
-            for key, task in due
+            asyncio.create_task(self._run_one(key, task, current)) for key, task in due
         ]
         runs: list[CollectorRun] = []
         writer_errors: list[Exception] = []
@@ -365,7 +370,9 @@ class CollectorSupervisor:
             await asyncio.gather(*pending, return_exceptions=True)
         ordered = sorted(runs, key=lambda item: (item.market_id, item.adapter_id))
         if writer_errors:
-            raise ExceptionGroup("one or more collector runs could not be published", writer_errors)
+            raise ExceptionGroup(
+                "one or more collector runs could not be published", writer_errors
+            )
         return ordered
 
     async def _run_one(
@@ -390,7 +397,7 @@ class CollectorSupervisor:
             state.open_until = None
             state.next_due = now + cadence
             finished = datetime.now(UTC).replace(microsecond=0)
-            detail = f"{type(fault).__name__}: {fault}"
+            detail = sanitize_fault(fault, status=CollectorRunStatus.UNAVAILABLE)
             return CollectorRun(
                 key[0],
                 key[1],
@@ -424,7 +431,7 @@ class CollectorSupervisor:
                 0,
                 0,
                 state.open_until.isoformat(),
-                "circuit breaker is open after consecutive source failures",
+                sanitize_fault(None, status=CollectorRunStatus.CIRCUIT_OPEN),
                 state.consecutive_failures,
                 state.open_until.isoformat(),
             )
@@ -490,8 +497,13 @@ class CollectorSupervisor:
                 state.next_due = now + cadence
                 finished = datetime.now(UTC).replace(microsecond=0)
                 return CollectorRun(
-                    key[0], key[1], CollectorRunStatus.SUCCESS,
-                    started.isoformat(), finished.isoformat(), written, attempts,
+                    key[0],
+                    key[1],
+                    CollectorRunStatus.SUCCESS,
+                    started.isoformat(),
+                    finished.isoformat(),
+                    written,
+                    attempts,
                     state.next_due.isoformat(),
                     None,
                     0,
@@ -509,10 +521,17 @@ class CollectorSupervisor:
             # cadence. Daily official feeds often have a shorter cooldown.
             state.next_due = max(state.next_due, state.open_until)
         finished = datetime.now(UTC).replace(microsecond=0)
-        detail = f"{type(fault).__name__}: {fault}" if fault is not None else "unknown fault"
+        detail = sanitize_fault(fault, status=CollectorRunStatus.FAILED)
         return CollectorRun(
-            key[0], key[1], CollectorRunStatus.FAILED,
-            started.isoformat(), finished.isoformat(), 0, attempts,
-            state.next_due.isoformat(), detail, state.consecutive_failures,
+            key[0],
+            key[1],
+            CollectorRunStatus.FAILED,
+            started.isoformat(),
+            finished.isoformat(),
+            0,
+            attempts,
+            state.next_due.isoformat(),
+            detail,
+            state.consecutive_failures,
             state.open_until.isoformat() if state.open_until is not None else None,
         )

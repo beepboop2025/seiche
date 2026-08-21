@@ -117,8 +117,10 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
           <h2 id="today-scope-title">Current v2 scope</h2>
           <p>
             The primary live Seiche signal remains US dollar funding. The v2 catalog
-            exposes 10 monetary-area packs. US-USD is VALIDATING; the 9 non-US packs
-            are REFERENCE context only. Global Tide is currently UNAVAILABLE.
+            registers 11 monetary-area packs: US-USD is VALIDATING and 10 non-US packs
+            are REFERENCE context. Registration declares a market contract, conventions,
+            and evidence rights; it does not promise a live traded benchmark. Global Tide
+            is currently UNAVAILABLE.
           </p>
           <div className="today-scope__links">
             <a href={`${API_BASE}/api/v2/markets`}>Open the market catalog →</a>
@@ -126,9 +128,9 @@ export default function Today({ snap, live }: { snap: Any; live: boolean }) {
           </div>
         </div>
         <dl className="today-scope__status">
-          <div><dt>CATALOG</dt><dd><b>10</b><span>monetary-area packs</span></dd></div>
+          <div><dt>CATALOG</dt><dd><b>11</b><span>registered monetary-area packs</span></dd></div>
           <div><dt>US-USD</dt><dd><b>VALIDATING</b><span>primary USD signal</span></dd></div>
-          <div><dt>NON-US</dt><dd><b>9 REFERENCE</b><span>context only</span></dd></div>
+          <div><dt>NON-US</dt><dd><b>10 REFERENCE</b><span>registered context, not live coverage</span></dd></div>
           <div><dt>GLOBAL TIDE</dt><dd><b>UNAVAILABLE</b><span>no reading published</span></dd></div>
         </dl>
       </section>

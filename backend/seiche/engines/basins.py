@@ -25,9 +25,10 @@ with daily overlap — Japan joined via TONA (BOJ flat files, to 1998) and
 China via SHIBOR O/N (CFETS; z quarantined until local history accrues).
 Per-country depth (India/Korea monthly mirrors included) lives in the
 harbors engine, each series labeled with its cadence and never interpolated
-across it. Russia and African markets still have no keyless feed that meets
-the provenance bar — out of scope, not faked. New basins plug into config
-when a qualifying feed exists.
+across it. Other markets remain visible in the Money Market Atlas registry or
+expansion ledger even when they lack an eligible coupling feed; this engine
+does not synthesize them. New basins plug into config when a qualifying feed
+exists.
 """
 
 from __future__ import annotations

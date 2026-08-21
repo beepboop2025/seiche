@@ -28,6 +28,7 @@ from seiche.markets.china_cny import PACK as CHINA_PACK
 from seiche.markets.india_inr import PACK as INDIA_PACK
 from seiche.markets.materialize import (
     PUBLIC_SNAPSHOT_VISIBILITY,
+    _age_observations,
     _source_state,
     materialize_global_tide,
     materialize_market,
@@ -94,24 +95,108 @@ def _save_success_run(market_id: str, adapter_id: str, cutoff: datetime) -> None
     )
 
 
-def test_policy_unavailable_collector_never_marks_inputs_fresh() -> None:
+def test_observation_clock_is_independent_of_collector_health() -> None:
     cutoff = datetime(2026, 8, 14, 10, tzinfo=UTC)
-    runs = {
-        "rbi_official": {
-            "status": "UNAVAILABLE",
-            "finished_at": cutoff.isoformat(),
-        }
-    }
 
-    state = _source_state(
+    stale_state = _source_state(
         INDIA_PACK,
         "IN.RBI.POLICY_REPO",
-        runs,
+        cutoff,
+        cutoff - timedelta(days=120),
+    )
+    current_state = _source_state(
+        INDIA_PACK,
+        "IN.RBI.POLICY_REPO",
         cutoff,
         cutoff,
     )
 
-    assert state is StalenessState.STALE
+    assert stale_state is StalenessState.DEAD
+    assert current_state is StalenessState.FRESH
+
+
+def test_rejected_latest_row_cannot_refresh_an_older_accepted_observation() -> None:
+    cutoff = datetime(2026, 8, 21, tzinfo=UTC)
+    accepted = _rate(
+        market_id="IN-INR",
+        instrument_id="IN.RBI.POLICY_REPO",
+        role=SemanticRole.POLICY_TARGET,
+        value=550,
+        event_time=cutoff - timedelta(days=120),
+    )
+    rejected = replace(
+        _rate(
+            market_id="IN-INR",
+            instrument_id="IN.RBI.POLICY_REPO",
+            role=SemanticRole.POLICY_TARGET,
+            value=999,
+            event_time=cutoff,
+        ),
+        quality=QualityState.REJECTED,
+    )
+
+    aged = _age_observations(INDIA_PACK, [accepted, rejected], cutoff)
+    by_quality = {item.quality: item for item in aged}
+
+    assert by_quality[QualityState.VERIFIED].staleness is StalenessState.DEAD
+    assert by_quality[QualityState.REJECTED].staleness is StalenessState.DEAD
+    assert all(not item.usable for item in aged)
+
+
+def test_recent_successful_run_does_not_make_old_estr_publishable(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "old-estr.sqlite")
+    repository = SQLiteMarketRepository()
+    cutoff = datetime(2026, 8, 21, tzinfo=UTC)
+    end = cutoff - timedelta(days=120)
+    start = end - timedelta(days=79)
+    rows = [
+        _rate(
+            market_id="EA-EUR",
+            instrument_id=instrument_id,
+            role=role,
+            value=value,
+            event_time=start,
+        )
+        for instrument_id, role, value in (
+            ("EA.ECB.DFR", SemanticRole.POLICY_FLOOR, 200),
+            ("EA.ECB.MRO", SemanticRole.POLICY_TARGET, 215),
+            ("EA.ECB.MLF", SemanticRole.POLICY_CEILING, 240),
+        )
+    ]
+    rows.extend(
+        _rate(
+            market_id="EA-EUR",
+            instrument_id="EA.ECB.ESTR",
+            role=SemanticRole.UNSECURED_OVERNIGHT,
+            value=190 + offset,
+            event_time=start + timedelta(days=offset),
+        )
+        for offset in range(80)
+    )
+    store.save_observations(rows)
+    run_finished = cutoff - timedelta(hours=1)
+    for adapter in ("ecb_benchmark", "ecb_policy"):
+        _save_success_run("EA-EUR", adapter, run_finished)
+
+    materialize_market(
+        "EA-EUR",
+        repository=repository,
+        knowledge_time=cutoff,
+        record_forward=False,
+    )
+    overview = store.load_latest_market_snapshot("EA-EUR", "overview")["payload"]
+    gauge = store.load_latest_market_snapshot("EA-EUR", "gauge")["payload"]
+
+    benchmark_run = next(
+        run for run in overview["collector_runs"] if run["adapter_id"] == "ecb_benchmark"
+    )
+    assert benchmark_run["status"] == "SUCCESS"
+    assert benchmark_run["finished_at"] == run_finished.isoformat()
+    assert gauge["status"] == "UNAVAILABLE"
+    assert gauge["reading"]["index"] is None
+    assert gauge["evidence_eligibility"]["eligible"] is False
 
 
 def _registry_with_non_derivable_instruments() -> tuple[MarketRegistry, MarketPack]:
@@ -238,8 +323,9 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id=instrument_id,
             role=role,
             value=value,
-            event_time=start,
+            event_time=event_time,
         )
+        for event_time in (start, cutoff)
         for instrument_id, role, value in (
             ("IN.RBI.SDF", SemanticRole.POLICY_FLOOR, 525),
             ("IN.RBI.POLICY_REPO", SemanticRole.POLICY_TARGET, 550),
@@ -252,7 +338,7 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id="IN.FBIL.MIBOR",
             role=SemanticRole.UNSECURED_OVERNIGHT,
             value=548 + offset % 4,
-            event_time=start + timedelta(days=offset),
+            event_time=cutoff - timedelta(days=79 - offset),
             source="licensed-public",
             classification=ConnectorClassification.LICENSED,
             redistribution=RedistributionStatus.DERIVED_ONLY,
@@ -282,7 +368,7 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id="IN.TENANT.CALL",
             role=SemanticRole.UNSECURED_OVERNIGHT,
             value=987654.25,
-            event_time=start + timedelta(days=90),
+            event_time=start + timedelta(days=10),
             source="tenant-instrument-secret",
             classification=ConnectorClassification.TENANT_PROVIDED,
             redistribution=RedistributionStatus.ALLOWED,
@@ -292,7 +378,7 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id="IN.FBIL.MIBOR",
             role=SemanticRole.UNSECURED_OVERNIGHT,
             value=876543.25,
-            event_time=start + timedelta(days=91),
+            event_time=start + timedelta(days=11),
             source="row-policy-secret",
             classification=ConnectorClassification.LICENSED,
             redistribution=RedistributionStatus.PROHIBITED,
@@ -302,7 +388,7 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id="IN.TENANT.RATE_P99",
             role=SemanticRole.RATE_P99,
             value=765432.5,
-            event_time=start + timedelta(days=92),
+            event_time=start + timedelta(days=12),
             source="tenant-role-secret",
             classification=ConnectorClassification.TENANT_PROVIDED,
             redistribution=RedistributionStatus.ALLOWED,
@@ -312,7 +398,7 @@ def test_local_snapshots_filter_non_derivable_rows_instruments_and_runs(
             instrument_id="IN.METADATA.CALL",
             role=SemanticRole.UNSECURED_OVERNIGHT,
             value=654320.5,
-            event_time=start + timedelta(days=93),
+            event_time=start + timedelta(days=13),
             source="metadata-only-secret",
             classification=ConnectorClassification.OFFICIAL_OPEN,
             redistribution=RedistributionStatus.METADATA_ONLY,
@@ -374,7 +460,7 @@ def test_global_tide_filters_non_derivable_inputs_but_keeps_derived_only_aggrega
     start = datetime(2026, 1, 1, tzinfo=UTC)
     cutoff = start + timedelta(days=100)
     public_rows = []
-    for offset in range(80):
+    for offset in range(101):
         event_time = start + timedelta(days=offset)
         for market_id, instrument_id, multiplier in (
             ("IN-INR", "IN.MARKET.FX_FORWARD_BASIS", 1.0),
@@ -455,7 +541,7 @@ def test_global_tide_filters_non_derivable_inputs_but_keeps_derived_only_aggrega
     assert {
         item["market_id"]: item["fx_swap_basis_observations"]
         for item in filtered["data_coverage"]
-    } == {"IN-INR": 80, "SG-SGD": 80}
+    } == {"IN-INR": 101, "SG-SGD": 101}
     _assert_non_derivable_metadata_absent(filtered, excluded_rows)
 
 
@@ -464,6 +550,7 @@ def test_local_materializer_uses_policy_asof_alignment_and_is_idempotent(
 ) -> None:
     monkeypatch.setattr(store, "DB_PATH", tmp_path / "local.sqlite")
     start = datetime(2025, 1, 1, tzinfo=UTC)
+    cutoff = start + timedelta(days=80)
     rows = [
         _rate(
             market_id="EA-EUR",
@@ -487,6 +574,31 @@ def test_local_materializer_uses_policy_asof_alignment_and_is_idempotent(
             event_time=start,
         ),
     ]
+    rows.extend(
+        [
+            _rate(
+                market_id="EA-EUR",
+                instrument_id="EA.ECB.DFR",
+                role=SemanticRole.POLICY_FLOOR,
+                value=200,
+                event_time=cutoff - timedelta(days=1),
+            ),
+            _rate(
+                market_id="EA-EUR",
+                instrument_id="EA.ECB.MRO",
+                role=SemanticRole.POLICY_TARGET,
+                value=215,
+                event_time=cutoff - timedelta(days=1),
+            ),
+            _rate(
+                market_id="EA-EUR",
+                instrument_id="EA.ECB.MLF",
+                role=SemanticRole.POLICY_CEILING,
+                value=240,
+                event_time=cutoff - timedelta(days=1),
+            ),
+        ]
+    )
     for offset in range(80):
         rows.append(
             _rate(
@@ -498,7 +610,6 @@ def test_local_materializer_uses_policy_asof_alignment_and_is_idempotent(
             )
         )
     store.save_observations(rows)
-    cutoff = start + timedelta(days=80)
     for adapter in ("ecb_benchmark", "ecb_policy", "ecb_liquidity"):
         _save_success_run("EA-EUR", adapter, cutoff)
 
@@ -562,7 +673,7 @@ def test_global_tide_is_sealed_unavailable_then_computes_only_from_fx_basis(
 
     start = datetime(2026, 1, 1, tzinfo=UTC)
     rows = []
-    for offset in range(80):
+    for offset in range((cutoff - start).days + 1):
         event = start + timedelta(days=offset)
         for market_id, instrument_id, multiplier in (
             ("IN-INR", "IN.MARKET.FX_FORWARD_BASIS", 1.0),
@@ -689,11 +800,11 @@ def test_global_tide_payload_cutoff_is_the_last_shared_session(
             instrument_id="IN.MARKET.FX_FORWARD_BASIS",
             role=SemanticRole.FX_SWAP_BASIS,
             value=5,
-            event_time=start + timedelta(days=70),
+            event_time=start + timedelta(days=62),
         )
     )
     store.save_observations(rows)
-    cutoff = start + timedelta(days=80)
+    cutoff = start + timedelta(days=63)
     _save_success_run("IN-INR", "licensed_inr_market", cutoff)
     _save_success_run("SG-SGD", "licensed_sgd_market", cutoff)
 

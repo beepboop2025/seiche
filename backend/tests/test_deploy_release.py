@@ -33,9 +33,7 @@ RELEASE_ALLOWED_SIGNERS = ROOT / "ops" / "deploy" / "release-allowed-signers"
 MARKET_INSTALLER = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
-LEGACY_UPDATE_RETIRER = (
-    ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
-)
+LEGACY_UPDATE_RETIRER = ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 
@@ -261,8 +259,7 @@ print(rendered)
         "SEICHE_SYNC_BIN": shutil.which("true") or "/usr/bin/true",
         "SEICHE_CP_BIN": shutil.which("cp") or "/bin/cp",
         "SEICHE_STAT_BIN": str(fake_stat),
-        "SEICHE_SHA256SUM_BIN": shutil.which("sha256sum")
-        or "/usr/bin/sha256sum",
+        "SEICHE_SHA256SUM_BIN": shutil.which("sha256sum") or "/usr/bin/sha256sum",
     }
     return env, systemd_dir, state_dir
 
@@ -277,7 +274,9 @@ def _run_legacy_retirement(env: dict[str, str]) -> subprocess.CompletedProcess[s
     )
 
 
-def _caddy_env(tmp_path: Path, *, reject_new_reload: bool = False) -> tuple[dict, Path, Path]:
+def _caddy_env(
+    tmp_path: Path, *, reject_new_reload: bool = False
+) -> tuple[dict, Path, Path]:
     source = tmp_path / "repo.Caddyfile"
     installed = tmp_path / "installed.Caddyfile"
     calls = tmp_path / "calls.log"
@@ -336,7 +335,9 @@ def test_caddy_installer_validates_backs_up_installs_and_reloads(tmp_path):
     assert installed.read_text() == "NEW\n"
     assert list(tmp_path.glob("installed.Caddyfile.bak-*"))[0].read_text() == "OLD\n"
     log = calls.read_text()
-    validation = next(line for line in log.splitlines() if line.startswith("caddy validate"))
+    validation = next(
+        line for line in log.splitlines() if line.startswith("caddy validate")
+    )
     assert "content=NEW" in validation
     assert str(tmp_path / ".installed.Caddyfile.new.") in validation
     assert str(tmp_path / "repo.Caddyfile") not in validation
@@ -435,12 +436,20 @@ case "$url" in
         type=application/json; body='{{"generated_at":"2026-08-10T00:00:00Z"}}'
         ;;
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
+    */api/money-markets)
+        type=application/json
+        body='{{"ok":true,"schema":"seiche.money-market-desk.v1","sections":[{{"id":"policy_corridor"}},{{"id":"secured_distributions"}},{{"id":"repo_segments"}},{{"id":"unsecured_funding"}},{{"id":"bills_cash_curve"}},{{"id":"liquidity_buffers"}},{{"id":"mmf_plumbing"}}]}}'
+        ;;
     */api/oil-funding)
         type=application/json; body='{{"schema":"seiche.oil-funding.v1"}}' ;;
     */api/estuary)
         type=application/json; body='{{"schema":"seiche.estuary.v1"}}' ;;
     */api/v2/markets)
         type=application/json; body='{{"schema":"seiche.markets.v2"}}' ;;
+    */api/v2/money-markets)
+        type=application/json
+        body='{{"ok":true,"schema":"seiche.global-money-markets.v1","coverage":{{"declared_markets":11,"expansion_markets":52,"global_discovery_universe":63}},"expansion_ledger":[],"read_faults":[]}}'
+        ;;
     */api/v2/coverage)
         type=application/json; body='{{"schema":"seiche.coverage.v2"}}' ;;
     */api/v2/global/tide)
@@ -463,6 +472,12 @@ fi
 if [ "${{SMOKE_SCENARIO:-success}}" = generic ] && [[ "$url" = */api/subscribe ]]; then
     status=200; type=application/json; body='{{"ok":true}}'
 fi
+if [ "${{SMOKE_SCENARIO:-success}}" = usd_partial ] && [[ "$url" = */api/money-markets ]]; then
+    body='{{"ok":false,"schema":"seiche.money-market-desk.v1","sections":[]}}'
+fi
+if [ "${{SMOKE_SCENARIO:-success}}" = atlas_read_fault ] && [[ "$url" = */api/v2/money-markets ]]; then
+    body='{{"ok":true,"schema":"seiche.global-money-markets.v1","coverage":{{"declared_markets":11,"expansion_markets":52,"global_discovery_universe":63}},"expansion_ledger":[],"read_faults":[{{"source":"canonical_repository"}}]}}'
+fi
 printf '%s' "$body" > "$out"
 printf '%s|%s' "$status" "$type"
 ''',
@@ -481,35 +496,58 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     definitions = EXTERNAL_ROUTES.read_text()
     assert 'GET|/api/health|200|application/json|"generated_at"' in definitions
     assert (
-        'GET|/api/oil-funding|200|application/json|'
-        '"schema":"seiche.oil-funding.v1"'
+        "GET|/api/money-markets|200|application/json|"
+        '"schema":"seiche.money-market-desk.v1"'
+    ) in definitions
+    for identity in (
+        '"ok":true',
+        '"id":"policy_corridor"',
+        '"id":"secured_distributions"',
+        '"id":"repo_segments"',
+        '"id":"unsecured_funding"',
+        '"id":"bills_cash_curve"',
+        '"id":"liquidity_buffers"',
+        '"id":"mmf_plumbing"',
+    ):
+        assert f"GET|/api/money-markets|200|application/json|{identity}" in definitions
+    assert (
+        'GET|/api/oil-funding|200|application/json|"schema":"seiche.oil-funding.v1"'
     ) in definitions
     assert (
-        'GET|/api/estuary|200|application/json|'
-        '"schema":"seiche.estuary.v1"'
+        'GET|/api/estuary|200|application/json|"schema":"seiche.estuary.v1"'
     ) in definitions
     assert (
-        'GET|/api/v2/markets|200|application/json|'
-        '"schema":"seiche.markets.v2"'
+        'GET|/api/v2/markets|200|application/json|"schema":"seiche.markets.v2"'
     ) in definitions
     assert (
-        'GET|/api/v2/coverage|200|application/json|'
-        '"schema":"seiche.coverage.v2"'
+        "GET|/api/v2/money-markets|200|application/json|"
+        '"schema":"seiche.global-money-markets.v1"'
+    ) in definitions
+    for identity in (
+        '"ok":true',
+        '"declared_markets":11',
+        '"expansion_markets":52',
+        '"global_discovery_universe":63',
+        '"expansion_ledger":[',
+        '"read_faults":[]',
+    ):
+        assert (
+            f"GET|/api/v2/money-markets|200|application/json|{identity}"
+            in definitions
+        )
+    assert (
+        'GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"'
     ) in definitions
     assert (
-        'GET|/api/v2/global/tide|200|application/json|'
-        '"schema":"seiche.global-tide.v2"'
+        'GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"'
     ) in definitions
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
+    assert ('GET|/riptide/|200|application/json|"name": "riptide"') in definitions
     assert (
-        'GET|/riptide/|200|application/json|"name": "riptide"'
+        'GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"'
     ) in definitions
     assert (
-        'GET|/riptide/openapi.json|200|application/json|'
-        '"title": "Riptide Public API"'
-    ) in definitions
-    assert (
-        'GET|/palimpsest/osint/osint-china.json|200|application/json|'
+        "GET|/palimpsest/osint/osint-china.json|200|application/json|"
         '"schema": "palimpsest-nemesis.public-snapshot"'
     ) in definitions
     env, calls = _smoke_env(tmp_path)
@@ -519,6 +557,20 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
+
+
+@pytest.mark.parametrize("scenario", ("usd_partial", "atlas_read_fault"))
+def test_external_smoke_rejects_incomplete_money_market_contracts(
+    tmp_path, scenario
+):
+    env, _ = _smoke_env(tmp_path, scenario)
+
+    result = subprocess.run(
+        ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
+    )
+
+    assert result.returncode != 0
+    assert "FAIL:" in result.stderr
 
 
 def test_riptide_edge_strips_only_its_product_prefix_and_proxies_all_transports():
@@ -574,9 +626,7 @@ printf '\\n' >> "{calls}"
     assert result.returncode == 0, result.stdout + result.stderr
     lines = calls.read_text().splitlines()
     assert len(lines) == 2
-    assert all(
-        line.endswith(f"<root@192.0.2.10><deploy {'a' * 40}>") for line in lines
-    )
+    assert all(line.endswith(f"<root@192.0.2.10><deploy {'a' * 40}>") for line in lines)
     workflow = DEPLOY_WORKFLOW.read_text()
     assert "target_sha:" in workflow
     assert 'SEICHE_EXPECTED_TARGET_SHA="$TARGET_SHA"' in workflow
@@ -630,7 +680,7 @@ def test_forced_command_retries_only_a_safe_defer(tmp_path):
         tmp_path,
         (
             f'count=$(cat "{counter}")\n'
-            'count=$((count + 1))\n'
+            "count=$((count + 1))\n"
             f'printf "%s\\n" "$count" >"{counter}"\n'
             '[ "$count" -gt 1 ] || exit 75\n'
         ),
@@ -690,9 +740,7 @@ def test_forced_command_refuses_an_unbound_target(tmp_path):
 
 
 def test_box_smoke_installs_its_declared_async_test_plugin():
-    optional = tomllib.loads(PYPROJECT.read_text())["project"][
-        "optional-dependencies"
-    ]
+    optional = tomllib.loads(PYPROJECT.read_text())["project"]["optional-dependencies"]
     deploy_dependencies = optional["deploy-test"]
     box_update = BOX_UPDATE.read_text()
 
@@ -733,7 +781,10 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
         "restore_market_services"
     )
     assert "market writers remain stopped because api recovery failed" in recovery
-    assert "healthy candidate code remains running and no rollback was attempted" in wrapper
+    assert (
+        "healthy candidate code remains running and no rollback was attempted"
+        in wrapper
+    )
     market_installer = wrapper[
         wrapper.index("deploy_market_platform()") : wrapper.index(
             "deploy_market_platform ||"
@@ -744,7 +795,7 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     ]
     assert "SEICHE_DEFER_MARKET_START=1 bash" in market_installer
     assert "SEICHE_DEFER_MARKET_START" not in caddy_installer
-    healthy_release = wrapper[wrapper.index('if [ -n "$HEALTHY" ]'):]
+    healthy_release = wrapper[wrapper.index('if [ -n "$HEALTHY" ]') :]
     assert healthy_release.index("start_market_services") < healthy_release.index(
         "deploy_caddy ||"
     )
@@ -775,22 +826,30 @@ def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
             "systemctl stop seiche-market-worker.service"
         )
     ]
-    assert recovery.index("restore_quiesced_api") < recovery.index(
-        "restore_preupdate_market_worker_unit"
-    ) < recovery.index("restore_market_services")
+    assert (
+        recovery.index("restore_quiesced_api")
+        < recovery.index("restore_preupdate_market_worker_unit")
+        < recovery.index("restore_market_services")
+    )
 
     rollback = wrapper[wrapper.index("rolling the service back to") :]
-    assert rollback.index("restore_preupdate_market_worker_unit") < rollback.index(
-        "systemctl restart seiche-api"
-    ) < rollback.index("restore_market_services")
+    assert (
+        rollback.index("restore_preupdate_market_worker_unit")
+        < rollback.index("systemctl restart seiche-api")
+        < rollback.index("restore_market_services")
+    )
 
 
 def test_market_platform_units_are_independent_and_postgres_backed():
     installer = (ROOT / "ops" / "deploy" / "install-market-platform.sh").read_text()
     worker = (ROOT / "ops" / "deploy" / "seiche-market-worker.service").read_text()
     backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
-    validation = (ROOT / "ops" / "deploy" / "seiche-market-validation.service").read_text()
-    validation_timer = (ROOT / "ops" / "deploy" / "seiche-market-validation.timer").read_text()
+    validation = (
+        ROOT / "ops" / "deploy" / "seiche-market-validation.service"
+    ).read_text()
+    validation_timer = (
+        ROOT / "ops" / "deploy" / "seiche-market-validation.timer"
+    ).read_text()
     backup = (ROOT / "ops" / "deploy" / "seiche-market-backup.service").read_text()
     backup_script = (ROOT / "ops" / "deploy" / "seiche-market-backup.sh").read_text()
     backup_timer = (ROOT / "ops" / "deploy" / "seiche-market-backup.timer").read_text()
@@ -820,7 +879,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-market-validation.timer" in installer
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
-    assert 'SEICHE_DEFER_MARKET_START:-0}' in installer
+    assert "SEICHE_DEFER_MARKET_START:-0}" in installer
     worker_verify = installer.index("worker unit failed verification")
     worker_install = installer.index(
         'mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"'
@@ -832,7 +891,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert 'chmod 2750 "$FUNDING_EXPORT_DIR"' in installer
     assert 'chmod 0640 "$FUNDING_EXPORT_FILE"' in installer
     assert "setfacl -R" not in installer
-    assert "find \"$FUNDING_EXPORT_DIR\"" not in installer
+    assert 'find "$FUNDING_EXPORT_DIR"' not in installer
     funding_acl = installer[: installer.index("ENV_STAGE=")]
     assert "usermod" not in funding_acl
     assert 'FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"' in installer
@@ -840,15 +899,20 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "systemctl start --no-block seiche-market-backfill.service" in installer
     assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-worker" in worker
     assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in worker
+    assert "EnvironmentFile=-/etc/seiche/bok-ecos.env" in worker
     assert "Restart=always" in worker
     assert "Type=oneshot" in backfill
     assert "EnvironmentFile=-/etc/seiche/rbnz-access.env" in backfill
+    assert "EnvironmentFile=-/etc/seiche/bok-ecos.env" in backfill
     assert "TimeoutStartSec=2h" in backfill
     assert "CPUQuota=100%" in backfill
     assert "CPUWeight=10" in backfill
     assert "IOWeight=10" in backfill
     assert "Nice=10" in backfill
-    assert "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-validate" in validation
+    assert (
+        "ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-validate"
+        in validation
+    )
     assert "--evidence-dir" not in validation
     assert "SuccessExitStatus=2" in validation
     assert "After=network-online.target postgresql.service" in validation
@@ -876,7 +940,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictSUIDSGID=true" in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
-    assert "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy" in backup
+    assert (
+        "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy"
+        in backup
+    )
     assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
     assert "RandomizedDelaySec=10m" in backup_timer
@@ -899,6 +966,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RBNZ access env ownership/mode is unsafe" in installer
     assert "SEICHE_RBNZ_ACCESS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
     assert "SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL=[0-9]{4}" in installer
+    assert "BOK_ECOS_ENV_FILE=/etc/seiche/bok-ecos.env" in installer
+    assert "SEICHE_BOK_ECOS_ENV_FILE" not in installer
+    assert "BOK ECOS env ownership/mode is unsafe" in installer
+    assert "SEICHE_BOK_ECOS_API_KEY=[A-Za-z0-9]{8,128}" in installer
+    assert 'wc -l <"$BOK_ECOS_ENV_FILE"' in installer
 
 
 def test_legacy_updater_is_retired_before_other_host_services_change():
@@ -936,9 +1008,7 @@ def test_legacy_updater_retirement_archives_exact_units_and_masks_both(tmp_path)
     assert (archive / "STAT").is_file()
     assert (systemd_dir / "seiche-update.service").readlink() == Path("/dev/null")
     assert (systemd_dir / "seiche-update.timer").readlink() == Path("/dev/null")
-    assert not (
-        systemd_dir / "timers.target.wants" / "seiche-update.timer"
-    ).exists()
+    assert not (systemd_dir / "timers.target.wants" / "seiche-update.timer").exists()
     assert not (
         systemd_dir / "multi-user.target.wants" / "seiche-update.service"
     ).exists()
@@ -1060,9 +1130,7 @@ def test_legacy_updater_retirement_rejects_collision_and_unsafe_symlink(tmp_path
 
 
 def test_forward_incident_runbook_loads_systemd_environment_without_sourcing():
-    runbook = (
-        ROOT / "docs" / "FORWARD_CHAIN_INCIDENT_2026-08-11.md"
-    ).read_text()
+    runbook = (ROOT / "docs" / "FORWARD_CHAIN_INCIDENT_2026-08-11.md").read_text()
 
     assert "mapfile -t MARKET_ENV" in runbook
     assert 'env "${MARKET_ENV[@]}"' in runbook
@@ -1076,9 +1144,7 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
     caddy = CADDYFILE.read_text()
     delivery_docs = (ROOT / "ops" / "deploy" / "WORLD-MODEL-DELIVERY.md").read_text()
     route = "/api/internal/v1/world-model/us-usd-funding-core-v2"
-    exact_file = (
-        "/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json"
-    )
+    exact_file = "/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json"
 
     assert f"path {route}" in caddy
     private_edge = caddy[
@@ -1112,9 +1178,7 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
 def test_release_health_capability_is_loopback_only():
     caddy = CADDYFILE.read_text()
     route = "/api/internal/v1/release-health"
-    private_edge = caddy[
-        caddy.index("@release_health path") : caddy.index("@public {")
-    ]
+    private_edge = caddy[caddy.index("@release_health path") : caddy.index("@public {")]
 
     assert f"@release_health path {route}" in private_edge
     assert 'respond "not here" 404' in private_edge
@@ -1126,12 +1190,8 @@ def test_release_health_capability_is_loopback_only():
 def test_event_analysis_edge_is_post_only_and_excluded_from_public_get():
     caddy = CADDYFILE.read_text()
     route = "/api/event-analysis"
-    public_matcher = caddy[
-        caddy.index("@public {") : caddy.index("@event_analysis {")
-    ]
-    event_handler = caddy[
-        caddy.index("@event_analysis {") : caddy.index("@login {")
-    ]
+    public_matcher = caddy[caddy.index("@public {") : caddy.index("@event_analysis {")]
+    event_handler = caddy[caddy.index("@event_analysis {") : caddy.index("@login {")]
     other_post_matcher = caddy[
         caddy.index("@login {") : caddy.index("handle @public {")
     ]
@@ -1216,10 +1276,10 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     assert "runuser -u seiche" not in function[function.index("POINT_OF_NO_RETURN") :]
 
     health = wrapper[
-        wrapper.index("HEALTHY=\"\"") : wrapper.index('if [ -n "$HEALTHY" ]')
+        wrapper.index('HEALTHY=""') : wrapper.index('if [ -n "$HEALTHY" ]')
     ]
-    assert 'if systemctl restart seiche-api; then' in health
-    assert 'RESTARTED=1' in health
+    assert "if systemctl restart seiche-api; then" in health
+    assert "RESTARTED=1" in health
     assert 'if [ -n "$RESTARTED" ] && systemctl is-active' in health
     assert health.index("systemctl restart seiche-api") < health.index(
         "candidate_health_wait"
@@ -1232,7 +1292,7 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
             'if [ "$BEFORE" = "$AFTER" ]; then'
         )
     ]
-    assert 'if ! systemctl is-active --quiet seiche-api; then' in already
+    assert "if ! systemctl is-active --quiet seiche-api; then" in already
     assert already.index("systemctl restart seiche-api") < already.index(
         'candidate_health_wait 900 "$AFTER"'
     )
@@ -1244,13 +1304,24 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     assert "promote_snapshot_handoff" in already
     assert already.index("candidate_health_wait") < already.index("market_health")
     assert already.index("market_health") < already.index("deploy_pull_unit")
-    assert already.index("deploy_pull_unit") < already.index(
-        "promote_snapshot_handoff"
-    )
+    assert already.index("deploy_pull_unit") < already.index("promote_snapshot_handoff")
     promotion_failure = already[already.index("promote_snapshot_handoff ||") :]
     assert "restore_market_services" in promotion_failure
     assert "healthy running candidate kept in place" in promotion_failure
     assert "accepted release did not recover strict health" in already
+
+
+def test_market_health_matches_the_candidate_registry_without_a_count_literal():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    health = wrapper[
+        wrapper.index("market_health()") : wrapper.index("promote_snapshot_handoff()")
+    ]
+
+    assert "from seiche.markets.registry import default_registry" in health
+    assert "expected={pack.market_id for pack in default_registry().list()}" in health
+    assert 'actual=[market["market_id"] for market in p["markets"]]' in health
+    assert "len(actual) == len(expected) and set(actual) == expected" in health
+    assert 'len(p["markets"]) ==' not in health
 
 
 def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
@@ -1266,12 +1337,10 @@ def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
     assert "EnvironmentFile=-/etc/seiche/market.env" not in unit
     assert "EnvironmentFile=-/etc/seiche/release.env" not in unit
     assert (
-        "ExecStart=/home/seiche/app/backend/.venv/bin/python "
-        "-m seiche.release_promote"
+        "ExecStart=/home/seiche/app/backend/.venv/bin/python -m seiche.release_promote"
     ) in unit
     assert (
-        "ExecStopPost=+/usr/bin/rm -f "
-        "/run/seiche-release/promotion-request.json"
+        "ExecStopPost=+/usr/bin/rm -f /run/seiche-release/promotion-request.json"
     ) in unit
     assert "CapabilityBoundingSet=" in unit
     assert "MemoryMax=1G" in unit
@@ -1288,7 +1357,9 @@ def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
     assert 'dpkg --compare-versions "$SYNC_VERSION" ge 8.24' in installer
     assert "systemd-analyze verify" in installer
     assert "seiche-snapshot-promote.service" in installer
-    assert 'mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"' in installer
+    assert (
+        'mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"' in installer
+    )
     assert "systemctl enable seiche-snapshot-promote.service" not in installer
     api_dropin = installer[installer.index('cat >"$DROPIN"') :]
     assert "EnvironmentFile=-$ENV_DIR/release.env" in api_dropin
@@ -1312,7 +1383,9 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert "chown root:seiche" in release_writer
     assert "chmod 0640" in release_writer
     assert 'mv -f "$stage" "$RELEASE_ENV"' in release_writer
-    assert 'printf \'{"expected_sha":"%s","activation_token":"%s"}\\n\'' in request_writer
+    assert (
+        'printf \'{"expected_sha":"%s","activation_token":"%s"}\\n\'' in request_writer
+    )
     assert "chown root:seiche" in request_writer
     assert "chmod 0640" in request_writer
     assert 'mv -f "$stage" "$PROMOTION_REQUEST"' in request_writer
@@ -1320,13 +1393,13 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert "source /etc/seiche" not in wrapper
     assert "eval " not in wrapper
     assert 'git -C "$APP" diff-index --quiet "$AFTER" --' in wrapper
-    assert '--others --exclude-standard -- backend' in wrapper
-    assert '--others --ignored --exclude-standard -- backend' in wrapper
+    assert "--others --exclude-standard -- backend" in wrapper
+    assert "--others --ignored --exclude-standard -- backend" in wrapper
     assert "$0 !~ /^backend\\/\\.venv\\//" in wrapper
     assert "$0 !~ /\\/__pycache__\\//" in wrapper
     assert 'if ! AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)' in wrapper
     unresolved = wrapper[
-        wrapper.index('if ! AFTER=$(runuser') : wrapper.index(
+        wrapper.index("if ! AFTER=$(runuser") : wrapper.index(
             'if [ "$AFTER" != "$TARGET" ]'
         )
     ]
@@ -1343,17 +1416,20 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     state_writer = wrapper[
         wrapper.index("write_deployed_state()") : wrapper.index("write_release_env()")
     ]
-    assert state_writer.index('/usr/bin/sync -f "$stage"') < state_writer.index(
-        'mv -f "$stage" "$STATE"'
-    ) < state_writer.index('/usr/bin/sync "$DEPLOY_STATE_DIR"')
+    assert (
+        state_writer.index('/usr/bin/sync -f "$stage"')
+        < state_writer.index('mv -f "$stage" "$STATE"')
+        < state_writer.index('/usr/bin/sync "$DEPLOY_STATE_DIR"')
+    )
     assert 'SEICHE_DEPLOYED_SHA="$DEPLOYED"' in wrapper
     assert "/home/seiche/.seiche-deployed-sha" not in wrapper
     assert "DEPLOYED=${SEICHE_DEPLOYED_SHA:-}" in BOX_UPDATE.read_text()
     deploy_lock = wrapper.index("flock --nonblock 9")
-    assert 'DEPLOY_RUNTIME_DIR=/run/seiche-deploy' in wrapper[:deploy_lock]
-    assert 'install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"' in wrapper[
-        :deploy_lock
-    ]
+    assert "DEPLOY_RUNTIME_DIR=/run/seiche-deploy" in wrapper[:deploy_lock]
+    assert (
+        'install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"'
+        in wrapper[:deploy_lock]
+    )
     assert 'exec 9>"$DEPLOY_LOCK"' in wrapper[:deploy_lock]
     assert "another seiche deployment is still running" in wrapper
     assert deploy_lock < wrapper.index("# The sha whose code is actually RUNNING")
@@ -1444,24 +1520,22 @@ def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
 
 def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     poller = RELEASE_POLLER.read_text()
-    selected = poller.index('TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)')
+    selected = poller.index(
+        'TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)'
+    )
     signature = poller.index('verify_target_signature "$TARGET"', selected)
     admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", signature)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
-    full_gate = poller.index(
-        '"$VENV/bin/python" -m pytest backend/tests -q', detached
-    )
+    full_gate = poller.index('"$VENV/bin/python" -m pytest backend/tests -q', detached)
     refetched = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', full_gate
     )
     superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
     gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
     gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
-    post_gate_admission = poller.index(
-        "wait_for_post_gate_admission", gate_only
-    )
+    post_gate_admission = poller.index("wait_for_post_gate_admission", gate_only)
     post_gate_refetch = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', post_gate_admission
     )
@@ -1492,7 +1566,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
     assert 'install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700' in poller
     assert 'exec 8>"$CONTROL_LOCK"' in poller
-    assert 'flock --nonblock 8' in poller
+    assert "flock --nonblock 8" in poller
     assert "ADMISSION_STATUS=0" in poller[signature:detached]
     assert 'case "$ADMISSION_STATUS"' in poller[signature:detached]
     assert "deferred with production unchanged" in poller[signature:detached]
@@ -1553,7 +1627,7 @@ def test_post_gate_admission_retries_a_safe_deferral(tmp_path):
         tmp_path,
         (
             f'count=$(cat "{counter}")\n'
-            'count=$((count + 1))\n'
+            "count=$((count + 1))\n"
             f'printf "%s\\n" "$count" >"{counter}"\n'
             '[ "$count" -gt 1 ] || exit 75\n'
         ),
@@ -1567,9 +1641,7 @@ def test_post_gate_admission_retries_a_safe_deferral(tmp_path):
 
 
 @pytest.mark.parametrize("wrapper_status", [1, 42])
-def test_post_gate_admission_preserves_real_probe_failures(
-    tmp_path, wrapper_status
-):
+def test_post_gate_admission_preserves_real_probe_failures(tmp_path, wrapper_status):
     result = _post_gate_admission(
         tmp_path,
         f"exit {wrapper_status}\n",
@@ -1629,12 +1701,10 @@ def test_release_signature_policy_is_fixed_to_one_ed25519_identity():
     poller = RELEASE_POLLER.read_text()
 
     assert signer.count("\n") == 1
-    assert signer.startswith(
-        "beepboop2025@users.noreply.github.com ssh-ed25519 "
-    )
+    assert signer.startswith("beepboop2025@users.noreply.github.com ssh-ed25519 ")
     assert "validate_allowed_signers" in poller
-    assert 'stat.S_IMODE(info.st_mode) != int(mode, 8)' in poller
-    assert 'info.st_nlink != 1' in poller
+    assert "stat.S_IMODE(info.st_mode) != int(mode, 8)" in poller
+    assert "info.st_nlink != 1" in poller
     assert '-c "gpg.ssh.program=$SSH_KEYGEN"' in poller
 
 
@@ -1654,9 +1724,10 @@ def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
     assert '"conclusion": "success"' in writer
     assert '"gate_receipt_sha256"' in writer
     assert gate < deploy < exact_health < release
-    assert "wrapper failure never writes" in (
-        ROOT / "ops" / "deploy" / "RELEASE-POLLER.md"
-    ).read_text()
+    assert (
+        "wrapper failure never writes"
+        in (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    )
 
 
 def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
@@ -1680,7 +1751,7 @@ def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     binary_dir.mkdir()
     wrapper = _executable(
         tmp_path / "seiche-deploy-wrapper",
-        'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n',
+        "EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n",
     )
     installed = {
         binary_dir / "seiche-release-poll": "old script\n",
@@ -1736,7 +1807,9 @@ esac
     )
 
     assert result.returncode != 0
-    assert "restoring the previous release-poller files and timer state" in result.stderr
+    assert (
+        "restoring the previous release-poller files and timer state" in result.stderr
+    )
     for path, body in installed.items():
         assert path.read_text() == body
     systemctl_calls = calls.read_text().splitlines()
@@ -1769,7 +1842,7 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     binary_dir.mkdir()
     wrapper = _executable(
         tmp_path / "seiche-deploy-wrapper",
-        'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n',
+        "EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n",
     )
     installed_signer = tmp_path / "seiche-release.allowed-signers"
     wrong_pin = (
@@ -1817,7 +1890,9 @@ def test_release_poller_units_are_inert_until_an_explicit_handoff():
     assert 'ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"' in installer
     assert "refusing to replace the pinned Seiche release signer" in installer
     assert 'ln "$SIGNER_STAGE" "$ALLOWED_SIGNERS"' in installer
-    assert "SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers" in service
+    assert (
+        "SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers" in service
+    )
     assert "SEICHE_CONTROL_SIGNING_PRINCIPAL=" in service
     assert "ReadOnlyPaths=/etc/seiche-release.allowed-signers" in service
     assert "ExecStart=/usr/local/sbin/seiche-release-poll" in service
@@ -1894,8 +1969,8 @@ def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     )
     assert 'rm -f -- "$PROMOTION_REQUEST"' in promotion
 
-    assert wrapper.index("market_health", wrapper.index("HEALTHY=\"\"")) < wrapper.index(
-        "promote_snapshot_handoff", wrapper.index("HEALTHY=\"\"")
+    assert wrapper.index("market_health", wrapper.index('HEALTHY=""')) < wrapper.index(
+        "promote_snapshot_handoff", wrapper.index('HEALTHY=""')
     )
     no_rollback = wrapper[
         wrapper.index('if [ -n "$POINT_OF_NO_RETURN" ]') : wrapper.index(
@@ -1914,7 +1989,7 @@ def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     restart = rollback.index("systemctl restart seiche-api")
     assert validate < verify_commit < stop_api < rewrite_release < reset < restart
     assert "systemctl stop seiche-api 2>/dev/null || true" not in rollback
-    assert 'rollback_health_wait 480' in rollback
+    assert "rollback_health_wait 480" in rollback
     rollback_health = wrapper[
         wrapper.index("rollback_health_wait()") : wrapper.index("market_health()")
     ]
@@ -1931,9 +2006,7 @@ def test_palimpest_osint_edge_is_an_exact_static_allowlist():
     ) in caddy
     assert "root * /var/lib/palimpsest-nemesis/public" in caddy
     osint_block = caddy[
-        caddy.index("@palimpsest_osint path") : caddy.index(
-            "# Palimpsest BLEEDTHROUGH"
-        )
+        caddy.index("@palimpsest_osint path") : caddy.index("# Palimpsest BLEEDTHROUGH")
     ]
     assert 'header Cache-Control "no-store"' in osint_block
     assert "stale-if-error" not in osint_block
@@ -1950,9 +2023,7 @@ def test_palimpsest_bleedthrough_edge_is_an_exact_sanitized_allowlist():
         "/palimpsest/bleedthrough/bleedthrough-history.jsonl"
     ) in caddy
     block = caddy[
-        caddy.index("@palimpsest_bleedthrough path") : caddy.index(
-            "# Palimpsest MCP"
-        )
+        caddy.index("@palimpsest_bleedthrough path") : caddy.index("# Palimpsest MCP")
     ]
     assert 'header Access-Control-Allow-Origin "https://palimpsest.info"' in block
     assert 'header Cache-Control "no-store, no-transform"' in block
@@ -1984,9 +2055,9 @@ def test_palimpsest_social_observations_edge_is_an_exact_static_allowlist():
         "/palimpsest/social-observations/*"
     ) in block
     assert 'respond "not here" 404' in block
-    assert block.count(
-        'header Access-Control-Allow-Origin "https://palimpsest.info"'
-    ) == 3
+    assert (
+        block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 3
+    )
     assert block.count('header Cache-Control "no-store, no-transform"') == 3
     assert 'header Content-Type "application/x-ndjson"' in block
     assert block.count("uri strip_prefix /palimpsest/social-observations") == 3

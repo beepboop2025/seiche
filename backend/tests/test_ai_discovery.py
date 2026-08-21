@@ -60,8 +60,9 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 9
+    assert len(mcp["capabilities"]) == 10
     assert "latest_article" in mcp["capabilities"]
+    assert "money_market_context" in mcp["capabilities"]
     assert catalog["host"]["documentationUrl"] == (
         "https://seiche.info/developers")
     assert all(".html" not in json.dumps(entry)

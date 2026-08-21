@@ -6,6 +6,7 @@ Exercises the /mcp endpoint through FastAPI's TestClient with a canned snapshot
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -18,11 +19,20 @@ from seiche import api, mcp_server, usage, world_model_delivery, x402
 def client(tmp_path, monkeypatch, fake_snap):
     # no network: every tool reads the canned board (fake_snap from conftest)
     monkeypatch.setattr(mcp_server, "_get_snapshot", lambda force=False: fake_snap)
+    monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda: fake_snap)
 
     async def fake_snapshot(force=False):
         return fake_snap
 
     monkeypatch.setattr(api.assemble, "snapshot", fake_snapshot)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 21, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr(api, "datetime", FrozenDateTime)
+    monkeypatch.setattr(mcp_server, "datetime", FrozenDateTime)
     # isolated meter
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     # deterministic auth
@@ -48,7 +58,90 @@ def _rpc(method, params=None, msg_id=1):
     return m
 
 
+def _http_money_market_snapshot(fake_snap):
+    sections = [
+        {
+            "id": section_id,
+            "label": section_id.replace("_", " ").title(),
+            "status": "available",
+            "plain_language": "Synthetic transport fixture.",
+            "metrics": [
+                {
+                    "id": f"{section_id}.metric",
+                    "label": "Synthetic metric",
+                    "value": 1.5,
+                    "unit": "bp",
+                    "asof": "2026-08-20",
+                    "cadence": "daily",
+                    "status": "available",
+                    "freshness": "fresh",
+                    "source": "Synthetic official source",
+                    "explanation": "A transport-only metric.",
+                    "formula": "100 x difference",
+                }
+            ],
+        }
+        for section_id in mcp_server.MONEY_MARKET_SECTION_IDS
+    ]
+    engine = {
+        "ok": True,
+        "schema": mcp_server.MONEY_MARKET_SCHEMA,
+        "asof": "2026-08-20",
+        "context_only": True,
+        "plain_language": "The synthetic USD desk is orderly.",
+        "quant_read": "The synthetic worst channel is p61.",
+        "strongest_signal": {"metric_id": "repo_segments.metric"},
+        "countercase": {"metric_id": "policy_corridor.metric"},
+        "regime": {
+            "state": "NORMAL",
+            "worst_stress_percentile": 61.0,
+            "indicators": [
+                {
+                    "metric_id": "repo_segments.metric",
+                    "label": "Synthetic repo metric",
+                    "value": 1.5,
+                    "unit": "bp",
+                    "asof": "2026-08-20",
+                    "stress_percentile": 61.0,
+                },
+                {
+                    "metric_id": "policy_corridor.metric",
+                    "label": "Synthetic policy metric",
+                    "value": 1.5,
+                    "unit": "bp",
+                    "asof": "2026-08-20",
+                    "stress_percentile": 30.0,
+                },
+            ],
+            "excluded_indicators": [],
+        },
+        "coverage": {"coverage_pct": 100.0},
+        "freshness": {
+            "desk_asof": "2026-08-20",
+            "evaluation_asof": "2026-08-20",
+        },
+        "sections": sections,
+        "charts": {"sentinel": ["NEVER RETURN MCP CHART"]},
+        "methodology": {"alignment": "exact observation dates"},
+        "formulas": [{"id": "basis_point_conversion"}],
+        "caveats": ["Descriptive context only."],
+        "source_metadata": [
+            {
+                "id": "fred_sofr",
+                "asof": "2026-08-20",
+                "cadence": "daily",
+                "freshness": "fresh",
+            }
+        ],
+    }
+    return {
+        **fake_snap,
+        "engines": {**fake_snap["engines"], "money_market": engine},
+    }
+
+
 # ---- handshake & surface ----------------------------------------------------
+
 
 def test_initialize_returns_session_header(client):
     r = client.post("/mcp", json=_rpc("initialize", {"protocolVersion": "2025-06-18"}))
@@ -59,9 +152,7 @@ def test_initialize_returns_session_header(client):
 
 def test_edge_serves_bounded_dormant_undertow_paypal_response():
     root = Path(__file__).resolve().parents[2]
-    caddy = (root / "ops" / "Caddyfile").read_text(
-        encoding="utf-8"
-    )
+    caddy = (root / "ops" / "Caddyfile").read_text(encoding="utf-8")
     paypal_at = caddy.index("handle /undertow/paypal/*")
     mirror_at = caddy.index("handle_path /undertow/*")
     assert paypal_at < mirror_at
@@ -84,8 +175,7 @@ def test_edge_allows_undertow_modern_mcp_headers():
     )
     undertow = caddy.split("handle /undertow/mcp* {", 1)[1].split("\n    }", 1)[0]
     allow_headers = next(
-        line for line in undertow.splitlines()
-        if "Access-Control-Allow-Headers" in line
+        line for line in undertow.splitlines() if "Access-Control-Allow-Headers" in line
     )
     assert "MCP-Protocol-Version" in allow_headers
     assert "Mcp-Method" in allow_headers
@@ -97,9 +187,12 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
+    assert payload["mcp"]["authentication"] == "none for the ten public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
+    assert payload["rest"]["usd_money_markets"] == "/api/money-markets"
+    assert payload["rest"]["global_money_markets_v2"] == "/api/v2/money-markets"
     assert payload["rest"]["oil_funding"] == "/api/oil-funding"
     assert payload["rest"]["fx_materials"] == "/api/estuary"
     assert payload["rest"]["openapi"] == "/api/openapi.json"
@@ -116,14 +209,22 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "/api/gauge" in spec["paths"]
     assert "/api/health" in spec["paths"]
     assert "/api/public" in spec["paths"]
+    assert "/api/money-markets" in spec["paths"]
+    assert "/api/v2/money-markets" in spec["paths"]
     assert "/api/oil-funding" in spec["paths"]
     assert "/api/estuary" in spec["paths"]
     oil_schema = spec["paths"]["/api/oil-funding"]["get"]["responses"]["200"]
     oil_schema = oil_schema["content"]["application/json"]["schema"]
+    money_schema = spec["paths"]["/api/money-markets"]["get"]["responses"]["200"]
+    money_schema = money_schema["content"]["application/json"]["schema"]
     estuary_schema = spec["paths"]["/api/estuary"]["get"]["responses"]["200"]
     estuary_schema = estuary_schema["content"]["application/json"]["schema"]
     assert oil_schema["required"] == ["schema"]
     assert oil_schema["properties"]["schema"]["const"] == "seiche.oil-funding.v1"
+    assert money_schema["required"] == ["schema"]
+    assert (
+        money_schema["properties"]["schema"]["const"] == "seiche.money-market-desk.v1"
+    )
     assert estuary_schema["required"] == ["schema"]
     assert estuary_schema["properties"]["schema"]["const"] == "seiche.estuary.v1"
     health = spec["paths"]["/api/health"]["get"]
@@ -138,7 +239,8 @@ def test_public_openapi_is_curated_and_importable(client):
     ]
     assert unavailable["additionalProperties"] is False
     assert set(health["responses"]["503"]["headers"]) == {
-        "Cache-Control", "Retry-After",
+        "Cache-Control",
+        "Retry-After",
     }
     assert "never starts or waits" in health["description"]
     oil_description = spec["paths"]["/api/oil-funding"]["get"]["description"]
@@ -152,18 +254,22 @@ def test_public_openapi_is_curated_and_importable(client):
 
 
 def test_successful_tool_call_emits_privacy_safe_activation_log(
-        client, caplog, monkeypatch):
+    client, caplog, monkeypatch
+):
     monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
     with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
-        r = client.post("/mcp", json=_rpc(
-            "tools/call", {"name": "data_health", "arguments": {}}),
+        r = client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "data_health", "arguments": {}}),
             headers={
                 "Authorization": "Bearer private-token-marker",
                 "X-Forwarded-For": "198.51.100.24",
-            })
+            },
+        )
     assert r.status_code == 200
-    record = next(record for record in caplog.records
-                  if "mcp_activation" in record.getMessage())
+    record = next(
+        record for record in caplog.records if "mcp_activation" in record.getMessage()
+    )
     assert record.levelno == logging.INFO
     assert record.getMessage() == (
         "mcp_activation product=seiche surface=public "
@@ -181,17 +287,19 @@ def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
 
     activation_log = api._mcp_activation_log
     root_log = logging.getLogger()
-    assert any(isinstance(handler, logging.StreamHandler)
-               for handler in activation_log.handlers)
+    assert any(
+        isinstance(handler, logging.StreamHandler)
+        for handler in activation_log.handlers
+    )
     monkeypatch.setattr(root_log, "handlers", [])
     monkeypatch.setattr(root_log, "level", logging.WARNING)
     monkeypatch.setattr(activation_log, "handlers", [Capture()])
 
     api._log_mcp_activation(
         _rpc("tools/call", {"name": "data_health", "arguments": {}}),
-        {"jsonrpc": "2.0", "id": 1,
-         "result": {"content": [], "isError": False}},
-        "public", "direct",
+        {"jsonrpc": "2.0", "id": 1, "result": {"content": [], "isError": False}},
+        "public",
+        "direct",
     )
 
     assert activation_log.name == "seiche.mcp.activation"
@@ -204,34 +312,43 @@ def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
 
 def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
     monkeypatch.setenv(
-        "SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD")
+        "SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD"
+    )
     monkeypatch.setattr(x402, "decode_payment", lambda header: {"payment": "safe"})
     monkeypatch.setattr(x402, "verify", lambda payment, reqs: (True, ""))
     monkeypatch.setattr(
-        x402, "settle",
+        x402,
+        "settle",
         lambda payment, reqs: (True, {"success": True, "transaction": "0xtx"}),
     )
     dispatched = []
 
     def dispatch(message, public):
         dispatched.append((message["params"]["name"], public))
-        return {"jsonrpc": "2.0", "id": message["id"],
-                "result": {"content": [], "isError": False}}
+        return {
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {"content": [], "isError": False},
+        }
 
     monkeypatch.setattr(mcp_server, "dispatch", dispatch)
     monkeypatch.setattr(api._mcp_activation_log, "handlers", [caplog.handler])
     with caplog.at_level(logging.INFO, logger=api._mcp_activation_log.name):
         r = client.post(
             "/mcp",
-            json=_rpc("tools/call", {
-                "name": "funding_stress_forecast", "arguments": {}}),
+            json=_rpc(
+                "tools/call", {"name": "funding_stress_forecast", "arguments": {}}
+            ),
             headers={"X-PAYMENT": "private-payment-marker"},
         )
 
     assert r.status_code == 200
     assert dispatched == [("funding_stress_forecast", False)]
-    events = [record.getMessage() for record in caplog.records
-              if "mcp_activation" in record.getMessage()]
+    events = [
+        record.getMessage()
+        for record in caplog.records
+        if "mcp_activation" in record.getMessage()
+    ]
     assert events == [
         "mcp_activation product=seiche surface=paid "
         "tool=funding_stress_forecast outcome=success origin=direct"
@@ -251,29 +368,46 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
     setting is who may read the proprietary engines. Asserted as a FAMILY,
     not as the specific names that happened to leak.
     """
-    engines = ("positioning_book", "desk_brief", "replay_asof",
-               "funding_stress_forecast", "ask_desk")
-    public_good = ("funding_stress_now", "historical_analogs",
-                   "proof_backtest", "data_health", "oil_funding_context",
-                   "fx_materials_passage", "latest_article")
+    engines = (
+        "positioning_book",
+        "desk_brief",
+        "replay_asof",
+        "funding_stress_forecast",
+        "ask_desk",
+    )
+    public_good = (
+        "funding_stress_now",
+        "historical_analogs",
+        "proof_backtest",
+        "data_health",
+        "oil_funding_context",
+        "fx_materials_passage",
+        "money_market_context",
+        "latest_article",
+    )
 
     for gate in ("1", None):
         if gate is None:
             monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
         else:
             monkeypatch.setenv("SEICHE_BOARD_AUTH", gate)
-        names = {t["name"] for t in
-                 client.post("/mcp", json=_rpc("tools/list")).json()["result"]["tools"]}
+        names = {
+            t["name"]
+            for t in client.post("/mcp", json=_rpc("tools/list")).json()["result"][
+                "tools"
+            ]
+        }
         for engine in engines:
             assert engine not in names, (
-                f"{engine} anonymous with SEICHE_BOARD_AUTH={gate!r}")
+                f"{engine} anonymous with SEICHE_BOARD_AUTH={gate!r}"
+            )
         for free in public_good:
             assert free in names, (
-                f"{free} must stay free with SEICHE_BOARD_AUTH={gate!r}")
+                f"{free} must stay free with SEICHE_BOARD_AUTH={gate!r}"
+            )
 
 
-def test_anonymous_flows_carries_the_reading_but_not_the_engine(client,
-                                                                monkeypatch):
+def test_anonymous_flows_carries_the_reading_but_not_the_engine(client, monkeypatch):
     """institutional_flows is free on purpose; its method versions are not.
 
     The handler took `_public` and never read it, so it had no gate of its
@@ -287,50 +421,136 @@ def test_anonymous_flows_carries_the_reading_but_not_the_engine(client,
     from seiche import wakeflows
 
     monkeypatch.setattr(wakeflows, "load", lambda *a, **k: {"stub": True})
-    monkeypatch.setattr(wakeflows, "readings", lambda pack: {
-        "as_of": "2026-08-03",
-        "method_versions": {"basis_nowcast": "1.0.0",
-                            "kalman_fusion": "1.0.0", "hawkes": "1.0.0"},
-        "basis_trade": {"size_usd_bn": 904.5},
-    })
+    monkeypatch.setattr(
+        wakeflows,
+        "readings",
+        lambda pack: {
+            "as_of": "2026-08-03",
+            "method_versions": {
+                "basis_nowcast": "1.0.0",
+                "kalman_fusion": "1.0.0",
+                "hawkes": "1.0.0",
+            },
+            "basis_trade": {"size_usd_bn": 904.5},
+        },
+    )
     monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
 
-    anon = json.dumps(client.post("/mcp", json=_rpc(
-        "tools/call", {"name": "institutional_flows", "arguments": {}})).json())
+    anon = json.dumps(
+        client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "institutional_flows", "arguments": {}}),
+        ).json()
+    )
     # the tool really ran (guards against a vacuous pass on an error result)
     assert "904.5" in anon and "isError" not in anon
     assert "method_versions" not in anon
     assert "kalman_fusion" not in anon
 
     # ...and a signed-in caller still receives the engine metadata.
-    full = json.dumps(client.post(
-        "/mcp",
-        json=_rpc("tools/call",
-                  {"name": "institutional_flows", "arguments": {}}),
-        headers={"Authorization": f"Bearer {_pro_token()}"}).json())
+    full = json.dumps(
+        client.post(
+            "/mcp",
+            json=_rpc("tools/call", {"name": "institutional_flows", "arguments": {}}),
+            headers={"Authorization": f"Bearer {_pro_token()}"},
+        ).json()
+    )
     assert "method_versions" in full and "kalman_fusion" in full
 
 
 def test_anonymous_sees_only_public_tools(client):
     r = client.post("/mcp", json=_rpc("tools/list"))
     names = {t["name"] for t in r.json()["result"]["tools"]}
-    assert names == {"latest_article", "funding_stress_now", "historical_analogs",
-                     "proof_backtest", "data_health", "crypto_stress_record",
-                     "institutional_flows", "oil_funding_context",
-                     "fx_materials_passage"}
+    assert names == {
+        "latest_article",
+        "funding_stress_now",
+        "historical_analogs",
+        "proof_backtest",
+        "data_health",
+        "crypto_stress_record",
+        "institutional_flows",
+        "oil_funding_context",
+        "fx_materials_passage",
+        "money_market_context",
+    }
     # the Time Machine, forward forecast, brief, book, assistant stay paid
-    for paid in ("replay_asof", "funding_stress_forecast", "desk_brief",
-                 "positioning_book", "ask_desk"):
+    for paid in (
+        "replay_asof",
+        "funding_stress_forecast",
+        "desk_brief",
+        "positioning_book",
+        "ask_desk",
+    ):
         assert paid not in names
+
+
+def test_anonymous_money_market_tool_is_bounded_granular_and_chartless(
+    client, monkeypatch, fake_snap
+):
+    snap = _http_money_market_snapshot(fake_snap)
+    monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda: snap)
+
+    summary_response = client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {
+                "name": "money_market_context",
+                "arguments": {},
+            },
+        ),
+    )
+    assert summary_response.status_code == 200
+    summary = summary_response.json()["result"]["structuredContent"]
+    assert summary["schema"] == mcp_server.MONEY_MARKET_SCHEMA
+    assert summary["selection"] == "summary"
+    assert summary["plain_language"].startswith(
+        "The most stretched current observed channel"
+    )
+    assert summary["regime"]["state"] == "NORMAL"
+    assert summary["chart_history_included"] is False
+    assert all(item["title"] for item in summary["section_catalog"])
+    assert "charts" not in summary
+
+    section_response = client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {
+                "name": "money_market_context",
+                "arguments": {"section": "repo_segments"},
+            },
+            msg_id=2,
+        ),
+    )
+    section = section_response.json()["result"]["structuredContent"]
+    assert [item["id"] for item in section["sections"]] == ["repo_segments"]
+    assert section["sections"][0]["metrics"][0]["source"] == (
+        "Synthetic official source"
+    )
+    assert "NEVER RETURN MCP CHART" not in json.dumps(section)
+
+    invalid_response = client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {
+                "name": "money_market_context",
+                "arguments": {"section": "charts"},
+            },
+            msg_id=3,
+        ),
+    )
+    invalid = invalid_response.json()["result"]
+    assert invalid["isError"] is True
+    assert "must be one of" in invalid["content"][0]["text"]
 
 
 @pytest.mark.parametrize(
     "query_name",
     ("api_key", "api-key", "access_token", "token"),
 )
-def test_query_credential_stays_anonymous_and_warns(
-    client, monkeypatch, query_name
-):
+def test_query_credential_stays_anonymous_and_warns(client, monkeypatch, query_name):
     monkeypatch.setattr(api, "_MCP_QUERY_CREDENTIAL_REJECT_AT", float("inf"))
     marker = "synthetic-query-credential"
 
@@ -375,15 +595,21 @@ def test_noncredential_query_does_not_emit_transition_headers(client):
 def test_anonymous_cannot_call_a_paid_tool(client):
     # replay_asof is the gated flagship; an anonymous caller must be refused,
     # not served the Time Machine for free.
-    r = client.post("/mcp", json=_rpc("tools/call",
-                    {"name": "replay_asof", "arguments": {"date": "2019-09-17"}}))
-    assert r.json()["error"]["code"] == mcp_server.INVALID_PARAMS   # not in visible set
+    r = client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call", {"name": "replay_asof", "arguments": {"date": "2019-09-17"}}
+        ),
+    )
+    assert r.json()["error"]["code"] == mcp_server.INVALID_PARAMS  # not in visible set
 
 
 def test_malformed_params_does_not_500(client):
     # params as an array (valid JSON, wrong shape) must not crash the endpoint
-    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1,
-                                  "method": "tools/call", "params": [1, 2, 3]})
+    r = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": [1, 2, 3]},
+    )
     assert r.status_code == 200
     assert r.json()["error"]["code"] == mcp_server.INVALID_PARAMS
 
@@ -395,17 +621,22 @@ def test_oversized_batch_is_rejected(client):
 
 
 def test_authenticated_sees_full_surface(client):
-    r = client.post("/mcp", json=_rpc("tools/list"),
-                    headers={"Authorization": f"Bearer {_pro_token()}"})
+    r = client.post(
+        "/mcp",
+        json=_rpc("tools/list"),
+        headers={"Authorization": f"Bearer {_pro_token()}"},
+    )
     names = {t["name"] for t in r.json()["result"]["tools"]}
     assert "positioning_book" in names
 
 
 # ---- tool calls & metering --------------------------------------------------
 
+
 def test_tool_call_returns_content_and_meters(client):
-    r = client.post("/mcp", json=_rpc("tools/call",
-                    {"name": "funding_stress_now", "arguments": {}}))
+    r = client.post(
+        "/mcp", json=_rpc("tools/call", {"name": "funding_stress_now", "arguments": {}})
+    )
     assert r.status_code == 200
     assert "EROSION" in r.json()["result"]["content"][0]["text"]
     delivery = r.json()["result"]["structuredContent"]["delivery"]
@@ -418,6 +649,7 @@ def test_tool_call_returns_content_and_meters(client):
 def test_public_context_routes_share_the_mcp_contract(client):
     oil = client.get("/api/oil-funding")
     estuary = client.get("/api/estuary")
+    money = client.get("/api/money-markets")
 
     assert oil.status_code == 200
     assert oil.json()["schema"] == "seiche.oil-funding.v1"
@@ -425,13 +657,62 @@ def test_public_context_routes_share_the_mcp_contract(client):
     assert estuary.status_code == 200
     assert estuary.json()["schema"] == "seiche.estuary.v1"
     assert estuary.json()["passage"]["earned"] == 1
+    assert money.status_code == 200
+    assert money.json()["schema"] == "seiche.money-market-desk.v1"
+    assert money.json()["regime"]["state"] == "CANNOT_ASSESS"
     assert "public" in oil.headers["cache-control"]
+
+
+def test_rest_and_mcp_age_last_known_good_money_market_snapshot(
+    client, monkeypatch, fake_snap
+):
+    snap = _http_money_market_snapshot(fake_snap)
+    engine = snap["engines"]["money_market"]
+    engine["asof"] = "2026-07-01"
+    engine["freshness"]["desk_asof"] = "2026-07-01"
+    engine["freshness"]["evaluation_asof"] = "2026-07-01"
+    for section in engine["sections"]:
+        for metric in section["metrics"]:
+            metric["asof"] = "2026-07-01"
+    for indicator in engine["regime"]["indicators"]:
+        indicator["asof"] = "2026-07-01"
+    for source in engine["source_metadata"]:
+        source["asof"] = "2026-07-01"
+
+    async def old_snapshot(force=False):
+        return snap
+
+    monkeypatch.setattr(api.assemble, "snapshot", old_snapshot)
+    monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda: snap)
+
+    rest = client.get("/api/money-markets")
+    assert rest.status_code == 200
+    rest_payload = rest.json()
+    assert rest_payload["regime"]["state"] == "CANNOT_ASSESS"
+    assert rest_payload["freshness"]["evaluation_asof"] == "2026-08-21"
+    assert rest_payload["sections"][0]["metrics"][0]["value"] == 1.5
+    assert rest_payload["sections"][0]["metrics"][0]["freshness"] == "stale"
+
+    mcp_response = client.post(
+        "/mcp",
+        json=_rpc(
+            "tools/call",
+            {
+                "name": "money_market_context",
+                "arguments": {},
+            },
+        ),
+    )
+    mcp_payload = mcp_response.json()["result"]["structuredContent"]
+    assert mcp_payload["regime"]["state"] == "CANNOT_ASSESS"
+    assert mcp_payload["freshness"]["evaluation_asof"] == "2026-08-21"
+    assert engine["regime"]["state"] == "NORMAL"
 
 
 def test_non_billable_methods_are_not_metered(client):
     client.post("/mcp", json=_rpc("tools/list"))
     r = client.get("/mcp/usage")
-    assert r.json()["used_today"] == 0        # tools/list is free
+    assert r.json()["used_today"] == 0  # tools/list is free
 
 
 def test_quota_exceeded_returns_upgrade_prompt(client, monkeypatch, caplog):
@@ -447,22 +728,24 @@ def test_quota_exceeded_returns_upgrade_prompt(client, monkeypatch, caplog):
     assert res["isError"] is True
     assert "quota reached" in res["content"][0]["text"]
     assert "seiche.info" in res["content"][0]["text"]
-    assert not any("mcp_activation" in record.getMessage()
-                   for record in caplog.records)
+    assert not any("mcp_activation" in record.getMessage() for record in caplog.records)
 
 
 def test_unlimited_tier_has_no_remaining_header(client):
     from seiche import accounts
 
     tok = accounts.issue_token("founder_1", "founder")["token"]
-    r = client.post("/mcp", json=_rpc("tools/call",
-                    {"name": "data_health", "arguments": {}}),
-                    headers={"Authorization": f"Bearer {tok}"})
+    r = client.post(
+        "/mcp",
+        json=_rpc("tools/call", {"name": "data_health", "arguments": {}}),
+        headers={"Authorization": f"Bearer {tok}"},
+    )
     assert r.headers["X-MCP-Usage-Used"] == "1"
-    assert "X-MCP-Usage-Limit" not in r.headers    # None => unlimited
+    assert "X-MCP-Usage-Limit" not in r.headers  # None => unlimited
 
 
 # ---- protocol edges ---------------------------------------------------------
+
 
 def test_notification_only_body_returns_202(client):
     r = client.post("/mcp", json=_rpc("notifications/initialized", msg_id=None))
@@ -485,7 +768,8 @@ def test_get_opens_sse_channel(client):
 def test_get_mcp_route_is_unique():
     """Registration order must not silently shadow the SSE contract."""
     routes = [
-        route for route in api.app.routes
+        route
+        for route in api.app.routes
         if getattr(route, "path", None) == "/mcp"
         and "GET" in (getattr(route, "methods", None) or set())
     ]
@@ -499,6 +783,7 @@ def test_batch_returns_array(client):
 
 
 # ---- usage report -----------------------------------------------------------
+
 
 def test_usage_report_anonymous(client):
     r = client.get("/mcp/usage")
@@ -539,6 +824,8 @@ def test_query_credentials_are_rejected_after_sunset(client, monkeypatch):
 
 
 def test_usage_report_reflects_calls(client):
-    client.post("/mcp", json=_rpc("tools/call", {"name": "data_health", "arguments": {}}))
+    client.post(
+        "/mcp", json=_rpc("tools/call", {"name": "data_health", "arguments": {}})
+    )
     r = client.get("/mcp/usage")
     assert r.json()["used_today"] == 1
