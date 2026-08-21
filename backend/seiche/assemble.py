@@ -40,7 +40,6 @@ from seiche.config import (
     BALLAST_EIA_RELEASE_LAG_DAYS,
     BIS_SERIES,
     BOJ_SERIES,
-    CHINAMONEY_SERIES,
     COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
@@ -137,7 +136,7 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import bis, boj, cftc, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -145,6 +144,21 @@ DEEP_TTL_MIN = 12 * 60
 LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
 STATIC_SNAPSHOT_PATH = (
     Path(__file__).resolve().with_name("bootstrap_snapshot.json")
+)
+RESTRICTED_PALIMPSEST_SERIES = frozenset({"CN_FDR007", "CN_PARITY"})
+RESTRICTED_SNAPSHOT_MARKERS = (
+    "chinamoney",
+    "china money",
+    "cfets",
+    "shibor",
+    "fdr007",
+    "dr007",
+    "cn_parity",
+    "usdcny_parity",
+    "cn·rate",
+)
+_NARRATIVE_ONLY_SNAPSHOT_FIELDS = frozenset(
+    {"caveats", "method", "note", "out_of_scope", "reading"}
 )
 _cache: dict = {
     "at": 0.0,
@@ -204,7 +218,6 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("llama_hacks", llamahacks.fetch_all(client, faults)),
             guard("windfetch", windfetch.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
-            guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
@@ -229,13 +242,40 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
     return out, faults
 
 
+def _rights_eligible_sources(src: dict) -> dict:
+    """Project collected data onto the redistribution-safe engine boundary.
+
+    This deliberately leaves the durable source cache untouched.  ChinaMoney
+    and the two Palimpsest fields derived from CFETS publications may remain
+    available for a future licensed migration, but they cannot enter engines,
+    provenance, snapshots, or replay products in the current public release.
+    The Federal Reserve H.10 ``CNY`` series lives in ``fred`` and is preserved.
+    """
+    eligible = dict(src)
+    eligible.pop("chinamoney", None)
+
+    palimpsest_block = src.get("palimpsest")
+    if isinstance(palimpsest_block, dict):
+        safe_palimpsest = dict(palimpsest_block)
+        series = palimpsest_block.get("series")
+        if isinstance(series, dict):
+            safe_palimpsest["series"] = {
+                mnemonic: value
+                for mnemonic, value in series.items()
+                if mnemonic not in RESTRICTED_PALIMPSEST_SERIES
+            }
+        eligible["palimpsest"] = safe_palimpsest
+    return eligible
+
+
 def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
+    src = _rights_eligible_sources(src)
     out: dict = {}
     for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
                   "ofr_pd_financing", "ecb", "eia_petroleum", "eia_inventory",
-                  "bis", "chinamoney", "boj"):
+                  "bis", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             cutoff = (
@@ -430,6 +470,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     present from the truncated series they are handed, but a forward calendar
     has no series to infer it from: without this, a replayed board would carry
     a settlement table built around the wall clock and blob-cache it forever."""
+    src = _rights_eligible_sources(src)
     fred_s = src.get("fred", {})
     ofr_s = src.get("ofr", {})
     frames = (src.get("nyfed_rates") or {}).get("frames", {})
@@ -676,7 +717,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     # --- Global basins ---
     ecb_s = src.get("ecb", {})
     boj_s = src.get("boj", {})
-    cm_s = src.get("chinamoney", {})
     run("basins", lambda: eng_basins.analyze(
         spread_us_bp=drv["spread_bp"],
         estr=_pts(ecb_s, "ESTR"),
@@ -689,7 +729,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         inr=_pts(fred_s, "INR"),
         usdt_peg_bp=drv["usdt_peg_bp"],
         tona=_pts(boj_s, "TONA"),
-        shibor_on=_pts(cm_s, "SHIBOR_ON"),
         cny=_pts(fred_s, "CNY"),
         jpy=_pts(fred_s, "JPY"),
         krw=_pts(fred_s, "KRW"),
@@ -699,7 +738,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
 
     # --- Harbors (national money markets — the holistic world view) ---
-    pal_series = (src.get("palimpsest") or {}).get("series", {})
     eurusd = _pts(fred_s, "EURUSD")
     run("harbors", lambda: eng_harbors.analyze(
         {
@@ -708,9 +746,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
                 "fx": (1.0 / eurusd.replace(0, np.nan)).dropna(), "fx_label": "EUR per USD",
             },
             "CHINA": {
-                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N (CFETS)", "cadence": "daily",
-                "rate2": _pts(pal_series, "CN_FDR007"),
-                "rate2_label": "FDR007 secured 7d (≈DR007 proxy)",
+                "cadence": "FX daily; local rate unavailable",
                 "fx": _pts(fred_s, "CNY"), "fx_label": "CNY per USD",
             },
             "INDIA": {
@@ -739,7 +775,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     run("spillover", lambda: eng_spillover.analyze({
         "US·rate": _pts(fred_s, "EFFR"),
         "EUR·rate": _pts(ecb_s, "ESTR"),
-        "CN·rate": _pts(cm_s, "SHIBOR_ON"),
         "JP·rate": _pts(src.get("boj", {}), "TONA"),
         "EUR·fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
         "CNY·fx": _pts(fred_s, "CNY"),
@@ -859,7 +894,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
             "CNY": {
                 "label": "Chinese yuan", "bucket": "EM", "series": _pts(fred_s, "CNY"),
                 "quote": "local_per_usd", "source_id": "DEXCHUS",
-                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N", "rate_cadence": "daily",
             },
             "INR": {
                 "label": "Indian rupee", "bucket": "EM", "series": _pts(fred_s, "INR"),
@@ -1587,6 +1621,7 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
 
 
 def _provenance(src: dict) -> list[dict]:
+    src = _rights_eligible_sources(src)
     prov = []
     for group in ("fred", "ofr", "ecb", "eia_petroleum", "eia_inventory"):
         for s in (src.get(group) or {}).values():
@@ -1717,6 +1752,88 @@ def _attest(day: str, record: dict) -> None:
 # Entry points
 # ---------------------------------------------------------------------------
 
+def _snapshot_contains_restricted_cfets(payload: object) -> bool:
+    """Detect raw or derived CFETS values in a completed board payload.
+
+    Identifier scanning catches raw/provenance/SONAR leakage.  The structural
+    checks catch legacy derived rows even if a historical serializer omitted
+    the source label.  Narrative-only methodology fields are ignored: they may
+    explain why an input is unavailable, but they contain no redistributed
+    observation or statistic.
+    """
+
+    def has_marker(value: str) -> bool:
+        folded = value.casefold()
+        return any(marker in folded for marker in RESTRICTED_SNAPSHOT_MARKERS)
+
+    def walk(value: object) -> bool:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                key_text = str(key)
+                if has_marker(key_text):
+                    return True
+                if key_text.casefold() in _NARRATIVE_ONLY_SNAPSHOT_FIELDS:
+                    continue
+                if walk(nested):
+                    return True
+            return False
+        if isinstance(value, (list, tuple)):
+            return any(walk(item) for item in value)
+        return isinstance(value, str) and has_marker(value)
+
+    if walk(payload):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    engines = payload.get("engines")
+    if not isinstance(engines, dict):
+        return False
+
+    harbors = engines.get("harbors")
+    if isinstance(harbors, dict):
+        rows = harbors.get("harbors")
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict) or str(row.get("harbor", "")).upper() != "CHINA":
+                    continue
+                if row.get("rate") is not None or row.get("rate2") is not None:
+                    return True
+                if row.get("regime") is not None:
+                    return True
+        rate_labels = harbors.get("rate_labels")
+        if isinstance(rate_labels, list) and any(
+            str(label).upper() == "CHINA" for label in rate_labels
+        ):
+            return True
+
+    basins = engines.get("basins")
+    basin_rows = basins.get("basins") if isinstance(basins, dict) else None
+    if isinstance(basin_rows, list) and any(
+        isinstance(row, dict) and str(row.get("basin", "")).upper() == "CHINA"
+        for row in basin_rows
+    ):
+        return True
+
+    estuary = engines.get("estuary")
+    fx = estuary.get("fx") if isinstance(estuary, dict) else None
+    currencies = fx.get("currencies") if isinstance(fx, dict) else None
+    if isinstance(currencies, list):
+        for row in currencies:
+            if not isinstance(row, dict) or str(row.get("key", "")).upper() != "CNY":
+                continue
+            if any(
+                row.get(field) is not None
+                for field in (
+                    "policy_diff_vs_effr_bp",
+                    "policy_rate_label",
+                    "policy_rate_cadence",
+                    "policy_asof",
+                )
+            ):
+                return True
+    return False
+
+
 def _servable_snapshot(payload: object) -> bool:
     """Whether a saved payload can safely cover the public boot window.
 
@@ -1725,7 +1842,7 @@ def _servable_snapshot(payload: object) -> bool:
     release's completed gauge is still a better, timestamped answer than seven
     minutes of timeouts while the new process trains its deep layer.
     """
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or _snapshot_contains_restricted_cfets(payload):
         return False
     engines = payload.get("engines")
     composite = engines.get("composite") if isinstance(engines, dict) else None
@@ -2209,6 +2326,8 @@ async def _publish_rebuilt_snapshot(
     state; ordinary v1 memory/PIT publication remains the live process's
     established behavior while the candidate health gate runs.
     """
+    if _snapshot_contains_restricted_cfets(payload):
+        raise ValueError("rebuilt snapshot contains restricted CFETS-derived data")
     _cache.update(
         at=time.time(),
         payload=payload,
@@ -2267,6 +2386,7 @@ async def _refresh_stale() -> None:
 async def _build_snapshot() -> dict:
     """Assemble the full payload. Caller holds `_lock`."""
     src, faults = await _gather_sources()
+    src = _rights_eligible_sources(src)
     drv = _derived(src)
     # The engine + deep stages are synchronous CPU work (the deep layer
     # trains sklearn models in mlpred.walk_forward — minutes, not ms).
@@ -2360,13 +2480,17 @@ async def snapshot_asof(date: str) -> dict:
     asof = pd.Timestamp(date).normalize()
     key = f"asof:{asof.date().isoformat()}"
     cached = store.load_blob(key)
-    if cached is not None:
+    if cached is not None and not _snapshot_contains_restricted_cfets(cached):
         if "historical_evidence" not in cached:
             cached = {
                 **cached,
                 "historical_evidence": eng_history.vintage_evidence(None),
             }
         return cached
+    if cached is not None:
+        logging.getLogger("seiche.assemble").warning(
+            "ignored replay cache containing restricted CFETS-derived data"
+        )
 
     async with _lock:
         src, faults = await _gather_sources()
