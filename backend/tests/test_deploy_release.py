@@ -708,6 +708,26 @@ def test_forced_command_retries_only_a_safe_defer(tmp_path):
     assert "safely deferred; retrying" in result.stdout
 
 
+def test_forced_command_gives_each_pass_its_own_defer_window(tmp_path):
+    counter = tmp_path / "counter"
+    counter.write_text("0\n")
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        (
+            f'count=$(cat "{counter}")\n'
+            "count=$((count + 1))\n"
+            f'printf "%s\\n" "$count" >"{counter}"\n'
+            'if [ "$count" -eq 1 ]; then sleep 2; exit 0; fi\n'
+            '[ "$count" -gt 2 ] || exit 75\n'
+        ),
+        wait_seconds=2,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == ["call", "call", "call"]
+    assert "pass 2/2 safely deferred; retrying" in result.stdout
+
+
 @pytest.mark.parametrize("status", [1, 42, 255])
 def test_forced_command_preserves_real_failures(tmp_path, status):
     result, calls = _forced_deploy_result(
@@ -1331,12 +1351,18 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in backup
     assert "seiche-market-backup.sh" in backup
     assert "mountpoint -q" in backup_script
+    assert '"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"' in backup_script
+    assert "cp -a --" not in backup_script
     assert "CPUQuota=50%" in backup
     assert "MemoryMax=1G" in backup
     assert "ProtectSystem=strict" in backup
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
+    assert (
+        "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
+    )
+    assert "CAP_CHOWN" not in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert (

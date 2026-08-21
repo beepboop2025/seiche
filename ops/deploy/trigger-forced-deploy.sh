@@ -29,8 +29,6 @@ if [[ ! "$DEFER_RETRY_SECONDS" =~ ^[1-9][0-9]*$ ]] \
     echo "SEICHE_DEPLOY_DEFER_RETRY_SECONDS must be an integer from 1 to 300" >&2
     exit 2
 fi
-DEFER_DEADLINE=$((SECONDS + DEFER_WAIT_SECONDS))
-
 trigger() {
     "$SSH" -i "$KEY_FILE" \
         -o IdentitiesOnly=yes \
@@ -44,6 +42,7 @@ trigger() {
 
 trigger_with_defer_retry() {
     local pass_label="$1" status=0 remaining=0 delay=0
+    local defer_deadline=$((SECONDS + DEFER_WAIT_SECONDS))
     while true; do
         status=0
         trigger || status=$?
@@ -53,7 +52,7 @@ trigger_with_defer_retry() {
         if (( status != 75 )); then
             return "$status"
         fi
-        remaining=$((DEFER_DEADLINE - SECONDS))
+        remaining=$((defer_deadline - SECONDS))
         if (( remaining <= 0 )); then
             printf 'forced deploy pass %s remained safely deferred after %ss\n' \
                 "$pass_label" "$DEFER_WAIT_SECONDS" >&2

@@ -422,7 +422,7 @@ def test_export_failure_is_surfaced_but_does_not_raise(
     assert "funding-core export failed" in caplog.text
 
 
-def test_percent_rate_backfill_generation_ignores_only_old_nyfed_marker(
+def test_sofrai_backfill_generation_ignores_legacy_and_v3_nyfed_markers(
     monkeypatch, tmp_path
 ) -> None:
     state = tmp_path / "backfill"
@@ -431,6 +431,8 @@ def test_percent_rate_backfill_generation_ignores_only_old_nyfed_marker(
     monkeypatch.setenv("SEICHE_NORMALIZED_DIR", str(tmp_path / "normalized"))
     state.mkdir()
     (state / "US-USD--nyfed_rates.done").touch()
+    v3_marker = state / "US-USD--nyfed_rates--funding-field-lineage-v3.done"
+    v3_marker.touch()
     (state / "US-USD--fred_daily.done").touch()
 
     class _Adapter:
@@ -451,23 +453,26 @@ def test_percent_rate_backfill_generation_ignores_only_old_nyfed_marker(
         lambda **_kwargs: (_Adapter("nyfed_rates"), _Adapter("fred_daily")),
     )
 
-    before_v2 = market_runtime.build_supervisor(
+    before_v4 = market_runtime.build_supervisor(
         repository=_BackfillRepository(),
         backfill=True,
     )
-    assert ("US-USD", "nyfed_rates") in before_v2._tasks
-    assert ("US-USD", "fred_daily") not in before_v2._tasks
+    assert ("US-USD", "nyfed_rates") in before_v4._tasks
+    assert ("US-USD", "fred_daily") not in before_v4._tasks
 
-    generation_marker = state / "US-USD--nyfed_rates--funding-field-lineage-v3.done"
+    generation_marker = (
+        state / "US-USD--nyfed_rates--nyfed-sofrai-averages-index-v4.done"
+    )
     assert market_runtime._backfill_marker("US-USD", "nyfed_rates") == generation_marker
     market_runtime._mark_backfill_complete("US-USD", "nyfed_rates")
     assert generation_marker.exists()
-    after_v2 = market_runtime.build_supervisor(
+    assert v3_marker.exists()
+    after_v4 = market_runtime.build_supervisor(
         repository=_BackfillRepository(),
         backfill=True,
     )
-    assert ("US-USD", "nyfed_rates") not in after_v2._tasks
-    assert ("US-USD", "fred_daily") not in after_v2._tasks
+    assert ("US-USD", "nyfed_rates") not in after_v4._tasks
+    assert ("US-USD", "fred_daily") not in after_v4._tasks
 
 
 @pytest.mark.asyncio
@@ -510,5 +515,5 @@ async def test_percent_rate_marker_waits_for_ready_funding_export(
         repository=_BackfillRepository([]),
     )
 
-    marker = state / "US-USD--nyfed_rates--funding-field-lineage-v3.done"
+    marker = state / "US-USD--nyfed_rates--nyfed-sofrai-averages-index-v4.done"
     assert marker.exists() is (export_status == "SUCCESS")

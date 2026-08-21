@@ -79,6 +79,31 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         sys.stdout.buffer.write(os.environ.get("FAKE_DUMP", "database-dump-payload").encode())
         """,
     )
+    copy = _executable(
+        tools / "cp",
+        """
+        import os
+        from pathlib import Path
+        import shutil
+        import sys
+
+        args = sys.argv[1:]
+        if args[:2] != ["-R", "--"] or len(args) != 4:
+            raise SystemExit(12)
+        if any(arg == "-a" or arg.startswith("--preserve") for arg in args):
+            raise SystemExit(13)
+        source = Path(args[2])
+        destination = Path(args[3])
+        for item in source.iterdir():
+            target = destination / item.name
+            if item.is_dir():
+                shutil.copytree(item, target)
+            else:
+                shutil.copyfile(item, target)
+        with open(os.environ["FAKE_CALLS"], "a", encoding="utf-8") as handle:
+            handle.write("cp " + " ".join(args) + "\\n")
+        """,
+    )
     tar = _executable(
         tools / "tar",
         """
@@ -179,6 +204,7 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "SEICHE_CREATEDB_BIN": str(createdb),
         "SEICHE_DROPDB_BIN": str(dropdb),
         "SEICHE_TAR_BIN": str(tar),
+        "SEICHE_CP_BIN": str(copy),
         "SEICHE_SHA256SUM_BIN": str(sha256sum),
         "SEICHE_SYNC_BIN": str(sync),
         "SEICHE_DATE_BIN": str(date),
@@ -274,6 +300,7 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     assert "setpriv " in log
     assert "SHOW port" in log
     assert "--port=5544" in log
+    assert "cp -R --" in log
 
 
 def test_backup_accepts_append_only_writes_during_snapshot(tmp_path: Path):
