@@ -107,8 +107,9 @@ control plane owns an incident.
 
 While the hosted `deploy-hetzner` workflow remains the active controller, its
 forced-deploy client retries only wrapper exit `75` for a bounded ten-minute
-window. Each retry remains pinned to the same reviewed SHA and repeats the
-host's admission check. Other SSH or wrapper failures stop immediately, and a
-host that stays busy through the bound leaves production unchanged and the
-workflow red. External route checks run only after both forced-deploy passes
-complete successfully.
+window per pass. Each retry remains pinned to the same reviewed SHA and repeats
+the host's admission check. Other SSH or wrapper failures stop immediately, and
+a host that stays busy through either bound leaves production unchanged and the
+workflow red. The workflow's 30-minute outer ceiling still applies to both
+windows and all remote release work. External route checks run only after both
+forced-deploy passes complete successfully.

@@ -708,6 +708,26 @@ def test_forced_command_retries_only_a_safe_defer(tmp_path):
     assert "safely deferred; retrying" in result.stdout
 
 
+def test_forced_command_gives_each_pass_its_own_defer_window(tmp_path):
+    counter = tmp_path / "counter"
+    counter.write_text("0\n")
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        (
+            f'count=$(cat "{counter}")\n'
+            "count=$((count + 1))\n"
+            f'printf "%s\\n" "$count" >"{counter}"\n'
+            'if [ "$count" -eq 1 ]; then sleep 2; exit 0; fi\n'
+            '[ "$count" -gt 2 ] || exit 75\n'
+        ),
+        wait_seconds=2,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == ["call", "call", "call"]
+    assert "pass 2/2 safely deferred; retrying" in result.stdout
+
+
 @pytest.mark.parametrize("status", [1, 42, 255])
 def test_forced_command_preserves_real_failures(tmp_path, status):
     result, calls = _forced_deploy_result(
