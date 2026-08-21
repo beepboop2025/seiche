@@ -316,3 +316,59 @@ def test_rvxray_thin_ust_week_still_reads_one_date():
     assert [row["contract"] for row in r["by_contract"]] == ["UST 2Y NOTE"]
     assert r["gross_short_b"] == 8.0
     assert sum(row["gross_short_b"] for row in r["by_contract"]) == r["gross_short_b"]
+
+
+def test_rvxray_drops_incomplete_position_row_instead_of_zero_filling_it():
+    df = _tff_two_weeks()
+    latest = df["date"].max()
+    missing = (df["date"] == latest) & (df["contract"] == "UST 2Y NOTE")
+    df.loc[missing, "asset_mgr_positions_long_all"] = np.nan
+    dvp = pd.Series([4e12], index=pd.to_datetime(["2026-01-13"]))
+
+    r = rvxray.analyze(df, dvp)
+
+    assert r["ok"] and r["asof"] == "2026-01-13"
+    assert [row["contract"] for row in r["by_contract"]] == ["UST 5Y NOTE"]
+    assert r["pair_proxy_b"] == 0.5
+    assert r["gross_short_b"] == 0.5
+    assert r["input_quality"] == {
+        "ust_rows_received": 4,
+        "complete_ust_rows": 3,
+        "incomplete_ust_rows_excluded": 1,
+    }
+
+
+@pytest.mark.parametrize("bad_value", [None, np.nan, np.inf, -np.inf])
+def test_rvxray_rejects_report_with_no_complete_exposure(bad_value):
+    df = _tff_two_weeks().iloc[[0]].copy()
+    df["lev_money_positions_short_all"] = pd.Series(
+        [bad_value], index=df.index, dtype=object
+    )
+
+    hist = rvxray.position_history(df)
+    r = rvxray.analyze(df, pd.Series(dtype=float))
+
+    assert hist.empty
+    assert not r["ok"] and "complete UST position" in r["reason"]
+
+
+def test_crowding_drops_missing_exposure_instead_of_treating_it_as_zero():
+    dates = _weeks(61)
+    rows = [_panel_row(date, "FED FUNDS") for date in dates]
+    rows[-1]["lev_money_positions_long_all"] = None
+
+    r = rvxray.crowding(pd.DataFrame(rows))
+
+    assert r["ok"]
+    assert r["rows"][0]["asof"] == dates[-2].date().isoformat()
+    assert r["rows"][0]["lev_net_share_oi"] == -0.08
+    assert "never zero-filled" in r["method"]
+
+
+def test_crowding_missing_required_column_degrades_cleanly():
+    df = pd.DataFrame([_panel_row(date, "FED FUNDS") for date in _weeks(61)])
+    df = df.drop(columns=["lev_money_positions_long_all"])
+
+    r = rvxray.crowding(df)
+
+    assert not r["ok"] and "complete CFTC positioning" in r["reason"]

@@ -23,10 +23,58 @@ import pandas as pd
 from seiche.config import UST_CONTRACTS
 
 
+_RV_POSITION_FIELDS = (
+    "lev_money_positions_short_all",
+    "lev_money_positions_long_all",
+    "asset_mgr_positions_long_all",
+)
+_CROWDING_POSITION_FIELDS = (
+    "open_interest_all",
+    "lev_money_positions_long_all",
+    "lev_money_positions_short_all",
+)
+
+
+def _complete_position_rows(
+    frame: pd.DataFrame, numeric_fields: tuple[str, ...]
+) -> pd.DataFrame:
+    """Return only dated contract rows whose required CFTC fields are finite."""
+
+    required = {"date", "contract", *numeric_fields}
+    if frame.empty or not required.issubset(frame.columns):
+        return frame.iloc[0:0].copy()
+
+    out = frame.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce")
+    mask = out["date"].notna() & out["contract"].notna()
+    mask &= out["contract"].astype(str).str.strip().ne("")
+    for field in numeric_fields:
+        out[field] = pd.to_numeric(out[field], errors="coerce")
+        mask &= np.isfinite(out[field].to_numpy(dtype=float))
+    return out.loc[mask].copy()
+
+
+def _ust_rows(tff: pd.DataFrame) -> pd.DataFrame:
+    if "contract" not in tff.columns:
+        return tff.iloc[0:0].copy()
+    return tff[tff["contract"].isin(UST_CONTRACTS)].copy()
+
+
+def _empty_position_history() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=["pair_b", "gross_short_b", "net_b", "dv01_m"],
+        index=pd.DatetimeIndex([], name="date"),
+    )
+
+
 def position_history(tff: pd.DataFrame) -> pd.DataFrame:
     """Weekly pair-proxy / gross-short / net / DV01 history from TFF rows."""
+    complete = _complete_position_rows(_ust_rows(tff), _RV_POSITION_FIELDS)
+    if complete.empty:
+        return _empty_position_history()
+
     rows = []
-    for date, grp in tff.groupby("date"):
+    for date, grp in complete.groupby("date"):
         pair_notional = 0.0
         gross_short = 0.0
         net = 0.0
@@ -35,9 +83,9 @@ def position_history(tff: pd.DataFrame) -> pd.DataFrame:
             c = UST_CONTRACTS.get(r["contract"])
             if c is None:  # crowding-panel extras (FF/SOFR/ES) — not RV legs
                 continue
-            ls = float(r.get("lev_money_positions_short_all") or 0)
-            ll = float(r.get("lev_money_positions_long_all") or 0)
-            al = float(r.get("asset_mgr_positions_long_all") or 0)
+            ls = float(r["lev_money_positions_short_all"])
+            ll = float(r["lev_money_positions_long_all"])
+            al = float(r["asset_mgr_positions_long_all"])
             pair_notional += min(ls, al) * c["face"]
             gross_short += ls * c["face"]
             net += (ll - ls) * c["face"]
@@ -60,15 +108,15 @@ def _by_contract_latest(tff: pd.DataFrame, asof: pd.Timestamp | None = None) -> 
     The as-of date is the caller's, so the table cannot date itself differently
     from the headline when the last TFF row is partial.
     """
-    ust = tff[tff["contract"].isin(UST_CONTRACTS)]
+    ust = _complete_position_rows(_ust_rows(tff), _RV_POSITION_FIELDS)
     if ust.empty:
         return []
     latest = ust[ust["date"] == (ust["date"].max() if asof is None else asof)]
     out = []
     for _, r in latest.iterrows():
         c = UST_CONTRACTS[r["contract"]]
-        ls = float(r.get("lev_money_positions_short_all") or 0)
-        ll = float(r.get("lev_money_positions_long_all") or 0)
+        ls = float(r["lev_money_positions_short_all"])
+        ll = float(r["lev_money_positions_long_all"])
         out.append(
             {
                 "contract": r["contract"],
@@ -88,10 +136,13 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
     # UST rows alone: a report date carrying only crowding-panel contracts is
     # not an RV observation, and grouping it in dated the totals a week later
     # than the table.
-    ust = tff[tff["contract"].isin(UST_CONTRACTS)]
-    hist = position_history(ust) if not ust.empty else pd.DataFrame()
-    if hist.empty:
+    ust_candidates = _ust_rows(tff)
+    if ust_candidates.empty:
         return {"ok": False, "reason": "no UST contracts in TFF data"}
+    ust = _complete_position_rows(ust_candidates, _RV_POSITION_FIELDS)
+    if ust.empty:
+        return {"ok": False, "reason": "no complete UST position rows in TFF data"}
+    hist = position_history(ust)
     asof = hist.index[-1]
     latest = hist.iloc[-1]
 
@@ -131,6 +182,11 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
         "net_b": round(float(latest["net_b"]), 1),
         "by_contract": _by_contract_latest(ust, asof),
         "by_contract_asof": asof.date().isoformat(),
+        "input_quality": {
+            "ust_rows_received": int(len(ust_candidates)),
+            "complete_ust_rows": int(len(ust)),
+            "incomplete_ust_rows_excluded": int(len(ust_candidates) - len(ust)),
+        },
         "dv01_m_per_bp": round(float(latest["dv01_m"]), 1),
         "pair_change_13w_b": round(chg_13w, 1) if chg_13w is not None else None,
         "size_z": round(size_z, 2),
@@ -145,7 +201,7 @@ def analyze(tff: pd.DataFrame, dvp_vol: pd.Series) -> dict:
             ]
             for d, r in hist.tail(200).iterrows()
         ],
-        "method": "TFF futures-only; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume; net=(levLong minus levShort)xface rides alongside gross, per contract and total; totals and the per-contract table are both dated asof, the last report date carrying UST rows (by_contract_asof repeats it)",
+        "method": "TFF futures-only; rows missing any required finite leveraged-short, leveraged-long or asset-manager-long field are excluded, never zero-filled; pair=min(levShort,amLong)xface; DV01 per-contract constants in config; scenarios assume 10% forced unwind vs DVP daily volume; net=(levLong minus levShort)xface rides alongside gross, per contract and total; totals and the per-contract table are both dated asof, the last report date carrying complete UST rows (by_contract_asof repeats it)",
     }
 
 
@@ -168,13 +224,16 @@ def crowding(tff: pd.DataFrame, lookback_weeks: int = 156) -> dict:
     classic pre-unwind constellation (Apr 2025). T+3 provenance as always."""
     if tff.empty:
         return {"ok": False, "reason": "no TFF data"}
+    complete = _complete_position_rows(tff, _CROWDING_POSITION_FIELDS)
+    if complete.empty:
+        return {"ok": False, "reason": "no complete CFTC positioning rows"}
     out = []
-    for contract, grp in tff.groupby("contract"):
+    for contract, grp in complete.groupby("contract"):
         g = grp.sort_values("date")
-        oi = g["open_interest_all"].astype(float)
+        oi = g["open_interest_all"]
         net = (
-            g["lev_money_positions_long_all"].fillna(0)
-            - g["lev_money_positions_short_all"].fillna(0)
+            g["lev_money_positions_long_all"]
+            - g["lev_money_positions_short_all"]
         )
         share = (net / oi.replace(0, np.nan)).dropna()
         if len(share) < 60:
@@ -201,6 +260,7 @@ def crowding(tff: pd.DataFrame, lookback_weeks: int = 156) -> dict:
         "rows": out,
         "method": (
             "leveraged-fund net position / open interest per contract; z and percentile "
-            f"vs trailing {lookback_weeks}w; |z| ranks the board (extremes = crowding)"
+            f"vs trailing {lookback_weeks}w; incomplete/non-finite CFTC rows are excluded, "
+            "never zero-filled; |z| ranks the board (extremes = crowding)"
         ),
     }
