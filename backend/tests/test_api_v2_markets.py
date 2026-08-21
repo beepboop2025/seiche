@@ -323,6 +323,7 @@ def test_public_openapi_advertises_all_v2_contracts() -> None:
     assert {
         "/api/v2/markets",
         "/api/v2/money-markets",
+        "/api/v2/world-markets",
         "/api/v2/markets/{market_id}/overview",
         "/api/v2/markets/{market_id}/gauge",
         "/api/v2/markets/{market_id}/asof/{timestamp}",

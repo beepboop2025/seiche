@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global money-market evidence map | Seiche</title>
+  <meta name="description" content="A citable map of Seiche's 11 registered money markets, public benchmark coverage, source rights, freshness, and evidence limits.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/money-markets/">
+  <link rel="alternate" type="application/json" href="https://seiche.info/money-markets/catalog.json" title="Seiche money-market evidence catalog">
+  <link rel="alternate" type="application/vnd.oai.openapi+json" href="https://api.seiche.info/api/openapi.json" title="Seiche public API contract">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/money-markets/">
+  <meta property="og:title" content="Global money-market evidence map | Seiche">
+  <meta property="og:description" content="Eleven registered markets, six public benchmarks, one derived benchmark, one policy-only market, and three explicit gaps.">
+  <meta property="og:image" content="https://seiche.info/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Global money-market evidence map | Seiche">
+  <meta name="twitter:description" content="A bounded, source-linked coverage receipt. No universal world-economy score.">
+  <meta name="twitter:image" content="https://seiche.info/og.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://seiche.info/#organization",
+        "name": "Seiche",
+        "url": "https://seiche.info/",
+        "logo": "https://seiche.info/og.png",
+        "sameAs": "https://github.com/beepboop2025/seiche"
+      },
+      {
+        "@type": "DataCatalog",
+        "@id": "https://seiche.info/money-markets/#catalog",
+        "name": "Seiche global money-market evidence catalog",
+        "description": "A bounded 21 August 2026 discovery receipt covering 11 registered monetary-area packs, 6 raw public benchmarks, 1 derived-context benchmark, 1 policy-only market, 3 declared-unavailable markets, and 52 discovery candidates across 9 regions, for a 63-market discovery universe.",
+        "url": "https://seiche.info/money-markets/",
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "provider": {"@id": "https://seiche.info/#organization"},
+        "dataset": {"@id": "https://seiche.info/money-markets/#dataset"}
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://seiche.info/money-markets/#dataset",
+        "identifier": "seiche.money-market-evidence-catalog.v1",
+        "name": "Seiche registered money-market coverage and rights map",
+        "description": "A source-linked map of which Seiche monetary-area packs had a redistributable public benchmark, derived-only context, only a policy anchor, or no eligible public benchmark in the 21 August 2026 receipt. Registration and discovery are not claims of live, supported, or evidence-eligible coverage.",
+        "url": "https://seiche.info/money-markets/",
+        "mainEntityOfPage": "https://seiche.info/money-markets/",
+        "includedInDataCatalog": {"@id": "https://seiche.info/money-markets/#catalog"},
+        "creator": {"@id": "https://seiche.info/#organization"},
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "isAccessibleForFree": true,
+        "keywords": [
+          "money markets",
+          "overnight interest rates",
+          "SOFR",
+          "ESTR",
+          "TONA",
+          "SORA",
+          "AONIA",
+          "CALL WAR",
+          "funding liquidity",
+          "market data rights"
+        ],
+        "variableMeasured": [
+          {"@type": "PropertyValue", "name": "Registered monetary-area packs", "value": 11},
+          {"@type": "PropertyValue", "name": "Raw public live benchmarks", "value": 6},
+          {"@type": "PropertyValue", "name": "Derived-context benchmarks", "value": 1},
+          {"@type": "PropertyValue", "name": "Policy-only markets", "value": 1},
+          {"@type": "PropertyValue", "name": "Declared-unavailable markets", "value": 3},
+          {"@type": "PropertyValue", "name": "Discovery candidates", "value": 52},
+          {"@type": "PropertyValue", "name": "Global discovery universe", "value": 63}
+        ],
+        "measurementTechnique": "Official-source collection at each adapter's native cadence, point-in-time knowledge clocks, explicit redistribution states, and own-history statistics without upsampling.",
+        "conditionsOfAccess": "AGPL-3.0 covers Seiche code, not upstream data. Public values are shown only when redistribution is allowed; derived-only raw values remain withheld; metadata-only inputs cannot enter public calculations.",
+        "distribution": [
+          {
+            "@type": "DataDownload",
+            "name": "Bounded money-market evidence catalog",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://seiche.info/money-markets/catalog.json"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Live global money-market Atlas",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/v2/money-markets"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Live market-pack coverage receipt",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/v2/coverage"
+          }
+        ],
+        "citation": [
+          "https://api.seiche.info/api/v2/money-markets",
+          "https://api.seiche.info/api/v2/coverage",
+          "https://seiche.info/methodology"
+        ],
+        "isBasedOn": [
+          "https://www.rba.gov.au/statistics/interest-rates/",
+          "https://data.ecb.europa.eu/data/datasets/EST",
+          "https://api.hkma.gov.hk/public/market-data-and-statistics/",
+          "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx",
+          "https://www.stat-search.boj.or.jp/",
+          "https://eservices.mas.gov.sg/statistics/dir/DomesticInterestRates.aspx",
+          "https://www.bankofengland.co.uk/boeapps/database/",
+          "https://fred.stlouisfed.org/"
+        ]
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root {
+      --bg: #000;
+      --panel: #0b0d15;
+      --panel-2: #11141e;
+      --edge: #242735;
+      --edge-2: #35394b;
+      --text: #edeef4;
+      --dim: #a2a8bb;
+      --faint: #747b91;
+      --accent: #b9adff;
+      --calm: #7ccdb4;
+      --watch: #ddb376;
+      --gap: #ef8078;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: #d4ccff; }
+    .shell { width: min(1180px, calc(100% - 36px)); margin: 0 auto; }
+    .topbar { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; padding: 24px 0 18px; border-bottom: 1px solid var(--edge); }
+    .wordmark { color: var(--text); font-size: 17px; font-weight: 650; letter-spacing: .28em; text-decoration: none; }
+    .wordmark span { color: var(--accent); }
+    nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 14px; font: 11px/1.4 var(--mono); }
+    nav a { color: var(--dim); }
+    main { padding-bottom: 72px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, .55fr); gap: 54px; padding: 78px 0 48px; }
+    .eyebrow, .label { color: var(--accent); font: 11px/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 800px; margin: 10px 0 20px; font-size: clamp(40px, 7vw, 78px); font-weight: 480; letter-spacing: -.055em; line-height: .98; }
+    .answer { max-width: 760px; margin: 0; color: var(--dim); font-size: clamp(17px, 2vw, 21px); line-height: 1.55; }
+    .receipt { align-self: end; padding: 24px; border: 1px solid var(--edge); border-radius: 14px; background: linear-gradient(145deg, rgba(185,173,255,.08), transparent 58%), var(--panel); }
+    .receipt strong { display: block; margin: 8px 0; font: 500 clamp(28px, 4vw, 43px)/1 var(--mono); }
+    .receipt p { margin: 0; color: var(--dim); font-size: 12px; }
+    .metrics { display: grid; grid-template-columns: repeat(7, 1fr); margin: 0 0 58px; border: solid var(--edge); border-width: 1px 0 0 1px; }
+    .metrics div { min-height: 126px; padding: 20px 16px; border: solid var(--edge); border-width: 0 1px 1px 0; }
+    .metrics dt { color: var(--faint); font: 10px/1.45 var(--mono); text-transform: uppercase; }
+    .metrics dd { margin: 18px 0 0; font: 500 31px/1 var(--mono); }
+    section { padding: 44px 0; border-top: 1px solid var(--edge); }
+    .section-head { display: grid; grid-template-columns: minmax(210px, .36fr) minmax(0, .64fr); gap: 38px; margin-bottom: 28px; }
+    h2 { margin: 7px 0 0; font-size: clamp(28px, 4vw, 45px); font-weight: 480; letter-spacing: -.035em; line-height: 1.08; }
+    .section-head p { max-width: 720px; margin: 4px 0 0; color: var(--dim); font-size: 16px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--edge); border-radius: 12px; }
+    table { width: 100%; min-width: 880px; border-collapse: collapse; }
+    th, td { padding: 15px 16px; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: top; }
+    th { color: var(--faint); background: var(--panel); font: 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    td { color: var(--dim); font-size: 13px; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child, td:nth-child(3), td:nth-child(4) { font-family: var(--mono); }
+    td:first-child strong { display: block; color: var(--text); font-family: var(--sans); font-size: 14px; }
+    td:first-child span { color: var(--faint); font-size: 10px; }
+    .status { display: inline-block; padding: 4px 7px; border: 1px solid currentColor; border-radius: 999px; font: 9px/1 var(--mono); letter-spacing: .05em; white-space: nowrap; }
+    .live { color: var(--calm); }
+    .derived { color: var(--accent); }
+    .policy { color: var(--watch); }
+    .unavailable { color: var(--gap); }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .card { min-height: 215px; padding: 24px; border: 1px solid var(--edge); border-radius: 12px; background: var(--panel); }
+    .card h3 { margin: 12px 0 10px; font-size: 19px; font-weight: 500; }
+    .card p, .card li { color: var(--dim); font-size: 13px; }
+    .card ul, .steps { padding-left: 20px; }
+    .card li + li, .steps li + li { margin-top: 8px; }
+    .steps { max-width: 850px; margin: 0; }
+    .steps li { padding-left: 6px; color: var(--dim); }
+    .steps strong { color: var(--text); }
+    .api-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .api { display: block; padding: 20px; border: 1px solid var(--edge); border-radius: 10px; background: var(--panel); text-decoration: none; }
+    .api strong { display: block; color: var(--text); font-size: 15px; }
+    .api code { display: block; margin-top: 8px; overflow-wrap: anywhere; color: var(--accent); font: 11px/1.5 var(--mono); }
+    .api span { display: block; margin-top: 10px; color: var(--dim); font-size: 12px; }
+    .citation { padding: 24px; border-left: 3px solid var(--accent); background: var(--panel); }
+    .citation p { margin: 8px 0 0; color: var(--dim); }
+    .citation code { color: var(--text); font: 12px/1.7 var(--mono); }
+    footer { padding: 28px 0 48px; border-top: 1px solid var(--edge); color: var(--faint); font: 11px/1.8 var(--mono); }
+    footer div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; }
+    @media (max-width: 900px) {
+      .hero, .section-head { grid-template-columns: 1fr; }
+      .hero { gap: 28px; padding-top: 54px; }
+      .receipt { max-width: 470px; }
+      .metrics { grid-template-columns: repeat(4, 1fr); }
+      .cards { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .topbar { align-items: flex-start; }
+      nav { max-width: 210px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metrics div:last-child { grid-column: span 2; }
+      .api-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary">
+      <a href="/">Live board</a>
+      <a href="/methodology">Methodology</a>
+      <a href="/developers">API + MCP</a>
+      <a href="/articles/">Articles</a>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <article>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Global money-market evidence map · 21 August 2026</p>
+          <h1>What Seiche can see across money markets</h1>
+          <p class="answer"><strong>Seiche does not publish a universal world-economy score.</strong> It publishes a bounded evidence map: 11 registered monetary-area packs, six redistributable public benchmarks, one derived-only benchmark, one policy-only market, three explicit data gaps, and 52 source-audited discovery candidates. Registration, availability, validation, and evidence eligibility remain separate claims.</p>
+        </div>
+        <aside class="receipt" aria-label="Snapshot status">
+          <span class="label">Published receipt</span>
+          <strong>PARTIAL</strong>
+          <p>Fixed coverage snapshot from the live <code>seiche.global-money-markets.v1</code> payload. Use the linked APIs for the newest observations and source clocks.</p>
+        </aside>
+      </header>
+
+      <dl class="metrics" aria-label="Coverage summary">
+        <div><dt>Registered packs</dt><dd>11</dd></div>
+        <div><dt>Raw live benchmarks</dt><dd>6</dd></div>
+        <div><dt>Derived context</dt><dd>1</dd></div>
+        <div><dt>Policy only</dt><dd>1</dd></div>
+        <div><dt>Unavailable</dt><dd>3</dd></div>
+        <div><dt>Discovery candidates</dt><dd>52</dd></div>
+        <div><dt>Discovery universe</dt><dd>63</dd></div>
+      </dl>
+
+      <section id="coverage">
+        <div class="section-head">
+          <div><span class="label">Registered coverage</span><h2>Eleven markets, four evidence states</h2></div>
+          <p>Six packs had a redistributable benchmark observation in this receipt. Sterling exposes only non-reversible derived context. Hong Kong exposes a policy anchor, not a traded overnight substitute. China, Korea, and New Zealand remain declared gaps. None of the 11 packs is evidence-eligible.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Market</th><th>Public state</th><th>Selected reference</th><th>Receipt as of</th><th>Official source and rights</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Australian dollar</strong><span>AU-AUD · AUD</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>AONIA</td><td>2026-08-19</td><td><a href="https://www.rba.gov.au/statistics/interest-rates/">Reserve Bank of Australia</a> · raw redistribution allowed</td></tr>
+              <tr><td><strong>Mainland Chinese renminbi</strong><span>CN-CNY · CNY</span></td><td><span class="status unavailable">DECLARED UNAVAILABLE</span></td><td>No selected public benchmark</td><td>Not available</td><td><a href="https://www.chinamoney.com.cn/english/bmkshibor/">China Foreign Exchange Trade System</a> · metadata only in this receipt</td></tr>
+              <tr><td><strong>Euro area</strong><span>EA-EUR · EUR</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>ESTR</td><td>2026-08-19</td><td><a href="https://data.ecb.europa.eu/data/datasets/EST">European Central Bank</a> · raw redistribution allowed</td></tr>
+              <tr><td><strong>Hong Kong dollar</strong><span>HK-HKD · HKD</span></td><td><span class="status policy">POLICY ONLY</span></td><td>HKMA base rate</td><td>2026-08-18</td><td><a href="https://api.hkma.gov.hk/public/market-data-and-statistics/">Hong Kong Monetary Authority</a> · policy anchor allowed</td></tr>
+              <tr><td><strong>Indian rupee</strong><span>IN-INR · INR</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>CALL WAR</td><td>2026-08-19</td><td><a href="https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx">Reserve Bank of India</a> · raw redistribution allowed</td></tr>
+              <tr><td><strong>Japanese yen</strong><span>JP-JPY · JPY</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>TONA</td><td>2026-08-18</td><td><a href="https://www.stat-search.boj.or.jp/">Bank of Japan</a> · raw redistribution allowed</td></tr>
+              <tr><td><strong>South Korean won</strong><span>KR-KRW · KRW</span></td><td><span class="status unavailable">DECLARED UNAVAILABLE</span></td><td>No selected public benchmark</td><td>Not available</td><td><a href="https://ecos.bok.or.kr/api/">Bank of Korea ECOS</a> · source access policy unavailable</td></tr>
+              <tr><td><strong>New Zealand dollar</strong><span>NZ-NZD · NZD</span></td><td><span class="status unavailable">DECLARED UNAVAILABLE</span></td><td>No selected public benchmark</td><td>Not available</td><td><a href="https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates">Reserve Bank of New Zealand</a> · source access policy unavailable</td></tr>
+              <tr><td><strong>Singapore dollar</strong><span>SG-SGD · SGD</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>SORA</td><td>2026-08-19</td><td><a href="https://eservices.mas.gov.sg/statistics/dir/DomesticInterestRates.aspx">Monetary Authority of Singapore</a> · raw redistribution allowed</td></tr>
+              <tr><td><strong>United Kingdom sterling</strong><span>UK-GBP · GBP</span></td><td><span class="status derived">DERIVED CONTEXT</span></td><td>SONIA</td><td>Raw date withheld</td><td><a href="https://www.bankofengland.co.uk/boeapps/database/">Bank of England</a> · non-reversible derived context only</td></tr>
+              <tr><td><strong>United States dollar</strong><span>US-USD · USD</span></td><td><span class="status live">LIVE REFERENCE</span></td><td>SOFR</td><td>2026-08-19</td><td><a href="https://fred.stlouisfed.org/">Federal Reserve Economic Data</a> · raw redistribution allowed</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="meaning">
+        <div class="section-head">
+          <div><span class="label">How to interpret it</span><h2>Coverage is not a score</h2></div>
+          <p>Each market is compared only with compatible local anchors and its own native-frequency history. Seiche does not rank unlike raw interest-rate levels across currencies, and it does not turn missing data into a calm reading.</p>
+        </div>
+        <div class="cards">
+          <article class="card"><span class="label">What it can answer</span><h3>Where public benchmark evidence exists</h3><p>The receipt identifies the benchmark, observation date, official source, redistribution state, and current market-pack support boundary for each registered monetary area.</p></article>
+          <article class="card"><span class="label">What it cannot answer</span><h3>Whether the whole world is stressed</h3><p>There is no universal score. Global Tide is unavailable because the required cross-basin FX swap basis evidence is absent. Six public benchmarks cannot stand in for the world economy.</p></article>
+          <article class="card"><span class="label">Validation boundary</span><h3>Reference is not evidence eligibility</h3><p>The US pack is validating and the other registered packs are reference context. Zero of 11 packs in this receipt is supported or evidence-eligible for validated historical claims.</p></article>
+          <article class="card"><span class="label">Rights boundary</span><h3>Upstream rights travel with the data</h3><p>AGPL-3.0 covers Seiche code, not upstream data. Allowed values may be public. Derived-only raw levels remain withheld. Metadata-only inputs cannot enter public calculations.</p></article>
+          <article class="card"><span class="label">Freshness boundary</span><h3>Every series keeps its own clock</h3><p>Daily, weekly, and event-driven releases are not upsampled into fake simultaneity. Use each observation's <code>asof</code>, publication time, knowledge time, expected cadence, and freshness status.</p></article>
+          <article class="card"><span class="label">Discovery boundary</span><h3>Fifty-two candidates are not live coverage</h3><p>The nine-region expansion ledger records source research. Promotion requires methodology, point-in-time behavior, calendars, reliability, legal rights, and production operations to pass review.</p></article>
+        </div>
+      </section>
+
+      <section id="access">
+        <div class="section-head">
+          <div><span class="label">Public retrieval</span><h2>Use the page for meaning and the API for now</h2></div>
+          <p>This page and its JSON twin preserve a fixed, citable 21 August receipt. The REST endpoints expose the current board and per-series clocks. The MCP endpoint exposes Seiche's public read-only tools; inspect <code>tools/list</code> for its current inventory.</p>
+        </div>
+        <div class="api-grid">
+          <a class="api" href="/money-markets/catalog.json"><strong>Bounded evidence catalog</strong><code>seiche.info/money-markets/catalog.json</code><span>Stable market IDs, counts, states, sources, rights, limits, and citation guidance.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/money-markets"><strong>Live global Atlas</strong><code>api.seiche.info/api/v2/money-markets</code><span>Current public observations, native histories, freshness clocks, coverage, caveats, and expansion ledger.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/coverage"><strong>Coverage and evidence receipt</strong><code>api.seiche.info/api/v2/coverage</code><span>Pack capabilities, missing capabilities, faults, validation support, and evidence eligibility.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/markets"><strong>Registered market-pack contract</strong><code>api.seiche.info/api/v2/markets</code><span>Stable pack IDs, currencies, settlement calendars, capabilities, source connectors, and support status.</span></a>
+          <a class="api" href="https://api.seiche.info/api/money-markets"><strong>Institutional USD desk</strong><code>api.seiche.info/api/money-markets</code><span>Granular US overnight, repo, bill, unsecured, liquidity-facility, and money-fund evidence.</span></a>
+          <a class="api" href="https://api.seiche.info/api/openapi.json"><strong>OpenAPI 3.1 contract</strong><code>api.seiche.info/api/openapi.json</code><span>Machine-readable contract for the intentionally public REST surface.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>Public MCP server</strong><code>api.seiche.info/mcp</code><span>Streamable HTTP access for grounded AI clients and research workflows.</span></a>
+        </div>
+      </section>
+
+      <section id="agents">
+        <div class="section-head">
+          <div><span class="label">For researchers and retrieval systems</span><h2>Attach the evidence clock</h2></div>
+          <ol class="steps">
+            <li><strong>Use the catalog for identity and scope.</strong> Resolve stable market IDs, availability definitions, source rights, and the fixed coverage receipt.</li>
+            <li><strong>Use the live Atlas for current facts.</strong> Read its <code>generated_at</code>, then retain the selected observation's <code>asof</code>, source URL, cadence, and freshness state.</li>
+            <li><strong>Check evidence eligibility separately.</strong> A visible benchmark can still belong to a reference or validating pack with no supported historical claim.</li>
+            <li><strong>Cite distinct evidence objects for distinct claims.</strong> Link this page for scope, the live API for the reading, the official source for the underlying observation, and the methodology for Seiche's transformation.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="citation">
+        <div class="section-head">
+          <div><span class="label">Cite this receipt</span><h2>One scope claim, one canonical URL</h2></div>
+          <div class="citation">
+            <code>Seiche. “Global money-market evidence map.” 21 August 2026. https://seiche.info/money-markets/.</code>
+            <p>For a live market reading, also include the Atlas <code>generated_at</code> timestamp, the benchmark <code>asof</code> date, and its official <code>source_url</code>. Research and market data, not investment advice.</p>
+          </div>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="shell"><span>Seiche · free public funding-liquidity research</span><span><a href="/product-card.json">Product card</a> · <a href="/.well-known/ai-catalog.json">AI catalog</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://github.com/beepboop2025/seiche">Source</a></span></div>
+  </footer>
+</body>
+</html>

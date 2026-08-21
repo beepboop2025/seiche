@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from seiche.markets.world import project_world_markets
+
 
 def _object(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
@@ -218,3 +220,22 @@ def estuary(snapshot: dict) -> dict[str, Any]:
             "probability, forecast, trade signal, or composite input."
         ),
     }
+
+
+def world_markets(
+    snapshot: dict,
+    *,
+    selector: str = "all",
+    evaluation_asof: Any = None,
+) -> dict[str, Any]:
+    """Unified chartless catalog over one already completed board snapshot.
+
+    The projection itself lives under ``seiche.markets`` so REST, MCP, static
+    publication, and tests share the exact same evidence/status semantics.
+    """
+
+    return project_world_markets(
+        snapshot,
+        selector=selector,
+        evaluation_asof=evaluation_asof,
+    )

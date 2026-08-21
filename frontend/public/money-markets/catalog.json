@@ -1,0 +1,197 @@
+{
+  "schema": "seiche.money-market-evidence-catalog.v1",
+  "id": "https://seiche.info/money-markets/catalog.json",
+  "title": "Seiche global money-market evidence catalog",
+  "description": "A bounded 21 August 2026 discovery receipt for Seiche's registered money-market packs, public benchmark availability, source rights, and evidence limits. It is not a world-economy score or a claim of validated global coverage.",
+  "canonical_url": "https://seiche.info/money-markets/",
+  "updated": "2026-08-21",
+  "snapshot": {
+    "observed_on": "2026-08-21",
+    "source_schema": "seiche.global-money-markets.v1",
+    "source_status": "PARTIAL",
+    "source_generated_at": "2026-08-21T17:41:31+00:00",
+    "registered_markets": 11,
+    "raw_live_benchmarks": 6,
+    "derived_context_benchmarks": 1,
+    "policy_only_markets": 1,
+    "declared_unavailable_markets": 3,
+    "discovery_candidates": 52,
+    "discovery_regions": 9,
+    "global_discovery_universe": 63,
+    "supported_market_packs": 0,
+    "evidence_eligible_market_packs": 0,
+    "global_score": null,
+    "global_tide_status": "UNAVAILABLE"
+  },
+  "availability_definitions": {
+    "LIVE_REFERENCE": "A redistributable public benchmark observation was present in the 21 August receipt. Reference status does not mean the market pack is validated or evidence-eligible.",
+    "DERIVED_CONTEXT": "Seiche may publish bounded, non-reversible context while the licensed raw benchmark level and history remain withheld.",
+    "POLICY_ONLY": "An official policy anchor is public, but no eligible traded overnight benchmark is substituted for it.",
+    "DECLARED_UNAVAILABLE": "The registered pack remains visible as a coverage gap. Absence is not interpreted as calm conditions."
+  },
+  "markets": [
+    {
+      "market_id": "AU-AUD",
+      "display_name": "Australian dollar",
+      "currency": "AUD",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "AONIA",
+      "as_of": "2026-08-19",
+      "source_url": "https://www.rba.gov.au/statistics/interest-rates/",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "CN-CNY",
+      "display_name": "Mainland Chinese renminbi",
+      "currency": "CNY",
+      "status": "DECLARED_UNAVAILABLE",
+      "benchmark": null,
+      "as_of": null,
+      "source_url": "https://www.chinamoney.com.cn/english/bmkshibor/",
+      "rights_status": "metadata_only",
+      "raw_value_public": false,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "EA-EUR",
+      "display_name": "Euro area",
+      "currency": "EUR",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "ESTR",
+      "as_of": "2026-08-19",
+      "source_url": "https://data.ecb.europa.eu/data/datasets/EST",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "HK-HKD",
+      "display_name": "Hong Kong dollar",
+      "currency": "HKD",
+      "status": "POLICY_ONLY",
+      "benchmark": "HKMA BASE RATE",
+      "as_of": "2026-08-18",
+      "source_url": "https://api.hkma.gov.hk/public/market-data-and-statistics/",
+      "rights_status": "allowed_policy_anchor",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "IN-INR",
+      "display_name": "Indian rupee",
+      "currency": "INR",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "CALL WAR",
+      "as_of": "2026-08-19",
+      "source_url": "https://www.rbi.org.in/Scripts/BS_ViewMMO.aspx",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "JP-JPY",
+      "display_name": "Japanese yen",
+      "currency": "JPY",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "TONA",
+      "as_of": "2026-08-18",
+      "source_url": "https://www.stat-search.boj.or.jp/",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "KR-KRW",
+      "display_name": "South Korean won",
+      "currency": "KRW",
+      "status": "DECLARED_UNAVAILABLE",
+      "benchmark": null,
+      "as_of": null,
+      "source_url": "https://ecos.bok.or.kr/api/",
+      "rights_status": "access_policy_unavailable",
+      "raw_value_public": false,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "NZ-NZD",
+      "display_name": "New Zealand dollar",
+      "currency": "NZD",
+      "status": "DECLARED_UNAVAILABLE",
+      "benchmark": null,
+      "as_of": null,
+      "source_url": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
+      "rights_status": "access_policy_unavailable",
+      "raw_value_public": false,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "SG-SGD",
+      "display_name": "Singapore dollar",
+      "currency": "SGD",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "SORA",
+      "as_of": "2026-08-19",
+      "source_url": "https://eservices.mas.gov.sg/statistics/dir/DomesticInterestRates.aspx",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "UK-GBP",
+      "display_name": "United Kingdom sterling",
+      "currency": "GBP",
+      "status": "DERIVED_CONTEXT",
+      "benchmark": "SONIA",
+      "as_of": null,
+      "source_url": "https://www.bankofengland.co.uk/boeapps/database/",
+      "rights_status": "derived_only",
+      "raw_value_public": false,
+      "evidence_eligible": false
+    },
+    {
+      "market_id": "US-USD",
+      "display_name": "United States dollar",
+      "currency": "USD",
+      "status": "LIVE_REFERENCE",
+      "benchmark": "SOFR",
+      "as_of": "2026-08-19",
+      "source_url": "https://fred.stlouisfed.org/",
+      "rights_status": "allowed",
+      "raw_value_public": true,
+      "evidence_eligible": false
+    }
+  ],
+  "discovery_scope": {
+    "definition": "The 52 candidates are monetary areas with an identifiable official policy, overnight, repo, call-money, or interbank reference reviewed as of 21 August 2026.",
+    "not_live_coverage": true,
+    "not_a_roadmap_commitment": true,
+    "promotion_gate": "A candidate becomes a canonical pack only after methodology, point-in-time behavior, calendar, source reliability, legal rights, and production operations pass review."
+  },
+  "evidence_boundary": {
+    "interpretation": "Registered, publicly available, validation-supported, and evidence-eligible are separate claims.",
+    "statistics_policy": "Own-history changes and windows use each adapter's native observation cadence without upsampling. Unlike raw rate levels are not ranked across currencies.",
+    "global_score_policy": "Seiche does not combine these monetary areas into a universal world-economy or global money-market stress score.",
+    "global_tide_policy": "Global Tide remains unavailable until the required cross-basin FX swap basis evidence is present.",
+    "investment_advice": false
+  },
+  "rights_boundary": {
+    "code_license": "AGPL-3.0",
+    "upstream_data_license_inherited": false,
+    "policy": "AGPL-3.0 covers Seiche code, not upstream data. Allowed observations may be public. Derived-only inputs may produce bounded non-reversible context. Metadata-only inputs cannot enter public calculations. Prohibited values and restricted source data remain withheld."
+  },
+  "access": {
+    "human_page": "https://seiche.info/money-markets/",
+    "catalog_json": "https://seiche.info/money-markets/catalog.json",
+    "global_atlas_api": "https://api.seiche.info/api/v2/money-markets",
+    "coverage_api": "https://api.seiche.info/api/v2/coverage",
+    "market_pack_api": "https://api.seiche.info/api/v2/markets",
+    "usd_desk_api": "https://api.seiche.info/api/money-markets",
+    "openapi": "https://api.seiche.info/api/openapi.json",
+    "mcp": "https://api.seiche.info/mcp",
+    "methodology": "https://seiche.info/methodology",
+    "source_code": "https://github.com/beepboop2025/seiche"
+  },
+  "citation": "Seiche. Global money-market evidence map. 21 August 2026. https://seiche.info/money-markets/. For a live reading, also include the API generated_at timestamp and the selected benchmark's asof date."
+}

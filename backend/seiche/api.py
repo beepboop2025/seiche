@@ -70,6 +70,7 @@ from seiche.markets.atlas import build_global_money_market_atlas
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
+from seiche.markets.world import WORLD_MARKETS_SELECTORS, unavailable_world_markets
 from seiche.public_faults import (
     project_public_fault,
     project_public_faults,
@@ -676,7 +677,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the ten public tools",
+            "authentication": "none for the eleven public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -685,6 +686,7 @@ def api_index() -> dict[str, Any]:
             "public_snapshot": "/api/public",
             "small_gauge": "/api/gauge",
             "market_catalog_v2": "/api/v2/markets",
+            "world_markets_v2": "/api/v2/world-markets",
             "global_money_markets_v2": "/api/v2/money-markets",
             "market_coverage_v2": "/api/v2/coverage",
             "global_tide_v2": "/api/v2/global/tide",
@@ -930,6 +932,62 @@ def _public_openapi_document() -> dict[str, Any]:
                     "request never starts collection."
                 ),
                 "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/world-markets": {
+            "get": {
+                "operationId": "getWorldMarketsV2",
+                "summary": "Read Seiche's unified world-markets context",
+                "description": (
+                    "A chartless, bounded projection of already assembled money-"
+                    "market, forex, and capital-market evidence. It includes "
+                    "explicit observed, derived, structural, restricted, and "
+                    "unavailable boundaries plus canonical citation URLs. The "
+                    "request reads only a completed memory or persisted snapshot "
+                    "and never starts collection or model fitting. Coverage is "
+                    "curated and partial, not exhaustive or uniformly live."
+                ),
+                "parameters": [
+                    {
+                        "name": "section",
+                        "in": "query",
+                        "required": False,
+                        "description": "Bounded projection to return.",
+                        "schema": {
+                            "type": "string",
+                            "enum": list(WORLD_MARKETS_SELECTORS),
+                            "default": "all",
+                        },
+                    }
+                ],
+                "responses": {
+                    "200": context_response("seiche.world-markets.v1"),
+                    "503": {
+                        "description": "No completed cached or persisted snapshot",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ok",
+                                        "schema",
+                                        "status",
+                                        "reason",
+                                    ],
+                                    "properties": {
+                                        "ok": {"const": False},
+                                        "schema": {
+                                            "const": "seiche.world-markets.v1"
+                                        },
+                                        "status": {"const": "unavailable"},
+                                        "reason": {"type": "string"},
+                                    },
+                                    "additionalProperties": True,
+                                }
+                            }
+                        },
+                    },
+                },
             },
         },
         "/api/v2/coverage": {
@@ -1630,6 +1688,58 @@ def global_money_markets_v2(response: Response):
         payload["status"] = "PARTIAL"
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return sanitize_public_fault_payload(payload)
+
+
+def _completed_world_markets_snapshot() -> dict[str, Any] | None:
+    """Restore, but never build, the board used by the world-markets route."""
+
+    snapshot = assemble.cached_snapshot()
+    if isinstance(snapshot, dict):
+        return snapshot
+    try:
+        assemble.restore_cached_snapshot()
+    except Exception:  # a broken durable handoff must fail closed
+        logging.getLogger("seiche.api").exception(
+            "world-markets snapshot restore failed"
+        )
+        return None
+    restored = assemble.cached_snapshot()
+    return restored if isinstance(restored, dict) else None
+
+
+@app.get("/api/v2/world-markets")
+def world_markets_v2(response: Response, section: str = "all"):
+    """Read the unified catalog without becoming an implicit build trigger."""
+
+    if section not in WORLD_MARKETS_SELECTORS:
+        raise HTTPException(
+            status_code=422,
+            detail="section must be one of: " + ", ".join(WORLD_MARKETS_SELECTORS),
+        )
+    snapshot = _completed_world_markets_snapshot()
+    if snapshot is None:
+        return JSONResponse(
+            status_code=503,
+            headers={
+                "Cache-Control": "no-store",
+                "Retry-After": "30",
+            },
+            content=unavailable_world_markets(
+                selector=section,
+                reason=(
+                    "no completed cached or persisted snapshot is available; "
+                    "this request never starts collection or model fitting"
+                )
+            ),
+        )
+    response.headers["Cache-Control"] = (
+        "public, max-age=60, stale-while-revalidate=240"
+    )
+    return context_views.world_markets(
+        snapshot,
+        selector=section,
+        evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+    )
 
 
 @app.get("/api/v2/coverage")

@@ -1,34 +1,23 @@
-# seiche.info — everything here is free public data plus published methods.
-# Search engines and AI systems are welcome to crawl, cite and learn from it.
-# Content signals (contentsignals.org): affirmative grants, not restrictions.
+# seiche.info: free public research, source links and published methods.
+# Search and user-directed retrieval are welcome. Model training is not granted.
+# Cloudflare may prepend a managed robots policy or enforce crawler rules at the
+# edge; this repository file cannot override Cloudflare AI Crawl Control or WAF.
 
 User-agent: *
-Content-Signal: search=yes, ai-input=yes, ai-train=yes
+Content-Signal: search=yes, ai-input=yes, ai-train=no
 Allow: /
 
-# AI crawlers and assistants, named so there is no ambiguity: welcome.
-User-agent: GPTBot
-Allow: /
-
+# Search and user-directed retrieval crawlers.
 User-agent: OAI-SearchBot
 Allow: /
 
 User-agent: ChatGPT-User
 Allow: /
 
-User-agent: ClaudeBot
-Allow: /
-
 User-agent: Claude-User
 Allow: /
 
 User-agent: Claude-SearchBot
-Allow: /
-
-User-agent: anthropic-ai
-Allow: /
-
-User-agent: Google-Extended
 Allow: /
 
 User-agent: Googlebot
@@ -46,34 +35,52 @@ Allow: /
 User-agent: Perplexity-User
 Allow: /
 
-User-agent: CCBot
-Allow: /
-
-User-agent: meta-externalagent
-Allow: /
-
-User-agent: Applebot-Extended
-Allow: /
-
-User-agent: Amazonbot
-Allow: /
-
 User-agent: DuckAssistBot
-Allow: /
-
-User-agent: Bytespider
-Allow: /
-
-User-agent: cohere-ai
 Allow: /
 
 User-agent: MistralAI-User
 Allow: /
 
+# Training and model-development crawlers are separate from search retrieval.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: cohere-ai
+Disallow: /
+
 # Machine-readable index of this site for LLMs: https://seiche.info/llms.txt
 # Full-text corpus of the daily letters:        https://seiche.info/llms-full.txt
 # Atom feed of the daily letters:               https://seiche.info/dispatches/feed.xml
 # Full-text daily article JSON Feed:             https://seiche.info/articles/feed.json
+# World markets evidence atlas:                  https://seiche.info/markets/
+# Forex reference ledger:                        https://seiche.info/markets/forex/
+# Capital-markets transmission ledger:           https://seiche.info/markets/capital-markets/
+# Global money-market evidence map:              https://seiche.info/money-markets/
+# Machine-readable money-market catalog:         https://seiche.info/money-markets/catalog.json
 # Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
 Agentmap: https://seiche.info/.well-known/ai-catalog.json

@@ -387,7 +387,7 @@ function AppInner() {
 
       {tab !== "TODAY" && <aside className="agent-launch" aria-label="Seiche API and MCP access">
         <span className="agent-launch__eyebrow">BUILD WITH THE LIVE BOARD</span>
-        <span className="agent-launch__copy">Give an AI agent the current funding-stress regime, analogs and published track record.</span>
+        <span className="agent-launch__copy">Give an AI agent current funding, money-, forex- and capital-market context with source clocks and citation URLs.</span>
         <a href="/developers">Connect the free MCP or API →</a>
       </aside>}
 
@@ -411,6 +411,9 @@ function AppInner() {
             )}
           </Fragment>
         ))}
+        <a href="/markets/" aria-label="Seiche world markets evidence atlas">
+          WORLD ATLAS
+        </a>
         <button className="cmdk" onClick={() => setPalette(true)} title="command line — function codes or search">⌘K</button>
         <button className="cmdk" onClick={() => setHelp(true)} title="keyboard shortcuts">?</button>
       </nav>
@@ -527,6 +530,7 @@ function AppInner() {
         <a href="/ampleness" style={{ color: "var(--dim)" }}>ampleness check</a> ·{" "}
         <a href="/skeptic" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
         <a href="/developers" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
+        <a href="/markets/" style={{ color: "var(--dim)" }}>world markets atlas</a> ·{" "}
         <a href="/use-cases" style={{ color: "var(--dim)" }}>when to use Seiche</a> ·{" "}
         <a href="/support" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}

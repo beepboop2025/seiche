@@ -486,37 +486,17 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
     return f"<noscript>{inner}</noscript>", facts
 
 
-def build_meta(facts: dict, snap: dict) -> dict[str, str]:
-    """Live card copy. The image stays the share card the fleet already ships."""
-    hl = snap.get("headline", {}) or {}
+def build_meta(facts: dict, _snap: dict) -> dict[str, str]:
+    """Add freshness and image accessibility without narrowing site identity.
 
-    def v(key: str, nd: int) -> str:
-        return _num((hl.get(key) or {}).get("value"), nd)
-
-    head = _clean(str(facts["headline"]))
-    editorial = facts.get("editorial") or {}
-    title = f"Seiche · {head[0].lower() + head[1:]}" if head else "Seiche"
-    if editorial.get("thesis"):
-        conviction = str(editorial.get("confidence") or "unrated").upper()
-        desc = (
-            f"{_clean(str(editorial.get('standfirst') or facts['reading']))} "
-            f"Conviction: {conviction}. Evidence, countercase and dated source clocks published."
-        )
-    else:
-        desc = (
-            f"{facts['reading']} {facts['gloss']} "
-            f"Reserves ${v('reserves_b', 0)}B, ON RRP ${v('rrp_b', 1)}B, "
-            f"TGA ${v('tga_b', 0)}B, SOFR {v('sofr_pct', 2)}%. "
-            "Free public data, no sign-in, historical diagnostic status and misses published."
-        )
+    The source shell owns the broad money/FX/capital-market social title and
+    description. The daily funding argument remains fully rendered in the page
+    body, where its evidence, countercase and dates travel with it.
+    """
     return {
-        "og:title": title,
-        "og:description": desc,
-        "twitter:title": title,
-        "twitter:description": desc,
         "og:updated_time": str(facts.get("generated_at") or ""),
-        "og:image:alt": "Seiche, the funding stress board for US money markets",
-        "twitter:image:alt": "Seiche, the funding stress board for US money markets",
+        "og:image:alt": "Seiche, the public money, forex and capital-market evidence terminal",
+        "twitter:image:alt": "Seiche, the public money, forex and capital-market evidence terminal",
         "og:locale": "en_US",
     }
 

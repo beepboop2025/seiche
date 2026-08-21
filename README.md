@@ -5,11 +5,11 @@
 > A **seiche** is a standing wave in an enclosed body of water — invisible from the
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
-**Seiche is a free, open source (AGPL-3.0) funding-stress, positioning and
-divergence terminal** for the dollar
-funding system — US money markets, the Treasury capital-market complex, the global
-basins connected to them through the swap lines, and the offshore-dollar crypto
-basin moored to the T-bill market through stablecoins. The core US board and
+**Seiche is a free, open source (AGPL-3.0) money-, foreign-exchange and
+capital-market evidence terminal** organized around the dollar funding system —
+US money markets, 22 public H.10 currency reference series, the Treasury
+capital-market complex, the global basins connected through swap lines, and the
+offshore-dollar crypto basin moored to the T-bill market through stablecoins. The core US board and
 USD desk use free official/public APIs (FRED, NY Fed Markets, OFR STFM, Treasury
 FiscalData, CFTC, ECB Data Portal, DeFiLlama, Coinbase Exchange). The global
 market-pack catalog can also declare licensed or tenant sources, but public
@@ -73,7 +73,7 @@ composite engine called "undertow" (critical slowing down,
 | **Swell Forecast** ★ | The funding-stress **forward curve** — a term structure nobody publishes, not even the $32k terminals: P(SOFR−IORB pop ≥ 2/5/10/20bp) for each of the next 42 business days, built from the PUBLIC forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops — small severities lend the rare big ones statistical mass), lifted by the live damping state and announced coupon settlements. Compounds to P(event by horizon), walk-forward scored vs climatology on final-vintage history with the reliability table printed, and the verdict self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
-| **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twelve H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
+| **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twenty-two H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
 | **Oil × Funding** ★ | The barrel's balance sheet, in both directions: WTI/Brent, CP−bill and SOFR−IORB evidence; live Cushing stocks and Brent−WTI basis kept separate from dated capacity, benchmark and chokepoint references; a rolling change-on-change coupling diagnostic; the observed mechanical carry hurdle; energy/core CPI into IORB; broad foreign-official dollar-parking proxies for the recycling channel; and an editable, explicitly scenario-only lab for cargo credit, margin calls, RBI liquidity absorption and OMC commercial-paper demand. Context only, never a composite input. |
 | **[Ballast](docs/BALLAST.md)** ★ | The energy-futures cash ledger inside Oil × Funding. Exact CFTC contract codes for WTI and Henry Hub join weekly open interest, trader classes and paying-side concentration to public benchmark moves and contract multipliers; EIA commercial crude stocks supply the physical-collateral leg; SOFR−IORB and CP−bill show a separate funding-amplifier overlay. The output is a bounded gross mark-displacement proxy—not an observed margin call—and the headline takes the worst own-history commodity/physical percentile without blending or letting funding alone manufacture a commodity alert. Typed handoffs route exit cost to Undertow and named-institution exposure to LiquiLens. Context only, never a composite input. |
 | **Stablecoin Moorings** ★ | The offshore-dollar basin's tie lines: peg deviations (USDT history + live board), total-circulation flows ($200B+ of T-bills behind them), and the 24/7 BTC canary — crypto trades when funding markets sleep. |
@@ -154,6 +154,22 @@ silently vanishes), **honest lags** (COT is T+3 by construction; shown, not hidd
 and **honest scope** (a registered market with no qualifying public benchmark stays
 visible as unavailable; a policy rate or restricted input is never relabelled as a
 live traded benchmark).
+
+## Public world-market contracts
+
+- **`GET /api/v2/world-markets`** returns the versioned
+  `seiche.world-markets.v1` projection of an already completed snapshot. It
+  connects money-market funding, the 22-currency FX reference ledger, three
+  trade-weighted dollar indexes, and capital-market transmission through
+  Treasury, credit, volatility, dealer, positioning and commodity evidence.
+  Every section carries canonical citation URLs plus `observed`, `derived`,
+  `structural`, `restricted` or `unavailable` status. The request never starts
+  collection, scans historical repositories or fits a model.
+- Crawlable citation pages live at **[`/markets/`](https://seiche.info/markets/)**,
+  **[`/markets/forex/`](https://seiche.info/markets/forex/)** and
+  **[`/markets/capital-markets/`](https://seiche.info/markets/capital-markets/)**.
+  They describe real public coverage and its gaps; they do not claim executable
+  quotes, every security or licensed redistribution rights.
 
 ## Public money-market contracts
 
@@ -243,7 +259,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Ten tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Eleven tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -264,11 +280,12 @@ The copy-paste quickstart and live tool runner are at
 | `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
 | `institutional_flows` | who is positioned where, from public prints |
 | `money_market_context` | compact, chartless USD desk summary or one requested section, plus sources/methodology selectors |
+| `world_markets_context` | bounded summary or money, forex, capital, source and methodology sections with canonical citation URLs |
 | `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
 | `fx_materials_passage` | upstream FX/material pressure and the Passage's holdout-tested links |
 
 That is the conclusion, the precedent, the honest record, the freshness, granular
-USD money-market context and cross-market transmission context, and it stays
+USD money-market context, unified world-market context and cross-market transmission context, and it stays
 free. Five tools want a bearer
 token because they read gated forecasting, replay, positioning, prose, or LLM
 engines rather than a published contextual conclusion:

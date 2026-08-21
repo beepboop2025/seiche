@@ -134,10 +134,26 @@ def _world(n: int = 1100) -> dict:
 def test_estuary_registry_is_keyless_and_covers_fx_and_material_categories() -> None:
     by_name = {spec.mnemonic: spec for spec in ESTUARY_FRED_SERIES}
     assert {"GBP", "AUD", "CAD", "CHF", "MXN", "BRL", "ZAR"} <= set(by_name)
+    assert {
+        "NZD", "DKK", "HKD", "MYR", "NOK", "SEK", "SGD", "TWD", "THB", "LKR"
+    } <= set(by_name)
     assert {"DXY_AFE", "DXY_EME", "NATGAS_SPOT", "COMMODITY_ALL"} <= set(by_name)
     assert {"COPPER", "ALUMINUM", "NICKEL", "COAL", "WHEAT", "CORN"} <= set(by_name)
     assert all(spec.source == "fred" for spec in by_name.values())
     assert set(by_name) <= set(ALL_SERIES)
+
+
+def test_expanded_h10_panel_has_unique_remote_series_and_explicit_quote_units() -> None:
+    panel = {
+        spec.mnemonic: spec
+        for spec in ESTUARY_FRED_SERIES
+        if spec.remote_id.startswith("DEX")
+    }
+    remote_ids = [spec.remote_id for spec in panel.values()]
+    assert len(remote_ids) == len(set(remote_ids))
+    assert panel["NZD"].unit == "$ per NZD"
+    assert panel["HKD"].unit == "HKD"
+    assert panel["SGD"].unit == "SGD"
 
 
 def test_flat_world_is_neutral_and_normalizes_every_fx_quote_direction() -> None:

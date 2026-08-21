@@ -107,7 +107,7 @@ def test_llms_txt_lists_letters_with_markdown_links(repo):
     llms = (root / "frontend" / "public" / "llms.txt").read_text()
     assert llms.startswith("# Seiche")
     assert f"https://seiche.info/dispatches/{d['slug']}.md" in llms
-    assert "AI input or training material" in llms  # the affirmative grant
+    assert "search and AI input but does not grant model training" in llms
 
 
 def test_llms_full_carries_complete_letters(repo):

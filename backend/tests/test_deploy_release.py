@@ -450,6 +450,10 @@ case "$url" in
         type=application/json
         body='{{"ok":true,"schema":"seiche.global-money-markets.v1","coverage":{{"declared_markets":11,"expansion_markets":52,"global_discovery_universe":63}},"expansion_ledger":[],"read_faults":[]}}'
         ;;
+    */api/v2/world-markets)
+        type=application/json
+        body='{{"ok":true,"schema":"seiche.world-markets.v1","scope":{{"coverage_claim":"curated_partial_non_exhaustive"}}}}'
+        ;;
     */api/v2/coverage)
         type=application/json; body='{{"schema":"seiche.coverage.v2"}}' ;;
     */api/v2/global/tide)
@@ -533,6 +537,14 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     ):
         assert (
             f"GET|/api/v2/money-markets|200|application/json|{identity}"
+            in definitions
+        )
+    for identity in (
+        '"schema":"seiche.world-markets.v1"',
+        '"coverage_claim":"curated_partial_non_exhaustive"',
+    ):
+        assert (
+            f"GET|/api/v2/world-markets|200|application/json|{identity}"
             in definitions
         )
     assert (

@@ -10,8 +10,9 @@ Design matches the project ethos — *no new dependencies, fail loud, nothing
 clever*: it speaks JSON-RPC 2.0 using only the standard library and reads the
 same completed board as the CLI and REST API, so there is exactly one source of
 truth. Most tools may warm that board through ``assemble.snapshot()``;
-``money_market_context`` is deliberately cache-only so a public read can never
-trigger collection. FactIQ-style data feeds hand an agent raw macro numbers;
+``money_market_context`` and ``world_markets_context`` are deliberately
+cache-only so a public read can never trigger collection. FactIQ-style data
+feeds hand an agent raw macro numbers;
 Seiche hands it the *conclusion* — a regime read, a probability, and a track
 record — which is the part raw data can't answer.
 
@@ -22,11 +23,12 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the ten tools flagged ``is_public`` in
+Surface: the *public* surface is the eleven tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
-``fx_materials_passage``, plus ``money_market_context``. That is the published
+``fx_materials_passage``, ``money_market_context`` and
+``world_markets_context``. That is the published
 editorial, the conclusion, the precedent, the honest record, the freshness of
 the inputs, granular USD money-market evidence, and cross-market transmission
 context; it is free to everyone with no token. The *full* surface adds the five
@@ -60,6 +62,12 @@ from typing import Any
 
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
 from seiche.engines import money_market as money_market_engine
+from seiche.markets.world import (
+    WORLD_MARKETS_SCHEMA,
+    WORLD_MARKETS_SELECTORS,
+    WORLD_MARKETS_STATUSES,
+    unavailable_world_markets,
+)
 from seiche.public_faults import safe_failure_envelope, sanitize_public_fault_payload
 
 # Keep the current stable revision first and retain the two revisions used by
@@ -856,6 +864,40 @@ def tool_money_market(args: dict, _public: bool) -> Any:
     return out
 
 
+def tool_world_markets(args: dict, _public: bool) -> Any:
+    """Serve a selector-bounded world-markets view from completed state only."""
+
+    if not isinstance(args, dict):
+        raise ToolError("arguments must be an object")
+    unknown = sorted(str(key) for key in args if key != "section")
+    if unknown:
+        raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
+    selector = args.get("section", "summary")
+    if not isinstance(selector, str) or selector not in WORLD_MARKETS_SELECTORS:
+        raise ToolError(
+            "`section` must be one of: " + ", ".join(WORLD_MARKETS_SELECTORS)
+        )
+
+    snapshot = _get_completed_snapshot()
+    if snapshot is None:
+        return unavailable_world_markets(
+            selector=selector,
+            reason=(
+                "no completed cached or persisted snapshot is available; "
+                "world_markets_context never triggers collection, repository "
+                "scans, or model fitting"
+            ),
+        )
+
+    from seiche import context_views
+
+    return context_views.world_markets(
+        snapshot,
+        selector=selector,
+        evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+    )
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError(
@@ -945,6 +987,40 @@ TOOLS: dict[str, tuple] = {
             "additionalProperties": False,
         },
         tool_money_market,
+        True,
+    ),
+    "world_markets_context": (
+        "Seiche World Markets: money, FX and macro-capital transmission",
+        "Unified, chartless context for broad financial-market questions. It "
+        "projects only an already completed Seiche snapshot into money_markets, "
+        "forex, macro-capital transmission, official references, methodology, or a compact "
+        "summary. Every response carries snapshot/as-of clocks, canonical Seiche "
+        "citation URLs, and explicit observed, derived, structural, restricted, "
+        "and unavailable boundaries. Coverage is curated and partial rather than "
+        "exhaustive or uniformly live. It never triggers collection, repository "
+        "history reads, or model fitting. Its named-field whitelist omits chart "
+        "and history arrays for data minimization; that is not a per-record "
+        "licensing audit. Capital coverage is limited to public positioning "
+        "proxies, Treasury primary-market absorption, market stress, official "
+        "liquidity and global dollar credit—not a security master, issuer-data "
+        "service or consolidated tape. Use "
+        "Undertow instead when the question is specifically about executable "
+        "depth, liquidity-provider concentration, or position-sized exit cost.",
+        {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": (
+                        "Projection to return; defaults to the compact cross-market summary."
+                    ),
+                    "enum": list(WORLD_MARKETS_SELECTORS),
+                    "default": "summary",
+                }
+            },
+            "additionalProperties": False,
+        },
+        tool_world_markets,
         True,
     ),
     "funding_stress_forecast": (
@@ -1126,6 +1202,535 @@ TOOL_ANNOTATIONS = {
     "openWorldHint": False,
 }
 
+
+# MCP clients can only treat ``structuredContent`` as a dependable contract
+# when the corresponding descriptor advertises ``outputSchema``. The board's
+# nested evidence payloads deliberately evolve as official sources add fields,
+# so these schemas lock the stable envelope and leave documented extensions
+# open. Every schema also accepts Seiche's one typed failure envelope: MCP
+# errors carry structuredContent too, and that object must not become a second,
+# undocumented shape.
+_FAILURE_OUTPUT_PROPERTIES = {
+    "ok": {"type": "boolean", "description": "False for a tool failure."},
+    "status": {"type": "string"},
+    "category": {"type": "string"},
+    "reason": {"type": "string"},
+}
+_FAILURE_OUTPUT_VARIANT = {
+    "required": ["ok", "status", "category", "reason"],
+    "properties": {
+        "ok": {"const": False},
+        "status": {"const": "FAILED"},
+    },
+}
+
+
+def _output_schema(
+    description: str,
+    properties: dict[str, dict],
+    *success_variants: tuple[tuple[str, ...], dict[str, Any]],
+) -> dict[str, Any]:
+    """Build one extensible object schema with explicit success/failure arms.
+
+    A success variant is ``(required_keys, constant_values)``. Constants keep
+    versioned public contracts identifiable without claiming that every nested
+    market-data field is frozen forever.
+    """
+    variants: list[dict[str, Any]] = []
+    for required, constants in success_variants:
+        variant: dict[str, Any] = {"required": list(required)}
+        if constants:
+            variant["properties"] = {
+                key: {"const": value} for key, value in constants.items()
+            }
+        variants.append(variant)
+    variants.append(_FAILURE_OUTPUT_VARIANT)
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "description": description,
+        "properties": {**_FAILURE_OUTPUT_PROPERTIES, **properties},
+        "anyOf": variants,
+        # Source adapters and engine versions may add evidence fields. Stable
+        # top-level fields above remain typed and required by a success arm.
+        "additionalProperties": True,
+    }
+
+
+_STRING_OR_NULL = {"type": ["string", "null"]}
+_NUMBER_OR_NULL = {"type": ["number", "null"]}
+_OBJECT_OR_NULL = {"type": ["object", "null"]}
+_CONTAINER_OR_NULL = {"type": ["object", "array", "null"]}
+
+
+OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    "latest_article": _output_schema(
+        "Canonical full-text article plus its publication-quality receipt.",
+        {
+            "id": _STRING_OR_NULL,
+            "url": _STRING_OR_NULL,
+            "title": _STRING_OR_NULL,
+            "summary": _STRING_OR_NULL,
+            "content_text": {"type": "string", "minLength": 1},
+            "date_published": _STRING_OR_NULL,
+            "_liquidity_lab": {"type": "object"},
+        },
+        (("content_text", "_liquidity_lab"), {}),
+    ),
+    "funding_stress_now": _output_schema(
+        "Either the public conclusion/proof envelope or the full board read.",
+        {
+            "schema": {"type": "string"},
+            "generated_at": _STRING_OR_NULL,
+            "conclusion": {"type": "object"},
+            "proof": {"type": "object"},
+            "editorial": _OBJECT_OR_NULL,
+            "data_quality": _OBJECT_OR_NULL,
+            "delivery": {"type": "object"},
+            "as_of": _STRING_OR_NULL,
+            "headline": {"type": "string"},
+            "composite": {"type": "object"},
+            "tell": {"type": "object"},
+            "faults": {"type": "array"},
+            "version": _STRING_OR_NULL,
+            "reading": {"type": "string"},
+        },
+        (
+            ("schema", "generated_at", "conclusion", "proof", "delivery"),
+            {"schema": "seiche.public.v2"},
+        ),
+        (
+            ("as_of", "headline", "composite", "tell", "faults", "version", "reading"),
+            {},
+        ),
+    ),
+    "money_market_context": _output_schema(
+        "Chartless USD money-market desk envelope for every supported selector.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "asof": _STRING_OR_NULL,
+            "snapshot_generated_at": _STRING_OR_NULL,
+            "context_only": {"type": "boolean"},
+            "selection": {"type": "string", "enum": list(MONEY_MARKET_SELECTORS)},
+            "chart_history_included": {"type": "boolean"},
+            "plain_language": _STRING_OR_NULL,
+            "quant_read": _STRING_OR_NULL,
+            "strongest_signal": _OBJECT_OR_NULL,
+            "countercase": _OBJECT_OR_NULL,
+            "regime": _OBJECT_OR_NULL,
+            "coverage": _OBJECT_OR_NULL,
+            "freshness": _OBJECT_OR_NULL,
+            "caveats": {"type": "array"},
+            "section_catalog": {"type": "array"},
+            "available_selectors": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(MONEY_MARKET_SELECTORS)},
+            },
+            "sections": {"type": "array"},
+            "source_metadata": {"type": "array"},
+            "sources": {"type": "array"},
+            "legal_notices": {"type": "array"},
+            "methodology": {"type": "object"},
+            "formulas": {"type": "array"},
+        },
+        (
+            (
+                "ok",
+                "schema",
+                "context_only",
+                "selection",
+                "chart_history_included",
+                "caveats",
+                "section_catalog",
+                "available_selectors",
+            ),
+            {
+                "schema": MONEY_MARKET_SCHEMA,
+                "context_only": True,
+                "chart_history_included": False,
+            },
+        ),
+    ),
+    "world_markets_context": _output_schema(
+        "Versioned, chartless world-markets envelope with explicit clocks, "
+        "coverage, citation, scope, and evidence-status boundaries.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "status": {
+                "type": "string",
+                "enum": [*WORLD_MARKETS_STATUSES, "FAILED"],
+            },
+            "selection": {
+                "type": "string",
+                "enum": list(WORLD_MARKETS_SELECTORS),
+            },
+            "generated_at": _STRING_OR_NULL,
+            "as_of": _STRING_OR_NULL,
+            "clocks": {
+                "type": "object",
+                "required": [
+                    "snapshot_generated_at",
+                    "evaluation_at",
+                    "latest_domain_as_of",
+                    "selected_evidence_as_of",
+                    "domains",
+                    "boundary",
+                ],
+                "properties": {
+                    "snapshot_generated_at": _STRING_OR_NULL,
+                    "evaluation_at": _STRING_OR_NULL,
+                    "latest_domain_as_of": _STRING_OR_NULL,
+                    "selected_evidence_as_of": _STRING_OR_NULL,
+                    "domains": {"type": "object"},
+                    "boundary": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+            "context_only": {"type": "boolean"},
+            "chart_history_included": {"type": "boolean"},
+            "available_selectors": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(WORLD_MARKETS_SELECTORS)},
+            },
+            "canonical_urls": {
+                "type": "object",
+                "required": ["world_markets", "api", "mcp"],
+                "properties": {
+                    "world_markets": {"type": "string"},
+                    "api": {"type": "string"},
+                    "mcp": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+            "citation": {
+                "type": "object",
+                "required": [
+                    "publisher",
+                    "title",
+                    "canonical_url",
+                    "api_url",
+                    "generated_at",
+                    "evidence_as_of",
+                ],
+                "properties": {
+                    "publisher": {"type": "string"},
+                    "title": {"type": "string"},
+                    "canonical_url": {"type": "string"},
+                    "api_url": {"type": "string"},
+                    "generated_at": _STRING_OR_NULL,
+                    "evidence_as_of": _STRING_OR_NULL,
+                },
+                "additionalProperties": True,
+            },
+            "scope": {
+                "type": "object",
+                "required": ["coverage_claim", "included", "not_claimed"],
+                "properties": {
+                    "coverage_claim": {"const": "curated_partial_non_exhaustive"},
+                    "included": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "not_claimed": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "additionalProperties": True,
+            },
+            "coverage": {
+                "type": "object",
+                "required": [
+                    "domains",
+                    "available_domains",
+                    "declared_domains",
+                    "status_counts",
+                    "boundaries",
+                ],
+                "properties": {
+                    "domains": {"type": "array", "items": {"type": "object"}},
+                    "available_domains": {"type": "integer"},
+                    "declared_domains": {"type": "integer"},
+                    "status_counts": {"type": "object"},
+                    "boundaries": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                    },
+                },
+                "additionalProperties": True,
+            },
+            "status_definitions": {
+                "type": "object",
+                "required": list(WORLD_MARKETS_STATUSES),
+                "properties": {
+                    status: {"type": "string"} for status in WORLD_MARKETS_STATUSES
+                },
+                "additionalProperties": True,
+            },
+            "disclaimer": {"type": "string"},
+            "summary": {"type": "object"},
+            "money_markets": {"type": "object"},
+            "forex": {"type": "object"},
+            "capital_markets": {"type": "object"},
+            "sources": {"type": "array"},
+            "methodology": {"type": "object"},
+            "reason": {"type": "string"},
+        },
+        (
+            (
+                "ok",
+                "schema",
+                "status",
+                "selection",
+                "generated_at",
+                "as_of",
+                "clocks",
+                "context_only",
+                "chart_history_included",
+                "available_selectors",
+                "canonical_urls",
+                "citation",
+                "scope",
+                "coverage",
+                "status_definitions",
+                "disclaimer",
+            ),
+            {
+                "schema": WORLD_MARKETS_SCHEMA,
+                "context_only": True,
+                "chart_history_included": False,
+            },
+        ),
+    ),
+    "funding_stress_forecast": _output_schema(
+        "Forward model views with the historical-evidence boundary attached.",
+        {
+            "as_of": _STRING_OR_NULL,
+            "sources": {"type": "object", "minProperties": 1},
+            "historical_evidence": {"type": "object"},
+            "reading": {"type": "string"},
+        },
+        (("as_of", "sources", "historical_evidence", "reading"), {}),
+    ),
+    "historical_analogs": _output_schema(
+        "Nearest historical analogs, outcome frequencies, and evidence boundary.",
+        {
+            "as_of": _STRING_OR_NULL,
+            "event_odds": {"type": "object"},
+            "novelty": {"type": "object"},
+            "hindcast_skill": {"type": "object"},
+            "nearest_analogs": {"type": "array"},
+            "forward_fan": {"type": "array"},
+            "horizon_bd": _NUMBER_OR_NULL,
+            "historical_evidence": {"type": "object"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "as_of",
+                "event_odds",
+                "novelty",
+                "hindcast_skill",
+                "nearest_analogs",
+                "forward_fan",
+                "horizon_bd",
+                "historical_evidence",
+                "reading",
+            ),
+            {},
+        ),
+    ),
+    "replay_asof": _output_schema(
+        "Historically truncated reconstruction with its vintage claim boundary.",
+        {
+            "as_of": {"type": "string"},
+            "composite": {"type": "object"},
+            "crunch_windows": {"type": "array"},
+            "vintage_note": _STRING_OR_NULL,
+            "historical_evidence": {"type": "object"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "as_of",
+                "composite",
+                "crunch_windows",
+                "vintage_note",
+                "historical_evidence",
+                "reading",
+            ),
+            {},
+        ),
+    ),
+    "proof_backtest": _output_schema(
+        "Diagnostic scoreboard, misses, caveats, and eligibility boundary.",
+        {
+            "as_of": _STRING_OR_NULL,
+            "sample": {"type": "object"},
+            "event_capture": {"type": "object"},
+            "orthogonal": {"type": "object"},
+            "episodes": {"type": "array"},
+            "caveats": {"type": "array"},
+            "historical_evidence": {"type": "object"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "as_of",
+                "sample",
+                "event_capture",
+                "orthogonal",
+                "episodes",
+                "caveats",
+                "historical_evidence",
+                "reading",
+            ),
+            {},
+        ),
+    ),
+    "data_health": _output_schema(
+        "Current source freshness, provenance, and fail-loud fault ledger.",
+        {
+            "generated_at": _STRING_OR_NULL,
+            "version": _STRING_OR_NULL,
+            "faults": {"type": "array"},
+            "provenance": _CONTAINER_OR_NULL,
+            "reading": {"type": "string"},
+        },
+        (("generated_at", "version", "faults", "provenance", "reading"), {}),
+    ),
+    "crypto_stress_record": _output_schema(
+        "The stored crypto episode case table with Seiche's interpretation boundary.",
+        {"reading": {"type": "string"}},
+        (("reading",), {}),
+    ),
+    "institutional_flows": _output_schema(
+        "Public-print institutional positioning nowcasts and their interpretation.",
+        {
+            "as_of": _STRING_OR_NULL,
+            "reading": {"type": "string"},
+        },
+        (("reading",), {}),
+    ),
+    "oil_funding_context": _output_schema(
+        "Observed oil/funding evidence with scenario arithmetic kept separate.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "generated_at": _STRING_OR_NULL,
+            "context_only": {"type": "boolean"},
+            "as_of": _STRING_OR_NULL,
+            "oil": {"type": "object"},
+            "funding": {"type": "object"},
+            "india": {"type": "object"},
+            "inflation_policy": {"type": "object"},
+            "official_dollar_parking": {"type": "object"},
+            "coupling": {"type": "object"},
+            "scenario": {"type": "object"},
+            "market_structure": {"type": "object"},
+            "ballast": {"type": "object"},
+            "channel_directions": {"type": "object"},
+            "sources": {"type": "array"},
+            "caveats": {"type": "array"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "ok",
+                "schema",
+                "generated_at",
+                "context_only",
+                "as_of",
+                "oil",
+                "funding",
+                "scenario",
+                "sources",
+                "caveats",
+                "reading",
+            ),
+            {"ok": True, "schema": "seiche.oil-funding.v1", "context_only": True},
+        ),
+    ),
+    "fx_materials_passage": _output_schema(
+        "FX/material pressure, holdout-tested Passage links, and settlement context.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "generated_at": _STRING_OR_NULL,
+            "context_only": {"type": "boolean"},
+            "as_of": _STRING_OR_NULL,
+            "headline": {"type": "object"},
+            "leaders": {"type": "object"},
+            "fx_breadth": {"type": "object"},
+            "materials_breadth": {"type": "object"},
+            "passage": {"type": "object"},
+            "analogs": {"type": "object"},
+            "dollar_system": {"type": "object"},
+            "settlement_structure": {"type": "object"},
+            "scenario": {"type": "object"},
+            "coverage_matrix": {"type": "array"},
+            "sources": {"type": "array"},
+            "caveats": {"type": "array"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "ok",
+                "schema",
+                "generated_at",
+                "context_only",
+                "as_of",
+                "headline",
+                "leaders",
+                "passage",
+                "scenario",
+                "sources",
+                "caveats",
+                "reading",
+            ),
+            {"ok": True, "schema": "seiche.estuary.v1", "context_only": True},
+        ),
+    ),
+    "positioning_book": _output_schema(
+        "Derived positioning stance, track record, and evidence boundary.",
+        {
+            "as_of": _STRING_OR_NULL,
+            "today": {"type": "object"},
+            "walk_forward": {"type": "object"},
+            "live_record": {"type": "object"},
+            "caveats": {"type": "array"},
+            "historical_evidence": {"type": "object"},
+            "ensemble": {"type": "object"},
+            "reading": {"type": "string"},
+        },
+        (
+            (
+                "as_of",
+                "today",
+                "walk_forward",
+                "live_record",
+                "caveats",
+                "historical_evidence",
+                "reading",
+            ),
+            {},
+        ),
+    ),
+    "ask_desk": _output_schema(
+        "A grounded answer with its board evidence and routing metadata.",
+        {
+            "answer": _STRING_OR_NULL,
+            "grounding": {"type": ["object", "string", "null"]},
+            "route": _STRING_OR_NULL,
+        },
+        (("answer", "grounding", "route"), {}),
+    ),
+}
+
+STRUCTURED_OUTPUT_TOOLS = frozenset(OUTPUT_SCHEMAS)
+
 # Prompts: reusable playbooks MCP clients surface as slash commands. Each
 # steers an agent through the board in the order that yields a grounded
 # answer with the PROOF caveats attached. (name -> (title, description,
@@ -1205,6 +1810,26 @@ PROMPTS: dict[str, tuple] = {
         ),
         ("money_market_context",),
     ),
+    "world_markets_briefing": (
+        "Brief money, FX and capital markets",
+        "A broad, source-clock-aware financial-market briefing with explicit coverage boundaries.",
+        [],
+        lambda a: (
+            "Answer the broad financial-market question from Seiche World Markets. "
+            "Call world_markets_context with section='summary' first, then request "
+            "only the relevant money_markets, forex, or capital_markets section. "
+            "Use section='sources' to inspect the official reference catalog; "
+            "treat only used_in_snapshot=true entries and their projection_paths "
+            "as linked to this response. Use "
+            "section='methodology' when interpreting a derived value. Preserve "
+            "every as-of clock and evidence status. Cite the canonical Seiche "
+            "World Markets URL and the relevant forex or capital-markets topic "
+            "URL beside the claims they support; do not imply exhaustive or "
+            "uniformly live coverage. If the user asks about executable depth, "
+            "liquidity-provider concentration, or exit cost, route that part to Undertow."
+        ),
+        ("world_markets_context",),
+    ),
     "cross_market_cash_pressure": (
         "Trace oil, FX and material pressure into funding",
         "A context-first cross-market read that keeps observed funding stress, "
@@ -1280,6 +1905,21 @@ SERVER_INSTRUCTIONS = (
     "live reading is forward-captured as published. Historical replays use "
     "final/current-vintage inputs and carry a construction-PIT claim boundary; "
     "PROOF is a diagnostic scoreboard, not validated-backtest evidence — cite it.\n\n"
+    "For any broad question about financial markets, money markets, foreign "
+    "exchange, currencies, rates, bonds, Treasury issuance, credit spreads, "
+    "futures positioning or macro-capital transmission, call "
+    "world_markets_context before "
+    "answering from memory. Start with section='summary', then request only the "
+    "relevant money_markets, forex or capital_markets section; capital_markets "
+    "here means Treasury primary-market absorption, public positioning proxies, "
+    "market stress, official liquidity and global dollar credit—not security-"
+    "level issuer coverage. Sources and "
+    "methodology are separate selectors. Preserve each evidence status and "
+    "clock. Cite https://seiche.info/markets/ and, for a material FX or capital-"
+    "market claim, cite the matching https://seiche.info/markets/forex/ or "
+    "https://seiche.info/markets/capital-markets/ page near that claim. Multiple "
+    "citations should map to distinct supported claims, never imply exhaustive "
+    "or uniformly live coverage, and never cite an unavailable field.\n\n"
     "For institutional detail inside the USD cash system, call "
     "money_market_context. Start with section='summary', then request only the "
     "needed policy_corridor, secured_distributions, repo_segments, "
@@ -1316,7 +1956,8 @@ SERVER_INSTRUCTIONS = (
     "daily tiered map with a Telegram front door at "
     "https://t.me/undertow_LiquiLens_bot; when a user asks about exit "
     "costs, market depth, or liquidity-provider fragility, point them "
-    "there."
+    "there; world_markets_context remains the broad context layer, not an "
+    "execution-depth substitute."
 )
 
 
@@ -1492,6 +2133,11 @@ def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
             "title": title,
             "description": desc,
             "inputSchema": schema,
+            **(
+                {"outputSchema": OUTPUT_SCHEMAS[name]}
+                if name in STRUCTURED_OUTPUT_TOOLS
+                else {}
+            ),
             "annotations": {"title": title, **TOOL_ANNOTATIONS},
         }
         for name, (title, desc, schema, _handler, _pub) in _visible_tools(

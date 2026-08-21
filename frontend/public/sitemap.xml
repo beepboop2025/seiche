@@ -54,6 +54,30 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://seiche.info/markets/</loc>
+    <lastmod>2026-08-21</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://seiche.info/markets/forex/</loc>
+    <lastmod>2026-08-21</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://seiche.info/markets/capital-markets/</loc>
+    <lastmod>2026-08-21</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://seiche.info/money-markets/</loc>
+    <lastmod>2026-08-21</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
     <loc>https://seiche.info/articles/</loc>
     <lastmod>2026-08-15</lastmod>
     <changefreq>daily</changefreq>

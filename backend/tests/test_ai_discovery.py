@@ -40,7 +40,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
         (PUBLIC / ".well-known" / "ai-catalog.json").read_text())
     assert catalog["specVersion"] == "1.0"
     assert catalog["host"]["displayName"] == "Seiche"
-    assert len(catalog["entries"]) == 2
+    assert len(catalog["entries"]) == 4
 
     identifiers = set()
     for entry in catalog["entries"]:
@@ -60,9 +60,15 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 10
+    assert len(mcp["capabilities"]) == 11
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
+    assert "world_markets_context" in mcp["capabilities"]
+    world = next(entry for entry in catalog["entries"]
+                 if entry["identifier"].endswith(":world-markets-context"))
+    assert world["url"] == "https://api.seiche.info/api/v2/world-markets"
+    assert world["metadata"]["humanPage"] == "https://seiche.info/markets/"
+    assert world["metadata"]["forexReferenceSeries"] == 22
     assert catalog["host"]["documentationUrl"] == (
         "https://seiche.info/developers")
     assert all(".html" not in json.dumps(entry)
@@ -130,8 +136,11 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
 
 def test_generated_discovery_indexes_include_the_selection_surface():
     assert ("/use-cases", "monthly", "0.9") in dispatch_pages.BASE_URLS
+    assert ("/money-markets/", "weekly", "0.9") in dispatch_pages.BASE_URLS
     for url in ("https://seiche.info/use-cases",
-                "https://seiche.info/product-card.json"):
+                "https://seiche.info/product-card.json",
+                "https://seiche.info/money-markets/",
+                "https://seiche.info/money-markets/catalog.json"):
         assert url in dispatch_pages._LLMS_PREAMBLE
     assert "https://seiche.info/articles/feed.json" in dispatch_pages._LLMS_PREAMBLE
 
@@ -183,7 +192,7 @@ def test_search_and_answer_crawlers_are_explicitly_welcome():
     robots = (PUBLIC / "robots.txt").read_text()
     for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
                   "Claude-User", "PerplexityBot", "Perplexity-User",
-                  "Google-Extended", "Googlebot", "Bingbot"):
+                  "Googlebot", "Bingbot"):
         assert f"User-agent: {agent}\nAllow: /" in robots
 
 

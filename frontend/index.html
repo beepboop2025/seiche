@@ -3,14 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Seiche · dollar funding and money-market intelligence</title>
-    <meta name="description" content="Seiche follows dollar funding through a granular USD money-market desk and a licence-aware, native-frequency global atlas, with exact source clocks, countercases and an as-published record." />
+    <title>Seiche · money, forex and capital-market intelligence</title>
+    <meta name="description" content="Seiche connects dollar funding, an 11-pack global money-market atlas, 22 registered public FX reference series and a bounded capital-market transmission projection with explicit clocks, rights and evidence gaps." />
     <link rel="canonical" href="https://seiche.info/" />
     <link rel="ai-catalog" type="application/ai-catalog+json" href="/.well-known/ai-catalog.json" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="alternate" type="application/atom+xml" href="/dispatches/feed.xml" title="Seiche dispatches" />
+    <link rel="alternate" type="application/atom+xml" href="/articles/feed.xml" title="Seiche daily market analysis" />
+    <link rel="alternate" type="application/feed+json" href="/articles/feed.json" title="Seiche daily market analysis JSON Feed" />
     <link rel="alternate" type="application/json" href="/product-card.json" title="Seiche product card" />
     <link rel="preload" as="fetch" href="/data/overview.json" crossorigin="anonymous" />
     <meta name="theme-color" content="#000000" />
@@ -18,15 +20,15 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Seiche" />
     <meta property="og:url" content="https://seiche.info/" />
-    <meta property="og:title" content="Seiche · dollar funding intelligence, argued and audited" />
-    <meta property="og:description" content="The daily argument, institutional USD money-market evidence, a bounded global atlas, the countercase and the record—with every source clock and evidence gap shown." />
+    <meta property="og:title" content="Seiche · world-market intelligence, argued and audited" />
+    <meta property="og:description" content="Money, forex and capital markets connected through one provenance-first evidence atlas, with source clocks, rights states and explicit coverage gaps." />
     <meta property="og:image" content="https://seiche.info/og2.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Seiche · dollar funding intelligence, argued and audited" />
-    <meta name="twitter:description" content="Institutional USD money-market evidence, a native-frequency global atlas, the countercase and an audited record." />
+    <meta name="twitter:title" content="Seiche · world-market intelligence, argued and audited" />
+    <meta name="twitter:description" content="Money markets, 22 public FX reference series and capital-market transmission with native clocks and an audited boundary." />
     <meta name="twitter:image" content="https://seiche.info/og2.png" />
 
     <script type="application/ld+json">
@@ -34,15 +36,24 @@
       "@context": "https://schema.org",
       "@graph": [
         {
+          "@type": "Organization",
+          "@id": "https://seiche.info/#organization",
+          "name": "Seiche",
+          "url": "https://seiche.info/",
+          "logo": "https://seiche.info/og2.png",
+          "sameAs": ["https://github.com/beepboop2025/seiche"]
+        },
+        {
           "@type": "SoftwareApplication",
           "@id": "https://seiche.info/#software",
           "name": "Seiche",
           "alternateName": "Seiche Terminal",
           "url": "https://seiche.info/",
-          "description": "Seiche is a free, open source funding-stress terminal with an institutional USD money-market desk, a licence-aware global atlas across 11 registered monetary-area packs, and a dated official-source discovery ledger for 52 additional monetary areas. It publishes a live stress regime, exact source clocks, forward event odds, historical analogs and construction-PIT diagnostics with explicit eligibility flags; registration and discovery are not claims of full live coverage.",
+          "description": "Seiche is a free, open source financial-market evidence terminal connecting an institutional USD money-market desk, a licence-aware atlas across 11 registered monetary-area packs, 22 registered Federal Reserve H.10 bilateral FX reference series, three trade-weighted dollar indexes, and a bounded derived macro-capital transmission projection. Its public contracts expose applicable source clocks, rights states and explicit gaps; reference coverage is not a claim to every live or executable market quote.",
           "applicationCategory": "FinanceApplication",
           "operatingSystem": "Web",
           "isAccessibleForFree": true,
+          "provider": { "@id": "https://seiche.info/#organization" },
           "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
           "license": "https://www.gnu.org/licenses/agpl-3.0.html",
           "softwareHelp": { "@type": "CreativeWork", "url": "https://seiche.info/guide" },
@@ -55,46 +66,9 @@
           "@id": "https://seiche.info/#website",
           "url": "https://seiche.info/",
           "name": "Seiche",
-          "description": "Free open source funding-stress terminal with a granular USD desk and bounded global money-market atlas.",
-          "about": { "@id": "https://seiche.info/#software" }
-        },
-        {
-          "@type": "FAQPage",
-          "@id": "https://seiche.info/#faq",
-          "mainEntity": [
-            {
-              "@type": "Question",
-              "name": "What is Seiche?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Seiche is free, open source software: a funding-stress early-warning terminal for US money markets, with a granular USD desk and a global Atlas that keeps registered, available and validation-supported markets separate. It is named after the standing-wave phenomenon, because funding stress builds invisibly and then sloshes over the edge. The software is licensed under AGPL-3.0 and the full source code is on GitHub."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Is Seiche free to use?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Yes. Seiche's public surface requires no sign in. The core USD board uses free official/public APIs from the Fed, NY Fed, OFR, Treasury and CFTC. The global Atlas can declare licensed or tenant sources, but public outputs obey upstream redistribution terms and withhold restricted raw levels and histories."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Where is the Seiche source code?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "The complete source code is public at github.com/beepboop2025/seiche under the AGPL-3.0 license, including the engine suite, historical diagnostic code and data collectors. AGPL covers the code, not upstream data rights. The served historical evidence is final-vintage construction-PIT and is not a validated backtest."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Does Seiche provide eleven live global money markets?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "No. Seiche registers 11 monetary-area packs, but registration is a catalog and semantics claim, not live coverage. A separate 52-row source-audited ledger is discovery metadata, not quotes. The Atlas labels each registered market as a live or stale reference, derived context with restricted raw values withheld, policy-only, or declared unavailable, and keeps weekly and monthly sources at their native cadence."
-              }
-            }
-          ]
+          "description": "Free open source money-, forex- and capital-market evidence terminal with a granular USD funding desk and bounded global atlas.",
+          "about": { "@id": "https://seiche.info/#software" },
+          "publisher": { "@id": "https://seiche.info/#organization" }
         }
       ]
     }
@@ -104,9 +78,9 @@
   <body>
     <div id="root"></div>
     <noscript>
-      <h1>Seiche · dollar funding intelligence, argued and audited</h1>
-      <p>Seiche is free, open source software (AGPL-3.0) that follows US dollar funding through a granular money-market desk and places it beside a licence-aware global Atlas. It publishes a daily argument, the evidence against it, native source clocks, explicit availability gaps and an honest as-published record.</p>
-      <p><a href="https://api.seiche.info/api/money-markets">USD Money Market Desk</a> · <a href="https://api.seiche.info/api/v2/money-markets">Global Money Market Atlas</a> · <a href="https://seiche.info/guide">Plain English guide</a> · <a href="https://seiche.info/dispatches/">Daily dispatches</a> · <a href="https://github.com/beepboop2025/seiche">Source code on GitHub</a></p>
+      <h1>Seiche · money, forex and capital-market intelligence</h1>
+      <p>Seiche is free, open source software (AGPL-3.0) that connects US dollar funding, a licence-aware global money-market Atlas, 22 registered public FX reference series and a bounded derived macro-capital transmission projection. Its public contracts expose applicable source clocks, evidence and rights states, explicit gaps, the countercase and an honest as-published record.</p>
+      <p><a href="https://seiche.info/markets/">World Markets Atlas</a> · <a href="https://seiche.info/markets/forex/">Forex Ledger</a> · <a href="https://seiche.info/markets/capital-markets/">Capital Markets</a> · <a href="https://seiche.info/money-markets/">Money Markets</a> · <a href="https://api.seiche.info/api/v2/world-markets">World Markets API</a> · <a href="https://seiche.info/guide">Guide</a> · <a href="https://github.com/beepboop2025/seiche">Source</a></p>
     </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>

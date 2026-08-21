@@ -438,6 +438,7 @@ def test_prompts_list_names_titles_and_arguments():
         "funding_stress_briefing",
         "is_now_dangerous",
         "money_market_deep_dive",
+        "world_markets_briefing",
         "cross_market_cash_pressure",
         "crisis_replay",
     }
@@ -495,6 +496,7 @@ def test_public_surface_hides_prompts_whose_tools_are_hidden():
     assert names == {
         "is_now_dangerous",
         "money_market_deep_dive",
+        "world_markets_briefing",
         "cross_market_cash_pressure",
     }
     for name in names:
@@ -561,6 +563,21 @@ def test_tools_list_has_valid_schemas():
     assert "replay_asof" in names
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
+        if t["name"] == "desk_brief":
+            assert "outputSchema" not in t
+        else:
+            assert t["outputSchema"]["type"] == "object"
+            assert t["outputSchema"]["description"]
+
+
+def test_every_public_tool_advertises_a_structured_output_contract():
+    tools = mcp.dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        public=True,
+    )["result"]["tools"]
+
+    assert {tool["name"] for tool in tools} == PUBLIC_TOOLS
+    assert all(tool["outputSchema"]["type"] == "object" for tool in tools)
 
 
 def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
@@ -591,6 +608,7 @@ PUBLIC_TOOLS = {
     "oil_funding_context",
     "fx_materials_passage",
     "money_market_context",
+    "world_markets_context",
 }
 PAID_TOOLS = {
     "funding_stress_forecast",

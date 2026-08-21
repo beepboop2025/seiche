@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forex market data: 22 currencies and dollar indexes | Seiche</title>
+  <meta name="description" content="Seiche's citable forex ledger covers 22 public Federal Reserve H.10 currency reference-rate series and three trade-weighted dollar indexes, with pair convention, clocks and explicit gaps.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/markets/forex/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/world-markets" title="Seiche world-markets context API containing the forex section">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/markets/forex/">
+  <meta property="og:title" content="Forex market data | Seiche">
+  <meta property="og:description" content="Twenty-two public currency reference series, three dollar indexes, exact pair conventions and explicit non-coverage.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Forex market data | Seiche">
+  <meta name="twitter:description" content="A provenance-first public FX reference ledger—not an executable quote feed.">
+  <meta name="twitter:image" content="https://seiche.info/og2.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {"@type": "ListItem", "position": 1, "name": "Seiche", "item": "https://seiche.info/"},
+          {"@type": "ListItem", "position": 2, "name": "World markets", "item": "https://seiche.info/markets/"},
+          {"@type": "ListItem", "position": 3, "name": "Forex", "item": "https://seiche.info/markets/forex/"}
+        ]
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://seiche.info/markets/forex/#dataset",
+        "identifier": "seiche.forex-reference.v1",
+        "name": "Seiche public foreign-exchange reference ledger",
+        "description": "A registered panel of twenty-two daily Federal Reserve H.10 bilateral reference-rate series and three trade-weighted US dollar indexes. Current observations, when present, carry explicit quote conventions, source-native dates, retrieval clocks and evidence limits.",
+        "url": "https://seiche.info/markets/forex/",
+        "mainEntityOfPage": "https://seiche.info/markets/forex/",
+        "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
+        "creator": {"@id": "https://seiche.info/#organization"},
+        "publisher": {"@type": "Organization", "name": "Seiche", "url": "https://seiche.info/"},
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "isAccessibleForFree": true,
+        "spatialCoverage": "United States dollar bilateral reference rates for 22 currencies",
+        "temporalCoverage": "Source-dependent; business-day observations at the publisher's native cadence",
+        "keywords": ["forex data", "foreign exchange rates", "FX", "dollar index", "EUR USD", "JPY USD", "emerging market currencies", "Federal Reserve H.10"],
+        "variableMeasured": [
+          {"@type": "PropertyValue", "name": "Bilateral H.10 currency series", "value": 22},
+          {"@type": "PropertyValue", "name": "Trade-weighted dollar indexes", "value": 3},
+          {"@type": "PropertyValue", "name": "Executable quotes", "value": 0}
+        ],
+        "measurementTechnique": "Registered Federal Reserve H.10 reference series transported through public FRED series. When an eligible observation is present, the unified API normalizes its bilateral level to local-currency units per US dollar, records the source convention and does not fill non-publication days.",
+        "isBasedOn": [
+          "https://www.federalreserve.gov/releases/h10/current/",
+          "https://fred.stlouisfed.org/categories/15"
+        ],
+        "conditionsOfAccess": "Public reference observations retain upstream source terms. These are not executable dealer quotes or a licence to redistribute restricted venue data.",
+        "distribution": [
+          {
+            "@type": "DataDownload",
+            "name": "Unified forex context",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/v2/world-markets"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Estuary FX and materials context",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/estuary"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Seiche series catalog",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/series/index.json"
+          }
+        ],
+        "citation": "Seiche. Forex reference ledger, schema seiche.forex-reference.v1. https://seiche.info/markets/forex/ (include the API generated_at time, series as-of date, unit and original Federal Reserve H.10 source)."
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://seiche.info/markets/forex/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Which currencies does Seiche cover?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Seiche registers daily Federal Reserve H.10 reference series for the euro, British pound, Japanese yen, Australian dollar, Canadian dollar, Swiss franc, Chinese renminbi, Indian rupee, South Korean won, Mexican peso, Brazilian real, South African rand, New Zealand dollar, Danish krone, Hong Kong dollar, Malaysian ringgit, Norwegian krone, Swedish krona, Singapore dollar, Taiwan dollar, Thai baht and Sri Lankan rupee, plus three trade-weighted dollar indexes."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Are Seiche FX rates live trading prices?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. When present, they are daily public reference observations, not bid/ask quotes, executable prices, order-book depth or intraday ticks."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Seiche cover FX forwards and options?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Not on the public evidence surface. Forward points, NDFs, cross-currency basis term structures, option volatility surfaces and risk reversals require additional eligible data and redistribution rights."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to forex evidence</a>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary">
+      <a href="/markets/">World markets</a>
+      <a href="/markets/forex/" aria-current="page">Forex</a>
+      <a href="/markets/capital-markets/">Capital</a>
+      <a href="/money-markets/">Money</a>
+      <a href="/developers">API + MCP</a>
+      <a href="/methodology">Methods</a>
+    </nav>
+  </header>
+
+  <main id="main" class="shell">
+    <div class="breadcrumbs"><a href="/">Seiche</a> / <a href="/markets/">world markets</a> / forex</div>
+    <article>
+      <header class="hero">
+        <div>
+          <p class="kicker">Foreign exchange / public reference ledger</p>
+          <h1>FX without the quotation fog.</h1>
+          <p class="lede">Twenty-two registered daily bilateral reference series. Three trade-weighted dollar indexes. The ledger records each source quote convention; a returned API observation adds its value, unit, source ID and as-of date without implying an executable market price.</p>
+        </div>
+        <aside class="receipt" aria-label="FX integration receipt">
+          <span class="label">Expansion receipt</span>
+          <strong>12 → 22</strong>
+          <p>Ten additional H.10 series were registered and live-checked on 21 August 2026. Use the API—not this receipt—for the current observation clock.</p>
+        </aside>
+      </header>
+
+      <dl class="pulse" aria-label="Forex coverage summary">
+        <div><dt>Bilateral currencies</dt><dd>22</dd><small>USD reference legs</small></div>
+        <div><dt>Dollar indexes</dt><dd>3</dd><small>broad / AFE / EME</small></div>
+        <div><dt>Native cadence</dt><dd>1d</dd><small>publication days only</small></div>
+        <div><dt>Intraday ticks</dt><dd>0</dd><small>explicitly unavailable</small></div>
+        <div><dt>Quote conventions</dt><dd>2</dd><small>USD/local or local/USD</small></div>
+      </dl>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head">
+          <div><span class="label">Direct answer</span><h2 id="answer-title">What the FX layer can establish</h2></div>
+          <p>The ledger supports sourced statements about the direction and scale of daily bilateral currency moves, broad dollar conditions and cross-market transmission into public funding and materials context.</p>
+        </div>
+        <div class="answer-block">
+          <p><strong>Registered public series:</strong> the configured ledger contains a Federal Reserve H.10 reference-rate series for each listed currency plus the broad, advanced-foreign-economy and emerging-market trade-weighted dollar indexes. A series becomes <em>observed</em> only when the current API response contains a value, unit, source ID and as-of date.</p>
+          <p><strong>Not established:</strong> the price currently available to trade, bid/ask spread, executable size, venue depth, forward carry, NDF curve, basis term structure, option-implied distribution or dealer positioning. Those require different instruments and, often, licensed data.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="universe-title">
+        <div class="section-head">
+          <div><span class="label">Registered universe</span><h2 id="universe-title">The 22-currency ledger</h2></div>
+          <p><code>USD per local</code> means one unit of the local currency expressed in US dollars. <code>Local per USD</code> means local-currency units required for one US dollar. This ledger records the source publication convention; the unified REST and MCP responses normalize bilateral levels to <code>local per USD</code> and label that unit explicitly.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Currency</th><th>Source publication convention</th><th>Remote series</th><th>Coverage class</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Euro</strong>EUR</td><td><code>USD per EUR</code></td><td><a href="https://fred.stlouisfed.org/series/DEXUSEU">DEXUSEU</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>British pound</strong>GBP</td><td><code>USD per GBP</code></td><td><a href="https://fred.stlouisfed.org/series/DEXUSUK">DEXUSUK</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Japanese yen</strong>JPY</td><td><code>JPY per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXJPUS">DEXJPUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Australian dollar</strong>AUD</td><td><code>USD per AUD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXUSAL">DEXUSAL</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Canadian dollar</strong>CAD</td><td><code>CAD per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXCAUS">DEXCAUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Swiss franc</strong>CHF</td><td><code>CHF per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXSZUS">DEXSZUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Chinese renminbi</strong>CNY</td><td><code>CNY per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXCHUS">DEXCHUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Indian rupee</strong>INR</td><td><code>INR per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXINUS">DEXINUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>South Korean won</strong>KRW</td><td><code>KRW per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXKOUS">DEXKOUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Mexican peso</strong>MXN</td><td><code>MXN per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXMXUS">DEXMXUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Brazilian real</strong>BRL</td><td><code>BRL per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXBZUS">DEXBZUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>South African rand</strong>ZAR</td><td><code>ZAR per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXSFUS">DEXSFUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>New Zealand dollar</strong>NZD</td><td><code>USD per NZD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXUSNZ">DEXUSNZ</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Danish krone</strong>DKK</td><td><code>DKK per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXDNUS">DEXDNUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Hong Kong dollar</strong>HKD</td><td><code>HKD per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXHKUS">DEXHKUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Malaysian ringgit</strong>MYR</td><td><code>MYR per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXMAUS">DEXMAUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Norwegian krone</strong>NOK</td><td><code>NOK per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXNOUS">DEXNOUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Swedish krona</strong>SEK</td><td><code>SEK per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXSDUS">DEXSDUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Singapore dollar</strong>SGD</td><td><code>SGD per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXSIUS">DEXSIUS</a></td><td>advanced foreign economy</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Taiwan dollar</strong>TWD</td><td><code>TWD per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXTAUS">DEXTAUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Thai baht</strong>THB</td><td><code>THB per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXTHUS">DEXTHUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Sri Lankan rupee</strong>LKR</td><td><code>LKR per USD</code></td><td><a href="https://fred.stlouisfed.org/series/DEXSLUS">DEXSLUS</a></td><td>emerging market</td><td><span class="status structural">registered</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fineprint">“Registered” identifies a configured public source series, not a current market print. Inspect the API's observation status, source ID, unit, as-of date and stale flag before making a numerical claim.</p>
+      </section>
+
+      <section aria-labelledby="indexes-title">
+        <div class="section-head">
+          <div><span class="label">Dollar factor</span><h2 id="indexes-title">Three trade-weighted indexes</h2></div>
+          <p>Bilateral pairs answer which currencies moved. The indexes answer whether the move resembles broad dollar pressure and which economic grouping carries it.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Index</th><th>Series</th><th>Universe</th><th>Role in Seiche</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Nominal broad US dollar index</strong></td><td><a href="https://fred.stlouisfed.org/series/DTWEXBGS">DTWEXBGS</a></td><td>large set of US trading partners</td><td>broad dollar-pressure context</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Advanced foreign economies dollar index</strong></td><td><a href="https://fred.stlouisfed.org/series/DTWEXAFEGS">DTWEXAFEGS</a></td><td>advanced foreign economies</td><td>advanced-economy transmission context</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Emerging market economies dollar index</strong></td><td><a href="https://fred.stlouisfed.org/series/DTWEXEMEGS">DTWEXEMEGS</a></td><td>emerging market economies</td><td>emerging-market transmission context</td><td><span class="status structural">registered</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="normalization-title">
+        <div class="section-head">
+          <div><span class="label">Method</span><h2 id="normalization-title">Document first, normalize for comparison</h2></div>
+          <p>FX series can point in opposite numerical directions solely because their quote convention differs. The page records each source convention, while the unified API normalizes every bilateral level to local-currency units per US dollar for comparison.</p>
+        </div>
+        <dl class="clock-list">
+          <div><dt>unit</dt><dd>The page records the published orientation, such as USD per EUR or JPY per USD. The unified API returns <code>local per USD</code>; a number without its stated unit is not a complete FX claim.</dd></div>
+          <div><dt>as_of</dt><dd>The source observation date. Weekends, holidays and non-publication days remain gaps rather than repeated synthetic observations.</dd></div>
+          <div><dt>retrieved_at</dt><dd>The capture clock used to diagnose delayed or stale upstream data.</dd></div>
+          <div><dt>normalization</dt><dd>An inversion used to produce <code>local per USD</code> is a Seiche transform. The original source value and convention remain available from the linked upstream publisher, not as a separate raw-value field in this API response.</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="gaps-title">
+        <div class="section-head">
+          <div><span class="label">Coverage frontier</span><h2 id="gaps-title">The forex market beyond H.10</h2></div>
+          <p>A reference-rate panel is useful macro evidence, but the global FX market also includes instruments and market microstructure that cannot be inferred from a daily fixing.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><strong><span class="status unavailable">unavailable</span> Intraday spot</strong><p>No tick stream, minute bars, venue order book, dealer composite, bid/ask spread or executable size.</p></article>
+          <article class="limit"><strong><span class="status restricted">restricted</span> Forwards and swaps</strong><p>No complete forward-point, deliverable swap, NDF or cross-currency basis term structure on the public surface.</p></article>
+          <article class="limit"><strong><span class="status restricted">restricted</span> Options</strong><p>No full implied-volatility surface, delta risk reversals, butterflies, skew or expiry-by-strike chain.</p></article>
+          <article class="limit"><strong><span class="status structural">structural</span> Turnover and conventions</strong><p>BIS surveys and settlement conventions may supply dated structural context, but dated structure is never presented as a live quote.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="sources-title">
+        <div class="section-head">
+          <div><span class="label">Source ledger</span><h2 id="sources-title">Primary and transport sources</h2></div>
+          <p>The Federal Reserve is the publishing authority for H.10. FRED is the public transport used by Seiche for these configured series. BIS is the natural official expansion source for broader international FX statistics.</p>
+        </div>
+        <div class="source-grid">
+          <a class="source" href="https://www.federalreserve.gov/releases/h10/current/"><strong>Federal Reserve H.10</strong><code>primary publisher</code><span>Current foreign-exchange release and published quote conventions.</span></a>
+          <a class="source" href="https://fred.stlouisfed.org/categories/15"><strong>FRED foreign-exchange category</strong><code>public transport</code><span>Series histories and machine-readable observations used by the Seiche adapter.</span></a>
+          <a class="source" href="https://stats.bis.org/api-doc/v2/"><strong>BIS SDMX API</strong><code>official expansion path</code><span>Machine-readable international statistics with explicit dimensions and time periods.</span></a>
+          <a class="source" href="https://www.bis.org/statistics/dataportal/exr.htm"><strong>BIS exchange-rate statistics</strong><code>structural / cross-country</code><span>Official exchange-rate data portal and methodology context.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head">
+          <div><span class="label">Retrieval</span><h2 id="api-title">Ask for forex, receive its boundary</h2></div>
+          <p>The world-markets contract returns the forex panel, indexes, source registry, status and methodology together. The older Estuary route remains the focused FX × materials transmission view.</p>
+        </div>
+        <div class="api-grid">
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets"><strong>Forex section</strong><code>GET /api/v2/world-markets → forex</code><span>The deterministic, cache-only response contains this bounded section.</span></a>
+          <a class="api" href="https://api.seiche.info/api/estuary"><strong>Estuary transmission</strong><code>GET /api/estuary</code><span>FX and materials passage into dollar-funding context.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>MCP section</strong><code>world_markets_context(section="forex")</code><span>Agent-ready bounded section with citation fields.</span></a>
+          <a class="api" href="https://api.seiche.info/api/series/index.json"><strong>Series discovery</strong><code>GET /api/series/index.json</code><span>Find available mnemonics and individual JSON/CSV distributions.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq-visible-title">
+        <div class="section-head">
+          <div><span class="label">Frequently asked questions</span><h2 id="faq-visible-title">Use the reference panel correctly</h2></div>
+          <p>These visible answers are the same answers published in the page's structured FAQ data.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><h3>Which currencies does Seiche cover?</h3><p>Seiche registers daily Federal Reserve H.10 reference series for the euro, British pound, Japanese yen, Australian dollar, Canadian dollar, Swiss franc, Chinese renminbi, Indian rupee, South Korean won, Mexican peso, Brazilian real, South African rand, New Zealand dollar, Danish krone, Hong Kong dollar, Malaysian ringgit, Norwegian krone, Swedish krona, Singapore dollar, Taiwan dollar, Thai baht and Sri Lankan rupee, plus three trade-weighted dollar indexes.</p></article>
+          <article class="limit"><h3>Are Seiche FX rates live trading prices?</h3><p>No. When present, they are daily public reference observations, not bid/ask quotes, executable prices, order-book depth or intraday ticks.</p></article>
+          <article class="limit"><h3>Does Seiche cover FX forwards and options?</h3><p>Not on the public evidence surface. Forward points, NDFs, cross-currency basis term structures, option volatility surfaces and risk reversals require additional eligible data and redistribution rights.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="cite-title">
+        <div class="section-head">
+          <div><span class="label">Citation protocol</span><h2 id="cite-title">Quote the orientation</h2></div>
+          <p>An FX number without a pair convention can reverse the meaning of a move. Always retain the unit and source date.</p>
+        </div>
+        <div class="citation">
+          <span class="label">Recommended citation</span>
+          <code>Seiche. “Forex reference ledger.” Schema seiche.forex-reference.v1, 21 Aug. 2026. https://seiche.info/markets/forex/ — for a live series claim, add API generated_at, observation as_of, exact unit and the linked Federal Reserve H.10 series.</code>
+          <p>Reference observations are informational market context, not investment advice or executable prices.</p>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="shell"><span>Seiche · forex reference data with the unit attached</span><span><a href="/markets/">World markets</a> · <a href="/methodology">Methodology</a> · <a href="/developers">Developers</a></span></div>
+  </footer>
+</body>
+</html>
