@@ -5,6 +5,7 @@ umask 0077
 
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
+API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 RETENTION_DAYS="${SEICHE_BACKUP_RETENTION_DAYS:-21}"
@@ -21,6 +22,7 @@ SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 GIT_BIN="${SEICHE_GIT_BIN:-git}"
+PYTHON_BIN="${SEICHE_PYTHON_BIN:-$APP_DIR/backend/.venv/bin/python}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
 
 fail() {
@@ -45,6 +47,17 @@ if [ "${EUID:-$(id -u)}" -ne 0 ] \
 fi
 [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] \
     || fail "state directory must be a real directory"
+case "$API_DATA_DIR" in
+    /*) ;;
+    *) fail "API data directory must be absolute" ;;
+esac
+[ "$API_DATA_DIR" != "/" ] || fail "refusing a filesystem-root API data directory"
+[ -d "$API_DATA_DIR" ] && [ ! -L "$API_DATA_DIR" ] \
+    || fail "API data directory must be a real directory"
+if find "$API_DATA_DIR" -type l -print -quit | grep -q .; then
+    fail "API data directory cannot contain symlinks"
+fi
+[ -x "$PYTHON_BIN" ] || fail "Python runtime is unavailable"
 [ ! -L "$BACKUP_DIR" ] || fail "backup directory cannot be a symlink"
 if [ "${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}" = "1" ]; then
     mkdir -p "$BACKUP_DIR"
@@ -110,10 +123,40 @@ STATE_NAME=$(basename "$STATE_DIR")
     --directory "$STATE_PARENT" "$STATE_NAME"
 "$TAR_BIN" --list --gzip --file "$STAGE/var-lib-seiche.tgz" >/dev/null
 
-COUNTS_AFTER=$(query_counts)
-[ "$COUNTS_BEFORE" = "$COUNTS_AFTER" ] \
-    || fail "critical table counts changed during snapshot; rerunning is safe"
-printf '%s\n' "$COUNTS_AFTER" >"$STAGE/table-counts.txt"
+# Copy the compatibility data directory, then replace the live SQLite files
+# with a transactionally consistent online backup.  Copying a database and its
+# WAL independently can produce a snapshot which only fails during a disaster.
+API_STAGE="$STAGE/api-data"
+mkdir -m 0700 "$API_STAGE"
+cp -a -- "$API_DATA_DIR/." "$API_STAGE/"
+rm -f -- "$API_STAGE/seiche.sqlite" \
+    "$API_STAGE/seiche.sqlite-wal" "$API_STAGE/seiche.sqlite-shm"
+[ -f "$API_DATA_DIR/seiche.sqlite" ] && [ ! -L "$API_DATA_DIR/seiche.sqlite" ] \
+    || fail "API SQLite database is missing or unsafe"
+"$PYTHON_BIN" - "$API_DATA_DIR/seiche.sqlite" "$API_STAGE/seiche.sqlite" <<'PY'
+import sqlite3
+import sys
+
+source_path, backup_path = sys.argv[1:]
+with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
+    with sqlite3.connect(backup_path) as backup:
+        source.backup(backup)
+        result = backup.execute("PRAGMA quick_check").fetchone()
+        if result != ("ok",):
+            raise SystemExit("SQLite online backup failed PRAGMA quick_check")
+PY
+"$TAR_BIN" --create --gzip --file "$STAGE/api-data.tgz" \
+    --acls --xattrs --numeric-owner --one-file-system \
+    --directory "$STAGE" api-data
+"$TAR_BIN" --list --gzip --file "$STAGE/api-data.tgz" >/dev/null
+rm -rf -- "$API_STAGE"
+API_STAGE=""
+
+# These four tables are append-only/upsert-only during ordinary collection.
+# Record the pre-dump values as a lower-bound receipt: pg_dump takes its own
+# consistent MVCC snapshot after this query, so concurrent ingestion may make
+# the dump larger but must never make a valid restore smaller.
+printf '%s\n' "$COUNTS_BEFORE" >"$STAGE/table-counts.txt"
 
 DEPLOYED_SHA=$(cat "$DEPLOYED_SHA_PATH" 2>/dev/null || true)
 if ! printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
@@ -123,18 +166,20 @@ printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     || fail "cannot bind the snapshot to a deployed commit"
 printf '%s\n' "$DEPLOYED_SHA" >"$STAGE/deployed-sha.txt"
 printf '%s\n' \
-    "schema=seiche.market-backup.v1" \
+    "schema=seiche.market-backup.v2" \
     "created_at=$STAMP" \
     "database=$DATABASE_NAME" \
     "postgres_port=$POSTGRES_PORT" \
     "state_root=$STATE_DIR" \
+    "api_data_root=$API_DATA_DIR" \
+    "critical_table_count_semantics=pre_dump_lower_bound" \
     "research_only=true" \
     "can_publish=false" \
     "can_execute=false" >"$STAGE/manifest.env"
 
 (
     cd "$STAGE"
-    "$SHA256SUM_BIN" seiche.dump var-lib-seiche.tgz table-counts.txt \
+    "$SHA256SUM_BIN" seiche.dump var-lib-seiche.tgz api-data.tgz table-counts.txt \
         deployed-sha.txt manifest.env >SHA256SUMS
     "$SHA256SUM_BIN" --check --strict SHA256SUMS >/dev/null
 )

@@ -17,6 +17,7 @@ from seiche.collectors import CollectorRun, CollectorRunStatus, CollectorSupervi
 from seiche.markets.registry import default_registry
 from seiche.repository import (
     COLLECTOR_WORKER_COMPONENT_ID,
+    LEGACY_SOURCE_WORKER_COMPONENT_ID,
     _POSTGRES_SCHEMA,
     SQLiteMarketRepository,
 )
@@ -248,8 +249,7 @@ def test_sqlite_additively_migrates_the_previous_collector_run_schema(
     database = tmp_path / "legacy-collector.sqlite"
     monkeypatch.setattr(store, "DB_PATH", database)
     with sqlite3.connect(database) as connection:
-        connection.execute(
-            """CREATE TABLE collector_runs (
+        connection.execute("""CREATE TABLE collector_runs (
                  run_id TEXT PRIMARY KEY,
                  market_id TEXT NOT NULL,
                  adapter_id TEXT NOT NULL,
@@ -259,16 +259,13 @@ def test_sqlite_additively_migrates_the_previous_collector_run_schema(
                  observations_written INTEGER NOT NULL,
                  attempts INTEGER NOT NULL,
                  next_due TEXT NOT NULL,
-                 fault TEXT)"""
-        )
+                 fault TEXT)""")
     repository = SQLiteMarketRepository()
 
     assert repository.latest_collector_runs() == []
     with sqlite3.connect(database) as connection:
-        state_table = connection.execute(
-            """SELECT name FROM sqlite_master
-                 WHERE type='table' AND name='collector_states'"""
-        ).fetchone()
+        state_table = connection.execute("""SELECT name FROM sqlite_master
+                 WHERE type='table' AND name='collector_states'""").fetchone()
     assert state_table == ("collector_states",)
 
 
@@ -415,6 +412,45 @@ def test_public_health_adds_overdue_worker_without_mutating_snapshot(
     )
 
     assert payload["faults"][0]["status"] == "OVERDUE"
+    assert snapshot["faults"] == []
+
+
+def test_public_health_independently_requires_legacy_source_worker(
+    monkeypatch,
+) -> None:
+    snapshot = {
+        "generated_at": "2026-08-14T10:00:00+00:00",
+        "version": "test",
+        "faults": [],
+        "provenance": {},
+    }
+    monkeypatch.setenv("SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("SEICHE_SOURCE_HEARTBEAT_REQUIRED", "1")
+    monkeypatch.setattr(assemble, "cached_snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        api,
+        "_legacy_source_worker_fault",
+        lambda: {
+            "source": LEGACY_SOURCE_WORKER_COMPONENT_ID,
+            "status": "OVERDUE",
+            "detail": "legacy source worker heartbeat is overdue",
+        },
+    )
+
+    payload = api._health_response(
+        Response(),
+        require_rebuilt=False,
+        include_release_candidate=False,
+    )
+
+    assert payload["faults"] == [
+        {
+            "source": LEGACY_SOURCE_WORKER_COMPONENT_ID,
+            "status": "OVERDUE",
+            "category": "WORKER_HEALTH",
+            "detail": "collector worker health is degraded",
+        }
+    ]
     assert snapshot["faults"] == []
 
 

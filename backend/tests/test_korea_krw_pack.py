@@ -16,6 +16,7 @@ from seiche.markets.base import (
     PolicyRegime,
     PublicationClockPrecision,
 )
+from seiche.markets.calibration import EngineKind, get_local_calibration
 from seiche.markets.registry import default_registry
 
 
@@ -31,17 +32,37 @@ def test_korea_pack_is_registered_as_a_reference_corridor() -> None:
     assert pack.support_status is PackSupportStatus.REFERENCE
 
 
+def test_korea_has_a_forward_local_calibration_over_implemented_bok_roles() -> None:
+    calibration = get_local_calibration("kr-krw")
+
+    assert calibration.market_id == "KR-KRW"
+    assert calibration.calibration_id == "kr-krw-local-forward-v1"
+    assert calibration.maturity == "FORWARD_ONLY"
+    assert calibration.required_components == frozenset({"policy_relative_overnight"})
+    assert [component.kind for component in calibration.components] == [
+        EngineKind.POLICY_RELATIVE,
+        EngineKind.CORRIDOR,
+    ]
+    required = calibration.components[0]
+    assert required.overnight_role is SemanticRole.UNSECURED_OVERNIGHT
+    assert required.anchor_role is SemanticRole.POLICY_TARGET
+
+
 def test_korea_pack_preserves_source_rights_cadence_and_rate_conventions() -> None:
     pack = default_registry().get("KR-KRW")
 
     assert pack.adapter_map["bok_ecos_policy"].expected_cadence == "P1D"
     assert (
         pack.adapter_map["bok_ecos_policy"].redistribution_status
-        is RedistributionStatus.ALLOWED
+        is RedistributionStatus.METADATA_ONLY
     )
     assert (
         pack.adapter_map["bok_ecos_money_market"].redistribution_status
-        is RedistributionStatus.ALLOWED
+        is RedistributionStatus.METADATA_ONLY
+    )
+    assert (
+        pack.adapter_map["bok_facilities"].redistribution_status
+        is RedistributionStatus.METADATA_ONLY
     )
     assert (
         pack.adapter_map["ksd_kofr"].redistribution_status

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import io
+import json
 import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -11,7 +12,16 @@ import httpx
 import pytest
 
 from seiche import store
-from seiche.domain.observation import QualityState
+from seiche.domain.observation import (
+    RATE_ROLES,
+    CanonicalUnit,
+    ConnectorClassification,
+    DayCountConvention,
+    QualityState,
+    RateCompounding,
+    RedistributionStatus,
+    SemanticRole,
+)
 from seiche.markets.registry import default_registry
 from seiche.repository import SQLiteMarketRepository
 from seiche.sources.base import SourcePolicyUnavailableError
@@ -27,6 +37,7 @@ from seiche.sources.official import (
     bounded_date_windows,
     build_official_adapters,
     parse_nyfed_rates,
+    parse_nyfed_unsecured_rates,
     parse_rbnz,
 )
 
@@ -136,6 +147,209 @@ def test_nyfed_changed_unflagged_row_gets_distinct_revision_lineage() -> None:
     )
 
 
+def test_nyfed_sofrai_parser_maps_all_horizons_and_index_with_same_day_clock() -> None:
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+        "application/json",
+        b'{"refRates":[{"effectiveDate":"2026-08-21","type":"SOFRAI",'
+        b'"average30day":3.64319,"average90day":3.63920,'
+        b'"average180day":3.66017,"index":1.25565902,'
+        b'"revisionIndicator":"R1"}]}',
+        "nyfed_secured_rates",
+    )
+
+    points = parse_nyfed_rates(document)
+    by_instrument = {point.instrument_id: point for point in points}
+
+    assert {
+        instrument: point.raw_value for instrument, point in by_instrument.items()
+    } == {
+        "US.NYFED.SOFR_AVERAGE_30D": Decimal("3.64319"),
+        "US.NYFED.SOFR_AVERAGE_90D": Decimal("3.63920"),
+        "US.NYFED.SOFR_AVERAGE_180D": Decimal("3.66017"),
+        "US.NYFED.SOFR_INDEX": Decimal("1.25565902"),
+    }
+    assert all(
+        point.source_publication_time == datetime(2026, 8, 21, 12, tzinfo=UTC)
+        for point in points
+    )
+    assert all(
+        re.fullmatch(
+            r"nyfed:SOFRAI:(?:average30day|average90day|average180day|index):"
+            r"2026-08-21:R1-[0-9a-f]{16}",
+            str(point.revision_id),
+        )
+        for point in points
+    )
+    evidence = json.loads(by_instrument["US.NYFED.SOFR_INDEX"].row_evidence)
+    assert evidence["label"] == "index"
+    assert evidence["row"]["average180day"] == 3.66017
+
+
+def test_nyfed_sofrai_parser_never_fills_missing_horizon() -> None:
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+        "application/json",
+        b'{"refRates":[{"effectiveDate":"2026-08-21","type":"SOFRAI",'
+        b'"average30day":null,"average90day":3.63920,'
+        b'"average180day":"","index":1.25565902}]}',
+        "nyfed_secured_rates",
+    )
+
+    points = parse_nyfed_rates(document)
+
+    assert [point.instrument_id for point in points] == [
+        "US.NYFED.SOFR_AVERAGE_90D",
+        "US.NYFED.SOFR_INDEX",
+    ]
+
+
+def test_nyfed_sofrai_parser_rejects_duplicate_field_date_identity() -> None:
+    row = (
+        b'{"effectiveDate":"2026-08-21","type":"SOFRAI",'
+        b'"average30day":3.64319,"average90day":3.63920,'
+        b'"average180day":3.66017,"index":1.25565902}'
+    )
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+        "application/json",
+        b'{"refRates":[' + row + b"," + row + b"]}",
+        "nyfed_secured_rates",
+    )
+
+    with pytest.raises(ValueError, match="duplicate SOFRAI average30day"):
+        parse_nyfed_rates(document)
+
+
+def test_nyfed_sofrai_changed_unflagged_row_gets_new_content_lineage() -> None:
+    first = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json",
+        "application/json",
+        b'{"refRates":[{"effectiveDate":"2026-08-21","type":"SOFRAI",'
+        b'"average30day":3.64319,"average90day":3.63920,'
+        b'"average180day":3.66017,"index":1.25565902}]}',
+        "nyfed_secured_rates",
+    )
+    changed = FetchedDocument(
+        first.source_uri,
+        first.media_type,
+        first.payload.replace(b'"average30day":3.64319', b'"average30day":3.64320'),
+        first.label,
+    )
+
+    first_average = next(
+        point
+        for point in parse_nyfed_rates(first)
+        if point.instrument_id == "US.NYFED.SOFR_AVERAGE_30D"
+    )
+    changed_average = next(
+        point
+        for point in parse_nyfed_rates(changed)
+        if point.instrument_id == "US.NYFED.SOFR_AVERAGE_30D"
+    )
+
+    assert first_average.revision_id != changed_average.revision_id
+    assert str(first_average.revision_id).startswith(
+        "nyfed:SOFRAI:average30day:2026-08-21:unrevised-"
+    )
+
+
+def test_nyfed_unsecured_parser_maps_canonical_effr_and_obfr_distribution() -> None:
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
+        "application/json",
+        b'{"refRates":['
+        b'{"type":"OBFR","effectiveDate":"2026-08-20",'
+        b'"percentRate":3.63,"percentPercentile1":3.53,'
+        b'"percentPercentile25":3.62,"percentPercentile75":3.63,'
+        b'"percentPercentile99":3.68,"volumeInBillions":229,'
+        b'"revisionIndicator":""},'
+        b'{"type":"EFFR","effectiveDate":"2026-08-20",'
+        b'"percentRate":3.63,"percentPercentile1":3.60,'
+        b'"percentPercentile25":3.62,"percentPercentile75":3.63,'
+        b'"percentPercentile99":3.69,"volumeInBillions":102,'
+        b'"revisionIndicator":"R1"}]}',
+        "nyfed_unsecured_rates",
+    )
+
+    points = parse_nyfed_unsecured_rates(document)
+    by_instrument = {point.instrument_id: point for point in points}
+
+    assert [point.instrument_id for point in points] == [
+        "US.NYFED.EFFR_MEDIAN",
+        "US.NYFED.EFFR_P99",
+        "US.NYFED.OBFR_MEDIAN",
+        "US.NYFED.OBFR_P99",
+    ]
+    assert {
+        instrument: point.raw_value for instrument, point in by_instrument.items()
+    } == {
+        "US.NYFED.EFFR_MEDIAN": Decimal("3.63"),
+        "US.NYFED.EFFR_P99": Decimal("3.69"),
+        "US.NYFED.OBFR_MEDIAN": Decimal("3.63"),
+        "US.NYFED.OBFR_P99": Decimal("3.68"),
+    }
+    assert re.fullmatch(
+        r"nyfed:EFFR:percentRate:2026-08-20:R1-[0-9a-f]{16}",
+        str(by_instrument["US.NYFED.EFFR_MEDIAN"].revision_id),
+    )
+    assert re.fullmatch(
+        r"nyfed:OBFR:percentPercentile99:2026-08-20:unrevised-[0-9a-f]{16}",
+        str(by_instrument["US.NYFED.OBFR_P99"].revision_id),
+    )
+    evidence = json.loads(by_instrument["US.NYFED.EFFR_MEDIAN"].row_evidence)
+    assert evidence["label"] == "EFFR.percentRate"
+    assert evidence["row"]["volumeInBillions"] == 102
+
+
+def test_nyfed_unsecured_parser_is_order_stable_and_never_fills_missing_tail() -> None:
+    effr = (
+        b'{"type":"EFFR","effectiveDate":"2026-08-20",'
+        b'"percentRate":3.63,"percentPercentile99":null}'
+    )
+    obfr = (
+        b'{"type":"OBFR","effectiveDate":"2026-08-20",'
+        b'"percentRate":3.64,"percentPercentile99":3.68}'
+    )
+
+    def parse(rows: bytes):
+        return parse_nyfed_unsecured_rates(
+            FetchedDocument(
+                "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
+                "application/json",
+                b'{"refRates":[' + rows + b"]}",
+                "nyfed_unsecured_rates",
+            )
+        )
+
+    forward = parse(effr + b"," + obfr)
+    reversed_rows = parse(obfr + b"," + effr)
+
+    assert forward == reversed_rows
+    assert [point.instrument_id for point in forward] == [
+        "US.NYFED.EFFR_MEDIAN",
+        "US.NYFED.OBFR_MEDIAN",
+        "US.NYFED.OBFR_P99",
+    ]
+    assert all(point.instrument_id != "US.NYFED.EFFR_P99" for point in forward)
+
+
+def test_nyfed_unsecured_parser_rejects_duplicate_distribution_identity() -> None:
+    row = (
+        b'{"type":"EFFR","effectiveDate":"2026-08-20",'
+        b'"percentRate":3.63,"percentPercentile99":3.69}'
+    )
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json",
+        "application/json",
+        b'{"refRates":[' + row + b"," + row + b"]}",
+        "nyfed_unsecured_rates",
+    )
+
+    with pytest.raises(ValueError, match="duplicate EFFR percentRate"):
+        parse_nyfed_unsecured_rates(document)
+
+
 def test_every_production_adapter_is_pack_declared_without_network_io(
     tmp_path, monkeypatch
 ) -> None:
@@ -163,6 +377,227 @@ def _official_adapter(
         clock=lambda: datetime(2026, 8, 11, tzinfo=UTC),
     )
     return next(item for item in adapters if item.adapter_id == adapter_id)
+
+
+def test_nyfed_unsecured_adapter_registration_and_pack_contract() -> None:
+    pack = default_registry().get("US-USD")
+    spec = pack.adapter_map["nyfed_unsecured_rates"]
+    instruments = {
+        item.instrument_id: item
+        for item in pack.instruments
+        if item.source_adapter_id == "nyfed_unsecured_rates"
+    }
+
+    assert spec.classification is ConnectorClassification.OFFICIAL_OPEN
+    assert spec.redistribution_status is RedistributionStatus.ALLOWED
+    assert spec.expected_cadence == "P1D"
+    assert spec.publication_clock.business_day_lag == 1
+    assert spec.publication_clock.local_time is not None
+    assert spec.publication_clock.local_time.isoformat() == "09:00:00"
+    assert set(instruments) == {
+        "US.NYFED.EFFR_MEDIAN",
+        "US.NYFED.EFFR_P99",
+        "US.NYFED.OBFR_MEDIAN",
+        "US.NYFED.OBFR_P99",
+    }
+    assert {
+        instrument: item.semantic_role for instrument, item in instruments.items()
+    } == {
+        "US.NYFED.EFFR_MEDIAN": SemanticRole.RATE_MEDIAN,
+        "US.NYFED.EFFR_P99": SemanticRole.RATE_P99,
+        "US.NYFED.OBFR_MEDIAN": SemanticRole.RATE_MEDIAN,
+        "US.NYFED.OBFR_P99": SemanticRole.RATE_P99,
+    }
+    assert all(item.source_unit == "percent" for item in instruments.values())
+    assert all(
+        item.canonical_unit is CanonicalUnit.BASIS_POINTS
+        and item.value_multiplier == Decimal("100")
+        for item in instruments.values()
+    )
+    assert (
+        pack.instrument_map["US.NYFED.SOFR_MEDIAN"].source_adapter_id == "nyfed_rates"
+    )
+    adapter = _official_adapter("nyfed_unsecured_rates")
+    assert adapter.source == "nyfed_unsecured_rates"
+    assert adapter.parser is parse_nyfed_unsecured_rates
+
+
+def test_nyfed_sofrai_pack_contract_has_honest_rate_and_index_semantics() -> None:
+    pack = default_registry().get("US-USD")
+    average_roles = {
+        "US.NYFED.SOFR_AVERAGE_30D": SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_30D,
+        "US.NYFED.SOFR_AVERAGE_90D": SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
+        "US.NYFED.SOFR_AVERAGE_180D": SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_180D,
+    }
+
+    for instrument_id, role in average_roles.items():
+        instrument = pack.instrument_map[instrument_id]
+        assert instrument.source_adapter_id == "nyfed_rates"
+        assert instrument.semantic_role is role
+        assert role in RATE_ROLES
+        assert instrument.source_unit == "percent"
+        assert instrument.canonical_unit is CanonicalUnit.BASIS_POINTS
+        assert instrument.value_multiplier == Decimal("100")
+        assert instrument.rate_compounding is RateCompounding.COMPOUNDED
+        assert instrument.day_count is DayCountConvention.ACT_360
+
+    index = pack.instrument_map["US.NYFED.SOFR_INDEX"]
+    assert index.source_adapter_id == "nyfed_rates"
+    assert index.semantic_role is SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX
+    assert index.semantic_role not in RATE_ROLES
+    assert index.source_unit == "index points"
+    assert index.canonical_unit is CanonicalUnit.INDEX_POINTS
+    assert index.value_multiplier == Decimal("1")
+    assert index.rate_compounding is None
+    assert index.day_count is None
+
+
+@pytest.mark.asyncio
+async def test_nyfed_unsecured_fetcher_uses_bounded_official_search() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json; charset=utf-8"},
+            json={
+                "refRates": [
+                    {
+                        "type": "EFFR",
+                        "effectiveDate": "2026-08-10",
+                        "percentRate": 3.63,
+                        "percentPercentile99": 3.69,
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(
+            await _official_adapter("nyfed_unsecured_rates").fetcher(client)
+        )
+
+    assert len(requests) == 1
+    assert requests[0].url.path == "/api/rates/unsecured/all/search.json"
+    assert dict(requests[0].url.params) == {
+        "startDate": "2026-06-27",
+        "endDate": "2026-08-11",
+    }
+    assert len(documents) == 1
+    assert documents[0].label == "nyfed_unsecured_rates"
+    assert documents[0].media_type == "application/json"
+    assert documents[0].source_uri == str(requests[0].url)
+
+
+@pytest.mark.asyncio
+async def test_nyfed_unsecured_adapter_preserves_raw_capture_and_row_clocks(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "nyfed-unsecured.sqlite")
+    capture = datetime(2026, 8, 11, 14, tzinfo=UTC)
+    payload = (
+        b'{"refRates":[{"type":"EFFR","effectiveDate":"2026-08-10",'
+        b'"percentRate":3.63,"percentPercentile99":3.69,'
+        b'"revisionIndicator":""}]}'
+    )
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/unsecured/all/search.json"
+        "?startDate=2026-08-10&endDate=2026-08-11",
+        "application/json",
+        payload,
+        "nyfed_unsecured_rates",
+    )
+
+    async def fetcher(_client):
+        return (document,)
+
+    adapter = next(
+        item
+        for item in build_official_adapters(
+            repository=SQLiteMarketRepository(),
+            clock=lambda: capture,
+        )
+        if item.adapter_id == "nyfed_unsecured_rates"
+    )
+    adapter.fetcher = fetcher
+
+    batch = await adapter.collect()
+    by_instrument = {row.instrument_id: row for row in batch.observations}
+
+    assert batch.raw_capture is not None
+    assert batch.raw_capture.payload == payload
+    assert batch.raw_capture.source_uri == document.source_uri
+    assert batch.raw_capture.media_type == "application/json"
+    assert by_instrument["US.NYFED.EFFR_MEDIAN"].value == Decimal("363")
+    assert by_instrument["US.NYFED.EFFR_P99"].value == Decimal("369")
+    assert all(row.knowledge_time == capture for row in batch.observations)
+    assert all(
+        row.source_publication_time == datetime(2026, 8, 11, 13, tzinfo=UTC)
+        for row in batch.observations
+    )
+    assert all(row.quality is QualityState.VERIFIED for row in batch.observations)
+
+
+@pytest.mark.asyncio
+async def test_nyfed_sofrai_adapter_preserves_raw_capture_units_and_bitemporal_clocks(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "nyfed-sofrai.sqlite")
+    capture = datetime(2026, 8, 21, 12, 30, tzinfo=UTC)
+    payload = (
+        b'{"refRates":[{"effectiveDate":"2026-08-21","type":"SOFRAI",'
+        b'"average30day":3.64319,"average90day":3.63920,'
+        b'"average180day":3.66017,"index":1.25565902,'
+        b'"revisionIndicator":""}]}'
+    )
+    document = FetchedDocument(
+        "https://markets.newyorkfed.org/api/rates/secured/all/search.json"
+        "?startDate=2026-08-21&endDate=2026-08-21",
+        "application/json",
+        payload,
+        "nyfed_secured_rates",
+    )
+
+    async def fetcher(_client):
+        return (document,)
+
+    adapter = next(
+        item
+        for item in build_official_adapters(
+            repository=SQLiteMarketRepository(),
+            clock=lambda: capture,
+        )
+        if item.adapter_id == "nyfed_rates"
+    )
+    adapter.fetcher = fetcher
+
+    batch = await adapter.collect()
+    by_instrument = {row.instrument_id: row for row in batch.observations}
+    average = by_instrument["US.NYFED.SOFR_AVERAGE_30D"]
+    index = by_instrument["US.NYFED.SOFR_INDEX"]
+
+    assert batch.raw_capture is not None
+    assert batch.raw_capture.payload == payload
+    assert batch.raw_capture.source_uri == document.source_uri
+    assert average.value == Decimal("364.31900")
+    assert average.canonical_unit is CanonicalUnit.BASIS_POINTS
+    assert average.rate_compounding is RateCompounding.COMPOUNDED
+    assert average.day_count is DayCountConvention.ACT_360
+    assert index.value == Decimal("1.25565902")
+    assert index.canonical_unit is CanonicalUnit.INDEX_POINTS
+    assert index.rate_compounding is None
+    assert index.day_count is None
+    assert all(
+        row.event_time == datetime(2026, 8, 21, tzinfo=UTC)
+        for row in batch.observations
+    )
+    assert all(
+        row.source_publication_time == datetime(2026, 8, 21, 12, tzinfo=UTC)
+        for row in batch.observations
+    )
+    assert all(row.knowledge_time == capture for row in batch.observations)
+    assert all(row.quality is QualityState.VERIFIED for row in batch.observations)
 
 
 def _rbnz_workbook_payload(*, include_b2: bool = True) -> bytes:

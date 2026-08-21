@@ -2,6 +2,9 @@
 Description=Seiche independent monetary-area collectors
 After=network-online.target postgresql.service seiche-market-backfill.service
 Wants=network-online.target postgresql.service
+OnFailure=undertow-failure-alert@%n.service
+StartLimitIntervalSec=15min
+StartLimitBurst=5
 
 [Service]
 Type=notify

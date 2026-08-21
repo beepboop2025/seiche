@@ -6,6 +6,7 @@ umask 0077
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-$STATE_DIR/validation/backup-restore-check.status}"
+DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
 POSTGRES_GROUP="${SEICHE_POSTGRES_OS_GROUP:-}"
 ID_BIN="${SEICHE_ID_BIN:-id}"
@@ -18,6 +19,7 @@ TAR_BIN="${SEICHE_TAR_BIN:-tar}"
 SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
+PYTHON_BIN="${SEICHE_PYTHON_BIN:-/home/seiche/app/backend/.venv/bin/python}"
 
 fail() {
     echo "seiche market restore check: $*" >&2
@@ -63,7 +65,7 @@ case "$SNAPSHOT_NAME" in
     [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
     *) fail "snapshot name is invalid" ;;
 esac
-for MEMBER in SHA256SUMS seiche.dump var-lib-seiche.tgz table-counts.txt \
+for MEMBER in SHA256SUMS seiche.dump var-lib-seiche.tgz api-data.tgz table-counts.txt \
     deployed-sha.txt manifest.env; do
     [ -f "$SNAPSHOT/$MEMBER" ] && [ ! -L "$SNAPSHOT/$MEMBER" ] \
         || fail "snapshot member $MEMBER is missing or unsafe"
@@ -72,8 +74,69 @@ done
     cd "$SNAPSHOT"
     "$SHA256SUM_BIN" --check --strict SHA256SUMS >/dev/null
 )
+
+# A valid checksum only binds bytes; it does not make an arbitrary manifest a
+# Seiche research-only backup. Parse the closed v2 contract without sourcing
+# attacker-controlled shell text before extracting files or creating a scratch
+# database.
+declare -A MANIFEST_FIELDS=()
+MANIFEST_VALID=1
+while IFS= read -r MANIFEST_LINE || [ -n "$MANIFEST_LINE" ]; do
+    case "$MANIFEST_LINE" in
+        *=*) ;;
+        *) MANIFEST_VALID=0; continue ;;
+    esac
+    MANIFEST_KEY=${MANIFEST_LINE%%=*}
+    MANIFEST_VALUE=${MANIFEST_LINE#*=}
+    case "$MANIFEST_KEY" in
+        schema|created_at|database|postgres_port|state_root|api_data_root|\
+        critical_table_count_semantics|research_only|can_publish|can_execute) ;;
+        *) MANIFEST_VALID=0; continue ;;
+    esac
+    if [ -n "${MANIFEST_FIELDS[$MANIFEST_KEY]+present}" ]; then
+        MANIFEST_VALID=0
+        continue
+    fi
+    MANIFEST_FIELDS[$MANIFEST_KEY]=$MANIFEST_VALUE
+done <"$SNAPSHOT/manifest.env"
+
+safe_manifest_root() {
+    local candidate="$1"
+    case "$candidate" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    [ "$candidate" != "/" ] || return 1
+    case "$candidate/" in
+        *'//'*) return 1 ;;
+        *'/./'*|*'/../'*) return 1 ;;
+    esac
+    return 0
+}
+
+[ "${#MANIFEST_FIELDS[@]}" -eq 10 ] || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[schema]-}" = "seiche.market-backup.v2" ] \
+    || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[created_at]-}" = "$SNAPSHOT_NAME" ] \
+    || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[database]-}" = "$DATABASE_NAME" ] \
+    || MANIFEST_VALID=0
+case "${MANIFEST_FIELDS[postgres_port]-}" in
+    ''|*[!0-9]*) MANIFEST_VALID=0 ;;
+esac
+safe_manifest_root "${MANIFEST_FIELDS[state_root]-}" || MANIFEST_VALID=0
+safe_manifest_root "${MANIFEST_FIELDS[api_data_root]-}" || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[critical_table_count_semantics]-}" = \
+    "pre_dump_lower_bound" ] || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[research_only]-}" = "true" ] || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[can_publish]-}" = "false" ] || MANIFEST_VALID=0
+[ "${MANIFEST_FIELDS[can_execute]-}" = "false" ] || MANIFEST_VALID=0
+[ "$MANIFEST_VALID" -eq 1 ] || fail "snapshot manifest contract is invalid"
+
 "$TAR_BIN" --list --gzip --file "$SNAPSHOT/var-lib-seiche.tgz" >/dev/null
+"$TAR_BIN" --list --gzip --file "$SNAPSHOT/api-data.tgz" >/dev/null
 "$PG_RESTORE_BIN" --list <"$SNAPSHOT/seiche.dump" >/dev/null
+[ -x "$PYTHON_BIN" ] || fail "Python runtime is unavailable"
 
 POSTGRES_PORT=$(run_as_postgres "$PSQL_BIN" --no-psqlrc -tAc "SHOW port" \
     | tr -d '[:space:]')
@@ -92,6 +155,7 @@ cleanup() {
             >/dev/null 2>&1 || true
     fi
     [ -z "${STATE_STAGE:-}" ] || rm -rf -- "$STATE_STAGE"
+    [ -z "${API_STAGE:-}" ] || rm -rf -- "$API_STAGE"
     [ -z "${STATUS_STAGE:-}" ] || rm -f -- "$STATUS_STAGE"
 }
 trap cleanup EXIT
@@ -107,6 +171,24 @@ find "$STATE_STAGE" -mindepth 1 -print -quit | grep -q . \
 rm -rf -- "$STATE_STAGE"
 STATE_STAGE=""
 
+API_STAGE=$(mktemp -d "$STATUS_DIR/.backup-api-data-restore.XXXXXX")
+"$TAR_BIN" --extract --gzip --file "$SNAPSHOT/api-data.tgz" \
+    --directory "$API_STAGE" --no-same-owner --no-same-permissions
+API_DATABASE="$API_STAGE/api-data/seiche.sqlite"
+[ -f "$API_DATABASE" ] && [ ! -L "$API_DATABASE" ] \
+    || fail "restored API SQLite database is missing or unsafe"
+"$PYTHON_BIN" - "$API_DATABASE" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as database:
+    result = database.execute("PRAGMA quick_check").fetchone()
+    if result != ("ok",):
+        raise SystemExit("restored API SQLite database failed PRAGMA quick_check")
+PY
+rm -rf -- "$API_STAGE"
+API_STAGE=""
+
 run_as_postgres "$CREATEDB_BIN" --template=template0 \
     --host=/var/run/postgresql --port="$POSTGRES_PORT" "$SCRATCH"
 CREATED=1
@@ -120,21 +202,33 @@ ACTUAL_COUNTS=$(run_as_postgres "$PSQL_BIN" --no-psqlrc \
     --host=/var/run/postgresql --port="$POSTGRES_PORT" \
     --dbname="$SCRATCH" --command "$COUNTS_SQL" | tr -d '[:space:]')
 EXPECTED_COUNTS=$(tr -d '[:space:]' <"$SNAPSHOT/table-counts.txt")
-[ "$ACTUAL_COUNTS" = "$EXPECTED_COUNTS" ] \
-    || fail "restored critical table counts do not match the snapshot"
+printf '%s' "$EXPECTED_COUNTS" \
+    | grep -Eq '^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$' \
+    || fail "snapshot critical table-count floor has an invalid shape"
+IFS='|' read -r ACTUAL_OBSERVATIONS ACTUAL_RUNS ACTUAL_FORWARD ACTUAL_SNAPSHOTS \
+    <<<"$ACTUAL_COUNTS"
+IFS='|' read -r FLOOR_OBSERVATIONS FLOOR_RUNS FLOOR_FORWARD FLOOR_SNAPSHOTS \
+    <<<"$EXPECTED_COUNTS"
+[ "$ACTUAL_OBSERVATIONS" -ge "$FLOOR_OBSERVATIONS" ] \
+    && [ "$ACTUAL_RUNS" -ge "$FLOOR_RUNS" ] \
+    && [ "$ACTUAL_FORWARD" -ge "$FLOOR_FORWARD" ] \
+    && [ "$ACTUAL_SNAPSHOTS" -ge "$FLOOR_SNAPSHOTS" ] \
+    || fail "restored critical table counts fall below the snapshot floor"
 run_as_postgres "$DROPDB_BIN" --if-exists \
     --host=/var/run/postgresql --port="$POSTGRES_PORT" "$SCRATCH"
 CREATED=""
 
 STATUS_STAGE=$(mktemp "$STATUS_DIR/.backup-restore-check.XXXXXX")
 printf '%s\n' \
-    "schema=seiche.market-backup-restore-check.v1" \
+    "schema=seiche.market-backup-restore-check.v2" \
     "checked_at=$($DATE_BIN -u +%Y-%m-%dT%H:%M:%SZ)" \
     "snapshot=$SNAPSHOT_NAME" \
     "deployed_sha=$(tr -d '[:space:]' <"$SNAPSHOT/deployed-sha.txt")" \
     "critical_table_counts=$ACTUAL_COUNTS" \
+    "critical_table_count_floor=$EXPECTED_COUNTS" \
     "database_restore=pass" \
     "state_archive_restore=pass" \
+    "api_data_archive_restore=pass" \
     "research_only=true" \
     "can_publish=false" \
     "can_execute=false" >"$STATUS_STAGE"

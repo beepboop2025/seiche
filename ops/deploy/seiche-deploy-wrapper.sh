@@ -268,11 +268,199 @@ if ! admit_shared_host; then
 fi
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_BACKFILL_WAS_ACTIVE=""
+SOURCE_WORKER_WAS_ACTIVE=""
+SOURCE_WORKER_WAS_ENABLED=""
+READINESS_TIMER_WAS_ACTIVE=""
+READINESS_TIMER_WAS_ENABLED=""
 if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then
   MARKET_WORKER_WAS_ACTIVE=1
 fi
 if systemctl is-active --quiet seiche-market-backfill.service 2>/dev/null; then
   MARKET_BACKFILL_WAS_ACTIVE=1
+fi
+if systemctl is-active --quiet seiche-source-worker.service 2>/dev/null; then
+  SOURCE_WORKER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-source-worker.service 2>/dev/null; then
+  SOURCE_WORKER_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet seiche-data-readiness.timer 2>/dev/null; then
+  READINESS_TIMER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-data-readiness.timer 2>/dev/null; then
+  READINESS_TIMER_WAS_ENABLED=1
+fi
+
+# The source collector and readiness monitor are arriving together, and an old
+# release may have any subset of their units (or none). Capture the host's exact
+# pre-deploy files instead of assuming the rollback commit can reproduce local
+# unit state. The root-only /run copy lives only for this locked deployment.
+DATA_UNIT_NAMES=(
+  seiche-source-worker.service
+  seiche-data-readiness.service
+  seiche-data-readiness.timer
+)
+DATA_UNIT_ROLLBACK_DIR=""
+DATA_UNITS_MAY_HAVE_CHANGED=""
+cleanup_preupdate_data_units() {
+  local unit
+  [ -n "$DATA_UNIT_ROLLBACK_DIR" ] || return 0
+  case "$DATA_UNIT_ROLLBACK_DIR" in
+    "$DEPLOY_RUNTIME_DIR"/.data-units.*) ;;
+    *)
+      echo "FAIL: refusing to clean an unsafe data-unit rollback path" >&2
+      return 1
+      ;;
+  esac
+  for unit in "${DATA_UNIT_NAMES[@]}"; do
+    rm -f -- "$DATA_UNIT_ROLLBACK_DIR/$unit.present" \
+      "$DATA_UNIT_ROLLBACK_DIR/$unit.absent"
+  done
+  rmdir "$DATA_UNIT_ROLLBACK_DIR" 2>/dev/null || return 1
+  DATA_UNIT_ROLLBACK_DIR=""
+}
+capture_preupdate_data_units() {
+  local unit destination
+  DATA_UNIT_ROLLBACK_DIR=$(mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX") \
+    || return 1
+  if ! chown root:root "$DATA_UNIT_ROLLBACK_DIR" \
+      || ! chmod 0700 "$DATA_UNIT_ROLLBACK_DIR"; then
+    cleanup_preupdate_data_units || true
+    return 1
+  fi
+  for unit in "${DATA_UNIT_NAMES[@]}"; do
+    destination="/etc/systemd/system/$unit"
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+      if [ -L "$destination" ] || [ ! -f "$destination" ] \
+          || ! cp -p -- "$destination" \
+            "$DATA_UNIT_ROLLBACK_DIR/$unit.present"; then
+        cleanup_preupdate_data_units || true
+        echo "FAIL: pre-deploy data-unit state is unsafe or unreadable"
+        return 1
+      fi
+    elif ! install -m 0600 /dev/null \
+        "$DATA_UNIT_ROLLBACK_DIR/$unit.absent"; then
+      cleanup_preupdate_data_units || true
+      return 1
+    fi
+  done
+}
+cleanup_data_unit_restore_stage() {
+  local stage="$1" unit
+  case "$stage" in
+    /etc/systemd/system/.seiche-data-units-restore.*) ;;
+    *) return 1 ;;
+  esac
+  for unit in "${DATA_UNIT_NAMES[@]}"; do
+    rm -f -- "$stage/$unit"
+  done
+  rmdir "$stage" 2>/dev/null || true
+}
+restore_preupdate_data_units() {
+  local stage unit captured destination
+  local -a candidates=()
+  [ -n "$DATA_UNITS_MAY_HAVE_CHANGED" ] || return 0
+  case "$DATA_UNIT_ROLLBACK_DIR" in
+    "$DEPLOY_RUNTIME_DIR"/.data-units.*) ;;
+    *)
+      echo "FAIL: no safe pre-deploy data-unit snapshot is available"
+      return 1
+      ;;
+  esac
+  stage=$(mktemp -d /etc/systemd/system/.seiche-data-units-restore.XXXXXX) \
+    || return 1
+  chmod 0700 "$stage" || {
+    cleanup_data_unit_restore_stage "$stage"
+    return 1
+  }
+  for unit in "${DATA_UNIT_NAMES[@]}"; do
+    captured="$DATA_UNIT_ROLLBACK_DIR/$unit.present"
+    if [ -f "$captured" ] && [ ! -L "$captured" ] \
+        && [ ! -e "$DATA_UNIT_ROLLBACK_DIR/$unit.absent" ]; then
+      if ! cp -p -- "$captured" "$stage/$unit"; then
+        cleanup_data_unit_restore_stage "$stage"
+        return 1
+      fi
+      candidates+=("$stage/$unit")
+    elif [ -f "$DATA_UNIT_ROLLBACK_DIR/$unit.absent" ] \
+        && [ ! -L "$DATA_UNIT_ROLLBACK_DIR/$unit.absent" ] \
+        && [ ! -e "$captured" ]; then
+      :
+    else
+      cleanup_data_unit_restore_stage "$stage"
+      echo "FAIL: pre-deploy data-unit snapshot is incomplete"
+      return 1
+    fi
+  done
+  if (( ${#candidates[@]} > 0 )) \
+      && ! systemd-analyze verify "${candidates[@]}"; then
+    cleanup_data_unit_restore_stage "$stage"
+    echo "FAIL: pre-deploy data units no longer pass systemd verification"
+    return 1
+  fi
+
+  # Remove any enablement created by the candidate while its unit is still
+  # visible. A missing unit can make disable return nonzero, so the final
+  # is-enabled check below is the authoritative fail-closed assertion.
+  if [ -z "$SOURCE_WORKER_WAS_ENABLED" ]; then
+    systemctl disable seiche-source-worker.service >/dev/null 2>&1 || true
+  fi
+  if [ -z "$READINESS_TIMER_WAS_ENABLED" ]; then
+    systemctl disable seiche-data-readiness.timer >/dev/null 2>&1 || true
+  fi
+  for unit in "${DATA_UNIT_NAMES[@]}"; do
+    destination="/etc/systemd/system/$unit"
+    if [ -f "$DATA_UNIT_ROLLBACK_DIR/$unit.present" ]; then
+      if ! mv -f "$stage/$unit" "$destination"; then
+        cleanup_data_unit_restore_stage "$stage"
+        echo "FAIL: pre-deploy data-unit files could not be restored"
+        return 1
+      fi
+    elif ! rm -f -- "$destination"; then
+      cleanup_data_unit_restore_stage "$stage"
+      echo "FAIL: candidate-only data-unit files could not be removed"
+      return 1
+    fi
+  done
+  cleanup_data_unit_restore_stage "$stage"
+  if ! systemctl daemon-reload; then
+    echo "FAIL: systemd rejected restored pre-deploy data units"
+    return 1
+  fi
+  if [ -n "$SOURCE_WORKER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-source-worker.service >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-source-worker.service; then
+      echo "FAIL: source worker enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-source-worker.service >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-source-worker.service 2>/dev/null; then
+      echo "FAIL: candidate source worker remains enabled after rollback"
+      return 1
+    fi
+  fi
+  if [ -n "$READINESS_TIMER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-data-readiness.timer >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-data-readiness.timer; then
+      echo "FAIL: readiness timer enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-data-readiness.timer >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-data-readiness.timer 2>/dev/null; then
+      echo "FAIL: candidate readiness timer remains enabled after rollback"
+      return 1
+    fi
+  fi
+  DATA_UNITS_MAY_HAVE_CHANGED=""
+  echo "data collection and readiness units restored to pre-deploy state"
+}
+
+trap 'cleanup_preupdate_data_units || true' EXIT
+if ! capture_preupdate_data_units; then
+  echo "FAIL: could not capture pre-deploy data-unit state"
+  exit 1
 fi
 restore_market_services() {
   [ -z "$MARKET_BACKFILL_WAS_ACTIVE" ] \
@@ -281,10 +469,68 @@ restore_market_services() {
   [ -z "$MARKET_WORKER_WAS_ACTIVE" ] \
     || systemctl start --no-block seiche-market-worker.service 2>/dev/null \
     || true
+  if [ -n "$SOURCE_WORKER_WAS_ACTIVE" ]; then
+    if ! systemctl start seiche-source-worker.service 2>/dev/null; then
+      echo "FAIL: source worker did not become ready; readiness timer remains stopped"
+      return 0
+    fi
+  fi
+  if [ -n "$READINESS_TIMER_WAS_ACTIVE" ]; then
+    if [ -z "$SOURCE_WORKER_WAS_ACTIVE" ]; then
+      echo "FAIL: readiness timer remains stopped because source readiness is unknown"
+      return 0
+    fi
+    systemctl start --no-block seiche-data-readiness.timer 2>/dev/null || true
+  fi
+}
+DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
+DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
+run_data_readiness_preflight() {
+  SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
+    /usr/bin/bash "$DATA_READINESS_SCRIPT"
+}
+activate_data_readiness_after_proof() {
+  # An already-current v2 backup and restore receipt avoid a redundant drill.
+  # A first v2/fresh host fails this preflight and must create and restore one
+  # real snapshot before the persistent timer is allowed to become active.
+  if ! run_data_readiness_preflight; then
+    echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
+    if ! systemctl start seiche-market-backup.service; then
+      echo "FAIL: v2 data-readiness bootstrap backup failed; readiness timer remains stopped"
+      return 1
+    fi
+    if ! systemctl start seiche-market-restore-check.service; then
+      echo "FAIL: v2 data-readiness bootstrap restore check failed; readiness timer remains stopped"
+      return 1
+    fi
+    if ! run_data_readiness_preflight; then
+      echo "FAIL: v2 data-readiness bootstrap did not pass; readiness timer remains stopped"
+      return 1
+    fi
+  fi
+  if ! systemctl enable --now seiche-data-readiness.timer; then
+    echo "FAIL: proven readiness timer could not be activated"
+    return 1
+  fi
+}
+ensure_source_worker_ready() {
+  systemctl reset-failed seiche-source-worker.service 2>/dev/null || true
+  if ! systemctl start seiche-source-worker.service; then
+    echo "FAIL: source worker did not produce its initial durable heartbeat"
+    return 1
+  fi
 }
 start_market_services() {
+  systemctl reset-failed \
+    seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
+    || true
   systemctl start --no-block \
     seiche-market-backfill.service seiche-market-worker.service
+  # Type=notify makes this block until the initial durable sweep has completed.
+  # Only then submit the persistent readiness timer; its After= on the market
+  # worker keeps a missed run queued until every collector startup is complete.
+  ensure_source_worker_ready
+  activate_data_readiness_after_proof
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {
@@ -366,9 +612,16 @@ restore_pre_restart_services() {
     echo "FAIL: market writers remain stopped because their unit recovery failed"
     return 1
   fi
+  if ! restore_preupdate_data_units; then
+    echo "FAIL: data workers remain stopped because their unit recovery failed"
+    return 1
+  fi
   restore_market_services
 }
+systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+  2>/dev/null || true
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
+  seiche-source-worker.service \
   2>/dev/null || true
 API_QUIESCED=""
 if [ "$BEFORE" != "$TARGET" ] || [ "$DEPLOYED" != "$TARGET" ]; then
@@ -689,6 +942,7 @@ promote_snapshot_handoff() {
 }
 
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1
+DATA_UNITS_MAY_HAVE_CHANGED=1
 deploy_market_platform || {
   restore_pre_restart_services || true
   echo "FAIL: application checkout is intact but market-platform provisioning failed"
@@ -714,6 +968,10 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
     fi
     sleep 3
   fi
+  ensure_source_worker_ready || {
+    echo "FAIL: accepted release source worker did not become ready"
+    exit 1
+  }
   candidate_health_wait 900 "$AFTER" || {
     echo "FAIL: accepted release did not recover strict health; market writers remain stopped"
     exit 1
@@ -754,7 +1012,7 @@ else
   echo "FAIL: seiche-api could not be restarted onto the candidate"
 fi
 if [ -n "$RESTARTED" ] && systemctl is-active --quiet seiche-api; then
-  if candidate_health_wait 900 "$AFTER"; then
+  if ensure_source_worker_ready && candidate_health_wait 900 "$AFTER"; then
     if market_health; then
       if deploy_pull_unit; then
         if promote_snapshot_handoff; then
@@ -788,7 +1046,10 @@ fi
 # way: this path always exits 1, because a deploy that needed the rollback
 # needs a human even when the rollback lands. Never rely on cancellation.
 echo "FAIL: ${AFTER:0:7} did not come healthy after restart"
-systemctl stop seiche-market-worker.service seiche-market-backfill.service 2>/dev/null || true
+systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+  2>/dev/null || true
+systemctl stop seiche-market-worker.service seiche-market-backfill.service \
+  seiche-source-worker.service 2>/dev/null || true
 if [ -z "$DEPLOYED" ] || [ "$DEPLOYED" = "$AFTER" ]; then
   echo "FAIL: no previously-deployed sha on record to roll back to — seiche-api needs a human NOW"
   exit 1
@@ -817,6 +1078,8 @@ runuser -u seiche -- bash -c "cd $APP && timeout -k 30 120 backend/.venv/bin/pyt
   || { echo "FAIL: rollback tree does not import — seiche-api needs a human NOW"; exit 1; }
 restore_preupdate_market_worker_unit \
   || { echo "FAIL: rollback worker unit could not be restored; market writers remain stopped"; exit 1; }
+restore_preupdate_data_units \
+  || { echo "FAIL: rollback data units could not be restored; data workers remain stopped"; exit 1; }
 systemctl restart seiche-api
 sleep 3
 if systemctl is-active --quiet seiche-api && rollback_health_wait 480; then

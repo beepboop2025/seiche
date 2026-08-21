@@ -12,6 +12,8 @@
   seiche bathymetry          the basin floor in detail: potential, spectrum, first passage
   seiche serve [--port]      run the API + UI
   seiche mcp                 serve the board to AI agents over MCP (stdio)
+  seiche source-collect      refresh the broad legacy source cache once
+  seiche source-worker       refresh legacy sources continuously
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired or validation pending.
 """
@@ -853,6 +855,28 @@ def cmd_market_worker(args) -> int:
     return 0
 
 
+def cmd_source_collect(_args) -> int:
+    from seiche.ingest_runtime import LegacySourceSweepError, collect_legacy_once
+
+    try:
+        payload = asyncio.run(collect_legacy_once())
+    except LegacySourceSweepError as exc:
+        print(json.dumps(exc.summary, indent=2, sort_keys=True))
+        return 1
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_source_worker(args) -> int:
+    from seiche.ingest_runtime import run_legacy_worker
+
+    try:
+        asyncio.run(run_legacy_worker(poll_seconds=args.poll_seconds))
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
 def _aware_iso_timestamp(value: str) -> datetime:
     """Argparse converter which refuses ambiguous local/naive cutoffs."""
 
@@ -1084,6 +1108,18 @@ def main() -> None:
     p = sub.add_parser("market-worker", help="run independent market schedules forever")
     p.add_argument("--poll-seconds", type=int, default=30)
     p.set_defaults(fn=cmd_market_worker)
+
+    sub.add_parser(
+        "source-collect",
+        help="run the broad legacy source collectors once",
+    ).set_defaults(fn=cmd_source_collect)
+
+    p = sub.add_parser(
+        "source-worker",
+        help="run the broad legacy source collectors forever",
+    )
+    p.add_argument("--poll-seconds", type=_positive_int, default=300)
+    p.set_defaults(fn=cmd_source_worker)
 
     from seiche.markets.base import ValidationCheck
 

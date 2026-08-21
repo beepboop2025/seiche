@@ -1,0 +1,51 @@
+[Unit]
+Description=Fail closed on stale Seiche data-plane readiness
+After=network-online.target seiche-api.service
+Wants=network-online.target
+OnFailure=undertow-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+User=root
+# The monitor drops every capability. Its primary group therefore supplies
+# ordinary traverse/read access to the seiche:seiche 0750 validation tree and
+# the root:seiche 0640 restore receipt without granting DAC bypass.
+Group=seiche
+EnvironmentFile=-/etc/seiche/data-readiness.env
+ExecStart=/usr/bin/bash /home/seiche/app/ops/deploy/seiche-data-readiness.sh
+TimeoutStartSec=60
+UMask=0077
+Nice=10
+CPUWeight=10
+IOWeight=10
+MemoryHigh=192M
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=32
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+ReadOnlyPaths=/home/seiche/app /etc/seiche /var/lib/seiche /var/backups/seiche-market

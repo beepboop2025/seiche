@@ -111,12 +111,21 @@ _NYFED_RATE_CLOCK = PublicationClock(
     precision=PublicationClockPrecision.SCHEDULED,
     calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
 )
+_NYFED_UNSECURED_RATE_CLOCK = PublicationClock(
+    timezone_name="America/New_York",
+    local_time=time(9, 0),
+    business_day_lag=1,
+    precision=PublicationClockPrecision.SCHEDULED,
+    calendar_id=US_SETTLEMENT_CALENDAR.calendar_id,
+)
 
 _OPEN = ConnectorClassification.OFFICIAL_OPEN
 _ALLOW = RedistributionStatus.ALLOWED
 _SIMPLE = RateCompounding.SIMPLE
+_COMPOUNDED = RateCompounding.COMPOUNDED
 _ACT_360 = DayCountConvention.ACT_360
 _BP = CanonicalUnit.BASIS_POINTS
+_INDEX = CanonicalUnit.INDEX_POINTS
 _LCY_M = CanonicalUnit.LOCAL_CURRENCY_MILLIONS
 
 
@@ -142,6 +151,13 @@ PACK = MarketPack(
         SourceAdapterSpec("fred_daily", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
         SourceAdapterSpec("fred_weekly", _OPEN, "P1W", _FRED_WEEKLY_CLOCK, _ALLOW),
         SourceAdapterSpec("nyfed_rates", _OPEN, "P1D", _NYFED_RATE_CLOCK, _ALLOW),
+        SourceAdapterSpec(
+            "nyfed_unsecured_rates",
+            _OPEN,
+            "P1D",
+            _NYFED_UNSECURED_RATE_CLOCK,
+            _ALLOW,
+        ),
         SourceAdapterSpec("nyfed_facilities", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
         SourceAdapterSpec("fiscaldata", _OPEN, "P1D", _FRED_DAILY_CLOCK, _ALLOW),
     ),
@@ -268,6 +284,91 @@ PACK = MarketPack(
             "USD billions",
             _LCY_M,
             1000,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SOFR_AVERAGE_30D",
+            "SOFR_AVERAGE_30D",
+            SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_30D,
+            "nyfed_rates",
+            "percent",
+            _BP,
+            100,
+            _COMPOUNDED,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SOFR_AVERAGE_90D",
+            "SOFR_AVERAGE_90D",
+            SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_90D,
+            "nyfed_rates",
+            "percent",
+            _BP,
+            100,
+            _COMPOUNDED,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SOFR_AVERAGE_180D",
+            "SOFR_AVERAGE_180D",
+            SemanticRole.COMPOUNDED_OVERNIGHT_AVERAGE_180D,
+            "nyfed_rates",
+            "percent",
+            _BP,
+            100,
+            _COMPOUNDED,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.SOFR_INDEX",
+            "SOFR_INDEX",
+            SemanticRole.COMPOUNDED_OVERNIGHT_RATE_INDEX,
+            "nyfed_rates",
+            "index points",
+            _INDEX,
+        ),
+        InstrumentSpec(
+            "US.NYFED.EFFR_MEDIAN",
+            "EFFR_MEDIAN",
+            SemanticRole.RATE_MEDIAN,
+            "nyfed_unsecured_rates",
+            "percent",
+            _BP,
+            100,
+            _SIMPLE,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.EFFR_P99",
+            "EFFR_P99",
+            SemanticRole.RATE_P99,
+            "nyfed_unsecured_rates",
+            "percent",
+            _BP,
+            100,
+            _SIMPLE,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.OBFR_MEDIAN",
+            "OBFR_MEDIAN",
+            SemanticRole.RATE_MEDIAN,
+            "nyfed_unsecured_rates",
+            "percent",
+            _BP,
+            100,
+            _SIMPLE,
+            _ACT_360,
+        ),
+        InstrumentSpec(
+            "US.NYFED.OBFR_P99",
+            "OBFR_P99",
+            SemanticRole.RATE_P99,
+            "nyfed_unsecured_rates",
+            "percent",
+            _BP,
+            100,
+            _SIMPLE,
+            _ACT_360,
         ),
     ),
     capabilities=(
