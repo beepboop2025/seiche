@@ -38,12 +38,44 @@ Funding stress episodes from crypto markets, scored against what actually happen
 served on the free page and the PROOF tab. Same discipline as the fiat record: episodes
 are stated, then graded.
 
-## Harbors: five money markets, one tide
+## Money-market research: the USD desk and global atlas
 
-The terminal watches five money markets (India, China, the euro area, Japan, Korea) from
-each market's own public prints, with Japan on daily data, and estimates directional
-spillover between them (Diebold and Yilmaz connectedness) so a reader can see which
-market is exporting stress. A dedicated view puts New York and Mumbai side by side.
+The [USD Money Market Desk](https://api.seiche.info/api/money-markets) is a
+descriptive ledger across seven sections: policy anchors and overnight spreads;
+SOFR/TGCR/BGCR distributions and tails; repo-segment rates and volumes;
+commercial-paper spreads; bills; official liquidity buffers and facilities; and
+money-market-fund repo plumbing. Cross-source formulas use exact common dates and
+never forward-fill one publisher's clock into another. Changes respect the
+series' native cadence, while robust z-scores and percentiles compare each metric
+only with its own trailing history. Its worst-of regime is context, not a causal
+model, event probability or trading signal.
+
+The [Global Money Market Atlas](https://api.seiche.info/api/v2/money-markets)
+currently registers 11 monetary-area packs: US, euro area, UK, Japan, China,
+Hong Kong, India, South Korea, Australia, New Zealand and Singapore. Registration
+declares semantics, clocks, instruments and access policy; it does **not** claim
+that every pack has a live public benchmark or has passed validation. Query the
+live response for current coverage. A market can expose an `AVAILABLE` raw
+benchmark, `DERIVED_CONTEXT` from a restricted input with its level/history
+withheld, `POLICY_ONLY` when only an official anchor is eligible, or remain
+declared unavailable. Missing evidence is not scored as calm, and policy rates
+are not substituted for traded cash benchmarks.
+
+The same contract carries a source-audited discovery ledger for 52 additional
+monetary areas. Each row identifies the benchmark or policy proxy, its economic
+type, official authority and URL, rights/access review, confidence, integration
+stage and 2026-08-21 verification date. Ledger rows contain no market values and
+must pass methodology, bitemporal, calendar, source, legal and operational gates
+before becoming a canonical pack.
+
+The Atlas keeps local units, calendars and publication frequency. Weekly and
+monthly observations stay weekly and monthly; own-history windows use the
+adapter's native observation count, and unlike cross-currency rate levels are
+never averaged into a global score. AGPL-3.0 covers the implementation, not the
+upstream data: `allowed` observations may be shown, `derived_only` inputs may
+produce non-reversible context, `metadata_only` inputs cannot enter public
+calculations, and `prohibited` values and source metadata stay out of the public
+projection.
 
 ## Methods
 
@@ -58,6 +90,10 @@ in the code:
   Carlo scenario engines anchored to the live board.
 - Threshold free AUROC with permutation null significance for backtest claims.
 - A one switch leakage audit protocol, run against our own pipeline.
+- Exact-date intersections for cross-source money-market spreads, with no
+  forward-fill across unrelated publication clocks.
+- Native-cadence own-history normalization for the global atlas, with no
+  upsampling and no comparison of unlike raw rate levels across currencies.
 - The stated competence boundary: the backtest distinguishes endogenous funding stress,
   which the board can anticipate, from exogenous shocks, which it can only react to.
 
@@ -65,8 +101,12 @@ in the code:
 
 - No paywall, ever. The terminal is a public good; support is voluntary.
 - No advice. Readings are descriptive states of the plumbing, not trade signals.
-- No private data. If a feed goes dark the board says the feed is dark rather than
-  rendering absence as calm.
+- No restricted raw values in the public output. Licensed and tenant adapters
+  may be declared, but their absence or redistribution boundary stays visible;
+  if a feed goes dark the board says so rather than rendering absence as calm.
+- No claim to replace a licensed news/data terminal, real-time quote feed,
+  entitlement system, or execution venue. The Atlas intentionally withholds raw
+  values when redistribution terms require it.
 
 ## License
 

@@ -18,13 +18,18 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
@@ -54,11 +59,23 @@ from seiche.config import (
     REGIMES,
     WRECKS_BLOB_KEY,
 )
-from seiche.domain.observation import QualityState, RedistributionStatus
+from seiche.domain.observation import (
+    QualityState,
+    RedistributionStatus,
+    StalenessState,
+)
+from seiche.engines import money_market as money_market_engine
 from seiche.markets.base import CapabilityStatus, PackSupportStatus
+from seiche.markets.atlas import build_global_money_market_atlas
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
+from seiche.public_faults import (
+    project_public_fault,
+    project_public_faults,
+    sanitize_fault_record,
+    sanitize_public_fault_payload,
+)
 from seiche.repository import COLLECTOR_WORKER_COMPONENT_ID, get_repository
 
 # In production (SEICHE_ENV=production, set in the systemd unit) the interactive
@@ -119,21 +136,29 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
                 await refresh_task
 
 
-app = FastAPI(title="Seiche", version=assemble.VERSION,
-              description="Funding-stress & leveraged-positioning early-warning terminal",
-              docs_url=None if _PROD else "/docs",
-              redoc_url=None if _PROD else "/redoc",
-              openapi_url=None if _PROD else "/openapi.json",
-              lifespan=_lifespan)
+app = FastAPI(
+    title="Seiche",
+    version=assemble.VERSION,
+    description="Funding-stress & leveraged-positioning early-warning terminal",
+    docs_url=None if _PROD else "/docs",
+    redoc_url=None if _PROD else "/redoc",
+    openapi_url=None if _PROD else "/openapi.json",
+    lifespan=_lifespan,
+)
 
 # Authentication is header-only. Some external MCP cataloguers append their
 # own credential to every URL they probe; FastAPI otherwise ignores that extra
 # query field while access logs retain it. During the compatibility window the
 # request still runs, but the query field never contributes identity. After the
 # published cutoff it is rejected so callers have a bounded migration period.
-_MCP_QUERY_CREDENTIAL_NAMES = frozenset({
-    "api_key", "api-key", "access_token", "token",
-})
+_MCP_QUERY_CREDENTIAL_NAMES = frozenset(
+    {
+        "api_key",
+        "api-key",
+        "access_token",
+        "token",
+    }
+)
 _MCP_QUERY_CREDENTIAL_PATHS = frozenset({"/mcp", "/mcp/usage"})
 _MCP_QUERY_CREDENTIAL_DEPRECATED_AT = 1_786_665_600  # 2026-08-14 00:00:00 UTC
 _MCP_QUERY_CREDENTIAL_REJECT_AT = 1_789_430_400  # 2026-09-15 00:00:00 UTC
@@ -143,8 +168,7 @@ _MCP_QUERY_CREDENTIAL_SUNSET = "Tue, 15 Sep 2026 00:00:00 GMT"
 def _mcp_query_credential_headers() -> dict[str, str]:
     return {
         "Warning": (
-            '299 Seiche "URL credentials are deprecated; use '
-            'Authorization: Bearer"'
+            '299 Seiche "URL credentials are deprecated; use Authorization: Bearer"'
         ),
         "Deprecation": f"@{_MCP_QUERY_CREDENTIAL_DEPRECATED_AT}",
         "Sunset": _MCP_QUERY_CREDENTIAL_SUNSET,
@@ -157,8 +181,7 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
         return await call_next(request)
     # Inspect names only. Values are neither read nor copied into diagnostics.
     has_query_credential = any(
-        name in _MCP_QUERY_CREDENTIAL_NAMES
-        for name in request.query_params.keys()
+        name in _MCP_QUERY_CREDENTIAL_NAMES for name in request.query_params.keys()
     )
     if not has_query_credential:
         return await call_next(request)
@@ -168,8 +191,7 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
         return JSONResponse(
             {
                 "detail": (
-                    "credentials in URLs are not accepted; use the "
-                    "Authorization header"
+                    "credentials in URLs are not accepted; use the Authorization header"
                 )
             },
             status_code=400,
@@ -183,6 +205,7 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
     for name, value in transition_headers.items():
         response.headers[name] = value
     return response
+
 
 # Uvicorn's default config gives only its own logger tree an INFO sink. Give
 # this one bounded event stream its own stderr sink instead of raising the root
@@ -225,7 +248,9 @@ def _market_pack(market_id: str):
         return default_registry().get(market_id)
     except UnknownMarketError as exc:
         known = ", ".join(pack.market_id for pack in default_registry().list())
-        raise HTTPException(404, f"unknown market {market_id!r}; available: {known}") from exc
+        raise HTTPException(
+            404, f"unknown market {market_id!r}; available: {known}"
+        ) from exc
 
 
 def _v2_capabilities(pack) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -252,14 +277,18 @@ def _v2_collector_faults(pack) -> list[dict[str, Any]]:
         if adapter.redistribution_status is not RedistributionStatus.PROHIBITED
     }
     return [
-        {
-            "market_id": pack.market_id,
-            "source": item["adapter_id"],
-            "status": item["status"],
-            "detail": item.get("fault"),
-            "finished_at": item["finished_at"],
-            "next_due": item["next_due"],
-        }
+        project_public_fault(
+            {
+                "market_id": pack.market_id,
+                "source": item["adapter_id"],
+                "status": item["status"],
+                "fault": item.get("fault"),
+                "finished_at": item["finished_at"],
+                "next_due": item["next_due"],
+            },
+            default_market_id=pack.market_id,
+            default_source=item["adapter_id"],
+        )
         for item in get_repository().latest_collector_runs(pack.market_id)
         if item["status"] != "SUCCESS" and item["adapter_id"] in public_adapters
     ]
@@ -290,7 +319,13 @@ def _v2_unavailable(pack, product: str, reason: str) -> JSONResponse:
             "event_cutoff": None,
             "knowledge_cutoff": None,
             "faults": _v2_collector_faults(pack)
-            or [{"market_id": pack.market_id, "detail": reason}],
+            or [
+                project_public_fault(
+                    {"market_id": pack.market_id, "status": "UNAVAILABLE"},
+                    default_market_id=pack.market_id,
+                    default_source="market_pack",
+                )
+            ],
             "stale_inputs": [],
         },
     )
@@ -300,7 +335,9 @@ def _parse_v2_timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise HTTPException(422, "timestamp must be ISO-8601 with an explicit timezone") from exc
+        raise HTTPException(
+            422, "timestamp must be ISO-8601 with an explicit timezone"
+        ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise HTTPException(422, "timestamp must include an explicit timezone")
     return parsed.astimezone(UTC)
@@ -325,7 +362,13 @@ def _decode_series_cursor(value: str | None) -> tuple[datetime, str] | None:
         instrument_id = payload["instrument_id"]
         if not isinstance(instrument_id, str) or not instrument_id.strip():
             raise ValueError
-    except (UnicodeEncodeError, binascii.Error, json.JSONDecodeError, KeyError, ValueError):
+    except (
+        UnicodeEncodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+    ):
         raise HTTPException(422, "cursor is invalid") from None
     return event_time, instrument_id
 
@@ -345,7 +388,11 @@ def _encode_series_cursor(value: tuple[datetime, str] | None) -> str | None:
     return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
 
 
-def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
+def _series_evidence_eligibility(
+    pack,
+    observations,
+    current_staleness: dict[str, StalenessState] | None = None,
+) -> dict[str, Any]:
     """Fail closed until pack, calibration, and row quality are validated."""
 
     reasons: list[str] = []
@@ -374,9 +421,21 @@ def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
             "observation quality is not evidence-eligible: "
             + ", ".join(ineligible_quality)
         )
+    if (
+        observations
+        and current_staleness
+        and any(
+            state
+            not in {
+                StalenessState.FRESH,
+                StalenessState.AGING,
+            }
+            for state in current_staleness.values()
+        )
+    ):
+        reasons.append("one or more latest observations are stale or unavailable")
     if observations and not any(
-        _observation_value_is_public(pack, observation)
-        for observation in observations
+        _observation_value_is_public(pack, observation) for observation in observations
     ):
         reasons.append("no publicly redistributable observation values are available")
     return {
@@ -385,6 +444,72 @@ def _series_evidence_eligibility(pack, observations) -> dict[str, Any]:
         "value_encoding": "decimal_string",
         "restricted_values": "redacted or omitted",
     }
+
+
+def _series_cadence_seconds(value: str) -> float:
+    if value.startswith("PT"):
+        amount = int(value[2:-1])
+        return amount * {"H": 3600, "M": 60, "S": 1}[value[-1]]
+    amount = int(value[1:-1])
+    return amount * {"D": 86400, "W": 7 * 86400}[value[-1]]
+
+
+_STALENESS_RANK = {
+    StalenessState.FRESH: 0,
+    StalenessState.AGING: 1,
+    StalenessState.UNKNOWN: 2,
+    StalenessState.STALE: 2,
+    StalenessState.DEAD: 3,
+    StalenessState.UNAVAILABLE: 4,
+}
+
+
+def _series_effective_staleness(pack, observation, cutoff: datetime) -> StalenessState:
+    """Age a row at read time against its adapter's declared native cadence."""
+
+    instrument = pack.instrument_map[observation.instrument_id]
+    adapter = pack.adapter_map[instrument.source_adapter_id]
+    age_seconds = max((cutoff - observation.event_time).total_seconds(), 0.0)
+    cadence_seconds = _series_cadence_seconds(adapter.expected_cadence)
+    aged = (
+        StalenessState.FRESH
+        if age_seconds <= cadence_seconds * 2
+        else StalenessState.AGING
+        if age_seconds <= cadence_seconds * 4
+        else StalenessState.STALE
+        if age_seconds <= cadence_seconds * 8
+        else StalenessState.DEAD
+    )
+    return max((observation.staleness, aged), key=_STALENESS_RANK.__getitem__)
+
+
+def _latest_public_series_observations(repository, pack, cutoff: datetime) -> dict:
+    """Load one latest policy-eligible vintage per public instrument.
+
+    The public series page is intentionally bounded and cursor-driven.  Its
+    current/readiness summary must not change merely because the caller asks
+    for a smaller page or a later cursor, so these point reads are separate
+    from page retrieval.
+    """
+
+    latest = {}
+    statuses = (
+        RedistributionStatus.ALLOWED,
+        RedistributionStatus.DERIVED_ONLY,
+        RedistributionStatus.METADATA_ONLY,
+    )
+    for instrument_id in _public_instrument_ids(pack):
+        rows, _ = repository.load_observation_page(
+            pack.market_id,
+            cutoff,
+            limit=1,
+            event_time=cutoff,
+            instrument_ids=(instrument_id,),
+            redistribution_statuses=statuses,
+        )
+        if rows:
+            latest[instrument_id] = rows[0]
+    return latest
 
 
 def _series_page_coverage(observations) -> list[dict[str, Any]]:
@@ -432,10 +557,10 @@ def require_board(authorization: str | None = Header(default=None)) -> dict | No
 # counters reset on restart, which is fine for a single-process deploy. Behind
 # Caddy the real client is in X-Forwarded-For.
 
-LOGIN_RATE_LIMIT_PER_MIN = 10   # max login attempts per IP per rolling minute
-LOGIN_LOCKOUT_AFTER = 5         # consecutive failures before a backoff lockout
-LOGIN_LOCKOUT_SECONDS = 300     # how long that lockout lasts (5 min)
-ASK_RATE_LIMIT_PER_MIN = 20     # max desk-assistant (LLM) calls per IP / minute
+LOGIN_RATE_LIMIT_PER_MIN = 10  # max login attempts per IP per rolling minute
+LOGIN_LOCKOUT_AFTER = 5  # consecutive failures before a backoff lockout
+LOGIN_LOCKOUT_SECONDS = 300  # how long that lockout lasts (5 min)
+ASK_RATE_LIMIT_PER_MIN = 20  # max desk-assistant (LLM) calls per IP / minute
 SUBSCRIBE_RATE_LIMIT_PER_MIN = 5  # a human types one address, not five a minute
 MARKET_SERIES_RATE_LIMIT_PER_MIN = 30
 
@@ -523,7 +648,10 @@ _OVERVIEW_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
 
 def _overview_wire(payload: dict) -> dict[str, Any]:
     if _OVERVIEW_WIRE["src"] is not payload:
-        body = json.dumps(_json_safe(payload), separators=(",", ":"), allow_nan=False).encode()
+        public_payload = sanitize_public_fault_payload(payload)
+        body = json.dumps(
+            _json_safe(public_payload), separators=(",", ":"), allow_nan=False
+        ).encode()
         _OVERVIEW_WIRE.update(
             src=payload,
             body=body,
@@ -548,7 +676,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the nine public tools",
+            "authentication": "none for the ten public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -557,8 +685,10 @@ def api_index() -> dict[str, Any]:
             "public_snapshot": "/api/public",
             "small_gauge": "/api/gauge",
             "market_catalog_v2": "/api/v2/markets",
+            "global_money_markets_v2": "/api/v2/money-markets",
             "market_coverage_v2": "/api/v2/coverage",
             "global_tide_v2": "/api/v2/global/tide",
+            "usd_money_markets": "/api/money-markets",
             "oil_funding": "/api/oil-funding",
             "fx_materials": "/api/estuary",
             "health": "/api/health",
@@ -630,17 +760,19 @@ def _public_openapi_document() -> dict[str, Any]:
                     "503 immediately. This request never starts or waits for a board "
                     "build."
                 ),
-                "parameters": [{
-                    "name": "require_rebuilt",
-                    "in": "query",
-                    "required": False,
-                    "description": (
-                        "Deployment gate: require a snapshot completed by the "
-                        "current process with both US market products sealed, rather "
-                        "than a restored handoff or a degraded rebuild."
-                    ),
-                    "schema": {"type": "boolean", "default": False},
-                }],
+                "parameters": [
+                    {
+                        "name": "require_rebuilt",
+                        "in": "query",
+                        "required": False,
+                        "description": (
+                            "Deployment gate: require a snapshot completed by the "
+                            "current process with both US market products sealed, rather "
+                            "than a restored handoff or a degraded rebuild."
+                        ),
+                        "schema": {"type": "boolean", "default": False},
+                    }
+                ],
                 "responses": {
                     "200": object_response,
                     "503": {
@@ -701,10 +833,14 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "getMarketOverviewV2",
                 "summary": "Read the latest sealed local-market overview",
-                "parameters": [{
-                    "name": "market_id", "in": "path", "required": True,
-                    "schema": {"type": "string"},
-                }],
+                "parameters": [
+                    {
+                        "name": "market_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
                 "responses": {"200": object_response, "503": object_response},
             },
         },
@@ -712,10 +848,14 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "getLocalSeicheGaugeV2",
                 "summary": "Read the latest sealed local Seiche gauge",
-                "parameters": [{
-                    "name": "market_id", "in": "path", "required": True,
-                    "schema": {"type": "string"},
-                }],
+                "parameters": [
+                    {
+                        "name": "market_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
                 "responses": {"200": object_response, "503": object_response},
             },
         },
@@ -724,10 +864,18 @@ def _public_openapi_document() -> dict[str, Any]:
                 "operationId": "getMarketOverviewAsOfV2",
                 "summary": "Read the last sealed market overview knowable by a timestamp",
                 "parameters": [
-                    {"name": "market_id", "in": "path", "required": True,
-                     "schema": {"type": "string"}},
-                    {"name": "timestamp", "in": "path", "required": True,
-                     "schema": {"type": "string", "format": "date-time"}},
+                    {
+                        "name": "market_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "timestamp",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "date-time"},
+                    },
                 ],
                 "responses": {"200": object_response, "404": object_response},
             },
@@ -738,18 +886,26 @@ def _public_openapi_document() -> dict[str, Any]:
                 "summary": "Read canonical, licence-aware market observations",
                 "parameters": [
                     {
-                        "name": "market_id", "in": "path", "required": True,
+                        "name": "market_id",
+                        "in": "path",
+                        "required": True,
                         "schema": {"type": "string"},
                     },
                     {
-                        "name": "n", "in": "query", "required": False,
+                        "name": "n",
+                        "in": "query",
+                        "required": False,
                         "schema": {
-                            "type": "integer", "minimum": 1, "maximum": 5000,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 5000,
                             "default": 1000,
                         },
                     },
                     {
-                        "name": "cursor", "in": "query", "required": False,
+                        "name": "cursor",
+                        "in": "query",
+                        "required": False,
                         "schema": {"type": "string"},
                     },
                 ],
@@ -760,6 +916,19 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "getGlobalSeicheTideV2",
                 "summary": "Read cross-basin synchronization and transmission",
+                "responses": {"200": object_response},
+            },
+        },
+        "/api/v2/money-markets": {
+            "get": {
+                "operationId": "getGlobalMoneyMarketAtlasV2",
+                "summary": "Read the native-frequency global money-market atlas",
+                "description": (
+                    "Summarizes already collected canonical observations for every "
+                    "registered monetary-area pack. It preserves local conventions, "
+                    "publication cadence, licensing, and explicit evidence gaps; the "
+                    "request never starts collection."
+                ),
                 "responses": {"200": object_response},
             },
         },
@@ -777,6 +946,19 @@ def _public_openapi_document() -> dict[str, Any]:
                 "responses": {"200": object_response},
             },
         },
+        "/api/money-markets": {
+            "get": {
+                "operationId": "getUsdMoneyMarketDesk",
+                "summary": "Read the institutional-depth USD money-market desk",
+                "description": (
+                    "Returns policy-relative rates, secured distributions, repo "
+                    "segments, commercial paper, bills, liquidity balances and "
+                    "facilities, and money-fund plumbing. Every derived value "
+                    "states its exact-date alignment and the desk remains context-only."
+                ),
+                "responses": {"200": context_response("seiche.money-market-desk.v1")},
+            },
+        },
         "/api/oil-funding": {
             "get": {
                 "operationId": "getOilFundingContext",
@@ -788,9 +970,7 @@ def _public_openapi_document() -> dict[str, Any]:
                     "benchmark and chokepoint references, and explicitly "
                     "scenario-only cargo, margin and India arithmetic."
                 ),
-                "responses": {
-                    "200": context_response("seiche.oil-funding.v1")
-                },
+                "responses": {"200": context_response("seiche.oil-funding.v1")},
             },
         },
         "/api/estuary": {
@@ -826,14 +1006,19 @@ def _public_openapi_document() -> dict[str, Any]:
             "get": {
                 "operationId": "getFundingStressAsOf",
                 "summary": "Replay the public board as of a UTC date",
-                "parameters": [{
-                    "name": "date",
-                    "in": "path",
-                    "required": True,
-                    "description": "UTC date in YYYY-MM-DD form",
-                    "schema": {"type": "string", "format": "date"},
-                }],
-                "responses": {"200": object_response, "404": {"description": "No record for that date"}},
+                "parameters": [
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": True,
+                        "description": "UTC date in YYYY-MM-DD form",
+                        "schema": {"type": "string", "format": "date"},
+                    }
+                ],
+                "responses": {
+                    "200": object_response,
+                    "404": {"description": "No record for that date"},
+                },
             },
         },
     }
@@ -919,8 +1104,9 @@ async def overview_head(ident: dict | None = Depends(require_board)):
 
 
 @app.get("/api/overview")
-async def overview(request: Request, force: bool = False,
-                   ident: dict | None = Depends(require_board)):
+async def overview(
+    request: Request, force: bool = False, ident: dict | None = Depends(require_board)
+):
     """The full board — subscriber-gated when SEICHE_BOARD_AUTH=1 (the public
     box). Free visitors get /api/public instead. `force` (cache-bypass
     recompute) is honoured only for authenticated callers."""
@@ -935,13 +1121,20 @@ async def overview(request: Request, force: bool = False,
         return Response(status_code=304, headers=headers)
     if "gzip" in (request.headers.get("accept-encoding") or "").lower():
         headers["Content-Encoding"] = "gzip"
-        return Response(content=wire["gz"], media_type="application/json", headers=headers)
-    return Response(content=wire["body"], media_type="application/json", headers=headers)
+        return Response(
+            content=wire["gz"], media_type="application/json", headers=headers
+        )
+    return Response(
+        content=wire["body"], media_type="application/json", headers=headers
+    )
 
 
 @app.get("/api/public")
-async def public(response: Response, force: bool = False,
-                 authorization: str | None = Header(default=None)):
+async def public(
+    response: Response,
+    force: bool = False,
+    authorization: str | None = Header(default=None),
+):
     """Free derived surface: argument, countercase, data quality, conclusion
     and PROOF. Never the underlying engine payloads. `force` is ignored for
     unauthenticated callers — no anonymous recompute."""
@@ -1001,6 +1194,7 @@ async def gauge(response: Response):
 # They never call assemble.snapshot(), so a cold API request cannot fan out to
 # every source or let one monetary area's collector block another area's read.
 
+
 def _public_adapter_ids(pack) -> frozenset[str]:
     return frozenset(
         adapter.adapter_id
@@ -1032,6 +1226,24 @@ def _observation_value_is_public(pack, observation) -> bool:
     )
 
 
+def _observation_is_publicly_derivable(pack, observation) -> bool:
+    """Allow only rows whose adapter and row policies permit public derivation."""
+
+    instrument = pack.instrument_map.get(observation.instrument_id)
+    if instrument is None:
+        return False
+    adapter = pack.adapter_map.get(instrument.source_adapter_id)
+    derivable = {
+        RedistributionStatus.ALLOWED,
+        RedistributionStatus.DERIVED_ONLY,
+    }
+    return (
+        adapter is not None
+        and adapter.redistribution_status in derivable
+        and observation.redistribution_status in derivable
+    )
+
+
 def _public_snapshot_payload(record: dict | None) -> dict | None:
     if record is None:
         return None
@@ -1040,7 +1252,10 @@ def _public_snapshot_payload(record: dict | None) -> dict | None:
         return None
     if payload.get("visibility") != PUBLIC_SNAPSHOT_VISIBILITY:
         return None
-    return payload
+    # Sealed snapshots can predate the current sanitization policy.  Treat the
+    # API boundary as independent protection rather than trusting historical
+    # collector/materializer behavior.
+    return sanitize_public_fault_payload(payload)
 
 
 @app.get("/api/v2/markets")
@@ -1124,7 +1339,9 @@ def market_gauge_v2(market_id: str, response: Response):
 def market_asof_v2(market_id: str, timestamp: str, response: Response):
     pack = _market_pack(market_id)
     cutoff = _parse_v2_timestamp(timestamp)
-    record = get_repository().load_market_snapshot_as_of(pack.market_id, "overview", cutoff)
+    record = get_repository().load_market_snapshot_as_of(
+        pack.market_id, "overview", cutoff
+    )
     payload = _public_snapshot_payload(record)
     if payload is None:
         raise HTTPException(
@@ -1174,12 +1391,51 @@ def market_series_v2(
         ),
         before=_decode_series_cursor(cursor),
     )
-    available_instruments = {item.instrument_id for item in observations}
+    latest_by_instrument = _latest_public_series_observations(repository, pack, now)
+    current_staleness = {
+        instrument_id: _series_effective_staleness(pack, observation, now)
+        for instrument_id, observation in latest_by_instrument.items()
+    }
+    instrument_availability: dict[str, str] = {}
+    for instrument_id in public_instrument_ids:
+        instrument = pack.instrument_map[instrument_id]
+        adapter = pack.adapter_map[instrument.source_adapter_id]
+        observation = latest_by_instrument.get(instrument_id)
+        state = current_staleness.get(instrument_id, StalenessState.UNAVAILABLE)
+        effective_policies = {adapter.redistribution_status}
+        if observation is not None:
+            effective_policies.add(observation.redistribution_status)
+        # Availability is a value contract, not merely connector health.
+        # Metadata-only and derived-only declarations are explicit even when a
+        # row exists; neither can be promoted to READY because no current raw
+        # value is publicly redistributable.
+        instrument_availability[instrument_id] = (
+            "RESTRICTED"
+            if RedistributionStatus.METADATA_ONLY in effective_policies
+            else "DERIVED_CONTEXT"
+            if RedistributionStatus.DERIVED_ONLY in effective_policies
+            else "UNAVAILABLE"
+            if observation is None
+            or not _observation_value_is_public(pack, observation)
+            or observation.quality
+            in {QualityState.REJECTED, QualityState.UNAVAILABLE}
+            or state is StalenessState.UNAVAILABLE
+            else "STALE"
+            if state
+            in {
+                StalenessState.STALE,
+                StalenessState.DEAD,
+                StalenessState.UNKNOWN,
+            }
+            else "READY"
+        )
+        current_staleness.setdefault(instrument_id, StalenessState.UNAVAILABLE)
     records = []
     # The repository pages newest-first so its index and cursor can stop early;
     # retain the endpoint's established chronological order within each page.
     for observation in reversed(observations):
         record = observation.to_record()
+        record["staleness"] = _series_effective_staleness(pack, observation, now).value
         if not _observation_value_is_public(pack, observation):
             record["value"] = None
             record["value_status"] = "REDACTED_BY_LICENCE"
@@ -1199,10 +1455,8 @@ def market_series_v2(
                 "connector_classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,
-                "availability": (
-                    "READY"
-                    if instrument.instrument_id in available_instruments
-                    else "UNAVAILABLE"
+                "availability": instrument_availability.get(
+                    instrument.instrument_id, "UNAVAILABLE"
                 ),
             }
         )
@@ -1210,10 +1464,11 @@ def market_series_v2(
         {
             "instrument_id": item.instrument_id,
             "event_time": item.event_time.isoformat(),
-            "staleness": item.staleness.value,
+            "staleness": current_staleness[item.instrument_id].value,
         }
-        for item in observations
-        if item.staleness.value not in {"fresh", "aging"}
+        for item in latest_by_instrument.values()
+        if current_staleness[item.instrument_id]
+        not in {StalenessState.FRESH, StalenessState.AGING}
     ]
     capabilities, missing = _v2_capabilities(pack)
     latest_gauge = repository.load_latest_market_snapshot(pack.market_id, "gauge")
@@ -1224,14 +1479,24 @@ def market_series_v2(
         if item.get("source") not in prohibited_adapters
     ]
     # A sealed gauge may carry instrument timestamps outside this public page.
-    # Derive staleness only from the already policy-filtered observations.
+    # Derive staleness only from current, policy-filtered canonical rows.
     stale_inputs = stale
     event_cutoff = max((item.event_time for item in observations), default=None)
     knowledge_cutoff = max((item.knowledge_time for item in observations), default=None)
     response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    readiness_states = set(instrument_availability.values())
+    status = (
+        "READY"
+        if readiness_states == {"READY"}
+        else "STALE"
+        if readiness_states == {"STALE"}
+        else "UNAVAILABLE"
+        if not readiness_states or readiness_states == {"UNAVAILABLE"}
+        else "PARTIAL"
+    )
     return {
         "schema": "seiche.market-series.v2",
-        "status": "READY" if observations else "UNAVAILABLE",
+        "status": status,
         "market_id": pack.market_id,
         "monetary_area_id": pack.monetary_area_id,
         "jurisdiction_codes": list(pack.jurisdiction_codes),
@@ -1240,10 +1505,15 @@ def market_series_v2(
         "support_status": pack.support_status.value,
         "data_coverage": _series_page_coverage(observations),
         "coverage_scope": "returned_page",
+        "readiness_scope": "latest_public_observation_per_instrument",
         "capabilities": capabilities,
         "missing_capabilities": missing,
         "calibration_id": pack.calibration_id,
-        "evidence_eligibility": _series_evidence_eligibility(pack, observations),
+        "evidence_eligibility": _series_evidence_eligibility(
+            pack,
+            list(latest_by_instrument.values()),
+            current_staleness,
+        ),
         "event_cutoff": event_cutoff.isoformat() if event_cutoff else None,
         "knowledge_cutoff": knowledge_cutoff.isoformat() if knowledge_cutoff else None,
         "faults": faults,
@@ -1287,6 +1557,79 @@ def global_tide_v2(response: Response):
         "reading": {"value": None},
         "notes": "Local gauges are never averaged into this product.",
     }
+
+
+@app.get("/api/v2/money-markets")
+def global_money_markets_v2(response: Response):
+    """Read a canonical, licence-aware atlas without collecting on request."""
+
+    cutoff = datetime.now(UTC).replace(microsecond=0)
+    event_floor = cutoff - timedelta(days=1120)
+    repository = get_repository()
+    observations_by_market: dict[str, list] = {}
+    read_faults: list[dict[str, str]] = []
+    packs = default_registry().list()
+    for pack in packs:
+        derivable_instruments = [
+            instrument.instrument_id
+            for instrument in pack.instruments
+            if pack.adapter_map[instrument.source_adapter_id].redistribution_status
+            in {
+                RedistributionStatus.ALLOWED,
+                RedistributionStatus.DERIVED_ONLY,
+            }
+        ]
+        try:
+            rows = repository.load_observations_as_of(
+                pack.market_id,
+                cutoff,
+                event_time=cutoff,
+                event_time_from=event_floor,
+                instrument_ids=derivable_instruments,
+            )
+        except Exception:  # one market cannot erase the atlas
+            logging.getLogger("seiche.api").error(
+                "canonical atlas read failed for %s", pack.market_id
+            )
+            rows = []
+            read_faults.append(
+                {
+                    "market_id": pack.market_id,
+                    "source": "canonical_repository",
+                    "detail": "canonical repository read failed",
+                }
+            )
+        observations_by_market[pack.market_id] = [
+            row for row in rows if _observation_is_publicly_derivable(pack, row)
+        ]
+
+    try:
+        collector_runs = [
+            sanitize_fault_record(item) for item in repository.latest_collector_runs()
+        ]
+    except Exception:
+        logging.getLogger("seiche.api").error(
+            "canonical atlas collector-run read failed"
+        )
+        collector_runs = []
+        read_faults.append(
+            {
+                "market_id": "GLOBAL",
+                "source": "collector_run_repository",
+                "detail": "collector-run repository read failed",
+            }
+        )
+    payload = build_global_money_market_atlas(
+        packs,
+        observations_by_market,
+        collector_runs=collector_runs,
+        as_of=cutoff,
+    )
+    payload["read_faults"] = read_faults
+    if read_faults:
+        payload["status"] = "PARTIAL"
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    return sanitize_public_fault_payload(payload)
 
 
 @app.get("/api/v2/coverage")
@@ -1358,12 +1701,8 @@ def coverage_v2(response: Response):
         "global_tide_snapshot": (
             {
                 "event_cutoff": global_payload.get("event_cutoff"),
-                "knowledge_cutoff": global_payload.get(
-                    "knowledge_cutoff"
-                ),
-                "evidence_eligibility": global_payload.get(
-                    "evidence_eligibility"
-                ),
+                "knowledge_cutoff": global_payload.get("knowledge_cutoff"),
+                "evidence_eligibility": global_payload.get("evidence_eligibility"),
                 "faults": global_payload.get("faults", []),
                 "stale_inputs": global_payload.get("stale_inputs", []),
             }
@@ -1378,19 +1717,52 @@ def coverage_v2(response: Response):
 async def oil_funding_context(response: Response):
     """Compact Oil x Funding evidence for bots, agents, and integrations."""
     snapshot = await assemble.snapshot()
-    response.headers["Cache-Control"] = (
-        "public, max-age=60, stale-while-revalidate=240"
-    )
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return context_views.oil_funding(snapshot)
+
+
+@app.get("/api/money-markets")
+async def money_market_context(response: Response):
+    """Full USD money-market desk from the shared completed board snapshot."""
+
+    snapshot = await assemble.snapshot()
+    payload = (snapshot.get("engines") or {}).get("money_market")
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != "seiche.money-market-desk.v1"
+    ):
+        payload = {
+            "ok": False,
+            "schema": "seiche.money-market-desk.v1",
+            "asof": snapshot.get("generated_at"),
+            "context_only": True,
+            "reason": "USD money-market desk is unavailable in this completed snapshot",
+            "regime": {
+                "state": "CANNOT_ASSESS",
+                "status": "descriptive_context_only_not_forecast_probability_or_trade_signal",
+            },
+            "coverage": {"status": "snapshot_unavailable"},
+            "sections": [],
+            "charts": {},
+            "caveats": ["Missing data are not treated as calm."],
+        }
+    if payload.get("schema") == "seiche.money-market-desk.v1":
+        served_at = datetime.now(UTC).replace(microsecond=0)
+        payload = money_market_engine.refresh_for_evaluation(
+            payload,
+            evaluation_asof=served_at,
+        )
+        payload["snapshot_generated_at"] = snapshot.get("generated_at")
+        payload["served_at"] = served_at.isoformat()
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
+    return _json_safe(sanitize_public_fault_payload(payload))
 
 
 @app.get("/api/estuary")
 async def estuary_context(response: Response):
     """Compact Estuary/Passage evidence with its context-only boundary."""
     snapshot = await assemble.snapshot()
-    response.headers["Cache-Control"] = (
-        "public, max-age=60, stale-while-revalidate=240"
-    )
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return context_views.estuary(snapshot)
 
 
@@ -1401,7 +1773,10 @@ async def wrecks_record():
     credibility is the public surface."""
     payload = store.load_blob(WRECKS_BLOB_KEY)
     if payload is None:
-        raise HTTPException(404, "wrecks record not computed yet — operator runs `seiche wrecks --refresh`")
+        raise HTTPException(
+            404,
+            "wrecks record not computed yet — operator runs `seiche wrecks --refresh`",
+        )
     return payload
 
 
@@ -1410,7 +1785,7 @@ async def engine(name: str, _ident: dict | None = Depends(require_board)):
     snap = await assemble.snapshot()
     if name not in snap["engines"]:
         raise HTTPException(404, f"unknown engine '{name}'")
-    return snap["engines"][name]
+    return sanitize_public_fault_payload(snap["engines"][name])
 
 
 class LoginBody(BaseModel):
@@ -1426,11 +1801,15 @@ async def login(body: LoginBody, request: Request):
     ip = _client_ip(request)
     locked = _login_guard.retry_after(ip)
     if locked:
-        raise HTTPException(429, f"too many failed attempts — try again in {locked}s",
-                            headers={"Retry-After": str(locked)})
+        raise HTTPException(
+            429,
+            f"too many failed attempts — try again in {locked}s",
+            headers={"Retry-After": str(locked)},
+        )
     if not _login_limiter.allow(ip):
-        raise HTTPException(429, "too many login attempts — slow down",
-                            headers={"Retry-After": "60"})
+        raise HTTPException(
+            429, "too many login attempts — slow down", headers={"Retry-After": "60"}
+        )
     user = accounts.verify_user(body.username, body.password)
     if user is None:
         _login_guard.record_failure(ip)
@@ -1495,20 +1874,29 @@ def subscribe_join(request: Request, body: Any = Body(default=None)):
     subscribe module imports neither `store` nor `sqlite3`, and a test asserts
     it."""
     if not _subscribe_limiter.allow(_client_ip(request)):
-        raise HTTPException(429, "too many attempts, slow down",
-                            headers={"Retry-After": "60"})
+        raise HTTPException(
+            429, "too many attempts, slow down", headers={"Retry-After": "60"}
+        )
 
-    email = subscribe_list.clean_email((body or {}).get("email") if isinstance(body, dict) else None)
+    email = subscribe_list.clean_email(
+        (body or {}).get("email") if isinstance(body, dict) else None
+    )
     if email is None:
         raise HTTPException(422, "that does not look like an email address")
 
     if not subscribe_list.enabled():
         # Not an error: the list simply is not open yet. Say so plainly and
         # hand back the desk address rather than pretending it worked.
-        return {"ok": False, "enabled": False, "delivered": False,
-                "mailto": subscribe_list.DESK_EMAIL,
-                "message": (f"The list is not open yet. Mail {subscribe_list.DESK_EMAIL} "
-                            "and you go on it the day it opens.")}
+        return {
+            "ok": False,
+            "enabled": False,
+            "delivered": False,
+            "mailto": subscribe_list.DESK_EMAIL,
+            "message": (
+                f"The list is not open yet. Mail {subscribe_list.DESK_EMAIL} "
+                "and you go on it the day it opens."
+            ),
+        }
 
     delivered = subscribe_list.submit(email)
     # `delivered` False means Listmonk was unreachable or unhappy. The reader's
@@ -1522,8 +1910,8 @@ def subscribe_join(request: Request, body: Any = Body(default=None)):
         "mailto": subscribe_list.DESK_EMAIL,
         "message": (
             "Check your inbox for the confirmation link. Nothing is sent until you click it."
-            if delivered else
-            f"Taken. If the confirmation link does not arrive, mail {subscribe_list.DESK_EMAIL}."
+            if delivered
+            else f"Taken. If the confirmation link does not arrive, mail {subscribe_list.DESK_EMAIL}."
         ),
     }
 
@@ -1550,8 +1938,9 @@ async def get_alert_prefs(authorization: str | None = Header(default=None)):
 
 
 @app.post("/api/alerts/prefs")
-async def set_alert_prefs(body: AlertPrefsBody,
-                          authorization: str | None = Header(default=None)):
+async def set_alert_prefs(
+    body: AlertPrefsBody, authorization: str | None = Header(default=None)
+):
     """Subscriber email alerts: set the address and toggle. When on, the box's
     pull cycle emails you on regime change, Tell/crunch thresholds, and dead
     inputs. Off by default; requires an email to enable."""
@@ -1565,12 +1954,15 @@ async def set_alert_prefs(body: AlertPrefsBody,
 
 
 @app.get("/api/asof/{date}")
-async def asof(date: str, response: Response,
-               ident: dict | None = Depends(require_board)):
+async def asof(
+    date: str, response: Response, ident: dict | None = Depends(require_board)
+):
     """Time Machine: the whole light board replayed as of a historical date.
     Subscriber-gated when SEICHE_ASOF_AUTH=1 (the public box); open in dev."""
     if accounts.asof_gate_enabled() and ident is None:
-        raise HTTPException(401, "Time Machine replay is a subscriber feature — sign in")
+        raise HTTPException(
+            401, "Time Machine replay is a subscriber feature — sign in"
+        )
     if not _DATE_RE.match(date):
         raise HTTPException(422, "date must be YYYY-MM-DD")
     payload = await assemble.snapshot_asof(date)
@@ -1582,14 +1974,14 @@ async def asof(date: str, response: Response,
     # Historical replays can carry NaN/Inf from sparse early vintages; strict
     # JSON rejects those and the whole replay 500s. Null them out instead —
     # a missing number is honest, a dead endpoint is not.
-    return _json_safe(payload)
+    return _json_safe(sanitize_public_fault_payload(payload))
 
 
 @app.get("/api/deep")
 async def deep(_ident: dict | None = Depends(require_board)):
     """History reconstruction, Tell, Turn, Playbook, PROOF backtest."""
     snap = await assemble.snapshot()
-    return snap.get("deep", {})
+    return sanitize_public_fault_payload(snap.get("deep", {}))
 
 
 @app.get("/api/book")
@@ -1604,6 +1996,7 @@ async def book(_ident: dict | None = Depends(require_board)):
 # "index.json" and "SOFR.csv" as mnemonics. Public by design: a reading nobody
 # can download and check is a vibe, and the raw registry series are free
 # public data (the licensed exceptions are refused per-series).
+
 
 @app.get("/api/series/index.json")
 async def series_index(response: Response):
@@ -1637,8 +2030,9 @@ async def series_csv(mnemonic: str):
 
 
 @app.get("/api/series/{mnemonic}")
-async def series(mnemonic: str, n: int = 750,
-                 _ident: dict | None = Depends(require_board)):
+async def series(
+    mnemonic: str, n: int = 750, _ident: dict | None = Depends(require_board)
+):
     if mnemonic not in ALL_SERIES:
         raise HTTPException(404, f"unknown series '{mnemonic}'")
     # Same licence allow-list as the CSV twin. This route used to lean on
@@ -1686,7 +2080,8 @@ async def alerts(n: int = 50, _ident: dict | None = Depends(require_board)):
         conn.close()
     return {
         "alerts": [
-            {"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]} for r in rows
+            {"fired_at": r[0], "rule": r[1], "state": r[2], "message": r[3]}
+            for r in rows
         ]
     }
 
@@ -1697,7 +2092,7 @@ async def brief_text(_ident: dict | None = Depends(require_board)):
     from seiche import brief as brief_mod
 
     snap = await assemble.snapshot()
-    return brief_mod.render_markdown(snap)
+    return brief_mod.render_markdown(sanitize_public_fault_payload(snap))
 
 
 class EventAnalysisBody(BaseModel):
@@ -1717,13 +2112,16 @@ async def event_analysis(body: EventAnalysisBody, request: Request):
     from seiche import event_analysis as event_analysis_mod
 
     if not _ask_limiter.allow(_client_ip(request)):
-        raise HTTPException(429, "too many questions — slow down",
-                            headers={"Retry-After": "60"})
+        raise HTTPException(
+            429, "too many questions — slow down", headers={"Retry-After": "60"}
+        )
     question = body.question.strip()
     if not question or len(question) > 1200:
         raise HTTPException(422, "question must be 1-1200 characters")
     snap = await assemble.snapshot()
-    return await event_analysis_mod.analyze(question, snap)
+    return await event_analysis_mod.analyze(
+        question, sanitize_public_fault_payload(snap)
+    )
 
 
 @app.api_route(
@@ -1747,12 +2145,13 @@ async def ask(q: str, request: Request):
     from seiche import ai
 
     if not _ask_limiter.allow(_client_ip(request)):
-        raise HTTPException(429, "too many questions — slow down",
-                            headers={"Retry-After": "60"})
+        raise HTTPException(
+            429, "too many questions — slow down", headers={"Retry-After": "60"}
+        )
     if not q or len(q) > 600:
         raise HTTPException(422, "q must be 1-600 characters")
     snap = await assemble.snapshot()
-    return await ai.ask(q, snap)
+    return await ai.ask(q, sanitize_public_fault_payload(snap))
 
 
 @app.get("/api/pit")
@@ -1812,19 +2211,17 @@ def _health_response(
             headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
     response.headers["Cache-Control"] = "no-store"
-    faults = list(snap["faults"])
-    required_setting = os.getenv(
-        "SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", ""
-    ).strip().lower()
+    faults = project_public_faults(snap["faults"])
+    required_setting = (
+        os.getenv("SEICHE_COLLECTOR_HEARTBEAT_REQUIRED", "").strip().lower()
+    )
     heartbeat_required = (
-        required_setting in {"1", "true", "yes"}
-        if required_setting
-        else _PROD
+        required_setting in {"1", "true", "yes"} if required_setting else _PROD
     )
     if heartbeat_required:
         worker_fault = _collector_worker_fault()
         if worker_fault is not None:
-            faults.append(worker_fault)
+            faults.append(project_public_fault(worker_fault))
     content = {
         "generated_at": snap["generated_at"],
         "version": snap.get("version"),
@@ -1961,8 +2358,11 @@ async def notary_proof(sha256: str):
     proof = notary.proof_for(sha256)
     if proof is None:
         raise HTTPException(404, "no proof yet (unanchored — awaiting the next stamp)")
-    return Response(content=proof, media_type="application/octet-stream",
-                    headers={"Content-Disposition": f'attachment; filename="{sha256[:16]}.ots"'})
+    return Response(
+        content=proof,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{sha256[:16]}.ots"'},
+    )
 
 
 # ---- Signed as-published record (attest layer) --------------------------------
@@ -1971,6 +2371,7 @@ async def notary_proof(sha256: str):
 # public and read-only, and serve commitments only — day, record hash,
 # signature, anchor status — never payloads, so the verification surface stays
 # identical whatever the stream carries.
+
 
 @app.get("/api/attest/pubkey")
 async def attest_pubkey():
@@ -2010,21 +2411,29 @@ async def attest_stream(stream: str, n: int = 400):
     for rec in records[-n:]:
         s = sigs.get(rec["hash"])
         a = anchors.get(rec["day"])
-        days.append({
-            "day": rec["day"],
-            "record_hash": rec["hash"],
-            "prev_hash": rec["prev_hash"],
-            "signature": {
-                "sig": s["sig"], "public_key": s["public_key"],
-                "algo": s["algo"], "signed_at": s["signed_at"],
-            } if s else None,
-            "anchor": {
-                "status": a["status"],
-                "calendar": a.get("calendar"),
-                "bitcoin_height": a.get("bitcoin_height"),
-                "submitted_at": a.get("submitted_at"),
-            } if a else None,
-        })
+        days.append(
+            {
+                "day": rec["day"],
+                "record_hash": rec["hash"],
+                "prev_hash": rec["prev_hash"],
+                "signature": {
+                    "sig": s["sig"],
+                    "public_key": s["public_key"],
+                    "algo": s["algo"],
+                    "signed_at": s["signed_at"],
+                }
+                if s
+                else None,
+                "anchor": {
+                    "status": a["status"],
+                    "calendar": a.get("calendar"),
+                    "bitcoin_height": a.get("bitcoin_height"),
+                    "submitted_at": a.get("submitted_at"),
+                }
+                if a
+                else None,
+            }
+        )
     return {
         "stream": stream,
         "n_records": len(records),
@@ -2076,26 +2485,36 @@ def _mcp_quota_result(msg_id: Any, meter: dict) -> dict:
         f"ERROR: daily MCP quota reached ({meter['used']}/{meter['limit']} "
         f"tool calls today). Upgrade for a higher limit: {MCP_UPGRADE_URL}"
     )
-    return {"jsonrpc": "2.0", "id": msg_id,
-            "result": {"content": [{"type": "text", "text": text}], "isError": True}}
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {"content": [{"type": "text", "text": text}], "isError": True},
+    }
 
 
-def _log_mcp_activation(message: Any, response: Any,
-                        surface: str, origin: str) -> None:
+def _log_mcp_activation(message: Any, response: Any, surface: str, origin: str) -> None:
     """Record the conversion event without caller data or tool arguments."""
-    if not (isinstance(message, dict)
-            and message.get("method") == "tools/call"):
+    if not (isinstance(message, dict) and message.get("method") == "tools/call"):
         return
     params = message.get("params")
     requested = params.get("name") if isinstance(params, dict) else None
-    tool = (requested if isinstance(requested, str)
-            and requested in mcp_server.TOOLS else "unknown")
+    tool = (
+        requested
+        if isinstance(requested, str) and requested in mcp_server.TOOLS
+        else "unknown"
+    )
     result = response.get("result") if isinstance(response, dict) else None
-    failed = (not isinstance(response, dict) or "error" in response
-              or (isinstance(result, dict) and result.get("isError") is True))
+    failed = (
+        not isinstance(response, dict)
+        or "error" in response
+        or (isinstance(result, dict) and result.get("isError") is True)
+    )
     _mcp_activation_log.info(
         "mcp_activation product=seiche surface=%s tool=%s outcome=%s origin=%s",
-        surface, tool, "error" if failed else "success", origin,
+        surface,
+        tool,
+        "error" if failed else "success",
+        origin,
     )
 
 
@@ -2114,8 +2533,11 @@ def mcp_http_get() -> Response:
 
 
 @app.post("/mcp")
-def mcp_http(request: Request, body: Any = Body(default=None),
-             authorization: str | None = Header(default=None)):
+def mcp_http(
+    request: Request,
+    body: Any = Body(default=None),
+    authorization: str | None = Header(default=None),
+):
     """Streamable-HTTP MCP transport (single-response mode). Accepts one
     JSON-RPC message or a batch; returns the JSON-RPC response(s), or 202 for a
     notification-only body."""
@@ -2140,7 +2562,8 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     if not _mcp_limiter.allow(burst_key):
         return JSONResponse(
             mcp_server._error(None, MCP_SERVER_ERROR, "rate limited — slow down"),
-            status_code=429, headers={"Retry-After": "60"},
+            status_code=429,
+            headers={"Retry-After": "60"},
         )
 
     if body is None:
@@ -2154,8 +2577,11 @@ def mcp_http(request: Request, body: Any = Body(default=None),
         # one HTTP request only costs one rate-limiter hit, so an unbounded
         # batch would evade the per-minute ceiling and the meter.
         return JSONResponse(
-            mcp_server._error(None, MCP_SERVER_ERROR,
-                              f"batch too large (max {MCP_MAX_BATCH} messages)"),
+            mcp_server._error(
+                None,
+                MCP_SERVER_ERROR,
+                f"batch too large (max {MCP_MAX_BATCH} messages)",
+            ),
             status_code=413,
         )
     # x402 pay-per-call: anonymous caller + a priced (subscriber) tool. The
@@ -2170,15 +2596,22 @@ def mcp_http(request: Request, body: Any = Body(default=None),
         params = (single or {}).get("params")
         params = params if isinstance(params, dict) else {}
         candidate_tool = params.get("name")
-        tool = candidate_tool if (
-            (single or {}).get("method") == "tools/call"
-            and isinstance(candidate_tool, str)
-        ) else None
+        tool = (
+            candidate_tool
+            if (
+                (single or {}).get("method") == "tools/call"
+                and isinstance(candidate_tool, str)
+            )
+            else None
+        )
         priced = x402.price_usd(tool)
         if pay_header is not None and priced is None:
             return JSONResponse(
-                mcp_server._error(None, MCP_SERVER_ERROR,
-                                  "X-PAYMENT covers exactly one tools/call for a priced tool"),
+                mcp_server._error(
+                    None,
+                    MCP_SERVER_ERROR,
+                    "X-PAYMENT covers exactly one tools/call for a priced tool",
+                ),
                 status_code=400,
             )
         if priced is not None:
@@ -2190,7 +2623,8 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             if authorization is not None and ident is None:
                 return JSONResponse(
                     mcp_server._error(
-                        single.get("id"), MCP_SERVER_ERROR,
+                        single.get("id"),
+                        MCP_SERVER_ERROR,
                         "invalid Authorization bearer token",
                     ),
                     status_code=401,
@@ -2198,8 +2632,11 @@ def mcp_http(request: Request, body: Any = Body(default=None),
                 )
             if pay_header is None:
                 return JSONResponse(
-                    x402.payment_required(tool, resource,
-                                          f"{tool} is a paid tool on the anonymous surface"),
+                    x402.payment_required(
+                        tool,
+                        resource,
+                        f"{tool} is a paid tool on the anonymous surface",
+                    ),
                     status_code=402,
                 )
             # Payment cannot make an invalid request valid. Run the pure MCP
@@ -2218,13 +2655,16 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             ok, why = x402.verify(payment, reqs)
             if not ok:
                 return JSONResponse(
-                    x402.payment_required(tool, resource, why), status_code=402)
+                    x402.payment_required(tool, resource, why), status_code=402
+                )
             settled, receipt = x402.settle(payment, reqs)
             if not settled:
                 return JSONResponse(
                     x402.payment_required(
-                        tool, resource,
-                        str(receipt.get("errorReason") or "settlement failed")),
+                        tool,
+                        resource,
+                        str(receipt.get("errorReason") or "settlement failed"),
+                    ),
                     status_code=402,
                 )
             # Paid: this one call runs on the full surface, no quota charged.
@@ -2233,11 +2673,13 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             try:
                 resp = mcp_server.dispatch(single, public=False)
             except Exception:
-                resp = mcp_server._error(single.get("id"),
-                                         mcp_server.INTERNAL_ERROR, "internal error")
+                resp = mcp_server._error(
+                    single.get("id"), mcp_server.INTERNAL_ERROR, "internal error"
+                )
             _log_mcp_activation(single, resp, "paid", origin)
-            return JSONResponse(resp, headers={
-                "X-PAYMENT-RESPONSE": x402.settle_header(receipt)})
+            return JSONResponse(
+                resp, headers={"X-PAYMENT-RESPONSE": x402.settle_header(receipt)}
+            )
 
     ukey = usage.key_for(ident, ip)
     limit = usage.quota_for(ident)
@@ -2261,10 +2703,14 @@ def mcp_http(request: Request, body: Any = Body(default=None),
             # dispatch is defensive, but never let one bad message 500 the batch.
             mid = m.get("id") if isinstance(m, dict) else None
             resp = mcp_server._error(mid, mcp_server.INTERNAL_ERROR, "internal error")
-        _log_mcp_activation(
-            m, resp, "public" if public else "subscriber", origin)
-        if (resp is not None and x402.enabled() and public
-                and isinstance(m, dict) and m.get("method") == "tools/list"):
+        _log_mcp_activation(m, resp, "public" if public else "subscriber", origin)
+        if (
+            resp is not None
+            and x402.enabled()
+            and public
+            and isinstance(m, dict)
+            and m.get("method") == "tools/list"
+        ):
             # advertise the payable tools to wallet-holding agents
             resp = x402.annotate_tools_list(resp)
         if resp is not None:
@@ -2274,15 +2720,16 @@ def mcp_http(request: Request, body: Any = Body(default=None),
     if any(isinstance(m, dict) and m.get("method") == "initialize" for m in msgs):
         headers["Mcp-Session-Id"] = secrets.token_hex(16)
 
-    if not responses:                       # notification-only body
+    if not responses:  # notification-only body
         return Response(status_code=202, headers=headers)
     payload = responses if isinstance(body, list) else responses[0]
     return JSONResponse(payload, headers=headers)
 
 
 @app.post("/api/provision")
-async def provision_webhook(request: Request,
-                           x_seiche_signature: str | None = Header(default=None)):
+async def provision_webhook(
+    request: Request, x_seiche_signature: str | None = Header(default=None)
+):
     """The payment -> account hook. A payment processor (BTCPay/NOWPayments/
     Stripe) or an operator adapter POSTs a signed JSON body when a payment
     confirms; Seiche provisions the subscriber and returns the credentials.
@@ -2322,7 +2769,9 @@ async def provision_webhook(request: Request,
 
 
 @app.get("/mcp/usage")
-def mcp_usage_report(request: Request, authorization: str | None = Header(default=None)):
+def mcp_usage_report(
+    request: Request, authorization: str | None = Header(default=None)
+):
     """The caller's meter for today — used by an agent (or a billing UI) to see
     how much of the daily quota remains."""
     ident = _bearer_identity(authorization)

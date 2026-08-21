@@ -28,6 +28,7 @@ def test_reference_registry_is_monetary_area_aware() -> None:
         "CN-CNY",
         "HK-HKD",
         "IN-INR",
+        "KR-KRW",
         "AU-AUD",
         "NZ-NZD",
         "SG-SGD",

@@ -158,53 +158,81 @@ def _public_coverage(observations: list[Observation]) -> list[dict[str, Any]]:
 def _source_state(
     pack: MarketPack,
     instrument_id: str,
-    runs: dict[str, dict],
     cutoff: datetime,
-    fallback_knowledge: datetime,
+    latest_event_time: datetime,
+    stored_state: StalenessState = StalenessState.FRESH,
 ) -> StalenessState:
+    """Age an instrument from its observation clock, never its collector run.
+
+    Collector runs describe connector health and remain separately visible in
+    ``collector_runs``/``faults``. A recent successful run cannot make an old
+    observation current or evidence-eligible.
+    """
+
     instrument = pack.instrument_map[instrument_id]
     adapter = pack.adapter_map[instrument.source_adapter_id]
-    run = runs.get(adapter.adapter_id)
-    if run is not None and run["status"] != "SUCCESS":
-        return (
-            StalenessState.DEAD
-            if run["status"] == "CIRCUIT_OPEN"
-            else StalenessState.STALE
-        )
-    reference = _parse_time(run["finished_at"]) if run is not None else fallback_knowledge
-    age = max((cutoff - reference).total_seconds(), 0.0)
+    age = max((cutoff - latest_event_time).total_seconds(), 0.0)
     cadence = cadence_delta(adapter.expected_cadence).total_seconds()
-    if age <= cadence * 2:
-        return StalenessState.FRESH
-    if age <= cadence * 4:
-        return StalenessState.AGING
-    if age <= cadence * 8:
-        return StalenessState.STALE
-    return StalenessState.DEAD
+    aged_state = (
+        StalenessState.FRESH
+        if age <= cadence * 2
+        else StalenessState.AGING
+        if age <= cadence * 4
+        else StalenessState.STALE
+        if age <= cadence * 8
+        else StalenessState.DEAD
+    )
+    rank = {
+        StalenessState.FRESH: 0,
+        StalenessState.AGING: 1,
+        StalenessState.UNKNOWN: 2,
+        StalenessState.STALE: 2,
+        StalenessState.DEAD: 3,
+        StalenessState.UNAVAILABLE: 4,
+    }
+    return max((stored_state, aged_state), key=rank.__getitem__)
 
 
 def _age_observations(
     pack: MarketPack,
     observations: list[Observation],
-    runs: list[dict],
     cutoff: datetime,
 ) -> list[Observation]:
-    run_map = {item["adapter_id"]: item for item in runs}
-    latest_knowledge: dict[str, datetime] = {}
+    """Apply one honest source clock per instrument.
+
+    Rejected/unavailable rows remain visible as quality evidence, but they do
+    not constitute a successful market print.  In particular, a rejected row
+    dated today must never make yesterday's (or last month's) accepted value
+    look fresh.  The clock therefore comes from the newest usable row that has
+    already passed the public redistribution filter; if none exists, every row
+    for that instrument is explicitly unavailable to the kernel.
+    """
+
+    latest_clock: dict[str, tuple[datetime, datetime, StalenessState]] = {}
     for observation in observations:
-        latest_knowledge[observation.instrument_id] = max(
+        if not observation.usable:
+            continue
+        candidate = (
+            observation.event_time,
             observation.knowledge_time,
-            latest_knowledge.get(observation.instrument_id, observation.knowledge_time),
+            observation.staleness,
         )
+        current = latest_clock.get(observation.instrument_id)
+        if current is None or candidate[:2] > current[:2]:
+            latest_clock[observation.instrument_id] = candidate
     return [
         replace(
             observation,
-            staleness=_source_state(
-                pack,
-                observation.instrument_id,
-                run_map,
-                cutoff,
-                latest_knowledge[observation.instrument_id],
+            staleness=(
+                _source_state(
+                    pack,
+                    observation.instrument_id,
+                    cutoff,
+                    latest_clock[observation.instrument_id][0],
+                    latest_clock[observation.instrument_id][2],
+                )
+                if observation.instrument_id in latest_clock
+                else StalenessState.UNAVAILABLE
             ),
         )
         for observation in observations
@@ -505,7 +533,7 @@ def build_local_products(
     public_instrument_ids = frozenset(_public_instrument_ids(pack))
     observations = _public_observations(pack, observations)
     runs = _public_runs(pack, runs)
-    aged = _age_observations(pack, observations, runs, knowledge_limit)
+    aged = _age_observations(pack, observations, knowledge_limit)
     panel = _selected_panel(pack, aged)
     results: dict[str, KernelResult] = {}
     components: list[dict[str, Any]] = []
@@ -753,7 +781,7 @@ def materialize_global_tide(
         )
         observations = _public_observations(pack, observations)
         runs = _public_runs(pack, _latest_runs(repo, pack.market_id))
-        aged = _age_observations(pack, observations, runs, cutoff)
+        aged = _age_observations(pack, observations, cutoff)
         all_observations.extend(aged)
         series = _fx_series(pack, aged) if aged else None
         if series is not None:

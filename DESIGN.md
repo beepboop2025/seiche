@@ -75,7 +75,9 @@ seiche/
   frontend/           Vite + React + TS + uPlot, dark terminal aesthetic
 ```
 
-- No API keys anywhere. SQLite cache so cold-start is fast and upstreams aren't hammered.
+- The original USD board remains keyless. Global packs may require official
+  credentials or licensed/tenant inputs; each fails closed and carries an
+  explicit redistribution state. SQLite caching limits repeated upstream work.
 - `config.py` holds the Seiche Index weights and thresholds — deliberately isolated:
   this is codified judgment, meant to be tuned by the operator, not buried in code.
 
@@ -112,9 +114,10 @@ have been. Three design moves:
 - *Global Basin Coupling* — same physics across basins: US (SOFR−IORB), euro area
   (€STR−DFR via ECB Data Portal), UK (SONIA), channels (broad dollar, foreign
   official RRP, H.4.1 swap lines). The Tide = common-component share; swap-line
-  draws ex small-value tests = the global confession channel. Out-of-scope basins
-  (Japan/China/Russia/Africa: no keyless daily feed meeting the provenance bar)
-  are declared, not faked.
+  draws ex small-value tests = the global confession channel. This coupling
+  engine remains narrower than the 11-pack Money Market Atlas: Japan and China
+  are registered there, while any market without an eligible overlapping basin
+  feed remains explicitly unavailable instead of being synthesized.
 
 **2. The money layer (what a user does with it).**
 - *The Tell* = plumbing percentile − market-priced-stress percentile (VIX, HY/IG
@@ -160,9 +163,10 @@ reported alongside, never weighted in (context/signal, not stress evidence).
   FRED official series; playbook outcomes speak native units instead of ETF PnL.
 - Weighting Echo or The Tell into the composite — resemblance and divergence are
   not stress evidence; they stay context.
-- Faking global coverage (Japan/China/Russia/Africa) from monthly or scraped
-  data — declared out of scope instead; basins plug into config when a
-  qualifying feed exists.
+- Faking *live* global coverage from monthly, scraped, or legally ambiguous
+  data. Japan and China now have registered market packs, while every pack
+  publishes its actual availability and redistribution state. The narrower
+  coupling engine gains a basin only when a qualifying overlapping feed exists.
 
 ---
 

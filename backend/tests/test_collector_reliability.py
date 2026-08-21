@@ -67,9 +67,7 @@ def _run_state(
         "fault": "source unavailable" if consecutive_failures else None,
         "consecutive_failures": consecutive_failures,
         "circuit_open_until": (
-            circuit_open_until.isoformat()
-            if circuit_open_until is not None
-            else None
+            circuit_open_until.isoformat() if circuit_open_until is not None else None
         ),
     }
 
@@ -153,7 +151,7 @@ async def test_policy_unavailable_preflight_supersedes_restored_circuit() -> Non
     assert run.consecutive_failures == 0
     assert run.circuit_open_until is None
     assert run.next_due == (now + timedelta(days=1)).isoformat()
-    assert "written approval is absent" in str(run.fault)
+    assert run.fault == "ACCESS_POLICY: source access policy is unavailable"
     assert adapter.checks == 1
 
 
@@ -502,13 +500,11 @@ async def test_adapter_deadline_cancels_a_hung_collector() -> None:
     )
     supervisor.register(_HungAdapter())
 
-    run = (
-        await supervisor.run_due(now=datetime(2026, 8, 14, 10, tzinfo=UTC))
-    )[0]
+    run = (await supervisor.run_due(now=datetime(2026, 8, 14, 10, tzinfo=UTC)))[0]
 
     assert run.status is CollectorRunStatus.FAILED
     assert run.attempts == 1
-    assert "AdapterDeadlineExceeded" in str(run.fault)
+    assert run.fault == "TIMEOUT: source collection timed out"
     assert cancelled.is_set()
 
 
@@ -555,10 +551,7 @@ async def test_document_fetches_are_bounded_and_return_in_declared_order() -> No
 
 def test_market_worker_unit_enables_systemd_watchdog() -> None:
     unit = (
-        Path(__file__).parents[2]
-        / "ops"
-        / "deploy"
-        / "seiche-market-worker.service"
+        Path(__file__).parents[2] / "ops" / "deploy" / "seiche-market-worker.service"
     ).read_text()
 
     assert "Type=notify" in unit

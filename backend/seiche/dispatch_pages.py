@@ -656,10 +656,11 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Nine tools answer with no auth at all:
+over MCP at https://api.seiche.info/mcp. Ten tools answer with no auth at all:
 latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health,
-crypto_stress_record, institutional_flows, oil_funding_context and
-fx_materials_passage, metered per IP per day. Five more
+crypto_stress_record, institutional_flows, oil_funding_context,
+fx_materials_passage and the section-selectable money_market_context, metered
+per IP per day. Five more
 read the derived engines and want a bearer token: funding_stress_forecast,
 replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
 holds can be downloaded as CSV with provenance headers; the catalog is at
@@ -670,11 +671,12 @@ stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
 
-Evidence receipt captured 2026-08-09 at 14:36 UTC: the v2 data plane has 10 market packs,
+Evidence receipt captured 2026-08-09 at 14:36 UTC: the v2 data plane had 10 market packs,
 87,000 canonical observations across 28 role series, and 220 forward market-pack
-validation records. The US pack is VALIDATING, nine packs are REFERENCE, no pack
-is SUPPORTED or evidence-eligible, and Global Tide is UNAVAILABLE. The public
-notary has 145 entries. Query the live coverage receipt at
+validation records. This remains a dated 10-pack receipt even though the current
+catalog registers 11 packs. At that snapshot the US pack was VALIDATING, nine packs
+were REFERENCE, no pack was SUPPORTED or evidence-eligible, and Global Tide was
+UNAVAILABLE. The public notary has 145 entries. Query the live coverage receipt at
 https://api.seiche.info/api/v2/coverage because forward records continue to accrue.
 
 Seiche currently serves zero validated backtests. Its four historical diagnostic

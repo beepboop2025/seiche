@@ -14,6 +14,7 @@ import hashlib
 import html
 import io
 import json
+import logging
 import os
 import re
 import urllib.parse
@@ -44,6 +45,50 @@ _HKMA_LIQUIDITY_URI = (
 )
 _HKMA_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 _sleep = asyncio.sleep
+
+_BOK_ECOS_BASE_URI = "https://ecos.bok.or.kr/api/StatisticSearch"
+_BOK_ECOS_API_KEY_ENV = "SEICHE_BOK_ECOS_API_KEY"
+_BOK_ECOS_PAGE_SIZE = 10_000
+_BOK_ECOS_CREDENTIAL_URI_RE = re.compile(
+    r"(https://ecos\.bok\.or\.kr/api/StatisticSearch/)[^/\s\"']+"
+)
+_BOK_ECOS_SERIES = {
+    "KR.BOK.BASE_RATE": ("722Y001", "0101000"),
+    "KR.BOK.CALL_OVERNIGHT_ALL": ("817Y002", "010101000"),
+}
+
+
+def _redact_bok_ecos_credential(value: object, api_key: str | None = None) -> str:
+    """Remove an ECOS path credential before text crosses a diagnostic boundary."""
+
+    text = str(value)
+    key = api_key or os.getenv(_BOK_ECOS_API_KEY_ENV, "").strip()
+    if key:
+        text = text.replace(key, "REDACTED")
+    return _BOK_ECOS_CREDENTIAL_URI_RE.sub(r"\1REDACTED", text)
+
+
+class _BOKECOSLogRedactionFilter(logging.Filter):
+    """Sanitize httpx's INFO request line before any handler can persist it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = _redact_bok_ecos_credential(message)
+        if record.exc_info is not None:
+            rendered = logging.Formatter().formatException(record.exc_info)
+            safe_rendered = _redact_bok_ecos_credential(rendered)
+            if safe_rendered != rendered:
+                redacted = f"{redacted}\n{safe_rendered}"
+                record.exc_info = None
+                record.exc_text = None
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
+_BOK_ECOS_LOG_REDACTION_FILTER = _BOKECOSLogRedactionFilter()
+logging.getLogger("httpx").addFilter(_BOK_ECOS_LOG_REDACTION_FILTER)
 
 _RBNZ_B2_XLSX_URI = (
     "https://www.rbnz.govt.nz/-/media/project/sites/rbnz/files/statistics/"
@@ -80,6 +125,38 @@ class RBNZAccessPolicyUnavailableError(
     SourcePolicyUnavailableError,
 ):
     """RBNZ access was withheld locally before any source request."""
+
+
+class BOKECOSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
+    """BOK ECOS collection was withheld before any credential-bearing request."""
+
+
+class BOKECOSSourceError(RuntimeError):
+    """A credential-safe BOK ECOS source failure suitable for public faults."""
+
+
+def _bok_ecos_api_key() -> str:
+    """Return a non-sample ECOS key without ever placing it in diagnostics."""
+
+    key = os.getenv(_BOK_ECOS_API_KEY_ENV, "").strip()
+    if not key:
+        raise BOKECOSAccessPolicyUnavailableError(
+            f"BOK ECOS API key is required via {_BOK_ECOS_API_KEY_ENV}; "
+            "no source request was made"
+        )
+    # ECOS' public ``sample`` key is deliberately capped at ten rows and can
+    # silently turn a daily collection into an incomplete window. Production
+    # collection therefore requires the individually issued alphanumeric key.
+    if key.casefold() == "sample" or not re.fullmatch(r"[A-Za-z0-9]{8,128}", key):
+        raise BOKECOSAccessPolicyUnavailableError(
+            f"{_BOK_ECOS_API_KEY_ENV} must contain an issued BOK ECOS API key; "
+            "the sample key is not a production credential"
+        )
+    return key
+
+
+def _require_bok_ecos_api_key() -> None:
+    _bok_ecos_api_key()
 
 
 def bounded_date_windows(
@@ -287,6 +364,89 @@ def parse_boj_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         )
     if not points:
         raise ValueError("BOJ CSV contains no numeric observations")
+    return tuple(points)
+
+
+def _bok_ecos_payload_contains_credential(value: Any, credential: str) -> bool:
+    if isinstance(value, str):
+        return credential in value
+    if isinstance(value, dict):
+        return any(
+            _bok_ecos_payload_contains_credential(key, credential)
+            or _bok_ecos_payload_contains_credential(item, credential)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(
+            _bok_ecos_payload_contains_credential(item, credential) for item in value
+        )
+    return False
+
+
+def _bok_ecos_search_payload(
+    payload: bytes,
+    *,
+    reject_credential: str | None = None,
+) -> tuple[dict[str, Any], list[Any]]:
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("BOK ECOS response is not valid JSON") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("BOK ECOS response is not a JSON object")
+    if reject_credential and _bok_ecos_payload_contains_credential(
+        decoded, reject_credential
+    ):
+        raise ValueError("BOK ECOS response echoed the API credential")
+    result = decoded.get("RESULT")
+    if isinstance(result, dict):
+        code = str(result.get("CODE") or "unknown")
+        message = str(result.get("MESSAGE") or "unspecified source error")
+        raise ValueError(f"BOK ECOS returned {code}: {message}")
+    search = decoded.get("StatisticSearch")
+    if not isinstance(search, dict):
+        raise ValueError("BOK ECOS response has no StatisticSearch object")
+    rows = search.get("row")
+    if not isinstance(rows, list):
+        raise ValueError("BOK ECOS response has no row list")
+    return search, rows
+
+
+def parse_bok_ecos(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
+    """Parse only the two BOK-produced daily series declared by the KR pack."""
+
+    try:
+        expected_stat, expected_item = _BOK_ECOS_SERIES[document.label]
+    except KeyError as exc:
+        raise ValueError(f"unknown BOK ECOS document label {document.label!r}") from exc
+    _, rows = _bok_ecos_search_payload(document.payload)
+    points: list[ParsedPoint] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("BOK ECOS row is not an object")
+        if row.get("STAT_CODE") != expected_stat:
+            raise ValueError(f"BOK ECOS row changed STAT_CODE for {document.label!r}")
+        if row.get("ITEM_CODE1") != expected_item:
+            raise ValueError(f"BOK ECOS row changed ITEM_CODE1 for {document.label!r}")
+        if row.get("UNIT_NAME") != "Percent Per Annum":
+            raise ValueError(f"BOK ECOS row changed UNIT_NAME for {document.label!r}")
+        raw_time = str(row.get("TIME") or "").strip()
+        event_day = (
+            _date(raw_time, "%Y%m%d") if re.fullmatch(r"\d{8}", raw_time) else None
+        )
+        value = _number(row.get("DATA_VALUE"))
+        if event_day is None or value is None:
+            raise ValueError(f"BOK ECOS row is malformed for {document.label!r}")
+        points.append(
+            ParsedPoint(
+                document.label,
+                event_day,
+                value,
+                _row_evidence(document.label, row),
+            )
+        )
+    if not points:
+        raise ValueError("BOK ECOS response contains no numeric observations")
     return tuple(points)
 
 
@@ -1650,6 +1810,107 @@ def build_official_adapters(
     add("JP-JPY", "boj_rates", "boj_rates", fetch_boj_rates, parse_boj_csv)
     add("JP-JPY", "boj_accounts", "boj_accounts", fetch_boj_accounts, parse_boj_csv)
 
+    bok_end = now.astimezone(ZoneInfo("Asia/Seoul")).date()
+    bok_start = configured_start if backfill else bok_end - timedelta(days=45)
+
+    def bok_ecos_fetcher(series: dict[str, tuple[str, str]]):
+        async def fetch(client):
+            api_key = _bok_ecos_api_key()
+            documents: list[FetchedDocument] = []
+            for instrument, (stat_code, item_code) in series.items():
+                first_row = 1
+                total_rows: int | None = None
+                while total_rows is None or first_row <= total_rows:
+                    last_row = first_row + _BOK_ECOS_PAGE_SIZE - 1
+                    uri = (
+                        f"{_BOK_ECOS_BASE_URI}/{api_key}/json/en/"
+                        f"{first_row}/{last_row}/{stat_code}/D/"
+                        f"{bok_start:%Y%m%d}/{bok_end:%Y%m%d}/{item_code}"
+                    )
+                    request_fault: str | None = None
+                    try:
+                        response = await client.get(uri, follow_redirects=False)
+                    except Exception as exc:  # noqa: BLE001 - credential boundary
+                        request_fault = type(exc).__name__
+                    if request_fault is not None:
+                        # Raise after leaving the except block so the original
+                        # credential-bearing request exception is not retained
+                        # as __context__ on the public-safe fault.
+                        raise BOKECOSSourceError(
+                            f"BOK ECOS request failed ({request_fault})"
+                        ) from None
+                    if not 200 <= response.status_code < 300:
+                        # Do not call raise_for_status(): httpx includes the full
+                        # request URL, and ECOS puts its credential in that path.
+                        raise BOKECOSSourceError(
+                            f"BOK ECOS request failed with HTTP {response.status_code}"
+                        )
+                    if api_key.encode() in response.content:
+                        raise BOKECOSSourceError(
+                            "BOK ECOS response rejected because it echoed the API credential"
+                        )
+                    response_fault: str | None = None
+                    try:
+                        search, rows = _bok_ecos_search_payload(
+                            response.content,
+                            reject_credential=api_key,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - credential boundary
+                        response_fault = _redact_bok_ecos_credential(
+                            f"{type(exc).__name__}: {exc}", api_key
+                        )
+                    if response_fault is not None:
+                        raise BOKECOSSourceError(
+                            f"BOK ECOS response validation failed: {response_fault}"
+                        ) from None
+                    try:
+                        reported_total = int(search["list_total_count"])
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise ValueError(
+                            "BOK ECOS response has no valid list_total_count"
+                        ) from exc
+                    if total_rows is None:
+                        total_rows = reported_total
+                    elif reported_total != total_rows:
+                        raise ValueError(
+                            "BOK ECOS list_total_count changed during pagination"
+                        )
+                    if total_rows < 1 or not rows:
+                        raise ValueError(
+                            f"BOK ECOS returned no rows for {instrument!r}"
+                        )
+                    documents.append(
+                        FetchedDocument(
+                            _redact_bok_ecos_credential(response.url, api_key),
+                            "application/json",
+                            response.content,
+                            instrument,
+                        )
+                    )
+                    first_row += len(rows)
+            return tuple(documents)
+
+        return fetch
+
+    add(
+        "KR-KRW",
+        "bok_ecos_policy",
+        "bok_ecos",
+        bok_ecos_fetcher({"KR.BOK.BASE_RATE": _BOK_ECOS_SERIES["KR.BOK.BASE_RATE"]}),
+        parse_bok_ecos,
+        availability_check=_require_bok_ecos_api_key,
+    )
+    add(
+        "KR-KRW",
+        "bok_ecos_money_market",
+        "bok_ecos",
+        bok_ecos_fetcher(
+            {"KR.BOK.CALL_OVERNIGHT_ALL": _BOK_ECOS_SERIES["KR.BOK.CALL_OVERNIGHT_ALL"]}
+        ),
+        parse_bok_ecos,
+        availability_check=_require_bok_ecos_api_key,
+    )
+
     async def fetch_cfets(client):
         end = now.date()
         window_start = start if backfill else max(start, end - timedelta(days=31))
@@ -1792,6 +2053,8 @@ PRODUCTION_ADAPTER_KEYS = frozenset(
         ("UK-GBP", "boe_policy"),
         ("JP-JPY", "boj_rates"),
         ("JP-JPY", "boj_accounts"),
+        ("KR-KRW", "bok_ecos_policy"),
+        ("KR-KRW", "bok_ecos_money_market"),
         ("CN-CNY", "cfets_rates"),
         ("HK-HKD", "hkma_official"),
         ("IN-INR", "rbi_official"),

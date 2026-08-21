@@ -14,7 +14,7 @@
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
         "title": "Seiche — funding-stress terminal",
-        "description": "US funding-stress warning with construction-PIT evidence limits and explicit eligibility flags.",
+        "description": "USD funding-stress warning and global money-market context with explicit evidence limits.",
         "version": "0.10.0",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
@@ -38,14 +38,14 @@
             "environmentVariables": [
               {
                 "name": "SEICHE_MCP_PUBLIC",
-                "description": "Set to 1 to expose the nine free public tools shipped by seiche 0.10.0 over stdio: latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows, oil_funding_context, fx_materials_passage.",
+                "description": "Set to 1 to expose the ten free public tools shipped by seiche 0.10.0 over stdio: latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows, oil_funding_context, fx_materials_passage, money_market_context.",
                 "isRequired": false
               }
             ]
           }
         ]
       },
-      "description": "Nine anonymous tools for the latest full-text editorial, current US dollar funding regime, historical analogs, data health, institutional positioning, crypto transmission, oil/FX/material context, and a historical diagnostic with misses and eligibility flags.",
+      "description": "Ten anonymous tools for the latest full-text editorial, current US dollar funding regime, historical analogs, data health, institutional positioning, crypto transmission, oil/FX/material context, granular money-market context, and a historical diagnostic with misses and eligibility flags.",
       "tags": [
         "US dollar funding",
         "repo",
@@ -63,21 +63,22 @@
         "crypto_stress_record",
         "institutional_flows",
         "oil_funding_context",
-        "fx_materials_passage"
+        "fx_materials_passage",
+        "money_market_context"
       ],
       "representativeQueries": [
         "What is the current US dollar funding stress regime?",
         "What historical episodes most resemble today?",
-        "How accurate has this funding stress model been?",
         "How are hedge funds positioned in the Treasury basis trade?",
-        "Are oil, FX or material cash demands—including current Cushing stocks and Brent−WTI basis—reaching dollar funding markets, and which structure figures are dated references?"
+        "Are oil, FX or material cash demands—including current Cushing stocks and Brent−WTI basis—reaching dollar funding markets, and which structure figures are dated references?",
+        "Explain the latest USD money-market plumbing in simple language and show the source clocks."
       ],
       "version": "0.10.0",
-      "updatedAt": "2026-08-15T12:00:00Z",
+      "updatedAt": "2026-08-21T12:00:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",
-        "publicToolCount": 9,
+        "publicToolCount": 10,
         "articleJsonFeed": "https://seiche.info/articles/feed.json",
         "telegramBot": "https://t.me/seiche_desk_bot",
         "telegramChannel": "https://t.me/LiquidityLabDesk"
@@ -88,7 +89,7 @@
       "displayName": "Seiche Public REST API",
       "type": "application/vnd.oai.openapi+json",
       "url": "https://api.seiche.info/api/openapi.json",
-      "description": "Curated OpenAPI contract for current funding conditions, Ballast and oil-market structure, FX/material context, series provenance, public methodology, and health endpoints.",
+      "description": "Curated OpenAPI contract for the granular USD money-market desk, licence-aware global atlas, current funding conditions, market structure, provenance, methodology, and health endpoints.",
       "tags": [
         "OpenAPI",
         "funding stress API",
@@ -97,6 +98,8 @@
       ],
       "capabilities": [
         "funding stress overview",
+        "USD money-market desk",
+        "global money-market atlas",
         "series catalog",
         "data provenance",
         "health status",
@@ -107,10 +110,11 @@
         "Give me an API for the current dollar funding regime.",
         "Retrieve repo, reserves and Treasury cash conditions with provenance.",
         "Check whether the Seiche data feeds are fresh.",
-        "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context."
+        "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context.",
+        "Compare registered money markets against their own native-frequency histories without exposing restricted raw quotes."
       ],
       "version": "0.10.0",
-      "updatedAt": "2026-08-15T12:00:00Z",
+      "updatedAt": "2026-08-21T12:00:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",

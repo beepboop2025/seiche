@@ -473,8 +473,9 @@ def build_block(snap: dict, entries: list[dict], letters: dict[str, str]) -> tup
     foot = (
         '<div class="foot">Seiche is free open source software '
         '(<a href="https://github.com/beepboop2025/seiche">AGPL-3.0, source</a>) and a free '
-        'public good: no sign-in, no paywall, no data cost. Built on free keyless public APIs '
-        'from the Fed, NY Fed, OFR, Treasury, CFTC and ECB. '
+        'public good: no sign-in or paywall for the public desk. The core USD board uses '
+        'public APIs from the Fed, NY Fed, OFR, Treasury and CFTC; global market coverage '
+        'labels credentialed, licensed, derived-only and unavailable inputs explicitly. '
         '<a href="/llms.txt">llms.txt</a> &middot; '
         '<a href="/llms-full.txt">full letter corpus</a> &middot; '
         '<a href="/dispatches/feed.xml">Atom feed</a> &middot; '

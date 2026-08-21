@@ -71,6 +71,7 @@ from seiche.domain.forward_record import (
     validate_release_handoff_envelope,
     validate_release_product_bindings,
 )
+from seiche.public_faults import safe_failure_envelope, sanitize_fault_record
 from seiche.engines import auctions as eng_auctions
 from seiche.engines import backtest as eng_backtest
 from seiche.engines import basins as eng_basins
@@ -103,6 +104,7 @@ from seiche.engines import searoom as eng_searoom
 from seiche.engines import seastate as eng_seastate
 from seiche.engines import thermohaline as eng_thermohaline
 from seiche.engines import market as eng_market
+from seiche.engines import money_market as eng_money_market
 from seiche.engines import mlpred as eng_mlpred
 from seiche.engines import moorings as eng_moorings
 from seiche.engines import navigator as eng_navigator
@@ -345,7 +347,10 @@ def _pts(d: dict, key: str) -> pd.Series:
 def _vol_b(s: pd.Series) -> pd.Series:
     """OFR volume mnemonics are raw dollars — scale to $B when they look it."""
     x = s.dropna()
-    if not x.empty and float(x.iloc[-1]) > 1e6:
+    # A latest legitimate zero must not make earlier dollar-scale rows look as
+    # though they were already billions. The series-wide magnitude is a unit
+    # boundary check, not a market-state inference.
+    if not x.empty and float(x.abs().max()) > 1e6:
         return x / 1e9
     return x
 
@@ -429,6 +434,10 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     ofr_s = src.get("ofr", {})
     frames = (src.get("nyfed_rates") or {}).get("frames", {})
     iorb = drv["iorb"]
+    evaluation_asof = (
+        asof if asof is not None
+        else pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    )
 
     results: dict = {}
 
@@ -436,8 +445,46 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         try:
             results[name] = fn()
         except Exception as e:
-            results[name] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+            results[name] = safe_failure_envelope(e)
             faults.append({"source": f"engine:{name}", "detail": traceback.format_exc(limit=2)})
+
+    # --- Institutional USD money-market desk ------------------------------
+    # Unit boundaries are explicit here: the pure engine receives every
+    # balance/volume in $B and every rate in percentage points. It performs
+    # no source-specific guessing and never reaches back into collectors.
+    cp_s = src.get("fred_cp_rates", {})
+    gcf_s = src.get("ofr_gcf", {})
+    run("money_market", lambda: eng_money_market.analyze(
+        sofr=_pts(fred_s, "SOFR"),
+        effr=_pts(fred_s, "EFFR"),
+        iorb=iorb if iorb is not None else pd.Series(dtype=float),
+        nyfed_sofr=frames.get("SOFR", pd.DataFrame()),
+        nyfed_tgcr=frames.get("TGCR", pd.DataFrame()),
+        nyfed_bgcr=frames.get("BGCR", pd.DataFrame()),
+        bgcr=_pts(ofr_s, "BGCR"),
+        tgcr=_pts(ofr_s, "TGCR"),
+        dvp_rate=_pts(ofr_s, "DVP_RATE_OO"),
+        dvp_volume=_vol_b(_pts(ofr_s, "DVP_VOL")),
+        tri_rate=_pts(ofr_s, "TRI_RATE_OO"),
+        tri_volume=_vol_b(_pts(ofr_s, "TRI_VOL")),
+        gcf_rate=_pts(gcf_s, "GCF_RATE_OO"),
+        gcf_volume=_vol_b(_pts(gcf_s, "GCF_VOL_OO")),
+        mmf_total=_vol_b(_pts(ofr_s, "MMF_TOT")),
+        mmf_repo_ficc=_vol_b(_pts(ofr_s, "MMF_REPO_FICC")),
+        mmf_repo_fed=_vol_b(_pts(ofr_s, "MMF_REPO_FED")),
+        mmf_repo_total=_vol_b(_pts(ofr_s, "MMF_REPO_TOT")),
+        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+        treasury_3m=_pts(cp_s, "DGS3M"),
+        bill_4w=_pts(fred_s, "TB4W"),
+        bill_3m=_pts(fred_s, "TB3M"),
+        reserves=_pts(fred_s, "WRESBAL") / 1000.0,
+        tga=drv["tga"],
+        on_rrp=drv["rrp"],
+        srf=drv["srf"],
+        discount_window=drv["dw_b"],
+        evaluation_asof=evaluation_asof,
+    ))
 
     # --- Kink ---
     if iorb is not None:
@@ -1054,7 +1101,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         }
     except Exception as e:
         faults.append({"source": "deep:history", "detail": f"{type(e).__name__}: {e}"})
-        out["history"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        out["history"] = safe_failure_envelope(e)
         _bind_deep_history_boundary(out)
         store.save_blob(cache_key, out)
         return out
@@ -1072,7 +1119,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         try:
             out[name] = fn()
         except Exception as e:
-            out[name] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+            out[name] = safe_failure_envelope(e)
             faults.append({"source": f"deep:{name}", "detail": traceback.format_exc(limit=2)})
 
     run("tell", lambda: eng_market.tell(
@@ -1224,7 +1271,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         out["refereegli"]["rubric"] = rubric.build(out.get("refereegli"))
     except Exception as e:
         faults.append({"source": "deep:rubric", "detail": f"{type(e).__name__}: {e}"})
-        out["refereegli"]["rubric"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        out["refereegli"]["rubric"] = safe_failure_envelope(e)
 
     # Orthogonal signal test: rebuild the index WITHOUT the tails component
     # (which contains the spread/tail variables the event is defined on) and
@@ -1257,7 +1304,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             out["backtest"]["orthogonal"] = _orthogonal()
         except Exception as e:
             faults.append({"source": "deep:orthogonal", "detail": f"{type(e).__name__}: {e}"})
-            out["backtest"]["orthogonal"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+            out["backtest"]["orthogonal"] = safe_failure_envelope(e)
 
     def _ml():
         stable = (src.get("crypto") or {}).get("stable", {})
@@ -2196,6 +2243,10 @@ async def _build_snapshot() -> dict:
     # git-tracked JSONL the dispatch CI appends to, which makes the court's
     # record auditable in history rather than a box-local file.
     deep["modelcourt"] = eng_modelcourt.convene(deep, odds_ledger=_odds_ledger())
+    # Source adapters predate the typed failure contract and may still append
+    # raw exception details to the shared list.  Normalize the complete list
+    # before it can enter editorial output, release handoffs, or blob storage.
+    faults = [sanitize_fault_record(item) for item in faults]
     generated_at = utcnow_iso()
     headline = _headline(src, drv)
     calendar = _calendar(src, engines, deep, drv)
@@ -2238,7 +2289,7 @@ async def _build_snapshot() -> dict:
                 drv["spread_bp"].index[-1].date().isoformat(),
             )
         except Exception as e:  # noqa: BLE001 — fail loud, never block the board
-            nav = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+            nav = safe_failure_envelope(e)
         if nav.get("ok"):
             nav = {**nav, "record": eng_navigator.score_record(
                 store.load_pit_records(), drv["spread_bp"])}

@@ -47,6 +47,18 @@ That is enough to use Seiche well. The rest is depth for when you want it.
 - **HELM** — plain-language positions this reading would imply, with an honest
   running score, including the times it was wrong.
 - **MARKET** — the raw rates and spreads, if you want the source numbers.
+- **MONEY MARKETS** — two desks kept deliberately separate. The **USD Money
+  Market Desk** walks through the policy corridor, SOFR/TGCR/BGCR distributions,
+  repo venues and volumes, commercial paper, bills, official liquidity buffers,
+  Fed facilities and money-fund repo plumbing. Its NORMAL/WATCH/STRAIN/STRESS
+  label describes the most stretched observed channel against its own history;
+  it is not the main Seiche regime, a forecast, or a trade. The **Global Money
+  Market Atlas** shows all 11 registered monetary-area packs on their own clocks
+  and a searchable, source-audited ledger of 52 additional monetary areas.
+  Eleven registered packs does not mean eleven live benchmarks: each market says
+  whether a raw benchmark is available, only derived context is permitted, only
+  a policy anchor exists, or evidence is unavailable. The same contracts are at
+  `/api/money-markets` and `/api/v2/money-markets`.
 - **GLOBAL** — whether the US, Europe, the UK, India and the crypto dollar are
   all moving together, which is what makes a local problem a global one.
 - **FX×MATERIALS** — The Estuary: whether currency weakness, settlement risk and
@@ -88,6 +100,8 @@ Seiche names its parts after the sea. Here is what each one really does.
 | **Kink** | How close we are to the point where bank cash gets scarce, and how many days away at the current drain rate. |
 | **Liquidity Weather** | A six week forecast of how much cash is in the banking system, and which days land on thin ice. |
 | **Tail Seismograph** | An early tremor detector: are the worst overnight lending rates starting to detach from the normal ones. |
+| **USD Money Market Desk** | The detailed cash-market ledger behind a simple headline: overnight rates versus Fed anchors, rate-distribution tails, separate repo venues and volumes, unsecured borrowing, bills, system cash buffers, facilities and money-fund repo. Cross-source spreads use the same date or stay blank. |
+| **Global Money Market Atlas** | A map of the 11 registered local markets, plus 52 dated official-source discovery records, without pretending they are interchangeable or all live. Each benchmark is ranked only against its own history at its source's native daily, weekly or monthly cadence; slower series are never padded into daily observations. |
 | **Echo** | Does today's path rhyme with the run up to a past stress episode. |
 | **Tide Tables** | What happened next, every previous time the board looked like it does today. |
 | **Resonance** | Is the same calendar pressure making a bigger wave than before. Bigger wave, same push, means rising fragility. |
@@ -121,6 +135,12 @@ Seiche names its parts after the sea. Here is what each one really does.
 - **It fails loud.** If a data feed goes stale or dies, the board says so on the
   SYSTEM tab and reduces its own confidence, rather than pretending everything is
   fine.
+- **It respects data rights.** AGPL-3.0 makes Seiche's code open; it does not
+  erase an upstream publisher's terms. `AVAILABLE` means a raw public value can
+  be shown. `DERIVED_CONTEXT` means only a non-reversible own-history statistic
+  can be shown while the level stays hidden. `POLICY_ONLY` means there is an
+  official policy anchor but no eligible traded benchmark. Unavailable means “we
+  cannot assess this market,” never “this market is calm.”
 
 ## A few finance words, in plain English
 
@@ -129,6 +149,19 @@ Seiche names its parts after the sea. Here is what each one really does.
 - **Repo** — a loan of cash overnight secured by a Treasury bond. The core pipe.
 - **SOFR** — the main interest rate on those overnight loans. When it spikes above
   where the Fed wants it, cash is getting scarce.
+- **IORB** — the rate the Fed pays banks on reserve balances. Comparing SOFR with
+  IORB is one way to see where private secured cash trades relative to a policy
+  anchor, but the instruments and counterparties are not identical.
+- **TGCR / BGCR** — broader official overnight Treasury-repo benchmarks. They
+  cover different transaction sets, so Seiche keeps their rates, distributions
+  and volumes separate instead of averaging them into “repo.”
+- **Commercial paper (CP)** — short-term unsecured borrowing by companies or
+  financial firms. Its spread to a same-date Treasury reference mixes credit,
+  liquidity, term and quote-convention effects; it is not a pure default-risk
+  number.
+- **Money-market fund (MMF)** — a large provider of short-term cash. Monthly MMF
+  holdings show how reported repo is divided among FICC, the Fed and an arithmetic
+  remainder, but the slower stock data should not be read as a daily flow.
 - **Reserves** — the cash banks keep at the Fed. The buffer for the whole system.
 - **TGA** — the government's checking account at the Fed. When it fills up, it
   pulls cash out of the banking system.

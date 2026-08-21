@@ -7,11 +7,13 @@ and the Time
 Machine replay.
 
 Design matches the project ethos — *no new dependencies, fail loud, nothing
-clever*: it speaks JSON-RPC 2.0 using only the standard library, and every tool
-wraps the same ``assemble.snapshot()`` the CLI and REST API read, so there is
-exactly one source of truth. FactIQ-style data feeds hand an agent raw macro
-numbers; Seiche hands it the *conclusion* — a regime read, a probability, and a
-track record — which is the part raw data can't answer.
+clever*: it speaks JSON-RPC 2.0 using only the standard library and reads the
+same completed board as the CLI and REST API, so there is exactly one source of
+truth. Most tools may warm that board through ``assemble.snapshot()``;
+``money_market_context`` is deliberately cache-only so a public read can never
+trigger collection. FactIQ-style data feeds hand an agent raw macro numbers;
+Seiche hands it the *conclusion* — a regime read, a probability, and a track
+record — which is the part raw data can't answer.
 
 Two transports share one dispatch:
 
@@ -20,14 +22,15 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the nine tools flagged ``is_public`` in
+Surface: the *public* surface is the ten tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
-``fx_materials_passage``. That is the published editorial, the conclusion,
-the precedent, the honest record, the freshness of the inputs, and cross-market
-transmission context; it is free to everyone with no token. The *full* surface
-adds the five that read the gated derived engines:
+``fx_materials_passage``, plus ``money_market_context``. That is the published
+editorial, the conclusion, the precedent, the honest record, the freshness of
+the inputs, granular USD money-market evidence, and cross-market transmission
+context; it is free to everyone with no token. The *full* surface adds the five
+that read the gated derived engines:
 ``funding_stress_forecast``, ``replay_asof``, ``positioning_book``,
 ``desk_brief`` and ``ask_desk``. For stdio the surface is fixed by
 ``SEICHE_MCP_PUBLIC``; for HTTP an anonymous caller is always the public one.
@@ -52,10 +55,12 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import date as calendar_date
+from datetime import UTC, date as calendar_date, datetime
 from typing import Any
 
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
+from seiche.engines import money_market as money_market_engine
+from seiche.public_faults import safe_failure_envelope, sanitize_public_fault_payload
 
 # Keep the current stable revision first and retain the two revisions used by
 # installed clients. MCP negotiation does not permit echoing an arbitrary
@@ -70,6 +75,23 @@ SERVER_NAME = "seiche"
 AGENT_MCP_TELEGRAM_URL = "https://t.me/seiche_desk_bot?start=agent_mcp"
 ARTICLE_FEED_URL = "https://seiche.info/articles/feed.json"
 ARTICLE_FEED_MAX_BYTES = 512 * 1024
+MONEY_MARKET_SCHEMA = "seiche.money-market-desk.v1"
+MONEY_MARKET_SECTION_IDS = (
+    "policy_corridor",
+    "secured_distributions",
+    "repo_segments",
+    "unsecured_funding",
+    "bills_cash_curve",
+    "liquidity_buffers",
+    "mmf_plumbing",
+)
+MONEY_MARKET_SELECTORS = (
+    "summary",
+    *MONEY_MARKET_SECTION_IDS,
+    "sources",
+    "methodology",
+    "all",
+)
 
 # Default surface for the stdio transport. HTTP overrides this per request.
 PUBLIC_ONLY = os.getenv("SEICHE_MCP_PUBLIC", "0") == "1"
@@ -125,8 +147,9 @@ def _run(coro):
         loop = _bridge_loop
         if loop is None or loop.is_closed():
             loop = asyncio.new_event_loop()
-            threading.Thread(target=loop.run_forever,
-                             name="seiche-mcp-bridge", daemon=True).start()
+            threading.Thread(
+                target=loop.run_forever, name="seiche-mcp-bridge", daemon=True
+            ).start()
             _bridge_loop = loop
     return asyncio.run_coroutine_threadsafe(coro, loop).result()
 
@@ -164,6 +187,38 @@ def _get_snapshot(force: bool = False) -> dict:
     return snap
 
 
+def _get_completed_snapshot() -> dict | None:
+    """Return completed memory or durable state without starting collection.
+
+    ``money_market_context`` is a public evidence read, so a cold or expired
+    stdio client must never become an implicit board-build trigger. The
+    assembler's cache-status and restore seams neither schedule refresh nor
+    run an engine. Observation values stay sealed; their freshness clock is
+    advanced separately by the bounded response projection.
+    """
+    from seiche import assemble
+
+    current = assemble.cached_snapshot()
+    if isinstance(current, dict):
+        # A restart seed is safe to read but must stay expired. Otherwise this
+        # cache-only tool can postpone the normal tool path's background warm
+        # by a full MCP TTL merely because it was called first after boot.
+        memo_time = time.time() if assemble.cached_snapshot_was_rebuilt() else 0.0
+        _cache.update(snap=current, at=memo_time)
+        return current
+
+    cached = _cache.get("snap")
+    if isinstance(cached, dict):
+        return cached
+
+    assemble.restore_cached_snapshot()
+    restored = assemble.cached_snapshot()
+    if isinstance(restored, dict):
+        _cache.update(snap=restored, at=0.0)
+        return restored
+    return None
+
+
 def _get_asof(date: str) -> dict:
     from seiche import assemble
 
@@ -196,7 +251,9 @@ def _need(section: dict | None, label: str) -> dict:
     if not section:
         raise ToolError(f"{label} is unavailable in this snapshot")
     if section.get("ok") is False:
-        raise ToolError(f"{label} unavailable: {section.get('reason', 'unknown reason')}")
+        raise ToolError(
+            f"{label} unavailable: {section.get('reason', 'unknown reason')}"
+        )
     return section
 
 
@@ -219,8 +276,10 @@ def _latest_article_from_feed(url: str = ARTICLE_FEED_URL) -> dict:
         raise ToolError("article feed URL is not allowlisted")
     request = urllib.request.Request(
         url,
-        headers={"Accept": "application/feed+json, application/json",
-                 "User-Agent": "seiche-mcp/0.10"},
+        headers={
+            "Accept": "application/feed+json, application/json",
+            "User-Agent": "seiche-mcp/0.10",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310 - fixed URL
@@ -291,7 +350,9 @@ def tool_stress_now(_args: dict, public: bool) -> Any:
 
 def tool_forecast(_args: dict, public: bool) -> Any:
     if public:
-        raise ToolError("the forward forecast is a subscriber tool — sign in with a token")
+        raise ToolError(
+            "the forward forecast is a subscriber tool — sign in with a token"
+        )
     snap = _get_snapshot()
     deep = snap.get("deep", {})
     out: dict[str, Any] = {"as_of": snap.get("generated_at"), "sources": {}}
@@ -363,7 +424,9 @@ def tool_forecast(_args: dict, public: bool) -> Any:
 
 def tool_analogs(_args: dict, _public: bool) -> Any:
     snap = _get_snapshot()
-    t = _need(snap.get("deep", {}).get("tidetables"), "Tide Tables (historical analogs)")
+    t = _need(
+        snap.get("deep", {}).get("tidetables"), "Tide Tables (historical analogs)"
+    )
     return {
         "as_of": snap.get("generated_at"),
         "event_odds": t.get("event_odds", {}),
@@ -384,7 +447,9 @@ def tool_analogs(_args: dict, _public: bool) -> Any:
 
 def tool_replay(args: dict, public: bool) -> Any:
     if public:
-        raise ToolError("the Time Machine replay is a subscriber tool — sign in with a token")
+        raise ToolError(
+            "the Time Machine replay is a subscriber tool — sign in with a token"
+        )
     date = (args or {}).get("date", "")
     if not isinstance(date, str) or not _is_iso_date(date):
         raise ToolError("`date` must be a calendar date as YYYY-MM-DD")
@@ -435,7 +500,9 @@ def tool_proof(_args: dict, _public: bool) -> Any:
 
 def tool_book(_args: dict, public: bool) -> Any:
     if public:
-        raise ToolError("the positioning book is a subscriber tool — sign in with a token")
+        raise ToolError(
+            "the positioning book is a subscriber tool — sign in with a token"
+        )
     snap = _get_snapshot()
     deep = snap.get("deep", {})
     bk = _need(deep.get("book"), "The Book (positioning)")
@@ -493,8 +560,10 @@ def tool_wrecks(_args: dict, _public: bool) -> Any:
 
     payload = store.load_blob(WRECKS_BLOB_KEY)
     if payload is None:
-        raise ToolError("the wrecks record has not been computed on this "
-                        "deployment yet (operator runs `seiche wrecks --refresh`)")
+        raise ToolError(
+            "the wrecks record has not been computed on this "
+            "deployment yet (operator runs `seiche wrecks --refresh`)"
+        )
     payload = dict(payload)
     payload["reading"] = (
         "labelled crypto stress episodes replayed with causal truncation but "
@@ -518,11 +587,9 @@ def tool_flows(_args: dict, public: bool) -> Any:
 
     try:
         pack = wakeflows.load()
-    except wakeflows.WakePackError as exc:
+    except wakeflows.WakePackError:
         raise ToolError(
-            f"the institutional-flows pack is unavailable: {exc} "
-            "(operator: the wake timer generates it — /opt/wake on the "
-            "box, `python3 -m wake.cli live`)"
+            "the institutional-flows pack is unavailable on this deployment"
         )
     out = wakeflows.readings(pack)
     if public:
@@ -562,9 +629,238 @@ def tool_estuary(_args: dict, _public: bool) -> Any:
     return _need(payload, "The Estuary FX/materials context")
 
 
+def _money_market_section_status(section: object) -> str:
+    """Surface an all-stale section without mutating the sealed snapshot."""
+    if not isinstance(section, dict):
+        return "unavailable"
+    raw_metrics = section.get("metrics")
+    metrics = raw_metrics if isinstance(raw_metrics, list) else []
+    observed_freshness = [
+        str(metric.get("freshness", "")).lower()
+        for metric in metrics
+        if isinstance(metric, dict)
+        and str(metric.get("freshness", "")).lower() in {"fresh", "aging", "stale"}
+    ]
+    if observed_freshness and all(value == "stale" for value in observed_freshness):
+        return "stale"
+    status = section.get("status")
+    return status if isinstance(status, str) and status else "unavailable"
+
+
+def _money_market_project_section(section: dict) -> dict:
+    """Copy one section with the response-level, freshness-aware status."""
+    return {**section, "status": _money_market_section_status(section)}
+
+
+def _money_market_base(
+    snap: dict,
+    engine: dict,
+    selector: str,
+    *,
+    ok: bool,
+) -> dict[str, Any]:
+    """Project invariant desk context without copying its chart history."""
+    raw_sections = engine.get("sections")
+    raw_sections = raw_sections if isinstance(raw_sections, list) else []
+    sections = {
+        section.get("id"): section
+        for section in raw_sections
+        if isinstance(section, dict) and section.get("id") in MONEY_MARKET_SECTION_IDS
+    }
+    return {
+        "ok": ok,
+        "schema": MONEY_MARKET_SCHEMA,
+        "asof": engine.get("asof"),
+        "snapshot_generated_at": snap.get("generated_at"),
+        "context_only": True,
+        "selection": selector,
+        "chart_history_included": False,
+        "plain_language": engine.get("plain_language"),
+        "quant_read": engine.get("quant_read"),
+        "strongest_signal": engine.get("strongest_signal"),
+        "countercase": engine.get("countercase"),
+        "regime": engine.get("regime"),
+        "coverage": engine.get("coverage"),
+        "freshness": engine.get("freshness"),
+        "caveats": engine.get("caveats") or [],
+        "section_catalog": [
+            {
+                "id": section_id,
+                "title": (
+                    (sections.get(section_id) or {}).get("title")
+                    or (sections.get(section_id) or {}).get("label")
+                ),
+                "status": _money_market_section_status(sections.get(section_id)),
+            }
+            for section_id in MONEY_MARKET_SECTION_IDS
+        ],
+        "available_selectors": list(MONEY_MARKET_SELECTORS),
+    }
+
+
+def _money_market_unavailable(
+    snap: dict,
+    engine: dict | None,
+    selector: str,
+) -> dict[str, Any]:
+    """Return an explicit machine-readable absence instead of a tool error."""
+    raw_desk = engine if isinstance(engine, dict) else {}
+    # Legacy persisted snapshots may contain exception-derived ``reason``
+    # strings. Sanitize before that field is copied into both ``reason`` and a
+    # section ``explanation`` below, so one hostile value cannot escape twice.
+    sanitized_desk = sanitize_public_fault_payload(raw_desk)
+    desk = sanitized_desk if isinstance(sanitized_desk, dict) else {}
+    out = _money_market_base(snap, desk, selector, ok=False)
+    reason = (
+        desk.get("reason") or "engines.money_market is unavailable in this snapshot"
+    )
+    out.update(
+        status="unavailable",
+        reason=reason,
+        plain_language=(
+            desk.get("plain_language")
+            or "The institutional USD money-market desk is unavailable in this snapshot."
+        ),
+        quant_read=(
+            desk.get("quant_read")
+            or "No money-market metric, regime, or inference is available."
+        ),
+        regime=(
+            desk.get("regime")
+            or {
+                "state": "CANNOT_ASSESS",
+                "status": (
+                    "descriptive_context_only_not_forecast_probability_or_trade_signal"
+                ),
+            }
+        ),
+        strongest_signal=(
+            desk.get("strongest_signal")
+            or {"metric_id": None, "reading": "No signal is available."}
+        ),
+        countercase=(
+            desk.get("countercase")
+            or {"metric_id": None, "reading": "No countercase is available."}
+        ),
+        coverage=(desk.get("coverage") or {"status": "unavailable"}),
+        freshness=(desk.get("freshness") or {"status": "unavailable"}),
+    )
+    if selector in MONEY_MARKET_SECTION_IDS:
+        out["sections"] = [
+            {
+                "id": selector,
+                "title": None,
+                "status": "unavailable",
+                "explanation": reason,
+                "metrics": [],
+            }
+        ]
+    elif selector in {"methodology", "all"}:
+        out["methodology"] = desk.get("methodology") or {}
+        out["formulas"] = desk.get("formulas") or []
+        if selector == "all":
+            out["sections"] = []
+    if selector in {"sources", "all"}:
+        source_metadata = desk.get("source_metadata") or desk.get("sources") or []
+        out["source_metadata"] = source_metadata
+        out["sources"] = source_metadata
+        out["legal_notices"] = desk.get("legal_notices") or []
+    return out
+
+
+def tool_money_market(args: dict, _public: bool) -> Any:
+    """Serve a chartless USD desk only from already-completed evidence."""
+    if not isinstance(args, dict):
+        raise ToolError("arguments must be an object")
+    unknown = sorted(str(key) for key in args if key != "section")
+    if unknown:
+        raise ToolError(f"unknown argument(s): {', '.join(unknown)}")
+    selector = args.get("section", "summary")
+    if not isinstance(selector, str) or selector not in MONEY_MARKET_SELECTORS:
+        raise ToolError(
+            "`section` must be one of: " + ", ".join(MONEY_MARKET_SELECTORS)
+        )
+
+    raw_snap = _get_completed_snapshot()
+    if raw_snap is None:
+        return _money_market_unavailable(
+            {},
+            {
+                "reason": (
+                    "no completed cached or persisted snapshot is available; "
+                    "money_market_context never triggers collection or engine recomputation"
+                )
+            },
+            selector,
+        )
+    snap = raw_snap if isinstance(raw_snap, dict) else {}
+    engines = snap.get("engines")
+    engine = engines.get("money_market") if isinstance(engines, dict) else None
+    if (
+        not isinstance(engine, dict)
+        or engine.get("schema") != MONEY_MARKET_SCHEMA
+        or engine.get("ok") is not True
+    ):
+        return _money_market_unavailable(snap, engine, selector)
+
+    engine = money_market_engine.refresh_for_evaluation(
+        engine,
+        evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+    )
+
+    out = _money_market_base(snap, engine, selector, ok=True)
+    raw_sections = engine.get("sections")
+    raw_sections = raw_sections if isinstance(raw_sections, list) else []
+    sections = {
+        section.get("id"): section
+        for section in raw_sections
+        if isinstance(section, dict)
+    }
+    if selector in MONEY_MARKET_SECTION_IDS:
+        selected = sections.get(selector)
+        if selected is None:
+            out["selection_status"] = "unavailable"
+            out["sections"] = [
+                {
+                    "id": selector,
+                    "title": None,
+                    "status": "unavailable",
+                    "explanation": "section is absent from this assembled snapshot",
+                    "metrics": [],
+                }
+            ]
+        else:
+            projected = _money_market_project_section(selected)
+            out["selection_status"] = projected["status"]
+            out["sections"] = [projected]
+    elif selector == "sources":
+        source_metadata = engine.get("source_metadata") or engine.get("sources") or []
+        out["source_metadata"] = source_metadata
+        out["sources"] = source_metadata
+        out["legal_notices"] = engine.get("legal_notices") or []
+    elif selector == "methodology":
+        out["methodology"] = engine.get("methodology") or {}
+        out["formulas"] = engine.get("formulas") or []
+    elif selector == "all":
+        out["sections"] = [
+            _money_market_project_section(sections[section_id])
+            for section_id in MONEY_MARKET_SECTION_IDS
+            if section_id in sections
+        ]
+        out["methodology"] = engine.get("methodology") or {}
+        out["formulas"] = engine.get("formulas") or []
+        source_metadata = engine.get("source_metadata") or engine.get("sources") or []
+        out["source_metadata"] = source_metadata
+        out["sources"] = source_metadata
+        out["legal_notices"] = engine.get("legal_notices") or []
+    return out
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
-        raise ToolError("the desk assistant is a subscriber tool — sign in with a token")
+        raise ToolError(
+            "the desk assistant is a subscriber tool — sign in with a token"
+        )
     from seiche import ai
 
     q = (args or {}).get("question", "")
@@ -576,11 +872,17 @@ def tool_ask(args: dict, public: bool) -> Any:
     res = _run(ai.ask(q, snap))
     if not res.get("ok"):
         raise ToolError(
-            res.get("reason", "the desk assistant is not configured "
-                    "(set SEICHE_LLM_BASE_URL / SEICHE_LLM_API_KEY)")
+            res.get(
+                "reason",
+                "the desk assistant is not configured "
+                "(set SEICHE_LLM_BASE_URL / SEICHE_LLM_API_KEY)",
+            )
         )
-    return {"answer": res.get("answer"), "grounding": res.get("grounding"),
-            "route": res.get("route")}
+    return {
+        "answer": res.get("answer"),
+        "grounding": res.get("grounding"),
+        "route": res.get("route"),
+    }
 
 
 def _is_iso_date(s: str) -> bool:
@@ -612,6 +914,37 @@ TOOLS: dict[str, tuple] = {
         "sheet, or liquidity conditions.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_stress_now,
+        True,
+    ),
+    "money_market_context": (
+        "Institutional USD money-market desk",
+        "Granular, descriptive USD money-market context from the already assembled "
+        "desk: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions "
+        "and tails; repo-segment rates and volumes; CP-Treasury spreads; bills and "
+        "cash curve; liquidity buffers and Fed facilities; and MMF repo plumbing. "
+        "Use optional `section` to request a compact summary, one named desk section, "
+        "sources, methodology, or all context. Returns exact-date alignment, native-"
+        "cadence changes, empirical own-history statistics, freshness, coverage, "
+        "formulas, sources, and caveats as applicable. Chart history is always "
+        "omitted. Reads only an already completed cached or persisted snapshot; it "
+        "never triggers collection or engine recomputation, while freshness is "
+        "re-evaluated at response time. Context only: no causal, predictive, "
+        "probability, or trade claim.",
+        {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": (
+                        "Projection to return; defaults to the compact desk summary."
+                    ),
+                    "enum": list(MONEY_MARKET_SELECTORS),
+                    "default": "summary",
+                }
+            },
+            "additionalProperties": False,
+        },
+        tool_money_market,
         True,
     ),
     "funding_stress_forecast": (
@@ -810,14 +1143,22 @@ PROMPTS: dict[str, tuple] = {
         lambda a: (
             "Write this morning's US funding-stress briefing from the Seiche "
             "board, in this order: 1) funding_stress_now for the regime and "
-            "composite; 2) funding_stress_forecast for 5/10/21-day event "
-            "odds; 3) historical_analogs for what usually happens from here; "
-            "4) data_health to confirm freshness. Quote numbers exactly, "
+            "composite; 2) money_market_context with section='summary' for the "
+            "descriptive USD desk countercase and evidence coverage; 3) "
+            "funding_stress_forecast for 5/10/21-day event odds; 4) "
+            "historical_analogs for what usually happens from here; 5) "
+            "data_health to confirm freshness. Quote numbers exactly, "
             "state the regime plainly, and close with the PROOF caveat: cite "
             "proof_backtest for how much to trust the signal."
         ),
-        ("funding_stress_now", "funding_stress_forecast", "historical_analogs",
-         "proof_backtest", "data_health"),
+        (
+            "funding_stress_now",
+            "money_market_context",
+            "funding_stress_forecast",
+            "historical_analogs",
+            "proof_backtest",
+            "data_health",
+        ),
     ),
     "is_now_dangerous": (
         "Is now a dangerous moment in money markets?",
@@ -827,14 +1168,42 @@ PROMPTS: dict[str, tuple] = {
         lambda a: (
             "Answer the question 'is now a dangerous moment in US money "
             "markets?' strictly from the Seiche board: funding_stress_now "
-            "for the current read, historical_analogs for precedent, "
+            "for the current read, money_market_context with section='summary' "
+            "for granular overnight, repo, unsecured, liquidity and MMF "
+            "context plus its independent countercase, historical_analogs for precedent, "
             "proof_backtest for how often signals like today's were followed "
             "by real events. Give a yes/no/qualified answer in the first "
             "sentence, then the evidence. If the question involves crypto, "
             "add crypto_stress_record for the transmission evidence."
         ),
-        ("funding_stress_now", "historical_analogs", "proof_backtest",
-         "crypto_stress_record"),
+        (
+            "funding_stress_now",
+            "money_market_context",
+            "historical_analogs",
+            "proof_backtest",
+            "crypto_stress_record",
+        ),
+    ),
+    "money_market_deep_dive": (
+        "Deep dive into the USD money-market desk",
+        "A granular but bounded read of overnight rates, secured and unsecured "
+        "funding, bills, official liquidity buffers, and MMF repo plumbing.",
+        [],
+        lambda a: (
+            "Build a USD money-market desk note from money_market_context. Call "
+            "it first with section='summary'; lead with plain_language, then "
+            "quant_read, regime, strongest_signal, countercase, coverage, and "
+            "freshness. Next request only the relevant named section(s): "
+            "policy_corridor, secured_distributions, repo_segments, "
+            "unsecured_funding, bills_cash_curve, liquidity_buffers, or "
+            "mmf_plumbing. Request section='sources' for provenance and "
+            "section='methodology' for formulas and caveats when those claims "
+            "matter. Explain each number simply, respect exact-date and native-"
+            "cadence metadata, and do not turn descriptive ranks into a causal, "
+            "predictive, probability, or tradable signal. Never request or "
+            "reconstruct chart history from this MCP projection."
+        ),
+        ("money_market_context",),
     ),
     "cross_market_cash_pressure": (
         "Trace oil, FX and material pressure into funding",
@@ -852,8 +1221,12 @@ PROMPTS: dict[str, tuple] = {
             "paragraph, call associations non-causal, and state that neither "
             "context engine enters the Seiche composite."
         ),
-        ("funding_stress_now", "oil_funding_context",
-         "fx_materials_passage", "data_health"),
+        (
+            "funding_stress_now",
+            "oil_funding_context",
+            "fx_materials_passage",
+            "data_health",
+        ),
     ),
     "crisis_replay": (
         "Replay a historical stress date",
@@ -907,6 +1280,14 @@ SERVER_INSTRUCTIONS = (
     "live reading is forward-captured as published. Historical replays use "
     "final/current-vintage inputs and carry a construction-PIT claim boundary; "
     "PROOF is a diagnostic scoreboard, not validated-backtest evidence — cite it.\n\n"
+    "For institutional detail inside the USD cash system, call "
+    "money_market_context. Start with section='summary', then request only the "
+    "needed policy_corridor, secured_distributions, repo_segments, "
+    "unsecured_funding, bills_cash_curve, liquidity_buffers or mmf_plumbing "
+    "section; sources and methodology are separate selectors, while all returns "
+    "the complete chartless desk. Preserve each metric's date, cadence, source, "
+    "alignment and caveat. Its worst-of empirical regime is descriptive context "
+    "only, never a causal, predictive, probability or trading signal.\n\n"
     "For oil prices, Cushing stocks, WTI/Brent benchmark structure, cargo "
     "finance, commodity margin calls, INR/RBI liquidity or petrodollar "
     "recycling, call oil_funding_context. For currencies, "
@@ -1046,11 +1427,15 @@ def preflight_tool_call(msg: Any, public: bool | None = None) -> dict | None:
         return _error(msg_id, INVALID_REQUEST, "not a JSON-RPC 2.0 message")
     msg_id = msg.get("id")
     if "id" not in msg:
-        return _error(None, INVALID_REQUEST,
-                      "paid tools/call must be a request, not a notification")
+        return _error(
+            None,
+            INVALID_REQUEST,
+            "paid tools/call must be a request, not a notification",
+        )
     if msg.get("method") != "tools/call":
-        return _error(msg_id, METHOD_NOT_FOUND,
-                      f"method not found: {msg.get('method')}")
+        return _error(
+            msg_id, METHOD_NOT_FOUND, f"method not found: {msg.get('method')}"
+        )
     params = msg.get("params")
     if not isinstance(params, dict):
         return _error(msg_id, INVALID_PARAMS, "tools/call params must be an object")
@@ -1078,8 +1463,9 @@ def _server_version() -> str:
 
 def _handle_initialize(msg_id: Any, params: dict) -> dict:
     client_ver = (params or {}).get("protocolVersion")
-    version = (client_ver if client_ver in SUPPORTED_PROTOCOL_VERSIONS
-               else PROTOCOL_VERSION)
+    version = (
+        client_ver if client_ver in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
+    )
     return _result(
         msg_id,
         {
@@ -1108,7 +1494,9 @@ def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
             "inputSchema": schema,
             "annotations": {"title": title, **TOOL_ANNOTATIONS},
         }
-        for name, (title, desc, schema, _handler, _pub) in _visible_tools(public).items()
+        for name, (title, desc, schema, _handler, _pub) in _visible_tools(
+            public
+        ).items()
     ]
     return _result(msg_id, {"tools": tools})
 
@@ -1133,16 +1521,24 @@ def _handle_prompts_get(msg_id: Any, params: dict, public: bool | None) -> dict:
         return _error(msg_id, INVALID_PARAMS, f"unknown prompt '{name}'")
     title, desc, args_spec, fn, _tools = entry
     args = (params or {}).get("arguments") or {}
-    missing = [a["name"] for a in args_spec if a.get("required") and not args.get(a["name"])]
+    missing = [
+        a["name"] for a in args_spec if a.get("required") and not args.get(a["name"])
+    ]
     if missing:
-        return _error(msg_id, INVALID_PARAMS,
-                      f"missing required argument(s): {', '.join(missing)}")
-    return _result(msg_id, {
-        "description": desc,
-        "messages": [
-            {"role": "user", "content": {"type": "text", "text": fn(args)}}
-        ],
-    })
+        return _error(
+            msg_id,
+            INVALID_PARAMS,
+            f"missing required argument(s): {', '.join(missing)}",
+        )
+    return _result(
+        msg_id,
+        {
+            "description": desc,
+            "messages": [
+                {"role": "user", "content": {"type": "text", "text": fn(args)}}
+            ],
+        },
+    )
 
 
 def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
@@ -1155,21 +1551,49 @@ def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
     try:
         payload = handler(args, _resolve_public(public))
     except ToolError as exc:
-        return _result(
-            msg_id,
-            {"content": [{"type": "text", "text": f"ERROR: {exc}"}], "isError": True},
+        raw_reason = exc.args[0] if len(exc.args) == 1 else None
+        projected = sanitize_public_fault_payload(
+            {"ok": False, "status": "FAILED", "reason": raw_reason}
         )
-    except Exception as exc:  # unexpected — still report as a tool error, loudly
+        failure = safe_failure_envelope(None)
+        if isinstance(projected, dict):
+            reason = projected.get("reason")
+            category = projected.get("category")
+            if isinstance(reason, str) and reason:
+                failure["reason"] = reason
+            if isinstance(category, str) and category:
+                failure["category"] = category
         return _result(
             msg_id,
             {
                 "content": [
-                    {"type": "text", "text": f"ERROR: {type(exc).__name__}: {exc}"}
+                    {"type": "text", "text": f"ERROR: {failure['reason']}"}
                 ],
+                "structuredContent": failure,
                 "isError": True,
             },
         )
-    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, default=str)
+    except Exception as exc:  # unexpected — keep arbitrary diagnostics private
+        print(
+            f"mcp tool {name or 'unknown'} failed: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        failure = safe_failure_envelope(exc)
+        return _result(
+            msg_id,
+            {
+                "content": [{"type": "text", "text": "ERROR: internal tool failure"}],
+                "structuredContent": failure,
+                "isError": True,
+            },
+        )
+    if isinstance(payload, dict):
+        payload = sanitize_public_fault_payload(payload)
+    text = (
+        payload
+        if isinstance(payload, str)
+        else json.dumps(payload, indent=2, default=str)
+    )
     result: dict[str, Any] = {
         "content": [{"type": "text", "text": text}],
     }
@@ -1185,8 +1609,11 @@ def dispatch(msg: dict, public: bool | None = None) -> dict | None:
     notifications (which take no reply). `public` selects the tool surface;
     None uses the transport default (the stdio env flag)."""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
-        return _error(msg.get("id") if isinstance(msg, dict) else None,
-                      INVALID_REQUEST, "not a JSON-RPC 2.0 message")
+        return _error(
+            msg.get("id") if isinstance(msg, dict) else None,
+            INVALID_REQUEST,
+            "not a JSON-RPC 2.0 message",
+        )
     method = msg.get("method")
     msg_id = msg.get("id")
     is_notification = "id" not in msg
@@ -1233,9 +1660,13 @@ def serve_stdio() -> int:
     """Read newline-delimited JSON-RPC from stdin, write responses to stdout.
     Runs until stdin closes."""
     surface = "public" if PUBLIC_ONLY else "full"
-    print(f"seiche mcp: serving {len(_visible_tools())} tools and "
-          f"{len(_visible_prompts())} prompts ({surface} surface) "
-          f"on stdio — protocol {PROTOCOL_VERSION}", file=sys.stderr, flush=True)
+    print(
+        f"seiche mcp: serving {len(_visible_tools())} tools and "
+        f"{len(_visible_prompts())} prompts ({surface} surface) "
+        f"on stdio — protocol {PROTOCOL_VERSION}",
+        file=sys.stderr,
+        flush=True,
+    )
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -1248,7 +1679,7 @@ def serve_stdio() -> int:
         # stdio in 2025-06-18 drops batching, but tolerate a JSON array anyway.
         msgs = msg if isinstance(msg, list) else [msg]
         for m in msgs:
-            with _stdout_to_stderr():                # backend prints -> stderr
+            with _stdout_to_stderr():  # backend prints -> stderr
                 resp = dispatch(m)
             if resp is not None:
                 _send(resp)

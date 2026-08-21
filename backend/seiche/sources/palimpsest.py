@@ -5,9 +5,9 @@ deletion itself as data, and publishes the readings as keyless CI-refreshed
 JSON: the DDTI deletion-threat index (3h cadence), the newly-targeted term
 count, and the Generative Firewall Index (state-aligned-LLM refusal
 tomography, daily). What an authoritarian state rushes to delete is a
-real-time stress read no market data vendor carries at any price — and
-Seiche's own README declares China out of scope for lack of a qualifying
-free feed. This is that feed.
+real-time stress read no market data vendor carries at any price. It is a
+policy-fear context channel, not a substitute for the registered CNY
+money-market pack or its CFETS market-data evidence.
 
 Contract discipline unchanged:
   - palimpsest.info primary, GitHub raw mirror fallback (same files, same

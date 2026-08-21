@@ -13,6 +13,10 @@ DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-
 # Both market units load this exact root-controlled path. Keep validation and
 # consumption inseparable instead of offering an override that systemd ignores.
 RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env
+# BOK ECOS embeds its individually issued key in the request path.  Provision
+# it separately so the idempotent market.env rewrite can never erase or copy
+# the credential into a broader service surface.
+BOK_ECOS_ENV_FILE=/etc/seiche/bok-ecos.env
 DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
 DELIVERY_READER_GROUP=liquilens-world-model-readers
 PROMOTION_REQUEST_DIR=/run/seiche-release
@@ -245,6 +249,27 @@ if [ -e "$RBNZ_ACCESS_ENV_FILE" ] || [ -L "$RBNZ_ACCESS_ENV_FILE" ]; then
         && grep -Eq '^SEICHE_RBNZ_ACCESS_APPROVAL_VALID_UNTIL=[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
             "$RBNZ_ACCESS_ENV_FILE"; }; then
         echo "market platform: RBNZ access env contract is invalid" >&2
+        exit 1
+    fi
+fi
+
+# The BOK key is optional at the platform level: without it the two KR
+# collectors fail closed before network access while every other market keeps
+# running.  If provisioned, the file has one narrowly scoped secret and must
+# already have the exact root-controlled ownership expected by systemd.
+if [ -e "$BOK_ECOS_ENV_FILE" ] || [ -L "$BOK_ECOS_ENV_FILE" ]; then
+    [ -f "$BOK_ECOS_ENV_FILE" ] && [ ! -L "$BOK_ECOS_ENV_FILE" ] || {
+        echo "market platform: BOK ECOS env is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a' "$BOK_ECOS_ENV_FILE")" = "root:seiche:640" ] || {
+        echo "market platform: BOK ECOS env ownership/mode is unsafe" >&2
+        exit 1
+    }
+    if ! { [ "$(wc -l <"$BOK_ECOS_ENV_FILE" | tr -d '[:space:]')" = "1" ] \
+        && grep -Eq '^SEICHE_BOK_ECOS_API_KEY=[A-Za-z0-9]{8,128}$' \
+            "$BOK_ECOS_ENV_FILE"; }; then
+        echo "market platform: BOK ECOS env contract is invalid" >&2
         exit 1
     fi
 fi

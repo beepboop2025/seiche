@@ -58,6 +58,11 @@ jobs:
         run: >-
           python -m pytest -q
           backend/tests/test_market_packs.py
+          backend/tests/test_global_money_market_atlas.py
+          backend/tests/test_money_market.py
+          backend/tests/test_money_market_integration.py
+          backend/tests/test_korea_krw_pack.py
+          backend/tests/test_korea_official_adapter.py
           backend/tests/test_canonical_store.py
           backend/tests/test_repository_v2.py
           backend/tests/test_postgres_market_repository.py
@@ -66,6 +71,8 @@ jobs:
           backend/tests/test_market_materialize.py
           backend/tests/test_official_adapters.py
           backend/tests/test_api_v2_markets.py
+          backend/tests/test_mcp_server.py
+          backend/tests/test_mcp_http.py
           backend/tests/test_deploy_release.py
           backend/tests/test_market_backup.py
           backend/tests/test_world_model_delivery.py

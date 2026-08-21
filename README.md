@@ -9,16 +9,20 @@
 divergence terminal** for the dollar
 funding system — US money markets, the Treasury capital-market complex, the global
 basins connected to them through the swap lines, and the offshore-dollar crypto
-basin moored to the T-bill market through stablecoins. Zero data cost: built
-entirely on free, keyless public APIs (FRED, NY Fed Markets, OFR STFM, Treasury
-FiscalData, CFTC, ECB Data Portal, DeFiLlama, Coinbase Exchange).
+basin moored to the T-bill market through stablecoins. The core US board and
+USD desk use free official/public APIs (FRED, NY Fed Markets, OFR STFM, Treasury
+FiscalData, CFTC, ECB Data Portal, DeFiLlama, Coinbase Exchange). The global
+market-pack catalog can also declare licensed or tenant sources, but public
+outputs obey each source's redistribution policy and never expose restricted raw
+values.
 
 Every 2025–26 stress event (Sep 15 2025 tax-date squeeze, Oct/Dec 2025 record SRF
 draws, Apr 2025 basis unwind) was front-run by *plumbing* signals while price screens
-looked calm. Incumbent tools either have the data with no opinion (Bloomberg, $32k/yr)
-or authority with no synthesis (OFR/NY Fed dashboards). Seiche is the opinionated
-fusion layer: forward-looking, alerting-ready, provenance-honest — and v2 adds the
-layer none of them have: **honest evidence about itself**.
+looked calm. Licensed terminals provide much broader real-time data and execution
+workflows, while OFR and NY Fed dashboards provide authoritative source views.
+Seiche is a narrower, opinionated research layer: forward-looking, alerting-ready,
+provenance-honest — and v2 adds **honest evidence about itself**. It is not a
+Bloomberg/Reuters replacement, a real-time quote service, or an execution venue.
 
 ## The lab
 
@@ -56,6 +60,8 @@ composite engine called "undertow" (critical slowing down,
 | **Kink Engine** | Where does reserve scarcity start, and how many days away is it at the current drain rate? (live hockey-stick fit of SOFR−IORB vs reserves/GDP) |
 | **Liquidity Weather** | What does the reserve path look like 6 weeks out — and which auction-settlement days land on thin ice? (TGA seasonal model + Fed drift + settlement calendar + backtested error bands) |
 | **Tail Seismograph** | Are the P99 tails of SOFR/TGCR/BGCR detaching from the median — the first tell of every squeeze? |
+| **USD Money Market Desk** ★ | Seven institutional-depth sections over the US cash system: policy corridor and overnight spreads; SOFR/TGCR/BGCR distributions and tails; repo-segment rates and volumes; CP−Treasury spreads; bills; liquidity buffers and Fed facilities; and MMF repo plumbing. Cross-source arithmetic uses exact common dates, repo aggregates require a fixed component set, and the descriptive NORMAL/WATCH/STRAIN/STRESS label uses a dependence-robust family-wise adjustment rather than an uncalibrated maximum. |
+| **Global Money Market Atlas** ★ | A licence-aware, native-frequency catalog and available-evidence comparison across 11 registered monetary-area packs, plus a dated source-audited discovery ledger of 52 additional monetary areas across nine regions. Registration and discovery are not live coverage. Each available market is compared only with its own history and can be `LIVE_REFERENCE`/`STALE_REFERENCE`, `DERIVED_CONTEXT`, `POLICY_ONLY`, or `DECLARED_UNAVAILABLE`; no global stress score is manufactured from unlike rate levels. |
 | **Echo Engine** | Does today's 30-day trajectory rhyme with the run-up to any historical stress episode? |
 | **Tide Tables** ★ | What happened next, every time the water looked like this? Markets rhyme, so forecast like a tide table: the k nearest analogs of today's trailing state trajectory over ALL history (labeled or not, expanding-z — no look-ahead) publish their actual forward spread paths as a fan, the share followed by a funding event within 5bd (Wilson CI vs climatology), a NOVELTY gauge ("the board has never looked like this" is its own signal, and flags the fan as extrapolation), and a walk-forward hindcast that says honestly whether analogs beat the base rate. |
 | **RV X-Ray** | How big is the leveraged Treasury RV complex, and what does a 5/15/30bp shock do to it? |
@@ -145,8 +151,43 @@ Routed through free-llm-router's free tiers, or any OpenAI-compatible endpoint v
 Principles: **no naked numbers** (every value carries source + as-of + staleness),
 **fail-loud** (a dead feed shows as DEAD and reduces published coverage — it never
 silently vanishes), **honest lags** (COT is T+3 by construction; shown, not hidden),
-**honest scope** (markets without a qualifying free feed — Japan, China, Russia,
-Africa — are stated as out of scope, not faked in).
+and **honest scope** (a registered market with no qualifying public benchmark stays
+visible as unavailable; a policy rate or restricted input is never relabelled as a
+live traded benchmark).
+
+## Public money-market contracts
+
+- **`GET /api/money-markets`** returns the full USD Money Market Desk. Every
+  metric carries its source, as-of date, cadence and plain-language explanation;
+  meaningful cards add native-series changes, a one-year robust z-score and a
+  three-year empirical percentile. Derived spreads use exact common observation
+  dates—there is no forward-fill across unrelated source clocks. The headline
+  displays both the raw most-extreme channel and a conservative Bonferroni-
+  adjusted desk-wide rank; reserve and ON-RRP stock levels remain visible
+  context but cannot manufacture a funding-stress label by themselves.
+- **`GET /api/v2/money-markets`** returns the Global Money Market Atlas from
+  already collected canonical observations for all **11 registered packs**.
+  Eleven is a catalog count, not a claim of 11 live benchmarks or validated
+  markets. It also returns a **52-row source-audited expansion ledger** with
+  benchmark taxonomy, authority link, access/rights caveat, confidence, review
+  stage and verification date. Those rows are discovery metadata, not quotes.
+  Query coverage, faults and per-market status for what is actually available
+  now; the request never starts collection.
+
+Atlas state is explicit. `AVAILABLE` means a redistributable raw observation is
+present. `DERIVED_CONTEXT` means a restricted/derived-only input may contribute
+non-reversible own-history statistics, while its raw level and history remain
+withheld. `POLICY_ONLY` means an official policy anchor is visible but no eligible
+traded benchmark is available; policy is not used as a substitute. A declared
+unavailable market remains an evidence gap, not a calm reading. Changes and
+history windows follow each adapter's **native cadence**—weekly or monthly series
+are never padded into daily data—and cross-market comparison uses own-history
+normalization rather than unlike rate levels.
+
+Seiche's AGPL-3.0 license covers the code. It does not override upstream terms:
+`allowed` inputs may expose values, `derived_only` inputs expose bounded derived
+context, `metadata_only` inputs can describe availability but cannot enter public
+calculations, and `prohibited` values and source metadata are omitted.
 
 ## Run it
 
@@ -202,7 +243,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Nine tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Ten tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -222,11 +263,13 @@ The copy-paste quickstart and live tool runner are at
 | `data_health` | freshness and provenance for every input, before you trust a reading |
 | `crypto_stress_record` | labelled crypto episodes replayed against the funding board |
 | `institutional_flows` | who is positioned where, from public prints |
+| `money_market_context` | compact, chartless USD desk summary or one requested section, plus sources/methodology selectors |
 | `oil_funding_context` | observed oil/funding and Ballast evidence, live-vs-reference market structure, plus clearly separated scenarios |
 | `fx_materials_passage` | upstream FX/material pressure and the Passage's holdout-tested links |
 
-That is the conclusion, the precedent, the honest record, the freshness and the
-cross-market transmission context, and it stays free. Five tools want a bearer
+That is the conclusion, the precedent, the honest record, the freshness, granular
+USD money-market context and cross-market transmission context, and it stays
+free. Five tools want a bearer
 token because they read gated forecasting, replay, positioning, prose, or LLM
 engines rather than a published contextual conclusion:
 `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief` and
