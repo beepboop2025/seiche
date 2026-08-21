@@ -287,6 +287,9 @@ def test_cloudflare_workflows_deploy_only_reviewed_state_and_fail_closed():
     assert "ref: main" not in catalog
     assert "persist-credentials: false" in catalog
     assert "test \"$(git rev-parse HEAD)\" = \"${SITE_SHA}\"" in catalog
+    # Wrangler 3.90 cannot bundle the site's standards-compliant JSON import
+    # attributes; keep the exact deployment toolchain on the verified release.
+    assert "wrangler@4.125.0" in catalog
 
     policy = POLICY_WORKFLOW.read_text()
     assert "for attempt in 1 2 3 4 5 6" in policy

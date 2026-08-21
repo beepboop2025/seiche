@@ -968,13 +968,12 @@ def _capital_global_liquidity(engine: Mapping[str, Any]) -> dict[str, Any]:
 def _capital_evidence_clocks(values: list[dict[str, Any]]) -> list[str]:
     clocks: list[str] = []
     for value in values:
-        if value.get("status") == "unavailable":
+        if (
+            value.get("status") == "unavailable"
+            or value.get("clock_role") == "scenario_evaluation_not_evidence_clock"
+        ):
             continue
-        keys = (
-            ("announced_through",)
-            if value.get("id") == "supplydesk"
-            else ("as_of", "asof", "funding_asof")
-        )
+        keys = ("as_of", "asof", "funding_asof")
         clocks.extend(
             value[key]
             for key in keys
