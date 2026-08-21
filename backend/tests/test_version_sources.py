@@ -2,8 +2,8 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.10.0 world-markets version and eleven-tool public surface so a human release publishes
-the right artifact. PyPI itself still carries 0.9.1 until that release is cut.
+0.10.1 world-markets patch and eleven-tool public surface so the release and
+immutable registry entry point at the same artifact.
 """
 
 import json
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the running 0.10.0 / eleven-tool public surface."""
+    """The registry card pins the running 0.10.1 / eleven-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -50,13 +50,13 @@ def test_registry_stdio_package_matches_hosted_surface():
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == hosted == "0.10.0"
+    assert package["version"] == hosted == "0.10.1"
     assert package["transport"] == {"type": "stdio"}
     assert "eleven free public tools" in description
     assert "latest_article" in description
     assert "money_market_context" in description
     assert "world_markets_context" in description
-    assert "0.10.0" in description
+    assert "0.10.1" in description
 
 
 def test_money_market_discovery_separates_catalog_from_dated_evidence():
