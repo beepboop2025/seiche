@@ -21,6 +21,7 @@ RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env
 # pins its digest; the artifact itself binds datasets, use, and expiry.
 CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env
 CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf
+CFETS_LICENCE_EVIDENCE_FILE=/etc/seiche/cfets-licence-evidence.pdf
 # BOK ECOS embeds its individually issued key in the request path.  Provision
 # it separately so the idempotent market.env rewrite can never erase or copy
 # the credential into a broader service surface.
@@ -313,18 +314,30 @@ if [ -e "$CFETS_ACCESS_ENV_FILE" ] || [ -L "$CFETS_ACCESS_ENV_FILE" ]; then
         echo "market platform: CFETS approval artifact size is unsafe" >&2
         exit 1
     fi
-    if ! { [ "$(wc -l <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')" = "8" ] \
-        && grep -Fqx 'schema=seiche.cfets-approval.v1' "$CFETS_APPROVAL_FILE" \
+    if ! { [ "$(wc -l <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')" = "13" ] \
+        && grep -Fqx 'schema=seiche.cfets-approval.v2' "$CFETS_APPROVAL_FILE" \
         && grep -Fqx 'publisher=China Foreign Exchange Trade System' \
             "$CFETS_APPROVAL_FILE" \
-        && grep -Fqx 'datasets=CN.CFETS.DR007,CN.CFETS.SHIBOR_ON' \
+        && grep -Fqx \
+            'endpoints=https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-settings.json,https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-chrt.csv,https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'upstream_products=FDR007,SHIBOR_ON' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'canonical_outputs=CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON' \
             "$CFETS_APPROVAL_FILE" \
         && grep -Fqx \
-            'collection_scope=automated_fdr007_and_shibor_history' \
+            'collection_scope=automated_bounded_fdr007_and_shibor_on_history' \
             "$CFETS_APPROVAL_FILE" \
         && grep -Fqx 'permitted_use=internal_research_only' \
             "$CFETS_APPROVAL_FILE" \
         && grep -Fqx 'publication=prohibited' "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'raw_response_retention=prohibited' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'retained_projection=event_date,value' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx \
+            "licence_evidence_path=$CFETS_LICENCE_EVIDENCE_FILE" \
+            "$CFETS_APPROVAL_FILE" \
         && grep -Eq '^licence_evidence_sha256=[0-9a-f]{64}$' \
             "$CFETS_APPROVAL_FILE" \
         && grep -Eq '^valid_until=[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
@@ -332,6 +345,31 @@ if [ -e "$CFETS_ACCESS_ENV_FILE" ] || [ -L "$CFETS_ACCESS_ENV_FILE" ]; then
         echo "market platform: CFETS approval artifact contract is invalid" >&2
         exit 1
     fi
+    [ -f "$CFETS_LICENCE_EVIDENCE_FILE" ] \
+        && [ ! -L "$CFETS_LICENCE_EVIDENCE_FILE" ] || {
+        echo "market platform: CFETS licence evidence is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a:%h' "$CFETS_LICENCE_EVIDENCE_FILE")" = \
+        "root:seiche:640:1" ] || {
+        echo "market platform: CFETS licence evidence ownership/mode is unsafe" >&2
+        exit 1
+    }
+    CFETS_EVIDENCE_BYTES=$(wc -c <"$CFETS_LICENCE_EVIDENCE_FILE" \
+        | tr -d '[:space:]')
+    if [ "$CFETS_EVIDENCE_BYTES" -lt 1 ] \
+        || [ "$CFETS_EVIDENCE_BYTES" -gt 16777216 ]; then
+        echo "market platform: CFETS licence evidence size is unsafe" >&2
+        exit 1
+    fi
+    CFETS_EXPECTED_EVIDENCE_SHA=$(sed -n \
+        's/^licence_evidence_sha256=//p' "$CFETS_APPROVAL_FILE")
+    CFETS_ACTUAL_EVIDENCE_SHA=$(/usr/bin/sha256sum \
+        "$CFETS_LICENCE_EVIDENCE_FILE" | cut -d ' ' -f 1)
+    [ "$CFETS_ACTUAL_EVIDENCE_SHA" = "$CFETS_EXPECTED_EVIDENCE_SHA" ] || {
+        echo "market platform: CFETS licence evidence digest mismatch" >&2
+        exit 1
+    }
     CFETS_EXPECTED_SHA=$(sed -n \
         's/^SEICHE_CFETS_APPROVAL_SHA256=//p' "$CFETS_ACCESS_ENV_FILE")
     CFETS_ACTUAL_SHA=$(/usr/bin/sha256sum "$CFETS_APPROVAL_FILE" | cut -d ' ' -f 1)
@@ -358,8 +396,10 @@ if [ -e "$CFETS_ACCESS_ENV_FILE" ] || [ -L "$CFETS_ACCESS_ENV_FILE" ]; then
         echo "market platform: CFETS approval review window is unsafe" >&2
         exit 1
     fi
-elif [ -e "$CFETS_APPROVAL_FILE" ] || [ -L "$CFETS_APPROVAL_FILE" ]; then
-    echo "market platform: CFETS approval artifact has no access env pin" >&2
+elif [ -e "$CFETS_APPROVAL_FILE" ] || [ -L "$CFETS_APPROVAL_FILE" ] \
+    || [ -e "$CFETS_LICENCE_EVIDENCE_FILE" ] \
+    || [ -L "$CFETS_LICENCE_EVIDENCE_FILE" ]; then
+    echo "market platform: CFETS approval artifacts have no access env pin" >&2
     exit 1
 fi
 

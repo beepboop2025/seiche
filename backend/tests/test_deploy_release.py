@@ -1539,11 +1539,16 @@ def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
     for unit in (worker, backfill):
         assert "EnvironmentFile=-/etc/seiche/cfets-access.env" in unit
         assert "ReadOnlyPaths=-/etc/seiche/cfets-approval.conf" in unit
+        assert "-/etc/seiche/cfets-licence-evidence.pdf" in unit
     assert "cfets-access.env" not in source_worker
     assert "cfets-approval.conf" not in source_worker
 
     assert "CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env" in installer
     assert "CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf" in installer
+    assert (
+        "CFETS_LICENCE_EVIDENCE_FILE=/etc/seiche/cfets-licence-evidence.pdf"
+        in installer
+    )
     assert "SEICHE_CFETS_ACCESS_ENV_FILE" not in installer
     assert "SEICHE_CFETS_APPROVAL_FILE" not in installer
     assert "CFETS access env ownership/mode is unsafe" in installer
@@ -1551,15 +1556,29 @@ def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
     assert "CFETS approval artifact size is unsafe" in installer
     assert "CFETS approval artifact contract is invalid" in installer
     assert "CFETS approval artifact digest mismatch" in installer
+    assert "CFETS licence evidence ownership/mode is unsafe" in installer
+    assert "CFETS licence evidence size is unsafe" in installer
+    assert "CFETS licence evidence digest mismatch" in installer
     assert "CFETS approval review window is unsafe" in installer
-    assert "CFETS approval artifact has no access env pin" in installer
+    assert "CFETS approval artifacts have no access env pin" in installer
     assert "SEICHE_CFETS_APPROVAL_PATH=$CFETS_APPROVAL_FILE" in installer
     assert "SEICHE_CFETS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
     assert "stat -c '%U:%G:%a:%h' \"$CFETS_APPROVAL_FILE\"" in installer
     assert '/usr/bin/sha256sum "$CFETS_APPROVAL_FILE"' in installer
-    assert "collection_scope=automated_fdr007_and_shibor_history" in installer
+    assert "schema=seiche.cfets-approval.v2" in installer
+    assert "upstream_products=FDR007,SHIBOR_ON" in installer
+    assert "canonical_outputs=CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON" in installer
+    assert (
+        "collection_scope=automated_bounded_fdr007_and_shibor_on_history"
+        in installer
+    )
     assert "permitted_use=internal_research_only" in installer
     assert "publication=prohibited" in installer
+    assert "raw_response_retention=prohibited" in installer
+    assert "retained_projection=event_date,value" in installer
+    assert "licence_evidence_path=$CFETS_LICENCE_EVIDENCE_FILE" in installer
+    assert "/usr/bin/sha256sum" in installer
+    assert '"$CFETS_LICENCE_EVIDENCE_FILE" | cut' in installer
     assert "CFETS_REVIEW_DAYS" in installer
     assert '"$CFETS_REVIEW_DAYS" -gt 366' in installer
     assert installer.index("CFETS approval artifact digest mismatch") < installer.index(
