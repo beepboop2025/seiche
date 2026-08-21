@@ -27,8 +27,12 @@ def _series(
     source: str,
     values: pd.Series | None = None,
 ) -> Series:
-    points = values if values is not None else pd.Series(
-        [1.0, 1.1], index=pd.date_range("2026-08-20", periods=2, freq="D")
+    points = (
+        values
+        if values is not None
+        else pd.Series(
+            [1.0, 1.1], index=pd.date_range("2026-08-20", periods=2, freq="D")
+        )
     )
     return Series(
         mnemonic=mnemonic,
@@ -158,9 +162,7 @@ def test_engine_bindings_keep_cny_fx_but_have_no_china_rate_path(monkeypatch) ->
     basin_inputs = captured["basins"]
     assert isinstance(basin_inputs, dict)
     assert "shibor_on" not in basin_inputs
-    pd.testing.assert_series_equal(
-        basin_inputs["cny"], raw["fred"]["CNY"].points
-    )
+    pd.testing.assert_series_equal(basin_inputs["cny"], raw["fred"]["CNY"].points)
 
     harbor_inputs = captured["harbors"]
     assert isinstance(harbor_inputs, dict)

@@ -136,15 +136,31 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import (
+    bis,
+    boj,
+    cftc,
+    crypto,
+    ecb,
+    eia_petroleum,
+    fedtext,
+    fiscaldata,
+    fred,
+    gdelt,
+    llamahacks,
+    nyfed,
+    nyfed_rde,
+    ofr,
+    palimpsest,
+    td_auctions,
+    windfetch,
+)
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
 DEEP_TTL_MIN = 12 * 60
 LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
-STATIC_SNAPSHOT_PATH = (
-    Path(__file__).resolve().with_name("bootstrap_snapshot.json")
-)
+STATIC_SNAPSHOT_PATH = Path(__file__).resolve().with_name("bootstrap_snapshot.json")
 RESTRICTED_PALIMPSEST_SERIES = frozenset({"CN_FDR007", "CN_PARITY"})
 RESTRICTED_SNAPSHOT_MARKERS = (
     "chinamoney",
@@ -187,6 +203,7 @@ VERSION_LABEL = f"{VERSION} {RELEASE}"
 # Sources
 # ---------------------------------------------------------------------------
 
+
 async def _gather_sources() -> tuple[dict, list[dict]]:
     faults: list[dict] = []
     out: dict = {}
@@ -202,24 +219,56 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
 
         fred_mnems = [
             s.mnemonic
-            for s in FRED_SERIES + MARKET_SERIES + GLOBAL_FRED_SERIES + INDIA_FRED_SERIES
-            + GLOBAL_MM_FRED_SERIES + OIL_FUNDING_FRED_SERIES
+            for s in FRED_SERIES
+            + MARKET_SERIES
+            + GLOBAL_FRED_SERIES
+            + INDIA_FRED_SERIES
+            + GLOBAL_MM_FRED_SERIES
+            + OIL_FUNDING_FRED_SERIES
             + ESTUARY_FRED_SERIES
-            + PRETRAIN_FRED_SERIES + REFEREE_SERIES
+            + PRETRAIN_FRED_SERIES
+            + REFEREE_SERIES
         ]
         await asyncio.gather(
             guard("fred", fred.fetch_many(client, fred_mnems, faults)),
-            guard("fred_cp_rates", fred.fetch_many(client, [s.mnemonic for s in FRED_CP_SERIES], faults)),
-            guard("fred_custody", fred.fetch_many(client, [s.mnemonic for s in FRED_CUSTODY_SERIES], faults)),
-            guard("eia_petroleum", eia_petroleum.fetch_many(client, [s.mnemonic for s in OIL_FUNDING_EIA_SERIES], faults)),
-            guard("ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)),
-            guard("ofr_gcf", ofr.fetch_many(client, [s.mnemonic for s in OFR_GCF_SERIES], faults)),
-            guard("ofr_pd_financing", ofr.fetch_many(client, [s.mnemonic for s in OFR_PD_SERIES], faults)),
+            guard(
+                "fred_cp_rates",
+                fred.fetch_many(client, [s.mnemonic for s in FRED_CP_SERIES], faults),
+            ),
+            guard(
+                "fred_custody",
+                fred.fetch_many(
+                    client, [s.mnemonic for s in FRED_CUSTODY_SERIES], faults
+                ),
+            ),
+            guard(
+                "eia_petroleum",
+                eia_petroleum.fetch_many(
+                    client, [s.mnemonic for s in OIL_FUNDING_EIA_SERIES], faults
+                ),
+            ),
+            guard(
+                "ofr", ofr.fetch_many(client, [s.mnemonic for s in OFR_SERIES], faults)
+            ),
+            guard(
+                "ofr_gcf",
+                ofr.fetch_many(client, [s.mnemonic for s in OFR_GCF_SERIES], faults),
+            ),
+            guard(
+                "ofr_pd_financing",
+                ofr.fetch_many(client, [s.mnemonic for s in OFR_PD_SERIES], faults),
+            ),
             guard("llama_hacks", llamahacks.fetch_all(client, faults)),
             guard("windfetch", windfetch.fetch_all(client, faults)),
-            guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
-            guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
-            guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
+            guard(
+                "ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)
+            ),
+            guard(
+                "boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)
+            ),
+            guard(
+                "bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)
+            ),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
             guard("nyfed_rates", nyfed.fetch_secured_rates(client)),
             guard("nyfed_srf", nyfed.fetch_srf_ops(client)),
@@ -232,9 +281,12 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("mspd", td_auctions.fetch_mspd_maturities(client)),
             guard("tff", cftc.fetch_tff_ust(client)),
             guard("commodity_cot", cftc.fetch_disaggregated_commodities(client)),
-            guard("eia_inventory", eia_petroleum.fetch_many(
-                client, [s.mnemonic for s in EIA_INVENTORY_SERIES], faults
-            )),
+            guard(
+                "eia_inventory",
+                eia_petroleum.fetch_many(
+                    client, [s.mnemonic for s in EIA_INVENTORY_SERIES], faults
+                ),
+            ),
             guard("palimpsest", palimpsest.fetch_all(client, faults)),
             guard("fedtext", fedtext.fetch_all(client, faults)),
             guard("gdelt", gdelt.fetch_all(client, faults)),
@@ -273,9 +325,19 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     cached live sources are never mutated."""
     src = _rights_eligible_sources(src)
     out: dict = {}
-    for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
-                  "ofr_pd_financing", "ecb", "eia_petroleum", "eia_inventory",
-                  "bis", "boj"):
+    for group in (
+        "fred",
+        "fred_cp_rates",
+        "fred_custody",
+        "ofr",
+        "ofr_gcf",
+        "ofr_pd_financing",
+        "ecb",
+        "eia_petroleum",
+        "eia_inventory",
+        "bis",
+        "boj",
+    ):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             cutoff = (
@@ -284,17 +346,30 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
                 else asof
             )
             pts = s.points[s.points.index <= cutoff]
-            cut[m] = Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq, s.fetched_at, pts)
+            cut[m] = Series(
+                s.mnemonic,
+                s.source,
+                s.remote_id,
+                s.label,
+                s.unit,
+                s.freq,
+                s.fetched_at,
+                pts,
+            )
         out[group] = cut
     out["llama_hacks"] = llamahacks.truncate(src.get("llama_hacks") or {}, asof)
     # windfetch is a live-only pack (no archive): a replay stamps the marker
     # and the engine refuses to backfill wind that was never recorded
-    out["windfetch"] = {**(src.get("windfetch") or {}),
-                        "replay_asof": asof.date().isoformat()}
+    out["windfetch"] = {
+        **(src.get("windfetch") or {}),
+        "replay_asof": asof.date().isoformat(),
+    }
     fxs = (src.get("nyfed_fxs") or {}).get("ops", [])
     out["nyfed_fxs"] = {
         "fetched_at": (src.get("nyfed_fxs") or {}).get("fetched_at"),
-        "ops": [o for o in fxs if (o.get("trade_date") or "") <= asof.date().isoformat()],
+        "ops": [
+            o for o in fxs if (o.get("trade_date") or "") <= asof.date().isoformat()
+        ],
     }
     cr = src.get("crypto") or {}
     stable = cr.get("stable") or {}
@@ -302,40 +377,67 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     out["crypto"] = {
         "fetched_at": cr.get("fetched_at"),
         "candles": {
-            m: Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq,
-                      s.fetched_at, s.points[s.points.index <= asof])
+            m: Series(
+                s.mnemonic,
+                s.source,
+                s.remote_id,
+                s.label,
+                s.unit,
+                s.freq,
+                s.fetched_at,
+                s.points[s.points.index <= asof],
+            )
             for m, s in (cr.get("candles") or {}).items()
         },
         # peg board is a spot-only feed — a replay has no vintage for it
-        "stable": {"board": [], "total": total[total.index <= asof] if not total.empty else total},
+        "stable": {
+            "board": [],
+            "total": total[total.index <= asof] if not total.empty else total,
+        },
     }
     nr = src.get("nyfed_rates") or {}
     out["nyfed_rates"] = {
         "fetched_at": nr.get("fetched_at"),
-        "frames": {k: df[df.index <= asof] for k, df in (nr.get("frames") or {}).items()},
+        "frames": {
+            k: df[df.index <= asof] for k, df in (nr.get("frames") or {}).items()
+        },
     }
     ns = src.get("nyfed_srf") or {}
     daily = ns.get("daily")
     out["nyfed_srf"] = {
         "fetched_at": ns.get("fetched_at"),
-        "daily": daily[daily.index <= asof] if daily is not None and not daily.empty else pd.DataFrame(),
+        "daily": daily[daily.index <= asof]
+        if daily is not None and not daily.empty
+        else pd.DataFrame(),
     }
     npd = src.get("nyfed_pd") or {}
     out["nyfed_pd"] = {
         "fetched_at": npd.get("fetched_at"),
-        "positions": {k: s[s.index <= asof] for k, s in (npd.get("positions") or {}).items()},
+        "positions": {
+            k: s[s.index <= asof] for k, s in (npd.get("positions") or {}).items()
+        },
     }
     tga = (src.get("tga") or {}).get(
         "tga", pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     )
-    out["tga"] = {"fetched_at": (src.get("tga") or {}).get("fetched_at"), "tga": tga[tga.index <= asof]}
+    out["tga"] = {
+        "fetched_at": (src.get("tga") or {}).get("fetched_at"),
+        "tga": tga[tga.index <= asof],
+    }
     au = (src.get("auctions") or {}).get("auctions", pd.DataFrame())
     if not au.empty:
         mask = pd.to_datetime(au["auction_date"], errors="coerce") <= asof
         au = au[mask]
-    out["auctions"] = {"fetched_at": (src.get("auctions") or {}).get("fetched_at"), "auctions": au}
-    out["upcoming"] = {"upcoming": pd.DataFrame()}  # current-state feed: no historical vintage
-    out["mspd"] = {"mspd": pd.DataFrame()}  # monthly current-state feed: no historical vintage
+    out["auctions"] = {
+        "fetched_at": (src.get("auctions") or {}).get("fetched_at"),
+        "auctions": au,
+    }
+    out["upcoming"] = {
+        "upcoming": pd.DataFrame()
+    }  # current-state feed: no historical vintage
+    out["mspd"] = {
+        "mspd": pd.DataFrame()
+    }  # monthly current-state feed: no historical vintage
     fedtexts = (src.get("fedtext") or {}).get("texts", {})
     out["fedtext"] = {
         "fetched_at": (src.get("fedtext") or {}).get("fetched_at"),
@@ -345,14 +447,10 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     if not tff.empty:
         tff = tff[tff["date"] <= asof]
     out["tff"] = {"fetched_at": (src.get("tff") or {}).get("fetched_at"), "tff": tff}
-    commodity_cot = (src.get("commodity_cot") or {}).get(
-        "positions", pd.DataFrame()
-    )
+    commodity_cot = (src.get("commodity_cot") or {}).get("positions", pd.DataFrame())
     if not commodity_cot.empty:
         if "available_date" in commodity_cot.columns:
-            available = pd.to_datetime(
-                commodity_cot["available_date"], errors="coerce"
-            )
+            available = pd.to_datetime(commodity_cot["available_date"], errors="coerce")
         else:
             available = pd.to_datetime(
                 commodity_cot["date"], errors="coerce"
@@ -366,8 +464,16 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     out["palimpsest"] = {
         "fetched_at": pal.get("fetched_at"),
         "series": {
-            m: Series(s.mnemonic, s.source, s.remote_id, s.label, s.unit, s.freq,
-                      s.fetched_at, s.points[s.points.index <= asof])
+            m: Series(
+                s.mnemonic,
+                s.source,
+                s.remote_id,
+                s.label,
+                s.unit,
+                s.freq,
+                s.fetched_at,
+                s.points[s.points.index <= asof],
+            )
             for m, s in (pal.get("series") or {}).items()
         },
         "latest": {},  # spot board — a replay has no vintage for it
@@ -378,6 +484,7 @@ def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
 # ---------------------------------------------------------------------------
 # Shared derived series
 # ---------------------------------------------------------------------------
+
 
 def _pts(d: dict, key: str) -> pd.Series:
     s = d.get(key)
@@ -408,13 +515,17 @@ def _derived(src: dict) -> dict:
 
     sofr = _pts(fred_s, "SOFR")
     if d["iorb"] is not None and not sofr.empty:
-        d["spread_bp"] = ((sofr - d["iorb"].reindex(sofr.index).ffill()) * 100.0).dropna()
+        d["spread_bp"] = (
+            (sofr - d["iorb"].reindex(sofr.index).ffill()) * 100.0
+        ).dropna()
     else:
         d["spread_bp"] = pd.Series(dtype=float)
 
     sofr_f = frames.get("SOFR")
     if sofr_f is not None and "percentPercentile99" in sofr_f.columns:
-        d["tail_bp"] = ((sofr_f["percentPercentile99"] - sofr_f["percentRate"]) * 100.0).dropna()
+        d["tail_bp"] = (
+            (sofr_f["percentPercentile99"] - sofr_f["percentRate"]) * 100.0
+        ).dropna()
     else:
         d["tail_bp"] = pd.Series(dtype=float)
 
@@ -422,30 +533,42 @@ def _derived(src: dict) -> dict:
     cp_s = src.get("fred_cp_rates", {})
     cp3m, dgs3m = _pts(cp_s, "CP_NONFIN_3M"), _pts(cp_s, "DGS3M")
     if not cp3m.empty and not dgs3m.empty:
-        d["cp_spread_bp"] = ((cp3m - dgs3m.reindex(cp3m.index).ffill()) * 100.0).dropna()
+        d["cp_spread_bp"] = (
+            (cp3m - dgs3m.reindex(cp3m.index).ffill()) * 100.0
+        ).dropna()
     else:
         d["cp_spread_bp"] = pd.Series(dtype=float)
 
     # DeFi exploit losses, daily USD (DeFiLlama hacks; zeros are real quiet days)
     hacks = (src.get("llama_hacks") or {}).get("daily")
-    d["hacks_usd"] = hacks.points.dropna() if hacks is not None else pd.Series(dtype=float)
+    d["hacks_usd"] = (
+        hacks.points.dropna() if hacks is not None else pd.Series(dtype=float)
+    )
 
-    res = _pts(fred_s, "WRESBAL") / 1000.0            # $B weekly
-    gdp = _pts(fred_s, "GDP")                          # $B quarterly
+    res = _pts(fred_s, "WRESBAL") / 1000.0  # $B weekly
+    gdp = _pts(fred_s, "GDP")  # $B quarterly
     if not res.empty and not gdp.empty:
         g = gdp.sort_index().reindex(res.index, method="ffill")
         d["res_gdp"] = (res / g).dropna()
     else:
         d["res_gdp"] = pd.Series(dtype=float)
     d["res_gdp_pctl"] = (
-        d["res_gdp"].expanding(60).rank(pct=True).dropna() if not d["res_gdp"].empty else pd.Series(dtype=float)
+        d["res_gdp"].expanding(60).rank(pct=True).dropna()
+        if not d["res_gdp"].empty
+        else pd.Series(dtype=float)
     )
 
     srf_daily = (src.get("nyfed_srf") or {}).get("daily", pd.DataFrame())
-    d["srf"] = srf_daily["accepted"] if isinstance(srf_daily, pd.DataFrame) and not srf_daily.empty else pd.Series(dtype=float)
-    d["srf_daily"] = srf_daily if isinstance(srf_daily, pd.DataFrame) else pd.DataFrame()
+    d["srf"] = (
+        srf_daily["accepted"]
+        if isinstance(srf_daily, pd.DataFrame) and not srf_daily.empty
+        else pd.Series(dtype=float)
+    )
+    d["srf_daily"] = (
+        srf_daily if isinstance(srf_daily, pd.DataFrame) else pd.DataFrame()
+    )
 
-    d["dw_b"] = _pts(fred_s, "DISCOUNT_WINDOW") / 1000.0   # $M -> $B
+    d["dw_b"] = _pts(fred_s, "DISCOUNT_WINDOW") / 1000.0  # $M -> $B
     d["rrp"] = _pts(fred_s, "RRPONTSYD")
     d["tga"] = (src.get("tga") or {}).get("tga", pd.Series(dtype=float))
     d["dvp_vol_b"] = _vol_b(_pts(ofr_s, "DVP_VOL"))
@@ -454,7 +577,9 @@ def _derived(src: dict) -> dict:
     candles = (src.get("crypto") or {}).get("candles", {})
     usdt = candles.get("USDT_USD")
     d["usdt_peg_bp"] = (
-        ((usdt.points.dropna() - 1.0) * 10_000.0) if usdt is not None else pd.Series(dtype=float)
+        ((usdt.points.dropna() - 1.0) * 10_000.0)
+        if usdt is not None
+        else pd.Series(dtype=float)
     )
     btc = candles.get("BTC_USD")
     d["btc"] = btc.points.dropna() if btc is not None else pd.Series(dtype=float)
@@ -465,7 +590,10 @@ def _derived(src: dict) -> dict:
 # Engines (the light layer — sub-second, replayable)
 # ---------------------------------------------------------------------------
 
-def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | None = None) -> dict:
+
+def _run_engines(
+    src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | None = None
+) -> dict:
     """`asof` is set only on Time Machine replays. Most engines infer their own
     present from the truncated series they are handed, but a forward calendar
     has no series to infer it from: without this, a replayed board would carry
@@ -476,7 +604,8 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     frames = (src.get("nyfed_rates") or {}).get("frames", {})
     iorb = drv["iorb"]
     evaluation_asof = (
-        asof if asof is not None
+        asof
+        if asof is not None
         else pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     )
 
@@ -487,7 +616,9 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
             results[name] = fn()
         except Exception as e:
             results[name] = safe_failure_envelope(e)
-            faults.append({"source": f"engine:{name}", "detail": traceback.format_exc(limit=2)})
+            faults.append(
+                {"source": f"engine:{name}", "detail": traceback.format_exc(limit=2)}
+            )
 
     # --- Institutional USD money-market desk ------------------------------
     # Unit boundaries are explicit here: the pure engine receives every
@@ -495,59 +626,81 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     # no source-specific guessing and never reaches back into collectors.
     cp_s = src.get("fred_cp_rates", {})
     gcf_s = src.get("ofr_gcf", {})
-    run("money_market", lambda: eng_money_market.analyze(
-        sofr=_pts(fred_s, "SOFR"),
-        effr=_pts(fred_s, "EFFR"),
-        iorb=iorb if iorb is not None else pd.Series(dtype=float),
-        nyfed_sofr=frames.get("SOFR", pd.DataFrame()),
-        nyfed_tgcr=frames.get("TGCR", pd.DataFrame()),
-        nyfed_bgcr=frames.get("BGCR", pd.DataFrame()),
-        bgcr=_pts(ofr_s, "BGCR"),
-        tgcr=_pts(ofr_s, "TGCR"),
-        dvp_rate=_pts(ofr_s, "DVP_RATE_OO"),
-        dvp_volume=_vol_b(_pts(ofr_s, "DVP_VOL")),
-        tri_rate=_pts(ofr_s, "TRI_RATE_OO"),
-        tri_volume=_vol_b(_pts(ofr_s, "TRI_VOL")),
-        gcf_rate=_pts(gcf_s, "GCF_RATE_OO"),
-        gcf_volume=_vol_b(_pts(gcf_s, "GCF_VOL_OO")),
-        mmf_total=_vol_b(_pts(ofr_s, "MMF_TOT")),
-        mmf_repo_ficc=_vol_b(_pts(ofr_s, "MMF_REPO_FICC")),
-        mmf_repo_fed=_vol_b(_pts(ofr_s, "MMF_REPO_FED")),
-        mmf_repo_total=_vol_b(_pts(ofr_s, "MMF_REPO_TOT")),
-        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
-        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
-        treasury_3m=_pts(cp_s, "DGS3M"),
-        bill_4w=_pts(fred_s, "TB4W"),
-        bill_3m=_pts(fred_s, "TB3M"),
-        reserves=_pts(fred_s, "WRESBAL") / 1000.0,
-        tga=drv["tga"],
-        on_rrp=drv["rrp"],
-        srf=drv["srf"],
-        discount_window=drv["dw_b"],
-        evaluation_asof=evaluation_asof,
-    ))
+    run(
+        "money_market",
+        lambda: eng_money_market.analyze(
+            sofr=_pts(fred_s, "SOFR"),
+            effr=_pts(fred_s, "EFFR"),
+            iorb=iorb if iorb is not None else pd.Series(dtype=float),
+            nyfed_sofr=frames.get("SOFR", pd.DataFrame()),
+            nyfed_tgcr=frames.get("TGCR", pd.DataFrame()),
+            nyfed_bgcr=frames.get("BGCR", pd.DataFrame()),
+            bgcr=_pts(ofr_s, "BGCR"),
+            tgcr=_pts(ofr_s, "TGCR"),
+            dvp_rate=_pts(ofr_s, "DVP_RATE_OO"),
+            dvp_volume=_vol_b(_pts(ofr_s, "DVP_VOL")),
+            tri_rate=_pts(ofr_s, "TRI_RATE_OO"),
+            tri_volume=_vol_b(_pts(ofr_s, "TRI_VOL")),
+            gcf_rate=_pts(gcf_s, "GCF_RATE_OO"),
+            gcf_volume=_vol_b(_pts(gcf_s, "GCF_VOL_OO")),
+            mmf_total=_vol_b(_pts(ofr_s, "MMF_TOT")),
+            mmf_repo_ficc=_vol_b(_pts(ofr_s, "MMF_REPO_FICC")),
+            mmf_repo_fed=_vol_b(_pts(ofr_s, "MMF_REPO_FED")),
+            mmf_repo_total=_vol_b(_pts(ofr_s, "MMF_REPO_TOT")),
+            cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+            cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+            treasury_3m=_pts(cp_s, "DGS3M"),
+            bill_4w=_pts(fred_s, "TB4W"),
+            bill_3m=_pts(fred_s, "TB3M"),
+            reserves=_pts(fred_s, "WRESBAL") / 1000.0,
+            tga=drv["tga"],
+            on_rrp=drv["rrp"],
+            srf=drv["srf"],
+            discount_window=drv["dw_b"],
+            evaluation_asof=evaluation_asof,
+        ),
+    )
 
     # --- Kink ---
     if iorb is not None:
-        run("kink", lambda: eng_kink.fit_kink(
-            (drv["spread_bp"] / 100.0), _pts(fred_s, "WRESBAL"), _pts(fred_s, "GDP")))
+        run(
+            "kink",
+            lambda: eng_kink.fit_kink(
+                (drv["spread_bp"] / 100.0), _pts(fred_s, "WRESBAL"), _pts(fred_s, "GDP")
+            ),
+        )
     else:
         results["kink"] = {"ok": False, "reason": "IORB/SOFR unavailable"}
-    kink_b = results["kink"].get("kink_reserves_b") if results["kink"].get("ok") else None
+    kink_b = (
+        results["kink"].get("kink_reserves_b") if results["kink"].get("ok") else None
+    )
 
     # --- RDE Nowcast (our kink fit vs the NY Fed official print) ---
-    run("rdenowcast", lambda: eng_rdenowcast.nowcast(
-        results["kink"],
-        (src.get("nyfed_rde") or {}).get("rde", pd.DataFrame()),
-        (drv["spread_bp"] / 100.0) if iorb is not None else None,
-        _pts(fred_s, "WRESBAL"),
-        _pts(fred_s, "GDP")))
+    run(
+        "rdenowcast",
+        lambda: eng_rdenowcast.nowcast(
+            results["kink"],
+            (src.get("nyfed_rde") or {}).get("rde", pd.DataFrame()),
+            (drv["spread_bp"] / 100.0) if iorb is not None else None,
+            _pts(fred_s, "WRESBAL"),
+            _pts(fred_s, "GDP"),
+        ),
+    )
 
     # --- Weather (with auction settlement overlay) ---
     settlements = eng_weather.settlement_calendar(
-        (src.get("upcoming") or {}).get("upcoming", pd.DataFrame()))
-    run("weather", lambda: eng_weather.forecast(
-        _pts(fred_s, "WRESBAL"), _pts(fred_s, "WALCL"), drv["tga"], kink_b, settlements))
+        (src.get("upcoming") or {}).get("upcoming", pd.DataFrame())
+    )
+    run(
+        "weather",
+        lambda: eng_weather.forecast(
+            _pts(fred_s, "WRESBAL"),
+            _pts(fred_s, "WALCL"),
+            drv["tga"],
+            kink_b,
+            settlements,
+        ),
+    )
 
     # --- Supply Desk (net-new-cash forward table, Wrightson style) ---
     if asof is not None:
@@ -557,51 +710,71 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         results["supplydesk"] = {
             "ok": False,
             "reason": "forward supply table needs the current-state auction feed, "
-                      "which has no historical vintage; not reconstructable point-in-time",
+            "which has no historical vintage; not reconstructable point-in-time",
         }
     else:
-        run("supplydesk", lambda: eng_supplydesk.forward_table(
-            (src.get("upcoming") or {}).get("upcoming", pd.DataFrame()),
-            (src.get("auctions") or {}).get("auctions", pd.DataFrame()),
-            (src.get("mspd") or {}).get("mspd", pd.DataFrame()),
-        ))
+        run(
+            "supplydesk",
+            lambda: eng_supplydesk.forward_table(
+                (src.get("upcoming") or {}).get("upcoming", pd.DataFrame()),
+                (src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+                (src.get("mspd") or {}).get("mspd", pd.DataFrame()),
+            ),
+        )
 
     # --- Reserve Runway (13-week kink-crossing projection) ---
-    run("runway", lambda: eng_runway.project(
-        _pts(fred_s, "WRESBAL"),
-        drv["rrp"],
-        drv["tga"],
-        results["kink"],
-        [{"date": d.date().isoformat(), "amount_b": round(float(v), 1)}
-         for d, v in settlements.items()],
-        RUNWAY_QT_PACE_B_PER_MONTH,
-    ))
+    run(
+        "runway",
+        lambda: eng_runway.project(
+            _pts(fred_s, "WRESBAL"),
+            drv["rrp"],
+            drv["tga"],
+            results["kink"],
+            [
+                {"date": d.date().isoformat(), "amount_b": round(float(v), 1)}
+                for d, v in settlements.items()
+            ],
+            RUNWAY_QT_PACE_B_PER_MONTH,
+        ),
+    )
 
     # --- Tails ---
-    run("tails", lambda: eng_tails.analyze(
-        frames, iorb if iorb is not None else pd.Series(dtype=float)))
+    run(
+        "tails",
+        lambda: eng_tails.analyze(
+            frames, iorb if iorb is not None else pd.Series(dtype=float)
+        ),
+    )
 
     # --- Stigma (SRF ceiling leak: repo paying up while the backstop sits idle) ---
-    run("stigma", lambda: eng_stigma.gauge(
-        frames.get("SOFR", pd.DataFrame()),
-        _pts(fred_s, "SRF_CEILING"),
-        drv["srf"],
-        iorb,
-    ))
+    run(
+        "stigma",
+        lambda: eng_stigma.gauge(
+            frames.get("SOFR", pd.DataFrame()),
+            _pts(fred_s, "SRF_CEILING"),
+            drv["srf"],
+            iorb,
+        ),
+    )
 
     # --- Echo ---
     def _echo():
         comps = {
             "sofr_iorb": drv["spread_bp"] / 100.0,
-            "effr_iorb": (_pts(fred_s, "EFFR") - iorb.reindex(_pts(fred_s, "EFFR").index).ffill()),
+            "effr_iorb": (
+                _pts(fred_s, "EFFR") - iorb.reindex(_pts(fred_s, "EFFR").index).ffill()
+            ),
             "bgcr_sofr": (_pts(ofr_s, "BGCR") - _pts(fred_s, "SOFR")),
             "rrp": drv["rrp"],
             "tga_chg5": drv["tga"].diff(5),
             "reserves_chg4w": _pts(fred_s, "WRESBAL").diff(4),
             "srf": drv["srf"],
         }
-        z = eng_echo.build_state({k: v for k, v in comps.items() if not v.dropna().empty})
+        z = eng_echo.build_state(
+            {k: v for k, v in comps.items() if not v.dropna().empty}
+        )
         return eng_echo.match(z)
+
     if iorb is not None:
         run("echo", _echo)
     else:
@@ -614,34 +787,47 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
 
     # --- Foreign Official Bid (custody vs foreign RRP: rotation or retreat) ---
     custody_s = src.get("fred_custody", {})
-    run("officialbid", lambda: eng_officialbid.analyze(
-        custody_tsy_weekly=_pts(custody_s, "CUSTODY_TSY"),
-        foreign_rrp_weekly=_pts(fred_s, "FOREIGN_RRP"),
-        fima_repo_weekly=_pts(custody_s, "FIMA_REPO"),
-    ))
+    run(
+        "officialbid",
+        lambda: eng_officialbid.analyze(
+            custody_tsy_weekly=_pts(custody_s, "CUSTODY_TSY"),
+            foreign_rrp_weekly=_pts(fred_s, "FOREIGN_RRP"),
+            fima_repo_weekly=_pts(custody_s, "FIMA_REPO"),
+        ),
+    )
 
     # --- Auctions ---
-    run("auctions", lambda: eng_auctions.analyze(
-        (src.get("auctions") or {}).get("auctions", pd.DataFrame())))
+    run(
+        "auctions",
+        lambda: eng_auctions.analyze(
+            (src.get("auctions") or {}).get("auctions", pd.DataFrame())
+        ),
+    )
 
     # --- Auction Report Card (the event study behind each auction grade) ---
-    run("reportcard", lambda: eng_reportcard.report_cards(
-        results["auctions"],
-        drv["spread_bp"],
-        drv["srf"],
-        _pts(fred_s, "WRESBAL"),
-        auctions_frame=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
-    ))
+    run(
+        "reportcard",
+        lambda: eng_reportcard.report_cards(
+            results["auctions"],
+            drv["spread_bp"],
+            drv["srf"],
+            _pts(fred_s, "WRESBAL"),
+            auctions_frame=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+        ),
+    )
 
     # --- Where the Dollars Sit (the H.4.1 identity, reconciled to the dollar) ---
-    run("ledger", lambda: eng_ledger.reconcile(
-        _pts(fred_s, "WALCL"),
-        _pts(fred_s, "WCURCIR"),
-        _pts(fred_s, "WRESBAL"),
-        _pts(fred_s, "WTREGEN"),
-        drv["rrp"],
-        _pts(fred_s, "FOREIGN_RRP"),
-    ))
+    run(
+        "ledger",
+        lambda: eng_ledger.reconcile(
+            _pts(fred_s, "WALCL"),
+            _pts(fred_s, "WCURCIR"),
+            _pts(fred_s, "WRESBAL"),
+            _pts(fred_s, "WTREGEN"),
+            drv["rrp"],
+            _pts(fred_s, "FOREIGN_RRP"),
+        ),
+    )
 
     # --- Resonance ---
     run("resonance", lambda: eng_resonance.analyze(drv["spread_bp"]))
@@ -653,19 +839,26 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     #     pop statistic: the calendar assumptions Resonance and the Swell/
     #     Microseism buckets hard-code, graded in public. Display-only:
     #     context, never composite) ---
-    run("phasemap", lambda: eng_phasemap.analyze(
-        drv["spread_bp"],
-        auctions=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
-    ))
+    run(
+        "phasemap",
+        lambda: eng_phasemap.analyze(
+            drv["spread_bp"],
+            auctions=(src.get("auctions") or {}).get("auctions", pd.DataFrame()),
+        ),
+    )
 
     # --- E-Detector (regime-break tripwire on the two funding streams, with a
     #     nonasymptotic false-alarm warranty; context, never composite) ---
-    run("edetect", lambda: eng_edetect.analyze(
-        spread_bp=drv["spread_bp"], tail_bp=drv["tail_bp"]))
+    run(
+        "edetect",
+        lambda: eng_edetect.analyze(spread_bp=drv["spread_bp"], tail_bp=drv["tail_bp"]),
+    )
 
     # --- Communiqué (the policy text read as data; vintage-stamped) ---
-    run("communique", lambda: eng_communique.analyze(
-        (src.get("fedtext") or {}).get("texts", {})))
+    run(
+        "communique",
+        lambda: eng_communique.analyze((src.get("fedtext") or {}).get("texts", {})),
+    )
 
     # --- Scuttlebutt (press attention on the plumbing; context, like
     #     Communiqué: narrative is never weighted into the composite) ---
@@ -680,10 +873,14 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         effr = _pts(fred_s, "EFFR")
         panel = {
             "SOFR-IORB": drv["spread_bp"],
-            "EFFR-IORB": ((effr - iorb.reindex(effr.index).ffill()) * 100.0) if iorb is not None else pd.Series(dtype=float),
+            "EFFR-IORB": ((effr - iorb.reindex(effr.index).ffill()) * 100.0)
+            if iorb is not None
+            else pd.Series(dtype=float),
             "BGCR-SOFR": ((_pts(ofr_s, "BGCR") - sofr) * 100.0),
             "TGCR-SOFR": ((_pts(ofr_s, "TGCR") - sofr) * 100.0),
-            "DVP-TRI rate": ((_pts(ofr_s, "DVP_RATE_OO") - _pts(ofr_s, "TRI_RATE_OO")) * 100.0),
+            "DVP-TRI rate": (
+                (_pts(ofr_s, "DVP_RATE_OO") - _pts(ofr_s, "TRI_RATE_OO")) * 100.0
+            ),
             "SOFR tail": drv["tail_bp"],
             "SRF": drv["srf"],
             "RRP": drv["rrp"],
@@ -711,84 +908,110 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     run("caesar", lambda: eng_caesar.analyze(spread_bp=drv["spread_bp"]))
 
     # --- Warehouse ---
-    run("warehouse", lambda: eng_warehouse.analyze(
-        (src.get("nyfed_pd") or {}).get("positions", {})))
+    run(
+        "warehouse",
+        lambda: eng_warehouse.analyze((src.get("nyfed_pd") or {}).get("positions", {})),
+    )
 
     # --- Global basins ---
     ecb_s = src.get("ecb", {})
     boj_s = src.get("boj", {})
-    run("basins", lambda: eng_basins.analyze(
-        spread_us_bp=drv["spread_bp"],
-        estr=_pts(ecb_s, "ESTR"),
-        ecb_dfr=_pts(fred_s, "ECB_DFR"),
-        sonia=_pts(fred_s, "SONIA"),
-        dxy=_pts(fred_s, "DXY_BROAD"),
-        swap_lines_m=_pts(fred_s, "SWAP_LINES"),
-        foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
-        fx_ops=(src.get("nyfed_fxs") or {}).get("ops", []),
-        inr=_pts(fred_s, "INR"),
-        usdt_peg_bp=drv["usdt_peg_bp"],
-        tona=_pts(boj_s, "TONA"),
-        cny=_pts(fred_s, "CNY"),
-        jpy=_pts(fred_s, "JPY"),
-        krw=_pts(fred_s, "KRW"),
-    ))
+    run(
+        "basins",
+        lambda: eng_basins.analyze(
+            spread_us_bp=drv["spread_bp"],
+            estr=_pts(ecb_s, "ESTR"),
+            ecb_dfr=_pts(fred_s, "ECB_DFR"),
+            sonia=_pts(fred_s, "SONIA"),
+            dxy=_pts(fred_s, "DXY_BROAD"),
+            swap_lines_m=_pts(fred_s, "SWAP_LINES"),
+            foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
+            fx_ops=(src.get("nyfed_fxs") or {}).get("ops", []),
+            inr=_pts(fred_s, "INR"),
+            usdt_peg_bp=drv["usdt_peg_bp"],
+            tona=_pts(boj_s, "TONA"),
+            cny=_pts(fred_s, "CNY"),
+            jpy=_pts(fred_s, "JPY"),
+            krw=_pts(fred_s, "KRW"),
+        ),
+    )
 
     # --- Thermohaline (BIS global liquidity — the deep circulation) ---
     run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
 
     # --- Harbors (national money markets — the holistic world view) ---
     eurusd = _pts(fred_s, "EURUSD")
-    run("harbors", lambda: eng_harbors.analyze(
-        {
-            "EURO AREA": {
-                "rate": _pts(ecb_s, "ESTR"), "rate_label": "€STR", "cadence": "daily",
-                "fx": (1.0 / eurusd.replace(0, np.nan)).dropna(), "fx_label": "EUR per USD",
+    run(
+        "harbors",
+        lambda: eng_harbors.analyze(
+            {
+                "EURO AREA": {
+                    "rate": _pts(ecb_s, "ESTR"),
+                    "rate_label": "€STR",
+                    "cadence": "daily",
+                    "fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
+                    "fx_label": "EUR per USD",
+                },
+                "CHINA": {
+                    "cadence": "FX daily; local rate unavailable",
+                    "fx": _pts(fred_s, "CNY"),
+                    "fx_label": "CNY per USD",
+                },
+                "INDIA": {
+                    "rate": _pts(fred_s, "CALL_IN"),
+                    "rate_label": "call money (OECD MEI)",
+                    "cadence": "monthly ~2mo lag",
+                    "fx": _pts(fred_s, "INR"),
+                    "fx_label": "INR per USD",
+                },
+                "JAPAN": {
+                    "rate": _pts(src.get("boj", {}), "TONA"),
+                    "rate_label": "TONA (BOJ)",
+                    "cadence": "daily",
+                    "fx": _pts(fred_s, "JPY"),
+                    "fx_label": "JPY per USD",
+                },
+                "KOREA": {
+                    "rate": _pts(fred_s, "CALL_KR"),
+                    "rate_label": "o/n call (OECD MEI)",
+                    "cadence": "monthly ~2mo lag",
+                    "fx": _pts(fred_s, "KRW"),
+                    "fx_label": "KRW per USD",
+                },
             },
-            "CHINA": {
-                "cadence": "FX daily; local rate unavailable",
-                "fx": _pts(fred_s, "CNY"), "fx_label": "CNY per USD",
-            },
-            "INDIA": {
-                "rate": _pts(fred_s, "CALL_IN"), "rate_label": "call money (OECD MEI)",
-                "cadence": "monthly ~2mo lag",
-                "fx": _pts(fred_s, "INR"), "fx_label": "INR per USD",
-            },
-            "JAPAN": {
-                "rate": _pts(src.get("boj", {}), "TONA"), "rate_label": "TONA (BOJ)",
-                "cadence": "daily",
-                "fx": _pts(fred_s, "JPY"), "fx_label": "JPY per USD",
-            },
-            "KOREA": {
-                "rate": _pts(fred_s, "CALL_KR"), "rate_label": "o/n call (OECD MEI)",
-                "cadence": "monthly ~2mo lag",
-                "fx": _pts(fred_s, "KRW"), "fx_label": "KRW per USD",
-            },
-        },
-        effr=_pts(fred_s, "EFFR"),
-    ))
+            effr=_pts(fred_s, "EFFR"),
+        ),
+    )
 
     # --- Spillover (Diebold-Yilmaz directional connectedness across harbors) ---
     # Daily nodes only: daily-cadence anchor rates + the H.10 FX legs (daily even
     # where the local RATE is a monthly OECD mirror). Monthly rates are excluded
     # from the VAR by construction, never interpolated to pad the panel.
-    run("spillover", lambda: eng_spillover.analyze({
-        "US·rate": _pts(fred_s, "EFFR"),
-        "EUR·rate": _pts(ecb_s, "ESTR"),
-        "JP·rate": _pts(src.get("boj", {}), "TONA"),
-        "EUR·fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
-        "CNY·fx": _pts(fred_s, "CNY"),
-        "JPY·fx": _pts(fred_s, "JPY"),
-        "INR·fx": _pts(fred_s, "INR"),
-        "KRW·fx": _pts(fred_s, "KRW"),
-    }))
+    run(
+        "spillover",
+        lambda: eng_spillover.analyze(
+            {
+                "US·rate": _pts(fred_s, "EFFR"),
+                "EUR·rate": _pts(ecb_s, "ESTR"),
+                "JP·rate": _pts(src.get("boj", {}), "TONA"),
+                "EUR·fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
+                "CNY·fx": _pts(fred_s, "CNY"),
+                "JPY·fx": _pts(fred_s, "JPY"),
+                "INR·fx": _pts(fred_s, "INR"),
+                "KRW·fx": _pts(fred_s, "KRW"),
+            }
+        ),
+    )
 
     # --- Station-Keeping (maneuver detection) ---
-    run("stationkeeping", lambda: eng_stationkeeping.analyze(
-        tga_daily=drv["tga"],
-        rrp_daily=drv["rrp"],
-        walcl_weekly=_pts(fred_s, "WALCL"),
-    ))
+    run(
+        "stationkeeping",
+        lambda: eng_stationkeeping.analyze(
+            tga_daily=drv["tga"],
+            rrp_daily=drv["rrp"],
+            walcl_weekly=_pts(fred_s, "WALCL"),
+        ),
+    )
 
     # --- Far Basin (Palimpsest policy-fear channel) ---
     pal = src.get("palimpsest") or {}
@@ -798,222 +1021,359 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         s = pal_series.get(m)
         return s.points.dropna() if s is not None else None
 
-    run("farbasin", lambda: eng_farbasin.analyze(
-        fear=_pal_pts("PALIMPSEST_FEAR"),
-        n_new=_pal_pts("PALIMPSEST_NEW"),
-        gfi=_pal_pts("PALIMPSEST_GFI"),
-        latest=pal.get("latest"),
-    ))
+    run(
+        "farbasin",
+        lambda: eng_farbasin.analyze(
+            fear=_pal_pts("PALIMPSEST_FEAR"),
+            n_new=_pal_pts("PALIMPSEST_NEW"),
+            gfi=_pal_pts("PALIMPSEST_GFI"),
+            latest=pal.get("latest"),
+        ),
+    )
 
     # --- Stablecoin moorings ---
     stable = (src.get("crypto") or {}).get("stable", {})
-    run("moorings", lambda: eng_moorings.analyze(
-        board=stable.get("board", []),
-        usdt_usd=(src.get("crypto") or {}).get("candles", {}).get("USDT_USD").points
-        if (src.get("crypto") or {}).get("candles", {}).get("USDT_USD") is not None
-        else pd.Series(dtype=float),
-        stable_total_b=stable.get("total", pd.Series(dtype=float)),
-        btc_usd=drv["btc"],
-    ))
+    run(
+        "moorings",
+        lambda: eng_moorings.analyze(
+            board=stable.get("board", []),
+            usdt_usd=(src.get("crypto") or {}).get("candles", {}).get("USDT_USD").points
+            if (src.get("crypto") or {}).get("candles", {}).get("USDT_USD") is not None
+            else pd.Series(dtype=float),
+            stable_total_b=stable.get("total", pd.Series(dtype=float)),
+            btc_usd=drv["btc"],
+        ),
+    )
 
     # --- CP Sentinel (do major DeFi exploits narrow CP spreads? cross-market
     #     channel context; a missing leg degrades to an honest ok=False) ---
-    run("cpsentinel", lambda: eng_cpsentinel.analyze(
-        hacks_usd=drv["hacks_usd"], cp_spread_bp=drv["cp_spread_bp"]))
+    run(
+        "cpsentinel",
+        lambda: eng_cpsentinel.analyze(
+            hacks_usd=drv["hacks_usd"], cp_spread_bp=drv["cp_spread_bp"]
+        ),
+    )
 
     # --- Oil × Funding (bidirectional physical-barrel / money-market context;
     #     rich research surface, deliberately never a composite component) ---
     cp_s = src.get("fred_cp_rates", {})
-    run("oilfunding", lambda: eng_oilfunding.analyze(
-        wti=_pts(fred_s, "WTI_SPOT"),
-        brent=_pts(fred_s, "BRENT_SPOT"),
-        sofr=_pts(fred_s, "SOFR"),
-        iorb=iorb if iorb is not None else pd.Series(dtype=float),
-        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
-        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
-        treasury_3m=_pts(cp_s, "DGS3M"),
-        inr_per_usd=_pts(fred_s, "INR"),
-        energy_cpi=_pts(fred_s, "ENERGY_CPI"),
-        core_cpi=_pts(fred_s, "CORE_CPI"),
-        foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
-        foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
-        cushing_stocks=_pts(src.get("eia_petroleum", {}), "CUSHING_STOCKS"),
-    ))
+    run(
+        "oilfunding",
+        lambda: eng_oilfunding.analyze(
+            wti=_pts(fred_s, "WTI_SPOT"),
+            brent=_pts(fred_s, "BRENT_SPOT"),
+            sofr=_pts(fred_s, "SOFR"),
+            iorb=iorb if iorb is not None else pd.Series(dtype=float),
+            cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+            cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+            treasury_3m=_pts(cp_s, "DGS3M"),
+            inr_per_usd=_pts(fred_s, "INR"),
+            energy_cpi=_pts(fred_s, "ENERGY_CPI"),
+            core_cpi=_pts(fred_s, "CORE_CPI"),
+            foreign_treasury_custody=_pts(src.get("fred_custody", {}), "CUSTODY_TSY"),
+            foreign_official_rrp=_pts(fred_s, "FOREIGN_RRP"),
+            cushing_stocks=_pts(src.get("eia_petroleum", {}), "CUSHING_STOCKS"),
+        ),
+    )
 
     # --- Ballast (energy-futures cash displacement and physical inventory;
     #     a context-only child of Oil × Funding, never a composite input) ---
-    run("ballast", lambda: eng_ballast.analyze(
-        commodity_positions=(src.get("commodity_cot") or {}).get(
-            "positions", pd.DataFrame()
+    run(
+        "ballast",
+        lambda: eng_ballast.analyze(
+            commodity_positions=(src.get("commodity_cot") or {}).get(
+                "positions", pd.DataFrame()
+            ),
+            prices={
+                "WTI_SPOT": _pts(fred_s, "WTI_SPOT"),
+                "HENRY_HUB_SPOT": _pts(fred_s, "HENRY_HUB_SPOT"),
+            },
+            crude_stocks_ex_spr=_pts(
+                src.get("eia_inventory", {}), "CRUDE_STOCKS_EX_SPR"
+            ),
+            sofr=_pts(fred_s, "SOFR"),
+            iorb=iorb if iorb is not None else pd.Series(dtype=float),
+            cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+            treasury_3m=_pts(cp_s, "DGS3M"),
         ),
-        prices={
-            "WTI_SPOT": _pts(fred_s, "WTI_SPOT"),
-            "HENRY_HUB_SPOT": _pts(fred_s, "HENRY_HUB_SPOT"),
-        },
-        crude_stocks_ex_spr=_pts(
-            src.get("eia_inventory", {}), "CRUDE_STOCKS_EX_SPR"
-        ),
-        sofr=_pts(fred_s, "SOFR"),
-        iorb=iorb if iorb is not None else pd.Series(dtype=float),
-        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
-        treasury_3m=_pts(cp_s, "DGS3M"),
-    ))
+    )
 
     # --- The Estuary (FX + materials -> price of cash).  The daily Passage
     #     and monthly breadth are explicitly separate; context only, never a
     #     composite component. ---
-    run("estuary", lambda: eng_estuary.analyze(
-        fx={
-            "EUR": {
-                "label": "Euro", "bucket": "AFE", "series": _pts(fred_s, "EURUSD"),
-                "quote": "usd_per_local", "source_id": "DEXUSEU",
-                "rate": _pts(ecb_s, "ESTR"), "rate_label": "€STR", "rate_cadence": "daily",
+    run(
+        "estuary",
+        lambda: eng_estuary.analyze(
+            fx={
+                "EUR": {
+                    "label": "Euro",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "EURUSD"),
+                    "quote": "usd_per_local",
+                    "source_id": "DEXUSEU",
+                    "rate": _pts(ecb_s, "ESTR"),
+                    "rate_label": "€STR",
+                    "rate_cadence": "daily",
+                },
+                "GBP": {
+                    "label": "Sterling",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "GBP"),
+                    "quote": "usd_per_local",
+                    "source_id": "DEXUSUK",
+                    "rate": _pts(fred_s, "SONIA"),
+                    "rate_label": "SONIA",
+                    "rate_cadence": "daily",
+                },
+                "JPY": {
+                    "label": "Japanese yen",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "JPY"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXJPUS",
+                    "rate": _pts(boj_s, "TONA"),
+                    "rate_label": "TONA",
+                    "rate_cadence": "daily",
+                },
+                "AUD": {
+                    "label": "Australian dollar",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "AUD"),
+                    "quote": "usd_per_local",
+                    "source_id": "DEXUSAL",
+                },
+                "CAD": {
+                    "label": "Canadian dollar",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "CAD"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXCAUS",
+                },
+                "CHF": {
+                    "label": "Swiss franc",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "CHF"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXSZUS",
+                },
+                "CNY": {
+                    "label": "Chinese yuan",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "CNY"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXCHUS",
+                },
+                "INR": {
+                    "label": "Indian rupee",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "INR"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXINUS",
+                    "rate": _pts(fred_s, "CALL_IN"),
+                    "rate_label": "call money",
+                    "rate_cadence": "monthly ~2mo lag",
+                },
+                "KRW": {
+                    "label": "Korean won",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "KRW"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXKOUS",
+                    "rate": _pts(fred_s, "CALL_KR"),
+                    "rate_label": "o/n call",
+                    "rate_cadence": "monthly ~2mo lag",
+                },
+                "MXN": {
+                    "label": "Mexican peso",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "MXN"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXMXUS",
+                },
+                "BRL": {
+                    "label": "Brazilian real",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "BRL"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXBZUS",
+                },
+                "ZAR": {
+                    "label": "South African rand",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "ZAR"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXSFUS",
+                },
+                "NZD": {
+                    "label": "New Zealand dollar",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "NZD"),
+                    "quote": "usd_per_local",
+                    "source_id": "DEXUSNZ",
+                },
+                "DKK": {
+                    "label": "Danish krone",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "DKK"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXDNUS",
+                },
+                "HKD": {
+                    "label": "Hong Kong dollar",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "HKD"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXHKUS",
+                },
+                "MYR": {
+                    "label": "Malaysian ringgit",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "MYR"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXMAUS",
+                },
+                "NOK": {
+                    "label": "Norwegian krone",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "NOK"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXNOUS",
+                },
+                "SEK": {
+                    "label": "Swedish krona",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "SEK"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXSDUS",
+                },
+                "SGD": {
+                    "label": "Singapore dollar",
+                    "bucket": "AFE",
+                    "series": _pts(fred_s, "SGD"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXSIUS",
+                },
+                "TWD": {
+                    "label": "New Taiwan dollar",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "TWD"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXTAUS",
+                },
+                "THB": {
+                    "label": "Thai baht",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "THB"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXTHUS",
+                },
+                "LKR": {
+                    "label": "Sri Lankan rupee",
+                    "bucket": "EM",
+                    "series": _pts(fred_s, "LKR"),
+                    "quote": "local_per_usd",
+                    "source_id": "DEXSLUS",
+                },
             },
-            "GBP": {
-                "label": "Sterling", "bucket": "AFE", "series": _pts(fred_s, "GBP"),
-                "quote": "usd_per_local", "source_id": "DEXUSUK",
-                "rate": _pts(fred_s, "SONIA"), "rate_label": "SONIA", "rate_cadence": "daily",
+            broad_dollar=_pts(fred_s, "DXY_BROAD"),
+            afe_dollar=_pts(fred_s, "DXY_AFE"),
+            eme_dollar=_pts(fred_s, "DXY_EME"),
+            commodities={
+                "WTI": {
+                    "label": "WTI crude",
+                    "category": "energy",
+                    "series": _pts(fred_s, "WTI_SPOT"),
+                    "cadence": "D",
+                    "change_kind": "diff",
+                    "unit": "$/bbl",
+                    "source_id": "DCOILWTICO",
+                },
+                "BRENT": {
+                    "label": "Brent crude",
+                    "category": "energy",
+                    "series": _pts(fred_s, "BRENT_SPOT"),
+                    "cadence": "D",
+                    "change_kind": "diff",
+                    "unit": "$/bbl",
+                    "source_id": "DCOILBRENTEU",
+                },
+                "NATGAS": {
+                    "label": "Henry Hub gas",
+                    "category": "energy",
+                    "series": _pts(fred_s, "NATGAS_SPOT"),
+                    "cadence": "D",
+                    "unit": "$/MMBtu",
+                    "source_id": "DHHNGSP",
+                },
+                "COAL": {
+                    "label": "Australian coal",
+                    "category": "energy",
+                    "series": _pts(fred_s, "COAL"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PCOALAUUSDM",
+                },
+                "ALL": {
+                    "label": "All commodities",
+                    "category": "broad",
+                    "series": _pts(fred_s, "COMMODITY_ALL"),
+                    "cadence": "M",
+                    "unit": "2016=100",
+                    "source_id": "PALLFNFINDEXM",
+                },
+                "COPPER": {
+                    "label": "Copper",
+                    "category": "industrial",
+                    "series": _pts(fred_s, "COPPER"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PCOPPUSDM",
+                },
+                "ALUMINUM": {
+                    "label": "Aluminum",
+                    "category": "industrial",
+                    "series": _pts(fred_s, "ALUMINUM"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PALUMUSDM",
+                },
+                "NICKEL": {
+                    "label": "Nickel",
+                    "category": "industrial",
+                    "series": _pts(fred_s, "NICKEL"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PNICKUSDM",
+                },
+                "WHEAT": {
+                    "label": "Wheat",
+                    "category": "agriculture",
+                    "series": _pts(fred_s, "WHEAT"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PWHEAMTUSDM",
+                },
+                "CORN": {
+                    "label": "Corn",
+                    "category": "agriculture",
+                    "series": _pts(fred_s, "CORN"),
+                    "cadence": "M",
+                    "unit": "$/metric ton",
+                    "source_id": "PMAIZMTUSDM",
+                },
             },
-            "JPY": {
-                "label": "Japanese yen", "bucket": "AFE", "series": _pts(fred_s, "JPY"),
-                "quote": "local_per_usd", "source_id": "DEXJPUS",
-                "rate": _pts(boj_s, "TONA"), "rate_label": "TONA", "rate_cadence": "daily",
-            },
-            "AUD": {
-                "label": "Australian dollar", "bucket": "AFE", "series": _pts(fred_s, "AUD"),
-                "quote": "usd_per_local", "source_id": "DEXUSAL",
-            },
-            "CAD": {
-                "label": "Canadian dollar", "bucket": "AFE", "series": _pts(fred_s, "CAD"),
-                "quote": "local_per_usd", "source_id": "DEXCAUS",
-            },
-            "CHF": {
-                "label": "Swiss franc", "bucket": "AFE", "series": _pts(fred_s, "CHF"),
-                "quote": "local_per_usd", "source_id": "DEXSZUS",
-            },
-            "CNY": {
-                "label": "Chinese yuan", "bucket": "EM", "series": _pts(fred_s, "CNY"),
-                "quote": "local_per_usd", "source_id": "DEXCHUS",
-            },
-            "INR": {
-                "label": "Indian rupee", "bucket": "EM", "series": _pts(fred_s, "INR"),
-                "quote": "local_per_usd", "source_id": "DEXINUS",
-                "rate": _pts(fred_s, "CALL_IN"), "rate_label": "call money", "rate_cadence": "monthly ~2mo lag",
-            },
-            "KRW": {
-                "label": "Korean won", "bucket": "EM", "series": _pts(fred_s, "KRW"),
-                "quote": "local_per_usd", "source_id": "DEXKOUS",
-                "rate": _pts(fred_s, "CALL_KR"), "rate_label": "o/n call", "rate_cadence": "monthly ~2mo lag",
-            },
-            "MXN": {
-                "label": "Mexican peso", "bucket": "EM", "series": _pts(fred_s, "MXN"),
-                "quote": "local_per_usd", "source_id": "DEXMXUS",
-            },
-            "BRL": {
-                "label": "Brazilian real", "bucket": "EM", "series": _pts(fred_s, "BRL"),
-                "quote": "local_per_usd", "source_id": "DEXBZUS",
-            },
-            "ZAR": {
-                "label": "South African rand", "bucket": "EM", "series": _pts(fred_s, "ZAR"),
-                "quote": "local_per_usd", "source_id": "DEXSFUS",
-            },
-            "NZD": {
-                "label": "New Zealand dollar", "bucket": "AFE", "series": _pts(fred_s, "NZD"),
-                "quote": "usd_per_local", "source_id": "DEXUSNZ",
-            },
-            "DKK": {
-                "label": "Danish krone", "bucket": "AFE", "series": _pts(fred_s, "DKK"),
-                "quote": "local_per_usd", "source_id": "DEXDNUS",
-            },
-            "HKD": {
-                "label": "Hong Kong dollar", "bucket": "AFE", "series": _pts(fred_s, "HKD"),
-                "quote": "local_per_usd", "source_id": "DEXHKUS",
-            },
-            "MYR": {
-                "label": "Malaysian ringgit", "bucket": "EM", "series": _pts(fred_s, "MYR"),
-                "quote": "local_per_usd", "source_id": "DEXMAUS",
-            },
-            "NOK": {
-                "label": "Norwegian krone", "bucket": "AFE", "series": _pts(fred_s, "NOK"),
-                "quote": "local_per_usd", "source_id": "DEXNOUS",
-            },
-            "SEK": {
-                "label": "Swedish krona", "bucket": "AFE", "series": _pts(fred_s, "SEK"),
-                "quote": "local_per_usd", "source_id": "DEXSDUS",
-            },
-            "SGD": {
-                "label": "Singapore dollar", "bucket": "AFE", "series": _pts(fred_s, "SGD"),
-                "quote": "local_per_usd", "source_id": "DEXSIUS",
-            },
-            "TWD": {
-                "label": "New Taiwan dollar", "bucket": "EM", "series": _pts(fred_s, "TWD"),
-                "quote": "local_per_usd", "source_id": "DEXTAUS",
-            },
-            "THB": {
-                "label": "Thai baht", "bucket": "EM", "series": _pts(fred_s, "THB"),
-                "quote": "local_per_usd", "source_id": "DEXTHUS",
-            },
-            "LKR": {
-                "label": "Sri Lankan rupee", "bucket": "EM", "series": _pts(fred_s, "LKR"),
-                "quote": "local_per_usd", "source_id": "DEXSLUS",
-            },
-        },
-        broad_dollar=_pts(fred_s, "DXY_BROAD"),
-        afe_dollar=_pts(fred_s, "DXY_AFE"),
-        eme_dollar=_pts(fred_s, "DXY_EME"),
-        commodities={
-            "WTI": {
-                "label": "WTI crude", "category": "energy", "series": _pts(fred_s, "WTI_SPOT"),
-                "cadence": "D", "change_kind": "diff", "unit": "$/bbl", "source_id": "DCOILWTICO",
-            },
-            "BRENT": {
-                "label": "Brent crude", "category": "energy", "series": _pts(fred_s, "BRENT_SPOT"),
-                "cadence": "D", "change_kind": "diff", "unit": "$/bbl", "source_id": "DCOILBRENTEU",
-            },
-            "NATGAS": {
-                "label": "Henry Hub gas", "category": "energy", "series": _pts(fred_s, "NATGAS_SPOT"),
-                "cadence": "D", "unit": "$/MMBtu", "source_id": "DHHNGSP",
-            },
-            "COAL": {
-                "label": "Australian coal", "category": "energy", "series": _pts(fred_s, "COAL"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PCOALAUUSDM",
-            },
-            "ALL": {
-                "label": "All commodities", "category": "broad", "series": _pts(fred_s, "COMMODITY_ALL"),
-                "cadence": "M", "unit": "2016=100", "source_id": "PALLFNFINDEXM",
-            },
-            "COPPER": {
-                "label": "Copper", "category": "industrial", "series": _pts(fred_s, "COPPER"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PCOPPUSDM",
-            },
-            "ALUMINUM": {
-                "label": "Aluminum", "category": "industrial", "series": _pts(fred_s, "ALUMINUM"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PALUMUSDM",
-            },
-            "NICKEL": {
-                "label": "Nickel", "category": "industrial", "series": _pts(fred_s, "NICKEL"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PNICKUSDM",
-            },
-            "WHEAT": {
-                "label": "Wheat", "category": "agriculture", "series": _pts(fred_s, "WHEAT"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PWHEAMTUSDM",
-            },
-            "CORN": {
-                "label": "Corn", "category": "agriculture", "series": _pts(fred_s, "CORN"),
-                "cadence": "M", "unit": "$/metric ton", "source_id": "PMAIZMTUSDM",
-            },
-        },
-        sofr=_pts(fred_s, "SOFR"),
-        iorb=iorb if iorb is not None else pd.Series(dtype=float),
-        effr=_pts(fred_s, "EFFR"),
-        cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
-        cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
-        treasury_3m=_pts(cp_s, "DGS3M"),
-        swap_lines_m=_pts(fred_s, "SWAP_LINES"),
-        foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
-        fima_repo_m=_pts(src.get("fred_custody", {}), "FIMA_REPO"),
-        offshore_usd_credit_m=_pts(src.get("bis", {}), "GLI_OFFSHORE_USD"),
-    ))
+            sofr=_pts(fred_s, "SOFR"),
+            iorb=iorb if iorb is not None else pd.Series(dtype=float),
+            effr=_pts(fred_s, "EFFR"),
+            cp_nonfinancial_3m=_pts(cp_s, "CP_NONFIN_3M"),
+            cp_financial_3m=_pts(cp_s, "CP_FIN_3M"),
+            treasury_3m=_pts(cp_s, "DGS3M"),
+            swap_lines_m=_pts(fred_s, "SWAP_LINES"),
+            foreign_rrp_m=_pts(fred_s, "FOREIGN_RRP"),
+            fima_repo_m=_pts(src.get("fred_custody", {}), "FIMA_REPO"),
+            offshore_usd_credit_m=_pts(src.get("bis", {}), "GLI_OFFSHORE_USD"),
+        ),
+    )
 
     # --- Windfetch (the lab's current-affairs wind read back from the
     #     Undertow FETCH pack; overlay only — never enters the composite) ---
@@ -1028,45 +1388,84 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
                 # OFR dollar series arrive as raw dollars; _vol_b leaves
                 # percent-scale series untouched.
                 pts = _vol_b(s.points) if group == "ofr" else s.points.dropna()
-                series_map[m] = (spec.label if spec else m, spec.unit if spec else "", pts)
+                series_map[m] = (
+                    spec.label if spec else m,
+                    spec.unit if spec else "",
+                    pts,
+                )
         series_map["SOFR-IORB"] = ("SOFR-IORB spread", "bp", drv["spread_bp"])
         series_map["SOFR_TAIL"] = ("SOFR P99-P50 tail", "bp", drv["tail_bp"])
         series_map["SRF"] = ("SRF accepted", "$B", drv["srf"])
         series_map["TGA"] = ("Treasury General Account", "$B", drv["tga"])
         for m, s in ((src.get("crypto") or {}).get("candles") or {}).items():
             spec = ALL_SERIES.get(m)
-            series_map[m] = (spec.label if spec else m, spec.unit if spec else "", s.points.dropna())
+            series_map[m] = (
+                spec.label if spec else m,
+                spec.unit if spec else "",
+                s.points.dropna(),
+            )
         stable_total = ((src.get("crypto") or {}).get("stable") or {}).get("total")
         if stable_total is not None and not stable_total.dropna().empty:
-            series_map["STABLE_TOTAL"] = ("Total stablecoin circulation", "$B", stable_total.dropna())
+            series_map["STABLE_TOTAL"] = (
+                "Total stablecoin circulation",
+                "$B",
+                stable_total.dropna(),
+            )
         for m, s in ((src.get("palimpsest") or {}).get("series") or {}).items():
             spec = ALL_SERIES.get(m)
             if s is not None and not s.points.dropna().empty:
-                series_map[m] = (spec.label if spec else m, spec.unit if spec else "", s.points.dropna())
+                series_map[m] = (
+                    spec.label if spec else m,
+                    spec.unit if spec else "",
+                    s.points.dropna(),
+                )
         return eng_sonar.sweep(series_map)
+
     run("sonar", _sonar)
 
     # --- Composite ---
     subs = {
-        "tails": eng_tails.tails_score(results["tails"]) if results["tails"].get("ok") else None,
-        "kink": eng_kink.kink_score(results["kink"]) if results["kink"].get("ok") else None,
-        "weather": eng_weather.weather_score(results["weather"], kink_b) if results["weather"].get("ok") else None,
+        "tails": eng_tails.tails_score(results["tails"])
+        if results["tails"].get("ok")
+        else None,
+        "kink": eng_kink.kink_score(results["kink"])
+        if results["kink"].get("ok")
+        else None,
+        "weather": eng_weather.weather_score(results["weather"], kink_b)
+        if results["weather"].get("ok")
+        else None,
         "confession": (
             eng_composite.confession_score(drv["srf_daily"], drv["dw_b"])
             if (not drv["srf_daily"].empty or not drv["dw_b"].dropna().empty)
             else None
         ),
-        "rvxray": eng_rvxray.rvxray_score(results["rvxray"]) if results["rvxray"].get("ok") else None,
-        "resonance": eng_resonance.resonance_score(results["resonance"]) if results["resonance"].get("ok") else None,
-        "hydrophone": eng_hydrophone.hydrophone_score(results["hydrophone"]) if results["hydrophone"].get("ok") else None,
-        "undertow": eng_undertow.undertow_score(results["undertow"]) if results["undertow"].get("ok") else None,
-        "auctions": eng_auctions.auctions_score(results["auctions"]) if results["auctions"].get("ok") else None,
-        "warehouse": eng_warehouse.warehouse_score(results["warehouse"]) if results["warehouse"].get("ok") else None,
-        "buffers": eng_composite.buffers_score(float(drv["rrp"].iloc[-1])) if not drv["rrp"].empty else None,
+        "rvxray": eng_rvxray.rvxray_score(results["rvxray"])
+        if results["rvxray"].get("ok")
+        else None,
+        "resonance": eng_resonance.resonance_score(results["resonance"])
+        if results["resonance"].get("ok")
+        else None,
+        "hydrophone": eng_hydrophone.hydrophone_score(results["hydrophone"])
+        if results["hydrophone"].get("ok")
+        else None,
+        "undertow": eng_undertow.undertow_score(results["undertow"])
+        if results["undertow"].get("ok")
+        else None,
+        "auctions": eng_auctions.auctions_score(results["auctions"])
+        if results["auctions"].get("ok")
+        else None,
+        "warehouse": eng_warehouse.warehouse_score(results["warehouse"])
+        if results["warehouse"].get("ok")
+        else None,
+        "buffers": eng_composite.buffers_score(float(drv["rrp"].iloc[-1]))
+        if not drv["rrp"].empty
+        else None,
     }
     results["composite"] = {
         **eng_composite.compose(subs),
-        "subscores": {k: round(v, 1) if v is not None else None for k, v in subs.items()},
+        "subscores": {
+            k: round(v, 1) if v is not None else None for k, v in subs.items()
+        },
     }
     return results
 
@@ -1074,6 +1473,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
 # ---------------------------------------------------------------------------
 # Deep layer (history reconstruction + Tell + Turn + Playbook + PROOF)
 # ---------------------------------------------------------------------------
+
 
 def _odds_ledger() -> list | None:
     """The as-published forward odds, appended daily by the dispatch CI and
@@ -1126,6 +1526,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         ts = cached.get("_computed_at")
         try:
             from datetime import datetime, timedelta, timezone
+
             fresh = ts is not None and (
                 datetime.now(timezone.utc) - datetime.fromisoformat(ts)
                 < timedelta(minutes=ttl_min)
@@ -1143,7 +1544,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     out: dict = {"ok": True}
     try:
         pair_full = engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float))
-        dig_full = engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float))
+        dig_full = engines.get("auctions", {}).get(
+            "_index_full", pd.Series(dtype=float)
+        )
         hist_kwargs = dict(
             spread_bp=spread,
             tail_bp=drv["tail_bp"],
@@ -1160,15 +1563,20 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             "ok": True,
             "current": {
                 "value": round(float(idx.iloc[-1]), 1),
-                "pctl": round(float(pctl.dropna().iloc[-1]), 0) if not pctl.dropna().empty else None,
+                "pctl": round(float(pctl.dropna().iloc[-1]), 0)
+                if not pctl.dropna().empty
+                else None,
                 "regime": str(hist["regime_series"].iloc[-1]),
             },
             "weights": hist["weights"],
             "excluded": hist["excluded"],
             "vintage_evidence": hist["vintage_evidence"],
             "series": [
-                [d.date().isoformat(), round(float(v), 1),
-                 round(float(pctl.loc[d]), 0) if pd.notna(pctl.loc[d]) else None]
+                [
+                    d.date().isoformat(),
+                    round(float(v), 1),
+                    round(float(pctl.loc[d]), 0) if pd.notna(pctl.loc[d]) else None,
+                ]
                 for d, v in idx.iloc[::2].items()
             ],
             "method": hist["method"],
@@ -1194,18 +1602,30 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             out[name] = fn()
         except Exception as e:
             out[name] = safe_failure_envelope(e)
-            faults.append({"source": f"deep:{name}", "detail": traceback.format_exc(limit=2)})
+            faults.append(
+                {"source": f"deep:{name}", "detail": traceback.format_exc(limit=2)}
+            )
 
-    run("tell", lambda: eng_market.tell(
-        idx, _pts(fred_s, "VIX"), _pts(fred_s, "HY_OAS"),
-        _pts(fred_s, "IG_OAS"), _pts(fred_s, "DGS10")))
+    run(
+        "tell",
+        lambda: eng_market.tell(
+            idx,
+            _pts(fred_s, "VIX"),
+            _pts(fred_s, "HY_OAS"),
+            _pts(fred_s, "IG_OAS"),
+            _pts(fred_s, "DGS10"),
+        ),
+    )
 
     # Full-overlap Tell series, shared by Playbook, the Stack and the Book
     # (the payload's tell series is tail-limited).
     try:
         mkt_stress, _ = eng_market.market_stress(
-            _pts(fred_s, "VIX"), _pts(fred_s, "HY_OAS"),
-            _pts(fred_s, "IG_OAS"), _pts(fred_s, "DGS10"))
+            _pts(fred_s, "VIX"),
+            _pts(fred_s, "HY_OAS"),
+            _pts(fred_s, "IG_OAS"),
+            _pts(fred_s, "DGS10"),
+        )
         plumb_p = eng_market._rpctl(idx.dropna())
         _both = pd.concat({"p": plumb_p, "m": mkt_stress}, axis=1).dropna()
         full_tell = _both["p"] - _both["m"]
@@ -1219,10 +1639,18 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             index=pd.DatetimeIndex([r[0] for r in tell_rows]),
             dtype=float,
         )
-        return eng_playbook.analyze(idx, full_tell if not full_tell.empty else tell_series, outcomes)
+        return eng_playbook.analyze(
+            idx, full_tell if not full_tell.empty else tell_series, outcomes
+        )
+
     run("playbook", _playbook)
 
-    run("turn", lambda: eng_turn.analyze(spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]))
+    run(
+        "turn",
+        lambda: eng_turn.analyze(
+            spread, drv["rrp"], drv["tail_bp"], drv["res_gdp_pctl"]
+        ),
+    )
     if hist["vintage_evidence"]["validated_backtest_eligible"]:
         run("backtest", lambda: eng_backtest.run(pctl, spread, outcomes))
     else:
@@ -1266,7 +1694,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             "srf": drv["srf"],
         }
         return eng_tidetables.analyze(
-            {k: v for k, v in comps.items() if not v.dropna().empty}, spread)
+            {k: v for k, v in comps.items() if not v.dropna().empty}, spread
+        )
+
     run("tidetables", _tidetables)
     # (_hindcast stays on the result until the Stack consumes it; all nested
     # private keys are popped together before the blob cache below.)
@@ -1284,6 +1714,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         # _p5_series stays on the result until the Stack consumes it as a
         # member; the private-key sweep below pops it before the blob cache.
         return res
+
     run("swell", _swell)
 
     # Bathymetry — the basin floor mapped: empirical Langevin potential,
@@ -1297,7 +1728,12 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # analytic-endpoint, and simulated-path-max.
     _comp = engines.get("composite", {})
     _cval, _creg = _comp.get("value"), _comp.get("regime")
-    run("markov", lambda: eng_markov.analyze(idx, hist.get("regime_series"), current_regime=_creg))
+    run(
+        "markov",
+        lambda: eng_markov.analyze(
+            idx, hist.get("regime_series"), current_regime=_creg
+        ),
+    )
     run("oujump", lambda: eng_oujump.analyze(idx, current_value=_cval))
     run("montecarlo", lambda: eng_montecarlo.analyze(idx, current_value=_cval))
 
@@ -1306,11 +1742,14 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # `riptide` is the original wire key and stays for compatibility, because
     # /api/overview consumers read deep.riptide and the resolved-pop history was
     # recorded under it. Do not drop the alias without a deprecation window.
-    run("funding_pop", lambda: eng_funding_pop.analyze(
-        spread_bp=spread,
-        rrp_b=drv["rrp"],
-        damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
-    ))
+    run(
+        "funding_pop",
+        lambda: eng_funding_pop.analyze(
+            spread_bp=spread,
+            rrp_b=drv["rrp"],
+            damping_pctl=engines.get("undertow", {}).get("_damping_pctl"),
+        ),
+    )
     out["riptide"] = out["funding_pop"]
 
     # The Gyre — Takens/EDM: is the basin deterministic enough to predict at
@@ -1323,17 +1762,20 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # publicly reconstructible layer (G3 balance sheets in USD). Deep-layer
     # citizen for the bootstrap cost; context, never composite. Published
     # standalone at referee.html.
-    run("refereegli", lambda: eng_refereegli.analyze(
-        fed_assets=_pts(fred_s, "FED_ASSETS_LONG"),
-        ecb_assets=_pts(fred_s, "ECB_ASSETS"),
-        boj_assets=_pts(fred_s, "BOJ_ASSETS"),
-        usd_per_eur=_pts(fred_s, "EURUSD_LONG"),
-        jpy_per_usd=_pts(fred_s, "JPY_LONG"),
-        equity=_pts(fred_s, "NASDAQ"),
-        indpro=_pts(fred_s, "INDPRO"),
-        tga=_pts(fred_s, "TGA_LONG"),
-        rrp=_pts(fred_s, "RRP_LONG"),
-    ))
+    run(
+        "refereegli",
+        lambda: eng_refereegli.analyze(
+            fed_assets=_pts(fred_s, "FED_ASSETS_LONG"),
+            ecb_assets=_pts(fred_s, "ECB_ASSETS"),
+            boj_assets=_pts(fred_s, "BOJ_ASSETS"),
+            usd_per_eur=_pts(fred_s, "EURUSD_LONG"),
+            jpy_per_usd=_pts(fred_s, "JPY_LONG"),
+            equity=_pts(fred_s, "NASDAQ"),
+            indpro=_pts(fred_s, "INDPRO"),
+            tga=_pts(fred_s, "TGA_LONG"),
+            rrp=_pts(fred_s, "RRP_LONG"),
+        ),
+    )
 
     # The Rubric: the coded evidence matrix (arXiv:2606.08285, re-coded for
     # a terminal that trades nothing) applied to Seiche itself FIRST, then to
@@ -1360,7 +1802,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             rrp_b=drv["rrp"],
             res_gdp=drv["res_gdp"],
             pair_b=engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float)),
-            digestion=engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float)),
+            digestion=engines.get("auctions", {}).get(
+                "_index_full", pd.Series(dtype=float)
+            ),
             exclude=("tails",),
         )
         cap = eng_backtest.capture(hist_o["pctl"], spread)
@@ -1373,11 +1817,14 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
                 "auctions/buffers only"
             )
         return cap
+
     if out.get("backtest", {}).get("ok"):
         try:
             out["backtest"]["orthogonal"] = _orthogonal()
         except Exception as e:
-            faults.append({"source": "deep:orthogonal", "detail": f"{type(e).__name__}: {e}"})
+            faults.append(
+                {"source": "deep:orthogonal", "detail": f"{type(e).__name__}: {e}"}
+            )
             out["backtest"]["orthogonal"] = safe_failure_envelope(e)
 
     def _ml():
@@ -1390,7 +1837,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             rrp_b=drv["rrp"],
             res_gdp_pctl=drv["res_gdp_pctl"],
             pair_b=engines.get("rvxray", {}).get("_pair_full", pd.Series(dtype=float)),
-            digestion=engines.get("auctions", {}).get("_index_full", pd.Series(dtype=float)),
+            digestion=engines.get("auctions", {}).get(
+                "_index_full", pd.Series(dtype=float)
+            ),
             lite_index=idx,
             lite_pctl=pctl,
             vix=_pts(fred_s, "VIX"),
@@ -1410,7 +1859,9 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         if res.get("ok") and pre is not None:
             solo = eng_mlpred.walk_forward(X, y, full_report=False)
             if solo.get("ok"):
-                gain = round(res["validation"]["auroc"] - solo["validation"]["auroc"], 3)
+                gain = round(
+                    res["validation"]["auroc"] - solo["validation"]["auroc"], 3
+                )
                 res["transfer"] = {
                     "auroc_pooled": res["validation"]["auroc"],
                     "auroc_solo": solo["validation"]["auroc"],
@@ -1422,8 +1873,8 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
                     "verdict": (
                         f"TED-era pretraining helps out-of-sample (+{gain} AUROC) — "
                         "the funding-stress grammar generalizes across eras"
-                        if gain > 0.005 else
-                        f"TED-era pretraining does NOT help ({gain:+} AUROC) — "
+                        if gain > 0.005
+                        else f"TED-era pretraining does NOT help ({gain:+} AUROC) — "
                         "the SOFR era speaks for itself; pretraining kept for robustness only"
                     ),
                 }
@@ -1441,12 +1892,15 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
                     "p_event_5bd": orth["p_event_5bd"],
                     "verdict": orth["verdict"],
                     "utility": orth.get("utility"),
-                    "dropped_features": [c for c in eng_mlpred.ORTHOGONAL_DROP if c in X.columns],
+                    "dropped_features": [
+                        c for c in eng_mlpred.ORTHOGONAL_DROP if c in X.columns
+                    ],
                 }
                 if orth.get("ok")
                 else orth
             )
         return res
+
     run("ml", _ml)
 
     # --- The Stack + The Book (the signal made accountable) -----------------
@@ -1458,13 +1912,16 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             ml_p=ml_blk.get("_p_daily") if ml_blk.get("ok") else None,
             tide_p=tide_blk.get("_hindcast") if tide_blk.get("ok") else None,
             swell_p=(out.get("swell") or {}).get("_p5_series")
-            if (out.get("swell") or {}).get("ok") else None,
+            if (out.get("swell") or {}).get("ok")
+            else None,
             bathy_p=(out.get("bathymetry") or {}).get("_p5_series")
-            if (out.get("bathymetry") or {}).get("ok") else None,
+            if (out.get("bathymetry") or {}).get("ok")
+            else None,
             tell=full_tell if not full_tell.empty else None,
         )
         yv = eng_stacker.event_labels(spread, M.index)
         return eng_stacker.walk_forward_stack(M, yv, regime=hist["regime_series"])
+
     run("stacker", _stacker)
 
     # Regatta + Sea Room consume the Stack's own OOS streams (private keys,
@@ -1475,14 +1932,17 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         if not stk.get("ok"):
             return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
         return eng_regatta.analyze(stk["_cal"], stk["_p_pub"], stk["_y"])
+
     run("regatta", _regatta)
 
     def _searoom():
         stk = out.get("stacker", {})
         if not stk.get("ok"):
             return {"ok": False, "reason": f"stacker unavailable: {stk.get('reason')}"}
-        return eng_searoom.analyze(stk["_p_pub"], stk["_y"],
-                                   regime=hist["regime_series"])
+        return eng_searoom.analyze(
+            stk["_p_pub"], stk["_y"], regime=hist["regime_series"]
+        )
+
     run("searoom", _searoom)
 
     # Sea State — the statistical regime gauge (filtered 2-state HMM).
@@ -1500,14 +1960,28 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
             tb3m=_pts(fred_s, "TB3M"),
         )
         return eng_book.run(
-            stk["_p"], stk["_member_probs"], stk["_dispersion"],
-            full_tell, rets, pit_records=store.load_pit_records(),
+            stk["_p"],
+            stk["_member_probs"],
+            stk["_dispersion"],
+            full_tell,
+            rets,
+            pit_records=store.load_pit_records(),
         )
+
     run("book", _book)
 
     # Nested private keys are pandas objects — json blob cache would crash on
     # them, and the API strips them anyway. Top-level _all_ok/_computed_at stay.
-    for key in ("ml", "tidetables", "stacker", "swell", "bathymetry", "gyre", "microseism", "seastate"):
+    for key in (
+        "ml",
+        "tidetables",
+        "stacker",
+        "swell",
+        "bathymetry",
+        "gyre",
+        "microseism",
+        "seastate",
+    ):
         blk = out.get(key)
         if isinstance(blk, dict):
             for k in [k for k in blk if str(k).startswith("_")]:
@@ -1528,6 +2002,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
 # Headline, calendar, provenance
 # ---------------------------------------------------------------------------
 
+
 def _headline(src: dict, drv: dict) -> dict:
     fred_s = src.get("fred", {})
 
@@ -1536,7 +2011,10 @@ def _headline(src: dict, drv: dict) -> dict:
         if s is None or s.points.dropna().empty:
             return None
         p = s.points.dropna()
-        return {"value": round(float(p.iloc[-1]) * scale, digits), "asof": p.index[-1].date().isoformat()}
+        return {
+            "value": round(float(p.iloc[-1]) * scale, digits),
+            "asof": p.index[-1].date().isoformat(),
+        }
 
     tga = drv["tga"]
     srf = drv["srf_daily"]
@@ -1547,9 +2025,24 @@ def _headline(src: dict, drv: dict) -> dict:
         "iorb_pct": last("IORB"),
         "reserves_b": last("WRESBAL", 1e-3),
         "rrp_b": last("RRPONTSYD"),
-        "tga_b": {"value": round(float(tga.iloc[-1]), 1), "asof": tga.index[-1].date().isoformat()} if not tga.empty else None,
-        "srf_accepted_b": {"value": round(float(srf["accepted"].iloc[-1]), 2), "asof": srf.index[-1].date().isoformat()} if not srf.empty else None,
-        "dw_b": {"value": round(float(dw.iloc[-1]), 1), "asof": dw.index[-1].date().isoformat()} if not dw.empty else None,
+        "tga_b": {
+            "value": round(float(tga.iloc[-1]), 1),
+            "asof": tga.index[-1].date().isoformat(),
+        }
+        if not tga.empty
+        else None,
+        "srf_accepted_b": {
+            "value": round(float(srf["accepted"].iloc[-1]), 2),
+            "asof": srf.index[-1].date().isoformat(),
+        }
+        if not srf.empty
+        else None,
+        "dw_b": {
+            "value": round(float(dw.iloc[-1]), 1),
+            "asof": dw.index[-1].date().isoformat(),
+        }
+        if not dw.empty
+        else None,
         "vix": last("VIX", 1.0, 2),
         "hy_oas_pct": last("HY_OAS", 1.0, 2),
     }
@@ -1587,7 +2080,14 @@ def _bill_desk(src: dict) -> list[dict]:
                 "next_auction": nxt.get(term),
             }
         )
-    order = {"4-Week": 0, "8-Week": 1, "13-Week": 2, "17-Week": 3, "26-Week": 4, "52-Week": 5}
+    order = {
+        "4-Week": 0,
+        "8-Week": 1,
+        "13-Week": 2,
+        "17-Week": 3,
+        "26-Week": 4,
+        "52-Week": 5,
+    }
     rows.sort(key=lambda r: order.get(r["tenor"], 99))
     return rows
 
@@ -1651,26 +2151,30 @@ def _provenance(src: dict) -> list[dict]:
             # health, not that every observation in the table is current.
             # Keep the fetch clock, but do not manufacture an observation-
             # freshness claim that the envelope cannot support.
-            prov.append({
-                "mnemonic": key,
-                "source": key.split("_")[0],
-                "label": label,
-                "asof": None,
-                "fetched_at": blk.get("fetched_at"),
-                "staleness": "unknown",
-                "age_days": None,
-                "freshness_grace_days": None,
-                "freshness_basis": (
-                    "fetch clock only; this table contains heterogeneous observation dates"
-                ),
-            })
+            prov.append(
+                {
+                    "mnemonic": key,
+                    "source": key.split("_")[0],
+                    "label": label,
+                    "asof": None,
+                    "fetched_at": blk.get("fetched_at"),
+                    "staleness": "unknown",
+                    "age_days": None,
+                    "freshness_grace_days": None,
+                    "freshness_basis": (
+                        "fetch clock only; this table contains heterogeneous observation dates"
+                    ),
+                }
+            )
     return prov
 
 
 def _strip_private(obj):
     """Remove '_'-prefixed keys (internal pandas objects) before serializing."""
     if isinstance(obj, dict):
-        return {k: _strip_private(v) for k, v in obj.items() if not str(k).startswith("_")}
+        return {
+            k: _strip_private(v) for k, v in obj.items() if not str(k).startswith("_")
+        }
     if isinstance(obj, list):
         return [_strip_private(v) for v in obj]
     return obj
@@ -1691,29 +2195,33 @@ def _record_pit(engines: dict, deep: dict, navigator: dict | None = None) -> Non
     if navigator and navigator.get("ok"):
         views["navigator"] = navigator.get("p_event_5bd")
     record = {
-            "date": day,
-            "value": comp.get("value"),
-            "regime": comp.get("regime"),
-            "coverage_pct": comp.get("coverage_pct"),
-            "subscores": comp.get("subscores"),
-            # the weight vector that produced this value — without it a future
-            # rebalance puts an undetectable structural break in the record
-            "weights": dict(COMPOSITE_WEIGHTS),
-            "tell": (deep or {}).get("tell", {}).get("tell"),
-            "forecasts": {
-                "p_ensemble": stk.get("p_now") if stk.get("ok") else None,
-                "dispersion": stk.get("dispersion_now") if stk.get("ok") else None,
-                "views": views,
-            } if views else None,
-            "book": {
-                "stance": book_today.get("stance"),
-                "p_ensemble": book_today.get("p_ensemble"),
-                "dispersion": book_today.get("dispersion"),
-                "positions": [
-                    [p.get("sleeve"), p.get("weight")]
-                    for p in book_today.get("positions", [])
-                ],
-            } if book_today else None,
+        "date": day,
+        "value": comp.get("value"),
+        "regime": comp.get("regime"),
+        "coverage_pct": comp.get("coverage_pct"),
+        "subscores": comp.get("subscores"),
+        # the weight vector that produced this value — without it a future
+        # rebalance puts an undetectable structural break in the record
+        "weights": dict(COMPOSITE_WEIGHTS),
+        "tell": (deep or {}).get("tell", {}).get("tell"),
+        "forecasts": {
+            "p_ensemble": stk.get("p_now") if stk.get("ok") else None,
+            "dispersion": stk.get("dispersion_now") if stk.get("ok") else None,
+            "views": views,
+        }
+        if views
+        else None,
+        "book": {
+            "stance": book_today.get("stance"),
+            "p_ensemble": book_today.get("p_ensemble"),
+            "dispersion": book_today.get("dispersion"),
+            "positions": [
+                [p.get("sleeve"), p.get("weight")]
+                for p in book_today.get("positions", [])
+            ],
+        }
+        if book_today
+        else None,
     }
     store.save_blob(f"pit:{day}", record)
     _notarize(day, record)
@@ -1726,10 +2234,12 @@ def _notarize(day: str, record: dict) -> None:
     from updating."""
     try:
         from seiche import notary
+
         notary.commit(day, record)
     except Exception as exc:  # pragma: no cover - defensive
         logging.getLogger("seiche.assemble").warning(
-            "notary commit failed for %s: %s", day, exc)
+            "notary commit failed for %s: %s", day, exc
+        )
 
 
 def _attest(day: str, record: dict) -> None:
@@ -1742,15 +2252,18 @@ def _attest(day: str, record: dict) -> None:
         return
     try:
         from seiche import attest
+
         attest.attest_stress_reading(day, record)
     except Exception as exc:  # pragma: no cover - defensive
         logging.getLogger("seiche.assemble").warning(
-            "attest failed for %s: %s", day, exc)
+            "attest failed for %s: %s", day, exc
+        )
 
 
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
+
 
 def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     """Detect raw or derived CFETS values in a completed board payload.
@@ -1794,7 +2307,10 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         rows = harbors.get("harbors")
         if isinstance(rows, list):
             for row in rows:
-                if not isinstance(row, dict) or str(row.get("harbor", "")).upper() != "CHINA":
+                if (
+                    not isinstance(row, dict)
+                    or str(row.get("harbor", "")).upper() != "CHINA"
+                ):
                     continue
                 if row.get("rate") is not None or row.get("rate2") is not None:
                     return True
@@ -1878,8 +2394,7 @@ def _servable_snapshot(payload: object) -> bool:
         )
         and mapping_or_none(stacker)
         and (
-            not isinstance(stacker, dict)
-            or mapping_or_none(stacker.get("members_now"))
+            not isinstance(stacker, dict) or mapping_or_none(stacker.get("members_now"))
         )
         and mapping_or_none(modelcourt)
         and (
@@ -1895,9 +2410,7 @@ def _servable_snapshot(payload: object) -> bool:
                     backtest.get("episodes") is None
                     or (
                         isinstance(backtest.get("episodes"), list)
-                        and all(
-                            isinstance(row, dict) for row in backtest["episodes"]
-                        )
+                        and all(isinstance(row, dict) for row in backtest["episodes"])
                     )
                 )
             )
@@ -2163,7 +2676,9 @@ def _persist_pending_snapshot(payload: dict, release_receipt: dict) -> str | Non
         envelope = _build_handoff(payload, release_receipt, producer_sha)
         handoff_id = envelope["handoff_id"]
         repository.stage_release_handoff(handoff_id, producer_sha, envelope)
-        if _accepted_release(repository, producer_sha) and not activate_pending_snapshot(
+        if _accepted_release(
+            repository, producer_sha
+        ) and not activate_pending_snapshot(
             producer_sha, handoff_id, repository=repository
         ):
             raise RuntimeError("accepted release could not advance active handoff")
@@ -2365,8 +2880,11 @@ async def snapshot(force: bool = False) -> dict:
             asyncio.get_running_loop().create_task(_refresh_stale())
         return cached
     async with _lock:
-        if not force and _cache["payload"] is not None \
-                and time.time() - _cache["at"] < CACHE_MIN * 60:
+        if (
+            not force
+            and _cache["payload"] is not None
+            and time.time() - _cache["at"] < CACHE_MIN * 60
+        ):
             return _cache["payload"]
         return await _build_snapshot()
 
@@ -2378,7 +2896,9 @@ async def _refresh_stale() -> None:
             if time.time() - _cache["at"] >= CACHE_MIN * 60:
                 await _build_snapshot()
     except Exception:  # noqa: BLE001 — a failed refresh keeps serving stale
-        logging.getLogger("seiche.assemble").exception("background snapshot refresh failed")
+        logging.getLogger("seiche.assemble").exception(
+            "background snapshot refresh failed"
+        )
     finally:
         _refreshing = False
 
@@ -2444,6 +2964,7 @@ async def _build_snapshot() -> dict:
     if not drv["spread_bp"].empty:
         try:
             from seiche import ai as _ai
+
             nav = await eng_navigator.commit(
                 _ai.context_pack(payload),
                 drv["spread_bp"].index[-1].date().isoformat(),
@@ -2451,8 +2972,12 @@ async def _build_snapshot() -> dict:
         except Exception as e:  # noqa: BLE001 — fail loud, never block the board
             nav = safe_failure_envelope(e)
         if nav.get("ok"):
-            nav = {**nav, "record": eng_navigator.score_record(
-                store.load_pit_records(), drv["spread_bp"])}
+            nav = {
+                **nav,
+                "record": eng_navigator.score_record(
+                    store.load_pit_records(), drv["spread_bp"]
+                ),
+            }
     payload["navigator"] = nav
     _record_pit(engines, deep, nav)
     # v2 never collects at request time. The existing US cycle is the first
@@ -2496,8 +3021,13 @@ async def snapshot_asof(date: str) -> dict:
         src, faults = await _gather_sources()
     tsrc = _truncate_sources(src, asof)
     drv = _derived(tsrc)
-    if drv["spread_bp"].empty or drv["spread_bp"].index[-1] < asof - pd.Timedelta(days=30):
-        return {"ok": False, "reason": f"no data near {date} (coverage starts ~2018-06)"}
+    if drv["spread_bp"].empty or drv["spread_bp"].index[-1] < asof - pd.Timedelta(
+        days=30
+    ):
+        return {
+            "ok": False,
+            "reason": f"no data near {date} (coverage starts ~2018-06)",
+        }
     # off the event loop: a cold wrecks rebuild chains many replays and the
     # engine stage would otherwise starve every HTTP request (same class as
     # the keep-warm fit incident)
