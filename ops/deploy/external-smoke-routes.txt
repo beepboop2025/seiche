@@ -21,6 +21,8 @@ GET|/api/v2/money-markets|200|application/json|"expansion_markets":52
 GET|/api/v2/money-markets|200|application/json|"global_discovery_universe":63
 GET|/api/v2/money-markets|200|application/json|"expansion_ledger":[
 GET|/api/v2/money-markets|200|application/json|"read_faults":[]
+GET|/api/v2/world-markets|200|application/json|"schema":"seiche.world-markets.v1"
+GET|/api/v2/world-markets|200|application/json|"coverage_claim":"curated_partial_non_exhaustive"
 GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"
 GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"
 GET|/api/subscribe|200|application/json|"gates_nothing":true

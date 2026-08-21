@@ -187,12 +187,13 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
-    assert payload["mcp"]["authentication"] == "none for the ten public tools"
+    assert payload["mcp"]["authentication"] == "none for the eleven public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
     assert payload["rest"]["usd_money_markets"] == "/api/money-markets"
     assert payload["rest"]["global_money_markets_v2"] == "/api/v2/money-markets"
+    assert payload["rest"]["world_markets_v2"] == "/api/v2/world-markets"
     assert payload["rest"]["oil_funding"] == "/api/oil-funding"
     assert payload["rest"]["fx_materials"] == "/api/estuary"
     assert payload["rest"]["openapi"] == "/api/openapi.json"
@@ -211,6 +212,7 @@ def test_public_openapi_is_curated_and_importable(client):
     assert "/api/public" in spec["paths"]
     assert "/api/money-markets" in spec["paths"]
     assert "/api/v2/money-markets" in spec["paths"]
+    assert "/api/v2/world-markets" in spec["paths"]
     assert "/api/oil-funding" in spec["paths"]
     assert "/api/estuary" in spec["paths"]
     oil_schema = spec["paths"]["/api/oil-funding"]["get"]["responses"]["200"]
@@ -383,6 +385,7 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
         "oil_funding_context",
         "fx_materials_passage",
         "money_market_context",
+        "world_markets_context",
         "latest_article",
     )
 
@@ -472,6 +475,7 @@ def test_anonymous_sees_only_public_tools(client):
         "oil_funding_context",
         "fx_materials_passage",
         "money_market_context",
+        "world_markets_context",
     }
     # the Time Machine, forward forecast, brief, book, assistant stay paid
     for paid in (
@@ -482,6 +486,40 @@ def test_anonymous_sees_only_public_tools(client):
         "ask_desk",
     ):
         assert paid not in names
+
+
+def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
+    response = client.post("/mcp", json=_rpc("tools/list"))
+    tools = response.json()["result"]["tools"]
+
+    assert response.status_code == 200
+    assert len(tools) == 11
+    for tool in tools:
+        assert tool["outputSchema"]["type"] == "object"
+        assert tool["annotations"] == {
+            "title": tool["title"],
+            "readOnlyHint": True,
+            "idempotentHint": True,
+            "destructiveHint": False,
+            "openWorldHint": False,
+        }
+
+    world = next(tool for tool in tools if tool["name"] == "world_markets_context")
+    world_schema = world["outputSchema"]
+    success_required = set(world_schema["anyOf"][0]["required"])
+    assert {
+        "schema",
+        "clocks",
+        "citation",
+        "scope",
+        "coverage",
+        "status_definitions",
+        "disclaimer",
+    } <= success_required
+    assert world_schema["anyOf"][0]["properties"]["schema"]["const"] == (
+        mcp_server.WORLD_MARKETS_SCHEMA
+    )
+    assert world_schema["anyOf"][-1]["properties"]["status"]["const"] == "FAILED"
 
 
 def test_anonymous_money_market_tool_is_bounded_granular_and_chartless(

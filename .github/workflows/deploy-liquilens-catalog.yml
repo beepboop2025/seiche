@@ -1,0 +1,56 @@
+name: Deploy LiquiLens AI catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_sha:
+        description: Exact reviewed liquilens-site main commit to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate the immutable site revision
+        env:
+          SITE_SHA: ${{ inputs.site_sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${SITE_SHA}" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::site_sha must be a full lowercase commit SHA"
+            exit 1
+          fi
+
+      - name: Check out the canonical public-site source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: beepboop2025/liquilens-site
+          ref: ${{ inputs.site_sha }}
+          path: liquilens-site
+          persist-credentials: false
+
+      - name: Verify checkout identity
+        working-directory: liquilens-site
+        env:
+          SITE_SHA: ${{ inputs.site_sha }}
+        run: test "$(git rev-parse HEAD)" = "${SITE_SHA}"
+
+      - name: Verify the catalog worker contract
+        working-directory: liquilens-site
+        run: node --test tests/test_catalog_worker.mjs
+
+      - name: Deploy the one-route catalog worker
+        working-directory: liquilens-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          npx --yes wrangler@3.90.0 deploy --config wrangler.catalog.jsonc

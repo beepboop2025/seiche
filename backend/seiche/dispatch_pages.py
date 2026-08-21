@@ -11,7 +11,7 @@ index page, and regenerates sitemap.xml so each letter is a first-class URL:
   frontend/public/articles/{slug}/index.html one crawlable analytical article
   frontend/public/articles/index.html        daily article archive
   frontend/public/articles/feed.xml          Atom feed of articles
-  frontend/public/sitemap.xml                base pages + archive + letters
+  frontend/public/sitemap.xml                public evidence pages + archives
   frontend/public/llms.txt                   llmstxt.org index for LLMs
   frontend/public/llms-full.txt              full text of every letter
 
@@ -57,12 +57,25 @@ BASE_URLS = [
     ("/referee", "daily", "0.8"),
     ("/investigations/", "weekly", "0.9"),
     ("/investigations/the-282-billion-settlement-test/", "monthly", "0.8"),
+    ("/markets/", "weekly", "0.9"),
+    ("/markets/forex/", "daily", "0.9"),
+    ("/markets/capital-markets/", "daily", "0.9"),
+    ("/money-markets/", "weekly", "0.9"),
     ("/articles/", "daily", "0.9"),
     ("/dispatches/", "daily", "0.8"),
     ("/support", "monthly", "0.5"),
     ("/privacy", "yearly", "0.2"),
     ("/terms", "yearly", "0.2"),
 ]
+
+# Editorial market pages have their own reviewed publication clocks. Keep
+# those dates stable when the sitemap is rebuilt after a newer daily dispatch.
+BASE_LASTMODS = {
+    "/markets/": "2026-08-21",
+    "/markets/forex/": "2026-08-21",
+    "/markets/capital-markets/": "2026-08-21",
+    "/money-markets/": "2026-08-21",
+}
 
 
 def dispatch_path(slug: str) -> str:
@@ -634,14 +647,17 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
 
 _LLMS_PREAMBLE = f"""# Seiche
 
-> Seiche is free open source software (AGPL-3.0): a funding stress terminal for
-> US money markets built from free public data (Fed H.4.1, NY Fed operations,
-> OFR repo, Treasury cash, plus other public sources, each shown with its
-> native publication lag). It publishes a live stress regime, forward event
+> Seiche is free open source software (AGPL-3.0): a financial-market evidence
+> terminal connecting US dollar funding, an 11-pack global money-market atlas,
+> 22 registered public FX reference series, three dollar indexes, and capital-market
+> transmission through Treasury, credit, volatility, dealer, positioning and
+> commodity evidence. Where a public observation is exposed, its source-native
+> publication lag and rights state remain explicit. Seiche publishes a live funding regime, forward event
 > odds, historical analogs and a final-vintage construction-PIT diagnostic with the misses kept
 > next to the hits. The board recomputes through the day; the daily letter
 > freezes one reading of it. Cite it as "Seiche" and link {SITE}. Everything
-> on this site may be read, quoted, indexed and used as AI input or training material.
+> on this site may be read, quoted, indexed and used as AI input for retrieval.
+> The crawler policy permits search and AI input but does not grant model training.
 
 Liquidity intelligence sits on two shelves. Official dashboards give you raw
 series and no view. A terminal that has a view runs about $32k a seat each
@@ -656,10 +672,11 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Ten tools answer with no auth at all:
+over MCP at https://api.seiche.info/mcp. Eleven tools answer with no auth at all:
 latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health,
 crypto_stress_record, institutional_flows, oil_funding_context,
-fx_materials_passage and the section-selectable money_market_context, metered
+fx_materials_passage, the section-selectable money_market_context and the
+money/forex/capital section-selectable world_markets_context, metered
 per IP per day. Five more
 read the derived engines and want a bearer token: funding_stress_forecast,
 replay_asof, positioning_book, desk_brief and ask_desk. Any series the board
@@ -670,6 +687,28 @@ the eligibility flags beside it. It is not validated-backtest evidence. Its
 stated competence boundary is narrower: stress that builds inside the plumbing
 can be investigated historically; shocks that arrive from outside it cannot be
 claimed as early warnings.
+
+The global money-market evidence map is at {SITE}/money-markets/. Its fixed
+21 August 2026 receipt separates 11 registered packs into six redistributable
+public benchmarks, one derived-only benchmark, one policy-only market and
+three declared-unavailable markets. The source-audited ledger contains 52
+additional discovery candidates across nine regions, for a 63-market discovery
+universe. Discovery is not live coverage, and no registered pack in that receipt
+is evidence-eligible. Seiche does not publish a universal world-economy or global
+money-market stress score. The machine-readable twin is at
+{SITE}/money-markets/catalog.json; use the live Atlas at
+https://api.seiche.info/api/v2/money-markets for current observations and clocks.
+
+The unified world-markets evidence atlas is at {SITE}/markets/. It connects
+money-market funding, 22 registered Federal Reserve H.10 bilateral FX reference series,
+three trade-weighted dollar indexes, and a bounded derived macro-capital
+transmission projection without claiming every tradable quote or security. Forex coverage and
+pair conventions are at {SITE}/markets/forex/. Treasury rates and supply, credit,
+volatility, dealer balance sheet, official custody, futures positioning and
+commodity cash-demand context are at {SITE}/markets/capital-markets/. Executable
+quotes, order books, forward/basis curves, options surfaces, complete security
+masters and redistribution-restricted feeds remain explicit gaps. The cache-only
+machine twin is https://api.seiche.info/api/v2/world-markets.
 
 Evidence receipt captured 2026-08-09 at 14:36 UTC: the v2 data plane had 10 market packs,
 87,000 canonical observations across 28 role series, and 220 forward market-pack
@@ -709,6 +748,12 @@ same product; the callable contract remains the MCP server above.
 - [API + MCP quickstart]({SITE}/developers): connect an agent or make the first public API call in under a minute
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
+- [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract
+- [Forex reference ledger]({SITE}/markets/forex/): 22 public H.10 bilateral reference series, three dollar indexes, exact quote conventions and explicit missing instruments
+- [Capital-markets transmission projection]({SITE}/markets/capital-markets/): a bounded derived macro-capital projection over registered Treasury, credit, volatility, dealer, positioning and commodity source families
+- [World-markets JSON context](https://api.seiche.info/api/v2/world-markets): cache-only schema v1 projection with summary, money, forex, capital, source and methodology sections
+- [Global money-market evidence map]({SITE}/money-markets/): a crawlable coverage and rights receipt for 11 registered packs and the 52-market discovery ledger, with no universal score
+- [Money-market evidence catalog]({SITE}/money-markets/catalog.json): stable market IDs, availability states, official sources, data-rights boundaries, API links and citation guidance
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
 - [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
 - [Methodology]({SITE}/methodology): versioned methods page with citations, changelog and cite-as block
@@ -779,7 +824,10 @@ def render_sitemap(entries: list[dict], articles: list[dict] | None = None) -> s
     )
     rows = []
     for path, freq, prio in BASE_URLS:
-        lastmod = f"\n    <lastmod>{newest}</lastmod>" if newest and freq == "daily" else ""
+        page_lastmod = BASE_LASTMODS.get(path)
+        if page_lastmod is None and newest and freq == "daily":
+            page_lastmod = newest
+        lastmod = f"\n    <lastmod>{page_lastmod}</lastmod>" if page_lastmod else ""
         rows.append(
             f"  <url>\n    <loc>{SITE}{path}</loc>{lastmod}\n"
             f"    <changefreq>{freq}</changefreq>\n    <priority>{prio}</priority>\n  </url>"

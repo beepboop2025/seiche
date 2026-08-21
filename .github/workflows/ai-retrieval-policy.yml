@@ -1,0 +1,101 @@
+name: AI retrieval policy
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: Zone whose composed robots and AI-bot policy should be audited
+        required: true
+        type: choice
+        options:
+          - seiche.info
+          - liquilens.in
+      action:
+        description: Audit only, or make the origin robots policy authoritative
+        required: true
+        default: audit
+        type: choice
+        options:
+          - audit
+          - use-origin-robots
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DOMAIN: ${{ inputs.domain }}
+      ACTION: ${{ inputs.action }}
+    steps:
+      - name: Audit or apply the bounded retrieval policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not configured"
+            exit 1
+          fi
+
+          auth_header="Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+          zones="$(curl --fail-with-body --silent --show-error --get "https://api.cloudflare.com/client/v4/zones" --header "${auth_header}" --data-urlencode "name=${DOMAIN}" --data-urlencode "status=active")"
+          if [ "$(jq -r '.success' <<<"${zones}")" != "true" ] || [ "$(jq '.result | length' <<<"${zones}")" -ne 1 ]; then
+            echo "::error::Expected exactly one active Cloudflare zone for ${DOMAIN}"
+            exit 1
+          fi
+          zone_id="$(jq -r '.result[0].id' <<<"${zones}")"
+          if ! [[ "${zone_id}" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::Cloudflare returned an invalid zone identifier"
+            exit 1
+          fi
+
+          endpoint="https://api.cloudflare.com/client/v4/zones/${zone_id}/bot_management"
+          before="$(curl --fail-with-body --silent --show-error "${endpoint}" --header "${auth_header}")"
+          if [ "$(jq -r '.success' <<<"${before}")" != "true" ]; then
+            echo "::error::Could not read Cloudflare bot-management policy"
+            exit 1
+          fi
+          echo "Current non-secret policy for ${DOMAIN}:"
+          jq -c '.result | {
+            ai_bots_protection,
+            content_bots_protection,
+            crawler_protection,
+            is_robots_txt_managed,
+            cf_robots_variant
+          }' <<<"${before}"
+
+          if [ "${ACTION}" = "use-origin-robots" ]; then
+            after="$(curl --fail-with-body --silent --show-error --request PUT "${endpoint}" --header "${auth_header}" --header "Content-Type: application/json" --data '{"is_robots_txt_managed":false,"ai_bots_protection":"disabled"}')"
+            if [ "$(jq -r '.success' <<<"${after}")" != "true" ] || [ "$(jq -r '.result.is_robots_txt_managed' <<<"${after}")" != "false" ] || [ "$(jq -r '.result.ai_bots_protection' <<<"${after}")" != "disabled" ]; then
+              echo "::error::Cloudflare did not apply the requested retrieval policy"
+              jq -c '{errors, messages}' <<<"${after}"
+              exit 1
+            fi
+            echo "Applied: origin robots authoritative; edge AI-bot blocking disabled."
+          fi
+
+          policy_visible=false
+          for attempt in 1 2 3 4 5 6; do
+            robots="$(curl --fail-with-body --silent --show-error "https://${DOMAIN}/robots.txt")"
+            if grep -Eiq 'Content-Signal:[[:space:]]*search=yes,[[:space:]]*ai-input=yes,[[:space:]]*ai-train=no' <<<"${robots}"; then
+              policy_visible=true
+              break
+            fi
+            if [ "${ACTION}" = "use-origin-robots" ] && [ "${attempt}" -lt 6 ]; then
+              sleep 5
+            else
+              break
+            fi
+          done
+
+          if [ "${policy_visible}" = "true" ]; then
+            echo "Live robots exposes search=yes, ai-input=yes, ai-train=no."
+          elif [ "${ACTION}" = "use-origin-robots" ]; then
+            echo "::error::Applied policy is not visible after bounded retries"
+            exit 1
+          else
+            echo "::warning::The live composed robots response does not expose the target content signal"
+          fi

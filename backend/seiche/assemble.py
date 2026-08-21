@@ -883,6 +883,46 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
                 "label": "South African rand", "bucket": "EM", "series": _pts(fred_s, "ZAR"),
                 "quote": "local_per_usd", "source_id": "DEXSFUS",
             },
+            "NZD": {
+                "label": "New Zealand dollar", "bucket": "AFE", "series": _pts(fred_s, "NZD"),
+                "quote": "usd_per_local", "source_id": "DEXUSNZ",
+            },
+            "DKK": {
+                "label": "Danish krone", "bucket": "AFE", "series": _pts(fred_s, "DKK"),
+                "quote": "local_per_usd", "source_id": "DEXDNUS",
+            },
+            "HKD": {
+                "label": "Hong Kong dollar", "bucket": "AFE", "series": _pts(fred_s, "HKD"),
+                "quote": "local_per_usd", "source_id": "DEXHKUS",
+            },
+            "MYR": {
+                "label": "Malaysian ringgit", "bucket": "EM", "series": _pts(fred_s, "MYR"),
+                "quote": "local_per_usd", "source_id": "DEXMAUS",
+            },
+            "NOK": {
+                "label": "Norwegian krone", "bucket": "AFE", "series": _pts(fred_s, "NOK"),
+                "quote": "local_per_usd", "source_id": "DEXNOUS",
+            },
+            "SEK": {
+                "label": "Swedish krona", "bucket": "AFE", "series": _pts(fred_s, "SEK"),
+                "quote": "local_per_usd", "source_id": "DEXSDUS",
+            },
+            "SGD": {
+                "label": "Singapore dollar", "bucket": "AFE", "series": _pts(fred_s, "SGD"),
+                "quote": "local_per_usd", "source_id": "DEXSIUS",
+            },
+            "TWD": {
+                "label": "New Taiwan dollar", "bucket": "EM", "series": _pts(fred_s, "TWD"),
+                "quote": "local_per_usd", "source_id": "DEXTAUS",
+            },
+            "THB": {
+                "label": "Thai baht", "bucket": "EM", "series": _pts(fred_s, "THB"),
+                "quote": "local_per_usd", "source_id": "DEXTHUS",
+            },
+            "LKR": {
+                "label": "Sri Lankan rupee", "bucket": "EM", "series": _pts(fred_s, "LKR"),
+                "quote": "local_per_usd", "source_id": "DEXSLUS",
+            },
         },
         broad_dollar=_pts(fred_s, "DXY_BROAD"),
         afe_dollar=_pts(fred_s, "DXY_AFE"),

@@ -1,0 +1,159 @@
+# Proposed schema for Data Commons review. The Data Commons reviewer may map
+# these observations to existing StatisticalVariables instead of accepting new
+# DCIDs. Descriptions are deliberately explicit because Data Commons uses them
+# in natural-language search embeddings.
+
+Node: dcid:seiche/g/OfrShortTermFunding
+typeOf: dcid:StatVarGroup
+name: "OFR short-term funding markets curated by Seiche"
+specializationOf: dcid:dc/g/Root
+
+Node: dcid:seiche/OfrPreliminaryRelease
+typeOf: dcid:MeasurementMethodEnum
+name: "OFR preliminary release"
+description: "A preliminary OFR Short-term Funding Monitor observation that may later be revised."
+
+Node: dcid:seiche/OfrMonthlyRevisedSeries
+typeOf: dcid:MeasurementMethodEnum
+name: "OFR monthly revisions complete series"
+description: "An OFR monthly series whose published history may be revised when the release is updated."
+
+# Custom qualifier enumeration members distinguish the underlying funding
+# market or investment bucket. Data Commons requires measurementQualifier to
+# reference an enumeration member; it cannot be a free-text label.
+
+Node: dcid:seiche/OfrDvpServiceTotalRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR DVP Service total repo"
+
+Node: dcid:seiche/OfrTriPartyTotalRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR tri-party total repo"
+
+Node: dcid:seiche/OfrDvpServiceOvernightOpenRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR DVP Service overnight and open repo"
+
+Node: dcid:seiche/OfrTriPartyOvernightOpenRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR tri-party overnight and open repo"
+
+Node: dcid:seiche/OfrGcfServiceOvernightOpenRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR GCF Repo Service overnight and open repo"
+
+Node: dcid:seiche/OfrMoneyMarketFundAllSecurities
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR U.S. money market mutual fund investments in all securities"
+
+Node: dcid:seiche/OfrMoneyMarketFundRepoClearedByFicc
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR U.S. money market mutual fund repo investments cleared by FICC"
+
+Node: dcid:seiche/OfrMoneyMarketFundRepoWithFederalReserve
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR U.S. money market mutual fund repo investments with the Federal Reserve"
+
+Node: dcid:seiche/OfrMoneyMarketFundAllRepo
+typeOf: dcid:MeasurementQualifierEnum
+name: "OFR U.S. money market mutual fund investments in all repurchase agreements"
+
+Node: dcid:seiche/OfrDvpRepoTotal_Sum_Amount_FinancialTransaction
+typeOf: dcid:StatisticalVariable
+name: "Total DVP Service repo transaction volume"
+description: "Seiche-curated direct import of the OFR preliminary daily sum of all repurchase agreements starting on a given day in FICC's DVP Service, measured in U.S. dollars. Missing values may reflect no trading or OFR disclosure edits."
+populationType: dcid:FinancialTransaction
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrDvpServiceTotalRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrTriPartyRepoTotal_Sum_Amount_FinancialTransaction
+typeOf: dcid:StatisticalVariable
+name: "Total tri-party repo transaction volume"
+description: "Seiche-curated direct import of the OFR preliminary daily sum of all repurchase agreements starting on a given day that were settled in tri-party repo, measured in U.S. dollars. Missing values may reflect no trading or OFR disclosure edits."
+populationType: dcid:FinancialTransaction
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrTriPartyTotalRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrDvpOvernightOpenRepo_Mean_InterestRate_FinancialInstrument
+typeOf: dcid:StatisticalVariable
+name: "Mean DVP Service overnight and open repo interest rate"
+description: "Seiche-curated direct import of the OFR preliminary volume-weighted mean interest rate for overnight and open repurchase agreements in FICC's DVP Service. The OFR says this informational rate is not administered to IOSCO standards and is not intended for use in contracts."
+populationType: dcid:FinancialInstrument
+measuredProperty: dcid:interestRate
+statType: dcid:meanValue
+measurementQualifier: dcid:seiche/OfrDvpServiceOvernightOpenRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrTriPartyOvernightOpenRepo_Mean_InterestRate_FinancialInstrument
+typeOf: dcid:StatisticalVariable
+name: "Mean tri-party overnight and open repo interest rate"
+description: "Seiche-curated direct import of the OFR preliminary volume-weighted mean interest rate for overnight and open repurchase agreements settled in tri-party repo. The OFR says this informational rate is not administered to IOSCO standards and is not intended for use in contracts."
+populationType: dcid:FinancialInstrument
+measuredProperty: dcid:interestRate
+statType: dcid:meanValue
+measurementQualifier: dcid:seiche/OfrTriPartyOvernightOpenRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrGcfOvernightOpenRepo_Mean_InterestRate_FinancialInstrument
+typeOf: dcid:StatisticalVariable
+name: "Mean GCF Repo Service overnight and open repo interest rate"
+description: "Seiche-curated direct import of the OFR preliminary volume-weighted mean interest rate for overnight and open repurchase agreements starting on a given day in FICC's GCF Repo Service. The OFR says this informational rate is not administered to IOSCO standards and is not intended for use in contracts."
+populationType: dcid:FinancialInstrument
+measuredProperty: dcid:interestRate
+statType: dcid:meanValue
+measurementQualifier: dcid:seiche/OfrGcfServiceOvernightOpenRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrGcfOvernightOpenRepo_Sum_Amount_FinancialTransaction
+typeOf: dcid:StatisticalVariable
+name: "GCF Repo Service overnight and open repo transaction volume"
+description: "Seiche-curated direct import of the OFR preliminary daily sum of overnight and open repurchase agreements starting on a given day in FICC's GCF Repo Service, measured in U.S. dollars. Missing values may reflect no trading or OFR disclosure edits."
+populationType: dcid:FinancialTransaction
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrGcfServiceOvernightOpenRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrMoneyMarketFundTotal_Sum_Amount_Investment
+typeOf: dcid:StatisticalVariable
+name: "Total U.S. money market mutual fund investments"
+description: "Seiche-curated direct import of the OFR month-end total value of U.S. money market mutual fund investments in all securities, derived by OFR from SEC Form N-MFP filings and measured in U.S. dollars. The complete published history may be revised with monthly releases."
+populationType: dcid:Investment
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrMoneyMarketFundAllSecurities
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrMoneyMarketFundRepoFicc_Sum_Amount_Investment
+typeOf: dcid:StatisticalVariable
+name: "U.S. money market mutual fund repo investments cleared by FICC"
+description: "Seiche-curated direct import of the OFR month-end value of U.S. money market mutual fund repurchase-agreement investments cleared by FICC, derived by OFR from SEC Form N-MFP filings and measured in U.S. dollars. The complete published history may be revised with monthly releases."
+populationType: dcid:Investment
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrMoneyMarketFundRepoClearedByFicc
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrMoneyMarketFundRepoFederalReserve_Sum_Amount_Investment
+typeOf: dcid:StatisticalVariable
+name: "U.S. money market mutual fund repo investments with the Federal Reserve"
+description: "Seiche-curated direct import of the OFR month-end value of U.S. money market mutual fund repurchase-agreement investments with the Federal Reserve, derived by OFR from SEC Form N-MFP filings and measured in U.S. dollars. The complete published history may be revised with monthly releases."
+populationType: dcid:Investment
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrMoneyMarketFundRepoWithFederalReserve
+memberOf: dcid:seiche/g/OfrShortTermFunding
+
+Node: dcid:seiche/OfrMoneyMarketFundRepoTotal_Sum_Amount_Investment
+typeOf: dcid:StatisticalVariable
+name: "Total U.S. money market mutual fund repo investments"
+description: "Seiche-curated direct import of the OFR month-end total value of U.S. money market mutual fund investments in all repurchase agreements, derived by OFR from SEC Form N-MFP filings and measured in U.S. dollars. The complete published history may be revised with monthly releases."
+populationType: dcid:Investment
+measuredProperty: dcid:amount
+statType: dcid:sumValue
+measurementQualifier: dcid:seiche/OfrMoneyMarketFundAllRepo
+memberOf: dcid:seiche/g/OfrShortTermFunding

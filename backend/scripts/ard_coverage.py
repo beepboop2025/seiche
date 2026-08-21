@@ -86,8 +86,8 @@ PRODUCTS = (
         openapi_identifier="urn:air:seiche.info:openapi:funding-stress",
         openapi_url="https://api.seiche.info/api/openapi.json",
         first_tool="latest_article",
-        public_tool_count=10,
-        intent_query="What is the current US dollar funding stress regime?",
+        public_tool_count=11,
+        intent_query="Give me sourced money, forex and capital-market context.",
     ),
     Product(
         slug="undertow",

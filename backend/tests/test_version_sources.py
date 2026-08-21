@@ -2,7 +2,7 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.10.0 estuary version and ten-tool public surface so a human release publishes
+0.10.0 world-markets version and eleven-tool public surface so a human release publishes
 the right artifact. PyPI itself still carries 0.9.1 until that release is cut.
 """
 
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the running 0.10.0 / ten-tool public surface."""
+    """The registry card pins the running 0.10.0 / eleven-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -52,9 +52,10 @@ def test_registry_stdio_package_matches_hosted_surface():
     assert package["identifier"] == "seiche"
     assert package["version"] == hosted == "0.10.0"
     assert package["transport"] == {"type": "stdio"}
-    assert "ten free public tools" in description
+    assert "eleven free public tools" in description
     assert "latest_article" in description
     assert "money_market_context" in description
+    assert "world_markets_context" in description
     assert "0.10.0" in description
 
 
@@ -82,7 +83,9 @@ def test_money_market_discovery_separates_catalog_from_dated_evidence():
     assert access["usd_money_markets"].endswith("/api/money-markets")
     assert access["global_money_markets"].endswith("/api/v2/money-markets")
     assert access["public_money_market_mcp_tool"] == "money_market_context"
-    assert "Ten public MCP tools" in access["authentication"]
+    assert "Eleven public MCP tools" in access["authentication"]
+    assert access["world_markets_api"].endswith("/api/v2/world-markets")
+    assert access["public_world_markets_mcp_tool"] == "world_markets_context"
 
 
 def test_version_is_bare_semver():

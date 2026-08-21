@@ -1,0 +1,25 @@
+{
+  "includeInputSubdirs": true,
+  "inputFiles": {
+    "observations/ofr_repo_markets.csv": {
+      "format": "variablePerRow",
+      "provenance": "SeicheOfrRepoMarkets",
+      "entityType": "Country"
+    },
+    "observations/ofr_money_market_funds.csv": {
+      "format": "variablePerRow",
+      "provenance": "SeicheOfrMoneyMarketFunds",
+      "entityType": "Country"
+    }
+  },
+  "groupStatVarsByProperty": false,
+  "sources": {
+    "Office of Financial Research": {
+      "url": "https://www.financialresearch.gov/short-term-funding-monitor/",
+      "provenances": {
+        "SeicheOfrRepoMarkets": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/",
+        "SeicheOfrMoneyMarketFunds": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/mmf/"
+      }
+    }
+  }
+}

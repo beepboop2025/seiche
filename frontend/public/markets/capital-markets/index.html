@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bounded capital-market transmission projection | Seiche</title>
+  <meta name="description" content="Seiche publishes a bounded derived macro-capital transmission projection connecting registered Treasury, credit, volatility, dealer, positioning and commodity evidence to funding liquidity.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/markets/capital-markets/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/world-markets" title="Seiche world-markets context API containing the capital-markets section">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/markets/capital-markets/">
+  <meta property="og:title" content="Bounded capital-market transmission projection | Seiche">
+  <meta property="og:description" content="A derived macro-capital transmission projection with exact raw-series routes, source clocks and explicit coverage limits.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Bounded capital-market transmission projection | Seiche">
+  <meta name="twitter:description" content="A derived macro-capital transmission projection with exact raw-series routes and explicit gaps.">
+  <meta name="twitter:image" content="https://seiche.info/og2.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {"@type": "ListItem", "position": 1, "name": "Seiche", "item": "https://seiche.info/"},
+          {"@type": "ListItem", "position": 2, "name": "World markets", "item": "https://seiche.info/markets/"},
+          {"@type": "ListItem", "position": 3, "name": "Capital markets", "item": "https://seiche.info/markets/capital-markets/"}
+        ]
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://seiche.info/markets/capital-markets/#dataset",
+        "identifier": "seiche.capital-markets-context.v1",
+        "name": "Seiche bounded capital-markets transmission projection",
+        "description": "A bounded derived macro-capital transmission projection spanning registered US Treasury, credit, volatility, dealer, official-custody, positioning and energy evidence. It is not a consolidated raw capital-market dataset; raw numerical claims must use an exact series or publisher URL.",
+        "url": "https://seiche.info/markets/capital-markets/",
+        "mainEntityOfPage": "https://seiche.info/markets/capital-markets/",
+        "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
+        "creator": {"@id": "https://seiche.info/#organization"},
+        "publisher": {"@type": "Organization", "name": "Seiche", "url": "https://seiche.info/"},
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "isAccessibleForFree": true,
+        "spatialCoverage": "Primarily United States, with bounded global transmission context",
+        "temporalCoverage": "Varies by series; daily, weekly, statement-week, monthly and event-driven observations remain at native cadence",
+        "keywords": ["capital markets", "Treasury yields", "yield curve", "credit spreads", "VIX", "dealer positioning", "Treasury auctions", "basis trade", "futures positioning", "funding liquidity"],
+        "variableMeasured": [
+          {"@type": "PropertyValue", "name": "Coverage domains", "value": 8},
+          {"@type": "PropertyValue", "name": "Primary live signal", "value": "US dollar funding transmission"},
+          {"@type": "PropertyValue", "name": "Security-master completeness", "value": 0}
+        ],
+        "measurementTechnique": "A bounded Seiche projection over registered public source families and eligible cache-backed observations. Raw observations remain at their native cadence and are joined to derived transforms only when source, unit, as-of time, freshness and redistribution state are known.",
+        "isBasedOn": [
+          "https://home.treasury.gov/treasury-daily-interest-rate-xml-feed",
+          "https://fiscaldata.treasury.gov/datasets/treasury-securities-auctions-data/treasury-securities-auctions-data",
+          "https://www.newyorkfed.org/markets/primarydealer_stats",
+          "https://www.federalreserve.gov/releases/h41/",
+          "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm",
+          "https://data.financialresearch.gov/"
+        ],
+        "conditionsOfAccess": "Seiche code is AGPL-3.0; upstream data retain their own terms. The public ledger excludes or bounds redistribution-restricted security-level, transaction-level and executable market data.",
+        "distribution": [
+          {
+            "@type": "DataDownload",
+            "name": "Unified capital-markets context",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/v2/world-markets"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Public series catalog",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/series/index.json"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Public API contract",
+            "encodingFormat": "application/vnd.oai.openapi+json",
+            "contentUrl": "https://api.seiche.info/api/openapi.json"
+          }
+        ],
+        "citation": "Seiche. Bounded capital-markets transmission projection, schema seiche.capital-markets-context.v1. https://seiche.info/markets/capital-markets/ (cite the exact series or publisher URL for a raw claim; include API generated_at, observation as-of clock and evidence status for a derived projection claim)."
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://seiche.info/markets/capital-markets/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What capital-market data does Seiche cover?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Seiche publishes a bounded derived macro-capital transmission projection across registered US Treasury, credit, volatility, primary-dealer, official-custody, positioning and energy source families. It is not a complete raw capital-market dataset. The current projection is returned by the world-markets API; raw numerical claims should use the exact series URL exposed by the series catalog or the linked original publisher."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Seiche contain every stock and bond?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. It is a macro capital-market transmission layer, not a complete global security master, exchange feed, issuer-fundamentals database or portfolio system."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How does Seiche connect capital markets to money markets?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Seiche tests whether Treasury supply and settlement, dealer inventory, leveraged positioning, risk premia and commodity cash demands coincide with changes in reserves, repo, facilities and other funding evidence. Co-movement is labeled context or a derived signal, not automatically treated as causal proof."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to capital-market evidence</a>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary">
+      <a href="/markets/">World markets</a>
+      <a href="/markets/forex/">Forex</a>
+      <a href="/markets/capital-markets/" aria-current="page">Capital</a>
+      <a href="/money-markets/">Money</a>
+      <a href="/developers">API + MCP</a>
+      <a href="/methodology">Methods</a>
+    </nav>
+  </header>
+
+  <main id="main" class="shell">
+    <div class="breadcrumbs"><a href="/">Seiche</a> / <a href="/markets/">world markets</a> / capital markets</div>
+    <article>
+      <header class="hero">
+        <div>
+          <p class="kicker">Capital markets / transmission ledger</p>
+          <h1>Duration has to be financed somewhere.</h1>
+          <p class="lede">Seiche reads capital markets as claims on balance-sheet capacity. Treasury supply consumes settlement cash; dealer inventory uses financing; leverage can crowd exits; credit and volatility reprice collateral. The ledger shows the links without pretending that co-movement proves causality.</p>
+        </div>
+        <aside class="receipt" aria-label="Capital-market scope receipt">
+          <span class="label">Primary competence</span>
+          <strong>USD</strong>
+          <p>The public world-markets response is a bounded derived projection, with deepest live competence in US dollar funding. A registered source family is not a claim that its latest raw observation is present.</p>
+        </aside>
+      </header>
+
+      <dl class="pulse" aria-label="Capital-market coverage summary">
+        <div><dt>Coverage domains</dt><dd>8</dd><small>macro transmission families</small></div>
+        <div><dt>Source cadences</dt><dd>5+</dd><small>daily through event-driven</small></div>
+        <div><dt>Security master</dt><dd>0</dd><small>not claimed</small></div>
+        <div><dt>Execution data</dt><dd>0</dd><small>not a trading venue</small></div>
+        <div><dt>Primary lens</dt><dd>cash</dd><small>funding and balance sheet</small></div>
+      </dl>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head">
+          <div><span class="label">Direct answer</span><h2 id="answer-title">What the capital layer measures</h2></div>
+          <p>The current public layer answers a specific macro question: where could capital-market positions create, absorb or transmit demand for cash and dealer balance sheet?</p>
+        </div>
+        <div class="answer-block">
+          <p><strong>What the integrated endpoint is:</strong> a bounded derived macro-capital transmission projection over registered Treasury, credit, volatility, dealer, official-custody, positioning and energy source families. It is not a consolidated tape, security master or promise that every registered input has a current observation.</p>
+          <p><strong>How to support a numerical claim:</strong> use the projection for Seiche's relative-value, auction-pressure, warehouse, crowding or cash-displacement interpretation; use an exact <code>/api/series/&lt;MNEMONIC&gt;</code> or original-publisher URL for the underlying raw value, unit and as-of date.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="coverage-title">
+        <div class="section-head">
+          <div><span class="label">Coverage matrix</span><h2 id="coverage-title">Eight capital-market domains</h2></div>
+          <p>The static matrix is a registered source map, not a live-observation receipt. Only the API can mark a current value observed after returning its value, unit, source ID and as-of date.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Domain</th><th>Public evidence in Seiche</th><th>Funding question</th><th>Native clock</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Sovereign rates</strong>US Treasury curve</td><td>4-week and 3-month bills; selected 2-, 10- and 30-year yields; curve changes and volatility context</td><td>How is duration and cash collateral repricing?</td><td>daily publication days</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Treasury supply</strong>auctions and settlement</td><td>auction sizes, issue/settlement calendar, maturity and cash-flow context</td><td>When does new supply remove cash or load dealer balance sheets?</td><td>event-driven</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Credit</strong>IG / HY / commercial paper</td><td>investment-grade and high-yield option-adjusted spreads; financial and nonfinancial CP; short-term risk-premium context</td><td>Is funding pressure migrating into private credit premia?</td><td>daily and weekly</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Equities and volatility</strong>S&amp;P 500 / VIX</td><td>broad equity level and implied-volatility context; not constituent or order-book coverage</td><td>Are risk assets forcing de-risking or collateral demand?</td><td>daily close/reference</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Dealer balance sheet</strong>financing and inventory</td><td>primary-dealer financing; Treasury positions by maturity bucket; GCF repo and warehouse transforms</td><td>How much intermediation capacity is carrying the position?</td><td>weekly / statement period</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Official cross-border holdings</strong>custody and FIMA</td><td>foreign official Treasury custody and FIMA-repo usage context</td><td>Are official dollar holders drawing on or supplying cash buffers?</td><td>weekly statement</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Futures positioning</strong>rates / equity / energy</td><td>CFTC positioning for Treasury futures, Fed funds, SOFR, E-mini S&amp;P, WTI and Henry Hub</td><td>Where might leverage and crowded exits amplify a cash shock?</td><td>weekly, publication lag</td><td><span class="status structural">registered</span></td></tr>
+              <tr><td><strong>Transmission analytics</strong>RV / crowding / oil</td><td>Seiche relative-value, auction-pressure, positioning-book, dealer-warehouse and commodity cash-displacement context</td><td>Which observed channels line up with funding strain?</td><td>depends on slowest input</td><td><span class="status derived">derived</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="chain-title">
+        <div class="section-head">
+          <div><span class="label">Transmission logic</span><h2 id="chain-title">From security price to cash demand</h2></div>
+          <p>The model does not equate a market move with a funding event. It looks for a sequence of eligible observations across price, position, intermediary and cash ledgers.</p>
+        </div>
+        <div class="ledger">
+          <article><span class="status structural">1 · source test</span><h3>Risk reprices</h3><p>An eligible yield, spread, volatility or commodity observation would establish the public market fact.</p><code>what changed?</code></article>
+          <article><span class="status structural">2 · source test</span><h3>Exposure is located</h3><p>Eligible dealer or CFTC reports may indicate where inventories and directional concentration sit.</p><code>who may carry it?</code></article>
+          <article><span class="status derived">3 · bridge</span><h3>Financing channel</h3><p>Repo, margin, settlement or collateral logic links the position to potential cash needs.</p><code>how could it transmit?</code></article>
+          <article><span class="status structural">4 · source test</span><h3>Funding confirms</h3><p>Eligible reserves, repo, facility, spread or volume observations must move before Seiche calls it a funding manifestation.</p><code>did plumbing respond?</code></article>
+          <article><span class="status unavailable">5 · countercase</span><h3>Or it did not</h3><p>If the funding evidence stays calm, the external move remains context rather than a confirmed cash shock.</p><code>misses stay visible</code></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="derived-title">
+        <div class="section-head">
+          <div><span class="label">Derived engines</span><h2 id="derived-title">Interpretation above the tape</h2></div>
+          <p>These Seiche modules are reproducible transforms over the observed layer. Their labels should accompany any citation so a reader does not mistake an engine result for an upstream publisher's statement.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><strong><span class="status derived">derived</span> Treasury relative value</strong><p>Compares eligible curve and financing evidence to identify unusual relative-value conditions without claiming an executable arbitrage.</p></article>
+          <article class="limit"><strong><span class="status derived">derived</span> Auction pressure</strong><p>Joins announced supply, settlement timing, Treasury cash and dealer context to frame upcoming funding tests.</p></article>
+          <article class="limit"><strong><span class="status derived">derived</span> Crowding and positioning book</strong><p>Uses public, lagged positioning reports as concentration context; it cannot identify every participant or current trade.</p></article>
+          <article class="limit"><strong><span class="status derived">derived</span> Oil × funding passage</strong><p>Tests inventory, benchmark and futures evidence for potential cash displacement while refusing to infer unobserved margin calls.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="clocks-title">
+        <div class="section-head">
+          <div><span class="label">Cadence discipline</span><h2 id="clocks-title">A weekly position is still weekly</h2></div>
+          <p>Capital-market sources arrive on incompatible calendars. Seiche keeps that incompatibility visible rather than manufacturing a smooth but false daily panel.</p>
+        </div>
+        <dl class="clock-list">
+          <div><dt>daily market reference</dt><dd>Yields, indexes and spreads usually publish on business days; their close/reference date remains attached.</dd></div>
+          <div><dt>weekly regulatory report</dt><dd>CFTC and dealer reports describe a reporting date and a later publication date. Both matter for point-in-time use.</dd></div>
+          <div><dt>statement-week stock</dt><dd>Federal Reserve balance-sheet and custody values are weekly stocks, not continuous flows.</dd></div>
+          <div><dt>event clock</dt><dd>Auctions, issuance, settlements and maturities occur on specific calendar events rather than a fixed statistical cadence.</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="frontier-title">
+        <div class="section-head">
+          <div><span class="label">Coverage frontier</span><h2 id="frontier-title">What a complete capital terminal would still need</h2></div>
+          <p>“Capital markets” spans millions of instruments. These gaps are deliberately published so the macro evidence layer is not misrepresented as universal security-level coverage.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Missing or bounded domain</th><th>What is not on the current public surface</th><th>Why it matters</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Global security master</strong></td><td>complete ticker/ISIN mapping, venues, currencies, corporate actions and instrument lifecycle</td><td>required for reliable asset-level joins</td><td><span class="status unavailable">unavailable</span></td></tr>
+              <tr><td><strong>Global equities</strong></td><td>constituents, sector breadth, volume, intraday prices and complete international coverage</td><td>macro index context is not the whole equity market</td><td><span class="status unavailable">unavailable</span></td></tr>
+              <tr><td><strong>Global fixed income</strong></td><td>complete sovereign and corporate curves, bond-level prices, evaluated marks and primary issuance</td><td>selected US public curves cannot represent all duration and credit</td><td><span class="status restricted">restricted</span></td></tr>
+              <tr><td><strong>Rates and credit derivatives</strong></td><td>swap curves, CDS curves, swap spreads, futures curves and transaction-level data</td><td>core hedging and basis channels need eligible term structures</td><td><span class="status restricted">restricted</span></td></tr>
+              <tr><td><strong>Options</strong></td><td>chains, implied-volatility surfaces, skew, open interest and Greeks across assets</td><td>VIX alone is not a universal volatility surface</td><td><span class="status restricted">restricted</span></td></tr>
+              <tr><td><strong>Funds and structured credit</strong></td><td>ETF/mutual-fund flows, holdings, MBS, ABS, municipal and private-market detail</td><td>important ownership and liquidity channels remain outside current scope</td><td><span class="status unavailable">unavailable</span></td></tr>
+              <tr><td><strong>Issuer fundamentals</strong></td><td>normalized filings, earnings, estimates, ownership and entity-resolution layer</td><td>needed to connect macro funding to issuer-level credit and equity</td><td><span class="status structural">expansion</span></td></tr>
+              <tr><td><strong>Order books and execution</strong></td><td>current bid/ask, depth, trade prints, venue fragmentation and estimated market impact</td><td>public macro observations cannot answer an execution question</td><td><span class="status restricted">restricted</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="sources-title">
+        <div class="section-head">
+          <div><span class="label">Primary source ledger</span><h2 id="sources-title">Observed facts begin upstream</h2></div>
+          <p>Each publisher controls a different slice and calendar. For a raw numerical claim, cite an exact series route below and the original publisher linked in that series record—not the derived world-markets projection alone.</p>
+        </div>
+        <div class="source-grid" aria-label="Exact machine-readable series routes">
+          <a class="source" href="https://api.seiche.info/api/series/DGS10"><strong>10-year Treasury yield</strong><code>GET /api/series/DGS10</code><span>Exact JSON observation, unit, as-of clock and FRED source identity.</span></a>
+          <a class="source" href="https://api.seiche.info/api/series/HY_OAS"><strong>US high-yield OAS</strong><code>GET /api/series/HY_OAS</code><span>Exact JSON route for the registered ICE BofA high-yield spread series.</span></a>
+          <a class="source" href="https://api.seiche.info/api/series/VIX"><strong>Cboe VIX index</strong><code>GET /api/series/VIX</code><span>Exact JSON route for the registered volatility observation and its source clock.</span></a>
+          <a class="source" href="https://api.seiche.info/api/series/PD_FIN_TOT"><strong>Primary-dealer financing</strong><code>GET /api/series/PD_FIN_TOT</code><span>Exact JSON route for the registered weekly OFR financing series.</span></a>
+        </div>
+        <div class="source-grid">
+          <a class="source" href="https://home.treasury.gov/treasury-daily-interest-rate-xml-feed"><strong>US Treasury daily interest-rate feed</strong><code>sovereign curve</code><span>Official daily par-yield and related curve distributions.</span></a>
+          <a class="source" href="https://fiscaldata.treasury.gov/datasets/treasury-securities-auctions-data/treasury-securities-auctions-data"><strong>Treasury Fiscal Data auctions</strong><code>supply / event clock</code><span>Auction announcements, results and security-level issuance fields.</span></a>
+          <a class="source" href="https://www.newyorkfed.org/markets/primarydealer_stats"><strong>New York Fed primary-dealer statistics</strong><code>inventory / financing</code><span>Weekly positions, transactions and financing activity by reported category.</span></a>
+          <a class="source" href="https://www.federalreserve.gov/releases/h41/"><strong>Federal Reserve H.4.1</strong><code>balance sheet / custody</code><span>Statement-week Federal Reserve accounts and selected foreign-official context.</span></a>
+          <a class="source" href="https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"><strong>CFTC Commitments of Traders</strong><code>weekly positioning</code><span>Regulatory futures and options positioning with reporting and publication lags.</span></a>
+          <a class="source" href="https://data.financialresearch.gov/"><strong>Office of Financial Research data</strong><code>repo / short-term funding</code><span>Public financial-research datasets used for repo and market-plumbing context.</span></a>
+          <a class="source" href="https://www.cboe.com/tradable_products/vix/vix_historical_data/"><strong>Cboe VIX historical data</strong><code>equity volatility</code><span>Official index history and methodology boundary for volatility context.</span></a>
+          <a class="source" href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces"><strong>SEC EDGAR APIs</strong><code>issuer expansion path</code><span>Public filing and company-facts interfaces; not yet a complete Seiche issuer data plane.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head">
+          <div><span class="label">Retrieval</span><h2 id="api-title">Capital context with proof boundaries</h2></div>
+          <p>The world-markets response carries the capital section beside a source registry and methodology object. MCP can select the same bounded section for an AI answer.</p>
+        </div>
+        <div class="api-grid">
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets"><strong>Capital-markets section</strong><code>GET /api/v2/world-markets → capital_markets</code><span>The cache-only response contains this bounded section.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>MCP section</strong><code>world_markets_context(section="capital_markets")</code><span>Agent-readable evidence, source and canonical citation fields.</span></a>
+          <a class="api" href="https://api.seiche.info/api/series/index.json"><strong>Series catalog</strong><code>GET /api/series/index.json</code><span>Discover exact public mnemonics, provenance and JSON/CSV downloads.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/money-markets"><strong>Funding confirmation layer</strong><code>GET /api/v2/money-markets</code><span>Compare the capital-market channel with registered money-market evidence.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq-title">
+        <div class="section-head">
+          <div><span class="label">FAQ</span><h2 id="faq-title">Capital-market coverage, plainly</h2></div>
+          <p>These visible answers are the same answers published in the page's structured FAQ data.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><strong>What capital-market data does Seiche cover?</strong><p>Seiche publishes a bounded derived macro-capital transmission projection across registered US Treasury, credit, volatility, primary-dealer, official-custody, positioning and energy source families. It is not a complete raw capital-market dataset. The current projection is returned by the world-markets API; raw numerical claims should use the exact series URL exposed by the series catalog or the linked original publisher.</p></article>
+          <article class="limit"><strong>Does Seiche contain every stock and bond?</strong><p>No. It is a macro capital-market transmission layer, not a complete global security master, exchange feed, issuer-fundamentals database or portfolio system.</p></article>
+          <article class="limit"><strong>How does Seiche connect capital markets to money markets?</strong><p>Seiche tests whether Treasury supply and settlement, dealer inventory, leveraged positioning, risk premia and commodity cash demands coincide with changes in reserves, repo, facilities and other funding evidence. Co-movement is labeled context or a derived signal, not automatically treated as causal proof.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="cite-title">
+        <div class="section-head">
+          <div><span class="label">Citation protocol</span><h2 id="cite-title">Name the layer you are citing</h2></div>
+          <p>A raw Treasury yield and a Seiche dealer-warehouse projection are different evidence classes. Cite the exact series record and original publisher for the first; cite this page, the API generation time and underlying inputs for the second.</p>
+        </div>
+        <div class="citation">
+          <span class="label">Recommended citation</span>
+          <code>Seiche. “Bounded capital-markets transmission projection.” Schema seiche.capital-markets-context.v1, 21 Aug. 2026. https://seiche.info/markets/capital-markets/ — for a raw claim, cite its exact /api/series/&lt;MNEMONIC&gt; record and original publisher; for a derived claim, add API generated_at, evidence status and underlying as-of clocks.</code>
+          <p>This is market intelligence and reproducible context, not investment advice, an execution service or a guarantee of causal interpretation.</p>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="shell"><span>Seiche · capital markets read through the cash ledger</span><span><a href="/markets/">World markets</a> · <a href="/methodology">Methodology</a> · <a href="/developers">Developers</a></span></div>
+  </footer>
+</body>
+</html>

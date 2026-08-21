@@ -156,9 +156,12 @@ def test_prerender_carries_the_same_argument_evidence_and_countercase(site):
     assert "The countercase" in text and "SOFR remains below IORB" in text
     assert "Conviction: GUARDED" in text
     assert (
-        '<meta property="og:title" content="Seiche · the balance sheet is tightening, '
-        'but the tape has not confirmed it." />'
+        '<meta property="og:title" content="Seiche · world-market intelligence, '
+        'argued and audited" />'
     ) in page
+    assert "the balance sheet is tightening" not in re.search(
+        r'<meta property="og:title" content="([^"]*)"', page
+    ).group(1).lower()
 
 
 def test_headline_numbers_carry_their_own_asof(site):
@@ -223,18 +226,28 @@ def test_running_twice_changes_nothing(site):
 # ---------------------------------------------------------------------------
 # the card
 # ---------------------------------------------------------------------------
-def test_card_meta_carries_the_live_reading(site):
+def test_card_meta_keeps_broad_identity_while_body_carries_live_reading(site):
     out, _, _ = site
     prerender.build(out)
     page = (out / "index.html").read_text()
-    assert '<meta property="og:title" content="Seiche · the board reads EROSION, 41 out of 100" />' in page
-    for key in ("og:description", "twitter:title", "twitter:description"):
-        assert "EROSION" in re.search(
+    assert (
+        '<meta property="og:title" content="Seiche · world-market intelligence, '
+        'argued and audited" />'
+    ) in page
+    for key in ("og:title", "og:description", "twitter:title", "twitter:description"):
+        value = re.search(
             r'content="([^"]*)"',
-            re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', page).group(0)).group(1)
+            re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', page).group(0),
+        ).group(1)
+        assert "EROSION" not in value
+    assert "Money, forex and capital markets" in page
+    assert "The composite reads 41 out of 100, EROSION" in prerender.body_text(page)
     # the fleet's existing share card, not a new image pipeline
     assert '<meta property="og:image" content="https://seiche.info/og2.png" />' in page
-    assert '<meta property="og:image:alt"' in page
+    assert (
+        '<meta property="og:image:alt" content="Seiche, the public money, forex '
+        'and capital-market evidence terminal" />'
+    ) in page
 
 
 def test_meta_rewrite_survives_an_apostrophe_in_the_old_value():

@@ -229,7 +229,7 @@ OIL_FUNDING_SCENARIO_DEFAULTS = {
 # that do not meet Seiche's free, keyless, reproducible-data rule.  The page
 # states that boundary rather than serving a stale "live" precious-metal box.
 ESTUARY_FRED_SERIES = [
-    # H.10 pair panel.  Starred H.10 quotes (GBP, AUD, EUR) are USD per local
+    # H.10 pair panel. Starred H.10 quotes (GBP, AUD, EUR, NZD) are USD per local
     # currency and are inverted inside the engine so every row means local
     # currency per USD; positive change then always means local depreciation.
     SeriesSpec("GBP", "fred", "DEXUSUK", "US dollars per pound sterling (H.10)", "$ per GBP", "D", 360),
@@ -239,6 +239,20 @@ ESTUARY_FRED_SERIES = [
     SeriesSpec("MXN", "fred", "DEXMXUS", "Mexican pesos per USD (H.10)", "MXN", "D", 360),
     SeriesSpec("BRL", "fred", "DEXBZUS", "Brazilian reais per USD (H.10)", "BRL", "D", 360),
     SeriesSpec("ZAR", "fred", "DEXSFUS", "South African rand per USD (H.10)", "ZAR", "D", 360),
+    # Complete the currently published H.10 bilateral reference-rate panel.
+    # These are official daily reference observations, not executable dealer
+    # quotes.  Keeping one local-per-USD direction is the engine's job; the
+    # four USD-per-local rows are declared explicitly in assemble.py.
+    SeriesSpec("NZD", "fred", "DEXUSNZ", "US dollars per New Zealand dollar (H.10)", "$ per NZD", "D", 360),
+    SeriesSpec("DKK", "fred", "DEXDNUS", "Danish kroner per USD (H.10)", "DKK", "D", 360),
+    SeriesSpec("HKD", "fred", "DEXHKUS", "Hong Kong dollars per USD (H.10)", "HKD", "D", 360),
+    SeriesSpec("MYR", "fred", "DEXMAUS", "Malaysian ringgit per USD (H.10)", "MYR", "D", 360),
+    SeriesSpec("NOK", "fred", "DEXNOUS", "Norwegian kroner per USD (H.10)", "NOK", "D", 360),
+    SeriesSpec("SEK", "fred", "DEXSDUS", "Swedish kronor per USD (H.10)", "SEK", "D", 360),
+    SeriesSpec("SGD", "fred", "DEXSIUS", "Singapore dollars per USD (H.10)", "SGD", "D", 360),
+    SeriesSpec("TWD", "fred", "DEXTAUS", "New Taiwan dollars per USD (H.10)", "TWD", "D", 360),
+    SeriesSpec("THB", "fred", "DEXTHUS", "Thai baht per USD (H.10)", "THB", "D", 360),
+    SeriesSpec("LKR", "fred", "DEXSLUS", "Sri Lankan rupees per USD (H.10)", "LKR", "D", 360),
     SeriesSpec("DXY_AFE", "fred", "DTWEXAFEGS", "Nominal advanced-economy US dollar index", "Jan 2006=100", "D", 360),
     SeriesSpec("DXY_EME", "fred", "DTWEXEMEGS", "Nominal emerging-market US dollar index", "Jan 2006=100", "D", 360),
     # Daily physical energy plus monthly IMF benchmark breadth.  Monthly

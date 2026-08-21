@@ -35,16 +35,17 @@ DOCS = [
 ]
 
 
-def test_the_surface_is_ten_tools():
+def test_the_surface_is_eleven_tools():
     """A guard on the guard: if this number moves, every sentence below moves
     with it, and someone has to decide that deliberately."""
-    assert len(PUBLIC) == 10, sorted(PUBLIC)
+    assert len(PUBLIC) == 11, sorted(PUBLIC)
     assert len(GATED) == 5, sorted(GATED)
     assert PUBLIC == {
         "latest_article",
         "funding_stress_now", "historical_analogs", "proof_backtest",
         "data_health", "crypto_stress_record", "institutional_flows",
         "oil_funding_context", "fx_materials_passage", "money_market_context",
+        "world_markets_context",
     }
 
 

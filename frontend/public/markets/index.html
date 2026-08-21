@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>World markets evidence atlas: money, forex and capital markets | Seiche</title>
+  <meta name="description" content="Seiche's citable world-markets atlas connects money markets, 22 registered public FX reference-rate series, dollar indexes and a bounded derived macro-capital transmission projection with explicit evidence gaps.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/markets/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/world-markets" title="Seiche world-markets context API">
+  <link rel="alternate" type="application/vnd.oai.openapi+json" href="https://api.seiche.info/api/openapi.json" title="Seiche public API contract">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/markets/">
+  <meta property="og:title" content="World markets evidence atlas | Seiche">
+  <meta property="og:description" content="Money, forex and capital markets connected through one provenance-first, licence-aware evidence contract.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="World markets evidence atlas | Seiche">
+  <meta name="twitter:description" content="A citable public map of observed market data, derived context, structural references and explicit gaps.">
+  <meta name="twitter:image" content="https://seiche.info/og2.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://seiche.info/#organization",
+        "name": "Seiche",
+        "url": "https://seiche.info/",
+        "logo": "https://seiche.info/og2.png",
+        "sameAs": "https://github.com/beepboop2025/seiche"
+      },
+      {
+        "@type": "DataCatalog",
+        "@id": "https://seiche.info/markets/#catalog",
+        "identifier": "seiche.world-markets.v1",
+        "name": "Seiche world markets evidence atlas",
+        "description": "A provenance-first catalog joining money-market funding, registered public foreign-exchange reference series and a bounded derived macro-capital transmission projection while distinguishing observed, derived, structural, restricted and unavailable evidence.",
+        "url": "https://seiche.info/markets/",
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "provider": {"@id": "https://seiche.info/#organization"},
+        "dataset": [
+          {"@id": "https://seiche.info/money-markets/#dataset"},
+          {"@id": "https://seiche.info/markets/forex/#dataset"},
+          {"@id": "https://seiche.info/markets/capital-markets/#dataset"}
+        ]
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://seiche.info/markets/#world-context",
+        "identifier": "seiche.world-markets.v1",
+        "name": "Seiche unified world-markets context",
+        "url": "https://seiche.info/markets/",
+        "mainEntityOfPage": "https://seiche.info/markets/",
+        "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
+        "creator": {"@id": "https://seiche.info/#organization"},
+        "datePublished": "2026-08-21",
+        "dateModified": "2026-08-21",
+        "isAccessibleForFree": true,
+        "spatialCoverage": "Global, bounded by the published coverage receipt",
+        "temporalCoverage": "Varies by upstream series and its native publication cadence",
+        "keywords": ["financial markets", "money markets", "foreign exchange", "forex", "capital markets", "funding liquidity", "Treasury market", "credit spreads", "market data provenance"],
+        "measurementTechnique": "Cache-only projection of Seiche's sealed snapshot, preserving event, publication and retrieval clocks without request-time collection or artificial daily upsampling.",
+        "conditionsOfAccess": "Seiche code is AGPL-3.0. Upstream data retain their own terms; restricted observations are withheld or represented only by non-reversible derived context where permitted.",
+        "distribution": [
+          {
+            "@type": "DataDownload",
+            "name": "World-markets JSON context",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/v2/world-markets"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "Public series catalog",
+            "encodingFormat": "application/json",
+            "contentUrl": "https://api.seiche.info/api/series/index.json"
+          },
+          {
+            "@type": "DataDownload",
+            "name": "OpenAPI contract",
+            "encodingFormat": "application/vnd.oai.openapi+json",
+            "contentUrl": "https://api.seiche.info/api/openapi.json"
+          }
+        ],
+        "citation": "Seiche. World markets evidence atlas, schema seiche.world-markets.v1. https://seiche.info/markets/ (use the response generated_at and each observation's as-of clock when citing live data)."
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://seiche.info/markets/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Does Seiche cover the whole forex and capital market?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Seiche publishes a bounded public macro-market evidence layer, not every tradable quote. Its forex catalog registers 22 Federal Reserve H.10 bilateral reference-rate series and three broad dollar indexes; current observations depend on the API receipt. Its capital section is a bounded derived macro-capital transmission projection over registered Treasury, credit, volatility, dealer, auction, positioning and commodity source families. Executable prices, order books, forward curves, options surfaces and complete security masters remain outside the public surface."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How should Seiche market data be cited?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Cite Seiche, the canonical topic URL, the schema version, the API generated_at time and the specific observation as-of or publication clock. Link the original publisher when the claim is an observed source fact."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is Seiche market data real-time or executable?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Public macro-market observations update at each source's native cadence and are not dealer quotes, trading instructions or an execution venue."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to evidence</a>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary">
+      <a href="/markets/" aria-current="page">World markets</a>
+      <a href="/markets/forex/">Forex</a>
+      <a href="/markets/capital-markets/">Capital</a>
+      <a href="/money-markets/">Money</a>
+      <a href="/developers">API + MCP</a>
+      <a href="/methodology">Methods</a>
+    </nav>
+  </header>
+
+  <main id="main" class="shell">
+    <article>
+      <header class="hero">
+        <div>
+          <p class="kicker">World markets / evidence atlas / schema v1</p>
+          <h1>One market is never just one market.</h1>
+          <p class="lede">Seiche connects the price of cash, the price of currency and the price of duration. Money-market funding is the pressure source; forex is the transmission channel; capital markets are the balance-sheet expression. The contract keeps evidence status and scope attached, while numerical claims route to their exact source, unit and clock.</p>
+        </div>
+        <aside class="receipt" aria-label="Coverage receipt">
+          <span class="label">Coverage receipt</span>
+          <strong>2026-08-21</strong>
+          <p>This page describes the supported public evidence surface, not a frozen market level. For current values and clocks, use the cache-only API.</p>
+        </aside>
+      </header>
+
+      <dl class="pulse" aria-label="Coverage summary">
+        <div><dt>Registered money-market packs</dt><dd>11</dd><small>live, reference and gap states</small></div>
+        <div><dt>Registered FX reference series</dt><dd>22</dd><small>daily H.10 source series</small></div>
+        <div><dt>Broad dollar indexes</dt><dd>3</dd><small>broad, AFE and EME</small></div>
+        <div><dt>Evidence states</dt><dd>5</dd><small>never collapse gaps into zero</small></div>
+        <div><dt>Request-time collection</dt><dd>0</dd><small>sealed cache only</small></div>
+      </dl>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head">
+          <div><span class="label">Direct answer</span><h2 id="answer-title">What Seiche covers</h2></div>
+          <p>A useful financial-market answer needs more than a value. It needs to say whether the value was observed or inferred, when the publisher knew it, whether it may be redistributed, and what the evidence cannot establish.</p>
+        </div>
+        <div class="answer-block">
+          <p><strong>Seiche is a bounded public financial-market evidence system, not a claim to every security or tick.</strong> It combines an 11-pack global money-market atlas; 22 registered daily bilateral FX reference-rate series and three dollar indexes; and a bounded derived macro-capital transmission projection over registered sovereign-rate, credit, volatility, Treasury-supply, dealer, positioning and energy source families.</p>
+          <p>The missing layer is equally explicit: executable spot quotes, order books, forward and basis curves, options surfaces, complete global security masters, issuer fundamentals and redistribution-restricted feeds are marked <span class="status restricted">restricted</span> or <span class="status unavailable">unavailable</span>, never silently imputed.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="domains-title">
+        <div class="section-head">
+          <div><span class="label">Three connected ledgers</span><h2 id="domains-title">The market transmission map</h2></div>
+          <p>These are not separate product silos. The unified response preserves each domain as its own bounded section so a model can select only the evidence relevant to the question.</p>
+        </div>
+        <div class="constellation">
+          <article class="domain">
+            <span class="status observed">funding layer</span>
+            <h3>Money markets</h3>
+            <p>Overnight secured and unsecured rates, policy corridors, reserve buffers, facilities, term cash, volumes and tails across registered monetary areas.</p>
+            <ul>
+              <li>11 stable market-pack identifiers</li>
+              <li>native-frequency own-history context</li>
+              <li>licence and evidence eligibility kept separate</li>
+            </ul>
+            <a class="jump" href="/money-markets/">Open the money-market map →</a>
+          </article>
+          <article class="domain">
+            <span class="status structural">registered layer</span>
+            <h3>Foreign exchange</h3>
+            <p>Twenty-two registered daily public reference series plus broad, advanced-economy and emerging-market dollar indexes; the API determines which current observations are present.</p>
+            <ul>
+              <li>pair convention and units are explicit</li>
+              <li>source-native dates are preserved</li>
+              <li>not executable dealer or venue prices</li>
+            </ul>
+            <a class="jump" href="/markets/forex/">Open the forex ledger →</a>
+          </article>
+          <article class="domain">
+            <span class="status derived">balance-sheet layer</span>
+            <h3>Capital markets</h3>
+            <p>A bounded derived projection over Treasury curve and supply, credit risk premia, equity volatility, dealer warehouse, positioning, custody and commodity cash-demand context.</p>
+            <ul>
+              <li>observations separated from Seiche transforms</li>
+              <li>source calendars and stale flags attached</li>
+              <li>transmission evidence, not trade advice</li>
+            </ul>
+            <a class="jump" href="/markets/capital-markets/">Open the capital-market ledger →</a>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="states-title">
+        <div class="section-head">
+          <div><span class="label">Epistemic contract</span><h2 id="states-title">Five states, no false precision</h2></div>
+          <p>Each returned world-markets section and source record declares one of these statuses. That lets a human or an AI distinguish a measured fact from an interpretation, a stable definition or a genuine evidence gap.</p>
+        </div>
+        <div class="ledger">
+          <article><span class="status observed">observed</span><h3>Publisher fact</h3><p>A redistributable observation is present with value, unit, source and clocks.</p><code>may support factual claims</code></article>
+          <article><span class="status derived">derived</span><h3>Seiche transform</h3><p>A reproducible statistic, regime or comparison computed from eligible inputs.</p><code>cite method + inputs</code></article>
+          <article><span class="status structural">structural</span><h3>Slow reference</h3><p>A dated market convention, capacity, definition or institutional feature.</p><code>do not label live</code></article>
+          <article><span class="status restricted">restricted</span><h3>Rights boundary</h3><p>The market exists, but raw public redistribution is not permitted or not verified.</p><code>withhold raw level</code></article>
+          <article><span class="status unavailable">unavailable</span><h3>Evidence gap</h3><p>No eligible value is present. Absence is not zero, calm or unchanged.</p><code>fail closed</code></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="clocks-title">
+        <div class="section-head">
+          <div><span class="label">Temporal integrity</span><h2 id="clocks-title">A value has more than one time</h2></div>
+          <p>Market answers often fail because “latest” is treated as one timestamp. Seiche carries the distinct clocks needed to audit what was known and when.</p>
+        </div>
+        <dl class="clock-list">
+          <div><dt>event_time / as_of</dt><dd>When the economic observation applies: the fixing date, auction date, statement week or reporting period.</dd></div>
+          <div><dt>published_at / knowledge_time</dt><dd>When the original publisher made the observation knowable, including revisions where the source exposes them.</dd></div>
+          <div><dt>retrieved_at / ingested_at</dt><dd>When Seiche captured and normalized the upstream record.</dd></div>
+          <div><dt>generated_at</dt><dd>When the sealed response was assembled. This is the citation clock for the complete context, not a substitute for each series clock.</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="sources-title">
+        <div class="section-head">
+          <div><span class="label">Primary publishers</span><h2 id="sources-title">The source spine</h2></div>
+          <p>Seiche is the integration and interpretation layer. Observed facts retain direct links to their original public publishers.</p>
+        </div>
+        <div class="source-grid">
+          <a class="source" href="https://www.federalreserve.gov/releases/h10/current/" rel="external"><strong>Federal Reserve H.10</strong><code>foreign exchange rates</code><span>Daily bilateral reference observations and dollar-index context.</span></a>
+          <a class="source" href="https://stats.bis.org/api-doc/v2/" rel="external"><strong>Bank for International Settlements</strong><code>SDMX API v2</code><span>International statistics architecture and future cross-country expansion spine.</span></a>
+          <a class="source" href="https://data.ecb.europa.eu/help/api/data" rel="external"><strong>European Central Bank</strong><code>ECB Data Portal API</code><span>Euro-area rates, yield curves and monetary data at source-native frequency.</span></a>
+          <a class="source" href="https://home.treasury.gov/treasury-daily-interest-rate-xml-feed" rel="external"><strong>US Treasury</strong><code>daily interest-rate feed</code><span>Official par yield and related curve data.</span></a>
+          <a class="source" href="https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm" rel="external"><strong>Commodity Futures Trading Commission</strong><code>Commitments of Traders</code><span>Weekly positioning context for rates, equities and energy futures.</span></a>
+          <a class="source" href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces" rel="external"><strong>US Securities and Exchange Commission</strong><code>EDGAR public APIs</code><span>Issuer and filing expansion path; not yet a complete security-level market feed.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head">
+          <div><span class="label">One contract, many readers</span><h2 id="api-title">Human page, REST and MCP</h2></div>
+          <p>The same bounded worldview is exposed in three forms. Use the page for citation, REST for deterministic retrieval, and MCP when an agent should choose a relevant market section.</p>
+        </div>
+        <div class="api-grid">
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets"><strong>World-markets REST context</strong><code>GET /api/v2/world-markets</code><span>Cache-only money, forex, capital, source and methodology sections.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>World-markets MCP tool</strong><code>world_markets_context(section="summary")</code><span>Choose summary, money_markets, forex, capital_markets, sources, methodology or all.</span></a>
+          <a class="api" href="https://api.seiche.info/api/series/index.json"><strong>Series catalog</strong><code>GET /api/series/index.json</code><span>Discover public mnemonics, units, provenance and downloadable series.</span></a>
+          <a class="api" href="https://api.seiche.info/api/openapi.json"><strong>OpenAPI 3.1</strong><code>GET /api/openapi.json</code><span>Import the intentionally public REST contract into tools and retrieval systems.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="limits-title">
+        <div class="section-head">
+          <div><span class="label">Boundary</span><h2 id="limits-title">What this atlas is not</h2></div>
+          <p>Dense coverage is useful only when its perimeter is visible. These limits apply to every page and machine response.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><strong>Not an execution feed</strong><p>Reference observations are not current bid/ask quotes, depth, executable size or transaction-cost estimates.</p></article>
+          <article class="limit"><strong>Not every financial instrument</strong><p>No public claim is made to complete global equities, bonds, swaps, options, funds, structured products or private markets.</p></article>
+          <article class="limit"><strong>Not frequency laundering</strong><p>Weekly, monthly and event-driven series remain at native cadence; they are not filled into synthetic daily evidence.</p></article>
+          <article class="limit"><strong>Not investment advice</strong><p>Seiche describes public evidence and model outputs. It does not recommend trades, guarantee forecasts or replace professional judgment.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq-visible-title">
+        <div class="section-head">
+          <div><span class="label">Frequently asked questions</span><h2 id="faq-visible-title">Scope before citation</h2></div>
+          <p>These visible answers are the same answers published in the page's structured FAQ data.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><h3>Does Seiche cover the whole forex and capital market?</h3><p>Seiche publishes a bounded public macro-market evidence layer, not every tradable quote. Its forex catalog registers 22 Federal Reserve H.10 bilateral reference-rate series and three broad dollar indexes; current observations depend on the API receipt. Its capital section is a bounded derived macro-capital transmission projection over registered Treasury, credit, volatility, dealer, auction, positioning and commodity source families. Executable prices, order books, forward curves, options surfaces and complete security masters remain outside the public surface.</p></article>
+          <article class="limit"><h3>How should Seiche market data be cited?</h3><p>Cite Seiche, the canonical topic URL, the schema version, the API generated_at time and the specific observation as-of or publication clock. Link the original publisher when the claim is an observed source fact.</p></article>
+          <article class="limit"><h3>Is Seiche market data real-time or executable?</h3><p>No. Public macro-market observations update at each source's native cadence and are not dealer quotes, trading instructions or an execution venue.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="cite-title">
+        <div class="section-head">
+          <div><span class="label">Citation protocol</span><h2 id="cite-title">Cite the claim, clock and source</h2></div>
+          <p>For a general scope statement, cite this atlas. For a live numerical claim, also cite the API generation time, the observation's as-of time and the original publisher.</p>
+        </div>
+        <div class="citation">
+          <span class="label">Recommended citation</span>
+          <code>Seiche. “World markets evidence atlas.” Schema seiche.world-markets.v1, 21 Aug. 2026. https://seiche.info/markets/ — live readings: https://api.seiche.info/api/v2/world-markets (include generated_at and the selected observation's as-of clock).</code>
+          <p>Seiche can make itself easy to retrieve and cite; it cannot compel any search engine or AI provider to cite a particular source or cite it a fixed number of times.</p>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="shell">
+      <span>Seiche · public evidence, native clocks, explicit gaps</span>
+      <span><a href="/methodology">Methodology</a> · <a href="/developers">Developers</a> · <a href="https://github.com/beepboop2025/seiche">Source</a></span>
+    </div>
+  </footer>
+</body>
+</html>

@@ -90,15 +90,15 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → ten tools, named so you can check this against the
+- **Anonymous** (no token) → eleven tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
-  `fx_materials_passage`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
+  `fx_materials_passage`, `world_markets_context`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, granular USD
-  money-market evidence, and cross-market oil/FX/material context. Capped per IP
+  money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
   per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same ten plus the five that read the
+- **Subscriber** (bearer token) → the same eleven plus the five that read the
   derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
   `desk_brief`, `ask_desk`. At your tier's quota.
 
@@ -116,6 +116,7 @@ reads when an integration does not speak MCP:
 ```bash
 curl https://api.seiche.info/api/money-markets
 curl https://api.seiche.info/api/v2/money-markets
+curl https://api.seiche.info/api/v2/world-markets
 curl https://api.seiche.info/api/oil-funding
 curl https://api.seiche.info/api/estuary
 ```
@@ -127,6 +128,12 @@ freshness and the regime at request time, then returns no chart history. Its opt
 `summary`, `policy_corridor`, `secured_distributions`, `repo_segments`,
 `unsecured_funding`, `bills_cash_curve`, `liquidity_buffers`, `mmf_plumbing`,
 `sources`, `methodology`, or `all`.
+
+`/api/v2/world-markets` and `world_markets_context` expose the same versioned,
+cache-only world-market projection. The MCP `section` selector is bounded to
+`summary`, `money_markets`, `forex`, `capital_markets`, `sources`, `methodology`
+or `all`. Each response carries canonical citation URLs and keeps `observed`,
+`derived`, `structural`, `restricted` and `unavailable` evidence distinct.
 
 The USD regime exposes both the raw most-extreme eligible channel and a
 Bonferroni-adjusted family-wise rank. Its label is descriptive context, not an
@@ -293,7 +300,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same ten the hosted endpoint gives an anonymous caller, so a local run and a
+the same eleven the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -310,6 +317,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `crypto_stress_record` | yes | labelled episodes replayed against the board |
 | `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
 | `money_market_context` | yes | compact chartless USD desk context; selector limits payload while formulas, provenance and caveats remain requestable |
+| `world_markets_context` | yes | bounded chartless money, FX and capital-market context with source clocks, canonical citations and explicit partial/unavailable states |
 | `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
 | `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
 | `funding_stress_forecast` | no | six modelled views of forward event odds |
