@@ -15,11 +15,11 @@ listed here as a runbook rather than automated blind.
 2. **Publish the package to PyPI when the stdio implementation changes.** The
    registry may advertise a newer hosted server while keeping its optional
    package entry pinned to the latest version that actually exists on PyPI.
-   Seiche currently pins `seiche==0.10.0` to match the hosted estuary product
+   Seiche currently pins `seiche==0.10.1` to match the hosted estuary product
    and the eleven public tools (including `latest_article`,
-   `money_market_context` and `world_markets_context`). That package is not
-   on PyPI until a human cuts a GitHub release or publishes the artifact; do
-   not advertise a newer package version than the next intended release.
+   `money_market_context` and `world_markets_context`). Publish that exact
+   package before the immutable MCP Registry entry; do not advertise a package
+   version that PyPI cannot resolve.
    ```bash
    cd backend
    python -m pip install build twine
