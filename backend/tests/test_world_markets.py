@@ -344,6 +344,56 @@ def test_capital_only_headline_uses_its_direct_observation_clock() -> None:
     assert payload["capital_markets"]["risk_context"]["as_of"] == "2026-08-20"
 
 
+def test_supplydesk_forward_dates_do_not_advance_the_evidence_clock() -> None:
+    snapshot = _snapshot()
+    snapshot["engines"]["supplydesk"] = {
+        "ok": True,
+        "asof": "2026-08-21",
+        "announced_through": "2026-08-31",
+        "horizon_end": "2026-09-18",
+        "totals": {"net_new_cash_b": 120.0},
+        "heaviest_day": {"date": "2026-09-16", "net_new_cash_b": 95.0},
+    }
+
+    payload = project_world_markets(snapshot, selector="capital_markets")
+    supply = next(
+        item
+        for item in payload["capital_markets"]["primary_market"]
+        if item["id"] == "supplydesk"
+    )
+
+    assert payload["as_of"] == "2026-08-20"
+    assert payload["citation"]["evidence_as_of"] == "2026-08-20"
+    assert supply["announced_through"] == "2026-08-31"
+    assert supply["horizon_end"] == "2026-09-18"
+    assert supply["heaviest_day"]["date"] == "2026-09-16"
+    assert supply["clock_role"] == "scenario_evaluation_not_evidence_clock"
+
+
+def test_supplydesk_only_snapshot_has_no_evidence_clock() -> None:
+    snapshot = {
+        "generated_at": "2026-08-21T11:30:00+00:00",
+        "headline": {},
+        "deep": {},
+        "engines": {
+            "supplydesk": {
+                "ok": True,
+                "asof": "2026-08-21",
+                "announced_through": "2026-08-31",
+                "horizon_end": "2026-09-18",
+            }
+        },
+    }
+
+    payload = project_world_markets(snapshot, selector="capital_markets")
+
+    assert payload["ok"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["as_of"] is None
+    assert payload["citation"]["evidence_as_of"] is None
+    assert payload["capital_markets"]["as_of"] is None
+
+
 def test_rest_route_reads_memory_cache_without_building(monkeypatch) -> None:
     snapshot = _snapshot()
     monkeypatch.setattr(api.assemble, "cached_snapshot", lambda: snapshot)
