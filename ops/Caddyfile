@@ -308,7 +308,7 @@ api.seiche.info {
     }
     @public {
         method GET HEAD
-        path /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/money-markets /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
+        path /.well-known/mcp.json /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/money-markets /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
     # Public POST endpoints live here because @public is GET/HEAD only. The
     # Week Ahead list also keeps GET in @public so the front door can discover

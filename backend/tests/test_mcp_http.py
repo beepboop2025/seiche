@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from seiche import api, mcp_server, usage, world_model_delivery, x402
 
 
@@ -148,6 +147,34 @@ def test_initialize_returns_session_header(client):
     assert r.status_code == 200
     assert r.json()["result"]["serverInfo"]["name"] == "seiche"
     assert r.headers.get("Mcp-Session-Id")
+
+
+def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client):
+    response = client.get("/.well-known/mcp.json")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    document = response.json()
+    assert document["canonicalCatalog"] == (
+        "https://seiche.info/.well-known/ai-catalog.json"
+    )
+    assert len(document["servers"]) == 1
+    server = document["servers"][0]
+    assert server["name"] == "io.github.beepboop2025/seiche"
+    assert server["version"] == api.assemble.VERSION
+    assert server["transport"] == "streamable-http"
+    assert server["url"] == "https://api.seiche.info/mcp"
+    assert server["authentication"] == {
+        "type": "none",
+        "scope": "eleven anonymous public evidence tools",
+    }
+    assert "tools" not in server
+
+    caddy = (Path(__file__).resolve().parents[2] / "ops" / "Caddyfile").read_text(
+        encoding="utf-8"
+    )
+    public_matcher = caddy.split("@public {", 1)[1].split("\n    }", 1)[0]
+    assert "/.well-known/mcp.json" in public_matcher
 
 
 def test_edge_serves_bounded_dormant_undertow_paypal_response():
@@ -352,8 +379,10 @@ def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
         if "mcp_activation" in record.getMessage()
     ]
     assert events == [
-        "mcp_activation product=seiche surface=paid "
-        "tool=funding_stress_forecast outcome=success origin=direct"
+        (
+            "mcp_activation product=seiche surface=paid "
+            "tool=funding_stress_forecast outcome=success origin=direct"
+        )
     ]
 
 

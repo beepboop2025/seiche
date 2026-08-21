@@ -37,13 +37,13 @@ DEFAULT_ADAPTER_DEADLINE_SECONDS = 300.0
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEFAULT_HEARTBEAT_GRACE_SECONDS = 120.0
 
-# Backfill markers are normally stable per adapter.  This one generation bump
-# is intentionally narrower: all three NY Fed funding states must recollect
-# full history once so legacy hash-only rows gain explicit source-field
-# lineage. After a successful import the versioned marker restores normal
-# idempotency.
+# Backfill markers certify an adapter's exact historical collection contract.
+# Production may already hold the v3 marker written after the SOFR distribution
+# lineage repair, so the SOFRAI 30/90/180-day averages and index require a new
+# generation. After that expanded history imports successfully, v4 restores
+# normal idempotency without deleting or reinterpreting older markers.
 _BACKFILL_MARKER_GENERATIONS = {
-    ("US-USD", "nyfed_rates"): "funding-field-lineage-v3",
+    ("US-USD", "nyfed_rates"): "nyfed-sofrai-averages-index-v4",
 }
 
 

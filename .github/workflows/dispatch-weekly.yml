@@ -3,9 +3,10 @@ name: dispatch-weekly
 # The Monday flagship: "The Week Ahead" (backend/seiche/dispatch_weekly.py).
 # A numbered weekly issue with forward tables and pre-registered calls printed
 # in advance, which the following Monday's issue grades. Deterministic, no LLM.
-# Commits the issue to main, then explicitly dispatches publish (site rebuild)
-# and deploy-hetzner (box picks up the continuation), because pushes made with
-# GITHUB_TOKEN do not trigger workflows on their own.
+# Commits the issue to main, then explicitly dispatches the static site rebuild
+# because pushes made with GITHUB_TOKEN do not trigger workflows on their own.
+# The signed release poller recognizes this narrow content-only commit class as
+# intentionally inert and never executes it on the API host.
 #
 # Runs 105 minutes BEFORE dispatch-daily so its publish run finishes before the
 # daily triggers its own: publish.yml is cancel-in-progress, so an overlapping
@@ -69,24 +70,13 @@ jobs:
           git commit -m "week ahead: $TITLE"
           git pull --rebase origin main
           git push origin main
-          TARGET_SHA=$(git rev-parse --verify "HEAD^{commit}")
-          if ! [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::pushed dispatch target is not a canonical commit SHA"
-            exit 1
-          fi
-          printf 'TARGET_SHA=%s\nPUSHED=1\n' "$TARGET_SHA" >> "$GITHUB_ENV"
+          printf 'PUSHED=1\n' >> "$GITHUB_ENV"
 
-      - name: Trigger site publish + box deploy
+      - name: Trigger site publish
         if: env.PUSHED == '1'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! [[ "${TARGET_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::exact pushed dispatch target is missing or invalid"
-            exit 1
-          fi
-          gh workflow run publish.yml --ref main
-          gh workflow run deploy-hetzner.yml --ref main --raw-field target_sha="$TARGET_SHA"
+        run: gh workflow run publish.yml --ref main
 
       # Wait for the site to actually carry the issue before telling Telegram
       # about it -- an announcement with a dead link is worse than a late one.

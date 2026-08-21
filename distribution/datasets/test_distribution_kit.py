@@ -55,8 +55,8 @@ def test_rights_clean_distribution_kit_and_reference_staging(tmp_path):
     compile(clients["python"].read_text(encoding="utf-8"), str(clients["python"]), "exec")
 
 
-def test_croissant_citation_targets_a_real_immutable_source_tree():
-    """A commit-looking URL is not provenance when its path is a 404."""
+def test_source_revision_targets_a_real_immutable_tree():
+    """A commit-looking source URL is not provenance when its path is a 404."""
     subprocess.run(
         [
             "git",

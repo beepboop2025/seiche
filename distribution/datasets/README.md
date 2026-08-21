@@ -10,6 +10,11 @@ has 674. FRED-fetched values, runtime caches, New York Fed reference-rate rows,
 the mismatched primary-dealer row, licensed/restricted series, and all
 Seiche-derived outputs are excluded.
 
+The metadata publication and source-data revision are deliberately separate:
+catalog citations resolve to the versioned `v0.11.0/distribution/datasets`
+tree, while every observation URL and hash stays pinned to the audited
+`93e83bbc.../integrations/datacommons` source tree.
+
 ## Validate
 
 ```sh

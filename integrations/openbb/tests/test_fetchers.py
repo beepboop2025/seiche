@@ -100,7 +100,7 @@ async def test_data_health_filters_without_erasing_dead_rows():
     client = _client_for(
         {
             "generated_at": "2026-08-21T20:54:06+00:00",
-            "version": "0.10.1",
+            "version": "0.11.0",
             "faults": [],
             "provenance": [
                 {

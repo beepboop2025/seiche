@@ -1,6 +1,8 @@
 name: deploy-hetzner
 
-# Auto-deploy to the Hetzner box on every merge to main.
+# Disabled legacy/manual fallback. The on-box signed release poller is the sole
+# automatic controller; this workflow has no push trigger and must stay
+# disabled unless the poller is deliberately stopped first.
 #
 # Two repo secrets (Settings → Secrets → Actions):
 #   HETZNER_HOST     the box's IP
@@ -14,11 +16,9 @@ name: deploy-hetzner
 #   seiche user (pull → pip install → pytest, rollback on red) and only a
 #   green tree gets a service restart + health check;
 # - the host key is PINNED below, closing the first-connection MITM window;
-# - secrets are never exposed to fork PRs (push-to-main + dispatch only).
+# - secrets are never exposed to fork PRs (manual dispatch only).
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       target_sha:

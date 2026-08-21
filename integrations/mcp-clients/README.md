@@ -92,6 +92,11 @@ fails, and it must be served from the MCP origin (`api.seiche.info`), not merely
 committed under an unrelated web root. The existing entry is evidence of
 listing, not Smithery verification or official status.
 
+The AI Catalog's ARD entry embeds the official MCP Registry `server.json`
+shape and labels that profile explicitly. It is not a claim of conformance to
+the separate experimental MCP Server Card extension, whose schema and
+recommended discovery path are still changing.
+
 ## Current format references
 
 - [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp)

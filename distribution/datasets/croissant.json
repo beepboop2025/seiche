@@ -42,7 +42,7 @@
   "name": "seiche-audited-direct-ofr-research-snapshot",
   "alternateName": "Seiche audited direct-OFR research snapshot",
   "description": "Draft, not submitted, no DOI assigned. 11,163 observations from ten direct Office of Financial Research series; FRED-fetched values, runtime caches, restricted rows, and derived Seiche outputs are excluded.",
-  "url": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
+  "url": "https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets",
   "conformsTo": "http://mlcommons.org/croissant/1.0",
   "version": "0.1.0-draft",
   "dateCreated": "2026-08-21",
@@ -50,6 +50,7 @@
   "license": "https://www.financialresearch.gov/legal-notices/",
   "seiche:publicationStatus": "draft_not_submitted",
   "seiche:snapshotDate": "2026-08-21",
+  "seiche:sourceRevision": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
   "creator": {
     "@type": "sc:Organization",
     "name": "Seiche",
@@ -67,7 +68,7 @@
     "financial time series",
     "United States"
   ],
-  "citeAs": "@misc{seiche_direct_ofr_2026, title={Seiche audited direct-OFR research snapshot}, author={{Seiche contributors}}, year={2026}, url={https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons}}",
+  "citeAs": "@misc{seiche_direct_ofr_2026, title={Seiche audited direct-OFR research snapshot}, author={{Seiche contributors}}, year={2026}, url={https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets}}",
   "citation": "Office of Financial Research, U.S. Repo Markets Data Release and U.S. Money Market Fund Data Release; curated into the Seiche direct-OFR research snapshot.",
   "distribution": [
     {

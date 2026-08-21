@@ -30,8 +30,9 @@ is current, owner-claimed, independently verified, or official.
   blocked until the separate Glama repository-score badge exists.
 - [mcpservers.org](https://mcpservers.org/submit): use its reviewed web form;
   the backing awesome list does not accept pull requests.
-- [MCPub](https://mcpub.dev/mcp): serve its well-known descriptor and invoke
-  its public directory submission tool.
+- [MCPub](https://mcpub.dev/mcp): the same-origin discovery route is implemented
+  for this release; deploy it, then invoke MCPub's public submission tool and
+  preserve the resulting live-directory receipt.
 
 The archived `appcypher/awesome-mcp-servers` repository is intentionally not an
 action target.

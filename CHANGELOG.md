@@ -11,6 +11,8 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-22
+
 ### Added
 
 - Repository security, contribution, conduct, and maintainer-governance policies.
@@ -18,18 +20,42 @@ they change a public contract, methodology, or release artifact.
   configuration for Python, npm, and GitHub Actions dependencies.
 - OpenBB provider/router packaging; hosted MCP client configurations; and
   copy-paste Python, R, and JavaScript world-markets clients.
-- A commit-pinned research notebook and rights-clean direct-OFR distribution
+- A commit-pinned research notebook and rights-reviewed direct-OFR distribution
   kit with Hugging Face, Kaggle, Croissant, Frictionless, DCAT 3, RO-Crate 1.3,
   and DOI-free DataCite metadata.
 - Distroless multi-platform container packaging, Compose hardening, GHCR
   provenance/SBOM publication, citation metadata, and a receipt-backed external
   submission ledger.
+- A same-origin MCPub compatibility document at `/.well-known/mcp.json`, ready
+  for receipt-gated directory submission after the release reaches production.
+
+### Changed
+
+- Expanded continuous official-source ingestion, readiness evidence, backup and
+  restore verification, deploy handoff checks, and source-worker supervision.
+- Advanced the NY Fed backfill generation so existing installations collect
+  full SOFRAI averages/index history once, without reinterpreting prior markers.
+- Published accurate live MCP-directory ownership/freshness records and kept
+  external OpenBB, dataset, catalog, OpenAI, and DOI claims receipt-gated.
+- Bound Python, MCP, AI-catalog, citation, container, and scientific metadata to
+  one `0.11.0` release identity.
+- Kept scheduled dispatches on the static-publish path and taught the production
+  poller to treat only exact desk-authored, content-only commits as non-release
+  updates; mixed or code changes still require the signed release path.
+- Made least-privilege market backups compatible with a service that lacks
+  `CAP_CHOWN`, while retaining backup freshness and restore-receipt gates.
 
 ### Security
 
 - Pinned third-party GitHub Actions to immutable commit SHAs.
 - Declared least-privilege read permissions for workflows that previously
   relied on the repository's default token policy.
+- Replaced request-derived dispatch paths with enumerated regular-file lookup,
+  sanitized attestation storage failures, and bounded public history reads.
+- Removed generated passwords and bearer tokens from CLI output in favor of
+  atomic, non-overwriting, mode-`0600` credential handoff files.
+- Required the pinned release author plus SSH-signed commit and annotated tag
+  before PyPI, GHCR, or MCP publication receives authority.
 
 ## [0.10.1] - 2026-08-22
 
@@ -70,7 +96,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/beepboop2025/seiche/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/beepboop2025/seiche/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/beepboop2025/seiche/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/beepboop2025/seiche/releases/tag/v0.9.1

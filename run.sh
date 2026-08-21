@@ -4,5 +4,5 @@ set -e
 cd "$(dirname "$0")"
 (cd backend && .venv/bin/uvicorn seiche.api:app --port 8787) &
 BACK=$!
-trap "kill $BACK 2>/dev/null" EXIT
+trap 'kill "$BACK" 2>/dev/null' EXIT
 cd frontend && npm run dev

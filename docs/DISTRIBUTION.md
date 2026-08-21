@@ -38,8 +38,8 @@ drop-in replacement for the hosted deployment.
 
 Published images use these tags:
 
-- the release version, such as `0.10.1`;
-- the Git tag, such as `v0.10.1`;
+- the release version, such as `0.11.0`;
+- the Git tag, such as `v0.11.0`;
 - the source commit, prefixed with `sha-`;
 - `latest` for a non-prerelease GitHub Release.
 
@@ -49,7 +49,7 @@ separate build-provenance attestation bound to the pushed manifest digest.
 
 ```bash
 gh attestation verify \
-  oci://ghcr.io/beepboop2025/seiche:0.10.1 \
+  oci://ghcr.io/beepboop2025/seiche:0.11.0 \
   --repo beepboop2025/seiche
 ```
 

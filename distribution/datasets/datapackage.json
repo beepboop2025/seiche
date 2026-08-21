@@ -6,7 +6,7 @@
   "description": "Draft, not submitted, no DOI assigned. Ten direct-OFR series only; runtime caches, FRED-fetched values, restricted rows, and Seiche-derived outputs are excluded.",
   "version": "0.1.0-draft",
   "publication_status": "draft_not_submitted",
-  "homepage": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
+  "homepage": "https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets",
   "created": "2026-08-21T18:05:16Z",
   "licenses": [
     {

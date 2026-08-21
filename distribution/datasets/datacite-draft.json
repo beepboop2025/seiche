@@ -60,6 +60,11 @@
     {
       "relatedIdentifier": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
       "relatedIdentifierType": "URL",
+      "relationType": "IsDerivedFrom"
+    },
+    {
+      "relatedIdentifier": "https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets",
+      "relatedIdentifierType": "URL",
       "relationType": "IsSupplementTo"
     }
   ],

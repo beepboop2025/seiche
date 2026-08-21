@@ -132,6 +132,46 @@ def _verify_release_signature(
     )
 
 
+def _commit_automation_content(
+    repository: Path,
+    files: dict[str, str],
+    *,
+    message: str = "dispatch: generated edition",
+    author: str = "desk@seiche.info",
+) -> str:
+    _git("config", "user.email", author, cwd=repository)
+    for relative, body in files.items():
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(body, encoding="utf-8")
+    _git("add", "--all", cwd=repository)
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "commit", "-m", message],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return _git("rev-parse", "HEAD", cwd=repository)
+
+
+def _classify_automation_content(
+    environment: dict[str, str], target: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$SEICHE_POLLER"; is_inert_automation_content_commit "$SEICHE_TARGET"',
+        ],
+        env=environment
+        | {"SEICHE_POLLER": str(RELEASE_POLLER), "SEICHE_TARGET": target},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _legacy_retirement_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     systemd_dir = tmp_path / "systemd"
     state_dir = tmp_path / "deploy-state"
@@ -706,6 +746,26 @@ def test_forced_command_retries_only_a_safe_defer(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls.read_text().splitlines() == ["call", "call", "call"]
     assert "safely deferred; retrying" in result.stdout
+
+
+def test_forced_command_gives_each_pass_its_own_defer_window(tmp_path):
+    counter = tmp_path / "counter"
+    counter.write_text("0\n")
+    result, calls = _forced_deploy_result(
+        tmp_path,
+        (
+            f'count=$(cat "{counter}")\n'
+            "count=$((count + 1))\n"
+            f'printf "%s\\n" "$count" >"{counter}"\n'
+            'if [ "$count" -eq 1 ]; then sleep 2; exit 0; fi\n'
+            '[ "$count" -gt 2 ] || exit 75\n'
+        ),
+        wait_seconds=2,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.read_text().splitlines() == ["call", "call", "call"]
+    assert "pass 2/2 safely deferred; retrying" in result.stdout
 
 
 @pytest.mark.parametrize("status", [1, 42, 255])
@@ -1331,6 +1391,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in backup
     assert "seiche-market-backup.sh" in backup
     assert "mountpoint -q" in backup_script
+    assert '"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"' in backup_script
+    assert "cp -a --" not in backup_script
     assert "CPUQuota=50%" in backup
     assert "MemoryMax=1G" in backup
     assert "ProtectSystem=strict" in backup
@@ -1338,6 +1400,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
+    backup_capabilities = next(
+        line for line in backup.splitlines() if line.startswith("CapabilityBoundingSet=")
+    )
+    assert "CAP_CHOWN" not in backup_capabilities
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert (
         "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy"
@@ -1922,7 +1988,10 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     selected = poller.index(
         'TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)'
     )
-    signature = poller.index('verify_target_signature "$TARGET"', selected)
+    inert_content = poller.index(
+        'if is_inert_automation_content_commit "$TARGET"', selected
+    )
+    signature = poller.index('verify_target_signature "$TARGET"', inert_content)
     admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", signature)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
@@ -1948,6 +2017,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
 
     assert (
         selected
+        < inert_content
         < signature
         < admission
         < detached
@@ -2067,6 +2137,63 @@ def test_release_signature_boundary_accepts_only_the_pinned_signed_identity(tmp_
     result = _verify_release_signature(env, target)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_generated_desk_content_is_inert_only_within_closed_paths(tmp_path):
+    repository, env = _release_signature_fixture(tmp_path)
+    _commit_release(repository, "signed base")
+    target = _commit_automation_content(
+        repository,
+        {
+            "frontend/public/dispatches/edition.md": "public dispatch\n",
+            "frontend/public/articles/edition.md": "public article\n",
+            "backend/seiche/dispatches/edition.desk.md": "continuation\n",
+        },
+    )
+
+    result = _classify_automation_content(env, target)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("files", "message", "author"),
+    (
+        (
+            {
+                "frontend/public/dispatches/edition.md": "dispatch\n",
+                "ops/Caddyfile": "mixed executable configuration\n",
+            },
+            "dispatch: mixed paths",
+            "desk@seiche.info",
+        ),
+        (
+            {"frontend/public/dispatches/edition.md": "dispatch\n"},
+            "dispatch: wrong author",
+            "intruder@example.invalid",
+        ),
+        (
+            {"frontend/public/dispatches/edition.md": "dispatch\n"},
+            "feat: misleading content commit",
+            "desk@seiche.info",
+        ),
+    ),
+)
+def test_generated_content_never_grants_broader_release_authority(
+    tmp_path, files, message, author
+):
+    repository, env = _release_signature_fixture(tmp_path)
+    _commit_release(repository, "signed base")
+    target = _commit_automation_content(
+        repository,
+        files,
+        message=message,
+        author=author,
+    )
+
+    result = _classify_automation_content(env, target)
+
+    assert result.returncode != 0
 
 
 def test_unsigned_release_target_is_rejected_before_candidate_execution(tmp_path):

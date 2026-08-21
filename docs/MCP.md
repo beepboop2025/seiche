@@ -170,11 +170,16 @@ not maintain separate interpretations of the engines.
 ### Getting a token
 
 ```bash
-seiche user add desk_01 --tier pro          # operator provisions the account
+seiche user add desk_01 --tier pro \
+  --credentials-file /secure/handoff/desk_01.json
 curl -sX POST https://api.seiche.info/api/auth/login \
   -H 'content-type: application/json' \
   -d '{"username":"desk_01","password":"…"}'  # returns a 30-day bearer token
 ```
+
+The handoff file is created atomically with mode `0600`, is never overwritten,
+and contains the generated password once. Transfer it through an approved
+secret channel, then delete it. Seiche never prints the password to stdout.
 
 ### Metering
 
@@ -206,9 +211,16 @@ webhook (a payment processor: BTCPay, NOWPayments, Stripe, …).
 Operator path, after you see a crypto payment land:
 
 ```bash
-seiche provision --tier pro --email buyer@x.com --ref <txid>
-# prints username + password (once) + a 30-day token; emails them if SMTP is set
+seiche provision --tier pro --email buyer@x.com --ref <txid> \
+  --credentials-file /secure/handoff/<txid>.json
+# stdout identifies the account and file only; it never contains credentials
 ```
+
+The new file is reserved before the account is created, written as mode-`0600`
+JSON, flushed to disk, and never overwrites an existing path. It contains the
+username, one-time password, 30-day bearer token, expiry, and tier. Optional
+SMTP delivery is best-effort; the file is the authoritative handoff and should
+be removed after safe transfer.
 
 Webhook path — enable it by setting a shared secret, then have the processor
 (or a tiny adapter) POST a signed JSON body:
@@ -265,9 +277,10 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche is a free public good funded by grants and voluntary support
-(seiche.info/support), not a subscription product. The codebase also
-carries a dormant [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
+Seiche's eleven evidence tools are a permanent free public good. Five
+compute-heavy tools are separately account-gated to cover operator cost. The
+codebase also carries a dormant
+[x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
 if it is ever enabled, an AI agent with a wallet can voluntarily chip in a
 few cents of USDC per call for the operator-cost tools — support in the
 currency agents hold, not a paywall, and never a condition for the public

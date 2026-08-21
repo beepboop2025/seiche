@@ -472,6 +472,30 @@ def test_endpoint_unknown_stream_404(client, dirs):
     assert client.get("/api/attest/stream/..evil%2F").status_code in (404, 422)
 
 
+def test_endpoint_rejects_unbounded_history_request(client, dirs):
+    assert client.get("/api/attest/stream/s1?n=0").status_code == 422
+    assert client.get("/api/attest/stream/s1?n=1001").status_code == 422
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ("/api/attest/stream/s1", "/api/attest/verify/s1"),
+)
+def test_endpoint_sanitizes_attestation_storage_failures(client, monkeypatch, endpoint):
+    secret = "/Users/operator/private-ledger.jsonl?token=do-not-leak"
+
+    def fail_closed(*_args, **_kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(attest, "read_records", fail_closed)
+    response = client.get(endpoint)
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "attestation record is temporarily unavailable"
+    }
+    assert secret not in response.text
+
+
 def test_endpoint_verify_reports_tamper(client, dirs):
     ledger, att = dirs
     _commit_days(ledger, stream="s1", n=2)

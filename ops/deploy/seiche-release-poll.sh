@@ -27,6 +27,7 @@ SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
 SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
 ALLOWED_SIGNERS="${SEICHE_CONTROL_ALLOWED_SIGNERS:-/etc/seiche-release.allowed-signers}"
 SIGNING_PRINCIPAL="${SEICHE_CONTROL_SIGNING_PRINCIPAL:-beepboop2025@users.noreply.github.com}"
+AUTOMATION_AUTHOR="${SEICHE_CONTROL_AUTOMATION_AUTHOR:-desk@seiche.info}"
 SIGNER_UID="${SEICHE_CONTROL_SIGNER_UID:-0}"
 SIGNER_GID="${SEICHE_CONTROL_SIGNER_GID:-0}"
 SIGNER_MODE="${SEICHE_CONTROL_SIGNER_MODE:-444}"
@@ -51,6 +52,39 @@ valid_sha() {
 
 as_service() {
   "$RUNUSER" -u "$SERVICE_USER" -- "$@"
+}
+
+is_inert_automation_content_commit() {
+  local target="$1" author="" subject="" parents="" changed_files="" changed_path=""
+  author=$(as_service git -C "$APP_DIR" show -s --format=%ae "$target") \
+    || return 1
+  [ "$author" = "$AUTOMATION_AUTHOR" ] || return 1
+  subject=$(as_service git -C "$APP_DIR" show -s --format=%s "$target") \
+    || return 1
+  case "$subject" in
+    "dispatch: "*|"week ahead: "*) ;;
+    *) return 1 ;;
+  esac
+  parents=$(as_service git -C "$APP_DIR" show -s --format=%P "$target") \
+    || return 1
+  # Generated desk commits must be ordinary one-parent commits. Merge commits
+  # never qualify for the inert path even if their visible diff looks narrow.
+  # The split below is an intentional word count over canonical SHA tokens.
+  # shellcheck disable=SC2086
+  set -- $parents
+  [ "$#" -eq 1 ] || return 1
+  changed_files=$(as_service git -C "$APP_DIR" -c core.quotePath=true diff-tree \
+    --no-commit-id --no-renames --name-only -r "${target}^" "$target") \
+    || return 1
+  [ -n "$changed_files" ] || return 1
+  while IFS= read -r changed_path; do
+    [ -n "$changed_path" ] || return 1
+    case "$changed_path" in
+      frontend/public/dispatches/*|frontend/public/articles/*|backend/seiche/dispatches/*) ;;
+      *) return 1 ;;
+    esac
+  done <<<"$changed_files"
+  return 0
 }
 
 validate_allowed_signers() {
@@ -226,6 +260,10 @@ if ! valid_sha "$TARGET" \
     || ! as_service git -C "$APP_DIR" rev-parse --verify --quiet \
       "$TARGET^{commit}" >/dev/null; then
   fail "origin/main is not a canonical local commit"
+fi
+if is_inert_automation_content_commit "$TARGET"; then
+  echo "release poll: content-only desk commit is intentionally inert; production unchanged"
+  exit 0
 fi
 verify_target_signature "$TARGET"
 

@@ -24,6 +24,13 @@ snapshot activation, Caddy deployment, health gates, and rollback.
   installation, tests, receipts, or the deploy wrapper. Branch protection is
   still recommended for review policy, but an unsigned push to an unprotected
   `main` is inert on the production host.
+- Scheduled desk commits are a deliberately narrower non-release class. The
+  poller exits successfully without candidate execution only when the author is
+  exactly `desk@seiche.info`, the subject starts with `dispatch: ` or
+  `week ahead: `, the commit has one parent, and every changed path is under
+  `frontend/public/dispatches/`, `frontend/public/articles/`, or
+  `backend/seiche/dispatches/`. They trigger the static publisher only. Any
+  mixed path or identity falls back to the strict release-signature failure.
 - Never put a source write credential on this box. A read-only deploy key keeps
   a host compromise from becoming a push-to-root loop even though only signed
   commits are eligible for release.
@@ -105,10 +112,10 @@ Do not enable both controllers. Two triggers cannot corrupt the checkout—the
 deploy wrapper has its own lock—but duplicate release attempts obscure which
 control plane owns an incident.
 
-While the hosted `deploy-hetzner` workflow remains the active controller, its
-forced-deploy client retries only wrapper exit `75` for a bounded ten-minute
-window. Each retry remains pinned to the same reviewed SHA and repeats the
-host's admission check. Other SSH or wrapper failures stop immediately, and a
-host that stays busy through the bound leaves production unchanged and the
-workflow red. External route checks run only after both forced-deploy passes
-complete successfully.
+The disabled/manual `deploy-hetzner` fallback retries only wrapper exit `75`
+for an independent, bounded ten-minute window on each of its two passes. Every
+retry remains pinned to the same reviewed SHA and repeats the host's admission
+check. Other SSH or wrapper failures stop immediately, and a host that stays
+busy through either bound leaves production unchanged and the workflow red.
+The workflow's outer timeout still covers both windows and all remote release
+work. External route checks run only after both passes complete successfully.

@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
@@ -150,6 +151,43 @@ app = FastAPI(
     openapi_url=None if _PROD else "/openapi.json",
     lifespan=_lifespan,
 )
+
+
+@app.get("/.well-known/mcp.json", include_in_schema=False)
+def mcp_directory_discovery(response: Response) -> dict[str, Any]:
+    """Publish the same-origin discovery document required by MCPub.
+
+    Domain-level MCP discovery is still evolving, so the canonical machine
+    catalog remains Seiche's AI Catalog. This compatibility document stays
+    deliberately small and points crawlers at the runtime transport rather
+    than duplicating a tool inventory that can drift.
+    """
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return {
+        "version": "1.0",
+        "canonicalCatalog": "https://seiche.info/.well-known/ai-catalog.json",
+        "servers": [
+            {
+                "name": "io.github.beepboop2025/seiche",
+                "title": "Seiche — world-markets evidence terminal",
+                "description": (
+                    "Money, FX and capital-market evidence with source clocks, "
+                    "canonical citations and explicit limits."
+                ),
+                "version": assemble.VERSION,
+                "transport": "streamable-http",
+                "url": "https://api.seiche.info/mcp",
+                "authentication": {
+                    "type": "none",
+                    "scope": "eleven anonymous public evidence tools",
+                },
+                "repository": "https://github.com/beepboop2025/seiche",
+                "documentation": "https://seiche.info/developers",
+                "status": "active",
+            }
+        ],
+    }
 
 # Authentication is header-only. Some external MCP cataloguers append their
 # own credential to every URL they probe; FastAPI otherwise ignores that extra
@@ -1933,6 +1971,66 @@ async def login(body: LoginBody, request: Request):
 
 
 DISPATCH_DIR = Path(__file__).parent / "dispatches"
+_DISPATCH_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
+_DISPATCH_SUFFIXES = (".paid.md", ".desk.md")
+_DISPATCH_MAX_BYTES = 1024 * 1024
+
+
+def _available_dispatch_continuations() -> dict[str, Path]:
+    """Enumerate trusted continuation files without using request text in paths."""
+    try:
+        root = DISPATCH_DIR.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return {}
+    if not root.is_dir():
+        return {}
+
+    available: dict[str, Path] = {}
+    try:
+        entries = tuple(root.iterdir())
+    except OSError:
+        return {}
+    # Historical `.paid.md` files remain readable, but a current `.desk.md`
+    # file wins deterministically when both names exist for the same slug.
+    for suffix in _DISPATCH_SUFFIXES:
+        for candidate in entries:
+            if not candidate.name.endswith(suffix):
+                continue
+            slug = candidate.name[: -len(suffix)]
+            if _DISPATCH_SLUG_RE.fullmatch(slug) is None or candidate.is_symlink():
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if resolved.parent == root and resolved.is_file():
+                available[slug] = resolved
+    return available
+
+
+def _read_dispatch_continuation(candidate: Path) -> str:
+    """Read one enumerated regular file with no symlink following or huge body."""
+    descriptor = -1
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(candidate, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _DISPATCH_MAX_BYTES:
+            raise HTTPException(503, "dispatch continuation is unavailable")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            body = stream.read(_DISPATCH_MAX_BYTES + 1)
+        if len(body) > _DISPATCH_MAX_BYTES:
+            raise HTTPException(503, "dispatch continuation is unavailable")
+        return body.decode("utf-8")
+    except HTTPException:
+        raise
+    except (OSError, UnicodeError):
+        logging.getLogger("seiche.api").exception("dispatch continuation read failed")
+        raise HTTPException(503, "dispatch continuation is unavailable") from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 @app.get("/api/dispatch/{slug}")
@@ -1942,14 +2040,12 @@ async def dispatch_full(slug: str):
     on the box still carries the pre-open-access `.paid.md` name, so both are
     served. The `paid` response key is historical and kept because deployed
     frontends read it."""
-    if not re.match(r"^[a-z0-9][a-z0-9-]{0,80}$", slug):
+    if _DISPATCH_SLUG_RE.fullmatch(slug) is None:
         raise HTTPException(422, "bad slug")
-    path = DISPATCH_DIR / f"{slug}.desk.md"
-    if not path.exists():
-        path = DISPATCH_DIR / f"{slug}.paid.md"
-    if not path.exists():
+    candidate = _available_dispatch_continuations().get(slug)
+    if candidate is None:
         raise HTTPException(404, "no continuation for this dispatch")
-    return {"slug": slug, "paid": path.read_text()}
+    return {"slug": slug, "paid": _read_dispatch_continuation(candidate)}
 
 
 # ---- The Week Ahead list ----------------------------------------------------
@@ -2545,48 +2641,58 @@ async def attest_stream(stream: str, n: int = 400):
     anchor status. Never payloads."""
     from seiche import attest
 
-    if not attest._STREAM_RE.match(stream):
+    if attest._STREAM_RE.fullmatch(stream) is None:
         raise HTTPException(422, "invalid stream name")
-    records = attest.read_records(stream)
-    if not records:
-        raise HTTPException(404, f"no committed records on stream '{stream}'")
-    sigs = {s["record_hash"]: s for s in attest.read_signatures(stream)}
-    anchors: dict[str, dict] = {}
-    for a in attest.read_anchors(stream):  # later lines (upgrades) win
-        anchors[a["day"]] = a
-    days = []
-    for rec in records[-n:]:
-        s = sigs.get(rec["hash"])
-        a = anchors.get(rec["day"])
-        days.append(
-            {
-                "day": rec["day"],
-                "record_hash": rec["hash"],
-                "prev_hash": rec["prev_hash"],
-                "signature": {
-                    "sig": s["sig"],
-                    "public_key": s["public_key"],
-                    "algo": s["algo"],
-                    "signed_at": s["signed_at"],
+    if n < 1 or n > 1000:
+        raise HTTPException(422, "n must be between 1 and 1000")
+    try:
+        records = attest.read_records(stream)
+        if not records:
+            raise HTTPException(404, f"no committed records on stream '{stream}'")
+        sigs = {s["record_hash"]: s for s in attest.read_signatures(stream)}
+        anchors: dict[str, dict] = {}
+        for anchor in attest.read_anchors(stream):  # later lines (upgrades) win
+            anchors[anchor["day"]] = anchor
+        days = []
+        for record in records[-n:]:
+            signature = sigs.get(record["hash"])
+            anchor = anchors.get(record["day"])
+            days.append(
+                {
+                    "day": record["day"],
+                    "record_hash": record["hash"],
+                    "prev_hash": record["prev_hash"],
+                    "signature": {
+                        "sig": signature["sig"],
+                        "public_key": signature["public_key"],
+                        "algo": signature["algo"],
+                        "signed_at": signature["signed_at"],
+                    }
+                    if signature
+                    else None,
+                    "anchor": {
+                        "status": anchor["status"],
+                        "calendar": anchor.get("calendar"),
+                        "bitcoin_height": anchor.get("bitcoin_height"),
+                        "submitted_at": anchor.get("submitted_at"),
+                    }
+                    if anchor
+                    else None,
                 }
-                if s
-                else None,
-                "anchor": {
-                    "status": a["status"],
-                    "calendar": a.get("calendar"),
-                    "bitcoin_height": a.get("bitcoin_height"),
-                    "submitted_at": a.get("submitted_at"),
-                }
-                if a
-                else None,
-            }
+            )
+        return {
+            "stream": stream,
+            "n_records": len(records),
+            "verification": attest.verify_stream(stream),
+            "days": days,
+        }
+    except HTTPException:
+        raise
+    except Exception:  # Public boundary must sanitize storage faults.
+        logging.getLogger("seiche.api").exception(
+            "attestation stream read failed for %s", stream
         )
-    return {
-        "stream": stream,
-        "n_records": len(records),
-        "verification": attest.verify_stream(stream),
-        "days": days,
-    }
+        raise HTTPException(503, "attestation record is temporarily unavailable") from None
 
 
 @app.get("/api/attest/verify/{stream}")
@@ -2595,11 +2701,19 @@ async def attest_verify(stream: str):
     hashes, signatures, anchors)."""
     from seiche import attest
 
-    if not attest._STREAM_RE.match(stream):
+    if attest._STREAM_RE.fullmatch(stream) is None:
         raise HTTPException(422, "invalid stream name")
-    if not attest.read_records(stream):
-        raise HTTPException(404, f"no committed records on stream '{stream}'")
-    return attest.verify_stream(stream)
+    try:
+        if not attest.read_records(stream):
+            raise HTTPException(404, f"no committed records on stream '{stream}'")
+        return attest.verify_stream(stream)
+    except HTTPException:
+        raise
+    except Exception:  # Public boundary must sanitize storage faults.
+        logging.getLogger("seiche.api").exception(
+            "attestation verification failed for %s", stream
+        )
+        raise HTTPException(503, "attestation record is temporarily unavailable") from None
 
 
 # ---- MCP over HTTP ----------------------------------------------------------

@@ -92,6 +92,22 @@ def test_dispatch_continuation_is_open(accounts, tmp_path, monkeypatch):
     r = client.get("/api/dispatch/old-slug")
     assert r.status_code == 200 and "legacy continuation" in r.json()["paid"]
 
+    # Current naming wins deterministically when both generations exist.
+    (tmp_path / "same-slug.paid.md").write_text("legacy body")
+    (tmp_path / "same-slug.desk.md").write_text("current body")
+    assert client.get("/api/dispatch/same-slug").json()["paid"] == "current body"
+
+    # Enumerating trusted regular files keeps a valid request slug from
+    # selecting a symlink or an oversized automated-publishing artifact.
+    outside = tmp_path.parent / "outside-dispatch.md"
+    outside.write_text("must never be served")
+    (tmp_path / "escaped-slug.desk.md").symlink_to(outside)
+    assert client.get("/api/dispatch/escaped-slug").status_code == 404
+    (tmp_path / "huge-slug.desk.md").write_bytes(
+        b"x" * (api_mod._DISPATCH_MAX_BYTES + 1)
+    )
+    assert client.get("/api/dispatch/huge-slug").status_code == 503
+
     # bad slugs still rejected, missing continuations still 404
     assert client.get("/api/dispatch/NOT%20a%20slug").status_code in (404, 422)
     assert client.get("/api/dispatch/absent-slug").status_code == 404

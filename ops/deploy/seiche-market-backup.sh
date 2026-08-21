@@ -18,6 +18,7 @@ PSQL_BIN="${SEICHE_PSQL_BIN:-psql}"
 PG_DUMP_BIN="${SEICHE_PG_DUMP_BIN:-pg_dump}"
 PG_RESTORE_BIN="${SEICHE_PG_RESTORE_BIN:-pg_restore}"
 TAR_BIN="${SEICHE_TAR_BIN:-tar}"
+CP_BIN="${SEICHE_CP_BIN:-cp}"
 SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
@@ -128,7 +129,11 @@ STATE_NAME=$(basename "$STATE_DIR")
 # WAL independently can produce a snapshot which only fails during a disaster.
 API_STAGE="$STAGE/api-data"
 mkdir -m 0700 "$API_STAGE"
-cp -a -- "$API_DATA_DIR/." "$API_STAGE/"
+# This is a content snapshot, not an ownership migration. The hardened backup
+# service intentionally has no CAP_CHOWN, so archive-preserving copies fail
+# when the live tree contains files owned by more than one service user. The
+# restore path already extracts with --no-same-owner/--no-same-permissions.
+"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"
 rm -f -- "$API_STAGE/seiche.sqlite" \
     "$API_STAGE/seiche.sqlite-wal" "$API_STAGE/seiche.sqlite-shm"
 [ -f "$API_DATA_DIR/seiche.sqlite" ] && [ ! -L "$API_DATA_DIR/seiche.sqlite" ] \

@@ -1,15 +1,13 @@
 """The selection surface must stay crawlable, honest and machine-readable."""
 
-from pathlib import Path
 import json
+from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
-
 from seiche import dispatch_pages
-
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC = ROOT / "frontend" / "public"
@@ -25,6 +23,8 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
     assert card["access"]["openapi"] == "https://api.seiche.info/api/openapi.json"
     assert card["access"]["ai_catalog"] == (
         "https://seiche.info/.well-known/ai-catalog.json")
+    assert card["access"]["mcp_discovery"] == (
+        "https://api.seiche.info/.well-known/mcp.json")
     assert card["evidence"]["status_source"] == (
         "https://api.seiche.info/api/health")
     assert card["evidence"]["public_scoreboard"] == (
@@ -61,6 +61,10 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
     assert len(mcp["capabilities"]) == 11
+    assert mcp["metadata"]["schemaProfile"] == (
+        "MCP Registry 2025-12-11 server metadata"
+    )
+    assert mcp["metadata"]["experimentalServerCardConformance"] is False
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]

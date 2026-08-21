@@ -734,26 +734,93 @@ def cmd_mcp(args) -> int:
     return mcp_server.serve_stdio()
 
 
+def _reserve_credentials_file(value: str) -> tuple[Path, int]:
+    """Atomically reserve a new mode-0600 file for a one-time secret handoff."""
+    if not value or not value.strip():
+        raise ValueError("--credentials-file must name a new file")
+    requested = Path(value).expanduser()
+    if requested.name in {"", ".", ".."}:
+        raise ValueError("--credentials-file must name a file, not a directory")
+    parent = requested.parent.resolve(strict=True)
+    if not parent.is_dir():
+        raise ValueError("--credentials-file parent must be an existing directory")
+    destination = parent / requested.name
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(destination, flags, 0o600)
+    os.fchmod(descriptor, 0o600)
+    return destination, descriptor
+
+
+def _discard_reserved_credentials(destination: Path, descriptor: int) -> None:
+    """Remove only the empty file this process atomically reserved."""
+    if descriptor >= 0:
+        os.close(descriptor)
+    try:
+        destination.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _write_reserved_credentials(descriptor: int, payload: dict) -> None:
+    """Consume a reserved descriptor and durably write its JSON handoff."""
+    body = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(body)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def cmd_provision(args) -> int:
     """Turn a confirmed payment into a subscriber account + token (operator
     path — the manual counterpart to the /api/provision webhook)."""
     from seiche import provisioning
+
+    try:
+        destination, descriptor = _reserve_credentials_file(args.credentials_file)
+    except (OSError, ValueError) as exc:
+        print(f"{RED}cannot reserve credentials file: {exc}{END}", file=sys.stderr)
+        return 1
     try:
         res = provisioning.provision(args.tier, email=args.email,
                                      username=args.username, payment_ref=args.ref)
     except provisioning.ProvisionError as e:
+        _discard_reserved_credentials(destination, descriptor)
         print(f"{RED}{e}{END}", file=sys.stderr)
         return 1
+    except BaseException:
+        _discard_reserved_credentials(destination, descriptor)
+        raise
     if res.get("already"):
+        _discard_reserved_credentials(destination, descriptor)
         print(f"{YEL}already provisioned{END} for that reference — "
               f"user '{res['username']}' ({res['tier']})")
         return 0
+    handoff = {
+        "password": res["password"],
+        "tier": res["tier"],
+        "token": res["token"],
+        "token_expires_utc": res["token_expires_utc"],
+        "username": res["username"],
+    }
+    descriptor_to_write, descriptor = descriptor, -1
+    try:
+        _write_reserved_credentials(descriptor_to_write, handoff)
+    except OSError as exc:
+        print(
+            f"{RED}account was provisioned but the credential handoff failed: {exc}; "
+            f"inspect the mode-0600 file at {str(destination)!r}{END}",
+            file=sys.stderr,
+        )
+        return 1
     print(f"provisioned '{res['username']}' ({res['tier']})")
-    print(f"password (shown ONCE, share over a safe channel): {res['password']}")
-    print(f"token (30d bearer): {res['token']}")
+    print(f"credentials written once to {str(destination)!r} (mode 0600)")
     if args.email:
-        print(f"{DIM}credentials emailed to {args.email} (if SMTP configured){END}",
-              file=sys.stderr)
+        print(
+            f"{DIM}email delivery was also attempted if SMTP is configured; "
+            f"the credential file is authoritative{END}",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -787,18 +854,56 @@ def cmd_notary(args) -> int:
     return 0
 
 
-def cmd_user(args) -> None:
+def cmd_user(args) -> int:
     from seiche import accounts
 
     if args.action == "add":
         import secrets as _secrets
+
+        generated = not args.password
+        credentials_file = getattr(args, "credentials_file", "")
+        if generated and not credentials_file:
+            print(
+                f"{RED}auto-generated passwords require --credentials-file{END}",
+                file=sys.stderr,
+            )
+            return 2
+        destination: Path | None = None
+        descriptor = -1
+        if credentials_file:
+            try:
+                destination, descriptor = _reserve_credentials_file(credentials_file)
+            except (OSError, ValueError) as exc:
+                print(f"{RED}cannot reserve credentials file: {exc}{END}", file=sys.stderr)
+                return 1
         password = args.password or _secrets.token_urlsafe(14)
-        accounts.add_user(args.username, password, tier=args.tier)
+        try:
+            accounts.add_user(args.username, password, tier=args.tier)
+        except Exception:
+            if destination is not None:
+                _discard_reserved_credentials(destination, descriptor)
+            raise
+        if destination is not None:
+            descriptor_to_write, descriptor = descriptor, -1
+            try:
+                _write_reserved_credentials(
+                    descriptor_to_write,
+                    {"password": password, "tier": args.tier, "username": args.username},
+                )
+            except OSError as exc:
+                print(
+                    f"{RED}user was provisioned but the credential handoff failed: {exc}; "
+                    f"inspect the mode-0600 file at {str(destination)!r}{END}",
+                    file=sys.stderr,
+                )
+                return 1
         print(f"user '{args.username}' ({args.tier}) provisioned")
-        print(f"password (shown ONCE, share over a safe channel): {password}")
+        if destination is not None:
+            print(f"credentials written once to {str(destination)!r} (mode 0600)")
     elif args.action == "list":
         for u in accounts.list_users():
             print(f"{u['username']:24s} {u['tier']}")
+    return 0
 
 
 def _market_ids(args) -> frozenset[str] | None:
@@ -1055,6 +1160,11 @@ def main() -> None:
     p.add_argument("username", nargs="?", default="")
     p.add_argument("--tier", default="pro")
     p.add_argument("--password", default="", help="omit to auto-generate")
+    p.add_argument(
+        "--credentials-file",
+        default="",
+        help="new mode-0600 JSON handoff file (required for generated passwords)",
+    )
     p.set_defaults(fn=cmd_user)
 
     sub.add_parser("ml", help="ML Lab: event probability + validation").set_defaults(fn=cmd_ml)
@@ -1093,6 +1203,11 @@ def main() -> None:
     p.add_argument("--email", default="", help="deliver credentials here (needs SMTP)")
     p.add_argument("--username", default="", help="omit to auto-generate")
     p.add_argument("--ref", default="", help="payment reference (txid/invoice) for idempotency")
+    p.add_argument(
+        "--credentials-file",
+        required=True,
+        help="new mode-0600 JSON handoff file; existing paths are never overwritten",
+    )
     p.set_defaults(fn=cmd_provision)
 
     p = sub.add_parser("market-collect", help="run official market collectors once")

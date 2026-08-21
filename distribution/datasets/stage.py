@@ -20,11 +20,16 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 KIT_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = KIT_ROOT.parents[1]
 DATA_COMMONS_ROOT = REPO_ROOT / "integrations" / "datacommons"
 OBSERVATION_ROOT = DATA_COMMONS_ROOT / "input" / "observations"
 NOTEBOOK = REPO_ROOT / "notebooks" / "seiche_direct_ofr_research.ipynb"
+SOFTWARE_VERSION = tomllib.loads(
+    (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
+)["project"]["version"]
 
 EXPECTED_FIELDS = (
     "entity",
@@ -47,6 +52,10 @@ RAW_PREFIX = (
 PINNED_SOURCE_TREE = (
     "https://github.com/beepboop2025/seiche/tree/"
     f"{EXPECTED_COMMIT}/integrations/datacommons"
+)
+METADATA_PUBLICATION_TREE = (
+    "https://github.com/beepboop2025/seiche/tree/"
+    f"v{SOFTWARE_VERSION}/distribution/datasets"
 )
 
 REPO_VARIABLES = frozenset(
@@ -229,6 +238,14 @@ def _validate_metadata() -> None:
     _require(manifest.get("publication_status") == "draft_not_submitted", "kit is not marked draft/not submitted")
     _require(manifest.get("doi") is None, "kit manifest unexpectedly has a DOI")
     _require(manifest.get("version") == DATASET_VERSION, "kit semantic version changed")
+    _require(
+        manifest.get("provenance")
+        == {
+            "metadata_publication": METADATA_PUBLICATION_TREE,
+            "source_revision": PINNED_SOURCE_TREE,
+        },
+        "kit source/publication provenance changed",
+    )
     _require(manifest.get("record_count") == EXPECTED_TOTAL_ROWS, "kit total row receipt changed")
     _require(manifest.get("series_count") == EXPECTED_TOTAL_SERIES, "kit series receipt changed")
     _require(set(manifest.get("series", [])) == EXPECTED_VARIABLES, "kit variable allowlist changed")
@@ -268,14 +285,17 @@ def _validate_metadata() -> None:
     )
     cite_as = str(croissant.get("citeAs", ""))
     _require(cite_as.startswith("@misc{seiche_direct_ofr_2026,"), "Croissant citation changed")
-    _require(EXPECTED_COMMIT in cite_as, "Croissant citation is not commit-pinned")
     _require(
-        croissant.get("url") == PINNED_SOURCE_TREE,
-        "Croissant landing page is not the audited source tree",
+        croissant.get("url") == METADATA_PUBLICATION_TREE,
+        "Croissant landing page is not the versioned metadata publication",
     )
     _require(
-        f"url={{{PINNED_SOURCE_TREE}}}" in cite_as,
-        "Croissant citation does not resolve to the audited source tree",
+        f"url={{{METADATA_PUBLICATION_TREE}}}" in cite_as,
+        "Croissant citation does not resolve to the versioned metadata publication",
+    )
+    _require(
+        croissant.get("seiche:sourceRevision") == PINNED_SOURCE_TREE,
+        "Croissant source revision is not commit-pinned",
     )
     context = croissant.get("@context")
     _require(isinstance(context, dict), "Croissant context must be an inline object")
@@ -307,6 +327,10 @@ def _validate_metadata() -> None:
     _require(package.get("profile") == "data-package", "Frictionless profile changed")
     _require(package.get("publication_status") == "draft_not_submitted", "Frictionless draft marker missing")
     _require(package.get("version") == DATASET_VERSION, "Frictionless semantic version changed")
+    _require(
+        package.get("homepage") == METADATA_PUBLICATION_TREE,
+        "Frictionless homepage is not version-pinned",
+    )
     package_roles = {
         (item.get("title"), item.get("role"))
         for item in package.get("contributors", [])
@@ -334,6 +358,11 @@ def _validate_metadata() -> None:
     _require(
         dcat_dataset.get("dct:creator") == {"@id": "https://seiche.info/#organization"},
         "DCAT curator changed",
+    )
+    _require(
+        dcat_dataset.get("dcat:landingPage") == {"@id": METADATA_PUBLICATION_TREE}
+        and dcat_dataset.get("seiche:sourceRevision") == {"@id": PINNED_SOURCE_TREE},
+        "DCAT source/publication provenance changed",
     )
     dcat_sources = {item.get("@id") for item in dcat_dataset.get("dct:source", [])}
     _require(
@@ -383,6 +412,7 @@ def _validate_metadata() -> None:
     root = roots[0]
     _require(root.get("datePublished") == "2026-08-21", "RO-Crate publication date changed")
     _require(root.get("version") == DATASET_VERSION, "RO-Crate semantic version changed")
+    _require(root.get("url") == METADATA_PUBLICATION_TREE, "RO-Crate URL is not version-pinned")
     _require("identifier" not in root, "RO-Crate draft must not claim a persistent identifier")
     _require(root.get("creator") == {"@id": "https://seiche.info/#organization"}, "RO-Crate curator changed")
     based_on = {item.get("@id") for item in root.get("isBasedOn", [])}
@@ -427,6 +457,15 @@ def _validate_metadata() -> None:
         }
         == {("Office of Financial Research", "Producer")},
         "DataCite source producer attribution changed",
+    )
+    datacite_relations = {
+        (item.get("relatedIdentifier"), item.get("relationType"))
+        for item in datacite.get("relatedIdentifiers", [])
+    }
+    _require(
+        (PINNED_SOURCE_TREE, "IsDerivedFrom") in datacite_relations
+        and (METADATA_PUBLICATION_TREE, "IsSupplementTo") in datacite_relations,
+        "DataCite source/publication provenance changed",
     )
 
     card = (KIT_ROOT / "huggingface" / "README.md").read_text(encoding="utf-8")
