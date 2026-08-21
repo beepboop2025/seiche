@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import html
+import importlib.util
 import json
 import re
 import sys

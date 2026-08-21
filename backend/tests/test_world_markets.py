@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
-
 from seiche import api
 from seiche import mcp_server as mcp
 from seiche.markets.world import (

@@ -159,12 +159,15 @@ live traded benchmark).
 
 - **`GET /api/v2/world-markets`** returns the versioned
   `seiche.world-markets.v1` projection of an already completed snapshot. It
-  connects money-market funding, the 22-currency FX reference ledger, three
-  trade-weighted dollar indexes, and capital-market transmission through
-  Treasury, credit, volatility, dealer, positioning and commodity evidence.
-  Every section carries canonical citation URLs plus `observed`, `derived`,
-  `structural`, `restricted` or `unavailable` status. The request never starts
-  collection, scans historical repositories or fits a model.
+  connects money-market funding, 22 official daily FX reference series, three
+  trade-weighted dollar indexes, and a bounded macro-capital transmission view
+  through selected Treasury, credit, volatility, dealer, positioning and
+  commodity evidence. The response carries canonical citation URLs, separate
+  generation/evidence clocks, and `observed`, `derived`, `structural`,
+  `restricted` or `unavailable` status. Add `?section=forex` (or `summary`,
+  `money_markets`, `capital_markets`, `sources`, `methodology`, `all`) for a
+  smaller projection. The request never starts collection, scans historical
+  repositories or fits a model.
 - Crawlable citation pages live at **[`/markets/`](https://seiche.info/markets/)**,
   **[`/markets/forex/`](https://seiche.info/markets/forex/)** and
   **[`/markets/capital-markets/`](https://seiche.info/markets/capital-markets/)**.
