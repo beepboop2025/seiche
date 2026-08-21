@@ -1,28 +1,82 @@
 # Seiche
 
-Money-, foreign-exchange and capital-market evidence intelligence, with deepest
-live competence in US dollar funding. Seiche joins free/keyless public data from
-the Fed, NY Fed, OFR, Treasury, CFTC and other official sources into an 11-pack
-money-market atlas, 22 H.10 currency reference series and a bounded
-capital-market transmission layer. Source clocks, rights, explicit gaps and
-construction-PIT eligibility flags travel with every output.
+[![PyPI](https://img.shields.io/pypi/v/seiche)](https://pypi.org/project/seiche/)
+[![Python](https://img.shields.io/pypi/pyversions/seiche)](https://pypi.org/project/seiche/)
+[![MCP Registry](https://img.shields.io/badge/MCP-registry-6f42c1)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.beepboop2025%2Fseiche)
+[![AGPL-3.0-or-later](https://img.shields.io/badge/code-AGPL--3.0--or--later-blue)](https://github.com/beepboop2025/seiche/blob/main/LICENSE)
 
-Full project, the terminal UI, and deployment: https://github.com/beepboop2025/seiche
-Live: https://seiche.info
+Seiche is an open-source money-, foreign-exchange, and capital-market evidence
+terminal, with its deepest live coverage in US-dollar funding. It joins public
+and official sources from the Federal Reserve, New York Fed, OFR, US Treasury,
+CFTC, and other authorities into a source-clocked research surface.
 
-## As an agent tool (MCP)
+Every output keeps its as-of date, provenance, evidence status, known gaps, and
+point-in-time eligibility attached. Seiche is a research and evidence tool—not
+a real-time quote service, execution venue, or investment adviser.
 
-Seiche is a Model Context Protocol server. Any MCP-capable agent can read the
-live board as tools — the current stress regime, forward event odds, historical
-analogs, the status-bound historical diagnostic, and a chartless world-markets
-context spanning money, forex and capital markets.
+- Live terminal: [seiche.info](https://seiche.info)
+- Developer guide and tool runner: [seiche.info/developers](https://seiche.info/developers)
+- Source and full documentation: [github.com/beepboop2025/seiche](https://github.com/beepboop2025/seiche)
+- Hosted MCP server: `https://api.seiche.info/mcp`
+
+## Install and run
+
+Seiche requires Python 3.12 or newer.
 
 ```bash
-pip install seiche
-seiche-mcp                 # stdio MCP server
+python3.12 -m venv .venv
+.venv/bin/pip install seiche
+.venv/bin/seiche pull
+.venv/bin/seiche brief
 ```
 
-Or connect to the hosted, metered endpoint at `https://api.seiche.info/mcp`.
-See [docs/MCP.md](https://github.com/beepboop2025/seiche/blob/main/docs/MCP.md).
+Start the local REST API and terminal UI with:
 
-mcp-name: io.github.beepboop2025/seiche
+```bash
+.venv/bin/seiche serve
+```
+
+The first pull can be slower while the local cadence-aware cache is populated.
+Subsequent reads reuse that cache and continue to expose stale or unavailable
+inputs explicitly instead of silently dropping them.
+
+## Use Seiche from an AI agent
+
+Seiche is a [Model Context Protocol](https://modelcontextprotocol.io) server.
+Run it locally over stdio:
+
+```bash
+SEICHE_MCP_PUBLIC=1 .venv/bin/seiche-mcp
+```
+
+Or connect an MCP-capable client directly to the public Streamable HTTP server:
+
+```text
+https://api.seiche.info/mcp
+```
+
+Eleven evidence/context tools are anonymous: the current funding-stress read,
+historical analogs, public backtest, data health, crypto record, institutional
+flows, oil/funding, FX/materials, US money markets, world markets, and the latest
+article. Five higher-cost forecast, replay, positioning, prose, and LLM tools
+require an account and are omitted from anonymous `tools/list` responses.
+
+The canonical registry identifier is:
+
+```text
+io.github.beepboop2025/seiche
+```
+
+See the [MCP integration guide](https://github.com/beepboop2025/seiche/blob/main/docs/MCP.md)
+for Claude, Codex, Cursor, VS Code, and raw JSON-RPC examples.
+
+## Data and licensing boundary
+
+The source code is licensed under AGPL-3.0-or-later. Upstream data keeps its own
+terms: Seiche's software license does not grant redistribution rights over data
+from third parties. Public outputs distinguish redistributable observations,
+bounded derived context, metadata-only sources, restricted inputs, and declared
+gaps. Review the source citation and rights fields before republishing data.
+
+For research citation, use the repository's `CITATION.cff`; for defects or data
+questions, open a [GitHub issue](https://github.com/beepboop2025/seiche/issues).

@@ -1,0 +1,70 @@
+name: Data quality or provenance report
+description: Report stale, missing, mislabelled, or incorrectly transformed public evidence.
+title: "data: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Seiche treats missing and stale evidence as first-class states. Please include the source clock and canonical public URL so the exact published observation can be reconstructed.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I checked the source's native publication cadence and known revision policy.
+          required: true
+        - label: This report does not reproduce restricted or licensed raw data.
+          required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: Problem type
+      options:
+        - Stale evidence clock
+        - Missing observation
+        - Incorrect value or unit
+        - Incorrect source or citation
+        - Revision or point-in-time mismatch
+        - Rights or redistribution concern
+        - Derived status or conclusion mismatch
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: seiche_url
+    attributes:
+      label: Seiche URL or tool
+      description: Public page/API URL, MCP tool name, or CLI command.
+    validations:
+      required: true
+  - type: input
+    id: evidence_time
+    attributes:
+      label: Published evidence time
+      description: Include timezone and the source timestamp shown by Seiche.
+    validations:
+      required: true
+  - type: input
+    id: source_url
+    attributes:
+      label: Canonical source URL
+      description: Prefer the official publisher rather than a screenshot or aggregator.
+    validations:
+      required: true
+  - type: textarea
+    id: discrepancy
+    attributes:
+      label: Discrepancy
+      description: Explain the observed output, expected output, units, and why they differ.
+    validations:
+      required: true
+  - type: textarea
+    id: rights
+    attributes:
+      label: Access and rights notes
+      description: Describe authentication, licensing, redistribution, or derived-only constraints relevant to the report.
+  - type: textarea
+    id: reconstruction
+    attributes:
+      label: Reproduction or calculation
+      description: Provide a minimal rights-safe reconstruction, including transformation details when applicable.

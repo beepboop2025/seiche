@@ -4,6 +4,35 @@ version = "0.10.1"
 description = "Funding-stress and leveraged-positioning research terminal with public, credentialed-official, licensed, and fail-closed market-data boundaries."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
+authors = [
+    { name = "Mrinal", email = "beepboop2025@users.noreply.github.com" },
+]
+maintainers = [
+    { name = "Seiche maintainers", email = "beepboop2025@users.noreply.github.com" },
+]
+keywords = [
+    "capital-markets",
+    "financial-data",
+    "funding-liquidity",
+    "mcp",
+    "model-context-protocol",
+    "money-markets",
+    "open-data",
+    "research",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 # 3.12+ only: the MCP bridge calls the async assembler via asyncio.run() per
 # call, and on 3.10/3.11 the module-level asyncio.Lock in assemble.py raises
 # "bound to a different event loop" across loops. 3.12 relaxed that binding;
@@ -49,6 +78,14 @@ postgres = ["psycopg[binary]>=3.2"]  # canonical observation metadata + sealed s
 [project.scripts]
 seiche = "seiche.cli:main"
 seiche-mcp = "seiche.mcp_server:main"
+
+[project.urls]
+Homepage = "https://seiche.info"
+Documentation = "https://seiche.info/developers"
+Source = "https://github.com/beepboop2025/seiche"
+Issues = "https://github.com/beepboop2025/seiche/issues"
+Changelog = "https://github.com/beepboop2025/seiche/blob/main/CHANGELOG.md"
+"MCP server" = "https://api.seiche.info/mcp"
 
 [build-system]
 requires = ["setuptools>=68"]

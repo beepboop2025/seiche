@@ -1,0 +1,42 @@
+{
+  "@context": "https://w3id.org/codemeta/3.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Seiche: World-markets evidence terminal",
+  "description": "Money, FX and capital-market evidence with source clocks, canonical citations and explicit limits. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
+  "version": "0.10.1",
+  "datePublished": "2026-08-22",
+  "codeRepository": "https://github.com/beepboop2025/seiche",
+  "issueTracker": "https://github.com/beepboop2025/seiche/issues",
+  "url": "https://seiche.info",
+  "downloadUrl": "https://pypi.org/project/seiche/0.10.1/",
+  "license": "https://spdx.org/licenses/AGPL-3.0-or-later.html",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "Mrinal",
+      "url": "https://github.com/beepboop2025"
+    }
+  ],
+  "programmingLanguage": [
+    "Python",
+    "TypeScript",
+    "JavaScript",
+    "R"
+  ],
+  "runtimePlatform": "Python 3.12 or later",
+  "applicationCategory": "ResearchApplication",
+  "developmentStatus": "active",
+  "isAccessibleForFree": true,
+  "keywords": [
+    "data catalogs",
+    "financial research",
+    "funding stress",
+    "foreign exchange",
+    "Model Context Protocol",
+    "money markets",
+    "OpenBB",
+    "point-in-time data",
+    "research datasets",
+    "research software"
+  ]
+}

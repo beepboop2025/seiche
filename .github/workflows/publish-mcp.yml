@@ -1,14 +1,13 @@
 name: publish-mcp
 
-# Publish the PyPI package and the MCP registry listing when a GitHub release is
-# cut (or run manually). Skips cleanly until its secret exists, like the other
-# workflows here.
+# A GitHub Release is downstream of PyPI's tag-triggered trusted publication.
+# PyPI versions are immutable, so this workflow verifies the existing wheel and
+# source archive against the release checkout before publishing the MCP record.
+# It never attempts to upload the same package version a second time.
 #
-# Needs one repo secret for the PyPI step (Settings -> Secrets -> Actions):
-#   PYPI_API_TOKEN   a PyPI token scoped to the `seiche` project
 # The MCP registry job authenticates with its own OIDC token (id-token: write,
-# granted to that job only, so the PyPI job never holds it) against the
-# io.github.beepboop2025/* namespace, no secret involved.
+# granted to that job only) against the io.github.beepboop2025/* namespace. No
+# long-lived publishing secret is involved.
 #
 # The publisher binary is version-pinned and sha256-verified, same pattern as
 # registry-publish.yml: the registry job holds an OIDC id-token, so executing
@@ -26,34 +25,246 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable SSH-signed release tag, for example v0.11.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  pypi:
+  verify-pypi:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: actions/setup-python@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - name: Build and upload to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Bind and verify the annotated SSH-signed release
+        id: release
         run: |
-          if [ -z "$TWINE_PASSWORD" ]; then
-            echo "::notice::PYPI_API_TOKEN not set — skipping PyPI upload."
-            exit 0
-          fi
-          python -m pip install --quiet build twine
-          python -m build backend
-          python -m twine upload backend/dist/*
+          version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          release_sha="$(git rev-parse HEAD)"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify immutable PyPI artifacts against this checkout
+        env:
+          EXPECTED_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import io
+          import json
+          import os
+          import re
+          import tarfile
+          import tomllib
+          import urllib.parse
+          import urllib.request
+          import zipfile
+          from email.parser import BytesParser
+          from email.policy import default
+          from pathlib import Path, PurePosixPath
+
+          root = Path.cwd()
+          project = tomllib.loads((root / "backend/pyproject.toml").read_text())["project"]
+          name = project["name"]
+          version = project["version"]
+          license_expression = project["license"]
+          requires_python = project["requires-python"]
+          release_tag = os.environ.get("EXPECTED_RELEASE_TAG", "").strip()
+          if release_tag and release_tag != f"v{version}":
+              raise SystemExit(
+                  f"GitHub Release tag {release_tag!r} does not match package v{version}"
+              )
+
+          normalized_name = re.sub(r"[-_.]+", "-", name).lower()
+          api_url = (
+              "https://pypi.org/pypi/"
+              f"{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json"
+          )
+          request = urllib.request.Request(
+              api_url,
+              headers={
+                  "Accept": "application/json",
+                  "User-Agent": "seiche-release-verifier/1",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              if response.status != 200:
+                  raise SystemExit(f"PyPI returned HTTP {response.status}")
+              release = json.load(response)
+
+          info = release.get("info", {})
+          if re.sub(r"[-_.]+", "-", str(info.get("name", ""))).lower() != normalized_name:
+              raise SystemExit("PyPI project name does not match the checkout")
+          if info.get("version") != version:
+              raise SystemExit("PyPI version does not match the checkout")
+
+          files = release.get("urls")
+          if not isinstance(files, list) or len(files) != 2:
+              raise SystemExit("expected exactly one PyPI wheel and one source archive")
+          by_type = {entry.get("packagetype"): entry for entry in files}
+          if set(by_type) != {"bdist_wheel", "sdist"}:
+              raise SystemExit("PyPI release does not contain the required wheel and sdist")
+
+          payloads: dict[str, tuple[str, bytes]] = {}
+          maximum_artifact_bytes = 50 * 1024 * 1024
+          for package_type, entry in sorted(by_type.items()):
+              if entry.get("yanked") is not False:
+                  raise SystemExit(f"{package_type} is yanked or has no yanked status")
+              filename = entry.get("filename")
+              artifact_url = entry.get("url")
+              digest = entry.get("digests", {}).get("sha256")
+              size = entry.get("size")
+              if not isinstance(filename, str) or PurePosixPath(filename).name != filename:
+                  raise SystemExit(f"unsafe PyPI filename: {filename!r}")
+              if not isinstance(artifact_url, str) or not artifact_url.startswith(
+                  "https://files.pythonhosted.org/"
+              ):
+                  raise SystemExit(f"unexpected PyPI artifact URL: {artifact_url!r}")
+              if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                  raise SystemExit(f"missing canonical SHA-256 for {filename}")
+              if not isinstance(size, int) or not 0 < size <= maximum_artifact_bytes:
+                  raise SystemExit(f"unsafe or missing artifact size for {filename}")
+
+              artifact_request = urllib.request.Request(
+                  artifact_url,
+                  headers={"User-Agent": "seiche-release-verifier/1"},
+              )
+              with urllib.request.urlopen(artifact_request, timeout=60) as response:
+                  body = response.read(maximum_artifact_bytes + 1)
+              if len(body) != size:
+                  raise SystemExit(
+                      f"size mismatch for {filename}: got {len(body)}, expected {size}"
+                  )
+              actual_digest = hashlib.sha256(body).hexdigest()
+              if actual_digest != digest:
+                  raise SystemExit(
+                      f"SHA-256 mismatch for {filename}: got {actual_digest}, expected {digest}"
+                  )
+              payloads[package_type] = (filename, body)
+              print(f"verified {filename} sha256:{digest}")
+
+          local_package_files = {
+              path.relative_to(root / "backend").as_posix(): path
+              for path in (root / "backend/seiche").rglob("*")
+              if path.is_file()
+              and (path.suffix == ".py" or path.name == "bootstrap_snapshot.json")
+          }
+
+          wheel_name, wheel_body = payloads["bdist_wheel"]
+          with zipfile.ZipFile(io.BytesIO(wheel_body)) as wheel:
+              members = wheel.namelist()
+              if len(members) != len(set(members)):
+                  raise SystemExit(f"duplicate member in {wheel_name}")
+              if any(
+                  PurePosixPath(member).is_absolute() or ".." in PurePosixPath(member).parts
+                  for member in members
+              ):
+                  raise SystemExit(f"unsafe member in {wheel_name}")
+              metadata_members = [
+                  member for member in members if member.endswith(".dist-info/METADATA")
+              ]
+              if len(metadata_members) != 1:
+                  raise SystemExit(f"expected exactly one METADATA file in {wheel_name}")
+              metadata = BytesParser(policy=default).parsebytes(
+                  wheel.read(metadata_members[0])
+              )
+              expected_metadata = {
+                  "Name": name,
+                  "Version": version,
+                  "License-Expression": license_expression,
+                  "Requires-Python": requires_python,
+              }
+              for field, expected in expected_metadata.items():
+                  if metadata.get(field) != expected:
+                      raise SystemExit(
+                          f"wheel {field} is {metadata.get(field)!r}, expected {expected!r}"
+                      )
+              wheel_package_files = {
+                  member
+                  for member in members
+                  if member.startswith("seiche/")
+                  and (member.endswith(".py") or member == "seiche/bootstrap_snapshot.json")
+              }
+              if wheel_package_files != set(local_package_files):
+                  missing = sorted(set(local_package_files) - wheel_package_files)
+                  extra = sorted(wheel_package_files - set(local_package_files))
+                  raise SystemExit(
+                      f"wheel source inventory mismatch; missing={missing}, extra={extra}"
+                  )
+              for member, local_path in local_package_files.items():
+                  if wheel.read(member) != local_path.read_bytes():
+                      raise SystemExit(f"wheel source differs from checkout: {member}")
+
+          sdist_name, sdist_body = payloads["sdist"]
+          sdist_prefix = f"{normalized_name}-{version}"
+          with tarfile.open(fileobj=io.BytesIO(sdist_body), mode="r:gz") as source:
+              members = source.getmembers()
+              names = [member.name for member in members]
+              if len(names) != len(set(names)):
+                  raise SystemExit(f"duplicate member in {sdist_name}")
+              if any(
+                  PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
+                  for name in names
+              ):
+                  raise SystemExit(f"unsafe member in {sdist_name}")
+              regular_files = {member.name: member for member in members if member.isfile()}
+              expected_source_files = {
+                  f"{sdist_prefix}/{relative}": local_path
+                  for relative, local_path in local_package_files.items()
+              }
+              expected_source_files.update(
+                  {
+                      f"{sdist_prefix}/pyproject.toml": root / "backend/pyproject.toml",
+                      f"{sdist_prefix}/README.md": root / "backend/README.md",
+                  }
+              )
+              missing = sorted(set(expected_source_files) - set(regular_files))
+              if missing:
+                  raise SystemExit(f"sdist is missing checkout files: {missing}")
+              for member, local_path in expected_source_files.items():
+                  extracted = source.extractfile(regular_files[member])
+                  if extracted is None or extracted.read() != local_path.read_bytes():
+                      raise SystemExit(f"sdist source differs from checkout: {member}")
+
+          print(
+              f"PyPI {name} {version} is immutable, metadata-consistent, "
+              "and source-identical to this checkout"
+          )
+          PY
 
   registry:
-    needs: pypi
+    needs: verify-pypi
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -62,8 +273,44 @@ jobs:
     env:
       MCP_PUBLISHER_VERSION: "1.8.1"
       MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.verify-pypi.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Re-verify the exact signed release before OIDC publication
+        env:
+          EXPECTED_RELEASE_SHA: ${{ needs.verify-pypi.outputs.release_sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"]
+          server = json.loads(Path("server.json").read_text())
+          if os.environ["RELEASE_TAG"] != f"v{version}":
+              raise SystemExit("release tag does not match the package version")
+          if server.get("version") != version:
+              raise SystemExit("server.json does not match the package version")
+          if server.get("packages", [{}])[0].get("version") != version:
+              raise SystemExit("server.json package does not match the package version")
+          PY
+          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_SHA"
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$EXPECTED_RELEASE_SHA"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
+
       - name: Install mcp-publisher (pinned + checksum-verified)
         run: |
           curl -sSLo mcp-publisher.tar.gz \

@@ -3,12 +3,17 @@ name: publish-pypi
 # Publish the seiche package to PyPI via Trusted Publishing (OIDC).
 # No token anywhere: PyPI trusts this exact repo + workflow + environment
 # (configured as a pending/trusted publisher on the PyPI project).
-# Runs on version tags or by hand.
+# Runs on version tags or against an explicitly requested immutable tag.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable SSH-signed release tag, for example v0.11.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,20 +24,46 @@ jobs:
     timeout-minutes: 15
     environment: pypi
     permissions:
+      contents: read
       id-token: write   # the OIDC handshake with PyPI
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
+      - name: Bind and verify the annotated SSH-signed release
+        run: |
+          version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          release_sha="$(git rev-parse HEAD)"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
+
       - name: Build sdist + wheel
         run: |
-          python -m pip install --quiet build
+          python -m pip install --disable-pip-version-check --quiet "build==1.5.0"
           python -m build backend --outdir dist
 
       - name: Publish to PyPI (trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist

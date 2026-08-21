@@ -1,0 +1,66 @@
+{
+  "schema": "seiche.research-distribution-manifest.v1",
+  "title": "Seiche audited direct-OFR research snapshot",
+  "version": "0.1.0-draft",
+  "publication_status": "draft_not_submitted",
+  "doi": null,
+  "prepared_at": "2026-08-22T00:00:00Z",
+  "source_manifest_generated_at": "2026-08-21T18:05:16+00:00",
+  "record_count": 11163,
+  "series_count": 10,
+  "entity": "country/USA",
+  "source_policy": "Only the ten audited series collected directly from the Office of Financial Research API are admitted. Runtime caches, FRED-fetched values, New York Fed reference rates, primary-dealer rows, and Seiche-derived outputs are excluded.",
+  "rights_review": {
+    "status": "engineering_review_not_legal_advice",
+    "reviewed_on": "2026-08-21",
+    "local_record": "../../integrations/datacommons/RIGHTS_AND_SOURCES.md",
+    "ofr_api": "https://www.financialresearch.gov/short-term-funding-monitor/api/",
+    "ofr_legal_notice": "https://www.financialresearch.gov/legal-notices/",
+    "credit_requested": true
+  },
+  "source_files": [
+    {
+      "name": "ofr_repo_markets.csv",
+      "local_path": "../../integrations/datacommons/input/observations/ofr_repo_markets.csv",
+      "content_url": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_repo_markets.csv",
+      "sha256": "307ae6ad5bbe8653c3bd4abf63449d4229b0fbba1ee66014d91f813e866d3a4a",
+      "bytes": 1466225,
+      "record_count": 10489,
+      "series_count": 6,
+      "release": "OFR U.S. Repo Markets Data Release",
+      "release_url": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/"
+    },
+    {
+      "name": "ofr_money_market_funds.csv",
+      "local_path": "../../integrations/datacommons/input/observations/ofr_money_market_funds.csv",
+      "content_url": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_money_market_funds.csv",
+      "sha256": "1d0975b69dcb6f3465e957679b21bacae02695145b1e77563dae3258d8b524cd",
+      "bytes": 94606,
+      "record_count": 674,
+      "series_count": 4,
+      "release": "OFR U.S. Money Market Fund Data Release",
+      "release_url": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/mmf/"
+    }
+  ],
+  "series": [
+    "seiche/OfrDvpOvernightOpenRepo_Mean_InterestRate_FinancialInstrument",
+    "seiche/OfrDvpRepoTotal_Sum_Amount_FinancialTransaction",
+    "seiche/OfrGcfOvernightOpenRepo_Mean_InterestRate_FinancialInstrument",
+    "seiche/OfrGcfOvernightOpenRepo_Sum_Amount_FinancialTransaction",
+    "seiche/OfrMoneyMarketFundRepoFederalReserve_Sum_Amount_Investment",
+    "seiche/OfrMoneyMarketFundRepoFicc_Sum_Amount_Investment",
+    "seiche/OfrMoneyMarketFundRepoTotal_Sum_Amount_Investment",
+    "seiche/OfrMoneyMarketFundTotal_Sum_Amount_Investment",
+    "seiche/OfrTriPartyOvernightOpenRepo_Mean_InterestRate_FinancialInstrument",
+    "seiche/OfrTriPartyRepoTotal_Sum_Amount_FinancialTransaction"
+  ],
+  "metadata": {
+    "hugging_face": "huggingface/README.md",
+    "kaggle": "kaggle/dataset-metadata.json",
+    "croissant": "croissant.json",
+    "frictionless": "datapackage.json",
+    "dcat_3": "dcat.jsonld",
+    "ro_crate": "ro-crate-metadata.json",
+    "datacite_draft": "datacite-draft.json"
+  }
+}

@@ -1,0 +1,63 @@
+name: Feature or integration proposal
+description: Propose a focused research, data, API, MCP, or distribution improvement.
+title: "feature: "
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues, pull requests, and public interfaces.
+          required: true
+        - label: I am proposing a problem to solve, not a claim of guaranteed forecasts or investment performance.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who needs this, what can they not do today, and why does it belong in Seiche?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful interface and its expected output.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Research engine or methodology
+        - Public or official data source
+        - API, MCP, schema, or catalog
+        - Python, R, or JavaScript client
+        - Research notebook or academic dataset
+        - Container or deployment
+        - AI or directory integration
+        - Website or documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and source boundary
+      description: List authoritative sources, cadence, timestamps, access terms, redistribution rights, and point-in-time limitations.
+  - type: textarea
+    id: failure
+    attributes:
+      label: Failure and safety behavior
+      description: What should happen when evidence is missing, stale, restricted, revised, or contradictory?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing Seiche interfaces or external tools that partly address the problem.
+  - type: textarea
+    id: operations
+    attributes:
+      label: Maintenance and release impact
+      description: Note new dependencies, credentials, recurring costs, external approvals, migrations, or deployment changes.

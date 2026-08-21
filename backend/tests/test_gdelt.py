@@ -3,9 +3,9 @@ the missing topics over from the stale complete blob instead of clobbering
 it with a fresh near-empty one."""
 
 import asyncio
-from datetime import datetime, timezone
 import gzip
 import json
+from datetime import UTC, datetime
 
 from seiche.engines import scuttlebutt
 from seiche.sources import gdelt
@@ -58,17 +58,17 @@ def test_gdelt_base_env_override(monkeypatch):
     assert g2.API == "http://127.0.0.1:8794/api/v2/doc/doc"
     monkeypatch.delenv("GDELT_BASE")
     g3 = importlib.reload(g2)
-    assert g3.API.startswith("https://api.gdeltproject.org")
+    assert g3.API == "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
 def test_web_ngram_batch_scans_all_topics_in_one_stream():
-    raw = "\n".join([
-        "1\tMoney market funds face withdrawals\t2",
-        "1\tTreasury bills absorb cash\t1",
-        "2\tStanding repo facility usage rose\t1",
-        "3\tUnrelated global headline words\t1",
-        "bad\tBasis trade line is ignored\t1",
-    ]).encode()
+    raw = (
+        b"1\tMoney market funds face withdrawals\t2\n"
+        b"1\tTreasury bills absorb cash\t1\n"
+        b"2\tStanding repo facility usage rose\t1\n"
+        b"3\tUnrelated global headline words\t1\n"
+        b"bad\tBasis trade line is ignored\t1"
+    )
     sample = gdelt._parse_web_batch(gzip.compress(raw), "20260805173200")
 
     assert sample["documents"] == 3
@@ -253,7 +253,7 @@ def test_web_refresh_survives_caller_cancellation_and_runs_once(monkeypatch):
 
 
 def test_web_fetch_uses_recent_lkg_without_claiming_freshness(monkeypatch):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     history = {"schema": "seiche.gdelt-web-history.v1", "samples": [{
         "batch_at": now,
         "documents": 250,

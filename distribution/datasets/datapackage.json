@@ -1,0 +1,84 @@
+{
+  "$schema": "https://frictionlessdata.io/schemas/data-package.json",
+  "profile": "data-package",
+  "name": "seiche-audited-direct-ofr-research-snapshot",
+  "title": "Seiche audited direct-OFR research snapshot",
+  "description": "Draft, not submitted, no DOI assigned. Ten direct-OFR series only; runtime caches, FRED-fetched values, restricted rows, and Seiche-derived outputs are excluded.",
+  "version": "0.1.0-draft",
+  "publication_status": "draft_not_submitted",
+  "homepage": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
+  "created": "2026-08-21T18:05:16Z",
+  "licenses": [
+    {
+      "name": "other",
+      "path": "https://www.financialresearch.gov/legal-notices/",
+      "title": "United States Government work; OFR credit requested"
+    }
+  ],
+  "contributors": [
+    {
+      "title": "Seiche",
+      "role": "author",
+      "path": "https://seiche.info/"
+    },
+    {
+      "title": "Office of Financial Research",
+      "role": "contributor",
+      "path": "https://www.financialresearch.gov/"
+    }
+  ],
+  "sources": [
+    {
+      "title": "OFR U.S. Repo Markets Data Release",
+      "path": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/"
+    },
+    {
+      "title": "OFR U.S. Money Market Fund Data Release",
+      "path": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/mmf/"
+    }
+  ],
+  "resources": [
+    {
+      "name": "ofr-repo-markets",
+      "path": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_repo_markets.csv",
+      "format": "csv",
+      "mediatype": "text/csv",
+      "encoding": "utf-8",
+      "bytes": 1466225,
+      "hash": "sha256:307ae6ad5bbe8653c3bd4abf63449d4229b0fbba1ee66014d91f813e866d3a4a",
+      "row_count": 10489,
+      "schema": {
+        "fields": [
+          {"name": "entity", "type": "string", "constraints": {"required": true, "pattern": "^country/USA$"}},
+          {"name": "variable", "type": "string", "constraints": {"required": true}},
+          {"name": "date", "type": "date", "constraints": {"required": true}},
+          {"name": "value", "type": "number", "constraints": {"required": true}},
+          {"name": "unit", "type": "string", "constraints": {"required": true, "enum": ["Percent", "USDollar"]}},
+          {"name": "measurementMethod", "type": "string", "constraints": {"required": true}},
+          {"name": "observationPeriod", "type": "duration", "constraints": {"required": true}}
+        ]
+      }
+    },
+    {
+      "name": "ofr-money-market-funds",
+      "path": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_money_market_funds.csv",
+      "format": "csv",
+      "mediatype": "text/csv",
+      "encoding": "utf-8",
+      "bytes": 94606,
+      "hash": "sha256:1d0975b69dcb6f3465e957679b21bacae02695145b1e77563dae3258d8b524cd",
+      "row_count": 674,
+      "schema": {
+        "fields": [
+          {"name": "entity", "type": "string", "constraints": {"required": true, "pattern": "^country/USA$"}},
+          {"name": "variable", "type": "string", "constraints": {"required": true}},
+          {"name": "date", "type": "date", "constraints": {"required": true}},
+          {"name": "value", "type": "number", "constraints": {"required": true}},
+          {"name": "unit", "type": "string", "constraints": {"required": true, "enum": ["Percent", "USDollar"]}},
+          {"name": "measurementMethod", "type": "string", "constraints": {"required": true}},
+          {"name": "observationPeriod", "type": "duration", "constraints": {"required": true}}
+        ]
+      }
+    }
+  ]
+}

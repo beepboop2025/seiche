@@ -67,10 +67,27 @@ def test_ledger_detects_tamper_and_refuses_to_extend(dirs):
         attest.append_record("2026-07-20", {"v": 9}, stream="s1", ledger_dir=ledger)
 
 
-def test_ledger_rejects_bad_stream_names(dirs):
+@pytest.mark.parametrize("stream", ["../evil", ".", "..", ".hidden", "bad/name", "bad\\name", "x" * 129])
+def test_ledger_rejects_bad_stream_names(dirs, stream):
     ledger, _ = dirs
     with pytest.raises(ValueError, match="invalid stream name"):
-        attest.append_record("2026-07-10", {}, stream="../evil", ledger_dir=ledger)
+        attest.append_record("2026-07-10", {}, stream=stream, ledger_dir=ledger)
+
+
+def test_stream_sidecars_reject_symlink_escape(dirs, tmp_path):
+    ledger, att = dirs
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("do not touch\n")
+    os.makedirs(ledger, exist_ok=True)
+    os.makedirs(att, exist_ok=True)
+    os.symlink(outside, os.path.join(ledger, "escaped.jsonl"))
+    os.symlink(outside, os.path.join(att, "escaped.sig.jsonl"))
+
+    with pytest.raises(ValueError, match="escapes its storage root"):
+        attest.read_records("escaped", ledger)
+    with pytest.raises(ValueError, match="escapes its storage root"):
+        attest.read_signatures("escaped", att)
+    assert outside.read_text() == "do not touch\n"
 
 
 # ---------------------------------------------------------------------------

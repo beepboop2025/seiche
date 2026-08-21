@@ -4,6 +4,9 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+build/
+dist/
 backend/data/
 node_modules/
 frontend/dist/
@@ -22,5 +25,4 @@ frontend/public/ampleness.html
 frontend/public/referee.html
 
 # build artifacts (compiler output, not source)
-backend/dist/
 *.tsbuildinfo

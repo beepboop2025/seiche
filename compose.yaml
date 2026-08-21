@@ -1,0 +1,41 @@
+name: seiche
+
+services:
+  seiche:
+    image: seiche:${SEICHE_VERSION:-development}
+    build:
+      context: .
+      args:
+        VERSION: ${SEICHE_VERSION:-development}
+        REVISION: ${SEICHE_REVISION:-unknown}
+        CREATED: ${SEICHE_CREATED:-1970-01-01T00:00:00Z}
+        SOURCE: https://github.com/beepboop2025/seiche
+    init: true
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      SEICHE_ENV: container
+    ports:
+      - "${SEICHE_PORT:-8787}:8787"
+    volumes:
+      - seiche-data:/app/backend/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    healthcheck:
+      test:
+        - CMD
+        - /home/nonroot/venv/bin/python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api', timeout=4).read(1)"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
+    stop_grace_period: 30s
+
+volumes:
+  seiche-data:

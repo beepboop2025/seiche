@@ -27,6 +27,43 @@ def test_committed_seiche_catalog_passes_the_monitor_contract():
     assert ard.validate_catalog(_seiche_catalog(), product) == []
 
 
+def test_only_seiche_pins_a_version_owned_by_this_repository():
+    versions = {product.slug: product.mcp_version for product in ard.PRODUCTS}
+    assert versions["seiche"] == json.loads((ROOT / "server.json").read_text())[
+        "version"
+    ]
+    assert versions["liquilens"] is None
+    assert versions["undertow"] is None
+
+
+def test_sibling_catalog_accepts_a_new_release_but_requires_internal_agreement():
+    sibling = next(product for product in ard.PRODUCTS
+                   if product.slug == "liquilens")
+    catalog = _seiche_catalog()
+    mcp = next(entry for entry in catalog["entries"]
+               if entry["type"] == "application/mcp-server-card+json")
+    mcp["identifier"] = sibling.mcp_identifier
+    mcp["version"] = "9.9.9"
+    mcp["data"]["name"] = sibling.mcp_name
+    mcp["data"]["version"] = "9.9.9"
+    mcp["data"]["remotes"] = [
+        {"type": "streamable-http", "url": sibling.mcp_endpoint}
+    ]
+    mcp["capabilities"] = [
+        f"tool_{index}" for index in range(sibling.public_tool_count)
+    ]
+    openapi = next(entry for entry in catalog["entries"]
+                   if entry["type"] == "application/vnd.oai.openapi+json")
+    openapi["identifier"] = sibling.openapi_identifier
+    openapi["url"] = sibling.openapi_url
+
+    assert ard.validate_catalog(catalog, sibling) == []
+    mcp["data"]["version"] = "9.9.8"
+    assert "embedded MCP version does not match the catalog version" in (
+        ard.validate_catalog(catalog, sibling)
+    )
+
+
 def test_value_or_reference_and_query_bounds_are_enforced():
     product = next(product for product in ard.PRODUCTS
                    if product.slug == "seiche")

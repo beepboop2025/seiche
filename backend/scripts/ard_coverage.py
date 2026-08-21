@@ -45,6 +45,19 @@ ARD_REGISTRY_LABELS = {
 USER_AGENT = "LiquidityLab-ARD-Coverage/1.0 (+https://seiche.info/developers)"
 URN = re.compile(r"^urn:air:[a-zA-Z0-9.-]+(:[a-zA-Z0-9._-]+)+$")
 SCALAR = (str, int, float, bool, type(None))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _local_seiche_version() -> str:
+    """Read the one version this repository is authoritative for."""
+    try:
+        card = json.loads((REPO_ROOT / "server.json").read_text(encoding="utf-8"))
+        version = card["version"]
+    except (OSError, KeyError, json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError("server.json must declare Seiche's release version") from exc
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeError("server.json version must be a non-empty string")
+    return version
 
 
 @dataclass(frozen=True)
@@ -53,7 +66,10 @@ class Product:
     catalog_url: str
     mcp_identifier: str
     mcp_name: str
-    mcp_version: str
+    # Seiche pins its local release. Sibling versions deliberately float: this
+    # repository owns the agreement between their live catalog and registry,
+    # not their release cadence.
+    mcp_version: str | None
     mcp_endpoint: str
     openapi_identifier: str
     openapi_url: str
@@ -68,7 +84,7 @@ PRODUCTS = (
         catalog_url="https://liquilens.in/.well-known/ai-catalog.json",
         mcp_identifier="urn:air:liquilens.in:mcp:failure-radar",
         mcp_name="io.github.beepboop2025/liquilens",
-        mcp_version="1.6.0",
+        mcp_version=None,
         mcp_endpoint="https://api.liquilens.in/mcp",
         openapi_identifier="urn:air:liquilens.in:openapi:failure-radar",
         openapi_url="https://api.liquilens.in/api/openapi.json",
@@ -81,7 +97,7 @@ PRODUCTS = (
         catalog_url="https://seiche.info/.well-known/ai-catalog.json",
         mcp_identifier="urn:air:seiche.info:mcp:funding-stress",
         mcp_name="io.github.beepboop2025/seiche",
-        mcp_version="0.10.1",
+        mcp_version=_local_seiche_version(),
         mcp_endpoint="https://api.seiche.info/mcp",
         openapi_identifier="urn:air:seiche.info:openapi:funding-stress",
         openapi_url="https://api.seiche.info/api/openapi.json",
@@ -96,7 +112,7 @@ PRODUCTS = (
         mcp_identifier=(
             "urn:air:liquilens-undertow.com:mcp:market-liquidity"),
         mcp_name="io.github.beepboop2025/undertow",
-        mcp_version="1.8.0",
+        mcp_version=None,
         mcp_endpoint="https://api.seiche.info/undertow/mcp",
         openapi_identifier=(
             "urn:air:liquilens-undertow.com:openapi:x402-market-liquidity"),
@@ -236,9 +252,10 @@ def validate_catalog(catalog: dict[str, Any], product: Product) -> list[str]:
     mcp = matches[0]
     if mcp.get("type") != "application/mcp-server-card+json":
         errors.append("product MCP entry has the wrong media type")
-    if mcp.get("version") != product.mcp_version:
+    catalog_version = mcp.get("version")
+    if product.mcp_version is not None and catalog_version != product.mcp_version:
         errors.append(
-            f"catalog MCP version is {mcp.get('version')!r}, "
+            f"catalog MCP version is {catalog_version!r}, "
             f"expected {product.mcp_version}")
     card = mcp.get("data")
     if not isinstance(card, dict):
@@ -246,7 +263,7 @@ def validate_catalog(catalog: dict[str, Any], product: Product) -> list[str]:
         return errors
     if card.get("name") != product.mcp_name:
         errors.append(f"embedded MCP name is not {product.mcp_name}")
-    if card.get("version") != product.mcp_version:
+    if card.get("version") != catalog_version:
         errors.append("embedded MCP version does not match the catalog version")
     remotes = card.get("remotes", [])
     if product.mcp_endpoint not in [
@@ -282,10 +299,16 @@ def probe_catalog(product: Product, source: str, timeout: float) -> dict[str, An
         cors = headers.get("access-control-allow-origin") if remote else None
         if remote and cors not in {"*", product.catalog_url}:
             errors.append("catalog is not cross-origin readable")
+        mcp_version = next((
+            entry.get("version") for entry in payload.get("entries", [])
+            if isinstance(entry, dict)
+            and entry.get("identifier") == product.mcp_identifier
+        ), None)
         return {
             "ok": not errors,
             "source": source,
             "entryCount": len(payload.get("entries", [])),
+            "mcpVersion": mcp_version,
             "cors": cors,
             "errors": errors,
         }
@@ -293,7 +316,9 @@ def probe_catalog(product: Product, source: str, timeout: float) -> dict[str, An
         return {"ok": False, "source": source, "errors": [str(exc)]}
 
 
-def probe_registry(product: Product, timeout: float) -> dict[str, Any]:
+def probe_registry(
+        product: Product, timeout: float,
+        expected_version: str | None = None) -> dict[str, Any]:
     url = f"{MCP_REGISTRY}?search={quote(product.mcp_name, safe='')}"
     try:
         payload, _ = _request_json(url, timeout=timeout)
@@ -307,10 +332,10 @@ def probe_registry(product: Product, timeout: float) -> dict[str, Any]:
         errors = []
         if row is None:
             errors.append("no exact official MCP Registry record")
-        elif version != product.mcp_version:
+        elif expected_version is not None and version != expected_version:
             errors.append(
                 f"official MCP Registry version is {version}, "
-                f"expected {product.mcp_version}")
+                f"expected catalog version {expected_version}")
         return {
             "ok": not errors,
             "version": version,
@@ -434,12 +459,15 @@ def probe_ard_search(
 
 def _run_product(product: Product, source: str, timeout: float,
                  local_only: bool) -> tuple[str, dict[str, Any]]:
+    catalog = probe_catalog(product, source, timeout)
     report: dict[str, Any] = {
         "expected": asdict(product),
-        "catalog": probe_catalog(product, source, timeout),
+        "catalog": catalog,
     }
     if not local_only:
-        report["mcpRegistry"] = probe_registry(product, timeout)
+        expected_version = product.mcp_version or catalog.get("mcpVersion")
+        report["mcpRegistry"] = probe_registry(
+            product, timeout, expected_version=expected_version)
         report["mcpInventory"] = probe_mcp(product, timeout)
         report["openapi"] = probe_openapi(product, timeout)
         with ThreadPoolExecutor(max_workers=len(ARD_REGISTRIES)) as pool:

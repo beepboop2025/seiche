@@ -1,0 +1,172 @@
+name: publish-container
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable release tag to publish, for example v0.10.1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: publish-container-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Bind the image to the immutable release tag
+        id: release
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]
+          version = project["version"]
+          expected_tag = f"v{version}"
+          release_tag = os.environ["RELEASE_TAG"]
+          if release_tag != expected_tag:
+              raise SystemExit(
+                  f"release tag {release_tag!r} does not match package {expected_tag!r}"
+              )
+          revision = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          tagged_revision = subprocess.check_output(
+              ["git", "rev-parse", f"{release_tag}^{{commit}}"], text=True
+          ).strip()
+          if revision != tagged_revision:
+              raise SystemExit("checkout HEAD is not the requested immutable tag")
+          if not re.fullmatch(r"[0-9a-f]{40}", revision):
+              raise SystemExit("release revision is not a canonical Git commit SHA")
+          created = subprocess.check_output(
+              ["git", "show", "-s", "--format=%cI", "HEAD"], text=True
+          ).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"version={version}", file=output)
+              print(f"tag={release_tag}", file=output)
+              print(f"revision={revision}", file=output)
+              print(f"short_revision={revision[:12]}", file=output)
+              print(f"created={created}", file=output)
+          PY
+
+      - name: Enforce the annotated SSH-signed release policy
+        run: |
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
+
+      - name: Check distribution contracts at the release tag
+        run: python backend/tests/test_distribution_artifacts.py
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+
+      - name: Build the release candidate for its security gate
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: seiche:release-scan
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ steps.release.outputs.revision }}
+            CREATED=${{ steps.release.outputs.created }}
+            SOURCE=https://github.com/${{ github.repository }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=seiche-release-container
+          cache-to: type=gha,mode=max,scope=seiche-release-container
+
+      - name: Reject high and critical package vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: seiche:release-scan
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+          format: table
+          version: v0.70.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive release tags and OCI labels
+        id: metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.release.outputs.version }}
+            type=raw,value=${{ steps.release.outputs.tag }}
+            type=raw,value=sha-${{ steps.release.outputs.short_revision }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+          labels: |
+            org.opencontainers.image.created=${{ steps.release.outputs.created }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and publish with SBOM and provenance
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ steps.release.outputs.revision }}
+            CREATED=${{ steps.release.outputs.created }}
+            SOURCE=https://github.com/${{ github.repository }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=seiche-release-container
+          cache-to: type=gha,mode=max,scope=seiche-release-container
+
+      - name: Attest the published manifest digest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

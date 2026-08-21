@@ -1,0 +1,75 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Seiche code or a public interface.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Seiche. Use a private security advisory for vulnerabilities and the data-quality form for stale or incorrect observations.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: This report does not contain credentials, personal data, or an undisclosed security vulnerability.
+          required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Python package or CLI
+        - Hosted API
+        - MCP server or registry metadata
+        - Website or static catalog
+        - Telegram bot
+        - Data collection or research engine
+        - Deployment or operations
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Package version, full Git commit, or hosted response version.
+      placeholder: "For example: package version, commit SHA, or hosted version label"
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Include the exact error and the smallest safe reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Install or open ...
+        2. Run or request ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/Node/client version, transport, and relevant non-secret configuration.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or supporting evidence
+      description: Redact tokens, personal information, account identifiers, and restricted data.
+      render: shell

@@ -1,0 +1,28 @@
+{
+  "title": "Seiche Audited Direct-OFR Time Series",
+  "id": "seiche-info/seiche-audited-direct-ofr-time-series",
+  "subtitle": "Draft repo and money-fund observations sourced directly from OFR",
+  "description": "DRAFT - NOT SUBMITTED. NO DOI ASSIGNED. A rights-reviewed snapshot of 11,163 observations from ten Office of Financial Research series: six repo-market series and four money-market-fund series. The staged files reference only the audited direct-OFR Data Commons candidate CSVs. FRED-fetched values, runtime caches, New York Fed reference-rate rows, the mismatched primary-dealer row, licensed series, and Seiche-derived outputs are excluded. Observation dates retain the publishers' native daily or monthly clocks. Research data, not investment advice. Source credit: United States Office of Financial Research.",
+  "licenses": [
+    {
+      "name": "other"
+    }
+  ],
+  "resources": [
+    {
+      "path": "ofr_repo_markets.csv",
+      "description": "Six direct-OFR repo-market series; 10,489 observations; pinned SHA-256 307ae6ad5bbe8653c3bd4abf63449d4229b0fbba1ee66014d91f813e866d3a4a."
+    },
+    {
+      "path": "ofr_money_market_funds.csv",
+      "description": "Four direct-OFR money-market-fund series; 674 observations; pinned SHA-256 1d0975b69dcb6f3465e957679b21bacae02695145b1e77563dae3258d8b524cd."
+    }
+  ],
+  "keywords": [
+    "finance",
+    "time series",
+    "economics",
+    "repo markets",
+    "money market funds"
+  ]
+}

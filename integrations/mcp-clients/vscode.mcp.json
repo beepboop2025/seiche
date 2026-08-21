@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "seiche": {
+      "type": "http",
+      "url": "https://api.seiche.info/mcp"
+    }
+  }
+}

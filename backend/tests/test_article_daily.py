@@ -5,9 +5,10 @@ quiet-day historical fallback, full-story selection, model grounding, durable
 archives, and crawlable publication artifacts.
 """
 
-from copy import deepcopy
-from datetime import datetime, timezone
 import json
+import re
+from copy import deepcopy
+from datetime import UTC, datetime
 
 from seiche import article_daily
 from seiche.article_daily import build_article, write_article
@@ -75,8 +76,13 @@ def test_material_change_publishes_current_argument(fake_snap):
     assert article["article_type"] == "current_analysis"
     assert article["headline"].startswith("A dated reserve drain")
     assert "## The strongest counter-case" in article["body_md"]
-    assert "https://liquilens.in/" in article["body_md"]
-    assert "https://liquilens-undertow.com/exit/" in article["body_md"]
+    destinations = set(re.findall(r"\[[^]]+\]\((https://[^)]+)\)", article["body_md"]))
+    assert destinations.issuperset(
+        {
+            "https://liquilens.in/",
+            "https://liquilens-undertow.com/exit/",
+        }
+    )
 
 
 def test_unsupported_model_number_forces_safe_fallback(fake_snap, monkeypatch):
@@ -261,7 +267,7 @@ def test_tag_only_editorial_memory_is_bound_and_applied(fake_snap):
     }
     memory = article_daily.validate_editorial_memory(
         payload,
-        now=datetime(2026, 7, 10, 9, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 10, 9, 0, tzinfo=UTC),
     )
     story = _story(fake_snap)
     article = build_article(

@@ -1,0 +1,15 @@
+# The repository owner is the default reviewer for every change.
+* @beepboop2025
+
+# Security- and release-sensitive surfaces are listed explicitly so future
+# ownership expansion cannot accidentally leave them without review.
+/.github/ @beepboop2025
+/ops/deploy/ @beepboop2025
+/ops/security/ @beepboop2025
+/backend/pyproject.toml @beepboop2025
+/backend/seiche/api.py @beepboop2025
+/backend/seiche/mcp_server.py @beepboop2025
+/frontend/public/.well-known/ @beepboop2025
+/server.json @beepboop2025
+/SECURITY.md @beepboop2025
+/GOVERNANCE.md @beepboop2025

@@ -11,6 +11,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 # Queue, never evict. This job takes ~45 minutes and three things trigger it:
 # a push to main, the 4-hourly cron (which GitHub delays by up to hours), and
 # the explicit dispatch from dispatch-daily after it commits the letter. With
@@ -27,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -59,7 +62,7 @@ jobs:
       # its marker.
       - name: Restore exact-code publish gate
         id: publish-gate-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/publish-gates/${{ github.sha }}
           key: seiche-publish-gate-v1-${{ runner.os }}-py312-${{ github.sha }}
@@ -98,7 +101,7 @@ jobs:
           printf '%s\n' "$GITHUB_SHA" > ".cache/publish-gates/$GITHUB_SHA/validated-sha"
 
       - name: Restore GDELT WEB-NGRAM baseline
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/gdelt-web-history.json
           key: gdelt-web-history-${{ runner.os }}-${{ github.run_id }}
@@ -156,7 +159,7 @@ jobs:
       - name: Render referee page
         run: python -m seiche.referee
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: npm
@@ -222,7 +225,7 @@ jobs:
           fi
       - name: Deploy to Cloudflare Pages (optional)
         continue-on-error: true
-        uses: cloudflare/wrangler-action@v4
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

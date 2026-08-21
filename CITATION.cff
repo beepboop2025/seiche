@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use Seiche in research, please cite this software release."
+title: "Seiche: World-markets evidence terminal"
+type: software
+version: "0.10.1"
+date-released: 2026-08-22
+authors:
+  - family-names: "Mrinal"
+    alias: "beepboop2025"
+    website: "https://github.com/beepboop2025"
+abstract: "Money, FX and capital-market evidence with source clocks, canonical citations and explicit limits. Seiche is research software, not investment advice; missing and stale evidence remains explicit."
+keywords:
+  - data catalogs
+  - financial research
+  - funding stress
+  - foreign exchange
+  - Model Context Protocol
+  - money markets
+  - OpenBB
+  - point-in-time data
+  - research datasets
+  - research software
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/beepboop2025/seiche"
+repository-artifact: "https://pypi.org/project/seiche/0.10.1/"
+url: "https://seiche.info"
+identifiers:
+  - type: url
+    value: "https://github.com/beepboop2025/seiche/tree/v0.10.1"
+    description: "Immutable Git release tag"

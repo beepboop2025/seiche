@@ -98,7 +98,7 @@ GENESIS = "0" * 64
 
 _ledger_lock = threading.Lock()
 _attest_lock = threading.Lock()
-_STREAM_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_STREAM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 # ---------------------------------------------------------------------------
@@ -161,10 +161,26 @@ def _ledger_dir(ledger_dir: str | None = None) -> Path:
     return p
 
 
-def _stream_path(stream: str, ledger_dir: str | None = None) -> Path:
-    if not _STREAM_RE.match(stream):
+def _safe_stream_file(root: Path, stream: str, suffix: str) -> Path:
+    """Return a stream sidecar that is provably contained by ``root``.
+
+    Stream names are part of the signed message, so silently rewriting them
+    would weaken the audit trail.  Validate the exact name instead, then
+    resolve the destination and reject symlink or traversal escapes before any
+    read or write.  Keeping every stream file directly beneath its fixed root
+    also makes the storage contract straightforward to audit and back up.
+    """
+    if not isinstance(stream, str) or _STREAM_RE.fullmatch(stream) is None:
         raise ValueError(f"invalid stream name: {stream!r}")
-    return _ledger_dir(ledger_dir) / f"{stream}.jsonl"
+    resolved_root = root.resolve()
+    candidate = (resolved_root / f"{stream}{suffix}").resolve()
+    if candidate.parent != resolved_root:
+        raise ValueError(f"stream path escapes its storage root: {stream!r}")
+    return candidate
+
+
+def _stream_path(stream: str, ledger_dir: str | None = None) -> Path:
+    return _safe_stream_file(_ledger_dir(ledger_dir), stream, ".jsonl")
 
 
 def canonical(day: str, payload: dict, prev_hash: str) -> str:
@@ -307,7 +323,7 @@ def _run_message(kind: str, manifest_hash: str) -> bytes:
 # Signing the ledger
 # ---------------------------------------------------------------------------
 def read_signatures(stream: str = DEFAULT_STREAM, attest_dir: str | None = None) -> list[dict]:
-    return _read_jsonl(_attest_dir(attest_dir) / f"{stream}.sig.jsonl")
+    return _read_jsonl(_safe_stream_file(_attest_dir(attest_dir), stream, ".sig.jsonl"))
 
 
 def sign_stream(stream: str = DEFAULT_STREAM, ledger_dir: str | None = None,
@@ -320,7 +336,7 @@ def sign_stream(stream: str = DEFAULT_STREAM, ledger_dir: str | None = None,
     if not ok:
         raise ValueError(f"stream '{stream}' chain broken at record {bad}; refusing to sign")
     private, pub_hex = load_or_create_keypair(attest_dir)
-    sig_path = _attest_dir(attest_dir) / f"{stream}.sig.jsonl"
+    sig_path = _safe_stream_file(_attest_dir(attest_dir), stream, ".sig.jsonl")
     with _attest_lock:
         signed_hashes = {s["record_hash"] for s in _read_jsonl(sig_path)}
         n_new = 0
@@ -411,7 +427,7 @@ def verify_stream(stream: str = DEFAULT_STREAM, ledger_dir: str | None = None,
 # OpenTimestamps anchoring (real calendar submissions)
 # ---------------------------------------------------------------------------
 def read_anchors(stream: str = DEFAULT_STREAM, attest_dir: str | None = None) -> list[dict]:
-    return _read_jsonl(_attest_dir(attest_dir) / f"{stream}.ots.jsonl")
+    return _read_jsonl(_safe_stream_file(_attest_dir(attest_dir), stream, ".ots.jsonl"))
 
 
 def _read_varuint(buf: io.BytesIO) -> int:
@@ -511,7 +527,7 @@ def anchor_stream(stream: str = DEFAULT_STREAM, ledger_dir: str | None = None,
     proof with no intermediate encoding to trust. One successful calendar
     response is enough (they all aggregate into Bitcoin); failures are logged
     and retried on the next run. Requires network."""
-    ots_path = _attest_dir(attest_dir) / f"{stream}.ots.jsonl"
+    ots_path = _safe_stream_file(_attest_dir(attest_dir), stream, ".ots.jsonl")
     with _attest_lock:
         done = {a["day"] for a in _read_jsonl(ots_path)
                 if a["status"] in ("pending", "anchored")}
@@ -570,7 +586,7 @@ def upgrade_anchors(stream: str = DEFAULT_STREAM, attest_dir: str | None = None,
     hourly, so run this a few hours after anchoring, or daily from cron).
     Appends an upgraded line per completed proof; originals are never
     rewritten (append-only, like everything here)."""
-    ots_path = _attest_dir(attest_dir) / f"{stream}.ots.jsonl"
+    ots_path = _safe_stream_file(_attest_dir(attest_dir), stream, ".ots.jsonl")
     with _attest_lock:
         lines = _read_jsonl(ots_path)
         upgraded_days = {a["day"] for a in lines if a["status"] == "anchored"}

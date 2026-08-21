@@ -16,13 +16,13 @@ market-pack catalog can also declare licensed or tenant sources, but public
 outputs obey each source's redistribution policy and never expose restricted raw
 values.
 
-Every 2025–26 stress event (Sep 15 2025 tax-date squeeze, Oct/Dec 2025 record SRF
-draws, Apr 2025 basis unwind) was front-run by *plumbing* signals while price screens
-looked calm. Licensed terminals provide much broader real-time data and execution
-workflows, while OFR and NY Fed dashboards provide authoritative source views.
-Seiche is a narrower, opinionated research layer: forward-looking, alerting-ready,
-provenance-honest — and v2 adds **honest evidence about itself**. It is not a
-Bloomberg/Reuters replacement, a real-time quote service, or an execution venue.
+Seiche publishes a construction-PIT historical diagnostic—with misses and
+eligibility limits kept visible—and is now accruing a separate as-published
+forward record that can be verified instead of reconstructed. Licensed terminals
+provide much broader real-time data and execution workflows, while OFR and NY Fed
+dashboards provide authoritative source views. Seiche is a narrower, opinionated
+research layer: forward-looking, alerting-ready, and provenance-honest. It is not
+a Bloomberg/Reuters replacement, a real-time quote service, or an execution venue.
 
 ## The lab
 
@@ -36,6 +36,36 @@ Undertow's published pack live, and the Windfetch engine reads the FETCH pack
 built in the Undertow repo back into this board. On names: the internal
 composite engine called "undertow" (critical slowing down,
 `engines/undertow.py`) is unrelated to the Undertow sister product.
+
+## Use Seiche everywhere
+
+Seiche is distributed as software, an MCP service, a research dataset, and
+machine-readable catalog metadata. Status is receipt-based: **verified** means
+a public record exists, **usable in repo** means the artifact runs from this
+checkout, and **prepared** means an owner-controlled submission or publication
+still remains. The auditable source of truth is
+[`distribution/submissions.csv`](distribution/submissions.csv).
+
+| Surface | What is available | Status |
+|---|---|---|
+| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable in repo; external publication prepared |
+| **Zenodo** | Release deposition metadata, citation identity, and related-source records ([metadata](.zenodo.json)) | Prepared; no deposit or DOI claimed |
+| **Hugging Face** | Rights-reviewed direct-OFR dataset card and staging layout ([dataset card](distribution/datasets/huggingface/README.md)) | Validated draft; upload prepared |
+| **Kaggle** | Dataset metadata and reference-only staging layout ([metadata](distribution/datasets/kaggle/dataset-metadata.json)) | Validated draft; upload prepared |
+| **Smithery** | Owner-published hosted endpoint entry ([live record](https://smithery.ai/servers/mrinallovesbhature/seiche)) | Listed but stale; authenticated rescan pending |
+| **MCP directories** | Official Registry, Glama, Smithery, and eight additional live indexes ([dated inventory](distribution/MCP_DIRECTORIES.md)) | 11 live records; claim/freshness gaps tracked |
+| **Research notebooks** | Commit-pinned, hash-checking direct-OFR workflow ([notebook](notebooks/seiche_direct_ofr_research.ipynb)) | Usable in repo |
+| **Python / R / JavaScript** | Zero-secret world-markets API clients with evidence-contract checks ([clients](clients/)) | Usable in repo |
+| **Docker** | Distroless, non-root, read-only Compose image and signed GHCR publication workflow ([guide](docs/DISTRIBUTION.md)) | Built and tested locally; GHCR prepared |
+| **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
+| **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
+| **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Version 0.10.1 verified publicly |
+
+Eleven evidence tools remain anonymous and free. Five compute-heavy tools are
+account-gated; client and catalog copy must preserve that boundary. See the
+[distribution and container trust guide](docs/DISTRIBUTION.md) for verification
+and release invariants.
 
 ## v2 "Deep Water" — an accountable engine fleet, layered analytics, one terminal
 
@@ -70,7 +100,7 @@ composite engine called "undertow" (critical slowing down,
 | **Warehouse** | How full is the primary-dealer balance sheet — the shock absorber of last resort? (NY Fed PD stats by maturity bucket) |
 | **Resonance Engine** ★ | *The seiche made literal:* does the same calendar forcing (month-end, quarter-end, year-end, tax dates) produce a bigger slosh than it used to? Amplification = damping loss = fragility rising while levels look calm. |
 | **Undertow** ★ | The free-decay half of the resonance physics: critical slowing down (Scheffer et al.), measured continuously. Rising lag-1 autocorrelation + variance of the detrended spread/tail and a stretching recovery half-life after everyday pops = the basin losing damping on days when NOTHING is happening. Expanding percentiles only; weighted into the composite as structural evidence. |
-| **Swell Forecast** ★ | The funding-stress **forward curve** — a term structure nobody publishes, not even the $32k terminals: P(SOFR−IORB pop ≥ 2/5/10/20bp) for each of the next 42 business days, built from the PUBLIC forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops — small severities lend the rare big ones statistical mass), lifted by the live damping state and announced coupon settlements. Compounds to P(event by horizon), walk-forward scored vs climatology on final-vintage history with the reliability table printed, and the verdict self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
+| **Swell Forecast** ★ | A 42-business-day funding-stress forward curve: P(SOFR−IORB pop ≥ 2/5/10/20bp) by date, built from the public forcing calendar (turn/tax/settlement days each keep their full expanding distribution of historical pops), lifted by the live damping state and announced coupon settlements. It compounds to P(event by horizon), is walk-forward scored vs climatology on final-vintage history with the reliability table printed, and self-demotes to "trust the dates, not the levels" when the levels stop earning it. |
 | **Hydrophone Array** ★ | How connected is the plumbing right now? (absorption ratio over 11 funding series + a live lead-lag map of which pipe is upstream) |
 | **Global Basin Coupling** ★ | Are the US, euro-area, UK, India (FX channel) and crypto basins moving as one tide? Plus the global confession channel: USD swap-line draws (test operations excluded). |
 | **The Estuary / Passage** ★ | Where FX settlement and physical inventory become money-market cash demand. Twenty-two H.10 currencies, advanced/emerging dollar indices, daily energy and monthly IMF commodity breadth are normalized into an upstream-pressure reading, then compared with SOFR−IORB and commercial-paper spreads. Its differentiator, **The Passage**, chooses each candidate target and lag on the first 60% of aligned history and calls it `earned` only if direction and magnitude survive the untouched final 40%; unstable stories print `not earned`. De-clustered analog outcomes, BIS PvP settlement structure and an editable cash-conversion lab keep statistical evidence, structural benchmarks and scenarios visibly separate. Context only, never a composite input. |
@@ -365,11 +395,15 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-No paid data, no auth, no intraday ticks. Daily cadence + operation results is the
-honest granularity of the free stack. Historical reconstruction uses final/current-
-vintage inputs and is therefore **construction-PIT, not validated-backtest
-evidence**. The engine now blocks the historical backtest output unless every
-required input has an ALFRED/as-published vintage manifest. From v2 onward Seiche
-accrues a true as-published point-in-time record (`/api/pit`) and stores immutable
-observation captures for forward vintage reconstruction. Those forward captures
-cannot repair vintages that were never retained. Not investment advice.
+The eleven-tool public evidence surface needs no account and does not depend on
+paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
+Five compute-heavy forecast, replay, positioning, prose and LLM tools are
+account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus
+operation results is the honest granularity of the public stack. Historical
+reconstruction uses final/current-vintage inputs and is therefore
+**construction-PIT, not validated-backtest evidence**. The engine blocks the
+historical backtest output unless every required input has an ALFRED/as-published
+vintage manifest. From v2 onward Seiche accrues a true as-published point-in-time
+record (`/api/pit`) and stores immutable observation captures for forward vintage
+reconstruction. Those forward captures cannot repair vintages that were never
+retained. Not investment advice.

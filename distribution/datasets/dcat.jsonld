@@ -1,0 +1,92 @@
+{
+  "@context": {
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "dct": "http://purl.org/dc/terms/",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "spdx": "http://spdx.org/rdf/terms#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "seiche": "https://seiche.info/ns/"
+  },
+  "@graph": [
+    {
+      "@id": "https://seiche.info/datasets/direct-ofr/#catalog",
+      "@type": "dcat:Catalog",
+      "dct:title": "Seiche research data catalog draft",
+      "dct:description": "Draft catalog record, not submitted; no DOI assigned.",
+      "seiche:publicationStatus": "draft_not_submitted",
+      "dct:publisher": {"@id": "https://seiche.info/#organization"},
+      "dct:issued": {"@value": "2026-08-21", "@type": "xsd:date"},
+      "dct:modified": {"@value": "2026-08-22", "@type": "xsd:date"},
+      "dcat:dataset": {"@id": "https://seiche.info/datasets/direct-ofr/"}
+    },
+    {
+      "@id": "https://seiche.info/datasets/direct-ofr/",
+      "@type": "dcat:Dataset",
+      "dct:title": "Seiche audited direct-OFR research snapshot",
+      "dct:description": "11,163 observations from ten audited direct Office of Financial Research series. Runtime caches, FRED-fetched values, restricted rows, and Seiche-derived outputs are excluded.",
+      "dct:creator": {"@id": "https://seiche.info/#organization"},
+      "dct:publisher": {"@id": "https://seiche.info/#organization"},
+      "dct:created": {"@value": "2026-08-21", "@type": "xsd:date"},
+      "dct:modified": {"@value": "2026-08-22", "@type": "xsd:date"},
+      "dct:license": {"@id": "https://www.financialresearch.gov/legal-notices/"},
+      "dct:source": [
+        {"@id": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/"},
+        {"@id": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/mmf/"}
+      ],
+      "dct:spatial": {"@id": "https://www.geonames.org/6252001/"},
+      "dct:temporal": {
+        "@type": "dct:PeriodOfTime",
+        "dcat:startDate": {"@value": "2010-11-30", "@type": "xsd:date"},
+        "dcat:endDate": {"@value": "2026-08-19", "@type": "xsd:date"}
+      },
+      "dct:subject": ["repo markets", "money market funds", "financial time series"],
+      "dcat:keyword": ["repo markets", "money market funds", "secured funding", "financial time series"],
+      "dcat:landingPage": {"@id": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons"},
+      "dcat:version": "0.1.0-draft",
+      "seiche:publicationStatus": "draft_not_submitted",
+      "seiche:doi": null,
+      "dcat:distribution": [
+        {"@id": "https://seiche.info/datasets/direct-ofr/#repo-csv"},
+        {"@id": "https://seiche.info/datasets/direct-ofr/#mmf-csv"}
+      ]
+    },
+    {
+      "@id": "https://seiche.info/datasets/direct-ofr/#repo-csv",
+      "@type": "dcat:Distribution",
+      "dct:title": "Audited direct-OFR repo-market observations",
+      "dct:description": "Six direct-OFR repo-market series, pinned to the audited Seiche source commit.",
+      "dct:format": "text/csv",
+      "dct:license": {"@id": "https://www.financialresearch.gov/legal-notices/"},
+      "dcat:downloadURL": {"@id": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_repo_markets.csv"},
+      "dct:accrualPeriodicity": {"@id": "http://publications.europa.eu/resource/authority/frequency/DAILY"},
+      "dcat:temporalResolution": {"@value": "P1D", "@type": "xsd:duration"},
+      "dcat:byteSize": {"@value": 1466225, "@type": "xsd:nonNegativeInteger"},
+      "dcat:mediaType": {"@id": "https://www.iana.org/assignments/media-types/text/csv"},
+      "spdx:checksum": {"@type": "spdx:Checksum", "spdx:algorithm": {"@id": "spdx:checksumAlgorithm_sha256"}, "spdx:checksumValue": {"@value": "307ae6ad5bbe8653c3bd4abf63449d4229b0fbba1ee66014d91f813e866d3a4a", "@type": "xsd:hexBinary"}}
+    },
+    {
+      "@id": "https://seiche.info/datasets/direct-ofr/#mmf-csv",
+      "@type": "dcat:Distribution",
+      "dct:title": "Audited direct-OFR money-market-fund observations",
+      "dct:description": "Four direct-OFR money-market-fund series, pinned to the audited Seiche source commit.",
+      "dct:format": "text/csv",
+      "dct:license": {"@id": "https://www.financialresearch.gov/legal-notices/"},
+      "dcat:downloadURL": {"@id": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_money_market_funds.csv"},
+      "dct:accrualPeriodicity": {"@id": "http://publications.europa.eu/resource/authority/frequency/MONTHLY"},
+      "dcat:temporalResolution": {"@value": "P1M", "@type": "xsd:duration"},
+      "dcat:byteSize": {"@value": 94606, "@type": "xsd:nonNegativeInteger"},
+      "dcat:mediaType": {"@id": "https://www.iana.org/assignments/media-types/text/csv"},
+      "spdx:checksum": {"@type": "spdx:Checksum", "spdx:algorithm": {"@id": "spdx:checksumAlgorithm_sha256"}, "spdx:checksumValue": {"@value": "1d0975b69dcb6f3465e957679b21bacae02695145b1e77563dae3258d8b524cd", "@type": "xsd:hexBinary"}}
+    },
+    {
+      "@id": "https://www.financialresearch.gov/",
+      "@type": "foaf:Organization",
+      "foaf:name": "Office of Financial Research"
+    },
+    {
+      "@id": "https://seiche.info/#organization",
+      "@type": "foaf:Organization",
+      "foaf:name": "Seiche"
+    }
+  ]
+}

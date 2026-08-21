@@ -1,0 +1,124 @@
+{
+  "@context": {
+    "@language": "en",
+    "@vocab": "https://schema.org/",
+    "citeAs": "cr:citeAs",
+    "column": "cr:column",
+    "conformsTo": "dct:conformsTo",
+    "cr": "http://mlcommons.org/croissant/",
+    "data": {"@id": "cr:data", "@type": "@json"},
+    "dataType": {"@id": "cr:dataType", "@type": "@vocab"},
+    "dct": "http://purl.org/dc/terms/",
+    "equivalentProperty": "cr:equivalentProperty",
+    "examples": {"@id": "cr:examples", "@type": "@json"},
+    "extract": "cr:extract",
+    "field": "cr:field",
+    "fileObject": "cr:fileObject",
+    "fileProperty": "cr:fileProperty",
+    "fileSet": "cr:fileSet",
+    "format": "cr:format",
+    "includes": "cr:includes",
+    "isLiveDataset": "cr:isLiveDataset",
+    "jsonPath": "cr:jsonPath",
+    "key": "cr:key",
+    "md5": "cr:md5",
+    "parentField": "cr:parentField",
+    "path": "cr:path",
+    "rai": "http://mlcommons.org/croissant/RAI/",
+    "recordSet": "cr:recordSet",
+    "references": "cr:references",
+    "regex": "cr:regex",
+    "repeated": "cr:repeated",
+    "replace": "cr:replace",
+    "samplingRate": "cr:samplingRate",
+    "sc": "https://schema.org/",
+    "separator": "cr:separator",
+    "seiche": "https://seiche.info/ns/",
+    "source": "cr:source",
+    "subField": "cr:subField",
+    "transform": "cr:transform"
+  },
+  "@type": "sc:Dataset",
+  "name": "seiche-audited-direct-ofr-research-snapshot",
+  "alternateName": "Seiche audited direct-OFR research snapshot",
+  "description": "Draft, not submitted, no DOI assigned. 11,163 observations from ten direct Office of Financial Research series; FRED-fetched values, runtime caches, restricted rows, and derived Seiche outputs are excluded.",
+  "url": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
+  "conformsTo": "http://mlcommons.org/croissant/1.0",
+  "version": "0.1.0-draft",
+  "dateCreated": "2026-08-21",
+  "datePublished": "2026-08-21",
+  "license": "https://www.financialresearch.gov/legal-notices/",
+  "seiche:publicationStatus": "draft_not_submitted",
+  "seiche:snapshotDate": "2026-08-21",
+  "creator": {
+    "@type": "sc:Organization",
+    "name": "Seiche",
+    "url": "https://seiche.info/"
+  },
+  "provider": {
+    "@type": "sc:Organization",
+    "name": "Office of Financial Research",
+    "url": "https://www.financialresearch.gov/"
+  },
+  "keywords": [
+    "repo markets",
+    "money market funds",
+    "secured funding",
+    "financial time series",
+    "United States"
+  ],
+  "citeAs": "@misc{seiche_direct_ofr_2026, title={Seiche audited direct-OFR research snapshot}, author={{Seiche contributors}}, year={2026}, url={https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons}}",
+  "citation": "Office of Financial Research, U.S. Repo Markets Data Release and U.S. Money Market Fund Data Release; curated into the Seiche direct-OFR research snapshot.",
+  "distribution": [
+    {
+      "@type": "cr:FileObject",
+      "@id": "repo_csv",
+      "name": "ofr_repo_markets.csv",
+      "description": "Six audited direct-OFR repo-market series with native daily observation dates.",
+      "contentUrl": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_repo_markets.csv",
+      "encodingFormat": "text/csv",
+      "sha256": "307ae6ad5bbe8653c3bd4abf63449d4229b0fbba1ee66014d91f813e866d3a4a"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "mmf_csv",
+      "name": "ofr_money_market_funds.csv",
+      "description": "Four audited direct-OFR money-market-fund series with native monthly observation dates and revised-series semantics.",
+      "contentUrl": "https://raw.githubusercontent.com/beepboop2025/seiche/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons/input/observations/ofr_money_market_funds.csv",
+      "encodingFormat": "text/csv",
+      "sha256": "1d0975b69dcb6f3465e957679b21bacae02695145b1e77563dae3258d8b524cd"
+    }
+  ],
+  "recordSet": [
+    {
+      "@type": "cr:RecordSet",
+      "@id": "repo_observations",
+      "name": "repo_observations",
+      "description": "Long-form observations from the pinned direct-OFR repo CSV.",
+      "field": [
+        {"@type": "cr:Field", "@id": "repo_observations/entity", "name": "entity", "dataType": "sc:Text", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "entity"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/variable", "name": "variable", "dataType": "sc:Text", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "variable"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/date", "name": "date", "dataType": "sc:Date", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "date"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/value", "name": "value", "dataType": "sc:Float", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "value"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/unit", "name": "unit", "dataType": "sc:Text", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "unit"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/measurementMethod", "name": "measurementMethod", "dataType": "sc:Text", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "measurementMethod"}}},
+        {"@type": "cr:Field", "@id": "repo_observations/observationPeriod", "name": "observationPeriod", "dataType": "sc:Text", "source": {"fileObject": {"@id": "repo_csv"}, "extract": {"column": "observationPeriod"}}}
+      ]
+    },
+    {
+      "@type": "cr:RecordSet",
+      "@id": "mmf_observations",
+      "name": "mmf_observations",
+      "description": "Long-form observations from the pinned direct-OFR money-market-fund CSV.",
+      "field": [
+        {"@type": "cr:Field", "@id": "mmf_observations/entity", "name": "entity", "dataType": "sc:Text", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "entity"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/variable", "name": "variable", "dataType": "sc:Text", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "variable"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/date", "name": "date", "dataType": "sc:Date", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "date"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/value", "name": "value", "dataType": "sc:Float", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "value"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/unit", "name": "unit", "dataType": "sc:Text", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "unit"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/measurementMethod", "name": "measurementMethod", "dataType": "sc:Text", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "measurementMethod"}}},
+        {"@type": "cr:Field", "@id": "mmf_observations/observationPeriod", "name": "observationPeriod", "dataType": "sc:Text", "source": {"fileObject": {"@id": "mmf_csv"}, "extract": {"column": "observationPeriod"}}}
+      ]
+    }
+  ]
+}

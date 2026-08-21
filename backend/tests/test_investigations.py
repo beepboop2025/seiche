@@ -6,8 +6,8 @@ import json
 import struct
 import sys
 from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC = ROOT / "frontend" / "public"
@@ -15,7 +15,22 @@ HUB = PUBLIC / "investigations" / "index.html"
 STORY = PUBLIC / "investigations" / "the-282-billion-settlement-test" / "index.html"
 sys.path.insert(0, str(ROOT / "backend"))
 
-from seiche.dispatch_pages import render_llms_txt, render_sitemap  # noqa: E402
+from seiche.dispatch_pages import render_llms_txt, render_sitemap
+
+
+class _LinkCollector(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, _tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.hrefs.extend(value for name, value in attrs if name == "href" and value)
+
+
+def _hrefs(document: str) -> list[str]:
+    parser = _LinkCollector()
+    parser.feed(document)
+    return parser.hrefs
 
 
 def _png_size(path: Path) -> tuple[int, int]:
@@ -36,8 +51,15 @@ def test_investigation_has_article_metadata_and_evidence_sections():
 
 def test_network_links_are_bidirectional_destinations():
     for page in (HUB.read_text(), STORY.read_text()):
-        assert "https://liquilens.in/investigations/" in page
-        assert "https://liquilens-undertow.com/investigations/" in page
+        links = _hrefs(page)
+        assert links.count(
+            "https://liquilens.in/investigations/"
+            "the-5-64x-private-credit-concentration/"
+        ) == 1
+        assert links.count(
+            "https://liquilens-undertow.com/investigations/"
+            "eight-blanks-are-not-eight-green-lights/"
+        ) == 1
 
 
 def test_articles_are_the_public_front_door_without_hiding_evidence():
@@ -45,7 +67,7 @@ def test_articles_are_the_public_front_door_without_hiding_evidence():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
     assert "SEICHE / ARTICLES" in hub
     assert 'href="/dispatches/"' in hub
-    assert "https://myquantdoesntspeakenglish.com/" in hub
+    assert _hrefs(hub).count("https://myquantdoesntspeakenglish.com/") == 2
     assert "The board checks new evidence six times a day" in hub
     assert "If coverage cannot support a verdict, Seiche abstains" in hub
     assert "ARTICLES" in app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
@@ -60,7 +82,7 @@ def test_manifest_and_share_assets_are_publication_ready():
     assert article["publication_status"] == "PUBLISHED"
     assert article["canonical_url"].startswith("https://seiche.info/investigations/")
     assert article["dek"] and article["limitations"]
-    event_time = datetime.fromisoformat(article["clocks"]["event_time"].replace("Z", "+00:00"))
+    event_time = datetime.fromisoformat(article["clocks"]["event_time"])
     knowledge_time = datetime.fromisoformat(article["clocks"]["knowledge_time"])
     published_at = datetime.fromisoformat(article["published_at"])
     assert event_time <= knowledge_time <= published_at

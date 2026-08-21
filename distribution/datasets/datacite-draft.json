@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "http://datacite.org/schema/kernel-4",
+  "publicationStatus": "draft_not_submitted",
+  "doi": null,
+  "url": null,
+  "creators": [
+    {
+      "name": "Seiche",
+      "nameType": "Organizational"
+    }
+  ],
+  "titles": [
+    {
+      "title": "Seiche audited direct-OFR research snapshot"
+    }
+  ],
+  "publisher": "Seiche",
+  "publicationYear": 2026,
+  "types": {
+    "resourceTypeGeneral": "Dataset",
+    "resourceType": "Financial time-series research dataset"
+  },
+  "subjects": [
+    {"subject": "repo markets"},
+    {"subject": "money market funds"},
+    {"subject": "secured funding"},
+    {"subject": "financial time series"}
+  ],
+  "contributors": [
+    {
+      "name": "Office of Financial Research",
+      "nameType": "Organizational",
+      "contributorType": "Producer"
+    }
+  ],
+  "dates": [
+    {
+      "date": "2026-08-21",
+      "dateType": "Created"
+    }
+  ],
+  "language": "en",
+  "alternateIdentifiers": [
+    {
+      "alternateIdentifier": "seiche-direct-ofr-2026-08-21-draft",
+      "alternateIdentifierType": "Local draft identifier"
+    }
+  ],
+  "relatedIdentifiers": [
+    {
+      "relatedIdentifier": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/",
+      "relatedIdentifierType": "URL",
+      "relationType": "IsDerivedFrom"
+    },
+    {
+      "relatedIdentifier": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/mmf/",
+      "relatedIdentifierType": "URL",
+      "relationType": "IsDerivedFrom"
+    },
+    {
+      "relatedIdentifier": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons",
+      "relatedIdentifierType": "URL",
+      "relationType": "IsSupplementTo"
+    }
+  ],
+  "version": "0.1.0-draft",
+  "rightsList": [
+    {
+      "rights": "United States Government work; OFR credit requested; separately copyrighted material requires permission",
+      "rightsUri": "https://www.financialresearch.gov/legal-notices/",
+      "schemeUri": "https://www.financialresearch.gov/legal-notices/"
+    }
+  ],
+  "descriptions": [
+    {
+      "description": "DRAFT - NOT SUBMITTED - NO DOI ASSIGNED. 11,163 observations from ten audited direct Office of Financial Research series. Runtime caches, FRED-fetched values, New York Fed reference-rate rows, the mismatched primary-dealer row, licensed series, and Seiche-derived outputs are excluded. Daily preliminary repo and monthly revised money-market-fund observations retain separate native clocks.",
+      "descriptionType": "Abstract"
+    },
+    {
+      "description": "Engineering rights review only, not legal advice or an Office of Financial Research endorsement.",
+      "descriptionType": "Other"
+    }
+  ],
+  "geoLocations": [
+    {
+      "geoLocationPlace": "United States"
+    }
+  ],
+  "fundingReferences": []
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/beepboop2025/seiche/security/advisories/new
+    about: Do not disclose authentication, integrity, privacy, or infrastructure vulnerabilities in a public issue.
+  - name: MCP and API integration help
+    url: https://seiche.info/developers
+    about: Read the live client setup, tool catalog, and API discovery guidance before filing an integration bug.
