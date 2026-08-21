@@ -1351,6 +1351,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in backup
     assert "seiche-market-backup.sh" in backup
     assert "mountpoint -q" in backup_script
+    assert '"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"' in backup_script
+    assert "cp -a --" not in backup_script
     assert "CPUQuota=50%" in backup
     assert "MemoryMax=1G" in backup
     assert "ProtectSystem=strict" in backup
