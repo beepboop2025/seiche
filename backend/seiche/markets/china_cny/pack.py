@@ -66,7 +66,7 @@ PACK = MarketPack(
             RedistributionStatus.ALLOWED,
         ),
         SourceAdapterSpec(
-            "cfets_rates", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
+            "cfets_rates", ConnectorClassification.LICENSED, "P1D", _CLOCK,
             RedistributionStatus.METADATA_ONLY,
         ),
         SourceAdapterSpec(
@@ -80,7 +80,7 @@ PACK = MarketPack(
     ),
     instruments=(
         rate_instrument("CN.PBC.OMO_7D", "PBC_OMO_7D", SemanticRole.POLICY_TARGET, "pbc_operations", DayCountConvention.ACT_365),
-        rate_instrument("CN.CFETS.DR007", "DR007", SemanticRole.TERM_1W, "cfets_rates", DayCountConvention.ACT_365),
+        rate_instrument("CN.CFETS.FDR007", "FDR007", SemanticRole.TERM_1W, "cfets_rates", DayCountConvention.ACT_365),
         rate_instrument("CN.CFETS.SHIBOR_ON", "SHIBOR_ON", SemanticRole.UNSECURED_OVERNIGHT, "cfets_rates", DayCountConvention.ACT_365),
         rate_instrument("CN.PBC.SLF_RATE", "PBC_SLF_RATE", SemanticRole.CENTRAL_BANK_FACILITY_RATE, "pbc_operations", DayCountConvention.ACT_365),
         InstrumentSpec(

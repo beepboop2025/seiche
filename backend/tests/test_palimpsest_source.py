@@ -7,13 +7,15 @@ import pandas as pd
 import pytest
 
 from seiche import store
-from seiche.config import ALL_SERIES
+from seiche.config import QUARANTINED_CFETS_LEGACY_SERIES
 from seiche.sources import palimpsest
 from seiche.sources.base import Series
 
 
 def _cached_cfets_series(mnemonic: str, value: float) -> Series:
-    spec = ALL_SERIES[mnemonic]
+    spec = {
+        item.mnemonic: item for item in QUARANTINED_CFETS_LEGACY_SERIES
+    }[mnemonic]
     return Series(
         mnemonic,
         spec.source,

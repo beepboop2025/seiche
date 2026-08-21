@@ -128,7 +128,7 @@
       "rank": 3,
       "priority": "P0",
       "id": "china_derivable_benchmarks",
-      "summary": "Obtain redistribution permission or a derived-entitled replacement for DR007 and SHIBOR_ON.",
+      "summary": "Obtain redistribution permission or a derived-entitled replacement for FDR007 and SHIBOR_ON; FDR007 is the fixing derived from DR007 transactions, not DR007 itself.",
       "candidate_ids": ["cfets_money_market_rates"],
       "unlocks": ["CN-CNY:term_funding", "CN-CNY:local_gauge"],
       "blocker": "The implemented CFETS adapter is metadata-only and cannot enter public calculations."
@@ -200,10 +200,10 @@
       "rank": 10,
       "priority": "P1",
       "id": "china_sixty_observations",
-      "summary": "Backfill or accumulate SHIBOR_ON and CN_FDR007 beyond 60 observations.",
+      "summary": "After exact collection and derivation rights are approved, backfill CN.CFETS.SHIBOR_ON and CN.CFETS.FDR007 beyond 60 observations.",
       "candidate_ids": ["cfets_money_market_rates"],
       "unlocks": ["basins:china_zscore", "harbors:china_percentiles"],
-      "blocker": "Range-limited and throttled feeds have not yet accrued enough local history."
+      "blocker": "No public derivation or redistribution authority exists, so history collection is disabled by default and no calibration clock is running."
     },
     {
       "rank": 11,
@@ -529,7 +529,7 @@
       "target_engines": ["CN-CNY:term_funding", "basins", "harbors", "spillover"],
       "implementation_status": "implemented",
       "blocker": "Current rights review permits metadata discovery but not use of values in public calculations; endpoint is also range-limited and throttled.",
-      "next_action": "Seek explicit derivation/redistribution permission or configure an entitled source; continue bounded history accrual without increasing request pressure."
+      "next_action": "Seek explicit collection plus derivation/redistribution permission or configure an entitled source; do not accrue values while approval is absent."
     },
     {
       "id": "pbc_open_market_operations",

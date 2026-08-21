@@ -209,7 +209,7 @@ API reads sealed canonical observations only.
 | `UK-GBP` local gauge | `policy_relative_overnight`: `SONIA UNSECURED_OVERNIGHT` minus `BOE_BANK_RATE POLICY_TARGET` | Policy and SONIA adapters implemented; SONIA derived-only | Source-complete; RONIA would add the optional secured/unsecured component. |
 | `JP-JPY` local gauge | `policy_relative_overnight`: `TONA UNSECURED_OVERNIGHT` minus `BOJ_BASIC_LOAN POLICY_CEILING` | BOJ rate/account adapters implemented | Source-complete; canonical history and validation must accrue. |
 | `KR-KRW` local gauge | Required policy-relative BOK call minus base rate; optional corridor | BOK policy and call adapters implemented but individually issued API key required; all BOK adapters are `METADATA_ONLY` while redistribution review remains open | Rows can be collected into the private canonical store, but the public gauge stays unavailable until terms review closes; corridor also waits for BOK facility rows; pack remains reference/forward-only. |
-| `CN-CNY` local gauge | `term_funding`: `DR007 TERM_1W` minus `SHIBOR_ON UNSECURED_OVERNIGHT` | CFETS adapter implemented but `METADATA_ONLY` | Public gauge unavailable until redistribution permission or a derived-entitled replacement exists. |
+| `CN-CNY` local gauge | `term_funding`: `FDR007 TERM_1W` minus `SHIBOR_ON UNSECURED_OVERNIGHT` | Conditionally licensed CFETS adapter implemented but `METADATA_ONLY`; FDR007 is a fixing based on DR007 transactions, not DR007 itself | Public gauge unavailable until redistribution permission or a derived-entitled replacement exists. |
 | `HK-HKD` local gauge | `liquidity_buffer_drain`: `HKMA_AGGREGATE_BALANCE SYSTEM_LIQUIDITY` | HKMA adapter implemented | Source-complete narrow gauge; HONIA/HIBOR/basis add breadth. |
 | `IN-INR` local gauge | `corridor_pressure`: `CALL_WAR UNSECURED_OVERNIGHT` within `RBI_SDF POLICY_FLOOR` and `RBI_MSF POLICY_CEILING` | RBI adapter implemented; most optional official roles included | Source-complete; licensed TREPS/CP/CD/basis add breadth. |
 | `AU-AUD` local gauge | `policy_relative_overnight`: `AONIA UNSECURED_OVERNIGHT` minus `RBA_CASH_TARGET POLICY_TARGET` | RBA cash/policy adapters implemented | Source-complete; secured overnight/BBSW optional. |
@@ -284,7 +284,7 @@ and candidate IDs.
 |---:|:---:|---|---|
 | 1 | P0 | Acquire/licence and backfill at least two public-derivable `FX_SWAP_BASIS` histories | Turns Global Tide from null to numeric. |
 | 2 | P0 | Create signed, content-bound ALFRED/as-published histories for all eight History inputs | Turns Backtest from UNVERIFIED to runnable and upgrades History/ML/Stack/Book evidence. |
-| 3 | P0 | Obtain redistribution permission or a derived-entitled replacement for DR007 and SHIBOR | Makes China's required term-funding component publicly calculable. |
+| 3 | P0 | Obtain redistribution permission or a derived-entitled replacement for FDR007 and SHIBOR | Makes China's required term-funding component publicly calculable. |
 | 4 | P0 | Obtain written RBNZ automated-access approval and an unambiguously classified NZ unsecured overnight series | Makes New Zealand's required corridor component possible. |
 | 5 | P0 | Persist/backfill and continuously materialize canonical histories for source-complete non-US packs | Converts implemented adapters into durable local gauges without buying duplicate data. |
 | 6 | P1 | Map a defensible canonical US `POLICY_FLOOR` | Unlocks the sole missing domestic US corridor component. |

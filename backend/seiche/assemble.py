@@ -24,9 +24,11 @@ import hmac
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import traceback
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -159,6 +161,7 @@ RESTRICTED_SNAPSHOT_IDENTIFIERS = frozenset({
     "shibor_on",
     "shibor:on",
     "cn.cfets.shibor_on",
+    "cn.cfets.fdr007",
     "cn.cfets.dr007",
     "cn_fdr007",
     "cn_parity",
@@ -173,17 +176,48 @@ RESTRICTED_SNAPSHOT_IDENTITY_FIELDS = frozenset({
     "adapter",
     "adapter_id",
     "benchmark",
+    "columns",
+    "id",
+    "input_series",
     "instrument_id",
     "label",
+    "metric",
     "mnemonic",
+    "name",
     "node",
     "rate_label",
     "remote_id",
+    "series",
     "series_id",
     "source",
     "source_id",
     "source_uri",
 })
+RESTRICTED_SNAPSHOT_PROSE_FIELDS = frozenset({
+    "caveat",
+    "caveats",
+    "description",
+    "detail",
+    "explanation",
+    "message",
+    "method",
+    "note",
+    "notes",
+    "reason",
+    "summary",
+    "term",
+    "text",
+    "title",
+})
+RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES = ("_id", "_ids", "_series")
+RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
+    "_url",
+    "_urls",
+    "_uri",
+    "_uris",
+    "_href",
+    "_hrefs",
+)
 _cache: dict = {
     "at": 0.0,
     "payload": None,
@@ -1152,6 +1186,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # minutes, so a transient fault can't poison the whole data-day (bit us
     # twice during the v2 build).
     cached = store.load_blob(cache_key)
+    if cached is not None and _snapshot_contains_restricted_cfets({"deep": cached}):
+        logging.getLogger("seiche.assemble").warning(
+            "ignored deep cache containing restricted CFETS-derived data"
+        )
+        cached = None
     if cached is not None:
         ttl_min = DEEP_TTL_MIN if cached.get("_all_ok") else 30
         ts = cached.get("_computed_at")
@@ -1208,6 +1247,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         faults.append({"source": "deep:history", "detail": f"{type(e).__name__}: {e}"})
         out["history"] = safe_failure_envelope(e)
         _bind_deep_history_boundary(out)
+        _assert_snapshot_rights({"deep": out})
         store.save_blob(cache_key, out)
         return out
 
@@ -1551,6 +1591,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         if k not in ("ok", "historical_evidence") and not str(k).startswith("_")
     )
     out["_computed_at"] = utcnow_iso()
+    _assert_snapshot_rights({"deep": out})
     store.save_blob(cache_key, out)
     return out
 
@@ -1793,22 +1834,53 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     happens to discuss a benchmark.
     """
 
-    def restricted_identifier(value: object, *, field: str | None = None) -> bool:
+    normalized_identifiers = {
+        re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+        for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
+    }
+    restricted_tokens = {"cfets", "chinamoney", "shibor", "fdr007", "dr007"}
+
+    def restricted_identifier(value: object, *, typed: bool = False) -> bool:
         if not isinstance(value, str):
             return False
         folded = value.strip().casefold()
+        normalized = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
         if (
             folded in RESTRICTED_SNAPSHOT_IDENTIFIERS
+            or normalized in normalized_identifiers
             or folded.startswith("cn.cfets.")
         ):
             return True
-        if field in {"source_uri", "remote_id"} and "chinamoney.com.cn" in folded:
+        return typed and bool(restricted_tokens & set(re.findall(r"[a-z0-9]+", folded)))
+
+    def restricted_mirror_url(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            parsed = urllib.parse.urlsplit(value.strip())
+        except ValueError:
+            return False
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        path = urllib.parse.unquote(parsed.path).casefold()
+        if host == "chinamoney.com.cn" or host.endswith(".chinamoney.com.cn"):
             return True
-        if field in {"benchmark", "label", "rate_label"}:
-            return any(
-                marker in folded for marker in ("cfets", "shibor", "fdr007", "dr007")
-            )
+        if host in {"palimpsest.info", "www.palimpsest.info"}:
+            return "/readings/china-econ" in path
+        if host == "raw.githubusercontent.com":
+            return "/palimpsest/" in path and "/china-econ" in path
         return False
+
+    def identity_field(field: str) -> bool:
+        return (
+            field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS
+            or field.endswith(RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES)
+        )
+
+    def url_field(field: str) -> bool:
+        return (
+            field in {"href", "hrefs", "mirror", "mirrors", "url", "urls", "uri", "uris"}
+            or field.endswith(RESTRICTED_SNAPSHOT_URL_SUFFIXES)
+        )
 
     def restricted_engine_shape(value: dict) -> bool:
         if str(value.get("harbor", "")).upper() == "CHINA" and (
@@ -1841,32 +1913,45 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             return True
         return False
 
-    def walk(value: object) -> bool:
+    def walk(
+        value: object,
+        *,
+        path: tuple[str, ...] = (),
+        typed_identity: bool = False,
+    ) -> bool:
         if isinstance(value, dict):
             if restricted_engine_shape(value):
                 return True
             for key, nested in value.items():
                 key_text = str(key)
                 field = key_text.casefold()
-                if restricted_identifier(key_text):
+                child_path = (*path, field)
+                if restricted_identifier(key_text, typed=True):
                     return True
-                if field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS:
-                    if restricted_identifier(nested, field=field):
-                        return True
-                    if isinstance(nested, (list, tuple)) and any(
-                        restricted_identifier(item, field=field) for item in nested
-                    ):
-                        return True
+                if url_field(field) and restricted_mirror_url(nested):
+                    return True
                 if field == "nodes" and isinstance(nested, (list, tuple)) and any(
-                    restricted_identifier(item) for item in nested
+                    restricted_identifier(item, typed=True) for item in nested
                 ):
                     return True
-                if walk(nested):
+                child_identity = typed_identity or identity_field(field)
+                if field in RESTRICTED_SNAPSHOT_PROSE_FIELDS:
+                    child_identity = False
+                if walk(
+                    nested,
+                    path=child_path,
+                    typed_identity=child_identity,
+                ):
                     return True
             return False
         if isinstance(value, (list, tuple)):
-            return any(walk(item) for item in value)
-        return False
+            return any(
+                walk(item, path=path, typed_identity=typed_identity)
+                for item in value
+            )
+        if restricted_mirror_url(value) and path and url_field(path[-1]):
+            return True
+        return typed_identity and restricted_identifier(value, typed=True)
 
     return walk(payload)
 
@@ -1874,6 +1959,28 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
 def _assert_snapshot_rights(payload: object) -> None:
     if _snapshot_contains_restricted_cfets(payload):
         raise ValueError("snapshot contains restricted CFETS-derived data")
+
+
+def _safe_memory_snapshot() -> dict | None:
+    """Return the in-process payload or quarantine it before any public read."""
+
+    payload = _cache.get("payload")
+    if payload is None:
+        return None
+    if not isinstance(payload, dict) or _snapshot_contains_restricted_cfets(payload):
+        logging.getLogger("seiche.assemble").error(
+            "quarantined invalid in-process snapshot before public cache read"
+        )
+        _cache.update(
+            at=0.0,
+            payload=None,
+            source=None,
+            release_receipt=None,
+            release_handoff_id=None,
+            producer_sha=None,
+        )
+        return None
+    return payload
 
 
 def _servable_snapshot(payload: object) -> bool:
@@ -1977,7 +2084,7 @@ def restore_cached_snapshot() -> str | None:
     Returns the source name for startup logging, or ``None`` when no safe
     snapshot exists.
     """
-    if _cache["payload"] is not None:
+    if _safe_memory_snapshot() is not None:
         return "memory"
 
     log = logging.getLogger("seiche.assemble")
@@ -2292,12 +2399,12 @@ def cached_snapshot() -> dict | None:
     :func:`snapshot`, it never acquires the build lock, schedules a refresh,
     or turns a cold-cache read into a full board build.
     """
-    return _cache["payload"]
+    return _safe_memory_snapshot()
 
 
 def cached_snapshot_was_rebuilt() -> bool:
     """True only after this process completed the full assembly pipeline."""
-    return _cache["payload"] is not None and _cache.get("source") == "rebuilt"
+    return _safe_memory_snapshot() is not None and _cache.get("source") == "rebuilt"
 
 
 def cached_snapshot_release_receipt() -> dict | None:
@@ -2398,7 +2505,7 @@ async def snapshot(force: bool = False) -> dict:
     Cold start / force → build inline; boot warming makes cold rare.
     """
     global _refreshing
-    cached = _cache["payload"]
+    cached = _safe_memory_snapshot()
     if not force and cached is not None:
         if time.time() - _cache["at"] < CACHE_MIN * 60:
             return cached
@@ -2407,9 +2514,10 @@ async def snapshot(force: bool = False) -> dict:
             asyncio.get_running_loop().create_task(_refresh_stale())
         return cached
     async with _lock:
-        if not force and _cache["payload"] is not None \
+        locked_cached = _safe_memory_snapshot()
+        if not force and locked_cached is not None \
                 and time.time() - _cache["at"] < CACHE_MIN * 60:
-            return _cache["payload"]
+            return locked_cached
         return await _build_snapshot()
 
 

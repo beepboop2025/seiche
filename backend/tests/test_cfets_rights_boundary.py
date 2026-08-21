@@ -15,11 +15,14 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 
 from seiche import api, assemble, context_views, mcp_server, repository
+from seiche.config import ALL_SERIES, SeriesSpec
 from seiche.engines import harbors as harbors_engine
-from seiche.sources.base import Series
+from seiche.sources import chinamoney
+from seiche.sources.base import Series, SourceFault
 
 
 def _series(
@@ -172,6 +175,34 @@ def test_legacy_gather_no_longer_schedules_chinamoney() -> None:
     assert "chinamoney" not in assemble.__dict__
 
 
+@pytest.mark.asyncio
+async def test_legacy_chinamoney_entrypoints_are_offline_and_uncatalogued() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    spec = SeriesSpec(
+        "SHIBOR_ON",
+        "chinamoney",
+        "shibor:ON",
+        "retired SHIBOR overnight",
+        "%",
+        "D",
+        360,
+    )
+    faults: list[dict] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourceFault, match="legacy direct ChinaMoney"):
+            await chinamoney.fetch_series(client, spec)
+        assert await chinamoney.fetch_many(client, ["SHIBOR_ON"], faults) == {}
+
+    assert requests == []
+    assert faults and "retired" in faults[0]["detail"]
+    assert not ({"SHIBOR_ON", "CN_FDR007", "CN_PARITY"} & set(ALL_SERIES))
+
+
 def test_hermes_harbors_watch_fails_closed_on_cfets_values() -> None:
     root = Path(__file__).resolve().parents[2]
     skill = (
@@ -317,6 +348,15 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
             }
         ],
     }
+    payload["deep"]["rights_commentary"] = {
+        "description": "SHIBOR and FDR007 are distinct China money-market rates.",
+        "note": (
+            "The retired mirror was documented at "
+            "https://palimpsest.info/readings/china-econ-latest.json."
+        ),
+        "method": "CFETS values are absent, never interpreted as calm.",
+        "caveats": ["DR007 is the transaction population behind FDR007."],
+    }
 
     assert assemble._snapshot_contains_restricted_cfets(payload) is False
     assert assemble._servable_snapshot(payload) is True
@@ -377,6 +417,28 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
                 "arbitrary_wrapper": {
                     "instrument_id": "CN.CFETS.SHIBOR_ON",
                     "value": 1.31,
+                }
+            }
+        },
+        {"deep": {"wrapper": {"id": "CN.CFETS.FDR007"}}},
+        {"deep": {"wrapper": {"name": "SHIBOR_ON"}}},
+        {"deep": {"wrapper": {"metric": "FDR007"}}},
+        {"deep": {"wrapper": {"series": ["safe", "CN_PARITY"]}}},
+        {
+            "deep": {
+                "wrapper": {"input_series": {"primary": "CN_FDR007"}}
+            }
+        },
+        {"deep": {"wrapper": {"columns": ["date", "SHIBOR_ON"]}}},
+        {"deep": {"wrapper": {"selected_series": "CN.CFETS.SHIBOR_ON"}}},
+        {"deep": {"wrapper": {"upstream_product_id": "FDR007"}}},
+        {
+            "deep": {
+                "wrapper": {
+                    "mirror_urls": [
+                        "https://palimpsest.info/readings/"
+                        "china-econ-history.jsonl"
+                    ]
                 }
             }
         },
@@ -454,6 +516,113 @@ def test_live_publication_rejects_poison_before_cache_or_handoff(fake_snap) -> N
         asyncio.run(assemble._publish_rebuilt_snapshot(poisoned, None))
 
     assert assemble.cached_snapshot() is None
+
+
+def test_poisoned_memory_and_public_wire_caches_are_quarantined(fake_snap) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["deep"]["wrapper"] = {"input_series": ["CN_FDR007"]}
+    _reset_cache()
+    assemble._cache.update(
+        at=1.0,
+        payload=poisoned,
+        source="rebuilt",
+        release_receipt={"secret": "receipt"},
+        release_handoff_id="a" * 64,
+        producer_sha="b" * 40,
+    )
+    api._OVERVIEW_WIRE.update(
+        src=None,
+        body=b"old",
+        gz=b"old",
+        etag='"old"',
+    )
+
+    assert assemble.cached_snapshot() is None
+    assert assemble._cache["payload"] is None
+    assert assemble._cache["release_receipt"] is None
+    with pytest.raises(ValueError, match="restricted CFETS-derived data"):
+        api._overview_wire(poisoned)
+    assert api._OVERVIEW_WIRE["body"] == b"old"
+
+
+def test_poisoned_mcp_ttl_cache_is_quarantined(fake_snap) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["deep"]["wrapper"] = {"columns": ["date", "FDR007"]}
+    prior = dict(mcp_server._cache)
+    try:
+        mcp_server._cache.update(snap=poisoned, at=123.0)
+        assert mcp_server._rights_safe_memo(poisoned) is None
+        assert mcp_server._cache == {"snap": None, "at": 0.0}
+    finally:
+        mcp_server._cache.clear()
+        mcp_server._cache.update(prior)
+
+
+def test_deep_cache_poison_is_ignored_before_use(monkeypatch) -> None:
+    poison = {"ok": True, "columns": ["date", "SHIBOR_ON"]}
+    saved: list[dict] = []
+    monkeypatch.setattr(assemble.store, "load_blob", lambda _key: poison)
+    monkeypatch.setattr(
+        assemble.store,
+        "save_blob",
+        lambda _key, value: saved.append(deepcopy(value)),
+    )
+    monkeypatch.setattr(
+        assemble.eng_history,
+        "build",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("stop after load")),
+    )
+    drv = {
+        "spread_bp": pd.Series(
+            [1.0], index=pd.DatetimeIndex(["2026-08-22"])
+        ),
+        "tail_bp": pd.Series(dtype=float),
+        "srf": pd.Series(dtype=float),
+        "dw_b": pd.Series(dtype=float),
+        "rrp": pd.Series(dtype=float),
+        "res_gdp": pd.Series(dtype=float),
+    }
+
+    result = assemble._deep_layer({}, drv, {}, [])
+
+    assert result.get("columns") is None
+    assert saved == [result]
+    assert not assemble._snapshot_contains_restricted_cfets({"deep": result})
+
+
+def test_deep_cache_poison_is_rejected_before_save(monkeypatch) -> None:
+    saved: list[dict] = []
+    monkeypatch.setattr(assemble.store, "load_blob", lambda _key: None)
+    monkeypatch.setattr(
+        assemble.store,
+        "save_blob",
+        lambda _key, value: saved.append(deepcopy(value)),
+    )
+    monkeypatch.setattr(
+        assemble.eng_history,
+        "build",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("history failed")),
+    )
+    monkeypatch.setattr(
+        assemble,
+        "safe_failure_envelope",
+        lambda _error: {"source_id": "cfets_rates"},
+    )
+    drv = {
+        "spread_bp": pd.Series(
+            [1.0], index=pd.DatetimeIndex(["2026-08-22"])
+        ),
+        "tail_bp": pd.Series(dtype=float),
+        "srf": pd.Series(dtype=float),
+        "dw_b": pd.Series(dtype=float),
+        "rrp": pd.Series(dtype=float),
+        "res_gdp": pd.Series(dtype=float),
+    }
+
+    with pytest.raises(ValueError, match="restricted CFETS-derived data"):
+        assemble._deep_layer({}, drv, {}, [])
+
+    assert saved == []
 
 
 @pytest.mark.asyncio
