@@ -261,7 +261,7 @@
           <p>The same bounded worldview is exposed in three forms. Use the page for citation, REST for deterministic retrieval, and MCP when an agent should choose a relevant market section.</p>
         </div>
         <div class="api-grid">
-          <a class="api" href="https://api.seiche.info/api/v2/world-markets"><strong>World-markets REST context</strong><code>GET /api/v2/world-markets</code><span>Cache-only money, forex, capital, source and methodology sections.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets?section=summary"><strong>World-markets REST context</strong><code>GET /api/v2/world-markets?section=summary</code><span>Cache-only bounded summary with domain status and evidence clocks.</span></a>
           <a class="api" href="https://api.seiche.info/mcp"><strong>World-markets MCP tool</strong><code>world_markets_context(section="summary")</code><span>Choose summary, money_markets, forex, capital_markets, sources, methodology or all.</span></a>
           <a class="api" href="https://api.seiche.info/api/series/index.json"><strong>Series catalog</strong><code>GET /api/series/index.json</code><span>Discover public mnemonics, units, provenance and downloadable series.</span></a>
           <a class="api" href="https://api.seiche.info/api/openapi.json"><strong>OpenAPI 3.1</strong><code>GET /api/openapi.json</code><span>Import the intentionally public REST contract into tools and retrieval systems.</span></a>

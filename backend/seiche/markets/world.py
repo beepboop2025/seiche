@@ -15,7 +15,6 @@ from typing import Any
 from seiche.engines import money_market as money_market_engine
 from seiche.public_faults import sanitize_public_fault_payload
 
-
 WORLD_MARKETS_SCHEMA = "seiche.world-markets.v1"
 WORLD_MARKETS_STATUSES = (
     "observed",
@@ -471,7 +470,7 @@ def _money_markets(
             engine,
             evaluation_asof=evaluation_asof,
         )
-    except Exception:  # fail closed instead of retaining stale `fresh` labels
+    except Exception:  # noqa: BLE001 - corrupt LKG state must fail closed
         return {
             "status": "unavailable",
             "as_of": engine.get("asof"),
