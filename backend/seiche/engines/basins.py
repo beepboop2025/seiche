@@ -21,8 +21,9 @@ Three measurements, same physics as the domestic engines:
    (flagged upstream), because a test is not a confession.
 
 Honest scope: this engine measures COUPLING and keeps its panel to feeds
-with daily overlap — Japan joined via TONA (BOJ flat files, to 1998) and
-China via SHIBOR O/N (CFETS; z quarantined until local history accrues).
+with daily overlap. Japan joins through TONA (BOJ flat files, to 1998), while
+China is represented only by the Federal Reserve H.10 CNY FX leg. No China
+local-rate node is currently entitled to enter the engine.
 Per-country depth (India/Korea monthly mirrors included) lives in the
 harbors engine, each series labeled with its cadence and never interpolated
 across it. Other markets remain visible in the Money Market Atlas registry or
@@ -66,7 +67,7 @@ def analyze(
     inr: pd.Series | None = None,       # INR per USD (FRED DEXINUS)
     usdt_peg_bp: pd.Series | None = None,  # USDT peg deviation, bp (crypto basin)
     tona: pd.Series | None = None,      # TONA, % (BOJ daily, history to 1998)
-    shibor_on: pd.Series | None = None,  # SHIBOR O/N, % (CFETS, accrues locally)
+    shibor_on: pd.Series | None = None,  # reserved for a future rights-approved rate
     cny: pd.Series | None = None,       # CNY per USD (FRED H.10)
     jpy: pd.Series | None = None,       # JPY per USD (FRED H.10)
     krw: pd.Series | None = None,       # KRW per USD (FRED H.10)
@@ -120,14 +121,14 @@ def analyze(
         })
     cn = shibor_on.dropna()
     if not cn.empty:
-        # local history accrues from the range-limited CFETS feed — the z is
-        # quarantined (None, not a fake 0.0) until enough own history exists
+        # This path is reserved for a future rights-approved rate binding. The
+        # public assembler leaves it empty; short history still cannot fake 0.0.
         cn_z = _rolling_z(cn.diff().dropna()) if len(cn) >= MIN_Z_OBS else None
         basins.append({
             "basin": "CHINA",
             "anchor": (
-                "SHIBOR O/N level (CFETS)" if cn_z is not None
-                else f"SHIBOR O/N (accruing — {len(cn)} obs, z unlocks at {MIN_Z_OBS})"
+                "China overnight level (rights-approved input)" if cn_z is not None
+                else f"China overnight input ({len(cn)} obs; z requires {MIN_Z_OBS})"
             ),
             "value_bp": round(float(cn.iloc[-1]) * 100.0, 1),
             "z": round(cn_z, 2) if cn_z is not None else None,
@@ -161,7 +162,7 @@ def analyze(
         "EUR spread": eur_spread_bp,
         "SONIA": uk,
         "TONA": jp,
-        "SHIBOR O/N": cn,
+        "China O/N": cn,
         "Dollar idx": dxy.dropna(),
         "Foreign RRP": (foreign_rrp_m.dropna() / 1000.0),
         "Swap lines": (swap_lines_m.dropna() / 1000.0),
@@ -266,10 +267,11 @@ def analyze(
             "dollar_idx_z": round(_rolling_z(dxy.dropna()) or 0.0, 2),
         },
         "out_of_scope": (
-            "daily-overlap coupling now spans US, euro area, UK, Japan (TONA), China "
-            "(SHIBOR O/N, z quarantined while local history accrues) plus the INR/CNY/"
-            "JPY/KRW FX legs; per-country depth lives in the Harbors panel with cadence "
-            "stated. India and Korea rate anchors stay monthly-lagged context — never "
+            "daily-overlap coupling spans US, euro area, UK and Japan (TONA), plus "
+            "the INR/CNY/JPY/KRW FX legs. China is FX-only from Federal Reserve H.10; "
+            "no local China rate node is used pending redistribution permission. "
+            "Per-country depth lives in Harbors with cadence stated. India and Korea "
+            "rate anchors stay monthly-lagged context — never "
             "interpolated into daily coupling math. India's DAILY rates anchor pending "
             "(CCIL = HTML, RBI DBIE = broken SSL, probed 2026-07-07); Russia and African "
             "markets still meet no keyless bar — excluded, not faked"

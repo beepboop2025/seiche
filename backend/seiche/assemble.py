@@ -145,21 +145,45 @@ LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
 STATIC_SNAPSHOT_PATH = (
     Path(__file__).resolve().with_name("bootstrap_snapshot.json")
 )
-RESTRICTED_PALIMPSEST_SERIES = frozenset({"CN_FDR007", "CN_PARITY"})
-RESTRICTED_SNAPSHOT_MARKERS = (
-    "chinamoney",
+PALIMPSEST_NATIVE_ENGINE_SERIES = {
+    "PALIMPSEST_FEAR": "ddti-history.jsonl:top_threat",
+    "PALIMPSEST_NEW": "ddti-history.jsonl:n_new",
+    "PALIMPSEST_GFI": "history.jsonl:gfi",
+}
+RESTRICTED_SNAPSHOT_IDENTIFIERS = frozenset({
     "china money",
+    "chinamoney",
     "cfets",
+    "cfets_rates",
     "shibor",
-    "fdr007",
-    "dr007",
+    "shibor_on",
+    "shibor:on",
+    "cn.cfets.shibor_on",
+    "cn.cfets.dr007",
+    "cn_fdr007",
     "cn_parity",
     "usdcny_parity",
+    "fdr007",
+    "dr007",
+    "china-econ-history.jsonl:fdr007",
+    "china-econ-history.jsonl:usdcny_parity",
     "cn·rate",
-)
-_NARRATIVE_ONLY_SNAPSHOT_FIELDS = frozenset(
-    {"caveats", "method", "note", "out_of_scope", "reading"}
-)
+})
+RESTRICTED_SNAPSHOT_IDENTITY_FIELDS = frozenset({
+    "adapter",
+    "adapter_id",
+    "benchmark",
+    "instrument_id",
+    "label",
+    "mnemonic",
+    "node",
+    "rate_label",
+    "remote_id",
+    "series_id",
+    "source",
+    "source_id",
+    "source_uri",
+})
 _cache: dict = {
     "at": 0.0,
     "payload": None,
@@ -246,9 +270,9 @@ def _rights_eligible_sources(src: dict) -> dict:
     """Project collected data onto the redistribution-safe engine boundary.
 
     This deliberately leaves the durable source cache untouched.  ChinaMoney
-    and the two Palimpsest fields derived from CFETS publications may remain
-    available for a future licensed migration, but they cannot enter engines,
-    provenance, snapshots, or replay products in the current public release.
+    and non-native Palimpsest fields may remain available for a future licensed
+    migration, but they cannot enter engines, provenance, snapshots, or replay
+    products in the current public release.
     The Federal Reserve H.10 ``CNY`` series lives in ``fred`` and is preserved.
     """
     eligible = dict(src)
@@ -258,12 +282,19 @@ def _rights_eligible_sources(src: dict) -> dict:
     if isinstance(palimpsest_block, dict):
         safe_palimpsest = dict(palimpsest_block)
         series = palimpsest_block.get("series")
+        safe_series: dict[str, Series] = {}
         if isinstance(series, dict):
-            safe_palimpsest["series"] = {
-                mnemonic: value
-                for mnemonic, value in series.items()
-                if mnemonic not in RESTRICTED_PALIMPSEST_SERIES
-            }
+            for mnemonic, value in series.items():
+                expected_remote_id = PALIMPSEST_NATIVE_ENGINE_SERIES.get(mnemonic)
+                if (
+                    expected_remote_id is not None
+                    and isinstance(value, Series)
+                    and value.mnemonic == mnemonic
+                    and value.source == "palimpsest"
+                    and value.remote_id == expected_remote_id
+                ):
+                    safe_series[mnemonic] = value
+        safe_palimpsest["series"] = safe_series
         eligible["palimpsest"] = safe_palimpsest
     return eligible
 
@@ -1753,85 +1784,96 @@ def _attest(day: str, record: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _snapshot_contains_restricted_cfets(payload: object) -> bool:
-    """Detect raw or derived CFETS values in a completed board payload.
+    """Recursively detect restricted data identities and derived engine rows.
 
-    Identifier scanning catches raw/provenance/SONAR leakage.  The structural
-    checks catch legacy derived rows even if a historical serializer omitted
-    the source label.  Narrative-only methodology fields are ignored: they may
-    explain why an input is unavailable, but they contain no redistributed
-    observation or statistic.
+    Ordinary prose is never scanned.  This validator follows typed identifiers
+    (for example ``mnemonic`` and ``source``), exact restricted keys, and the
+    known legacy engine shapes.  It therefore finds a poisoned row under any
+    wrapper without rejecting lawful editorial or Palimpsest target text that
+    happens to discuss a benchmark.
     """
 
-    def has_marker(value: str) -> bool:
-        folded = value.casefold()
-        return any(marker in folded for marker in RESTRICTED_SNAPSHOT_MARKERS)
+    def restricted_identifier(value: object, *, field: str | None = None) -> bool:
+        if not isinstance(value, str):
+            return False
+        folded = value.strip().casefold()
+        if (
+            folded in RESTRICTED_SNAPSHOT_IDENTIFIERS
+            or folded.startswith("cn.cfets.")
+        ):
+            return True
+        if field in {"source_uri", "remote_id"} and "chinamoney.com.cn" in folded:
+            return True
+        if field in {"benchmark", "label", "rate_label"}:
+            return any(
+                marker in folded for marker in ("cfets", "shibor", "fdr007", "dr007")
+            )
+        return False
+
+    def restricted_engine_shape(value: dict) -> bool:
+        if str(value.get("harbor", "")).upper() == "CHINA" and (
+            value.get("rate") is not None
+            or value.get("rate2") is not None
+            or value.get("regime") is not None
+        ):
+            return True
+        if (
+            str(value.get("basin", "")).upper() == "CHINA"
+            and {"anchor", "value_bp", "z", "asof"} & set(value)
+        ):
+            return True
+        if str(value.get("key", "")).upper() == "CNY" and any(
+            value.get(field) is not None
+            for field in (
+                "policy_diff_vs_effr_bp",
+                "policy_rate_label",
+                "policy_rate_cadence",
+                "policy_asof",
+            )
+        ):
+            return True
+        rate_labels = value.get("rate_labels")
+        if (
+            isinstance(rate_labels, list)
+            and ("harbors" in value or "rate_rows" in value)
+            and any(str(label).upper() == "CHINA" for label in rate_labels)
+        ):
+            return True
+        return False
 
     def walk(value: object) -> bool:
         if isinstance(value, dict):
+            if restricted_engine_shape(value):
+                return True
             for key, nested in value.items():
                 key_text = str(key)
-                if has_marker(key_text):
+                field = key_text.casefold()
+                if restricted_identifier(key_text):
                     return True
-                if key_text.casefold() in _NARRATIVE_ONLY_SNAPSHOT_FIELDS:
-                    continue
+                if field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS:
+                    if restricted_identifier(nested, field=field):
+                        return True
+                    if isinstance(nested, (list, tuple)) and any(
+                        restricted_identifier(item, field=field) for item in nested
+                    ):
+                        return True
+                if field == "nodes" and isinstance(nested, (list, tuple)) and any(
+                    restricted_identifier(item) for item in nested
+                ):
+                    return True
                 if walk(nested):
                     return True
             return False
         if isinstance(value, (list, tuple)):
             return any(walk(item) for item in value)
-        return isinstance(value, str) and has_marker(value)
-
-    if walk(payload):
-        return True
-    if not isinstance(payload, dict):
-        return False
-    engines = payload.get("engines")
-    if not isinstance(engines, dict):
         return False
 
-    harbors = engines.get("harbors")
-    if isinstance(harbors, dict):
-        rows = harbors.get("harbors")
-        if isinstance(rows, list):
-            for row in rows:
-                if not isinstance(row, dict) or str(row.get("harbor", "")).upper() != "CHINA":
-                    continue
-                if row.get("rate") is not None or row.get("rate2") is not None:
-                    return True
-                if row.get("regime") is not None:
-                    return True
-        rate_labels = harbors.get("rate_labels")
-        if isinstance(rate_labels, list) and any(
-            str(label).upper() == "CHINA" for label in rate_labels
-        ):
-            return True
+    return walk(payload)
 
-    basins = engines.get("basins")
-    basin_rows = basins.get("basins") if isinstance(basins, dict) else None
-    if isinstance(basin_rows, list) and any(
-        isinstance(row, dict) and str(row.get("basin", "")).upper() == "CHINA"
-        for row in basin_rows
-    ):
-        return True
 
-    estuary = engines.get("estuary")
-    fx = estuary.get("fx") if isinstance(estuary, dict) else None
-    currencies = fx.get("currencies") if isinstance(fx, dict) else None
-    if isinstance(currencies, list):
-        for row in currencies:
-            if not isinstance(row, dict) or str(row.get("key", "")).upper() != "CNY":
-                continue
-            if any(
-                row.get(field) is not None
-                for field in (
-                    "policy_diff_vs_effr_bp",
-                    "policy_rate_label",
-                    "policy_rate_cadence",
-                    "policy_asof",
-                )
-            ):
-                return True
-    return False
+def _assert_snapshot_rights(payload: object) -> None:
+    if _snapshot_contains_restricted_cfets(payload):
+        raise ValueError("snapshot contains restricted CFETS-derived data")
 
 
 def _servable_snapshot(payload: object) -> bool:
@@ -2079,6 +2121,7 @@ def _handoff_body(payload: dict, release_receipt: dict, producer_sha: str) -> di
 
 
 def _build_handoff(payload: dict, release_receipt: dict, producer_sha: str) -> dict:
+    _assert_snapshot_rights(payload)
     body = _handoff_body(payload, release_receipt, producer_sha)
     _release_receipt_snapshot_ids(release_receipt, payload)
     return {**body, "handoff_id": _handoff_digest(body)}
@@ -2326,8 +2369,7 @@ async def _publish_rebuilt_snapshot(
     state; ordinary v1 memory/PIT publication remains the live process's
     established behavior while the candidate health gate runs.
     """
-    if _snapshot_contains_restricted_cfets(payload):
-        raise ValueError("rebuilt snapshot contains restricted CFETS-derived data")
+    _assert_snapshot_rights(payload)
     _cache.update(
         at=time.time(),
         payload=payload,
@@ -2396,6 +2438,9 @@ async def _build_snapshot() -> dict:
     # keep-warm cycle trained). One rebuild at a time is still guaranteed
     # by the caller holding `_lock`.
     engines = await asyncio.to_thread(_run_engines, src, drv, faults)
+    # Engine results are the first completed value-bearing projection. Reject
+    # restricted rows before the deep layer can cache or otherwise consume them.
+    _assert_snapshot_rights({"engines": _strip_private(engines)})
     deep = await asyncio.to_thread(_deep_layer, src, drv, engines, faults)
     # Model Court sits on the finished deep layer (published payloads, never
     # raw series) and re-reads the as-published odds ledger on every rebuild,
@@ -2437,6 +2482,9 @@ async def _build_snapshot() -> dict:
             headline=headline,
         ),
     }
+    # The complete internal board must clear the same boundary before the
+    # Navigator sees it or PIT/notary/materialization performs any side effect.
+    _assert_snapshot_rights(payload)
     # The Navigator commits AFTER the board is assembled (its whole world
     # is the context pack of this payload), once per data-day, cached —
     # a re-run must never let the model revise the morning's number.
@@ -2454,6 +2502,7 @@ async def _build_snapshot() -> dict:
             nav = {**nav, "record": eng_navigator.score_record(
                 store.load_pit_records(), drv["spread_bp"])}
     payload["navigator"] = nav
+    _assert_snapshot_rights(payload)
     _record_pit(engines, deep, nav)
     # v2 never collects at request time. The existing US cycle is the first
     # producer during migration: once its payload is complete, a pack-local
@@ -2514,5 +2563,6 @@ async def snapshot_asof(date: str) -> dict:
         "engines": _strip_private(engines),
         "faults": faults,
     }
+    _assert_snapshot_rights(payload)
     store.save_blob(key, payload)
     return payload

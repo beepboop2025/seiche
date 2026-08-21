@@ -11,6 +11,7 @@ import asyncio
 from copy import deepcopy
 import inspect
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -25,6 +26,7 @@ def _series(
     mnemonic: str,
     *,
     source: str,
+    remote_id: str | None = None,
     values: pd.Series | None = None,
 ) -> Series:
     points = values if values is not None else pd.Series(
@@ -33,7 +35,7 @@ def _series(
     return Series(
         mnemonic=mnemonic,
         source=source,
-        remote_id=f"test:{mnemonic}",
+        remote_id=remote_id or f"test:{mnemonic}",
         label=mnemonic,
         unit="%",
         freq="D",
@@ -47,7 +49,21 @@ def _source_pack() -> dict:
     shibor = _series("SHIBOR_ON", source="chinamoney")
     fdr007 = _series("CN_FDR007", source="palimpsest")
     parity = _series("CN_PARITY", source="palimpsest")
-    fear = _series("PALIMPSEST_FEAR", source="palimpsest")
+    fear = _series(
+        "PALIMPSEST_FEAR",
+        source="palimpsest",
+        remote_id="ddti-history.jsonl:top_threat",
+    )
+    new = _series(
+        "PALIMPSEST_NEW",
+        source="palimpsest",
+        remote_id="ddti-history.jsonl:n_new",
+    )
+    gfi = _series(
+        "PALIMPSEST_GFI",
+        source="palimpsest",
+        remote_id="history.jsonl:gfi",
+    )
     return {
         "fred": {"CNY": cny},
         "chinamoney": {"SHIBOR_ON": shibor},
@@ -57,6 +73,8 @@ def _source_pack() -> dict:
                 "CN_FDR007": fdr007,
                 "CN_PARITY": parity,
                 "PALIMPSEST_FEAR": fear,
+                "PALIMPSEST_NEW": new,
+                "PALIMPSEST_GFI": gfi,
             },
             "latest": {"fear": 42.0},
         },
@@ -72,11 +90,6 @@ def _reset_cache() -> None:
         release_handoff_id=None,
         producer_sha=None,
     )
-
-
-def _encoded_has_restricted_marker(payload: object) -> bool:
-    encoded = json.dumps(payload, ensure_ascii=False).casefold()
-    return any(marker in encoded for marker in assemble.RESTRICTED_SNAPSHOT_MARKERS)
 
 
 @pytest.fixture(autouse=True)
@@ -98,11 +111,17 @@ def test_rights_projection_is_non_mutating_and_preserves_h10_cny(monkeypatch) ->
 
     assert "chinamoney" not in eligible
     assert eligible["fred"]["CNY"] is raw["fred"]["CNY"]
-    assert set(eligible["palimpsest"]["series"]) == {"PALIMPSEST_FEAR"}
+    assert set(eligible["palimpsest"]["series"]) == {
+        "PALIMPSEST_FEAR",
+        "PALIMPSEST_NEW",
+        "PALIMPSEST_GFI",
+    }
     assert set(raw["palimpsest"]["series"]) == {
         "CN_FDR007",
         "CN_PARITY",
         "PALIMPSEST_FEAR",
+        "PALIMPSEST_NEW",
+        "PALIMPSEST_GFI",
     }
     assert "chinamoney" in raw
 
@@ -110,8 +129,40 @@ def test_rights_projection_is_non_mutating_and_preserves_h10_cny(monkeypatch) ->
     assert {row["mnemonic"] for row in provenance} == {
         "CNY",
         "PALIMPSEST_FEAR",
+        "PALIMPSEST_NEW",
+        "PALIMPSEST_GFI",
     }
-    assert not _encoded_has_restricted_marker(provenance)
+    assert not assemble._snapshot_contains_restricted_cfets(provenance)
+
+
+def test_palimpsest_boundary_is_a_strict_native_series_allowlist() -> None:
+    raw = _source_pack()
+    series = raw["palimpsest"]["series"]
+    series["PALIMPSEST_FEAR"] = _series(
+        "PALIMPSEST_FEAR",
+        source="palimpsest",
+        remote_id="china-econ-history.jsonl:fdr007",
+    )
+    series["PALIMPSEST_ALIAS"] = _series(
+        "PALIMPSEST_NEW",
+        source="palimpsest",
+        remote_id="ddti-history.jsonl:n_new",
+    )
+    series["PALIMPSEST_FUTURE"] = _series(
+        "PALIMPSEST_FUTURE",
+        source="palimpsest",
+        remote_id="future.jsonl:value",
+    )
+
+    eligible = assemble._rights_eligible_sources(raw)
+
+    assert set(eligible["palimpsest"]["series"]) == {
+        "PALIMPSEST_NEW",
+        "PALIMPSEST_GFI",
+    }
+    assert "PALIMPSEST_FEAR" in raw["palimpsest"]["series"]
+    assert "PALIMPSEST_ALIAS" in raw["palimpsest"]["series"]
+    assert "PALIMPSEST_FUTURE" in raw["palimpsest"]["series"]
 
 
 def test_legacy_gather_no_longer_schedules_chinamoney() -> None:
@@ -119,6 +170,36 @@ def test_legacy_gather_no_longer_schedules_chinamoney() -> None:
 
     assert "chinamoney" not in gather_source
     assert "chinamoney" not in assemble.__dict__
+
+
+def test_hermes_harbors_watch_fails_closed_on_cfets_values() -> None:
+    root = Path(__file__).resolve().parents[2]
+    skill = (
+        root / "integrations" / "hermes" / "skills" / "seiche-harbors-watch" / "SKILL.md"
+    ).read_text()
+
+    assert "https://palimpsest.info/readings/china-econ-latest.json" not in skill
+    assert "https://palimpsest.info/readings/ddti-latest.json" in skill
+    assert "Never fetch or publish `china-econ-*`" in skill
+    assert "H.10 CNY FX remains live" in skill
+    assert "Absence never means calm" in skill
+
+
+def test_public_copy_describes_china_as_h10_fx_only() -> None:
+    root = Path(__file__).resolve().parents[2]
+    frontend = (root / "frontend" / "src" / "App.tsx").read_text()
+    harbors = (root / "backend" / "seiche" / "engines" / "harbors.py").read_text()
+    basins = (root / "backend" / "seiche" / "engines" / "basins.py").read_text()
+    ledger = (root / "docs" / "DATA_COVERAGE_LEDGER.md").read_text()
+
+    assert "already reads its keyless CFETS feed" not in frontend
+    assert "Federal Reserve H.10 CNY FX leg" in frontend
+    assert "SHIBOR history accrues locally" not in harbors
+    assert "China is FX-only from Federal Reserve H.10" in harbors
+    assert "z quarantined while local history accrues" not in basins
+    assert "no local China rate node is used" in basins
+    assert "China percentile history is still accruing" not in ledger
+    assert "China H.10 `CNY` FX only" in ledger
 
 
 def test_engine_bindings_keep_cny_fx_but_have_no_china_rate_path(monkeypatch) -> None:
@@ -223,6 +304,24 @@ def test_missing_china_rate_stays_unavailable_instead_of_scoring_as_calm() -> No
     assert "CHINA" in result["fx_labels"]
 
 
+def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
+    payload = deepcopy(fake_snap)
+    payload["engines"]["farbasin"] = {
+        "ok": True,
+        "top_targets": [
+            {
+                "term": "SHIBOR liquidity debate",
+                "domain": "public discussion",
+                "threat": 0.72,
+                "is_new": True,
+            }
+        ],
+    }
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is False
+    assert assemble._servable_snapshot(payload) is True
+
+
 @pytest.mark.parametrize(
     "poison",
     [
@@ -261,6 +360,26 @@ def test_missing_china_rate_stays_unavailable_instead_of_scoring_as_calm() -> No
             }
         },
         {"engines": {"spillover": {"nodes": ["US·rate", "CN·rate"]}}},
+        {
+            "deep": {
+                "arbitrary_wrapper": [
+                    {"another_wrapper": {"CN_FDR007": {"value": 1.52}}}
+                ]
+            }
+        },
+        {
+            "editorial": {
+                "arbitrary_wrapper": {"source": "chinamoney", "value": 1.31}
+            }
+        },
+        {
+            "calendar": {
+                "arbitrary_wrapper": {
+                    "instrument_id": "CN.CFETS.SHIBOR_ON",
+                    "value": 1.31,
+                }
+            }
+        },
     ],
 )
 def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -> None:
@@ -299,6 +418,33 @@ def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
     assert assemble.cached_snapshot() == fake_snap
 
 
+@pytest.mark.asyncio
+async def test_replay_cache_does_not_serve_nested_restricted_payload(
+    monkeypatch,
+) -> None:
+    cached = {
+        "ok": True,
+        "arbitrary_wrapper": {"CN_PARITY": {"value": 7.18}},
+    }
+
+    async def rebuild_required():
+        raise RuntimeError("restricted replay was ignored")
+
+    monkeypatch.setattr(assemble.store, "load_blob", lambda _key: cached)
+    monkeypatch.setattr(assemble, "_gather_sources", rebuild_required)
+
+    with pytest.raises(RuntimeError, match="restricted replay was ignored"):
+        await assemble.snapshot_asof("2026-08-20")
+
+
+def test_handoff_builder_rejects_poison_before_receipt_construction(fake_snap) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["nested"] = {"adapter_id": "cfets_rates", "value": 1.31}
+
+    with pytest.raises(ValueError, match="restricted CFETS-derived data"):
+        assemble._build_handoff(poisoned, {}, "a" * 40)
+
+
 def test_live_publication_rejects_poison_before_cache_or_handoff(fake_snap) -> None:
     poisoned = deepcopy(fake_snap)
     poisoned["engines"]["spillover"] = {"nodes": ["CN·rate"]}
@@ -308,6 +454,118 @@ def test_live_publication_rejects_poison_before_cache_or_handoff(fake_snap) -> N
         asyncio.run(assemble._publish_rebuilt_snapshot(poisoned, None))
 
     assert assemble.cached_snapshot() is None
+
+
+@pytest.mark.asyncio
+async def test_engine_poison_is_rejected_before_deep_or_publication_side_effects(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+
+    async def gather_sources():
+        return {}, []
+
+    def forbidden(name: str):
+        def call(*_args, **_kwargs):
+            events.append(name)
+            raise AssertionError(f"{name} ran after engine poison")
+
+        return call
+
+    async def forbidden_async(*_args, **_kwargs):
+        events.append("navigator")
+        raise AssertionError("Navigator ran after engine poison")
+
+    monkeypatch.setattr(assemble, "_gather_sources", gather_sources)
+    monkeypatch.setattr(
+        assemble,
+        "_derived",
+        lambda _src: {
+            "spread_bp": pd.Series(
+                [1.0], index=pd.DatetimeIndex(["2026-08-22"])
+            )
+        },
+    )
+    monkeypatch.setattr(
+        assemble,
+        "_run_engines",
+        lambda *_args: {
+            "harbors": {
+                "harbors": [
+                    {
+                        "harbor": "CHINA",
+                        "rate": {"last_pct": 1.31},
+                        "regime": "HOLDING",
+                    }
+                ]
+            }
+        },
+    )
+    monkeypatch.setattr(assemble, "_deep_layer", forbidden("deep"))
+    monkeypatch.setattr(assemble.eng_navigator, "commit", forbidden_async)
+    monkeypatch.setattr(assemble, "_record_pit", forbidden("pit"))
+    monkeypatch.setattr(assemble, "_seal_release_evidence", forbidden("seal"))
+    monkeypatch.setattr(assemble, "_publish_rebuilt_snapshot", forbidden_async)
+
+    with pytest.raises(ValueError, match="restricted CFETS-derived data"):
+        await assemble._build_snapshot()
+
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_complete_payload_poison_is_rejected_before_navigator_and_publish(
+    monkeypatch,
+) -> None:
+    events: list[str] = []
+
+    async def gather_sources():
+        return {}, []
+
+    async def forbidden_navigator(*_args, **_kwargs):
+        events.append("navigator")
+        return {"ok": False}
+
+    def forbidden(name: str):
+        def call(*_args, **_kwargs):
+            events.append(name)
+            return None
+
+        return call
+
+    monkeypatch.setattr(assemble, "_gather_sources", gather_sources)
+    monkeypatch.setattr(
+        assemble,
+        "_derived",
+        lambda _src: {
+            "spread_bp": pd.Series(
+                [1.0], index=pd.DatetimeIndex(["2026-08-22"])
+            )
+        },
+    )
+    monkeypatch.setattr(assemble, "_run_engines", lambda *_args: {})
+    monkeypatch.setattr(assemble, "_deep_layer", lambda *_args: {"ok": False})
+    monkeypatch.setattr(assemble.eng_modelcourt, "convene", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(assemble, "_headline", lambda *_args: {})
+    monkeypatch.setattr(assemble, "_calendar", lambda *_args: {})
+    monkeypatch.setattr(
+        assemble,
+        "_provenance",
+        lambda _src: [{"source": "chinamoney", "value": 1.31}],
+    )
+    monkeypatch.setattr(assemble.editorial, "build_editorial", lambda **_kwargs: {})
+    monkeypatch.setattr(
+        assemble.editorial, "build_data_quality", lambda **_kwargs: {}
+    )
+    monkeypatch.setattr(assemble.eng_navigator, "commit", forbidden_navigator)
+    monkeypatch.setattr(assemble, "_record_pit", forbidden("pit"))
+    monkeypatch.setattr(assemble, "_seal_release_evidence", forbidden("seal"))
+    monkeypatch.setattr(assemble, "_publish_rebuilt_snapshot", forbidden_navigator)
+
+    with pytest.raises(ValueError, match="restricted CFETS-derived data"):
+        await assemble._build_snapshot()
+
+    assert events == []
 
 
 def test_clean_cny_fx_snapshot_reaches_overview_estuary_static_and_mcp(
