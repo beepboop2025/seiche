@@ -634,7 +634,10 @@ activate_data_readiness_after_proof() {
     fi
 }
 if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then
-    systemctl start --no-block \
+    # Wait for the Type=notify market worker (and its ordered one-shot
+    # backfill) before evaluating readiness. Otherwise a valid fresh recovery
+    # receipt can trigger a redundant backup/restore drill during activation.
+    systemctl start \
         seiche-market-backfill.service seiche-market-worker.service
     systemctl start seiche-source-worker.service
     activate_data_readiness_after_proof

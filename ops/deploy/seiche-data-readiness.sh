@@ -12,6 +12,7 @@ HEALTH_URL="${SEICHE_DATA_READINESS_HEALTH_URL:-http://127.0.0.1:8787/api/health
 BACKUP_DIR="${SEICHE_DATA_READINESS_BACKUP_DIR:-/var/backups/seiche-market}"
 BACKUP_ARTIFACT="${SEICHE_DATA_READINESS_BACKUP_ARTIFACT:-}"
 RESTORE_RECEIPT="${SEICHE_DATA_READINESS_RESTORE_RECEIPT:-/var/lib/seiche/validation/backup-restore-check.status}"
+DEPLOYED_SHA_PATH="${SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
 MAX_GENERATED_AGE="${SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS:-900}"
 MAX_BACKUP_AGE="${SEICHE_DATA_READINESS_BACKUP_MAX_AGE_SECONDS:-129600}"
 MAX_RESTORE_AGE="${SEICHE_DATA_READINESS_RESTORE_MAX_AGE_SECONDS:-691200}"
@@ -85,6 +86,11 @@ case "$RESTORE_RECEIPT" in
     /*) ;;
     *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
 esac
+case "$DEPLOYED_SHA_PATH" in
+    /) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+    /*) ;;
+    *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
 if [ -n "$BACKUP_ARTIFACT" ]; then
     case "$BACKUP_ARTIFACT" in
         /*) ;;
@@ -116,9 +122,9 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
 
     VALIDATION_OUTPUT=$(
         "$PYTHON_BIN" - "$HEALTH_FILE" "$HEALTH_AVAILABLE" "$BACKUP_DIR" \
-            "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$MAX_GENERATED_AGE" \
-            "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" "$MAX_FUTURE_SKEW" \
-            "$NOW_EPOCH" 2>/dev/null <<'PY'
+            "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$DEPLOYED_SHA_PATH" \
+            "$MAX_GENERATED_AGE" "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" \
+            "$MAX_FUTURE_SKEW" "$NOW_EPOCH" 2>/dev/null <<'PY'
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -136,6 +142,7 @@ import time
     backup_dir_raw,
     backup_artifact_raw,
     restore_receipt_raw,
+    deployed_sha_path_raw,
     max_generated_raw,
     max_backup_raw,
     max_restore_raw,
@@ -229,6 +236,22 @@ def safe_regular(path: Path) -> bool:
     return stat.S_ISREG(mode)
 
 
+current_deployed_sha: str | None = None
+deployed_sha_path = Path(deployed_sha_path_raw)
+if safe_regular(deployed_sha_path):
+    try:
+        if deployed_sha_path.stat().st_size > 64:
+            raise ValueError
+        deployed_sha_candidate = deployed_sha_path.read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", deployed_sha_candidate) is None:
+            raise ValueError
+        current_deployed_sha = deployed_sha_candidate
+    except (OSError, UnicodeError, ValueError):
+        current_deployed_sha = None
+if current_deployed_sha is None:
+    add("deployed release SHA missing or invalid")
+
+
 backup_epoch: float | None = None
 if backup_artifact_raw:
     backup_artifact = Path(backup_artifact_raw)
@@ -311,6 +334,11 @@ if safe_regular(restore_receipt):
         if re.fullmatch(count_shape, fields.get("critical_table_count_floor", "")) is None:
             raise ValueError
         checked_at = timestamp(fields.get("checked_at"))
+        if (
+            current_deployed_sha is not None
+            and fields["deployed_sha"] != current_deployed_sha
+        ):
+            add("restore receipt belongs to a different release")
     except (OSError, UnicodeError, ValueError):
         checked_at = None
 if checked_at is None:
@@ -340,6 +368,8 @@ PY
                 "backup artifact timestamp is in the future"|\
                 "backup artifact stale"|\
                 "restore receipt missing or invalid"|\
+                "deployed release SHA missing or invalid"|\
+                "restore receipt belongs to a different release"|\
                 "restore receipt timestamp is in the future"|\
                 "restore receipt stale")
                     add_failure "$reason"

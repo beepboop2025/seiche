@@ -69,6 +69,8 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "can_publish=false\n"
         "can_execute=false\n"
     )
+    deployed_sha_path = tmp_path / "deployed-sha"
+    deployed_sha_path.write_text("a" * 40 + "\n")
     unit_calls = tmp_path / "unit-calls.log"
 
     curl = _executable(
@@ -132,6 +134,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "SEICHE_DATA_READINESS_HEALTH_URL": "http://127.0.0.1:8787/api/health",
         "SEICHE_DATA_READINESS_BACKUP_DIR": str(backup_dir),
         "SEICHE_DATA_READINESS_RESTORE_RECEIPT": str(restore_receipt),
+        "SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH": str(deployed_sha_path),
         "SEICHE_DATA_READINESS_NOW_EPOCH": str(int(NOW.timestamp())),
         "SEICHE_DATA_READINESS_REQUIRED_UNITS": (
             "seiche-api.service seiche-market-worker.service "
@@ -385,6 +388,63 @@ def test_restore_receipt_requires_the_complete_v2_pass_contract(
     assert result.returncode == 1
     assert result.stderr == (
         "seiche data readiness: restore receipt missing or invalid\n"
+    )
+
+
+def test_restore_receipt_must_belong_to_the_current_deployed_release(
+    tmp_path: Path,
+) -> None:
+    env, _, restore_receipt = _layout(tmp_path)
+    restore_receipt.write_text(
+        restore_receipt.read_text().replace(
+            "deployed_sha=" + "a" * 40,
+            "deployed_sha=" + "b" * 40,
+        )
+    )
+    mismatch = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert mismatch.returncode == 1
+    assert mismatch.stderr == (
+        "seiche data readiness: restore receipt belongs to a different release\n"
+    )
+
+
+@pytest.mark.parametrize("marker_kind", ["missing", "symlink", "invalid"])
+def test_deployed_release_sha_marker_fails_closed(
+    tmp_path: Path,
+    marker_kind: str,
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    marker = Path(env["SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH"])
+    if marker_kind == "missing":
+        marker.unlink()
+    elif marker_kind == "symlink":
+        target = tmp_path / "deployed-sha-target"
+        target.write_text("a" * 40 + "\n")
+        marker.unlink()
+        marker.symlink_to(target)
+    else:
+        marker.write_text("not-a-git-sha\n")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: deployed release SHA missing or invalid\n"
     )
 
 

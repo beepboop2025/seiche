@@ -891,9 +891,11 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     assert "systemctl reset-failed" in start
     assert "seiche-market-worker.service seiche-source-worker.service" in start
     assert "seiche-market-backfill.service seiche-market-worker.service" in start
+    candidate_market = start.index("if ! systemctl start")
     candidate_source = start.index("ensure_source_worker_ready")
     candidate_timer = start.index("activate_data_readiness_after_proof")
-    assert candidate_source < candidate_timer
+    assert candidate_market < candidate_source < candidate_timer
+    assert "systemctl start --no-block" not in start
     assert "systemctl start --no-block seiche-source-worker.service" not in start
     assert "seiche-source-worker.service seiche-data-readiness.timer" not in start
 
@@ -908,6 +910,71 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     restored = rollback.index("restore_market_services", reset)
     assert rollback_timer_stop < rollback_writer_stop < reset < restored
     assert "seiche-source-worker.service" in rollback[rollback_writer_stop:reset]
+
+
+def test_wrapper_waits_for_market_worker_before_readiness(tmp_path: Path):
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("start_market_services() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+state=${FAKE_DATA_STATE:?}
+printf 'systemctl %s\n' "$*" >>"$state/calls.log"
+case "$*" in
+  "reset-failed seiche-market-worker.service seiche-source-worker.service")
+    exit 0
+    ;;
+  "start seiche-market-backfill.service seiche-market-worker.service")
+    touch "$state/market-worker.ready"
+    exit 0
+    ;;
+  *--no-block*)
+    exit 91
+    ;;
+  *)
+    exit 92
+    ;;
+esac
+""",
+    )
+    harness = f"""
+ensure_source_worker_ready() {{
+  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 81
+  printf '%s\n' source-ready >>"$FAKE_DATA_STATE/calls.log"
+}}
+activate_data_readiness_after_proof() {{
+  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 82
+  printf '%s\n' readiness >>"$FAKE_DATA_STATE/calls.log"
+}}
+{helper}
+start_market_services
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        env=os.environ
+        | {
+            "FAKE_DATA_STATE": str(state),
+            "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (state / "calls.log").read_text().splitlines() == [
+        "systemctl reset-failed seiche-market-worker.service seiche-source-worker.service",
+        "systemctl start seiche-market-backfill.service seiche-market-worker.service",
+        "source-ready",
+        "readiness",
+    ]
 
 
 def test_wrapper_starts_source_worker_before_strict_candidate_health():
@@ -1281,6 +1348,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     )
     installer_timer = installer_start.index("activate_data_readiness_after_proof")
     assert installer_source < installer_timer
+    assert "systemctl start --no-block" not in installer_start
     assert (
         "systemctl start --no-block seiche-source-worker.service" not in installer_start
     )

@@ -524,8 +524,15 @@ start_market_services() {
   systemctl reset-failed \
     seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
     || true
-  systemctl start --no-block \
-    seiche-market-backfill.service seiche-market-worker.service
+  # The worker is Type=notify and ordered after the one-shot backfill.  Wait
+  # for both jobs here: a --no-block start races the readiness preflight, which
+  # can mistake an activating worker for a stale recovery proof and repeat the
+  # full backup/restore drill on the controller's same-SHA convergence pass.
+  if ! systemctl start \
+      seiche-market-backfill.service seiche-market-worker.service; then
+    echo "FAIL: market backfill/worker did not become ready"
+    return 1
+  fi
   # Type=notify makes this block until the initial durable sweep has completed.
   # Only then submit the persistent readiness timer; its After= on the market
   # worker keeps a missed run queued until every collector startup is complete.
