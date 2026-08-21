@@ -540,16 +540,14 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         '"read_faults":[]',
     ):
         assert (
-            f"GET|/api/v2/money-markets|200|application/json|{identity}"
-            in definitions
+            f"GET|/api/v2/money-markets|200|application/json|{identity}" in definitions
         )
     for identity in (
         '"schema":"seiche.world-markets.v1"',
         '"coverage_claim":"curated_partial_non_exhaustive"',
     ):
         assert (
-            f"GET|/api/v2/world-markets|200|application/json|{identity}"
-            in definitions
+            f"GET|/api/v2/world-markets|200|application/json|{identity}" in definitions
         )
     assert (
         'GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"'
@@ -576,9 +574,7 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
 
 
 @pytest.mark.parametrize("scenario", ("usd_partial", "atlas_read_fault"))
-def test_external_smoke_rejects_incomplete_money_market_contracts(
-    tmp_path, scenario
-):
+def test_external_smoke_rejects_incomplete_money_market_contracts(tmp_path, scenario):
     env, _ = _smoke_env(tmp_path, scenario)
 
     result = subprocess.run(
@@ -1242,9 +1238,12 @@ def test_market_platform_units_are_independent_and_postgres_backed():
             "DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="
         )
     ]
-    assert "seiche-data-readiness.timer" not in early_enable.split(
-        "systemctl enable --now seiche-market-validation.timer", 1
-    )[0]
+    assert (
+        "seiche-data-readiness.timer"
+        not in early_enable.split(
+            "systemctl enable --now seiche-market-validation.timer", 1
+        )[0]
+    )
     assert "SEICHE_DEFER_MARKET_START:-0}" in installer
     worker_verify = installer.index("worker unit failed verification")
     worker_install = installer.index(
@@ -1359,9 +1358,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
-    assert (
-        "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
-    )
+    assert "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
     assert "CAP_CHOWN" not in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
@@ -1396,6 +1393,54 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "BOK ECOS env ownership/mode is unsafe" in installer
     assert "SEICHE_BOK_ECOS_API_KEY=[A-Za-z0-9]{8,128}" in installer
     assert 'wc -l <"$BOK_ECOS_ENV_FILE"' in installer
+
+
+def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
+    installer = MARKET_INSTALLER.read_text()
+    worker = MARKET_WORKER.read_text()
+    backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
+    source_worker = SOURCE_WORKER.read_text()
+    runbook = (ROOT / "docs" / "CFETS_ACCESS_BOUNDARY.md").read_text()
+
+    for unit in (worker, backfill):
+        assert "EnvironmentFile=-/etc/seiche/cfets-access.env" in unit
+        assert "ReadOnlyPaths=-/etc/seiche/cfets-approval.conf" in unit
+    assert "cfets-access.env" not in source_worker
+    assert "cfets-approval.conf" not in source_worker
+
+    assert "CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env" in installer
+    assert "CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf" in installer
+    assert "SEICHE_CFETS_ACCESS_ENV_FILE" not in installer
+    assert "SEICHE_CFETS_APPROVAL_FILE" not in installer
+    assert "CFETS access env ownership/mode is unsafe" in installer
+    assert "CFETS approval artifact ownership/mode is unsafe" in installer
+    assert "CFETS approval artifact size is unsafe" in installer
+    assert "CFETS approval artifact contract is invalid" in installer
+    assert "CFETS approval artifact digest mismatch" in installer
+    assert "CFETS approval review window is unsafe" in installer
+    assert "CFETS approval artifact has no access env pin" in installer
+    assert "SEICHE_CFETS_APPROVAL_PATH=$CFETS_APPROVAL_FILE" in installer
+    assert "SEICHE_CFETS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
+    assert "stat -c '%U:%G:%a:%h' \"$CFETS_APPROVAL_FILE\"" in installer
+    assert '/usr/bin/sha256sum "$CFETS_APPROVAL_FILE"' in installer
+    assert "collection_scope=automated_fdr007_and_shibor_history" in installer
+    assert "permitted_use=internal_research_only" in installer
+    assert "publication=prohibited" in installer
+    assert "CFETS_REVIEW_DAYS" in installer
+    assert '"$CFETS_REVIEW_DAYS" -gt 366' in installer
+    assert installer.index("CFETS approval artifact digest mismatch") < installer.index(
+        "WORKER_UNIT_STAGE_DIR=$(mktemp"
+    )
+
+    for contract in (
+        "root:seiche",
+        "0640",
+        "internal_research_only",
+        "publication=prohibited",
+        "no more than 366 days",
+        "before every",
+    ):
+        assert contract in runbook
 
 
 def test_legacy_updater_is_retired_before_other_host_services_change():

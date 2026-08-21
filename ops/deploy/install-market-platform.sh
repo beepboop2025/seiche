@@ -14,6 +14,11 @@ DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-
 # Both market units load this exact root-controlled path. Keep validation and
 # consumption inseparable instead of offering an override that systemd ignores.
 RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env
+# CFETS collection is disabled unless these two root-controlled files form one
+# content-bound approval object.  The env file names the fixed artifact and
+# pins its digest; the artifact itself binds datasets, use, and expiry.
+CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env
+CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf
 # BOK ECOS embeds its individually issued key in the request path.  Provision
 # it separately so the idempotent market.env rewrite can never erase or copy
 # the credential into a broader service surface.
@@ -267,6 +272,91 @@ if [ -e "$RBNZ_ACCESS_ENV_FILE" ] || [ -L "$RBNZ_ACCESS_ENV_FILE" ]; then
         echo "market platform: RBNZ access env contract is invalid" >&2
         exit 1
     fi
+fi
+
+# CFETS values remain metadata-only and collection remains off by default.
+# When legal approval exists, validate the exact environment/artifact pair
+# before installing either writer unit.  An orphan artifact is rejected so an
+# operator cannot mistake unused evidence for an enabled collection boundary.
+if [ -e "$CFETS_ACCESS_ENV_FILE" ] || [ -L "$CFETS_ACCESS_ENV_FILE" ]; then
+    [ -f "$CFETS_ACCESS_ENV_FILE" ] && [ ! -L "$CFETS_ACCESS_ENV_FILE" ] || {
+        echo "market platform: CFETS access env is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a' "$CFETS_ACCESS_ENV_FILE")" = "root:seiche:640" ] || {
+        echo "market platform: CFETS access env ownership/mode is unsafe" >&2
+        exit 1
+    }
+    if ! { [ "$(wc -l <"$CFETS_ACCESS_ENV_FILE" | tr -d '[:space:]')" = "2" ] \
+        && grep -Fqx \
+            "SEICHE_CFETS_APPROVAL_PATH=$CFETS_APPROVAL_FILE" \
+            "$CFETS_ACCESS_ENV_FILE" \
+        && grep -Eq '^SEICHE_CFETS_APPROVAL_SHA256=[0-9a-f]{64}$' \
+            "$CFETS_ACCESS_ENV_FILE"; }; then
+        echo "market platform: CFETS access env contract is invalid" >&2
+        exit 1
+    fi
+    [ -f "$CFETS_APPROVAL_FILE" ] && [ ! -L "$CFETS_APPROVAL_FILE" ] || {
+        echo "market platform: CFETS approval artifact is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a:%h' "$CFETS_APPROVAL_FILE")" = "root:seiche:640:1" ] || {
+        echo "market platform: CFETS approval artifact ownership/mode is unsafe" >&2
+        exit 1
+    }
+    CFETS_APPROVAL_BYTES=$(wc -c <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')
+    if [ "$CFETS_APPROVAL_BYTES" -lt 1 ] || [ "$CFETS_APPROVAL_BYTES" -gt 4096 ]; then
+        echo "market platform: CFETS approval artifact size is unsafe" >&2
+        exit 1
+    fi
+    if ! { [ "$(wc -l <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')" = "8" ] \
+        && grep -Fqx 'schema=seiche.cfets-approval.v1' "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'publisher=China Foreign Exchange Trade System' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'datasets=CN.CFETS.DR007,CN.CFETS.SHIBOR_ON' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx \
+            'collection_scope=automated_fdr007_and_shibor_history' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'permitted_use=internal_research_only' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'publication=prohibited' "$CFETS_APPROVAL_FILE" \
+        && grep -Eq '^licence_evidence_sha256=[0-9a-f]{64}$' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Eq '^valid_until=[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+            "$CFETS_APPROVAL_FILE"; }; then
+        echo "market platform: CFETS approval artifact contract is invalid" >&2
+        exit 1
+    fi
+    CFETS_EXPECTED_SHA=$(sed -n \
+        's/^SEICHE_CFETS_APPROVAL_SHA256=//p' "$CFETS_ACCESS_ENV_FILE")
+    CFETS_ACTUAL_SHA=$(/usr/bin/sha256sum "$CFETS_APPROVAL_FILE" | cut -d ' ' -f 1)
+    [ "$CFETS_ACTUAL_SHA" = "$CFETS_EXPECTED_SHA" ] || {
+        echo "market platform: CFETS approval artifact digest mismatch" >&2
+        exit 1
+    }
+    CFETS_VALID_UNTIL=$(sed -n 's/^valid_until=//p' "$CFETS_APPROVAL_FILE")
+    CFETS_CANONICAL_VALID_UNTIL=$(/usr/bin/date -u -d "$CFETS_VALID_UNTIL" +%F \
+        2>/dev/null) || {
+        echo "market platform: CFETS approval expiry is invalid" >&2
+        exit 1
+    }
+    [ "$CFETS_CANONICAL_VALID_UNTIL" = "$CFETS_VALID_UNTIL" ] || {
+        echo "market platform: CFETS approval expiry is not canonical" >&2
+        exit 1
+    }
+    CFETS_TODAY_EPOCH=$(/usr/bin/date -u -d "$(/usr/bin/date -u +%F)" +%s)
+    CFETS_VALID_UNTIL_EPOCH=$(/usr/bin/date -u -d "$CFETS_VALID_UNTIL" +%s)
+    CFETS_REVIEW_DAYS=$((
+        (CFETS_VALID_UNTIL_EPOCH - CFETS_TODAY_EPOCH) / 86400
+    ))
+    if [ "$CFETS_REVIEW_DAYS" -lt 0 ] || [ "$CFETS_REVIEW_DAYS" -gt 366 ]; then
+        echo "market platform: CFETS approval review window is unsafe" >&2
+        exit 1
+    fi
+elif [ -e "$CFETS_APPROVAL_FILE" ] || [ -L "$CFETS_APPROVAL_FILE" ]; then
+    echo "market platform: CFETS approval artifact has no access env pin" >&2
+    exit 1
 fi
 
 # The BOK key is optional at the platform level: without it the two KR

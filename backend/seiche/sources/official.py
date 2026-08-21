@@ -10,18 +10,23 @@ from __future__ import annotations
 import asyncio
 import calendar as civil_calendar
 import csv
+import grp
 import hashlib
+import hmac
 import html
 import io
 import json
 import logging
 import os
 import re
+import stat
 import urllib.parse
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -58,9 +63,25 @@ _BOK_ECOS_SERIES = {
 }
 
 _CFETS_TERMS_URI = "https://www.chinamoney.com.cn/english/svcmds/"
-_CFETS_LICENSE_SHA256_ENV = "SEICHE_CFETS_LICENSE_SHA256"
-_CFETS_LICENSE_VALID_UNTIL_ENV = "SEICHE_CFETS_LICENSE_VALID_UNTIL"
+_CFETS_APPROVAL_PATH_ENV = "SEICHE_CFETS_APPROVAL_PATH"
+_CFETS_APPROVAL_SHA256_ENV = "SEICHE_CFETS_APPROVAL_SHA256"
+_CFETS_APPROVAL_CANONICAL_PATH = Path("/etc/seiche/cfets-approval.conf")
+_CFETS_APPROVAL_GROUP = "seiche"
+_CFETS_APPROVAL_MODE = 0o640
+_CFETS_APPROVAL_MAX_BYTES = 4096
 _CFETS_MAX_LICENSE_REVIEW_DAYS = 366
+_CFETS_APPROVAL_FIXED_FIELDS = {
+    "schema": "seiche.cfets-approval.v1",
+    "publisher": "China Foreign Exchange Trade System",
+    "datasets": "CN.CFETS.DR007,CN.CFETS.SHIBOR_ON",
+    "collection_scope": "automated_fdr007_and_shibor_history",
+    "permitted_use": "internal_research_only",
+    "publication": "prohibited",
+}
+_CFETS_APPROVAL_FIELDS = frozenset(
+    {*_CFETS_APPROVAL_FIXED_FIELDS, "licence_evidence_sha256", "valid_until"}
+)
+_CFETS_RIGHTS_GENERATION_KEY = "seiche-rights-generation"
 
 
 def _redact_bok_ecos_credential(value: object, api_key: str | None = None) -> str:
@@ -142,6 +163,16 @@ class BOKECOSSourceError(RuntimeError):
 
 class CFETSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
     """CFETS value collection was withheld before any source request."""
+
+
+@dataclass(frozen=True, slots=True)
+class _CFETSApproval:
+    artifact_sha256: str
+    valid_until: date
+
+    @property
+    def rights_generation(self) -> str:
+        return f"cfets-approval-v1-{self.artifact_sha256[:16]}"
 
 
 def _bok_ecos_api_key() -> str:
@@ -459,6 +490,50 @@ def parse_bok_ecos(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
+def _cfets_rights_generation(document: FetchedDocument) -> str | None:
+    fragment = urllib.parse.urlsplit(document.source_uri).fragment
+    if not fragment:
+        return None
+    try:
+        values = urllib.parse.parse_qs(
+            fragment,
+            keep_blank_values=True,
+            strict_parsing=True,
+        )
+    except ValueError as exc:
+        raise ValueError("CFETS document has invalid local rights lineage") from exc
+    generations = values.get(_CFETS_RIGHTS_GENERATION_KEY)
+    if set(values) != {_CFETS_RIGHTS_GENERATION_KEY} or generations is None:
+        raise ValueError("CFETS document has unknown local rights lineage")
+    if len(generations) != 1 or not re.fullmatch(
+        r"cfets-approval-v1-[0-9a-f]{16}", generations[0]
+    ):
+        raise ValueError("CFETS document has invalid local rights generation")
+    return generations[0]
+
+
+def _cfets_revision_id(
+    document: FetchedDocument,
+    event_day: date,
+    row_evidence: bytes,
+) -> str | None:
+    generation = _cfets_rights_generation(document)
+    if generation is None:
+        return None
+    row_hash = hashlib.sha256(row_evidence).hexdigest()[:16]
+    return f"cfets:{generation}:{event_day.isoformat()}:{row_hash}"
+
+
+def _cfets_document_uri(uri: object, approval: _CFETSApproval) -> str:
+    parts = urllib.parse.urlsplit(str(uri))
+    if parts.fragment:
+        raise ValueError("CFETS response URI unexpectedly contained a fragment")
+    fragment = urllib.parse.urlencode(
+        {_CFETS_RIGHTS_GENERATION_KEY: approval.rights_generation}
+    )
+    return urllib.parse.urlunsplit((*parts[:4], fragment))
+
+
 def parse_cfets_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     points: list[ParsedPoint] = []
     for raw_line in document.payload.decode("utf-8-sig").splitlines():
@@ -479,8 +554,19 @@ def parse_cfets_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         value = _number(row[column])
         if value is None:
             continue
+        row_evidence = raw_line.encode("utf-8")
         points.append(
-            ParsedPoint(document.label, event_day, value, raw_line.encode("utf-8"))
+            ParsedPoint(
+                document.label,
+                event_day,
+                value,
+                row_evidence,
+                revision_id=_cfets_revision_id(
+                    document,
+                    event_day,
+                    row_evidence,
+                ),
+            )
         )
     if not points:
         raise ValueError("CFETS CSV contains no numeric observations")
@@ -502,12 +588,18 @@ def parse_cfets_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
         value = _number(row.get("ON"))
         if event_day is None or value is None:
             continue
+        row_evidence = _row_evidence("SHIBOR_ON", row)
         points.append(
             ParsedPoint(
                 "CN.CFETS.SHIBOR_ON",
                 event_day,
                 value,
-                _row_evidence("SHIBOR_ON", row),
+                row_evidence,
+                revision_id=_cfets_revision_id(
+                    document,
+                    event_day,
+                    row_evidence,
+                ),
             )
         )
     if not points:
@@ -1503,23 +1595,145 @@ def _cfets_access_today() -> date:
     return datetime.now(UTC).date()
 
 
-def _require_cfets_access_license() -> None:
-    """Require bounded proof of an operator-held CFETS data licence."""
-
-    license_hash = os.getenv(_CFETS_LICENSE_SHA256_ENV, "").strip().lower()
-    valid_until_raw = os.getenv(_CFETS_LICENSE_VALID_UNTIL_ENV, "").strip()
+def _cfets_approval_expected_owner() -> tuple[int, int]:
     try:
-        valid_until = date.fromisoformat(valid_until_raw)
-    except ValueError:
-        valid_until = None
-    if not re.fullmatch(r"[0-9a-f]{64}", license_hash) or valid_until is None:
+        group_id = grp.getgrnam(_CFETS_APPROVAL_GROUP).gr_gid
+    except KeyError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval cannot be validated because the service group is absent; "
+            "no request was made"
+        ) from exc
+    return 0, group_id
+
+
+def _read_cfets_approval_bytes(path: Path) -> bytes:
+    """Open one immutable approval identity without following the final symlink."""
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval validation requires no-follow file opens; "
+            "no request was made"
+        )
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact is missing or cannot be opened safely; "
+            "no request was made"
+        ) from exc
+    try:
+        metadata = os.fstat(descriptor)
+        expected_uid, expected_gid = _cfets_approval_expected_owner()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or stat.S_IMODE(metadata.st_mode) != _CFETS_APPROVAL_MODE
+            or metadata.st_nlink != 1
+        ):
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact ownership, mode, or file type is unsafe; "
+                "no request was made"
+            )
+        if not 0 < metadata.st_size <= _CFETS_APPROVAL_MAX_BYTES:
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact size is unsafe; no request was made"
+            )
+        chunks: list[bytes] = []
+        remaining = _CFETS_APPROVAL_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 4096))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+    if len(payload) != metadata.st_size:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact changed while being read; no request was made"
+        )
+    return payload
+
+
+def _parse_cfets_approval(payload: bytes) -> tuple[dict[str, str], date]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact is not UTF-8; no request was made"
+        ) from exc
+    if "\r" in text or not text.endswith("\n"):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has a non-canonical line format; "
+            "no request was made"
+        )
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if (
+            separator != "="
+            or not re.fullmatch(r"[a-z0-9_]+", key)
+            or not value
+            or key in fields
+        ):
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact key/value schema is invalid; "
+                "no request was made"
+            )
+        fields[key] = value
+    if fields.keys() != _CFETS_APPROVAL_FIELDS:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has missing or unknown fields; no request was made"
+        )
+    if any(fields[key] != value for key, value in _CFETS_APPROVAL_FIXED_FIELDS.items()):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact does not grant the required dataset, "
+            "research-only, and nonpublication scope; no request was made"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", fields["licence_evidence_sha256"]):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has no valid licence-evidence digest; "
+            "no request was made"
+        )
+    try:
+        valid_until = date.fromisoformat(fields["valid_until"])
+    except ValueError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has no valid ISO expiry; no request was made"
+        ) from exc
+    if valid_until.isoformat() != fields["valid_until"]:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact expiry is not canonical; no request was made"
+        )
+    return fields, valid_until
+
+
+def _require_cfets_access_license(*, today: date | None = None) -> _CFETSApproval:
+    """Validate content-bound, scope-bound proof before any CFETS request."""
+
+    configured_path = os.getenv(_CFETS_APPROVAL_PATH_ENV, "").strip()
+    expected_hash = os.getenv(_CFETS_APPROVAL_SHA256_ENV, "").strip().lower()
+    if configured_path != str(_CFETS_APPROVAL_CANONICAL_PATH) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_hash
+    ):
         raise CFETSAccessPolicyUnavailableError(
             "CFETS value collection is disabled before any request: an "
             f"operator-held data licence or written permission is required; see "
-            f"{_CFETS_TERMS_URI}. Configure {_CFETS_LICENSE_SHA256_ENV} and "
-            f"{_CFETS_LICENSE_VALID_UNTIL_ENV} only after approval"
+            f"{_CFETS_TERMS_URI}. Configure {_CFETS_APPROVAL_PATH_ENV} and "
+            f"{_CFETS_APPROVAL_SHA256_ENV} only after approval"
         )
-    review_days = (valid_until - _cfets_access_today()).days
+    payload = _read_cfets_approval_bytes(_CFETS_APPROVAL_CANONICAL_PATH)
+    actual_hash = hashlib.sha256(payload).hexdigest()
+    if not hmac.compare_digest(actual_hash, expected_hash):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact digest does not match the configured proof; "
+            "no request was made"
+        )
+    _, valid_until = _parse_cfets_approval(payload)
+    review_days = (valid_until - (today or _cfets_access_today())).days
     if review_days < 0:
         raise CFETSAccessPolicyUnavailableError(
             "CFETS data-licence review has expired; no request was made"
@@ -1529,6 +1743,7 @@ def _require_cfets_access_license() -> None:
             "CFETS data-licence proof must be reviewed within 366 days; "
             "no request was made"
         )
+    return _CFETSApproval(actual_hash, valid_until)
 
 
 def _rbnz_request_headers(*, navigation: bool) -> dict[str, str]:
@@ -2096,8 +2311,9 @@ def build_official_adapters(
     )
 
     async def fetch_cfets(client):
-        _require_cfets_access_license()
-        end = now.date()
+        collection_day = _cfets_access_today()
+        approval = _require_cfets_access_license(today=collection_day)
+        end = collection_day
         window_start = start if backfill else max(start, end - timedelta(days=31))
         fdr = await client.get(
             "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
@@ -2106,7 +2322,7 @@ def build_official_adapters(
         fdr.raise_for_status()
         documents = [
             FetchedDocument(
-                str(fdr.url),
+                _cfets_document_uri(fdr.url, approval),
                 "text/csv",
                 fdr.content,
                 "CN.CFETS.DR007",
@@ -2120,6 +2336,13 @@ def build_official_adapters(
             end,
             maximum_days=360,
         ):
+            window_day = _cfets_access_today()
+            window_approval = _require_cfets_access_license(today=window_day)
+            if window_approval.artifact_sha256 != approval.artifact_sha256:
+                raise CFETSAccessPolicyUnavailableError(
+                    "CFETS approval changed during collection; no further request "
+                    "was made"
+                )
             shibor = await client.get(
                 "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis",
                 params={
@@ -2134,7 +2357,7 @@ def build_official_adapters(
             if records:
                 documents.append(
                     FetchedDocument(
-                        str(shibor.url),
+                        _cfets_document_uri(shibor.url, window_approval),
                         "application/json",
                         shibor.content,
                         "CN.CFETS.SHIBOR_ON",
