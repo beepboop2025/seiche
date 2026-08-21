@@ -53,7 +53,11 @@ CHOKEPOINT_FLOWS = [
 def _clean(series: pd.Series | None) -> pd.Series:
     if series is None or not isinstance(series, pd.Series):
         return pd.Series(dtype=float)
-    out = pd.to_numeric(series, errors="coerce").dropna().sort_index()
+    out = pd.to_numeric(series, errors="coerce").dropna()
+    if out.empty or not isinstance(out.index, pd.DatetimeIndex):
+        return pd.Series(dtype=float)
+    out = out[~out.index.isna()]
+    out = out[np.isfinite(out.to_numpy(dtype=float))].sort_index()
     return out[~out.index.duplicated(keep="last")].astype(float)
 
 
@@ -173,20 +177,32 @@ def _adaptive_rows(
 def _scenario(
     *,
     oil_price_usd_per_bbl: float,
-    funding_rate_pct: float,
+    funding_rate_pct: float | None,
     usd_inr: float | None,
     assumptions: Mapping[str, float],
 ) -> dict:
     tenor = assumptions["tenor_days"]
     year_fraction = tenor / 365.0
     insurance_rate = assumptions["insurance_rate_pct"] / 100.0
-    funding_rate = funding_rate_pct / 100.0
+    funding_rate = (
+        funding_rate_pct / 100.0 if funding_rate_pct is not None else None
+    )
     storage_cost = assumptions["storage_usd_per_bbl_day"] * tenor
-    financing_cost = oil_price_usd_per_bbl * funding_rate * year_fraction
+    financing_cost = (
+        oil_price_usd_per_bbl * funding_rate * year_fraction
+        if funding_rate is not None
+        else None
+    )
     insurance_cost = oil_price_usd_per_bbl * insurance_rate * year_fraction
-    required_contango = storage_cost + financing_cost + insurance_cost
+    required_contango = (
+        storage_cost + financing_cost + insurance_cost
+        if financing_cost is not None
+        else None
+    )
     carry_headroom = (
         assumptions["forward_spread_usd_per_bbl"] - required_contango
+        if required_contango is not None
+        else None
     )
 
     cargo_barrels = assumptions["barrels_per_cargo_m"] * 1_000_000.0
@@ -245,6 +261,8 @@ def _scenario(
             "cargo_credit_usd": rounded(cargo_credit),
             "cargo_financing_cost_usd": rounded(
                 cargo_credit * funding_rate * voyage_days / 365.0
+                if funding_rate is not None
+                else None
             ),
             "in_transit_working_capital_usd": rounded(in_transit),
             "incremental_voyage_working_capital_usd": rounded(
@@ -378,15 +396,37 @@ def analyze(
     iorb_last, iorb_asof = _latest(iorb_visible)
 
     assert wti_last is not None
-    scenario_assumptions = dict(OIL_FUNDING_SCENARIO_DEFAULTS)
+    scenario_assumptions: dict[str, float | None] = dict(
+        OIL_FUNDING_SCENARIO_DEFAULTS
+    )
+    explicit_funding_rate: float | None = None
     if assumptions:
         for key, value in assumptions.items():
-            if key in scenario_assumptions and np.isfinite(float(value)):
-                scenario_assumptions[key] = float(value)
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(numeric_value):
+                continue
+            if key == "funding_rate_pct":
+                explicit_funding_rate = numeric_value
+            elif key in scenario_assumptions:
+                scenario_assumptions[key] = numeric_value
+
+    if explicit_funding_rate is not None:
+        scenario_funding_rate = explicit_funding_rate
+        scenario_funding_basis = "explicit_scenario_assumption"
+        scenario_funding_asof = None
+    else:
+        scenario_funding_rate = sofr_last
+        scenario_funding_basis = (
+            "observed_sofr" if sofr_last is not None else "unavailable"
+        )
+        scenario_funding_asof = sofr_asof
     scenario_assumptions.update(
         {
             "oil_price_usd_per_bbl": wti_last,
-            "funding_rate_pct": sofr_last if sofr_last is not None else 0.0,
+            "funding_rate_pct": scenario_funding_rate,
             "usd_inr": inr_last,
         }
     )
@@ -764,9 +804,14 @@ def analyze(
         },
         "scenario": {
             "assumptions": scenario_assumptions,
+            "funding_rate_evidence": {
+                "value_pct": scenario_funding_rate,
+                "basis": scenario_funding_basis,
+                "asof": scenario_funding_asof,
+            },
             "outputs": _scenario(
                 oil_price_usd_per_bbl=wti_last,
-                funding_rate_pct=sofr_last if sofr_last is not None else 0.0,
+                funding_rate_pct=scenario_funding_rate,
                 usd_inr=inr_last,
                 assumptions=scenario_assumptions,
             ),

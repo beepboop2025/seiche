@@ -244,3 +244,67 @@ def test_refuses_to_speak_without_oil_or_funding_history() -> None:
     world["cp_financial_3m"] = empty
     out = oilfunding.analyze(**world)
     assert not out["ok"] and "funding spread" in out["reason"]
+
+
+def test_missing_sofr_never_becomes_a_zero_rate_in_outputs() -> None:
+    world = _constant_world()
+    world["sofr"] = pd.Series(dtype=float)
+
+    out = oilfunding.analyze(**world)
+
+    assert out["ok"]  # CP funding context is still observed and usable.
+    assert out["live"]["sofr_iorb"] == {
+        "spread_bp": None,
+        "change_20d_bp": None,
+        "percentile_3y": None,
+        "asof": None,
+    }
+    scenario = out["scenario"]
+    assert scenario["assumptions"]["funding_rate_pct"] is None
+    assert scenario["funding_rate_evidence"] == {
+        "value_pct": None,
+        "basis": "unavailable",
+        "asof": None,
+    }
+    assert scenario["outputs"]["carry"]["financing_cost_usd_per_bbl"] is None
+    assert scenario["outputs"]["carry"]["required_contango_usd_per_bbl"] is None
+    assert scenario["outputs"]["carry"]["mechanical_headroom_usd_per_bbl"] is None
+    assert scenario["outputs"]["trade_finance"]["cargo_financing_cost_usd"] is None
+    assert out["charts"]["carry_hurdle"]["rows"] == []
+    assert json.dumps(out, allow_nan=False)
+
+
+def test_explicit_scenario_funding_rate_is_computed_and_labelled() -> None:
+    world = _constant_world()
+    world["sofr"] = pd.Series(dtype=float)
+
+    out = oilfunding.analyze(
+        **world,
+        assumptions={"funding_rate_pct": 4.25},
+    )
+
+    evidence = out["scenario"]["funding_rate_evidence"]
+    assert evidence == {
+        "value_pct": 4.25,
+        "basis": "explicit_scenario_assumption",
+        "asof": None,
+    }
+    financing = out["scenario"]["outputs"]["carry"][
+        "financing_cost_usd_per_bbl"
+    ]
+    assert financing == pytest.approx(80.0 * 0.0425 * 90.0 / 365.0, abs=0.001)
+    # A point assumption may drive forward arithmetic, never fake a historical tape.
+    assert out["charts"]["carry_hurdle"]["rows"] == []
+
+
+def test_undated_or_nat_series_degrade_without_date_exceptions() -> None:
+    world = _constant_world()
+    world["wti"] = pd.Series(80.0, index=pd.RangeIndex(len(world["wti"])))
+    out = oilfunding.analyze(**world)
+    assert not out["ok"] and "WTI" in out["reason"]
+
+    world = _constant_world()
+    world["sofr"] = pd.Series([5.0], index=pd.DatetimeIndex([pd.NaT]))
+    out = oilfunding.analyze(**world)
+    assert out["ok"]
+    assert out["scenario"]["funding_rate_evidence"]["basis"] == "unavailable"

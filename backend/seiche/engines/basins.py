@@ -42,14 +42,22 @@ from seiche.engines.hydrophone import _absorption
 
 
 def _rolling_z(s: pd.Series, window: int = 250) -> float | None:
-    x = s.dropna()
+    x = pd.to_numeric(s, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
     if len(x) < 60:
         return None
     tail = x.tail(window)
     sd = float(tail.std())
-    if sd <= 0:
+    if not np.isfinite(sd) or sd <= 0:
         return None
-    return float((float(x.iloc[-1]) - float(tail.mean())) / sd)
+    z = float((float(x.iloc[-1]) - float(tail.mean())) / sd)
+    return z if np.isfinite(z) else None
+
+
+def _rounded_rolling_z(s: pd.Series) -> float | None:
+    """Round a calibrated z-score without turning missing calibration into zero."""
+
+    z = _rolling_z(s)
+    return round(z, 2) if z is not None else None
 
 
 MIN_Z_OBS = 60   # a z against fewer own-history points is noise — quarantine
@@ -93,14 +101,14 @@ def analyze(
     basins.append({
         "basin": "US", "anchor": "SOFR − IORB",
         "value_bp": round(float(us.iloc[-1]), 1),
-        "z": round(_rolling_z(us) or 0.0, 2),
+        "z": _rounded_rolling_z(us),
         "asof": us.index[-1].date().isoformat(),
     })
     if not eur_spread_bp.empty:
         basins.append({
             "basin": "EURO AREA", "anchor": "€STR − DFR",
             "value_bp": round(float(eur_spread_bp.iloc[-1]), 1),
-            "z": round(_rolling_z(eur_spread_bp) or 0.0, 2),
+            "z": _rounded_rolling_z(eur_spread_bp),
             "asof": eur_spread_bp.index[-1].date().isoformat(),
         })
     uk = sonia.dropna()
@@ -108,7 +116,7 @@ def analyze(
         basins.append({
             "basin": "UK", "anchor": "SONIA level (no keyless daily policy anchor)",
             "value_bp": round(float(uk.iloc[-1]) * 100.0, 1),
-            "z": round(_rolling_z(uk.diff().dropna()) or 0.0, 2),
+            "z": _rounded_rolling_z(uk.diff().dropna()),
             "asof": uk.index[-1].date().isoformat(),
         })
     jp = tona.dropna()
@@ -116,7 +124,7 @@ def analyze(
         basins.append({
             "basin": "JAPAN", "anchor": "TONA level (BOJ daily; no keyless daily policy anchor)",
             "value_bp": round(float(jp.iloc[-1]) * 100.0, 1),
-            "z": round(_rolling_z(jp.diff().dropna()) or 0.0, 2),
+            "z": _rounded_rolling_z(jp.diff().dropna()),
             "asof": jp.index[-1].date().isoformat(),
         })
     cn = shibor_on.dropna()
@@ -143,8 +151,8 @@ def analyze(
         basins.append({
             "basin": "INDIA", "anchor": "INR/USD (FX channel only — rates feed pending)",
             "value_bp": round(float(inr_d.iloc[-1]), 2),
-            "z": round(_rolling_z(inr_d) or 0.0, 2),
-            "vol_z": round(_rolling_z(inr_vol) or 0.0, 2) if not inr_vol.empty else None,
+            "z": _rounded_rolling_z(inr_d),
+            "vol_z": _rounded_rolling_z(inr_vol),
             "asof": inr_d.index[-1].date().isoformat(),
         })
     peg = usdt_peg_bp.dropna()
@@ -152,7 +160,7 @@ def analyze(
         basins.append({
             "basin": "CRYPTO (offshore $)", "anchor": "USDT peg deviation",
             "value_bp": round(float(peg.iloc[-1]), 1),
-            "z": round(_rolling_z(peg.abs()) or 0.0, 2),
+            "z": _rounded_rolling_z(peg.abs()),
             "asof": peg.index[-1].date().isoformat(),
         })
 
@@ -264,7 +272,7 @@ def analyze(
             "foreign_rrp_b": round(float(fr.iloc[-1]), 1) if not fr.empty else None,
             "foreign_rrp_chg_13w_b": round(float(fr.iloc[-1] - fr.iloc[-14]), 1) if len(fr) > 14 else None,
             "dollar_idx": round(float(dxy.dropna().iloc[-1]), 2) if not dxy.dropna().empty else None,
-            "dollar_idx_z": round(_rolling_z(dxy.dropna()) or 0.0, 2),
+            "dollar_idx_z": _rounded_rolling_z(dxy.dropna()),
         },
         "out_of_scope": (
             "daily-overlap coupling spans US, euro area, UK and Japan (TONA), plus "

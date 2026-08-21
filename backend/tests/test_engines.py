@@ -446,6 +446,49 @@ def test_basins_optional_asia_rate_stays_uncalibrated_with_short_history(rng):
     assert r["tide"]["n_series"] >= 9
 
 
+def test_basins_preserves_missing_z_instead_of_publishing_calm_zero():
+    idx = _bdays(20)
+    widx = pd.date_range(idx[0], idx[-1], freq="W-WED")
+    empty = pd.Series(dtype=float)
+
+    r = basins.analyze(
+        spread_us_bp=pd.Series(np.linspace(-1.0, 1.0, len(idx)), index=idx),
+        estr=empty,
+        ecb_dfr=empty,
+        sonia=empty,
+        dxy=pd.Series(np.linspace(100.0, 101.0, len(idx)), index=idx),
+        swap_lines_m=pd.Series(0.0, index=widx),
+        foreign_rrp_m=pd.Series(300_000.0, index=widx),
+        fx_ops=[],
+    )
+
+    assert r["ok"]
+    assert r["basins"][0]["basin"] == "US"
+    assert r["basins"][0]["z"] is None
+    assert r["channels"]["dollar_idx_z"] is None
+
+
+def test_basins_preserves_a_genuinely_measured_zero_z():
+    idx = _bdays(61)
+    widx = pd.date_range(idx[0], idx[-1], freq="W-WED")
+    centered = np.array([-1.0, 1.0] * 30 + [0.0])
+    empty = pd.Series(dtype=float)
+
+    r = basins.analyze(
+        spread_us_bp=pd.Series(centered, index=idx),
+        estr=empty,
+        ecb_dfr=empty,
+        sonia=empty,
+        dxy=pd.Series(100.0 + centered, index=idx),
+        swap_lines_m=pd.Series(0.0, index=widx),
+        foreign_rrp_m=pd.Series(300_000.0, index=widx),
+        fx_ops=[],
+    )
+
+    assert r["basins"][0]["z"] == 0.0
+    assert r["channels"]["dollar_idx_z"] == 0.0
+
+
 # --------------------------------------------------------------------------
 # Weather settlement calendar + crowding guard
 # --------------------------------------------------------------------------
