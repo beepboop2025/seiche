@@ -130,10 +130,13 @@ freshness and the regime at request time, then returns no chart history. Its opt
 `sources`, `methodology`, or `all`.
 
 `/api/v2/world-markets` and `world_markets_context` expose the same versioned,
-cache-only world-market projection. The MCP `section` selector is bounded to
+cache-only world-market projection. Both accept a `section` selector bounded to
 `summary`, `money_markets`, `forex`, `capital_markets`, `sources`, `methodology`
-or `all`. Each response carries canonical citation URLs and keeps `observed`,
-`derived`, `structural`, `restricted` and `unavailable` evidence distinct.
+or `all`; for example, use REST `?section=forex` or MCP `section="forex"`.
+REST defaults to `all`, while MCP defaults to the smaller `summary`. Each
+response carries canonical citation URLs, separates generation from evidence
+clocks, and keeps `observed`, `derived`, `structural`, `restricted` and
+`unavailable` evidence distinct.
 
 The USD regime exposes both the raw most-extreme eligible channel and a
 Bonferroni-adjusted family-wise rank. Its label is descriptive context, not an
