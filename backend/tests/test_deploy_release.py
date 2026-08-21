@@ -1359,6 +1359,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
+    assert (
+        "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
+    )
+    assert "CAP_CHOWN" not in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert (
