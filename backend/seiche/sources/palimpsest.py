@@ -7,7 +7,9 @@ count, and the Generative Firewall Index (state-aligned-LLM refusal
 tomography, daily). What an authoritarian state rushes to delete is a
 real-time stress read no market data vendor carries at any price. It is a
 policy-fear context channel, not a substitute for the registered CNY
-money-market pack or its CFETS market-data evidence.
+money-market pack or its CFETS market-data evidence. The collector deliberately
+does not request Palimpsest's CFETS-derived ``china-econ-history`` mirror;
+those values require the separately attested CFETS licence boundary.
 
 Contract discipline unchanged:
   - palimpsest.info primary, GitHub raw mirror fallback (same files, same
@@ -83,16 +85,23 @@ def _merge_and_store(mnemonic: str, fresh: pd.Series) -> Series:
         merged = merged[~merged.index.duplicated(keep="last")].sort_index()
     else:
         merged = fresh
-    s = Series(mnemonic, spec.source, spec.remote_id, spec.label, spec.unit,
-               spec.freq, utcnow_iso(), merged)
+    s = Series(
+        mnemonic,
+        spec.source,
+        spec.remote_id,
+        spec.label,
+        spec.unit,
+        spec.freq,
+        utcnow_iso(),
+        merged,
+    )
     store.save_series(s)
     return s
 
 
 async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     """DDTI + GFI series (accrued) plus the latest board for the card."""
-    mnems = ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI",
-             "CN_FDR007", "CN_PARITY")
+    mnems = ("PALIMPSEST_FEAR", "PALIMPSEST_NEW", "PALIMPSEST_GFI")
     if all(store.is_fresh(m, PALIMPSEST_TTL_MIN) for m in mnems):
         cached = {m: store.load_series(m) for m in mnems}
         latest = store.load_blob("palimpsest:latest") or {}
@@ -104,33 +113,31 @@ async def fetch_all(client: httpx.AsyncClient, faults: list[dict]) -> dict:
     try:
         ddti_hist = _jsonl(await _get_text(client, "ddti-history.jsonl"))
         out["series"]["PALIMPSEST_FEAR"] = _merge_and_store(
-            "PALIMPSEST_FEAR", _daily(ddti_hist, "generated_at", "top_threat", "max"))
+            "PALIMPSEST_FEAR", _daily(ddti_hist, "generated_at", "top_threat", "max")
+        )
         out["series"]["PALIMPSEST_NEW"] = _merge_and_store(
-            "PALIMPSEST_NEW", _daily(ddti_hist, "generated_at", "n_new", "last"))
+            "PALIMPSEST_NEW", _daily(ddti_hist, "generated_at", "n_new", "last")
+        )
     except SourceFault as e:
         faults.append({"source": e.source, "detail": e.detail})
 
     try:
         gfi_hist = _jsonl(await _get_text(client, "history.jsonl"))
         out["series"]["PALIMPSEST_GFI"] = _merge_and_store(
-            "PALIMPSEST_GFI", _daily(gfi_hist, "date", "gfi", "last"))
-    except SourceFault as e:
-        faults.append({"source": e.source, "detail": e.detail})
-
-    try:
-        cn_hist = _jsonl(await _get_text(client, "china-econ-history.jsonl"))
-        out["series"]["CN_FDR007"] = _merge_and_store(
-            "CN_FDR007", _daily(cn_hist, "date", "fdr007", "last"))
-        out["series"]["CN_PARITY"] = _merge_and_store(
-            "CN_PARITY", _daily(cn_hist, "date", "usdcny_parity", "last"))
+            "PALIMPSEST_GFI", _daily(gfi_hist, "date", "gfi", "last")
+        )
     except SourceFault as e:
         faults.append({"source": e.source, "detail": e.detail})
 
     try:
         latest = json.loads(await _get_text(client, "ddti-latest.json"))
         top = [
-            {"term": r.get("term"), "domain": r.get("domain"),
-             "threat": r.get("threat"), "is_new": r.get("is_new")}
+            {
+                "term": r.get("term"),
+                "domain": r.get("domain"),
+                "threat": r.get("threat"),
+                "is_new": r.get("is_new"),
+            }
             for r in (latest.get("ranked") or [])[:8]
         ]
         out["latest"] = {

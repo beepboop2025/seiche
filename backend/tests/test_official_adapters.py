@@ -687,6 +687,15 @@ def _approve_rbnz_access(monkeypatch) -> None:
     )
 
 
+def _approve_cfets_access(monkeypatch) -> None:
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: date(2026, 8, 14))
+    monkeypatch.setenv(official._CFETS_LICENSE_SHA256_ENV, "b" * 64)
+    monkeypatch.setenv(
+        official._CFETS_LICENSE_VALID_UNTIL_ENV,
+        "2027-08-14",
+    )
+
+
 def _rbnz_mock_transport(handler) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
 
@@ -1015,6 +1024,109 @@ def test_rbnz_workbook_archive_row_and_cell_bounds_fail_closed(monkeypatch) -> N
     monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_CELLS", 1)
     with pytest.raises(ValueError, match="cell limit"):
         parse_rbnz(document)
+
+
+@pytest.mark.asyncio
+async def test_cfets_access_defaults_off_before_any_request(monkeypatch) -> None:
+    monkeypatch.delenv(official._CFETS_LICENSE_SHA256_ENV, raising=False)
+    monkeypatch.delenv(official._CFETS_LICENSE_VALID_UNTIL_ENV, raising=False)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    adapter = _official_adapter("cfets_rates")
+    with pytest.raises(SourcePolicyUnavailableError) as availability:
+        adapter.check_availability()
+    assert official._CFETS_LICENSE_SHA256_ENV in str(availability.value)
+    assert official._CFETS_LICENSE_VALID_UNTIL_ENV in str(availability.value)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match="operator-held"):
+            await adapter.fetcher(client)
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_cfets_valid_bounded_licence_proof_enables_collection(
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/fdr-chrt.csv"):
+            return httpx.Response(
+                200,
+                request=request,
+                content=b"2026-08-11,0,0,0,0,0,0,1.52\n",
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "records": [
+                    {"showDateCN": "2026-08-11", "ON": "1.31"},
+                ]
+            },
+        )
+
+    adapter = _official_adapter("cfets_rates")
+    adapter.check_availability()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await adapter.fetcher(client))
+
+    assert [document.label for document in documents] == [
+        "CN.CFETS.DR007",
+        "CN.CFETS.SHIBOR_ON",
+    ]
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+
+
+def test_cfets_source_catalog_remains_metadata_only() -> None:
+    spec = default_registry().get("CN-CNY").adapter_map["cfets_rates"]
+
+    assert spec.classification is ConnectorClassification.OFFICIAL_OPEN
+    assert spec.redistribution_status is RedistributionStatus.METADATA_ONLY
+    assert ("CN-CNY", "cfets_rates") in PRODUCTION_ADAPTER_KEYS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("valid_until", "message"),
+    (
+        ("2026-08-13", "review has expired"),
+        ("2027-08-16", "reviewed within 366 days"),
+    ),
+)
+async def test_cfets_expired_or_overlong_proof_stays_offline(
+    monkeypatch,
+    valid_until: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: date(2026, 8, 14))
+    monkeypatch.setenv(official._CFETS_LICENSE_SHA256_ENV, "b" * 64)
+    monkeypatch.setenv(official._CFETS_LICENSE_VALID_UNTIL_ENV, valid_until)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    adapter = _official_adapter("cfets_rates")
+    with pytest.raises(SourcePolicyUnavailableError, match=message):
+        adapter.check_availability()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match=message):
+            await adapter.fetcher(client)
+
+    assert requests == []
 
 
 @pytest.mark.asyncio

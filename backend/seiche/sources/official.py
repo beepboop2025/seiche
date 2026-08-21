@@ -57,6 +57,11 @@ _BOK_ECOS_SERIES = {
     "KR.BOK.CALL_OVERNIGHT_ALL": ("817Y002", "010101000"),
 }
 
+_CFETS_TERMS_URI = "https://www.chinamoney.com.cn/english/svcmds/"
+_CFETS_LICENSE_SHA256_ENV = "SEICHE_CFETS_LICENSE_SHA256"
+_CFETS_LICENSE_VALID_UNTIL_ENV = "SEICHE_CFETS_LICENSE_VALID_UNTIL"
+_CFETS_MAX_LICENSE_REVIEW_DAYS = 366
+
 
 def _redact_bok_ecos_credential(value: object, api_key: str | None = None) -> str:
     """Remove an ECOS path credential before text crosses a diagnostic boundary."""
@@ -133,6 +138,10 @@ class BOKECOSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
 
 class BOKECOSSourceError(RuntimeError):
     """A credential-safe BOK ECOS source failure suitable for public faults."""
+
+
+class CFETSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
+    """CFETS value collection was withheld before any source request."""
 
 
 def _bok_ecos_api_key() -> str:
@@ -1490,6 +1499,38 @@ def _require_rbnz_access_approval() -> None:
         )
 
 
+def _cfets_access_today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _require_cfets_access_license() -> None:
+    """Require bounded proof of an operator-held CFETS data licence."""
+
+    license_hash = os.getenv(_CFETS_LICENSE_SHA256_ENV, "").strip().lower()
+    valid_until_raw = os.getenv(_CFETS_LICENSE_VALID_UNTIL_ENV, "").strip()
+    try:
+        valid_until = date.fromisoformat(valid_until_raw)
+    except ValueError:
+        valid_until = None
+    if not re.fullmatch(r"[0-9a-f]{64}", license_hash) or valid_until is None:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS value collection is disabled before any request: an "
+            f"operator-held data licence or written permission is required; see "
+            f"{_CFETS_TERMS_URI}. Configure {_CFETS_LICENSE_SHA256_ENV} and "
+            f"{_CFETS_LICENSE_VALID_UNTIL_ENV} only after approval"
+        )
+    review_days = (valid_until - _cfets_access_today()).days
+    if review_days < 0:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS data-licence review has expired; no request was made"
+        )
+    if review_days > _CFETS_MAX_LICENSE_REVIEW_DAYS:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS data-licence proof must be reviewed within 366 days; "
+            "no request was made"
+        )
+
+
 def _rbnz_request_headers(*, navigation: bool) -> dict[str, str]:
     """Identify Seiche honestly on an operator-approved RBNZ connection."""
 
@@ -2055,6 +2096,7 @@ def build_official_adapters(
     )
 
     async def fetch_cfets(client):
+        _require_cfets_access_license()
         end = now.date()
         window_start = start if backfill else max(start, end - timedelta(days=31))
         fdr = await client.get(
@@ -2100,7 +2142,15 @@ def build_official_adapters(
                 )
         return tuple(documents)
 
-    add("CN-CNY", "cfets_rates", "cfets_rates", fetch_cfets, parse_cfets_rates, 90)
+    add(
+        "CN-CNY",
+        "cfets_rates",
+        "cfets_rates",
+        fetch_cfets,
+        parse_cfets_rates,
+        90,
+        availability_check=_require_cfets_access_license,
+    )
 
     add(
         "HK-HKD",
