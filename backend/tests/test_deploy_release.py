@@ -1603,6 +1603,10 @@ case "${FAKE_CANDIDATE_RESPONSE_MODE:?}" in
         "${FAKE_ACTIVATION_TOKEN:?}"
     fi
     ;;
+  unavailable|dies-after-900)
+    printf 'http-503\n' >>"$state/calls.log"
+    exit 22
+    ;;
   drift)
     printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
       "${FAKE_GENERATED_AT:?}" "${FAKE_DRIFT_SHA:?}" \
@@ -1610,6 +1614,10 @@ case "${FAKE_CANDIDATE_RESPONSE_MODE:?}" in
     ;;
   missing)
     printf '{"status":"rebuilt_without_market_evidence"}\n'
+    ;;
+  stale)
+    printf '{"generated_at":"2000-01-01T00:00:00+00:00","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
+      "${FAKE_EXPECTED_SHA:?}" "${FAKE_ACTIVATION_TOKEN:?}"
     ;;
   *) exit 64 ;;
 esac
@@ -1620,6 +1628,11 @@ esac
         """
 printf 'systemctl %s\n' "$*" >>"${FAKE_CANDIDATE_STATE:?}/calls.log"
 [ "$*" = "is-active --quiet seiche-api" ] || exit 64
+[ "${FAKE_CANDIDATE_RESPONSE_MODE:?}" != dies-after-900 ] || {
+  count=$(cat "${FAKE_CANDIDATE_STATE:?}/curl-count")
+  [ "$count" -le 91 ]
+  exit
+}
 [ "${FAKE_API_ACTIVE:?}" = 1 ]
 """,
     )
@@ -1705,18 +1718,72 @@ def test_candidate_health_wait_allows_503_past_900_before_full_rebuild_bound(
     assert 900 < elapsed < 1800
 
 
-def test_candidate_health_wait_rejects_exact_sha_drift_at_its_bound(
+def test_candidate_health_wait_rejects_exact_sha_drift_immediately(
     tmp_path: Path,
 ) -> None:
     result, calls = _run_candidate_health_wait_helper(
         tmp_path,
         response_mode="drift",
-        window=0,
+        window=1800,
     )
 
     assert result.returncode != 0
     assert [call.split()[0] for call in calls] == ["curl"]
-    assert "exact release after 0min warm-up window" in result.stdout
+    assert "invalid exact-release evidence" in result.stdout
+
+
+@pytest.mark.parametrize("response_mode", ["missing", "stale"])
+def test_candidate_health_wait_rejects_invalid_2xx_contract_immediately(
+    tmp_path: Path,
+    response_mode: str,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode=response_mode,
+        window=1800,
+    )
+
+    assert result.returncode != 0
+    assert [call.split()[0] for call in calls] == ["curl"]
+    assert "invalid exact-release evidence" in result.stdout
+
+
+def test_candidate_health_wait_bounds_continuous_503_at_1800_seconds(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="unavailable",
+        window=1800,
+        report_elapsed=True,
+    )
+
+    assert result.returncode != 0
+    assert calls.count("http-503") == 181
+    assert calls.count("systemctl is-active --quiet seiche-api") == 180
+    assert calls.count("sleep 10") == 180
+    assert "exact release after 30min warm-up window" in result.stdout
+    elapsed = int(result.stdout.split("elapsed-seconds=", 1)[1].splitlines()[0])
+    assert 1800 <= elapsed < 1820
+
+
+def test_candidate_health_wait_detects_api_death_after_900_seconds(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="dies-after-900",
+        window=1800,
+        report_elapsed=True,
+    )
+
+    assert result.returncode != 0
+    assert calls.count("http-503") == 92
+    assert calls.count("systemctl is-active --quiet seiche-api") == 92
+    assert calls.count("sleep 10") == 91
+    assert "seiche-api died during warm-up" in result.stdout
+    elapsed = int(result.stdout.split("elapsed-seconds=", 1)[1].splitlines()[0])
+    assert 910 <= elapsed < 930
 
 
 def test_candidate_health_wait_fails_immediately_if_api_dies_during_reseal(
@@ -1724,13 +1791,13 @@ def test_candidate_health_wait_fails_immediately_if_api_dies_during_reseal(
 ) -> None:
     result, calls = _run_candidate_health_wait_helper(
         tmp_path,
-        response_mode="missing",
+        response_mode="unavailable",
         window=120,
         api_active=False,
     )
 
     assert result.returncode != 0
-    assert [call.split()[0] for call in calls] == ["curl", "systemctl"]
+    assert [call.split()[0] for call in calls] == ["curl", "http-503", "systemctl"]
     assert "seiche-api died during warm-up" in result.stdout
 
 

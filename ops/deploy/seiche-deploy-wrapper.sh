@@ -1240,30 +1240,47 @@ sys.stdout.write(candidate["activation_token"])
 ACTIVATION_TOKEN=""
 candidate_health_once() {
   local expected_sha="$1" max_generated_age="${2:-0}" body token now_epoch
-  body=$(mktemp) || return 1
+  body=$(mktemp) || return 2
   if ! curl -sf -m 10 \
       'http://127.0.0.1:8787/api/internal/v1/release-health' >"$body"; then
     rm -f -- "$body"
+    # A transport error or non-2xx response is the normal not-ready state.
     return 1
   fi
   now_epoch=$(date +%s) || {
     rm -f -- "$body"
-    return 1
+    return 2
   }
   if ! token=$(
       parse_candidate_health \
         "$body" "$expected_sha" "$max_generated_age" "$now_epoch"
   ); then
     rm -f -- "$body"
-    return 1
+    # A successful HTTP response is an evidence claim. Wrong-SHA, stale,
+    # malformed, or token-invalid claims cannot become valid by waiting.
+    return 2
   fi
   rm -f -- "$body"
   ACTIVATION_TOKEN="$token"
 }
 
 candidate_health_wait() {  # candidate_health_wait SECONDS SHA [MAX_AGE] -> exact candidate
-  local window="$1" expected_sha="$2" max_generated_age="${3:-0}" deadline=$((SECONDS + $1))
-  until candidate_health_once "$expected_sha" "$max_generated_age"; do
+  local window="$1" expected_sha="$2" max_generated_age="${3:-0}" \
+    deadline=$((SECONDS + $1)) health_status
+  while true; do
+    if candidate_health_once "$expected_sha" "$max_generated_age"; then
+      return 0
+    else
+      health_status=$?
+    fi
+    if [ "$health_status" -eq 2 ]; then
+      echo "FAIL: api returned invalid exact-release evidence during warm-up"
+      return 1
+    fi
+    if [ "$health_status" -ne 1 ]; then
+      echo "FAIL: candidate health check returned an unknown status"
+      return 1
+    fi
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "FAIL: api did not rebuild the exact release after $((window / 60))min warm-up window"
       return 1
@@ -1271,7 +1288,6 @@ candidate_health_wait() {  # candidate_health_wait SECONDS SHA [MAX_AGE] -> exac
     systemctl is-active --quiet seiche-api || { echo "FAIL: seiche-api died during warm-up"; return 1; }
     sleep 10
   done
-  return 0
 }
 
 # A rollback target can predate the controller token contract. It still has to
