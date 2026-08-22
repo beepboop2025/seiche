@@ -853,10 +853,12 @@ activate_data_readiness_after_proof() {
     echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
     return 1
   fi
-  # A refresh may take most of the candidate's freshness window. Re-read the
-  # private exact-release contract before making readiness monitoring durable.
-  if ! candidate_health_once "$AFTER" 900; then
-    echo "FAIL: exact candidate health drifted during data-readiness convergence"
+  # A forced refresh publishes its in-memory board before the exact release
+  # handoff finishes sealing. Readiness can therefore turn green during that
+  # short interval; wait for the strict SHA-bound capability instead of
+  # accepting ordinary API health without current release evidence.
+  if ! candidate_health_wait 120 "$AFTER" 900; then
+    echo "FAIL: exact candidate evidence did not reseal after data-readiness convergence"
     return 1
   fi
   if ! systemctl enable --now seiche-data-readiness.timer; then

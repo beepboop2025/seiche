@@ -1478,16 +1478,16 @@ touch "$state/refresh-triggered"
 {helper}
 candidate_health_wait() {{
   printf 'candidate-health-wait %s\n' "$*" >>"$FAKE_DATA_STATE/calls.log"
+  wait_count_file=$FAKE_DATA_STATE/candidate-health-wait-count
+  wait_count=0
+  [ ! -f "$wait_count_file" ] || wait_count=$(cat "$wait_count_file")
+  wait_count=$((wait_count + 1))
+  printf '%s\n' "$wait_count" >"$wait_count_file"
   case "${{FAKE_CANDIDATE_HEALTH_WAIT_MODE:?}}" in
     success) return 0 ;;
     fail) return 1 ;;
-    fail-once)
-      if [ ! -f "$FAKE_DATA_STATE/candidate-health-wait-failed" ]; then
-        touch "$FAKE_DATA_STATE/candidate-health-wait-failed"
-        return 1
-      fi
-      return 0
-      ;;
+    fail-once) [ "$wait_count" -ne 1 ] ;;
+    fail-after-first) [ "$wait_count" -eq 1 ] ;;
     *) return 64 ;;
   esac
 }}
@@ -1508,6 +1508,152 @@ activate_data_readiness_after_proof
     calls_path = state / "calls.log"
     calls = calls_path.read_text().splitlines() if calls_path.exists() else []
     return result, calls, state
+
+def _run_candidate_health_wait_helper(
+    tmp_path: Path,
+    *,
+    response_mode: str,
+    window: int,
+    max_generated_age: int = 900,
+    api_active: bool = True,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper_start = wrapper.index("parse_candidate_health()")
+    helper = wrapper[
+        helper_start : wrapper.index(
+            "# A rollback target can predate", helper_start
+        )
+    ]
+    helper = helper.replace(
+        '"$APP/backend/.venv/bin/python"', f'"{sys.executable}"'
+    )
+    state = tmp_path / "candidate-health-state"
+    state.mkdir()
+    fake_curl = _executable(
+        tmp_path / "curl",
+        """
+state=${FAKE_CANDIDATE_STATE:?}
+count_file=$state/curl-count
+count=0
+[ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s\n' "$count" >"$count_file"
+printf 'curl %s\n' "$*" >>"$state/calls.log"
+case "${FAKE_CANDIDATE_RESPONSE_MODE:?}" in
+  reseals)
+    if [ "$count" -eq 1 ]; then
+      printf '{"status":"rebuilt_without_market_evidence"}\n'
+    else
+      printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
+        "${FAKE_GENERATED_AT:?}" "${FAKE_EXPECTED_SHA:?}" \
+        "${FAKE_ACTIVATION_TOKEN:?}"
+    fi
+    ;;
+  drift)
+    printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
+      "${FAKE_GENERATED_AT:?}" "${FAKE_DRIFT_SHA:?}" \
+      "${FAKE_ACTIVATION_TOKEN:?}"
+    ;;
+  missing)
+    printf '{"status":"rebuilt_without_market_evidence"}\n'
+    ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    _executable(
+        tmp_path / "systemctl",
+        """
+printf 'systemctl %s\n' "$*" >>"${FAKE_CANDIDATE_STATE:?}/calls.log"
+[ "$*" = "is-active --quiet seiche-api" ] || exit 64
+[ "${FAKE_API_ACTIVE:?}" = 1 ]
+""",
+    )
+    expected_sha = "a" * 40
+    activation_token = "c" * 64
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"""
+sleep() {{ printf 'sleep %s\n' "$1" >>"$FAKE_CANDIDATE_STATE/calls.log"; }}
+{helper}
+candidate_health_wait {window} {expected_sha} {max_generated_age}
+status=$?
+[ "$status" -ne 0 ] || printf 'activation-token=%s\n' "$ACTIVATION_TOKEN"
+exit "$status"
+""",
+        ],
+        env=os.environ
+        | {
+            "APP": str(tmp_path / "app"),
+            "FAKE_CANDIDATE_STATE": str(state),
+            "FAKE_CANDIDATE_RESPONSE_MODE": response_mode,
+            "FAKE_EXPECTED_SHA": expected_sha,
+            "FAKE_DRIFT_SHA": "b" * 40,
+            "FAKE_ACTIVATION_TOKEN": activation_token,
+            "FAKE_GENERATED_AT": datetime.now(UTC).isoformat(),
+            "FAKE_API_ACTIVE": "1" if api_active else "0",
+            "PATH": f"{fake_curl.parent}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    calls_path = state / "calls.log"
+    calls = calls_path.read_text().splitlines() if calls_path.exists() else []
+    return result, calls
+
+
+def test_candidate_health_wait_recovers_when_exact_evidence_reseals_after_refresh(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="reseals",
+        window=120,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [call.split()[0] for call in calls] == [
+        "curl",
+        "systemctl",
+        "sleep",
+        "curl",
+    ]
+    assert calls[1] == "systemctl is-active --quiet seiche-api"
+    assert calls[2] == "sleep 10"
+    assert result.stdout == f"activation-token={'c' * 64}\n"
+
+
+def test_candidate_health_wait_rejects_exact_sha_drift_at_its_bound(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="drift",
+        window=0,
+    )
+
+    assert result.returncode != 0
+    assert [call.split()[0] for call in calls] == ["curl"]
+    assert "exact release after 0min warm-up window" in result.stdout
+
+
+def test_candidate_health_wait_fails_immediately_if_api_dies_during_reseal(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="missing",
+        window=120,
+        api_active=False,
+    )
+
+    assert result.returncode != 0
+    assert [call.split()[0] for call in calls] == ["curl", "systemctl"]
+    assert "seiche-api died during warm-up" in result.stdout
+
 
 
 @pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
@@ -1555,17 +1701,22 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
             "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
-    expected_kinds += ["readiness", "systemctl"]
-    expected_calls += [
-        calls[-2],
-        "systemctl enable --now seiche-data-readiness.timer",
-    ]
+    final_readiness = calls[-3] if script_path == DEPLOY_WRAPPER else calls[-2]
+    expected_kinds.append("readiness")
+    expected_calls.append(final_readiness)
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds.append("candidate-health-wait")
+        expected_calls.append(
+            f"candidate-health-wait 120 {'a' * 40} 900"
+        )
+    expected_kinds.append("systemctl")
+    expected_calls.append("systemctl enable --now seiche-data-readiness.timer")
     assert [call.split()[0] for call in calls] == expected_kinds
     assert calls == expected_calls
     assert calls[0].startswith("readiness proof ")
     assert calls[0] == calls[3]
-    assert calls[-2].startswith("readiness full ")
-    assert "seiche-data-readiness.timer" not in calls[-2]
+    assert final_readiness.startswith("readiness full ")
+    assert "seiche-data-readiness.timer" not in final_readiness
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1584,13 +1735,14 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
             "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
-    expected_calls += [
-        calls[-2],
-        "systemctl enable --now seiche-data-readiness.timer",
-    ]
+    final_readiness = calls[-3] if script_path == DEPLOY_WRAPPER else calls[-2]
+    expected_calls.append(final_readiness)
+    if script_path == DEPLOY_WRAPPER:
+        expected_calls.append(f"candidate-health-wait 120 {'a' * 40} 900")
+    expected_calls.append("systemctl enable --now seiche-data-readiness.timer")
     assert calls == expected_calls
     assert calls[0].startswith("readiness proof ")
-    assert calls[-2].startswith("readiness full ")
+    assert final_readiness.startswith("readiness full ")
     assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
 
@@ -1612,7 +1764,7 @@ def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
         expected_kinds += ["curl", "candidate-health-wait"]
     expected_kinds += ["readiness", "systemctl", "curl", "systemctl", "readiness"]
     if script_path == DEPLOY_WRAPPER:
-        expected_kinds.append("candidate-health")
+        expected_kinds.append("candidate-health-wait")
     expected_kinds.append("systemctl")
     assert [call.split()[0] for call in calls] == expected_kinds
     assert calls[0].startswith("readiness proof ")
@@ -1634,9 +1786,9 @@ def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
     assert sum("--proto =http" in call for call in calls) == 1
     assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
     if script_path == DEPLOY_WRAPPER:
-        assert calls[-2] == f"candidate-health {'a' * 40} 900"
+        assert calls[-2] == f"candidate-health-wait 120 {'a' * 40} 900"
     else:
-        assert not any(call.startswith("candidate-health ") for call in calls)
+        assert not any(call.startswith("candidate-health-wait ") for call in calls)
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1766,15 +1918,14 @@ def test_readiness_convergence_wait_is_strictly_bounded(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-def test_wrapper_candidate_health_is_revalidated_before_readiness_timer(
+def test_wrapper_candidate_evidence_is_resealed_before_readiness_timer(
     tmp_path: Path,
 ) -> None:
     result, calls, state = _run_readiness_activation_helper(
         DEPLOY_WRAPPER,
         tmp_path,
         readiness_mode="current",
-        candidate_health_mode="fail",
-        log_candidate_health=True,
+        candidate_health_wait_mode="fail-after-first",
     )
 
     assert result.returncode != 0
@@ -1783,10 +1934,10 @@ def test_wrapper_candidate_health_is_revalidated_before_readiness_timer(
         "curl",
         "candidate-health-wait",
         "readiness",
-        "candidate-health",
+        "candidate-health-wait",
     ]
-    assert calls[-1] == f"candidate-health {'a' * 40} 900"
-    assert "exact candidate health drifted" in result.stdout
+    assert calls[-1] == f"candidate-health-wait 120 {'a' * 40} 900"
+    assert "exact candidate evidence did not reseal" in result.stdout
     assert not (state / "readiness-timer.enabled").exists()
 
 
