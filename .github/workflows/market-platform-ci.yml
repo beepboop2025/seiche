@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "bot/**"
       - "ops/**"
       - ".github/workflows/market-platform-ci.yml"
   workflow_dispatch:
@@ -82,3 +83,5 @@ jobs:
           backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py
           backend/tests/test_fleet_mac_heartbeat.py
+      - name: Run Telegram bot contracts
+        run: python -m pytest -q bot/tests

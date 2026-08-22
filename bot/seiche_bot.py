@@ -28,6 +28,7 @@ Commands
   /turns           the next calendar turn + crunch windows + auction desk
   /oil             Oil × Funding: spot, cash spreads, coupling, scenarios
   /estuary         FX/material pressure + holdout-tested Passage links
+  /china           China macro evidence identities; metadata only, no values
   /analogs         historical analogs from the wreck ledger
   /proof           historical evidence status, misses included
   /letter          today's dispatch: title, summary, link
@@ -62,12 +63,13 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 TOKEN = os.environ.get("SEICHE_BOT_TOKEN", "")
 API = os.environ.get("SEICHE_API", "https://api.seiche.info").rstrip("/")
@@ -106,7 +108,8 @@ CRYPTO_CHANNEL = "https://t.me/LiquidityCryptoDesk"
 CRYPTO_BOT = "https://t.me/liquilens_crypto_bot"
 LAB_CHANNEL_ABOUT = (
     "One daily card: Seiche, LiquiLens, Undertow. Three named "
-    "lanes, fail-closed. Move-only extras. Public data. Research only."
+    "lanes, fail-closed. China evidence identities via Seiche /china; "
+    "metadata only, 0 values. Move-only extras. Public data. Research only."
 )
 LAB_CHANNEL_PIN = (
     "<b>Start here</b>\n\n"
@@ -116,6 +119,8 @@ LAB_CHANNEL_PIN = (
     "Seiche (funding): @seiche_desk_bot\n"
     "LiquiLens (institutions): @LiquiLens_bot\n"
     "Undertow (exit cost): @undertow_LiquiLens_bot\n\n"
+    "China macro evidence identities: /china in @seiche_desk_bot. "
+    "Metadata only, 0 values, never in a score or gauge.\n\n"
     "Screens, not a joint score. "
     "Public data. Research only, not investment advice."
 )
@@ -1039,6 +1044,350 @@ def fmt_estuary(payload: dict | None) -> str:
     return "\n".join(lines) + FOOT
 
 
+CHINA_TOPIC_URL = f"{SITE}/markets/china-macro/"
+_CHINA_SERIES_LABELS = {
+    "CN.NBS.CPI_INDEX": ("Consumer Price Index (The same month last year=100)"),
+    "CN.NBS.INDUSTRIAL_VALUE_ADDED_YOY": (
+        "Value-added of Industrial Enterprises above Designated Size, "
+        "Growth Rate (The same period last year=100)(%)"
+    ),
+    "CN.NBS.MANUFACTURING_PMI": "Manufacturing Purchasing Managers' Index (%)",
+    "CN.NBS.PPI_INDEX": (
+        "Producer Price Index for Industrial Products (The same month last year=100)"
+    ),
+}
+_CHINA_SERIES_IDS = tuple(_CHINA_SERIES_LABELS)
+_CHINA_SERIES_KEYS = frozenset(
+    {
+        "series_id",
+        "catalogid",
+        "catalog_label",
+        "row_id",
+        "i",
+        "ek",
+        "ek_dp",
+        "dp",
+        "dp_name",
+        "label",
+        "reference_release_url",
+        "release_url",
+        "source_unit_label_exact",
+        "source_unit_semantically_authoritative",
+        "semantic_contract",
+        "value_publication",
+    }
+)
+_CHINA_SEMANTIC_KEYS = frozenset(
+    {
+        "value_kind",
+        "canonical_unit",
+        "comparison_base",
+        "transform",
+        "threshold",
+    }
+)
+_CHINA_COMMON_KEYS = frozenset(
+    {
+        "status",
+        "evidence_status",
+        "as_of",
+        "schema",
+        "available",
+        "dataset",
+        "publisher",
+        "source_url",
+        "context_only",
+        "scoring_eligible",
+        "cn_cny_gauge_eligible",
+        "values_published",
+        "raw_evidence_included",
+        "history_included",
+        "public_distribution",
+        "rights_status",
+        "terms_url",
+        "series_catalog",
+        "series_count",
+        "reading",
+        "boundaries",
+    }
+)
+_CHINA_AVAILABLE_KEYS = _CHINA_COMMON_KEYS | frozenset(
+    {
+        "source_registry_ids",
+        "revision_id",
+        "predecessor_revision_id",
+        "knowledge_time",
+        "provenance",
+        "attestation",
+    }
+)
+_CHINA_STRUCTURAL_KEYS = _CHINA_COMMON_KEYS | frozenset({"reason_code"})
+_CHINA_PROVENANCE_KEYS = frozenset({"manifest_sha256", "owner_attestation"})
+_CHINA_ATTESTATION_KEYS = frozenset(
+    {
+        "schema",
+        "algorithm",
+        "domain",
+        "export_id",
+        "signer_key_id",
+        "signed_at",
+        "manifest_sha256",
+        "public_projection_sha256",
+        "signature",
+    }
+)
+_CHINA_CLOCK_KEYS = frozenset(
+    {
+        "snapshot_generated_at",
+        "evaluation_at",
+        "latest_domain_as_of",
+        "domains",
+        "excluded_from_observation_clocks",
+        "boundary",
+        "selected_evidence_as_of",
+    }
+)
+_CHINA_CLOCK_DOMAINS = frozenset(
+    {
+        "money_markets",
+        "forex",
+        "capital_markets",
+    }
+)
+_CHINA_CLOCK_BOUNDARY = (
+    "Response time never advances a source or observation as-of clock."
+)
+_CHINA_EXPORT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_CHINA_MAX_FUTURE_SKEW = timedelta(minutes=5)
+
+
+def _lower_hex(value: object, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _canonical_utc_instant(value: object) -> datetime | None:
+    """Parse only the canonical UTC form emitted by the signed intake."""
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
+    except (OverflowError, ValueError):
+        return None
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    canonical = parsed.isoformat(timespec=timespec).replace("+00:00", "Z")
+    return parsed if canonical == value else None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _china_projection(payload: object) -> dict | None:
+    """Return the narrow metadata view only when every safety boundary holds.
+
+    The backend performs the cryptographic and rights-policy validation. This
+    second, deliberately closed check keeps the chat renderer from becoming a
+    path by which a future or malformed payload can leak values, histories, or
+    observation clocks.
+    """
+    if not isinstance(payload, dict):
+        return None
+    citation = payload.get("citation")
+    clocks = payload.get("clocks")
+    china = payload.get("china_macro")
+    clock_domains = clocks.get("domains") if isinstance(clocks, dict) else None
+    if (
+        payload.get("ok") is not True
+        or payload.get("schema") != "seiche.world-markets.v1"
+        or payload.get("selection") != "china_macro"
+        or payload.get("context_only") is not True
+        or payload.get("as_of") is not None
+        or payload.get("generated_at") is not None
+        or not isinstance(citation, dict)
+        or citation.get("topic_url") != CHINA_TOPIC_URL
+        or citation.get("evidence_as_of") is not None
+        or citation.get("generated_at") is not None
+        or not isinstance(clocks, dict)
+        or set(clocks) != _CHINA_CLOCK_KEYS
+        or clocks.get("selected_evidence_as_of") is not None
+        or clocks.get("snapshot_generated_at") is not None
+        or clocks.get("evaluation_at") is not None
+        or clocks.get("latest_domain_as_of") is not None
+        or not isinstance(clock_domains, dict)
+        or set(clock_domains) != _CHINA_CLOCK_DOMAINS
+        or any(value is not None for value in clock_domains.values())
+        or clocks.get("excluded_from_observation_clocks")
+        != ["china_macro.knowledge_time"]
+        or clocks.get("boundary") != _CHINA_CLOCK_BOUNDARY
+        or not isinstance(china, dict)
+    ):
+        return None
+
+    available = china.get("available")
+    if not isinstance(available, bool):
+        return None
+    expected_keys = _CHINA_AVAILABLE_KEYS if available else _CHINA_STRUCTURAL_KEYS
+    if set(china) != expected_keys:
+        return None
+    expected_status = "restricted" if available else "structural"
+    expected_evidence = "restricted" if available else "unavailable"
+    required_false = (
+        "scoring_eligible",
+        "cn_cny_gauge_eligible",
+        "values_published",
+        "raw_evidence_included",
+        "history_included",
+    )
+    if (
+        payload.get("status") != expected_status
+        or china.get("status") != expected_status
+        or china.get("evidence_status") != expected_evidence
+        or china.get("schema") != "seiche.nbs-macro-context.v1"
+        or china.get("dataset") != "CN.NBS.MACRO_CONTEXT"
+        or china.get("publisher") != "National Bureau of Statistics of China"
+        or china.get("source_url")
+        != "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData"
+        or china.get("terms_url")
+        != "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html"
+        or china.get("context_only") is not True
+        or china.get("as_of") is not None
+        or any(china.get(field) is not False for field in required_false)
+        or china.get("public_distribution") != "metadata_only"
+        or china.get("rights_status") != "redistribution_review_required"
+        or isinstance(china.get("series_count"), bool)
+        or china.get("series_count") != 4
+    ):
+        return None
+
+    rows = china.get("series_catalog")
+    if not isinstance(rows, list) or len(rows) != 4:
+        return None
+    safe_rows = []
+    for expected_id, row in zip(_CHINA_SERIES_IDS, rows):
+        expected_label = _CHINA_SERIES_LABELS[expected_id]
+        if not isinstance(row, dict) or set(row) != _CHINA_SERIES_KEYS:
+            return None
+        semantic = row.get("semantic_contract")
+        if (
+            row.get("series_id") != expected_id
+            or row.get("label") != expected_label
+            or row.get("value_publication") != "withheld_pending_rights_review"
+            or not isinstance(semantic, dict)
+            or set(semantic) != _CHINA_SEMANTIC_KEYS
+            or any(
+                value is not None and not isinstance(value, str)
+                for value in semantic.values()
+            )
+        ):
+            return None
+        safe_rows.append({"series_id": expected_id, "label": expected_label})
+
+    knowledge_time = china.get("knowledge_time")
+    if available:
+        provenance = china.get("provenance")
+        attestation = china.get("attestation")
+        revision_id = china.get("revision_id")
+        predecessor_revision_id = china.get("predecessor_revision_id")
+        if (
+            not isinstance(revision_id, str)
+            or _CHINA_EXPORT_ID_RE.fullmatch(revision_id) is None
+            or (
+                predecessor_revision_id is not None
+                and (
+                    not isinstance(predecessor_revision_id, str)
+                    or _CHINA_EXPORT_ID_RE.fullmatch(predecessor_revision_id) is None
+                )
+            )
+            or china.get("source_registry_ids")
+            != ["nbs_monthly_data_browser", "nbs_terms_of_service"]
+            or not isinstance(provenance, dict)
+            or set(provenance) != _CHINA_PROVENANCE_KEYS
+            or provenance.get("owner_attestation") != "ed25519"
+            or not _lower_hex(provenance.get("manifest_sha256"), 64)
+            or not isinstance(attestation, dict)
+            or set(attestation) != _CHINA_ATTESTATION_KEYS
+            or attestation.get("schema") != "seiche.nbs-owner-export-signature.v1"
+            or attestation.get("algorithm") != "ed25519"
+            or attestation.get("domain") != "seiche-nbs-owner-export-v1"
+            or not isinstance(attestation.get("export_id"), str)
+            or _CHINA_EXPORT_ID_RE.fullmatch(attestation["export_id"]) is None
+            or attestation.get("export_id") != revision_id
+            or attestation.get("manifest_sha256") != provenance.get("manifest_sha256")
+            or not _lower_hex(attestation.get("signer_key_id"), 64)
+            or not _lower_hex(attestation.get("public_projection_sha256"), 64)
+            or not _lower_hex(attestation.get("signature"), 128)
+        ):
+            return None
+        evidence_time = _canonical_utc_instant(knowledge_time)
+        signature_time = _canonical_utc_instant(attestation.get("signed_at"))
+        latest_allowed = _utc_now() + _CHINA_MAX_FUTURE_SKEW
+        if (
+            evidence_time is None
+            or signature_time is None
+            or signature_time < evidence_time
+            or evidence_time > latest_allowed
+            or signature_time > latest_allowed
+        ):
+            return None
+    elif knowledge_time is not None:
+        return None
+    return {
+        "available": available,
+        "status": expected_status,
+        "knowledge_time": knowledge_time,
+        "series": safe_rows,
+    }
+
+
+def fmt_china_macro(payload: dict | None) -> str:
+    """Render only the safe identity projection, never observations."""
+    view = _china_projection(payload)
+    if view is None:
+        return (
+            "🇨🇳 <b>China macro context unavailable</b>\n\n"
+            "The served metadata contract did not pass the bot's boundary "
+            "checks. No series identities or values are displayed.\n\n"
+            f"Evidence page: {CHINA_TOPIC_URL}"
+        )
+
+    lines = [
+        "🇨🇳 <b>China macro evidence catalog</b>",
+        "",
+        f"Status: <b>{esc(view['status'])}</b> · 4 identities · 0 values",
+    ]
+    if view["available"]:
+        lines.extend(
+            [
+                "A trusted owner-attested Seiche export is present; values remain "
+                "withheld pending redistribution review.",
+                f"Knowledge time: <code>{esc(view['knowledge_time'])}</code> "
+                "(evidence receipt, not an observation date).",
+            ]
+        )
+    else:
+        lines.append(
+            "The reviewed structural catalog is present; no trusted owner "
+            "export is currently available."
+        )
+    lines.append("")
+    for row in view["series"]:
+        lines.append(f"• {esc(row['label'])} · <code>{esc(row['series_id'])}</code>")
+    lines.extend(
+        [
+            "",
+            "<i>Metadata only. No NBS value, raw export, or history is shown. "
+            "Owner attestation is not an NBS digital signature. This context "
+            "cannot enter Seiche scoring or the CN-CNY gauge.</i>",
+            f"Evidence page: {CHINA_TOPIC_URL}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def fmt_analogs(wrecks: dict | None) -> str:
     eps = (wrecks or {}).get("episodes") or []
     if not eps:
@@ -1318,6 +1667,7 @@ HELP = (
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
     "/letter — today's dispatch\n"
     "/tandem — labeled Seiche and LiquiLens reads (not a joint score)\n"
+    "/china — China macro evidence identities (metadata only; no values)\n"
     "/where — the three public desks\n"
     "/help — this list\n"
     "/start — follow the 11:30 UTC letter + state-change alerts\n"
@@ -1509,7 +1859,8 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd == "/help":
         return [[_btn("🌡 Full gauge", "/now"),
                  _btn("📰 Today's article", "/article")],
-                [_btn("📨 Fixed-order letter", "/letter")], LAB_ROW]
+                [_btn("🇨🇳 China evidence", "/china"),
+                 _btn("📨 Fixed-order letter", "/letter")], LAB_ROW]
     if cmd == "/now":
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
                  _btn("\U0001f9fe Proof", "/proof")],
@@ -1532,6 +1883,10 @@ def keyboard_for(cmd: str) -> list | None:
             if cmd == "/oil" else ("\U0001f6e2 Oil × Funding", "/oil")
         return [[_btn(other[0], other[1]), _btn("\U0001f321 Gauge now", "/now")],
                 [_btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
+    if cmd == "/china":
+        return [[{"text": "🇨🇳 China evidence page", "url": CHINA_TOPIC_URL}],
+                [_btn("\U0001f321 Gauge now", "/now"),
+                 _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
     if cmd == "/share":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}],
                 LAB_ROW, FLEET_ROW]
@@ -1690,6 +2045,12 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/estuary":
         send(chat_id, fmt_estuary(api_get("/api/estuary")),
              keyboard_for("/estuary"))
+    elif cmd == "/china":
+        send(chat_id,
+             fmt_china_macro(
+                 api_get("/api/v2/world-markets?section=china_macro")
+             ),
+             keyboard_for("/china"))
     elif cmd == "/analogs":
         send(chat_id, fmt_analogs(api_get("/api/wrecks")), keyboard_for("/analogs"))
     elif cmd == "/proof":
@@ -1978,6 +2339,7 @@ BOT_COMMANDS = [
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "letter", "description": "Today's dispatch"},
     {"command": "tandem", "description": "Labeled Seiche and LiquiLens reads"},
+    {"command": "china", "description": "China macro evidence identities; no values"},
     {"command": "where", "description": "The three public desks"},
     {"command": "help", "description": "Full command list and desk guide"},
     {"command": "start", "description": "Follow privately: daily 11:30 UTC letter + state-change alerts"},

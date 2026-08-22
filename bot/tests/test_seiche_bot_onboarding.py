@@ -62,7 +62,15 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
     assert calls[1][1]["commands"] is bot.BOT_COMMANDS
     names = [command["command"] for command in calls[1][1]["commands"]]
     assert names == [
-        "now", "snap", "ask", "letter", "tandem", "where", "help", "start",
+        "now",
+        "snap",
+        "ask",
+        "letter",
+        "tandem",
+        "china",
+        "where",
+        "help",
+        "start",
         "stop",
     ]
     assert 8 <= len(names) <= 10
@@ -245,9 +253,13 @@ def test_lab_channel_about_fits_telegram():
     assert len(bot.LAB_CHANNEL_ABOUT) <= 255
     assert "daily card" in bot.LAB_CHANNEL_ABOUT
     assert "fail-closed" in bot.LAB_CHANNEL_ABOUT
+    assert "/china" in bot.LAB_CHANNEL_ABOUT
+    assert "metadata only, 0 values" in bot.LAB_CHANNEL_ABOUT
     assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_ABOUT
     assert "LiquidityLabTalk" not in bot.LAB_CHANNEL_PIN
     assert "joint score" in bot.LAB_CHANNEL_PIN
+    assert "/china" in bot.LAB_CHANNEL_PIN
+    assert "never in a score or gauge" in bot.LAB_CHANNEL_PIN
     assert "@seiche_desk_bot" in bot.LAB_CHANNEL_PIN
     assert "@LiquiLens_bot" in bot.LAB_CHANNEL_PIN
     assert "@undertow_LiquiLens_bot" in bot.LAB_CHANNEL_PIN
