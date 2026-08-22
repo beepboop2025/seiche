@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import re
 from typing import Any, Literal
 
@@ -220,7 +220,7 @@ def _canonical_utc_instant(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.endswith("Z"):
         return None
     try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00").astimezone(UTC)
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00").astimezone(timezone.utc)
     except (OverflowError, ValueError):
         return None
     timespec = "microseconds" if parsed.microsecond else "seconds"

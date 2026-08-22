@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -9,6 +11,15 @@ from openbb_core.app.model.abstract.error import OpenBBError
 from openbb_seiche.models import _client
 from openbb_seiche.models.funding_stress import SeicheFundingStressFetcher
 from openbb_seiche.models.world_markets import SeicheWorldMarketsFetcher
+
+
+def test_world_markets_keeps_python_310_utc_compatibility() -> None:
+    source = (
+        Path(__file__).parents[1] / "openbb_seiche" / "models" / "world_markets.py"
+    ).read_text()
+
+    assert "from datetime import UTC" not in source
+    assert "timezone.utc" in source
 
 
 def _mock_client(payload: object, *, status: int = 200) -> httpx.AsyncClient:
