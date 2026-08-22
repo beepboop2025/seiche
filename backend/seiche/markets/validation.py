@@ -60,13 +60,26 @@ _LEGACY_CFETS_INSTRUMENT_IDS = frozenset({"CN.CFETS.SHIBOR_ON"})
 _LEGACY_CFETS_QUALITIES = frozenset(
     {QualityState.ESTIMATED, QualityState.PROVISIONAL}
 )
-# The signed d540e2d8a0ffb7a5f1e88d4996003c200e014679 contract change
-# was followed by the old market writer beginning shutdown in the production
-# systemd journal at
-# 2026-08-22T01:07:16.781347Z. Use the earlier whole-second boundary so no
-# observation created during shutdown can be mistaken for reviewed history.
-_LEGACY_CFETS_CONTRACT_CUTOVER = datetime(2026, 8, 22, 1, 7, 16, tzinfo=UTC)
-_LEGACY_CFETS_CONTRACT_COMMIT = "d540e2d8a0ffb7a5f1e88d4996003c200e014679"
+LEGACY_CFETS_CONTRACT_QUARANTINE_ID = (
+    "cfets-shibor-contract-generation-quarantine-v1"
+)
+LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT = (
+    "d540e2d8a0ffb7a5f1e88d4996003c200e014679"
+)
+# The commit records when the rights decision became canonical. The producer
+# boundary is later because the prior writer began shutdown at
+# 2026-08-22T01:07:16.781347Z; the earlier whole second keeps shutdown-time
+# observations out of the reviewed legacy generation.
+LEGACY_CFETS_RIGHTS_TRANSITION_UTC = datetime(
+    2026, 8, 22, 1, 6, 45, tzinfo=UTC
+)
+LEGACY_CFETS_PRODUCER_CUTOVER_UTC = datetime(
+    2026, 8, 22, 1, 7, 16, tzinfo=UTC
+)
+LEGACY_CFETS_RIGHTS_CUTOVER_UTC = LEGACY_CFETS_RIGHTS_TRANSITION_UTC
+LEGACY_CFETS_SHIBOR_PENDING_REASON = (
+    "LEGACY_CFETS_SHIBOR_PRE_CUTOVER_CONTRACT_QUARANTINED"
+)
 
 
 def _is_quarantined_legacy_cfets_contract(
@@ -94,7 +107,10 @@ def _is_quarantined_legacy_cfets_contract(
         and observation.quality in _LEGACY_CFETS_QUALITIES
         and observation.revision_id
         == f"sha256:{observation.evidence_hash[:20]}"
-        and observation.knowledge_time < _LEGACY_CFETS_CONTRACT_CUTOVER
+        and observation.event_time < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
+        and observation.source_publication_time
+        < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
+        and observation.knowledge_time < LEGACY_CFETS_PRODUCER_CUTOVER_UTC
         and observation.connector_classification
         is ConnectorClassification.OFFICIAL_OPEN
         and adapter.classification is ConnectorClassification.LICENSED
@@ -377,6 +393,12 @@ def _schema_and_units(
             mismatches.add("OBSERVATION_COMPOUNDING_MISMATCH")
         if observation.day_count is not instrument.day_count:
             mismatches.add("OBSERVATION_DAY_COUNT_MISMATCH")
+        if (
+            pack.market_id == _LEGACY_CFETS_MARKET_ID
+            and instrument.source_adapter_id == _LEGACY_CFETS_ADAPTER_ID
+            and observation.source != _LEGACY_CFETS_ADAPTER_ID
+        ):
+            mismatches.add("OBSERVATION_SOURCE_MISMATCH")
         if observation.connector_classification is not adapter.classification:
             if _is_quarantined_legacy_cfets_contract(
                 pack,
@@ -450,11 +472,11 @@ def _schema_and_units(
                     "+00:00", "Z"
                 ),
                 "knowledge_time_cutover_exclusive": (
-                    _LEGACY_CFETS_CONTRACT_CUTOVER.isoformat().replace(
+                    LEGACY_CFETS_PRODUCER_CUTOVER_UTC.isoformat().replace(
                         "+00:00", "Z"
                     )
                 ),
-                "contract_change_commit": _LEGACY_CFETS_CONTRACT_COMMIT,
+                "contract_change_commit": LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT,
             }
         )
     calibration_matches_pack = (
@@ -485,6 +507,25 @@ def _schema_and_units(
         ),
         "calibration_matches_pack": calibration_matches_pack,
     }
+    if pack.market_id == _LEGACY_CFETS_MARKET_ID:
+        metrics["legacy_contract_quarantine"] = {
+            "policy_id": LEGACY_CFETS_CONTRACT_QUARANTINE_ID,
+            "rights_transition_commit": LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT,
+            "rights_transition_utc": (
+                LEGACY_CFETS_RIGHTS_TRANSITION_UTC.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            ),
+            "producer_cutover_exclusive": (
+                LEGACY_CFETS_PRODUCER_CUTOVER_UTC.isoformat().replace(
+                    "+00:00", "Z"
+                )
+            ),
+            "instrument_id": "CN.CFETS.SHIBOR_ON",
+            "legacy_connector_classification": "official_open",
+            "required_redistribution_status": "metadata_only",
+            "rows_pending": sum(legacy_contract_quarantine_counts.values()),
+        }
     if mismatches:
         return GateAssessment(
             ValidationCheck.SCHEMA_AND_UNITS,
@@ -494,7 +535,7 @@ def _schema_and_units(
         )
     pending_reasons: list[str] = []
     if legacy_contract_quarantine_counts:
-        pending_reasons.append("LEGACY_CONNECTOR_CONTRACT_QUARANTINED")
+        pending_reasons.append(LEGACY_CFETS_SHIBOR_PENDING_REASON)
     if missing_roles:
         pending_reasons.append("READY_CAPABILITY_OBSERVATIONS_MISSING")
     if pending_reasons:

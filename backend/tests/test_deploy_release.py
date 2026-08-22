@@ -1294,8 +1294,13 @@ def _run_readiness_activation_helper(
     *,
     readiness_mode: str,
     fail_command: str = "",
-    candidate_health_fail: bool = False,
-    curl_fail: bool = False,
+    curl_mode: str = "success",
+    nudge_curl_mode: str = "success",
+    api_mode: str = "active",
+    candidate_health_mode: str = "success",
+    candidate_health_wait_mode: str = "success",
+    convergence_wait_seconds: str = "900",
+    log_candidate_health: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     script = script_path.read_text()
     helper_start = script.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
@@ -1326,11 +1331,77 @@ printf '%s\n' "$count" >"$count_file"
 kind=full
 [ "${SEICHE_DATA_READINESS_PROOF_ONLY:-0}" != "1" ] || kind=proof
 printf 'readiness %s %s\n' "$kind" "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
+if [ "$kind" = full ]; then
+  full_count_file=$state/readiness-full-count
+  full_count=0
+  [ ! -f "$full_count_file" ] || full_count=$(cat "$full_count_file")
+  full_count=$((full_count + 1))
+  printf '%s\n' "$full_count" >"$full_count_file"
+fi
 case "${FAKE_READINESS_MODE:?}" in
-  current) exit 0 ;;
-  fresh) [ "$kind" = full ] || [ "$count" -gt 1 ] ;;
-  operational-fail) [ "$kind" = proof ] ;;
-  always-fail) exit 1 ;;
+  current)
+    printf 'seiche data readiness: ready\n'
+    exit 0
+    ;;
+  fresh)
+    if [ "$kind" = proof ] && [ "$count" -eq 1 ]; then
+      printf 'seiche data readiness: restore receipt missing or invalid\n' >&2
+      exit 1
+    fi
+    printf 'seiche data readiness: ready\n'
+    exit 0
+    ;;
+  operational-fail)
+    if [ "$kind" = proof ]; then
+      printf 'seiche data readiness: ready\n'
+      exit 0
+    fi
+    printf 'seiche data readiness: API health reports critical faults\n' >&2
+    exit 1
+    ;;
+  always-fail)
+    printf 'seiche data readiness: restore receipt missing or invalid\n' >&2
+    exit 1
+    ;;
+  stale-then-fresh)
+    if [ "$kind" = full ] && [ "$full_count" -eq 1 ]; then
+      printf 'seiche data readiness: API snapshot stale\n' >&2
+      exit 1
+    fi
+    printf 'seiche data readiness: ready\n'
+    exit 0
+    ;;
+  stale-always)
+    if [ "$kind" = proof ]; then
+      printf 'seiche data readiness: ready\n'
+      exit 0
+    fi
+    printf 'seiche data readiness: API snapshot stale\n' >&2
+    exit 1
+    ;;
+  stale-wrong-status)
+    if [ "$kind" = proof ]; then
+      printf 'seiche data readiness: ready\n'
+      exit 0
+    fi
+    printf 'seiche data readiness: API snapshot stale\n' >&2
+    exit 2
+    ;;
+  stale-then-other)
+    if [ "$kind" = proof ]; then
+      printf 'seiche data readiness: ready\n'
+      exit 0
+    elif [ "$full_count" -eq 1 ]; then
+      printf 'seiche data readiness: API snapshot stale\n' >&2
+    else
+      printf 'seiche data readiness: collector heartbeat unhealthy\n' >&2
+    fi
+    exit 1
+    ;;
+  unexpected-success)
+    printf 'unexpected success output\n'
+    exit 0
+    ;;
   *) exit 64 ;;
 esac
 """,
@@ -1345,14 +1416,6 @@ esac
     )
     state = tmp_path / "state"
     state.mkdir()
-    _executable(
-        tmp_path / "curl",
-        """
-state=${FAKE_DATA_STATE:?}
-printf 'curl %s\n' "$*" >>"$state/calls.log"
-[ "${FAKE_CURL_FAIL:-0}" != "1" ]
-""",
-    )
     _executable(tmp_path / "sleep", "exit 0\n")
     fake_systemctl = _executable(
         tmp_path / "systemctl",
@@ -1362,42 +1425,88 @@ printf 'systemctl %s\n' "$*" >>"$state/calls.log"
 if [ "$*" = "${FAKE_FAIL_COMMAND:-}" ]; then
   exit 1
 fi
+if [ "$*" = "is-active --quiet seiche-api.service" ]; then
+  case "${FAKE_API_MODE:?}" in
+    active) exit 0 ;;
+    dead) exit 1 ;;
+    dies-after-trigger)
+      [ ! -f "$state/refresh-triggered" ]
+      exit
+      ;;
+    *) exit 64 ;;
+  esac
+fi
 if [ "$*" = "enable --now seiche-data-readiness.timer" ]; then
   touch "$state/readiness-timer.enabled"
 fi
 """,
     )
+    fake_curl = _executable(
+        tmp_path / "curl",
+        """
+state=${FAKE_DATA_STATE:?}
+printf 'curl %s\n' "$*" >>"$state/calls.log"
+if [ "$1" = -sf ]; then
+  [ "${FAKE_NUDGE_CURL_MODE:?}" != fail ]
+  exit
+fi
+[ "${FAKE_CURL_MODE:?}" != fail ] || exit 1
+touch "$state/refresh-triggered"
+""",
+    )
+    helper = helper.replace("/usr/bin/curl", str(fake_curl))
     environment = os.environ | {
         "APP": str(app),
         "APP_DIR": str(app),
         "FAKE_DATA_STATE": str(state),
         "FAKE_READINESS_MODE": readiness_mode,
         "FAKE_FAIL_COMMAND": fail_command,
-        "FAKE_CANDIDATE_HEALTH_FAIL": "1" if candidate_health_fail else "0",
-        "FAKE_CURL_FAIL": "1" if curl_fail else "0",
+        "FAKE_CURL_MODE": curl_mode,
+        "FAKE_NUDGE_CURL_MODE": nudge_curl_mode,
+        "FAKE_API_MODE": api_mode,
+        "FAKE_CANDIDATE_HEALTH_MODE": candidate_health_mode,
+        "FAKE_CANDIDATE_HEALTH_WAIT_MODE": candidate_health_wait_mode,
+        "FAKE_LOG_CANDIDATE_HEALTH": "1" if log_candidate_health else "0",
+        "SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS": convergence_wait_seconds,
         "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
     }
-    runtime_support = ""
-    if script_path == DEPLOY_WRAPPER:
-        runtime_support = """
-AFTER=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-candidate_health_wait() {
-  printf 'candidate-health %s\n' "$*" >>"$FAKE_DATA_STATE/calls.log"
-  [ "${FAKE_CANDIDATE_HEALTH_FAIL:-0}" != "1" ]
-}
-"""
     result = subprocess.run(
         [
             "bash",
             "-c",
-            f"{runtime_support}\n{helper}\nactivate_data_readiness_after_proof",
+            f"""
+{helper}
+candidate_health_wait() {{
+  printf 'candidate-health-wait %s\n' "$*" >>"$FAKE_DATA_STATE/calls.log"
+  case "${{FAKE_CANDIDATE_HEALTH_WAIT_MODE:?}}" in
+    success) return 0 ;;
+    fail) return 1 ;;
+    fail-once)
+      if [ ! -f "$FAKE_DATA_STATE/candidate-health-wait-failed" ]; then
+        touch "$FAKE_DATA_STATE/candidate-health-wait-failed"
+        return 1
+      fi
+      return 0
+      ;;
+    *) return 64 ;;
+  esac
+}}
+candidate_health_once() {{
+  [ "${{FAKE_LOG_CANDIDATE_HEALTH:?}}" != 1 ] \\
+    || printf 'candidate-health %s\n' "$*" >>"$FAKE_DATA_STATE/calls.log"
+  [ "${{FAKE_CANDIDATE_HEALTH_MODE:?}}" != fail ]
+}}
+AFTER={"a" * 40}
+activate_data_readiness_after_proof
+""",
         ],
         env=environment,
         text=True,
         capture_output=True,
         check=False,
     )
-    calls = (state / "calls.log").read_text().splitlines()
+    calls_path = state / "calls.log"
+    calls = calls_path.read_text().splitlines() if calls_path.exists() else []
     return result, calls, state
 
 
@@ -1441,10 +1550,10 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
         calls[3],
     ]
     if script_path == DEPLOY_WRAPPER:
-        expected_kinds += ["curl", "candidate-health"]
+        expected_kinds += ["curl", "candidate-health-wait"]
         expected_calls += [
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
-            "candidate-health 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+            "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
     expected_kinds += ["readiness", "systemctl"]
     expected_calls += [
@@ -1473,7 +1582,7 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     if script_path == DEPLOY_WRAPPER:
         expected_calls += [
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
-            "candidate-health 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+            "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
     expected_calls += [
         calls[-2],
@@ -1484,6 +1593,229 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     assert calls[-2].startswith("readiness full ")
     assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
+    script_path: Path, tmp_path: Path
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode="stale-then-fresh",
+        log_candidate_health=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    expected_kinds = ["readiness"]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds += ["curl", "candidate-health-wait"]
+    expected_kinds += ["readiness", "systemctl", "curl", "systemctl", "readiness"]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds.append("candidate-health")
+    expected_kinds.append("systemctl")
+    assert [call.split()[0] for call in calls] == expected_kinds
+    assert calls[0].startswith("readiness proof ")
+    readiness_index = 3 if script_path == DEPLOY_WRAPPER else 1
+    assert calls[readiness_index].startswith("readiness full ")
+    assert calls[readiness_index + 1] == (
+        "systemctl is-active --quiet seiche-api.service"
+    )
+    assert calls[readiness_index + 2].startswith(
+        "curl --fail --silent --show-error --proto =http "
+    )
+    assert calls[readiness_index + 2].endswith(
+        "http://127.0.0.1:8787/api/gauge"
+    )
+    assert calls[readiness_index + 3] == (
+        "systemctl is-active --quiet seiche-api.service"
+    )
+    assert calls[readiness_index + 4] == calls[readiness_index]
+    assert sum("--proto =http" in call for call in calls) == 1
+    assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
+    if script_path == DEPLOY_WRAPPER:
+        assert calls[-2] == f"candidate-health {'a' * 40} 900"
+    else:
+        assert not any(call.startswith("candidate-health ") for call in calls)
+    assert (state / "readiness-timer.enabled").is_file()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_stale_snapshot_refresh_trigger_failure_leaves_timer_disabled(
+    script_path: Path, tmp_path: Path
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode="stale-then-fresh",
+        curl_mode="fail",
+    )
+
+    assert result.returncode != 0
+    expected_kinds = ["readiness"]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds += ["curl", "candidate-health-wait"]
+    expected_kinds += ["readiness", "systemctl", "curl"]
+    assert [call.split()[0] for call in calls] == expected_kinds
+    assert "refresh trigger failed" in (result.stdout + result.stderr)
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_stale_snapshot_convergence_fails_if_api_dies_after_trigger(
+    script_path: Path, tmp_path: Path
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode="stale-then-fresh",
+        api_mode="dies-after-trigger",
+    )
+
+    assert result.returncode != 0
+    expected_kinds = ["readiness"]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds += ["curl", "candidate-health-wait"]
+    expected_kinds += ["readiness", "systemctl", "curl", "systemctl"]
+    assert [call.split()[0] for call in calls] == expected_kinds
+    assert "died during stale snapshot convergence" in (result.stdout + result.stderr)
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_stale_snapshot_convergence_timeout_is_bounded_and_disables_timer(
+    script_path: Path, tmp_path: Path
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode="stale-always",
+        convergence_wait_seconds="0",
+    )
+
+    assert result.returncode != 0
+    expected_kinds = ["readiness"]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds += ["curl", "candidate-health-wait"]
+    expected_kinds += [
+        "readiness",
+        "systemctl",
+        "curl",
+        "systemctl",
+        "readiness",
+    ]
+    assert [call.split()[0] for call in calls] == expected_kinds
+    assert "API snapshot remained stale after 0s" in (result.stdout + result.stderr)
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize(
+    "readiness_mode",
+    ["operational-fail", "stale-wrong-status", "unexpected-success"],
+)
+def test_non_stale_or_malformed_readiness_results_fail_without_refresh(
+    script_path: Path, tmp_path: Path, readiness_mode: str
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path, tmp_path, readiness_mode=readiness_mode
+    )
+
+    assert result.returncode != 0
+    if script_path == DEPLOY_WRAPPER:
+        assert calls[1] == "curl -sf -m 20 http://127.0.0.1:8787/api/gauge"
+        assert not any("--proto =http" in call for call in calls)
+    else:
+        assert not any(call.startswith("curl ") for call in calls)
+    assert not any(
+        call == "systemctl is-active --quiet seiche-api.service" for call in calls
+    )
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_new_readiness_failure_after_refresh_fails_immediately(
+    script_path: Path, tmp_path: Path
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path, tmp_path, readiness_mode="stale-then-other"
+    )
+
+    assert result.returncode != 0
+    assert sum("--proto =http" in call for call in calls) == 1
+    assert sum(call.startswith("readiness full ") for call in calls) == 2
+    assert "collector heartbeat unhealthy" in result.stderr
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("wait_seconds", ["901", "not-a-number", "-1"])
+def test_readiness_convergence_wait_is_strictly_bounded(
+    script_path: Path, tmp_path: Path, wait_seconds: str
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        script_path,
+        tmp_path,
+        readiness_mode="current",
+        convergence_wait_seconds=wait_seconds,
+    )
+
+    assert result.returncode != 0
+    assert calls == []
+    assert "integer from 0 to 900 seconds" in (result.stdout + result.stderr)
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+def test_wrapper_candidate_health_is_revalidated_before_readiness_timer(
+    tmp_path: Path,
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        DEPLOY_WRAPPER,
+        tmp_path,
+        readiness_mode="current",
+        candidate_health_mode="fail",
+        log_candidate_health=True,
+    )
+
+    assert result.returncode != 0
+    assert [call.split()[0] for call in calls] == [
+        "readiness",
+        "curl",
+        "candidate-health-wait",
+        "readiness",
+        "candidate-health",
+    ]
+    assert calls[-1] == f"candidate-health {'a' * 40} 900"
+    assert "exact candidate health drifted" in result.stdout
+    assert not (state / "readiness-timer.enabled").exists()
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_readiness_stale_convergence_preserves_freshness_and_poll_bounds(
+    script_path: Path,
+) -> None:
+    script = script_path.read_text()
+    helper_start = script.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
+    if script_path == DEPLOY_WRAPPER:
+        helper_end = script.index("start_market_services() {", helper_start)
+    else:
+        helper_end = script.index(
+            'if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then',
+            helper_start,
+        )
+    helper = script[helper_start:helper_end]
+    readiness_script = (
+        ROOT / "ops" / "deploy" / "seiche-data-readiness.sh"
+    ).read_text()
+
+    assert (
+        'MAX_GENERATED_AGE="${SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS:-900}"'
+        in readiness_script
+    )
+    assert "SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900" in helper
+    assert "http://127.0.0.1:8787/api/gauge" in helper
+    assert "sleep 10" in helper
+    assert "SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS=" not in helper
 
 
 @pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
@@ -1517,7 +1849,7 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
         if script_path == DEPLOY_WRAPPER:
             assert len(calls) == 4
             assert calls[1].startswith("curl ")
-            assert calls[2].startswith("candidate-health ")
+            assert calls[2].startswith("candidate-health-wait ")
         else:
             assert len(calls) == 2
         assert calls[-1].startswith("readiness full ")
@@ -1528,28 +1860,51 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
         assert "systemctl enable --now seiche-data-readiness.timer" not in calls
 
 
-@pytest.mark.parametrize(
-    ("candidate_health_fail", "curl_fail"),
-    [(True, False), (True, True)],
-)
+@pytest.mark.parametrize("nudge_curl_mode", ["success", "fail"])
 def test_wrapper_refresh_failure_after_recovery_proof_stays_fail_closed(
     tmp_path: Path,
-    candidate_health_fail: bool,
-    curl_fail: bool,
+    nudge_curl_mode: str,
 ) -> None:
     result, calls, state = _run_readiness_activation_helper(
         DEPLOY_WRAPPER,
         tmp_path,
         readiness_mode="fresh",
-        candidate_health_fail=candidate_health_fail,
-        curl_fail=curl_fail,
+        candidate_health_wait_mode="fail",
+        nudge_curl_mode=nudge_curl_mode,
     )
 
     assert result.returncode != 0
     assert not (state / "readiness-timer.enabled").exists()
     assert "systemctl restart seiche-api" in calls
-    assert sum(call.startswith("candidate-health 900 ") for call in calls) in {1, 2}
+    assert sum(call.startswith("candidate-health-wait 900 ") for call in calls) == 2
     assert not any(call.startswith("readiness full ") for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("nudge_curl_mode", "candidate_health_wait_mode"),
+    [("fail", "success"), ("success", "fail-once")],
+)
+def test_wrapper_refresh_restart_fallback_can_recover(
+    tmp_path: Path,
+    nudge_curl_mode: str,
+    candidate_health_wait_mode: str,
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        DEPLOY_WRAPPER,
+        tmp_path,
+        readiness_mode="current",
+        nudge_curl_mode=nudge_curl_mode,
+        candidate_health_wait_mode=candidate_health_wait_mode,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls.count("systemctl restart seiche-api") == 1
+    expected_waits = 2 if candidate_health_wait_mode == "fail-once" else 1
+    assert sum(
+        call.startswith("candidate-health-wait 900 ") for call in calls
+    ) == expected_waits
+    assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
+    assert (state / "readiness-timer.enabled").is_file()
 
 
 def test_recovery_refresh_does_not_rewrite_or_repromote_the_release() -> None:

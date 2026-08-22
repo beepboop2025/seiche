@@ -783,6 +783,28 @@ def test_production_lifespan_restores_before_background_refresh(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_keep_warm_requests_coalesced_snapshot_refresh_every_cycle(monkeypatch):
+    refresh_calls = []
+    sleep_intervals = []
+
+    async def refresh_snapshot():
+        refresh_calls.append("refresh")
+
+    async def stop_after_two_cycles(delay):
+        sleep_intervals.append(delay)
+        if len(sleep_intervals) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(assemble, "refresh_snapshot", refresh_snapshot)
+    monkeypatch.setattr(api.asyncio, "sleep", stop_after_two_cycles)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(api._keep_warm())
+
+    assert refresh_calls == ["refresh", "refresh"]
+    assert sleep_intervals == [api._REFRESH_INTERVAL_S, api._REFRESH_INTERVAL_S]
+
+
 def test_stale_cache_served_instantly_then_refreshed_once(clean_cache, monkeypatch):
     calls = []
 

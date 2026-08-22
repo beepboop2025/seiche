@@ -163,6 +163,13 @@ REPRESENTATIVE_FIXTURES: Mapping[str, tuple[CalendarFixture, ...]] = MappingProx
             ),
         ),
         "KR-KRW": (
+            _business_fixture(
+                "kr-bok-wire-labor-day-2026",
+                "KR-KRW",
+                "KR-BOK-WIRE",
+                date(2026, 5, 1),
+                False,
+            ),
             # The Bank of Korea's 2026 Holiday Schedule explicitly lists the
             # regional election on June 3; no 2027 schedule is inferred.
             _business_fixture(
