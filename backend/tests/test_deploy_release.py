@@ -3688,6 +3688,28 @@ def test_market_health_matches_the_candidate_registry_without_a_count_literal():
     assert 'len(p["markets"]) ==' not in health
 
 
+def test_market_health_grants_only_group_read_before_unprivileged_validation():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    health = wrapper[
+        wrapper.index("market_health()") : wrapper.index("promote_snapshot_handoff()")
+    ]
+
+    mktemp_at = health.index("body=$(mktemp)")
+    curl_at = health.index("/api/v2/coverage")
+    permission_at = health.index('if ! /usr/bin/chown root:seiche "$body"')
+    validator_at = health.index('if ! "$RUNUSER" -u seiche -- /usr/bin/env -i')
+    permission_failure = health[permission_at:validator_at]
+
+    assert mktemp_at < curl_at < permission_at < validator_at
+    assert permission_failure.index('chown root:seiche "$body"') < (
+        permission_failure.index('chmod 0640 "$body"')
+    )
+    assert 'chmod 0644 "$body"' not in permission_failure
+    assert "chmod 066" not in permission_failure
+    assert 'rm -f -- "$body"' in permission_failure
+    assert "return 1" in permission_failure
+
+
 def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
     installer = MARKET_INSTALLER.read_text()
     unit = PROMOTION_UNIT.read_text()

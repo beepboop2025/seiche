@@ -2394,6 +2394,16 @@ market_health() {
     rm -f -- "$body"
     return 1
   fi
+  # The isolated wrapper runs with umask 077, so mktemp correctly creates a
+  # root-only file. The validator deliberately imports candidate code as the
+  # unprivileged service user; grant that user read-only group access to this
+  # public API response without making the file writable or world-readable.
+  if ! /usr/bin/chown root:seiche "$body" \
+      || ! /usr/bin/chmod 0640 "$body"; then
+    echo "FAIL: v2 coverage payload could not be prepared for unprivileged validation"
+    rm -f -- "$body"
+    return 1
+  fi
   if ! "$RUNUSER" -u seiche -- /usr/bin/env -i \
       HOME=/home/seiche LANG=C.UTF-8 \
       PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
