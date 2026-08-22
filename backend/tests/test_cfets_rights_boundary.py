@@ -370,6 +370,7 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
         {
             "name": "Public discussion of SHIBOR liquidity",
             "label": "Public discussion of FDR007 methodology",
+            "explanation": {"text": "SHIBOR"},
         }
     ]
 
@@ -476,6 +477,37 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
         {"deep": {"wrapper": {"factors": ["CFETS FDR007"]}}},
         {"deep": {"wrapper": {"signals": ["CFETS FDR007"]}}},
         {"deep": {"wrapper": {"predictors": ["CFETS FDR007"]}}},
+        {
+            "deep": {
+                "wrapper": {
+                    "description": {"source": "chinamoney", "value": 1.52}
+                }
+            }
+        },
+        {
+            "deep": {
+                "wrapper": {
+                    "notes": [
+                        {"series": "CN.CFETS.FDR007", "value": 1.52}
+                    ]
+                }
+            }
+        },
+        {
+            "engines": {
+                "farbasin": {
+                    "ok": True,
+                    "top_targets": [
+                        {
+                            "term": {
+                                "instrument_id": "CN.CFETS.SHIBOR_ON",
+                                "value": 1.31,
+                            }
+                        }
+                    ],
+                }
+            }
+        },
         {
             "deep": {
                 "wrapper": {
@@ -638,11 +670,54 @@ def test_rest_overview_quarantines_unknown_scalar_identity_bypass(
     assert assemble._cache["release_receipt"] is None
 
 
-def test_mcp_tool_quarantines_plural_container_identity_bypass(
+def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
     fake_snap, monkeypatch
 ) -> None:
     poisoned = deepcopy(fake_snap)
-    poisoned["deep"]["wrapper"] = {"metrics": ["SHIBOR_ON"]}
+    poisoned["engines"]["farbasin"] = {
+        "ok": True,
+        "top_targets": [
+            {
+                "term": {
+                    "instrument_id": "CN.CFETS.SHIBOR_ON",
+                    "value": 1.31,
+                }
+            }
+        ],
+    }
+    clean = deepcopy(fake_snap)
+    _reset_cache()
+    assemble._cache.update(at=1.0, payload=poisoned, source="rebuilt")
+    api._OVERVIEW_WIRE.update(src=None, body=None, gz=None, etag=None)
+    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+
+    async def clean_rebuild() -> dict:
+        return clean
+
+    monkeypatch.setattr(assemble, "_build_snapshot", clean_rebuild)
+    response = TestClient(api.app).get(
+        "/api/overview",
+        headers={"Accept-Encoding": "identity"},
+    )
+
+    assert response.status_code == 200
+    assert "CN.CFETS.SHIBOR_ON" not in response.text
+    assert assemble._cache["payload"] is None
+    assert assemble._cache["release_receipt"] is None
+
+
+@pytest.mark.parametrize(
+    "poison",
+    (
+        {"metrics": ["SHIBOR_ON"]},
+        {"notes": [{"series": "CN.CFETS.FDR007", "value": 1.52}]},
+    ),
+)
+def test_mcp_tool_quarantines_plural_and_nested_prose_mapping_bypasses(
+    fake_snap, monkeypatch, poison
+) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["deep"]["wrapper"] = poison
     clean = deepcopy(fake_snap)
     _reset_cache()
     assemble._cache.update(at=1.0, payload=poisoned, source="rebuilt")

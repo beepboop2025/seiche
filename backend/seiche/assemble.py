@@ -1976,6 +1976,12 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         prose_context: bool = False,
     ) -> bool:
         if isinstance(value, dict):
+            # Prose authority is leaf-only. A mapping beneath an audited prose
+            # key is a new structural object: discard inherited prose context
+            # and require each of its exact keys to establish its own role.
+            # Thus {"text": "SHIBOR"} remains lawful prose, while
+            # {"source": "chinamoney"} is a restricted identity.
+            prose_context = False
             if restricted_engine_shape(value):
                 return True
             for key, nested in value.items():
