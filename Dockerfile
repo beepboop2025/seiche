@@ -44,7 +44,7 @@ ARG CREATED=1970-01-01T00:00:00Z
 ARG SOURCE=https://github.com/beepboop2025/seiche
 
 LABEL org.opencontainers.image.title="Seiche" \
-      org.opencontainers.image.description="Money, FX and capital-market evidence with source clocks, canonical citations and explicit limits." \
+      org.opencontainers.image.description="Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits." \
       org.opencontainers.image.authors="Mrinal" \
       org.opencontainers.image.url="https://seiche.info" \
       org.opencontainers.image.documentation="https://github.com/beepboop2025/seiche/blob/main/docs/DISTRIBUTION.md" \

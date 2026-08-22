@@ -24,7 +24,7 @@ export const ENTRIES: Entry[] = [
   { code: "DIS", title: "DISPATCHES", hint: "the daily letter", keywords: "letter desk note daily", run: { type: "tab", tab: "DISPATCHES" } },
   { code: "BRD", title: "BOARD", hint: "composite index · decomposition · ask", keywords: "dive index regime composite ask kink weather", run: { type: "tab", tab: "BOARD" } },
   { code: "MM", title: "MONEY MARKETS", hint: "clearing ladder · policy anchors · repo · liquidity", keywords: "money markets cash rates repo sofr effr iorb global benchmark policy corridor funding", run: { type: "tab", tab: "MONEY MARKETS" } },
-  { code: "WLD", title: "WORLD MARKETS ATLAS", hint: "money · forex · capital · sources · citation", keywords: "world markets forex capital market data sources citation evidence atlas", run: { type: "href", url: "/markets/" } },
+  { code: "WLD", title: "WORLD MARKETS ATLAS", hint: "money · forex · capital · China metadata · citation", keywords: "world markets forex capital China macro NBS metadata provenance sources citation evidence atlas", run: { type: "href", url: "/markets/" } },
   { code: "FCT", title: "FORECAST", hint: "swell curve · stack ensemble · analogs", keywords: "swell stack tide tables analogs ml lab odds", run: { type: "tab", tab: "FORECAST" } },
   { code: "PHY", title: "PHYSICS", hint: "bathymetry · merian · gyre · rogue wave", keywords: "bathymetry merian gyre rogue langevin", run: { type: "tab", tab: "PHYSICS" } },
   { code: "HLM", title: "HELM", hint: "the Book — paper positions, walk-forward P&L", keywords: "book positions pnl sharpe", run: { type: "tab", tab: "HELM" } },

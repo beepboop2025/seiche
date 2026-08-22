@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>World markets evidence atlas: money, forex and capital markets | Seiche</title>
-  <meta name="description" content="Seiche's citable world-markets atlas connects money markets, 22 registered public FX reference-rate series, dollar indexes and a bounded derived macro-capital transmission projection with explicit evidence gaps.">
+  <title>World markets evidence atlas: money, forex, capital and China macro | Seiche</title>
+  <meta name="description" content="Seiche's citable world-markets atlas connects money markets, public FX references, bounded macro-capital transmission and release-reviewed China macro metadata with explicit clocks, rights and gaps.">
   <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
   <link rel="canonical" href="https://seiche.info/markets/">
   <link rel="stylesheet" href="/markets/markets.css">
@@ -39,15 +39,16 @@
         "@id": "https://seiche.info/markets/#catalog",
         "identifier": "seiche.world-markets.v1",
         "name": "Seiche world markets evidence atlas",
-        "description": "A provenance-first catalog joining money-market funding, registered public foreign-exchange reference series and a bounded derived macro-capital transmission projection while distinguishing observed, derived, structural, restricted and unavailable evidence.",
+        "description": "A provenance-first catalog joining money-market funding, registered public foreign-exchange references, bounded macro-capital transmission and release-reviewed China macro metadata while distinguishing observed, derived, structural, restricted and unavailable evidence.",
         "url": "https://seiche.info/markets/",
         "datePublished": "2026-08-21",
-        "dateModified": "2026-08-21",
+        "dateModified": "2026-08-22",
         "provider": {"@id": "https://seiche.info/#organization"},
         "dataset": [
           {"@id": "https://seiche.info/money-markets/#dataset"},
           {"@id": "https://seiche.info/markets/forex/#dataset"},
-          {"@id": "https://seiche.info/markets/capital-markets/#dataset"}
+          {"@id": "https://seiche.info/markets/capital-markets/#dataset"},
+          {"@id": "https://seiche.info/markets/china-macro/#dataset"}
         ]
       },
       {
@@ -60,7 +61,7 @@
         "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
         "creator": {"@id": "https://seiche.info/#organization"},
         "datePublished": "2026-08-21",
-        "dateModified": "2026-08-21",
+        "dateModified": "2026-08-22",
         "isAccessibleForFree": true,
         "spatialCoverage": "Global, bounded by the published coverage receipt",
         "temporalCoverage": "Varies by upstream series and its native publication cadence",
@@ -129,6 +130,7 @@
     <a class="wordmark" href="/">SEI<span>CHE</span></a>
     <nav aria-label="Primary">
       <a href="/markets/" aria-current="page">World markets</a>
+      <a href="/markets/china-macro/">China macro</a>
       <a href="/markets/forex/">Forex</a>
       <a href="/markets/capital-markets/">Capital</a>
       <a href="/money-markets/">Money</a>
@@ -143,11 +145,11 @@
         <div>
           <p class="kicker">World markets / evidence atlas / schema v1</p>
           <h1>One market is never just one market.</h1>
-          <p class="lede">Seiche connects the price of cash, the price of currency and the price of duration. Money-market funding is the pressure source; forex is the transmission channel; capital markets are the balance-sheet expression. The contract keeps evidence status and scope attached, while numerical claims route to their exact source, unit and clock.</p>
+          <p class="lede">Seiche connects the price of cash, the price of currency and the price of duration, then keeps slower macro evidence in its own signed side projection. Money-market funding is the pressure source; forex is the transmission channel; capital markets are the balance-sheet expression. Evidence status, rights and clocks stay attached.</p>
         </div>
         <aside class="receipt" aria-label="Coverage receipt">
           <span class="label">Coverage receipt</span>
-          <strong>2026-08-21</strong>
+          <strong>2026-08-22</strong>
           <p>This page describes the supported public evidence surface, not a frozen market level. For current values and clocks, use the cache-only API.</p>
         </aside>
       </header>
@@ -155,7 +157,7 @@
       <dl class="pulse" aria-label="Coverage summary">
         <div><dt>Registered money-market packs</dt><dd>11</dd><small>live, reference and gap states</small></div>
         <div><dt>Registered FX reference series</dt><dd>22</dd><small>daily H.10 source series</small></div>
-        <div><dt>Broad dollar indexes</dt><dd>3</dd><small>broad, AFE and EME</small></div>
+        <div><dt>China macro identities</dt><dd>4</dd><small>reviewed metadata; zero values</small></div>
         <div><dt>Evidence states</dt><dd>5</dd><small>never collapse gaps into zero</small></div>
         <div><dt>Request-time collection</dt><dd>0</dd><small>sealed cache only</small></div>
       </dl>
@@ -166,14 +168,14 @@
           <p>A useful financial-market answer needs more than a value. It needs to say whether the value was observed or inferred, when the publisher knew it, whether it may be redistributed, and what the evidence cannot establish.</p>
         </div>
         <div class="answer-block">
-          <p><strong>Seiche is a bounded public financial-market evidence system, not a claim to every security or tick.</strong> It combines an 11-pack global money-market atlas; 22 registered daily bilateral FX reference-rate series and three dollar indexes; and a bounded derived macro-capital transmission projection over registered sovereign-rate, credit, volatility, Treasury-supply, dealer, positioning and energy source families.</p>
+          <p><strong>Seiche is a bounded public financial-market evidence system, not a claim to every security or tick.</strong> It combines an 11-pack global money-market atlas; 22 registered daily bilateral FX reference-rate series and three dollar indexes; a bounded derived macro-capital transmission projection; and four release-reviewed NBS China macro identities. Their structural catalog is unsigned; only a restricted response carries verified Seiche owner-attested provenance, while raw exports and values remain withheld.</p>
           <p>The missing layer is equally explicit: executable spot quotes, order books, forward and basis curves, options surfaces, complete global security masters, issuer fundamentals and redistribution-restricted feeds are marked <span class="status restricted">restricted</span> or <span class="status unavailable">unavailable</span>, never silently imputed.</p>
         </div>
       </section>
 
       <section aria-labelledby="domains-title">
         <div class="section-head">
-          <div><span class="label">Three connected ledgers</span><h2 id="domains-title">The market transmission map</h2></div>
+          <div><span class="label">Three market ledgers + one evidence sidecar</span><h2 id="domains-title">The market transmission map</h2></div>
           <p>These are not separate product silos. The unified response preserves each domain as its own bounded section so a model can select only the evidence relevant to the question.</p>
         </div>
         <div class="constellation">
@@ -209,6 +211,17 @@
               <li>transmission evidence, not trade advice</li>
             </ul>
             <a class="jump" href="/markets/capital-markets/">Open the capital-market ledger →</a>
+          </article>
+          <article class="domain">
+            <span class="status restricted">metadata-only layer</span>
+            <h3>China macro evidence</h3>
+            <p>Four official NBS monthly series identities with exact semantic bindings; a restricted response may add verified Seiche owner-attested provenance, while raw exports, histories and values remain restricted.</p>
+            <ul>
+              <li>unsigned catalog or verified revision chain</li>
+              <li>knowledge time is not observation time</li>
+              <li>never enters gauges or scoring</li>
+            </ul>
+            <a class="jump" href="/markets/china-macro/">Open the China evidence catalog →</a>
           </article>
         </div>
       </section>
@@ -252,6 +265,7 @@
           <a class="source" href="https://home.treasury.gov/treasury-daily-interest-rate-xml-feed" rel="external"><strong>US Treasury</strong><code>daily interest-rate feed</code><span>Official par yield and related curve data.</span></a>
           <a class="source" href="https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm" rel="external"><strong>Commodity Futures Trading Commission</strong><code>Commitments of Traders</code><span>Weekly positioning context for rates, equities and energy futures.</span></a>
           <a class="source" href="https://www.sec.gov/search-filings/edgar-application-programming-interfaces" rel="external"><strong>US Securities and Exchange Commission</strong><code>EDGAR public APIs</code><span>Issuer and filing expansion path; not yet a complete security-level market feed.</span></a>
+          <a class="source" href="https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData" rel="external"><strong>National Bureau of Statistics of China</strong><code>monthly data browser</code><span>Provider of four pinned macro-series identities; Seiche publishes reviewed metadata and no values, with owner attestation only when a revision verifies.</span></a>
         </div>
       </section>
 
@@ -262,7 +276,7 @@
         </div>
         <div class="api-grid">
           <a class="api" href="https://api.seiche.info/api/v2/world-markets?section=summary"><strong>World-markets REST context</strong><code>GET /api/v2/world-markets?section=summary</code><span>Cache-only bounded summary with domain status and evidence clocks.</span></a>
-          <a class="api" href="https://api.seiche.info/mcp"><strong>World-markets MCP tool</strong><code>world_markets_context(section="summary")</code><span>Choose summary, money_markets, forex, capital_markets, sources, methodology or all.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>World-markets MCP tool</strong><code>world_markets_context(section="summary")</code><span>Choose summary, money_markets, forex, capital_markets, china_macro, sources, methodology or all.</span></a>
           <a class="api" href="https://api.seiche.info/api/series/index.json"><strong>Series catalog</strong><code>GET /api/series/index.json</code><span>Discover public mnemonics, units, provenance and downloadable series.</span></a>
           <a class="api" href="https://api.seiche.info/api/openapi.json"><strong>OpenAPI 3.1</strong><code>GET /api/openapi.json</code><span>Import the intentionally public REST contract into tools and retrieval systems.</span></a>
         </div>
@@ -300,7 +314,7 @@
         </div>
         <div class="citation">
           <span class="label">Recommended citation</span>
-          <code>Seiche. “World markets evidence atlas.” Schema seiche.world-markets.v1, 21 Aug. 2026. https://seiche.info/markets/ — live readings: https://api.seiche.info/api/v2/world-markets (include generated_at and the selected observation's as-of clock).</code>
+          <code>Seiche. “World markets evidence atlas.” Schema seiche.world-markets.v1, 22 Aug. 2026. https://seiche.info/markets/ — live readings: https://api.seiche.info/api/v2/world-markets (include generated_at and the selected observation's as-of clock).</code>
           <p>Seiche can make itself easy to retrieve and cite; it cannot compel any search engine or AI provider to cite a particular source or cite it a fixed number of times.</p>
         </div>
       </section>

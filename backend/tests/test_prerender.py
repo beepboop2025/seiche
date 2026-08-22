@@ -240,7 +240,7 @@ def test_card_meta_keeps_broad_identity_while_body_carries_live_reading(site):
             re.search(r'<meta [^>]*"' + re.escape(key) + r'"[^>]*>', page).group(0),
         ).group(1)
         assert "EROSION" not in value
-    assert "Money, forex and capital markets" in page
+    assert "Money, forex, capital and metadata-only China macro evidence" in page
     assert "The composite reads 41 out of 100, EROSION" in prerender.body_text(page)
     # the fleet's existing share card, not a new image pipeline
     assert '<meta property="og:image" content="https://seiche.info/og2.png" />' in page

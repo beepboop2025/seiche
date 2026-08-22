@@ -9,7 +9,9 @@ browser engines.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from seiche.engines import money_market as money_market_engine
@@ -28,9 +30,16 @@ WORLD_MARKETS_SELECTORS = (
     "money_markets",
     "forex",
     "capital_markets",
+    "china_macro",
     "sources",
     "methodology",
     "all",
+)
+
+_WORLD_DOMAIN_IDS = (
+    "money_markets",
+    "forex",
+    "capital_markets",
 )
 
 CANONICAL_URLS = {
@@ -38,6 +47,7 @@ CANONICAL_URLS = {
     "money_markets": "https://seiche.info/money-markets/",
     "forex": "https://seiche.info/markets/forex/",
     "capital_markets": "https://seiche.info/markets/capital-markets/",
+    "china_macro": "https://seiche.info/markets/china-macro/",
     "api": "https://api.seiche.info/api/v2/world-markets",
     "mcp": "https://api.seiche.info/mcp",
     "realtime_venue": "https://api.seiche.info/undertow/live/quotes.json",
@@ -157,6 +167,20 @@ OFFICIAL_SOURCE_REGISTRY: tuple[dict[str, Any], ...] = (
         "publisher": "Bank of Japan",
         "domains": ["money_markets", "forex"],
         "url": "https://www.stat-search.boj.or.jp/",
+        "status": "structural",
+    },
+    {
+        "id": "nbs_monthly_data_browser",
+        "publisher": "National Bureau of Statistics of China",
+        "domains": ["china_macro"],
+        "url": "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData",
+        "status": "structural",
+    },
+    {
+        "id": "nbs_terms_of_service",
+        "publisher": "National Bureau of Statistics of China",
+        "domains": ["china_macro"],
+        "url": "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html",
         "status": "structural",
     },
 )
@@ -1032,6 +1056,275 @@ def _capital_markets(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+_CHINA_PUBLIC_RECORD_FIELDS = frozenset(
+    {
+        "schema",
+        "available",
+        "evidence_status",
+        "dataset",
+        "revision_id",
+        "predecessor_revision_id",
+        "predecessor_manifest_sha256",
+        "knowledge_time",
+        "publisher",
+        "source_url",
+        "publication_policy",
+        "values_published",
+        "series",
+        "provenance",
+        "caveats",
+        "attestation",
+    }
+)
+_CHINA_PROVENANCE_FIELDS = frozenset(
+    {"manifest_sha256", "owner_attestation"}
+)
+_CHINA_ATTESTATION_FIELDS = frozenset(
+    {
+        "schema",
+        "algorithm",
+        "domain",
+        "export_id",
+        "signer_key_id",
+        "signed_at",
+        "manifest_sha256",
+        "public_projection_sha256",
+        "signature",
+    }
+)
+_LOWER_HEX_64 = re.compile(r"[0-9a-f]{64}")
+_LOWER_HEX_128 = re.compile(r"[0-9a-f]{128}")
+_SAFE_REVISION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def _aware_china_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    candidate = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    return (
+        parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
+    )
+
+
+def _verified_china_record_matches_catalog(
+    candidate: Mapping[str, Any],
+    catalog: Mapping[str, Any],
+) -> bool:
+    """Validate the closed public envelope before labeling it available."""
+
+    if set(candidate) != _CHINA_PUBLIC_RECORD_FIELDS:
+        return False
+    revision_id = candidate.get("revision_id")
+    predecessor = candidate.get("predecessor_revision_id")
+    predecessor_hash = candidate.get("predecessor_manifest_sha256")
+    if (
+        not isinstance(revision_id, str)
+        or _SAFE_REVISION_ID.fullmatch(revision_id) is None
+    ):
+        return False
+    if predecessor is None:
+        if predecessor_hash is not None:
+            return False
+    elif (
+        not isinstance(predecessor, str)
+        or _SAFE_REVISION_ID.fullmatch(predecessor) is None
+        or not isinstance(predecessor_hash, str)
+        or _LOWER_HEX_64.fullmatch(predecessor_hash) is None
+    ):
+        return False
+
+    knowledge_time = _aware_china_time(candidate.get("knowledge_time"))
+    provenance = candidate.get("provenance")
+    attestation = candidate.get("attestation")
+    if (
+        knowledge_time is None
+        or not isinstance(provenance, Mapping)
+        or set(provenance) != _CHINA_PROVENANCE_FIELDS
+        or not isinstance(attestation, Mapping)
+        or set(attestation) != _CHINA_ATTESTATION_FIELDS
+    ):
+        return False
+    manifest_hash = provenance.get("manifest_sha256")
+    signed_at = _aware_china_time(attestation.get("signed_at"))
+    return bool(
+        candidate.get("schema") == catalog.get("schema")
+        and candidate.get("dataset") == catalog.get("dataset")
+        and candidate.get("publisher") == catalog.get("publisher")
+        and candidate.get("source_url") == catalog.get("source_url")
+        and candidate.get("publication_policy") == catalog.get("publication_policy")
+        and candidate.get("available") is True
+        and candidate.get("evidence_status") == "restricted"
+        and candidate.get("values_published") is False
+        and candidate.get("series") == catalog.get("series")
+        and isinstance(candidate.get("caveats"), list)
+        and candidate.get("caveats")
+        and isinstance(manifest_hash, str)
+        and _LOWER_HEX_64.fullmatch(manifest_hash) is not None
+        and provenance.get("owner_attestation") == "ed25519"
+        and attestation.get("schema") == "seiche.nbs-owner-export-signature.v1"
+        and attestation.get("algorithm") == "ed25519"
+        and attestation.get("domain") == "seiche-nbs-owner-export-v1"
+        and attestation.get("export_id") == revision_id
+        and attestation.get("manifest_sha256") == manifest_hash
+        and isinstance(attestation.get("public_projection_sha256"), str)
+        and _LOWER_HEX_64.fullmatch(attestation["public_projection_sha256"]) is not None
+        and isinstance(attestation.get("signer_key_id"), str)
+        and _LOWER_HEX_64.fullmatch(attestation["signer_key_id"]) is not None
+        and isinstance(attestation.get("signature"), str)
+        and _LOWER_HEX_128.fullmatch(attestation["signature"]) is not None
+        and signed_at is not None
+        and signed_at >= knowledge_time
+    )
+
+
+def _china_macro(context: object | None) -> dict[str, Any]:
+    """Project only the release-reviewed, metadata-only NBS public contract.
+
+    The caller may inject a signature-verified public revision.  This second
+    whitelist is deliberate defense in depth: even a malformed injected
+    mapping cannot move observations, raw evidence, or history into World
+    Markets, and this module never opens the restricted intake store.
+    """
+
+    from seiche.nbs_intake import (
+        NBS_DATASET,
+        NBS_PUBLIC_SCHEMA,
+        NBSMacroContext,
+        nbs_public_catalog,
+    )
+
+    catalog = nbs_public_catalog()
+    candidate = context.to_dict() if isinstance(context, NBSMacroContext) else None
+    # Only the typed result of the signature-verifying public loader can become
+    # available.  Requiring the complete code-owned series catalog also keeps a
+    # partial owner capture from overstating the stable public contract.
+    candidate_is_verified = bool(
+        candidate is not None
+        and candidate.get("schema") == NBS_PUBLIC_SCHEMA
+        and candidate.get("dataset") == NBS_DATASET
+        and _verified_china_record_matches_catalog(candidate, catalog)
+    )
+    context = candidate if candidate_is_verified else catalog
+    available = candidate_is_verified
+
+    policy = _object(catalog.get("publication_policy"))
+    series: list[dict[str, Any]] = []
+    raw_series = catalog.get("series")
+    for source in raw_series[:4] if isinstance(raw_series, list) else []:
+        if not isinstance(source, Mapping):
+            continue
+        row = {
+            key: source.get(key)
+            for key in (
+                "series_id",
+                "catalogid",
+                "catalog_label",
+                "row_id",
+                "i",
+                "ek",
+                "ek_dp",
+                "dp",
+                "dp_name",
+                "label",
+                "reference_release_url",
+                "release_url",
+                "source_unit_label_exact",
+                "source_unit_semantically_authoritative",
+                "semantic_contract",
+                "value_publication",
+            )
+            if key in source
+        }
+        if isinstance(row.get("series_id"), str):
+            series.append(row)
+
+    provenance_in = _object(context.get("provenance")) if available else {}
+    provenance = {
+        key: provenance_in.get(key)
+        for key in (
+            "manifest_sha256",
+            "owner_attestation",
+        )
+        if key in provenance_in
+    }
+    attestation_in = _object(context.get("attestation")) if available else {}
+    attestation = {
+        key: attestation_in.get(key)
+        for key in (
+            "schema",
+            "algorithm",
+            "domain",
+            "export_id",
+            "signer_key_id",
+            "signed_at",
+            "manifest_sha256",
+            "public_projection_sha256",
+            "signature",
+        )
+        if key in attestation_in
+    }
+    evidence_status = "restricted" if available else "unavailable"
+    reading = (
+        "A trusted owner-attested NBS browser export is present. Its exact "
+        "series identities and provenance are public; values remain withheld "
+        "pending redistribution review."
+        if available
+        else (
+            "The release-reviewed NBS series catalog is public, but no trusted "
+            "owner export is currently available."
+        )
+    )
+    out: dict[str, Any] = {
+        "status": "restricted" if available else "structural",
+        "evidence_status": evidence_status,
+        "as_of": None,
+        "schema": catalog["schema"],
+        "available": available,
+        "dataset": catalog["dataset"],
+        "publisher": catalog["publisher"],
+        "source_url": catalog["source_url"],
+        "context_only": True,
+        "scoring_eligible": False,
+        "cn_cny_gauge_eligible": False,
+        "values_published": False,
+        "raw_evidence_included": False,
+        "history_included": False,
+        "public_distribution": policy.get("public_distribution", "metadata_only"),
+        "rights_status": policy.get("rights_status", "redistribution_review_required"),
+        "terms_url": policy.get(
+            "terms_url",
+            "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html",
+        ),
+        "series_catalog": series,
+        "series_count": len(series),
+        "reading": reading,
+        "boundaries": [
+            "Owner attestation is not an NBS digital signature.",
+            "No NBS value, raw export, or history is redistributed.",
+            "China macro context cannot enter CN-CNY gauges or Seiche scoring.",
+        ],
+    }
+    if available:
+        out["source_registry_ids"] = [
+            "nbs_monthly_data_browser",
+            "nbs_terms_of_service",
+        ]
+    for key in ("revision_id", "predecessor_revision_id", "knowledge_time"):
+        if available and key in context:
+            out[key] = context.get(key)
+    if provenance:
+        out["provenance"] = provenance
+    if attestation:
+        out["attestation"] = attestation
+    if not available and isinstance(context.get("reason_code"), str):
+        out["reason_code"] = context.get("reason_code")
+    return out
+
+
 def _source_link_paths(value: Any, path: str = "") -> dict[str, set[str]]:
     links: dict[str, set[str]] = {}
     if isinstance(value, Mapping):
@@ -1085,6 +1378,7 @@ def _methodology() -> dict[str, Any]:
             "forex_leaders_max": _MAX_FOREX_LEADERS,
             "network_edges_max": _MAX_NETWORK_EDGES,
             "capital_cards_max": _MAX_CAPITAL_CARDS,
+            "china_macro_series_max": 4,
         },
         "data_minimization": (
             "Only named current-value and structural fields are projected; "
@@ -1126,7 +1420,7 @@ def _domain_summary(name: str, payload: Mapping[str, Any]) -> dict[str, Any]:
             "harbors": len(payload.get("harbors") or []),
             "basins": len(payload.get("basins") or []),
         }
-    else:
+    elif name == "capital_markets":
         summary["reading"] = _object(
             _object(payload.get("risk_context")).get("market_vs_plumbing")
         ).get("reading")
@@ -1141,6 +1435,13 @@ def _domain_summary(name: str, payload: Mapping[str, Any]) -> dict[str, Any]:
                 for item in payload.get("primary_market") or []
                 if isinstance(item, Mapping)
             ),
+        }
+    else:
+        summary["reading"] = payload.get("reading")
+        summary["coverage"] = {
+            "series_catalogued": len(payload.get("series_catalog") or []),
+            "signed_revision_available": payload.get("available") is True,
+            "values_published": False,
         }
     return summary
 
@@ -1206,6 +1507,7 @@ def _world_clocks(
         "domains": {
             summary["id"]: summary.get("as_of") for summary in domain_summaries
         },
+        "excluded_from_observation_clocks": ["china_macro.knowledge_time"],
         "boundary": "Response time never advances a source or observation as-of clock.",
     }
 
@@ -1214,7 +1516,11 @@ def _selection_state(
     selector: str,
     domains: Mapping[str, Mapping[str, Any]],
     latest_domain_as_of: Any,
+    china_macro: Mapping[str, Any],
 ) -> tuple[bool, str, Any]:
+    if selector == "china_macro":
+        status = str(china_macro.get("status", "structural"))
+        return True, status, None
     if selector in domains:
         selected = domains[selector]
         status = str(selected.get("status", "unavailable"))
@@ -1233,10 +1539,10 @@ def _base(
     selector: str,
     domains: Mapping[str, Mapping[str, Any]],
     evaluation_asof: Any,
+    china_macro: Mapping[str, Any],
 ) -> dict[str, Any]:
     domain_summaries = [
-        _domain_summary(name, domains[name])
-        for name in ("money_markets", "forex", "capital_markets")
+        _domain_summary(name, domains[name]) for name in _WORLD_DOMAIN_IDS
     ]
     coverage = _world_coverage(domain_summaries)
     clocks = _world_clocks(snapshot, domain_summaries, evaluation_asof)
@@ -1244,6 +1550,7 @@ def _base(
         selector,
         domains,
         clocks["latest_domain_as_of"],
+        china_macro,
     )
     clocks["selected_evidence_as_of"] = selected_as_of
     return {
@@ -1262,13 +1569,14 @@ def _base(
             "publisher": "Seiche",
             "title": "Seiche World Markets",
             "canonical_url": CANONICAL_URLS["world_markets"],
+            "topic_url": CANONICAL_URLS.get(selector, CANONICAL_URLS["world_markets"]),
             "api_url": CANONICAL_URLS["api"],
             "generated_at": snapshot.get("generated_at"),
             "evidence_as_of": selected_as_of,
         },
         "scope": {
             "coverage_claim": "curated_partial_non_exhaustive",
-            "included": ["money_markets", "forex", "capital_markets"],
+            "included": [*_WORLD_DOMAIN_IDS, "china_macro"],
             "not_claimed": [
                 "every jurisdiction, currency, security, venue, or issuer",
                 "a consolidated real-time market data feed",
@@ -1287,6 +1595,7 @@ def project_world_markets(
     *,
     selector: str = "all",
     evaluation_asof: Any = None,
+    china_macro_context: object | None = None,
 ) -> dict[str, Any]:
     """Project one completed snapshot into a selector-bounded public contract."""
 
@@ -1298,29 +1607,49 @@ def project_world_markets(
         return unavailable_world_markets(
             selector=selector,
             reason="no completed snapshot is available",
+            china_macro_context=china_macro_context,
         )
 
-    evaluation_clock = evaluation_asof or snapshot.get("generated_at")
+    # A standalone China response is an independent metadata-only evidence
+    # surface. Do not let a caller-supplied market snapshot lend it freshness,
+    # domain summaries, or a generation clock. The combined `all` selector
+    # deliberately retains the completed market snapshot.
+    projection_snapshot = {} if selector == "china_macro" else snapshot
+    evaluation_clock = (
+        None
+        if selector == "china_macro"
+        else evaluation_asof or projection_snapshot.get("generated_at")
+    )
     domains = {
         "money_markets": _money_markets(
-            snapshot,
+            projection_snapshot,
             evaluation_asof=evaluation_clock,
         ),
-        "forex": _forex(snapshot),
-        "capital_markets": _capital_markets(snapshot),
+        "forex": _forex(projection_snapshot),
+        "capital_markets": _capital_markets(projection_snapshot),
     }
-    out = _base(snapshot, selector, domains, evaluation_clock)
+    china_macro = _china_macro(china_macro_context)
+    out = _base(
+        projection_snapshot,
+        selector,
+        domains,
+        evaluation_clock,
+        china_macro,
+    )
     if selector == "summary":
         out["summary"] = {"domains": out["coverage"]["domains"]}
     elif selector in domains:
         out[selector] = domains[selector]
+    elif selector == "china_macro":
+        out["china_macro"] = china_macro
     elif selector == "sources":
-        out["sources"] = _source_registry(domains)
+        out["sources"] = _source_registry({**domains, "china_macro": china_macro})
     elif selector == "methodology":
         out["methodology"] = _methodology()
     else:
         out.update(domains)
-        out["sources"] = _source_registry(domains)
+        out["china_macro"] = china_macro
+        out["sources"] = _source_registry({**domains, "china_macro": china_macro})
         out["methodology"] = _methodology()
     return out
 
@@ -1329,6 +1658,7 @@ def unavailable_world_markets(
     *,
     selector: str = "all",
     reason: str = "no completed cached or persisted snapshot is available",
+    china_macro_context: object | None = None,
 ) -> dict[str, Any]:
     """Return the same typed envelope for a cold cache without implying a build."""
 
@@ -1336,20 +1666,25 @@ def unavailable_world_markets(
         selector = "all"
     domains = {
         name: {"status": "unavailable", "as_of": None, "reason": reason}
-        for name in ("money_markets", "forex", "capital_markets")
+        for name in _WORLD_DOMAIN_IDS
     }
-    out = _base({}, selector, domains, None)
-    out.update(ok=False, status="unavailable", reason=reason)
+    china_macro = _china_macro(china_macro_context)
+    out = _base({}, selector, domains, None, china_macro)
+    if selector != "china_macro":
+        out.update(ok=False, status="unavailable", reason=reason)
     if selector == "summary":
         out["summary"] = {"domains": out["coverage"]["domains"]}
     elif selector in domains:
         out[selector] = domains[selector]
+    elif selector == "china_macro":
+        out["china_macro"] = china_macro
     elif selector == "sources":
-        out["sources"] = _source_registry(domains)
+        out["sources"] = _source_registry({**domains, "china_macro": china_macro})
     elif selector == "methodology":
         out["methodology"] = _methodology()
     else:
         out.update(domains)
-        out["sources"] = _source_registry(domains)
+        out["china_macro"] = china_macro
+        out["sources"] = _source_registry({**domains, "china_macro": china_macro})
         out["methodology"] = _methodology()
     return out

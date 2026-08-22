@@ -37,6 +37,7 @@ STATIC_PATHS = (
     "/markets/",
     "/markets/forex/",
     "/markets/capital-markets/",
+    "/markets/china-macro/",
     "/money-markets/",
     "/money-markets/catalog.json",
     "/developers",

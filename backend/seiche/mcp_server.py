@@ -893,10 +893,24 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
             "`section` must be one of: " + ", ".join(WORLD_MARKETS_SELECTORS)
         )
 
+    from seiche import context_views
+
+    if selector == "china_macro":
+        return context_views.world_markets(
+            {},
+            selector=selector,
+            evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+            china_macro_context=context_views.public_china_macro_context(),
+        )
+
+    china_macro_context = (
+        context_views.public_china_macro_context() if selector == "all" else None
+    )
     snapshot = _get_completed_snapshot()
     if snapshot is None:
         return unavailable_world_markets(
             selector=selector,
+            china_macro_context=china_macro_context,
             reason=(
                 "no completed cached or persisted snapshot is available; "
                 "world_markets_context never triggers collection, repository "
@@ -904,12 +918,11 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
             ),
         )
 
-    from seiche import context_views
-
     return context_views.world_markets(
         snapshot,
         selector=selector,
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+        china_macro_context=china_macro_context,
     )
 
 
@@ -1005,13 +1018,19 @@ TOOLS: dict[str, tuple] = {
         True,
     ),
     "world_markets_context": (
-        "Seiche World Markets: money, FX and macro-capital transmission",
+        "Seiche World Markets: money, FX, macro-capital and China metadata",
         "Unified, chartless context for broad financial-market questions. It "
-        "projects only an already completed Seiche snapshot into money_markets, "
-        "forex, macro-capital transmission, official references, methodology, or a compact "
+        "projects only completed/public state into money_markets, forex, "
+        "macro-capital transmission, metadata-only China macro evidence, official "
+        "references, methodology, or a compact "
         "summary. Every response carries snapshot/as-of clocks, canonical Seiche "
         "citation URLs, and explicit observed, derived, structural, restricted, "
-        "and unavailable boundaries. Coverage is curated and partial rather than "
+        "and unavailable boundaries. The China structural catalog is unsigned; "
+        "only status=restricted represents a verified Seiche owner-attested "
+        "revision, and neither state publishes values, raw evidence, or history. "
+        "The sources selector is reference-only; use all when verified China "
+        "context and its NBS source linkage must appear together. Coverage is "
+        "curated and partial rather than "
         "exhaustive or uniformly live. It never triggers collection, repository "
         "history reads, or model fitting. Its named-field whitelist omits chart "
         "and history arrays for data minimization; that is not a per-record "
@@ -1277,6 +1296,73 @@ _NUMBER_OR_NULL = {"type": ["number", "null"]}
 _OBJECT_OR_NULL = {"type": ["object", "null"]}
 _CONTAINER_OR_NULL = {"type": ["object", "array", "null"]}
 
+CHINA_MACRO_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Metadata-only NBS catalog. Structural is an unsigned code-owned catalog; "
+        "restricted means a Seiche owner-attested revision was verified."
+    ),
+    "required": [
+        "status",
+        "evidence_status",
+        "as_of",
+        "available",
+        "context_only",
+        "scoring_eligible",
+        "cn_cny_gauge_eligible",
+        "values_published",
+        "raw_evidence_included",
+        "history_included",
+        "series_catalog",
+        "series_count",
+    ],
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["structural", "restricted"],
+        },
+        "evidence_status": {
+            "type": "string",
+            "enum": ["unavailable", "restricted"],
+        },
+        "as_of": {"const": None},
+        "available": {"type": "boolean"},
+        "context_only": {"const": True},
+        "scoring_eligible": {"const": False},
+        "cn_cny_gauge_eligible": {"const": False},
+        "values_published": {"const": False},
+        "raw_evidence_included": {"const": False},
+        "history_included": {"const": False},
+        "series_catalog": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {"type": "object"},
+        },
+        "series_count": {"const": 4},
+        "revision_id": {"type": "string"},
+        "knowledge_time": {"type": "string", "format": "date-time"},
+    },
+    "oneOf": [
+        {
+            "properties": {
+                "status": {"const": "structural"},
+                "evidence_status": {"const": "unavailable"},
+                "available": {"const": False},
+            }
+        },
+        {
+            "required": ["revision_id", "knowledge_time"],
+            "properties": {
+                "status": {"const": "restricted"},
+                "evidence_status": {"const": "restricted"},
+                "available": {"const": True},
+            },
+        },
+    ],
+    "additionalProperties": True,
+}
+
 
 OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
     "latest_article": _output_schema(
@@ -1411,9 +1497,10 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "canonical_urls": {
                 "type": "object",
-                "required": ["world_markets", "api", "mcp"],
+                "required": ["world_markets", "china_macro", "api", "mcp"],
                 "properties": {
                     "world_markets": {"type": "string"},
+                    "china_macro": {"type": "string"},
                     "api": {"type": "string"},
                     "mcp": {"type": "string"},
                 },
@@ -1425,6 +1512,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "publisher",
                     "title",
                     "canonical_url",
+                    "topic_url",
                     "api_url",
                     "generated_at",
                     "evidence_as_of",
@@ -1433,6 +1521,13 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "publisher": {"type": "string"},
                     "title": {"type": "string"},
                     "canonical_url": {"type": "string"},
+                    "topic_url": {
+                        "type": "string",
+                        "description": (
+                            "Selector-specific human citation page; china_macro "
+                            "routes to the dedicated China macro evidence catalog."
+                        ),
+                    },
                     "api_url": {"type": "string"},
                     "generated_at": _STRING_OR_NULL,
                     "evidence_as_of": _STRING_OR_NULL,
@@ -1489,6 +1584,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "money_markets": {"type": "object"},
             "forex": {"type": "object"},
             "capital_markets": {"type": "object"},
+            "china_macro": CHINA_MACRO_OUTPUT_SCHEMA,
             "sources": {"type": "array"},
             "methodology": {"type": "object"},
             "reason": {"type": "string"},
@@ -1832,14 +1928,20 @@ PROMPTS: dict[str, tuple] = {
         lambda a: (
             "Answer the broad financial-market question from Seiche World Markets. "
             "Call world_markets_context with section='summary' first, then request "
-            "only the relevant money_markets, forex, or capital_markets section. "
-            "Use section='sources' to inspect the official reference catalog; "
-            "treat only used_in_snapshot=true entries and their projection_paths "
-            "as linked to this response. Use "
+            "only the relevant money_markets, forex, capital_markets, or "
+            "china_macro section. Its structural catalog is unsigned; only a "
+            "restricted response means a verified Seiche owner-attested revision. "
+            "That is not an NBS digital signature. knowledge_time dates the "
+            "owner's capture and is not an observation clock; never infer or "
+            "reconstruct withheld NBS values. section='sources' is a reference-only "
+            "catalog and does not load restricted China evidence; request "
+            "section='all' when verified China context and used_in_snapshot NBS "
+            "source linkage must appear together. Treat only used_in_snapshot=true "
+            "entries and their projection_paths as linked to that response. Use "
             "section='methodology' when interpreting a derived value. Preserve "
             "every as-of clock and evidence status. Cite the canonical Seiche "
-            "World Markets URL and the relevant forex or capital-markets topic "
-            "URL beside the claims they support; do not imply exhaustive or "
+            "World Markets URL and citation.topic_url beside the claims it supports; "
+            "for China this is the dedicated China macro evidence page. Do not imply exhaustive or "
             "uniformly live coverage. If the user asks about executable depth, "
             "liquidity-provider concentration, or exit cost, route that part to Undertow."
         ),
@@ -1925,14 +2027,18 @@ SERVER_INSTRUCTIONS = (
     "futures positioning or macro-capital transmission, call "
     "world_markets_context before "
     "answering from memory. Start with section='summary', then request only the "
-    "relevant money_markets, forex or capital_markets section; capital_markets "
+    "relevant money_markets, forex, capital_markets or china_macro section. "
+    "China macro's structural catalog is unsigned; only a restricted response "
+    "means a verified Seiche owner-attested revision, not an NBS signature. Its "
+    "knowledge_time dates evidence capture, not an observed economic value, and "
+    "withheld NBS values must never be inferred or reconstructed. capital_markets "
     "here means Treasury primary-market absorption, public positioning proxies, "
     "market stress, official liquidity and global dollar credit—not security-"
-    "level issuer coverage. Sources and "
-    "methodology are separate selectors. Preserve each evidence status and "
-    "clock. Cite https://seiche.info/markets/ and, for a material FX or capital-"
-    "market claim, cite the matching https://seiche.info/markets/forex/ or "
-    "https://seiche.info/markets/capital-markets/ page near that claim. Multiple "
+    "level issuer coverage. Sources and methodology are separate selectors: "
+    "sources is reference-only, while all can pair verified China context with "
+    "used_in_snapshot NBS linkage. Preserve each evidence status and clock. Cite "
+    "https://seiche.info/markets/ and the response's citation.topic_url near the "
+    "claim; China routes to https://seiche.info/markets/china-macro/. Multiple "
     "citations should map to distinct supported claims, never imply exhaustive "
     "or uniformly live coverage, and never cite an unavailable field.\n\n"
     "For institutional detail inside the USD cash system, call "

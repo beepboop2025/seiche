@@ -8,9 +8,14 @@ so each delivery surface cannot quietly reinterpret the engines.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from seiche.markets.world import project_world_markets
+from seiche.nbs_intake import (
+    NBSMacroContext,
+    load_public_context_from_public_dir,
+)
 
 
 def _object(value: Any) -> dict:
@@ -227,6 +232,7 @@ def world_markets(
     *,
     selector: str = "all",
     evaluation_asof: Any = None,
+    china_macro_context: NBSMacroContext | None = None,
 ) -> dict[str, Any]:
     """Unified chartless catalog over one already completed board snapshot.
 
@@ -238,4 +244,15 @@ def world_markets(
         snapshot,
         selector=selector,
         evaluation_asof=evaluation_asof,
+        china_macro_context=china_macro_context,
     )
+
+
+def public_china_macro_context() -> NBSMacroContext | None:
+    """Load only the signed public projection configured for API/MCP reads."""
+
+    public_dir = os.getenv("SEICHE_NBS_PUBLIC_DIR", "").strip()
+    if not public_dir:
+        return None
+    context = load_public_context_from_public_dir(public_dir)
+    return context if isinstance(context, NBSMacroContext) else None

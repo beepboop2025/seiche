@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>China macro evidence: release-reviewed NBS identities without redistributed values | Seiche</title>
+  <meta name="description" content="Seiche's China macro evidence catalog binds four official NBS monthly series to exact source identities, semantics and release pages. A separately verified owner-attested revision may add capture provenance; raw exports and values remain withheld.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/markets/china-macro/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/world-markets?section=china_macro" title="Seiche China macro metadata context">
+  <link rel="alternate" type="application/vnd.oai.openapi+json" href="https://api.seiche.info/api/openapi.json" title="Seiche public API contract">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/markets/china-macro/">
+  <meta property="og:title" content="China macro evidence | Seiche">
+  <meta property="og:description" content="Four release-reviewed NBS series identities, with a clear distinction between the unsigned structural catalog and any verified Seiche owner-attested revision.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="China macro evidence | Seiche">
+  <meta name="twitter:description" content="Release-reviewed NBS identities and, when available, verified Seiche owner-attested provenance—without publishing raw exports, histories or values.">
+  <meta name="twitter:image" content="https://seiche.info/og2.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://seiche.info/#organization",
+        "name": "Seiche",
+        "url": "https://seiche.info/",
+        "logo": "https://seiche.info/og2.png",
+        "sameAs": "https://github.com/beepboop2025/seiche"
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://www.stats.gov.cn/english/#organization",
+        "name": "National Bureau of Statistics of China",
+        "url": "https://www.stats.gov.cn/english/"
+      },
+      {
+        "@type": "Dataset",
+        "@id": "https://seiche.info/markets/china-macro/#dataset",
+        "identifier": "CN.NBS.MACRO_CONTEXT",
+        "name": "Seiche China macro evidence catalog",
+        "description": "A release-reviewed, metadata-only public catalog binding four National Bureau of Statistics of China monthly series to exact browser identifiers, human labels, semantic contracts and official release references. A separately verified Seiche owner-attested revision may add capture provenance. Numeric observations, raw exports and history are withheld pending redistribution review.",
+        "url": "https://seiche.info/markets/china-macro/",
+        "mainEntityOfPage": "https://seiche.info/markets/china-macro/",
+        "includedInDataCatalog": {"@id": "https://seiche.info/markets/#catalog"},
+        "creator": {"@id": "https://seiche.info/#organization"},
+        "publisher": {"@id": "https://seiche.info/#organization"},
+        "provider": {"@id": "https://www.stats.gov.cn/english/#organization"},
+        "isBasedOn": [
+          "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData",
+          "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html"
+        ],
+        "datePublished": "2026-08-22",
+        "dateModified": "2026-08-22",
+        "isAccessibleForFree": true,
+        "temporalCoverage": "Monthly source cadence; the public catalog itself carries no observations",
+        "keywords": ["China economy", "NBS China", "consumer price index", "producer price index", "manufacturing PMI", "industrial value added", "data provenance"],
+        "measurementTechnique": "The structural catalog is release-reviewed code. When a revision is available, offline owner-operated browser export, exact schema and source-label binding, domain-separated Ed25519 attestation and a metadata-only public projection are additionally verified.",
+        "conditionsOfAccess": "Public distribution is metadata only. Upstream terms remain controlling; raw exports, observations and histories are not redistributed by Seiche.",
+        "variableMeasured": [
+          {"@type": "PropertyValue", "propertyID": "CN.NBS.CPI_INDEX", "name": "Consumer Price Index (The same month last year=100)", "unitText": "index points; comparison base previous-year same month=100"},
+          {"@type": "PropertyValue", "propertyID": "CN.NBS.PPI_INDEX", "name": "Producer Price Index for Industrial Products (The same month last year=100)", "unitText": "index points; comparison base previous-year same month=100"},
+          {"@type": "PropertyValue", "propertyID": "CN.NBS.MANUFACTURING_PMI", "name": "Manufacturing Purchasing Managers' Index", "unitText": "percentage points; diffusion threshold 50"},
+          {"@type": "PropertyValue", "propertyID": "CN.NBS.INDUSTRIAL_VALUE_ADDED_YOY", "name": "Value-added of Industrial Enterprises above Designated Size, Growth Rate", "unitText": "percent year over year"}
+        ],
+        "distribution": [{"@type": "DataDownload", "name": "Metadata-only China macro context", "encodingFormat": "application/json", "contentUrl": "https://api.seiche.info/api/v2/world-markets?section=china_macro"}],
+        "citation": "Seiche. China macro evidence catalog, dataset CN.NBS.MACRO_CONTEXT, schema seiche.nbs-macro-context.v1. https://seiche.info/markets/china-macro/ (cite the API revision_id and knowledge_time only when available; neither is an observation date)."
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://seiche.info/markets/china-macro/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Does Seiche publish China NBS economic values?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. The public China macro contract always publishes four release-reviewed series identities and semantics. Only a restricted response adds verified Seiche owner-attested capture provenance. Raw exports, monthly observations and histories remain restricted pending redistribution review."}
+          },
+          {
+            "@type": "Question",
+            "name": "Is the owner attestation an NBS digital signature?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. The Ed25519 attestation proves that a trusted Seiche operator captured and signed a specific export envelope. It does not claim that the National Bureau of Statistics signed the file."}
+          },
+          {
+            "@type": "Question",
+            "name": "What does knowledge_time mean for China macro evidence?",
+            "acceptedAnswer": {"@type": "Answer", "text": "knowledge_time records when the owner-attested evidence was captured and knowable to Seiche. It is not the economic observation month and never advances the world-market observation clock."}
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to evidence</a>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary">
+      <a href="/markets/">World markets</a>
+      <a href="/markets/china-macro/" aria-current="page">China macro</a>
+      <a href="/markets/forex/">Forex</a>
+      <a href="/markets/capital-markets/">Capital</a>
+      <a href="/money-markets/">Money</a>
+      <a href="/developers">API + MCP</a>
+    </nav>
+  </header>
+
+  <main id="main" class="shell">
+    <article>
+      <p class="breadcrumbs"><a href="/markets/">World markets</a> / China macro evidence</p>
+      <header class="hero">
+        <div>
+          <p class="kicker">China macro / reviewed identities / metadata only</p>
+          <h1>Provenance first. Values withheld.</h1>
+          <p class="lede">Seiche publishes four exact official NBS browser identities without republishing a monthly value. When a verified revision is present, the same contract additionally proves which export a Seiche owner captured, when it became knowable and which trusted key attested it.</p>
+        </div>
+        <aside class="receipt" aria-label="Public evidence boundary">
+          <span class="label">Public evidence boundary</span>
+          <strong>4 identities · 0 values</strong>
+          <p>The API reports <span class="status restricted">restricted</span> only for a verified signed revision. Otherwise it returns the structural catalog as unavailable evidence.</p>
+        </aside>
+      </header>
+
+      <dl class="pulse" aria-label="China macro contract summary">
+        <div><dt>Release-reviewed identities</dt><dd>4</dd><small>exact browser bindings</small></div>
+        <div><dt>Public numeric values</dt><dd>0</dd><small>hard-disabled in schema v1</small></div>
+        <div><dt>Raw exports exposed</dt><dd>0</dd><small>root-only restricted store</small></div>
+        <div><dt>Scoring roles</dt><dd>0</dd><small>never enters a Seiche gauge</small></div>
+        <div><dt>Request-time scraping</dt><dd>0</dd><small>offline intake only</small></div>
+      </dl>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head">
+          <div><span class="label">Direct answer</span><h2 id="answer-title">What the China contract proves</h2></div>
+          <p>The unsigned structural catalog proves only what Seiche's reviewed code recognizes. A verified revision additionally proves continuity of Seiche's owner-attested evidence chain: signed manifest identity, public projection, trusted signer, capture clock and predecessor relationship. The public receipt does not expose raw-data hashes or sizes. Neither state proves NBS signed an export or grants downstream redistribution rights.</p>
+        </div>
+        <div class="answer-block">
+          <p><strong>The public object is a source catalog or provenance receipt, never a China data feed.</strong> It tells a researcher or agent exactly which four NBS tables and rows Seiche recognizes, how each source field should be interpreted, and whether a verified Seiche owner-attested capture exists.</p>
+          <p><code>knowledge_time</code> is the evidence-capture clock. It is deliberately excluded from World Markets observation clocks, freshness, coverage scores, CN-CNY gauges and every forecasting or ranking path.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="series-title">
+        <div class="section-head">
+          <div><span class="label">Pinned catalog</span><h2 id="series-title">Four exact source identities</h2></div>
+          <p>Human labels, internal browser identifiers, units and comparison bases are release-reviewed in code. A signed manifest that drifts from any pinned binding is rejected before storage.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Stable ID</th><th>Official NBS row</th><th>Semantic contract</th><th>Official release reference</th><th>Public state</th></tr></thead>
+            <tbody>
+              <tr><td><strong>CN.NBS.CPI_INDEX</strong><code>catalogid 5c745282…</code></td><td>Consumer Price Index (The same month last year=100)</td><td>index points; previous-year same month = 100; source “%” label is not treated as a percent change</td><td><span>Official NBS · 10 Aug 2026 · CPI July 2026</span></td><td><span class="status restricted">metadata only</span></td></tr>
+              <tr><td><strong>CN.NBS.PPI_INDEX</strong><code>catalogid 8bc27b5f…</code></td><td>Producer Price Index for Industrial Products (The same month last year=100)</td><td>index points; previous-year same month = 100; the source unit label is not semantically authoritative</td><td><span>Official NBS · 10 Aug 2026 · PPI July 2026</span></td><td><span class="status restricted">metadata only</span></td></tr>
+              <tr><td><strong>CN.NBS.MANUFACTURING_PMI</strong><code>catalogid 93ffbb1a…</code></td><td>Manufacturing Purchasing Managers' Index (%)</td><td>diffusion index in percentage points; threshold = 50</td><td><span>Official NBS · 1 Aug 2026 · PMI July 2026</span></td><td><span class="status restricted">metadata only</span></td></tr>
+              <tr><td><strong>CN.NBS.INDUSTRIAL_VALUE_ADDED_YOY</strong><code>catalogid 3f2e14f0…</code></td><td>Value-added of Industrial Enterprises above Designated Size, Growth Rate</td><td>real year-over-year change in percent; blank source cells remain missing</td><td><span>Official NBS · 18 Aug 2026 · industry July 2026</span></td><td><span class="status restricted">metadata only</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="chain-title">
+        <div class="section-head">
+          <div><span class="label">Evidence chain</span><h2 id="chain-title">From browser export to public receipt</h2></div>
+          <p>The intake is intentionally owner-operated and offline. Public requests cannot launch a browser scrape, read the restricted directory or promote their own key.</p>
+        </div>
+        <div class="ledger">
+          <article><span class="status structural">1 · export</span><h3>Human capture</h3><p>An owner exports CSV from the official NBS monthly-data browser.</p><code>UTF-8 BOM · exact tab-comma layout</code></article>
+          <article><span class="status structural">2 · bind</span><h3>Canonical manifest</h3><p>Exact series IDs, labels, month headers and records are validated inside restricted intake.</p><code>public receipt omits raw hashes and sizes</code></article>
+          <article><span class="status restricted">3 · attest</span><h3>Trusted signature</h3><p>A release-pinned Ed25519 key signs a domain-separated claim over the envelope.</p><code>sidecar keys grant no trust</code></article>
+          <article><span class="status restricted">4 · commit</span><h3>Immutable chain</h3><p>Predecessor, chronology and committed head are checked before atomic publication.</p><code>forks and rollback fail closed</code></article>
+          <article><span class="status structural">5 · project</span><h3>Metadata only</h3><p>The API process can read only the bounded public revision directory.</p><code>no raw · no values · no history</code></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="source-title">
+        <div class="section-head">
+          <div><span class="label">Primary-source boundary</span><h2 id="source-title">Official pages stay upstream</h2></div>
+          <p>Seiche identifies and cites the official source. It does not mirror the source browser or imply ownership of NBS material.</p>
+        </div>
+        <div class="source-grid">
+          <article class="source"><strong>NBS monthly data browser</strong><code>official interactive source</code><span>The owner-operated export originates here; public API requests do not automate it.</span></article>
+          <article class="source"><strong>NBS browser help</strong><code>export format guidance</code><span>Documents supported XLSX, CSV, XML and PDF export paths.</span></article>
+          <article class="source"><strong>NBS terms of service</strong><code>upstream terms remain controlling</code><span>The public projection stays metadata-only pending a specific redistribution review.</span></article>
+          <article class="source"><strong>NBS English releases</strong><code>official release references</code><span>Each pinned identity above records its exact reviewed NBS release URL in the machine contract.</span></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head">
+          <div><span class="label">Machine access</span><h2 id="api-title">One bounded selector</h2></div>
+          <p>The China projection does not depend on the wider board being warm. Its unsigned structural catalog, or a verified public revision when one is present, therefore remains citable while unrelated market engines are unavailable.</p>
+        </div>
+        <div class="api-grid">
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets?section=china_macro"><strong>REST metadata context</strong><code>GET /api/v2/world-markets?section=china_macro</code><span>Returns the structural catalog or a verified restricted revision; never observations.</span></a>
+          <a class="api" href="https://api.seiche.info/mcp"><strong>MCP metadata context</strong><code>world_markets_context(section="china_macro")</code><span>For agents that must preserve evidence status, provenance and capture clock.</span></a>
+          <a class="api" href="https://api.seiche.info/api/v2/world-markets?section=all"><strong>Projection + source linkage</strong><code>GET /api/v2/world-markets?section=all</code><span>The all selector can link a verified China revision to NBS. The standalone sources selector is deliberately a reference-only catalog.</span></a>
+          <a class="api" href="/developers"><strong>Operator and client entrypoint</strong><code>docs/NBS_SIGNED_EXPORT.md · API + MCP</code><span>Start inside Seiche, then use the repository specification for manifest, signature, storage, recovery and verification.</span></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq-visible-title">
+        <div class="section-head">
+          <div><span class="label">Frequently asked questions</span><h2 id="faq-visible-title">Do not overread the receipt</h2></div>
+          <p>These visible answers exactly match the structured FAQ above.</p>
+        </div>
+        <div class="limitations">
+          <article class="limit"><h3>Does Seiche publish China NBS economic values?</h3><p>No. The public China macro contract always publishes four release-reviewed series identities and semantics. Only a restricted response adds verified Seiche owner-attested capture provenance. Raw exports, monthly observations and histories remain restricted pending redistribution review.</p></article>
+          <article class="limit"><h3>Is the owner attestation an NBS digital signature?</h3><p>No. The Ed25519 attestation proves that a trusted Seiche operator captured and signed a specific export envelope. It does not claim that the National Bureau of Statistics signed the file.</p></article>
+          <article class="limit"><h3>What does knowledge_time mean for China macro evidence?</h3><p>knowledge_time records when the owner-attested evidence was captured and knowable to Seiche. It is not the economic observation month and never advances the world-market observation clock.</p></article>
+          <article class="limit"><strong>Not investment advice</strong><p>This is evidence provenance and source semantics, not a forecast, a China growth score or a recommendation to trade.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="cite-title">
+        <div class="section-head">
+          <div><span class="label">Citation protocol</span><h2 id="cite-title">Cite identity and evidence state</h2></div>
+          <p>If the API says unavailable, cite only the structural catalog. If it says restricted, add the returned revision ID, owner-attestation signer and knowledge time—never invent an observation value or date.</p>
+        </div>
+        <div class="citation">
+          <span class="label">Recommended citation</span>
+          <code>Seiche. “China macro evidence catalog.” Dataset CN.NBS.MACRO_CONTEXT, schema seiche.nbs-macro-context.v1, 22 Aug. 2026. https://seiche.info/markets/china-macro/ — machine receipt: https://api.seiche.info/api/v2/world-markets?section=china_macro.</code>
+          <p>Owner attestation authenticates Seiche's evidence envelope; it is not an NBS digital signature and does not change upstream rights.</p>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <div class="shell">
+      <span>Seiche · exact identities, conditional attestation, explicit rights</span>
+      <span><a href="/markets/">World markets</a> · <a href="/developers">Developers</a> · <a href="/product-card.json">Product card</a></span>
+    </div>
+  </footer>
+</body>
+</html>

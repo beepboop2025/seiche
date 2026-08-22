@@ -61,6 +61,7 @@ BASE_URLS = [
     ("/markets/", "weekly", "0.9"),
     ("/markets/forex/", "daily", "0.9"),
     ("/markets/capital-markets/", "daily", "0.9"),
+    ("/markets/china-macro/", "monthly", "0.9"),
     ("/money-markets/", "weekly", "0.9"),
     ("/datasets/direct-ofr/", "monthly", "0.8"),
     ("/articles/", "daily", "0.9"),
@@ -73,9 +74,10 @@ BASE_URLS = [
 # Editorial market pages have their own reviewed publication clocks. Keep
 # those dates stable when the sitemap is rebuilt after a newer daily dispatch.
 BASE_LASTMODS = {
-    "/markets/": "2026-08-21",
+    "/markets/": "2026-08-22",
     "/markets/forex/": "2026-08-21",
     "/markets/capital-markets/": "2026-08-21",
+    "/markets/china-macro/": "2026-08-22",
     "/money-markets/": "2026-08-21",
     "/datasets/direct-ofr/": "2026-08-22",
 }
@@ -745,6 +747,15 @@ quotes, order books, forward/basis curves, options surfaces, complete security
 masters and redistribution-restricted feeds remain explicit gaps. The cache-only
 machine twin is https://api.seiche.info/api/v2/world-markets.
 
+China macro evidence is at {SITE}/markets/china-macro/. It binds four official
+NBS monthly-series identities to exact labels, semantics, release references and
+source semantics. Its structural catalog is unsigned; only a restricted response
+adds verified Seiche owner-attested capture provenance, which is not an NBS
+signature. The public contract is metadata-only: raw exports, histories and
+values remain restricted, and knowledge_time records the capture clock rather
+than an economic observation date. The selector-specific citation URL is
+{SITE}/markets/china-macro/.
+
 Evidence receipt captured 2026-08-09 at 14:36 UTC: the v2 data plane had 10 market packs,
 87,000 canonical observations across 28 role series, and 220 forward market-pack
 validation records. This remains a dated 10-pack receipt even though the current
@@ -786,7 +797,8 @@ same product; the callable contract remains the MCP server above.
 - [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract
 - [Forex reference ledger]({SITE}/markets/forex/): 22 public H.10 bilateral reference series, three dollar indexes, exact quote conventions and explicit missing instruments
 - [Capital-markets transmission projection]({SITE}/markets/capital-markets/): a bounded derived macro-capital projection over registered Treasury, credit, volatility, dealer, positioning and commodity source families
-- [World-markets JSON context](https://api.seiche.info/api/v2/world-markets): cache-only schema v1 projection with summary, money, forex, capital, source and methodology sections
+- [China macro evidence catalog]({SITE}/markets/china-macro/): four exact NBS series identities; the structural catalog is unsigned, while only a restricted response adds verified Seiche owner-attested provenance; no values are redistributed
+- [World-markets JSON context](https://api.seiche.info/api/v2/world-markets): cache-only schema v1 projection with summary, money, forex, capital, China metadata, source and methodology sections
 - [Global money-market evidence map]({SITE}/money-markets/): a crawlable coverage and rights receipt for 11 registered packs and the 52-market discovery ledger, with no universal score
 - [Money-market evidence catalog]({SITE}/money-markets/catalog.json): stable market IDs, availability states, official sources, data-rights boundaries, API links and citation guidance
 - [Audited direct-OFR research dataset]({SITE}/datasets/direct-ofr/): 11,163 source-pinned observations across ten repo and money-market-fund series, with explicit exclusions and no DOI claim

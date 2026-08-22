@@ -1,6 +1,6 @@
 {
   "title": "Seiche: World-markets evidence terminal",
-  "description": "Money, FX and capital-market evidence with source clocks, canonical citations and explicit limits. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
+  "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits. Canonical citations remain explicit. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
   "creators": [
     {
       "name": "Mrinal"

@@ -72,7 +72,11 @@ from seiche.markets.atlas import build_global_money_market_atlas
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
-from seiche.markets.world import WORLD_MARKETS_SELECTORS, unavailable_world_markets
+from seiche.markets.world import (
+    WORLD_MARKETS_SELECTORS,
+    WORLD_MARKETS_STATUSES,
+    unavailable_world_markets,
+)
 from seiche.public_faults import (
     project_public_fault,
     project_public_faults,
@@ -747,6 +751,7 @@ def api_index() -> dict[str, Any]:
             "small_gauge": "/api/gauge",
             "market_catalog_v2": "/api/v2/markets",
             "world_markets_v2": "/api/v2/world-markets",
+            "china_macro_page": "https://seiche.info/markets/china-macro/",
             "global_money_markets_v2": "/api/v2/money-markets",
             "market_coverage_v2": "/api/v2/coverage",
             "global_tide_v2": "/api/v2/global/tide",
@@ -801,6 +806,89 @@ def _public_openapi_document() -> dict[str, Any]:
                 },
             },
         }
+
+    china_macro_schema = mcp_server.CHINA_MACRO_OUTPUT_SCHEMA
+    world_markets_response = {
+        "description": "Successful versioned world-markets context response",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": [
+                        "ok",
+                        "schema",
+                        "status",
+                        "selection",
+                        "context_only",
+                        "chart_history_included",
+                        "citation",
+                    ],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "schema": {"const": "seiche.world-markets.v1"},
+                        "status": {
+                            "type": "string",
+                            "enum": list(WORLD_MARKETS_STATUSES),
+                        },
+                        "selection": {
+                            "type": "string",
+                            "enum": list(WORLD_MARKETS_SELECTORS),
+                        },
+                        "generated_at": {"type": ["string", "null"]},
+                        "as_of": {"type": ["string", "null"]},
+                        "context_only": {"const": True},
+                        "chart_history_included": {"const": False},
+                        "citation": {
+                            "type": "object",
+                            "required": [
+                                "publisher",
+                                "title",
+                                "canonical_url",
+                                "topic_url",
+                                "api_url",
+                                "generated_at",
+                                "evidence_as_of",
+                            ],
+                            "properties": {
+                                "publisher": {"const": "Seiche"},
+                                "title": {"type": "string"},
+                                "canonical_url": {
+                                    "type": "string",
+                                    "format": "uri",
+                                },
+                                "topic_url": {
+                                    "type": "string",
+                                    "format": "uri",
+                                    "description": (
+                                        "Selector-specific human citation page; "
+                                        "china_macro routes to the dedicated "
+                                        "China macro evidence catalog."
+                                    ),
+                                },
+                                "api_url": {"type": "string", "format": "uri"},
+                                "generated_at": {"type": ["string", "null"]},
+                                "evidence_as_of": {"type": ["string", "null"]},
+                            },
+                            "additionalProperties": True,
+                        },
+                        "china_macro": china_macro_schema,
+                    },
+                    "allOf": [
+                        {
+                            "if": {
+                                "required": ["selection"],
+                                "properties": {
+                                    "selection": {"const": "china_macro"}
+                                },
+                            },
+                            "then": {"required": ["china_macro"]},
+                        }
+                    ],
+                    "additionalProperties": True,
+                }
+            }
+        },
+    }
 
     paths: dict[str, Any] = {
         "/api": {
@@ -1000,7 +1088,10 @@ def _public_openapi_document() -> dict[str, Any]:
                 "summary": "Read Seiche's unified world-markets context",
                 "description": (
                     "A chartless, bounded projection of already assembled money-"
-                    "market, forex, and capital-market evidence. It includes "
+                    "market, forex, capital-market and metadata-only China macro "
+                    "evidence. The China structural catalog is unsigned; only a "
+                    "restricted response has verified Seiche owner-attested "
+                    "revision provenance, and neither state publishes values. It includes "
                     "explicit observed, derived, structural, restricted, and "
                     "unavailable boundaries plus canonical citation URLs. The "
                     "request reads only a completed memory or persisted snapshot "
@@ -1012,7 +1103,11 @@ def _public_openapi_document() -> dict[str, Any]:
                         "name": "section",
                         "in": "query",
                         "required": False,
-                        "description": "Bounded projection to return.",
+                        "description": (
+                            "Bounded projection to return. sources is a reference-only "
+                            "registry; use all when China context and its verified "
+                            "NBS source linkage must appear together."
+                        ),
                         "schema": {
                             "type": "string",
                             "enum": list(WORLD_MARKETS_SELECTORS),
@@ -1021,7 +1116,7 @@ def _public_openapi_document() -> dict[str, Any]:
                     }
                 ],
                 "responses": {
-                    "200": context_response("seiche.world-markets.v1"),
+                    "200": world_markets_response,
                     "503": {
                         "description": "No completed cached or persisted snapshot",
                         "content": {
@@ -1766,13 +1861,33 @@ def _completed_world_markets_snapshot() -> dict[str, Any] | None:
 
 @app.get("/api/v2/world-markets")
 def world_markets_v2(response: Response, section: str = "all"):
-    """Read the unified catalog without becoming an implicit build trigger."""
+    """Read the cache-only market catalog or China metadata context.
+
+    ``china_macro`` always publishes an unsigned structural series catalog.
+    When a restricted response is present, its Seiche owner attestation has
+    been verified. ``knowledge_time`` dates that capture; it is not an
+    observation clock, and no NBS values, raw exports or history appear.
+    """
 
     if section not in WORLD_MARKETS_SELECTORS:
         raise HTTPException(
             status_code=422,
             detail="section must be one of: " + ", ".join(WORLD_MARKETS_SELECTORS),
         )
+    if section == "china_macro":
+        response.headers["Cache-Control"] = (
+            "public, max-age=60, stale-while-revalidate=240"
+        )
+        return context_views.world_markets(
+            {},
+            selector=section,
+            evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+            china_macro_context=context_views.public_china_macro_context(),
+        )
+
+    china_macro_context = (
+        context_views.public_china_macro_context() if section == "all" else None
+    )
     snapshot = _completed_world_markets_snapshot()
     if snapshot is None:
         return JSONResponse(
@@ -1783,6 +1898,7 @@ def world_markets_v2(response: Response, section: str = "all"):
             },
             content=unavailable_world_markets(
                 selector=section,
+                china_macro_context=china_macro_context,
                 reason=(
                     "no completed cached or persisted snapshot is available; "
                     "this request never starts collection or model fitting"
@@ -1794,6 +1910,7 @@ def world_markets_v2(response: Response, section: str = "all"):
         snapshot,
         selector=section,
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
+        china_macro_context=china_macro_context,
     )
 
 

@@ -10,7 +10,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from seiche import dispatch_pages, mcp_server
+from seiche import api, dispatch_pages, mcp_server
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLIC = ROOT / "frontend" / "public"
@@ -75,6 +75,7 @@ def test_world_market_pages_are_real_canonical_dataset_surfaces():
         "capital-markets/index.html": (
             "https://seiche.info/markets/capital-markets/"
         ),
+        "china-macro/index.html": "https://seiche.info/markets/china-macro/",
     }
     for relative, canonical in pages.items():
         page = _page(relative)
@@ -108,6 +109,9 @@ def test_public_mcp_examples_execute_with_the_external_section_argument(monkeypa
         "capital-markets/index.html": (
             'world_markets_context(section="capital_markets")'
         ),
+        "china-macro/index.html": (
+            'world_markets_context(section="china_macro")'
+        ),
     }
     for relative, example in examples.items():
         page = _page(relative)
@@ -119,6 +123,19 @@ def test_public_mcp_examples_execute_with_the_external_section_argument(monkeypa
         monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda: None)
         response = mcp_server.tool_world_markets({"section": section}, True)
         assert response["selection"] == section
+        if section == "china_macro":
+            china = response["china_macro"]
+            for field in (
+                "values_published",
+                "raw_evidence_included",
+                "history_included",
+                "scoring_eligible",
+                "cn_cny_gauge_eligible",
+            ):
+                assert china[field] is False
+            assert response["citation"]["topic_url"] == (
+                "https://seiche.info/markets/china-macro/"
+            )
 
 
 def test_world_page_publishes_the_evidence_status_vocabulary():
@@ -148,11 +165,57 @@ def test_capital_page_separates_macro_coverage_from_security_level_gaps():
         assert f"https://api.seiche.info/api/series/{mnemonic}" in page
 
 
+def test_china_macro_page_is_explicitly_metadata_only_and_source_bound():
+    page = _page("china-macro/index.html")
+    graph = _json_ld(page)["@graph"]
+    dataset = next(node for node in graph if node.get("@type") == "Dataset")
+    nbs = next(
+        node
+        for node in graph
+        if node.get("@id") == "https://www.stats.gov.cn/english/#organization"
+    )
+
+    assert dataset["identifier"] == "CN.NBS.MACRO_CONTEXT"
+    assert dataset["publisher"] == {"@id": "https://seiche.info/#organization"}
+    assert dataset["provider"] == {"@id": nbs["@id"]}
+    assert dataset["isBasedOn"] == [
+        "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData",
+        "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html",
+    ]
+    assert len(dataset["variableMeasured"]) == 4
+    for series_id in (
+        "CN.NBS.CPI_INDEX",
+        "CN.NBS.PPI_INDEX",
+        "CN.NBS.MANUFACTURING_PMI",
+        "CN.NBS.INDUSTRIAL_VALUE_ADDED_YOY",
+    ):
+        assert series_id in page
+    for boundary in (
+        "4 identities · 0 values",
+        "not an NBS digital signature",
+        "knowledge_time",
+        "CN-CNY gauges and every forecasting or ranking path",
+        "Raw exports, monthly observations and histories remain restricted",
+        "unsigned structural catalog",
+        "standalone sources selector is deliberately a reference-only catalog",
+    ):
+        assert boundary in page
+    assert (
+        'href="https://api.seiche.info/api/v2/world-markets?section=all"'
+        in page
+    )
+    assert (
+        'href="https://api.seiche.info/api/v2/world-markets?section=sources"'
+        not in page
+    )
+
+
 def test_faq_structured_answers_are_visible_on_public_discovery_pages():
     pages = [
         _page("index.html"),
         _page("forex/index.html"),
         _page("capital-markets/index.html"),
+        _page("china-macro/index.html"),
         (PUBLIC / "use-cases.html").read_text(),
     ]
     for page in pages:
@@ -184,6 +247,7 @@ def test_market_routes_are_in_every_static_discovery_queue():
         "/markets/",
         "/markets/forex/",
         "/markets/capital-markets/",
+        "/markets/china-macro/",
     }
     assert routes <= {path for path, _, _ in dispatch_pages.BASE_URLS}
     sitemap = (PUBLIC / "sitemap.xml").read_text()
@@ -193,6 +257,19 @@ def test_market_routes_are_in_every_static_discovery_queue():
         assert f"https://seiche.info{route}" in dispatch_pages._LLMS_PREAMBLE
     smoke = (ROOT / "ops" / "deploy" / "external-smoke-routes.txt").read_text()
     assert '/api/v2/world-markets|200|application/json|"schema":' in smoke
+    for identity in (
+        '"values_published":false',
+        '"raw_evidence_included":false',
+        '"history_included":false',
+        '"scoring_eligible":false',
+        '"cn_cny_gauge_eligible":false',
+        '"as_of":null',
+        '"topic_url":"https://seiche.info/markets/china-macro/"',
+    ):
+        assert (
+            "GET|/api/v2/world-markets?section=china_macro|200|"
+            f"application/json|{identity}"
+        ) in smoke
 
 
 def test_rendered_sitemap_keeps_editorial_market_page_dates():
@@ -218,10 +295,17 @@ def test_machine_discovery_routes_world_markets_to_rest_and_mcp():
     world = card["world_markets_v1"]
     assert world["schema"] == "seiche.world-markets.v1"
     assert world["forex_reference_series"] == 22
+    assert world["china_macro_series_identities"] == 4
+    assert world["china_macro_values_published"] is False
     assert world["request_time_collection"] is False
     assert card["access"]["public_world_markets_mcp_tool"] == (
         "world_markets_context"
     )
+    assert card["access"]["china_macro_page"] == (
+        "https://seiche.info/markets/china-macro/"
+    )
+    assert "structural response is an unsigned" in world["interpretation"]
+    assert "only its restricted response" in world["interpretation"]
 
     catalog = json.loads(
         (PUBLIC / ".well-known" / "ai-catalog.json").read_text()
@@ -232,8 +316,55 @@ def test_machine_discovery_routes_world_markets_to_rest_and_mcp():
     )
     assert world_entry["url"] == "https://api.seiche.info/api/v2/world-markets"
     assert world_entry["metadata"]["humanPage"] == "https://seiche.info/markets/"
+    assert world_entry["metadata"]["chinaMacroPage"] == (
+        "https://seiche.info/markets/china-macro/"
+    )
+    mcp_entry = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"].endswith(":mcp:funding-stress")
+    )
+    assert mcp_entry["metadata"]["chinaMacroPage"] == (
+        "https://seiche.info/markets/china-macro/"
+    )
+    assert "structural China catalog is unsigned" in world_entry["description"]
+    assert "only a restricted response" in world_entry["description"]
     assert "Every response" not in card["product"]["description"]
     assert "world-markets contract" in card["product"]["description"]
+
+
+def test_openapi_and_mcp_publish_the_hard_china_boundary():
+    mcp_schema = mcp_server.OUTPUT_SCHEMAS["world_markets_context"]
+    openapi_schema = api._public_openapi_document()["paths"][
+        "/api/v2/world-markets"
+    ]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+
+    for schema in (mcp_schema, openapi_schema):
+        china = schema["properties"]["china_macro"]
+        assert china["properties"]["as_of"] == {"const": None}
+        assert china["properties"]["series_count"] == {"const": 4}
+        assert {
+            arm["properties"]["status"]["const"] for arm in china["oneOf"]
+        } == {"structural", "restricted"}
+        for field in (
+            "values_published",
+            "raw_evidence_included",
+            "history_included",
+            "scoring_eligible",
+            "cn_cny_gauge_eligible",
+        ):
+            assert china["properties"][field] == {"const": False}
+            assert field in china["required"]
+        citation = schema["properties"]["citation"]
+        assert "topic_url" in citation["required"]
+        assert "topic_url" in citation["properties"]
+
+    prompt = mcp_server.PROMPTS["world_markets_briefing"][3]({})
+    assert "structural catalog is unsigned" in prompt
+    assert "section='all'" in prompt
+    assert "citation.topic_url" in prompt
+    assert "structural catalog is unsigned" in mcp_server.SERVER_INSTRUCTIONS
+    assert "reference-only" in mcp_server.SERVER_INSTRUCTIONS
 
 
 def test_home_and_developer_surfaces_link_the_new_citation_layer():
@@ -242,7 +373,8 @@ def test_home_and_developer_surfaces_link_the_new_citation_layer():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
     commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
     for route in (
-        "/markets/", "/markets/forex/", "/markets/capital-markets/"
+        "/markets/", "/markets/forex/", "/markets/capital-markets/",
+        "/markets/china-macro/",
     ):
         assert route in home
         assert route in developers

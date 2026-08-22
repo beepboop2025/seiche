@@ -20,8 +20,9 @@ WEBSITE = "https://seiche.info"
 LICENSE_EXPRESSION = "AGPL-3.0-or-later"
 CANONICAL_TITLE = "Seiche: World-markets evidence terminal"
 CANONICAL_DESCRIPTION = (
-    "Money, FX and capital-market evidence with source clocks, canonical citations "
-    "and explicit limits. Seiche is research software, not investment advice; "
+    "Money, FX, capital-market and metadata-only China macro evidence with source "
+    "clocks and limits. Canonical citations remain explicit. Seiche is research "
+    "software, not investment advice; "
     "missing and stale evidence remains explicit."
 )
 OWNED_WORKFLOWS = (

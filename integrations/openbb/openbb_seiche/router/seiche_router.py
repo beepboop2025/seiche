@@ -42,8 +42,10 @@ async def funding_stress(
     examples=[
         APIEx(parameters={"selector": "summary", "provider": "seiche"}),
         PythonEx(
-            description="Read the bounded public FX evidence domain.",
-            code=['obb.seiche.world_markets(selector="forex", provider="seiche")'],
+            description="Read signed metadata-only China macro provenance.",
+            code=[
+                'obb.seiche.world_markets(selector="china_macro", provider="seiche")'
+            ],
         ),
     ],
 )
@@ -53,7 +55,7 @@ async def world_markets(
     standard_params: StandardParams,
     extra_params: ExtraParams,
 ) -> OBBject:
-    """Get bounded money-market, FX, and capital-market evidence domains."""
+    """Get bounded market evidence or metadata-only China macro provenance."""
     return await OBBject.from_query(Query(**locals()))
 
 

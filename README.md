@@ -193,17 +193,23 @@ live traded benchmark).
   connects money-market funding, 22 official daily FX reference series, three
   trade-weighted dollar indexes, and a bounded macro-capital transmission view
   through selected Treasury, credit, volatility, dealer, positioning and
-  commodity evidence. The response carries canonical citation URLs, separate
+  commodity evidence, plus a signed metadata-only China macro side projection
+  over four release-reviewed NBS series identities. The response carries canonical citation URLs, separate
   generation/evidence clocks, and `observed`, `derived`, `structural`,
   `restricted` or `unavailable` status. Add `?section=forex` (or `summary`,
-  `money_markets`, `capital_markets`, `sources`, `methodology`, `all`) for a
+  `money_markets`, `capital_markets`, `china_macro`, `sources`, `methodology`, `all`) for a
   smaller projection. The request never starts collection, scans historical
   repositories or fits a model.
 - Crawlable citation pages live at **[`/markets/`](https://seiche.info/markets/)**,
   **[`/markets/forex/`](https://seiche.info/markets/forex/)** and
-  **[`/markets/capital-markets/`](https://seiche.info/markets/capital-markets/)**.
+  **[`/markets/capital-markets/`](https://seiche.info/markets/capital-markets/)**,
+  with the signed metadata-only China catalog at
+  **[`/markets/china-macro/`](https://seiche.info/markets/china-macro/)**.
   They describe real public coverage and its gaps; they do not claim executable
-  quotes, every security or licensed redistribution rights.
+  quotes, every security or licensed redistribution rights. China raw exports,
+  histories and values remain restricted and never enter a gauge or score; see
+  [`docs/NBS_SIGNED_EXPORT.md`](docs/NBS_SIGNED_EXPORT.md) for the operator and
+  verification contract.
 
 ## Public money-market contracts
 
@@ -276,6 +282,8 @@ seiche book               # the Book: today's positions + walk-forward P&L verdi
 seiche ask "…"            # desk assistant, grounded in the live board
 seiche serve              # API + UI
 seiche mcp                # serve the board to AI agents over MCP (stdio)
+seiche nbs-intake catalog # four code-owned NBS source identities; no values
+seiche nbs-intake status  # verify the public-only signed China revision head
 ```
 
 ## For AI agents (MCP)

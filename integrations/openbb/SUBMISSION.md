@@ -78,11 +78,11 @@ After the immutable PyPI `0.1.0` receipt is live, add this block under the
 then-current **Applications → Live data** format:
 
 ```markdown
-**Seiche**: Source-clocked funding-liquidity and world-markets evidence for OpenBB, with explicit data-health and research-not-advice boundaries.
+**Seiche**: Source-clocked funding-liquidity and world-markets evidence for OpenBB, plus signed metadata-only China macro provenance with explicit rights and research-not-advice boundaries.
 - Open source: [github.com/beepboop2025/seiche](https://github.com/beepboop2025/seiche)
 - PyPI: [openbb-seiche](https://pypi.org/project/openbb-seiche/0.1.0/)
 - Install: `pip install openbb-seiche`
-- OpenBB usage: `obb.seiche.funding_stress(provider="seiche")` or `obb.seiche.world_markets(selector="summary", provider="seiche")`
+- OpenBB usage: `obb.seiche.funding_stress(provider="seiche")` or `obb.seiche.world_markets(selector="china_macro", provider="seiche")`
 - API required: None; the extension reads Seiche's anonymous hosted API
 - Author: [beepboop2025](https://github.com/beepboop2025)
 ```

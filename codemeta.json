@@ -2,7 +2,7 @@
   "@context": "https://w3id.org/codemeta/3.0",
   "@type": "SoftwareSourceCode",
   "name": "Seiche: World-markets evidence terminal",
-  "description": "Money, FX and capital-market evidence with source clocks, canonical citations and explicit limits. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
+  "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits. Canonical citations remain explicit. Seiche is research software, not investment advice; missing and stale evidence remains explicit.",
   "version": "0.11.0",
   "datePublished": "2026-08-22",
   "codeRepository": "https://github.com/beepboop2025/seiche",

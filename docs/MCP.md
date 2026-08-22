@@ -117,6 +117,7 @@ reads when an integration does not speak MCP:
 curl https://api.seiche.info/api/money-markets
 curl https://api.seiche.info/api/v2/money-markets
 curl https://api.seiche.info/api/v2/world-markets
+curl 'https://api.seiche.info/api/v2/world-markets?section=china_macro'
 curl https://api.seiche.info/api/oil-funding
 curl https://api.seiche.info/api/estuary
 ```
@@ -131,12 +132,32 @@ freshness and the regime at request time, then returns no chart history. Its opt
 
 `/api/v2/world-markets` and `world_markets_context` expose the same versioned,
 cache-only world-market projection. Both accept a `section` selector bounded to
-`summary`, `money_markets`, `forex`, `capital_markets`, `sources`, `methodology`
+`summary`, `money_markets`, `forex`, `capital_markets`, `china_macro`, `sources`, `methodology`
 or `all`; for example, use REST `?section=forex` or MCP `section="forex"`.
 REST defaults to `all`, while MCP defaults to the smaller `summary`. Each
 response carries canonical citation URLs, separates generation from evidence
 clocks, and keeps `observed`, `derived`, `structural`, `restricted` and
-`unavailable` evidence distinct.
+`unavailable` evidence distinct. `citation.topic_url` identifies the relevant
+human citation page; the `china_macro` selector routes it to
+`https://seiche.info/markets/china-macro/`.
+
+`china_macro` is a side projection over four release-reviewed NBS browser
+series identities. It remains usable when the wider completed board is cold,
+but it is metadata-only: raw exports, history and observations are never
+returned, and schema v1 fixes `values_published=false`,
+`raw_evidence_included=false`, `history_included=false`,
+`scoring_eligible=false` and `cn_cny_gauge_eligible=false`. A `structural`
+response is the unsigned, code-owned release-reviewed catalog. A `restricted`
+response means Seiche verified an owner-attested immutable capture; it is not an
+NBS digital signature or a redistribution grant. Its `knowledge_time` records
+when the evidence was captured and knowable, not an observation date, and it
+never advances World Markets clocks, coverage, CN-CNY gauges or scoring.
+
+The standalone `sources` selector is intentionally reference-only and does not
+load the restricted China revision. Use `all` when an agent needs the China
+context and its NBS entries in the same response; only then can a verified
+revision make those entries `used_in_snapshot=true` with supporting
+`projection_paths`. Catalog presence alone never proves use.
 
 The USD regime exposes both the raw most-extreme eligible channel and a
 Bonferroni-adjusted family-wise rank. Its label is descriptive context, not an
@@ -255,6 +276,7 @@ recorded in the `provisions` table for audit.
 | `crypto_stress_record` | Wrecks: labelled crypto stress episodes (Terra, FTX, SVB/USDC, the Oct-2025 cascade…) replayed point-in-time against the funding board — transmission vs specificity, stated honestly | public |
 | `institutional_flows` | Hedge-fund, pension and sovereign positioning from public prints; implementation version tags withheld anonymously | public |
 | `money_market_context` | Chartless projection of the assembled USD desk: compact summary, one of seven granular sections, sources, methodology, or all; exact-date/native-cadence context and explicit unavailability stay attached | public |
+| `world_markets_context` | Chartless money, FX, capital and metadata-only China macro context with selector-specific citation URLs; China is an unsigned structural catalog unless a restricted response carries verified Seiche owner-attested provenance | public |
 | `oil_funding_context` | WTI/Brent and funding evidence; Ballast's CFTC WTI/Henry Hub gross cash-displacement, concentration and EIA inventory ledger; live Cushing/Brent−WTI observations separated from dated capacity, benchmark and chokepoint references; change-on-change coupling; explicitly scenario-only cargo/margin/India arithmetic | public |
 | `fx_materials_passage` | Upstream FX/material pressure versus funding priced, with the Passage's discovery/holdout ledger and settlement scenarios | public |
 | `funding_stress_forecast` | P(funding event) at 5/10/21bd from three independent models, each validated | subscriber |
@@ -333,7 +355,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `crypto_stress_record` | yes | labelled episodes replayed against the board |
 | `institutional_flows` | yes | public prints in, a reading out (`method_versions` withheld) |
 | `money_market_context` | yes | compact chartless USD desk context; selector limits payload while formulas, provenance and caveats remain requestable |
-| `world_markets_context` | yes | bounded chartless money, FX and capital-market context with source clocks, canonical citations and explicit partial/unavailable states |
+| `world_markets_context` | yes | bounded chartless money, FX, capital and metadata-only China macro context with selector-specific citations and explicit partial/unavailable states |
 | `oil_funding_context` | yes | compact observed transmission, Ballast futures-cash context and live-vs-reference oil-market structure; bounded derivations and scenarios stay labelled and separate |
 | `fx_materials_passage` | yes | compact upstream gap plus the untouched-holdout ledger |
 | `funding_stress_forecast` | no | six modelled views of forward event odds |

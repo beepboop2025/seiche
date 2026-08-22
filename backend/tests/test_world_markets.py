@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 
+from fastapi import Response
 from fastapi.testclient import TestClient
 from seiche import api
+from seiche import context_views
 from seiche import mcp_server as mcp
+from seiche import nbs_intake as nbs
 from seiche.markets.world import (
     CANONICAL_URLS,
     WORLD_MARKETS_SCHEMA,
     WORLD_MARKETS_SELECTORS,
     WORLD_MARKETS_STATUSES,
     project_world_markets,
+    unavailable_world_markets,
 )
 
 
@@ -182,6 +186,48 @@ def _mcp_payload(response: dict) -> dict:
     return json.loads(response["result"]["content"][0]["text"])
 
 
+def _verified_china_record() -> dict:
+    context = nbs.nbs_public_catalog()
+    context.pop("reason_code")
+    context.update(
+        available=True,
+        evidence_status="restricted",
+        revision_id="nbs-2026-07-r1",
+        predecessor_revision_id=None,
+        predecessor_manifest_sha256=None,
+        knowledge_time="2026-08-10T02:00:00Z",
+        provenance={
+            "manifest_sha256": "a" * 64,
+            "owner_attestation": "ed25519",
+        },
+        attestation={
+            "schema": nbs.NBS_SIGNATURE_SCHEMA,
+            "algorithm": "ed25519",
+            "domain": nbs.NBS_SIGNATURE_DOMAIN,
+            "export_id": "nbs-2026-07-r1",
+            "signer_key_id": "c" * 64,
+            "signed_at": "2026-08-10T02:05:00Z",
+            "manifest_sha256": "a" * 64,
+            "public_projection_sha256": "d" * 64,
+            "signature": "e" * 128,
+        },
+        caveats=[
+            "Owner-attested browser export; not an NBS digital signature.",
+            "Metadata-only macro context; excluded from scoring and CN-CNY gauge roles.",
+            "Raw evidence and observation values remain restricted; public revision commitments are retained.",
+        ],
+    )
+    return context
+
+
+def _verified_china_context() -> nbs.NBSMacroContext:
+    record = _verified_china_record()
+    return nbs.NBSMacroContext(
+        revision_id=str(record["revision_id"]),
+        record=record,
+    )
+
+
 def test_projection_is_versioned_citable_bounded_and_honest() -> None:
     payload = project_world_markets(_snapshot())
 
@@ -239,6 +285,7 @@ def test_projection_is_versioned_citable_bounded_and_honest() -> None:
         "forex_leaders_max": 22,
         "network_edges_max": 12,
         "capital_cards_max": 8,
+        "china_macro_series_max": 4,
     }
 
 
@@ -258,6 +305,8 @@ def test_official_registry_contains_verified_primary_urls() -> None:
         "https://data.financialresearch.gov/v1",
         "https://www.cboe.com/tradable_products/vix/",
         "https://www.eia.gov/opendata/",
+        "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData",
+        "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html",
     } <= urls
     assert all(item["status"] == "structural" for item in sources)
     by_id = {item["id"]: item for item in sources}
@@ -268,6 +317,21 @@ def test_official_registry_contains_verified_primary_urls() -> None:
     )
     assert by_id["sec_edgar_api"]["used_in_snapshot"] is False
     assert by_id["sec_edgar_api"]["catalog_role"] == "official_reference_only"
+    assert by_id["nbs_monthly_data_browser"]["used_in_snapshot"] is False
+    assert by_id["nbs_monthly_data_browser"]["catalog_role"] == (
+        "official_reference_only"
+    )
+
+    verified_sources = project_world_markets(
+        _snapshot(),
+        selector="sources",
+        china_macro_context=_verified_china_context(),
+    )["sources"]
+    verified_by_id = {item["id"]: item for item in verified_sources}
+    assert verified_by_id["nbs_monthly_data_browser"]["used_in_snapshot"] is True
+    assert verified_by_id["nbs_monthly_data_browser"]["projection_paths"] == [
+        "china_macro"
+    ]
 
 
 def test_forex_projection_includes_the_full_registered_panel_but_no_more() -> None:
@@ -295,7 +359,7 @@ def test_forex_projection_includes_the_full_registered_panel_but_no_more() -> No
 
 
 def test_every_selector_is_bounded_to_its_named_projection() -> None:
-    domains = {"money_markets", "forex", "capital_markets"}
+    domains = {"money_markets", "forex", "capital_markets", "china_macro"}
     for selector in WORLD_MARKETS_SELECTORS:
         payload = project_world_markets(_snapshot(), selector=selector)
         assert payload["selection"] == selector
@@ -324,6 +388,117 @@ def test_selected_unavailable_domain_cannot_inherit_other_domain_success() -> No
     assert payload["as_of"] == "2026-08-19"
     assert payload["forex"]["status"] == "unavailable"
     assert payload["coverage"]["available_domains"] == 2
+
+
+def test_china_macro_is_metadata_only_and_never_enters_world_clocks() -> None:
+    payload = project_world_markets(
+        _snapshot(),
+        selector="china_macro",
+        china_macro_context=_verified_china_context(),
+    )
+    china = payload["china_macro"]
+
+    assert payload["ok"] is True
+    assert payload["status"] == "restricted"
+    assert payload["as_of"] is None
+    assert payload["generated_at"] is None
+    assert payload["citation"]["generated_at"] is None
+    assert payload["clocks"]["snapshot_generated_at"] is None
+    assert payload["clocks"]["evaluation_at"] is None
+    assert payload["clocks"]["latest_domain_as_of"] is None
+    assert payload["clocks"]["domains"] == {
+        "money_markets": None,
+        "forex": None,
+        "capital_markets": None,
+    }
+    assert payload["clocks"]["selected_evidence_as_of"] is None
+    assert payload["clocks"]["excluded_from_observation_clocks"] == [
+        "china_macro.knowledge_time"
+    ]
+    assert payload["citation"]["topic_url"] == (
+        "https://seiche.info/markets/china-macro/"
+    )
+    assert china["available"] is True
+    assert china["evidence_status"] == "restricted"
+    assert china["values_published"] is False
+    assert china["raw_evidence_included"] is False
+    assert china["history_included"] is False
+    assert china["scoring_eligible"] is False
+    assert china["cn_cny_gauge_eligible"] is False
+    assert china["revision_id"] == "nbs-2026-07-r1"
+    serialized = json.dumps(payload)
+    assert "RAW-NBS-SENTINEL" not in serialized
+    assert "100.5" not in serialized
+    assert "latest_value" not in serialized
+    assert "history" not in _keys(china)
+
+
+def test_china_macro_static_catalog_is_structural_not_observed() -> None:
+    payload = project_world_markets(_snapshot(), selector="china_macro")
+
+    assert payload["ok"] is True
+    assert payload["status"] == "structural"
+    assert payload["china_macro"]["available"] is False
+    assert payload["china_macro"]["evidence_status"] == "unavailable"
+    assert payload["china_macro"]["series_count"] == 4
+
+
+def test_china_macro_rejects_self_promoted_or_value_publishing_context() -> None:
+    verified = _verified_china_record()
+    for candidate in (
+        verified,
+        {**verified, "schema": "attacker.example.v1"},
+        {**verified, "evidence_status": "unavailable"},
+        {**verified, "values_published": True},
+    ):
+        payload = project_world_markets(
+            _snapshot(),
+            selector="china_macro",
+            china_macro_context=candidate,
+        )
+
+        assert payload["status"] == "structural"
+        assert payload["china_macro"]["available"] is False
+        assert payload["china_macro"]["evidence_status"] == "unavailable"
+        assert payload["china_macro"]["reason_code"] == "signed_owner_export_required"
+        assert "reason" not in payload["china_macro"]
+        assert "revision_id" not in payload["china_macro"]
+        assert "attestation" not in payload["china_macro"]
+
+
+def test_china_macro_typed_context_cannot_smuggle_unknown_nested_values() -> None:
+    record = _verified_china_record()
+    record["raw_evidence"] = "RAW-NBS-SENTINEL"
+    record["series"][0]["semantic_contract"]["latest_value"] = "100.5"
+    context = nbs.NBSMacroContext(
+        revision_id=str(record["revision_id"]),
+        record=record,
+    )
+
+    payload = project_world_markets(
+        _snapshot(),
+        selector="china_macro",
+        china_macro_context=context,
+    )
+
+    assert payload["status"] == "structural"
+    assert payload["china_macro"]["available"] is False
+    serialized = json.dumps(payload)
+    assert "RAW-NBS-SENTINEL" not in serialized
+    assert "100.5" not in serialized
+    assert "latest_value" not in serialized
+
+
+def test_dedicated_china_macro_stays_available_in_cold_board_helper() -> None:
+    payload = unavailable_world_markets(
+        selector="china_macro",
+        china_macro_context=_verified_china_context(),
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "restricted"
+    assert "reason" not in payload
+    assert payload["china_macro"]["available"] is True
 
 
 def test_capital_only_headline_uses_its_direct_observation_clock() -> None:
@@ -613,6 +788,65 @@ def test_rest_cold_cache_returns_typed_unavailable_without_building(
     assert "never starts collection or model fitting" in payload["reason"]
 
 
+def test_china_macro_rest_and_mcp_survive_a_cold_world_board(monkeypatch) -> None:
+    china = _verified_china_context()
+    monkeypatch.setattr(context_views, "public_china_macro_context", lambda: china)
+
+    def forbidden_board(*_args, **_kwargs):
+        raise AssertionError("dedicated China context must bypass the world board")
+
+    monkeypatch.setattr(api.assemble, "cached_snapshot", forbidden_board)
+    monkeypatch.setattr(api.assemble, "restore_cached_snapshot", forbidden_board)
+
+    rest = TestClient(api.app).get("/api/v2/world-markets?section=china_macro")
+    assert rest.status_code == 200
+    assert rest.json()["china_macro"]["revision_id"] == "nbs-2026-07-r1"
+    assert rest.json()["status"] == "restricted"
+
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", forbidden_board)
+    response = mcp.dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": "china-cold",
+            "method": "tools/call",
+            "params": {
+                "name": "world_markets_context",
+                "arguments": {"section": "china_macro"},
+            },
+        },
+        public=True,
+    )
+    mcp_payload = _mcp_payload(response)
+    assert "isError" not in response["result"]
+    assert mcp_payload["china_macro"] == rest.json()["china_macro"]
+    assert mcp_payload["generated_at"] is None
+
+
+def test_non_china_rest_and_mcp_selectors_never_resolve_nbs_disk(monkeypatch) -> None:
+    snapshot = _snapshot()
+
+    def forbidden_nbs():
+        raise AssertionError("non-China selector must not resolve the NBS store")
+
+    monkeypatch.setattr(context_views, "public_china_macro_context", forbidden_nbs)
+    monkeypatch.setattr(api, "_completed_world_markets_snapshot", lambda: snapshot)
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snapshot)
+
+    for selector in (
+        "summary",
+        "money_markets",
+        "forex",
+        "capital_markets",
+        "sources",
+        "methodology",
+    ):
+        rest = api.world_markets_v2(Response(), section=selector)
+        assert rest["selection"] == selector
+
+        projected = mcp.tool_world_markets({"section": selector}, True)
+        assert projected["selection"] == selector
+
+
 def test_mcp_tool_selectors_are_public_chartless_and_cache_only(monkeypatch) -> None:
     snapshot = _snapshot()
     monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snapshot)
@@ -650,6 +884,16 @@ def test_mcp_tool_selectors_are_public_chartless_and_cache_only(monkeypatch) -> 
         WORLD_MARKETS_SELECTORS
     )
     assert descriptor["outputSchema"]["properties"]["schema"] == {"type": "string"}
+    china_schema = descriptor["outputSchema"]["properties"]["china_macro"]
+    assert china_schema == mcp.CHINA_MACRO_OUTPUT_SCHEMA
+    for field in (
+        "scoring_eligible",
+        "cn_cny_gauge_eligible",
+        "values_published",
+        "raw_evidence_included",
+        "history_included",
+    ):
+        assert china_schema["properties"][field] == {"const": False}
     assert "world_markets_context" in mcp.SERVER_INSTRUCTIONS
     assert "Undertow" in mcp.SERVER_INSTRUCTIONS
 

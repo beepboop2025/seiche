@@ -130,13 +130,15 @@ jobs:
             backend/tests/test_public_money_market_discovery.py \
             backend/tests/test_public_dataset_deploy.py \
             backend/tests/test_python_artifact_verifier.py \
-            distribution/datasets/test_distribution_kit.py
+            distribution/datasets/test_distribution_kit.py \
+            clients/python/test_world_markets_client.py
           python distribution/datasets/stage.py --validate-only
 
       - name: Lint distribution scripts outside the backend package
         run: |
           ruff check --no-cache \
             clients/python/world_markets.py \
+            clients/python/test_world_markets_client.py \
             distribution/datasets/stage.py \
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
@@ -145,6 +147,7 @@ jobs:
             ops/release/verify_public_dataset.py
           ruff format --check --no-cache \
             clients/python/world_markets.py \
+            clients/python/test_world_markets_client.py \
             distribution/datasets/stage.py \
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
@@ -161,10 +164,30 @@ jobs:
           payload = {
               "schema": "seiche.world-markets.v1",
               "selection": "sources",
+              "generated_at": "2026-08-21T20:54:06Z",
+              "as_of": None,
               "context_only": True,
-              "clocks": {"boundary": "synthetic-offline-contract"},
-              "citation": {"canonical_url": "https://seiche.info/world-markets"},
+              "clocks": {
+                  "boundary": "synthetic-offline-contract",
+                  "domains": {
+                      "money_markets": "2026-08-20",
+                      "forex": "2026-08-19",
+                      "capital_markets": "2026-08-18",
+                  },
+                  "snapshot_generated_at": "2026-08-21T20:54:06Z",
+                  "latest_domain_as_of": "2026-08-20",
+                  "selected_evidence_as_of": None,
+                  "excluded_from_observation_clocks": [
+                      "china_macro.knowledge_time"
+                  ],
+              },
+              "citation": {
+                  "canonical_url": "https://seiche.info/world-markets",
+                  "generated_at": "2026-08-21T20:54:06Z",
+                  "evidence_as_of": None,
+              },
               "scope": {"coverage_claim": "curated_partial_non_exhaustive"},
+              "sources": [],
           }
           client["_validate_contract"](payload, "sources")
           receipt = client["contract_receipt"](
@@ -200,10 +223,28 @@ jobs:
             return new Response(JSON.stringify({
               schema: "seiche.world-markets.v1",
               selection: "sources",
+              generated_at: "2026-08-21T20:54:06Z",
+              as_of: null,
               context_only: true,
-              clocks: { boundary: "synthetic-offline-contract" },
-              citation: { canonical_url: "https://seiche.info/world-markets" },
+              clocks: {
+                boundary: "synthetic-offline-contract",
+                domains: {
+                  money_markets: "2026-08-20",
+                  forex: "2026-08-19",
+                  capital_markets: "2026-08-18",
+                },
+                snapshot_generated_at: "2026-08-21T20:54:06Z",
+                latest_domain_as_of: "2026-08-20",
+                selected_evidence_as_of: null,
+                excluded_from_observation_clocks: ["china_macro.knowledge_time"],
+              },
+              citation: {
+                canonical_url: "https://seiche.info/world-markets",
+                generated_at: "2026-08-21T20:54:06Z",
+                evidence_as_of: null,
+              },
               scope: { coverage_claim: "curated_partial_non_exhaustive" },
+              sources: [],
             }), { status: 200, headers: { "content-type": "application/json" } });
           };
 
@@ -239,6 +280,7 @@ jobs:
 
       - name: Parse and exercise the R contract without network access
         run: |
+          Rscript clients/r/world_markets_test.R
           Rscript - <<'RS'
           invisible(parse(file = "clients/r/world_markets.R"))
           client <- new.env(parent = baseenv())
@@ -246,10 +288,30 @@ jobs:
           payload <- list(
             schema = "seiche.world-markets.v1",
             selection = "sources",
+            generated_at = "2026-08-21T20:54:06Z",
+            as_of = NULL,
             context_only = TRUE,
-            clocks = list(boundary = "synthetic-offline-contract"),
-            citation = list(canonical_url = "https://seiche.info/world-markets"),
-            scope = list(coverage_claim = "curated_partial_non_exhaustive")
+            clocks = list(
+              boundary = "synthetic-offline-contract",
+              domains = list(
+                money_markets = "2026-08-20",
+                forex = "2026-08-19",
+                capital_markets = "2026-08-18"
+              ),
+              snapshot_generated_at = "2026-08-21T20:54:06Z",
+              latest_domain_as_of = "2026-08-20",
+              selected_evidence_as_of = NULL,
+              excluded_from_observation_clocks = list(
+                "china_macro.knowledge_time"
+              )
+            ),
+            citation = list(
+              canonical_url = "https://seiche.info/world-markets",
+              generated_at = "2026-08-21T20:54:06Z",
+              evidence_as_of = NULL
+            ),
+            scope = list(coverage_claim = "curated_partial_non_exhaustive"),
+            sources = list()
           )
           stopifnot(isTRUE(client$validate_world_markets_contract(payload, "sources")))
           receipt <- client$contract_receipt(
