@@ -171,6 +171,33 @@ def _materialized_privileged_assets(tmp_path: Path) -> tuple[Path, str, Path]:
     return destination, target, repository
 
 
+def _isolated_nbs_runtime_test_python() -> str:
+    probe = (
+        "import sys\n"
+        "supported = sys.version_info >= (3, 11)\n"
+        "isolated = not any(\n"
+        "    path == '/home' or path.startswith('/home/') for path in sys.path\n"
+        ")\n"
+        "raise SystemExit(0 if supported and isolated else 1)\n"
+    )
+    for candidate in (Path(sys.executable), Path("/usr/bin/python3")):
+        if (
+            not candidate.is_absolute()
+            or not candidate.is_file()
+            or not os.access(candidate, os.X_OK)
+        ):
+            continue
+        result = subprocess.run(
+            [str(candidate), "-I", "-B", "-c", probe],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return str(candidate)
+    pytest.fail("no supported Python with an isolated non-/home import path exists")
+
+
 def _nbs_runtime_test_fixture(
     tmp_path: Path, *, target: str = "a" * 40
 ) -> tuple[Path, Path, dict[str, str]]:
@@ -189,7 +216,7 @@ def _nbs_runtime_test_fixture(
         "SEICHE_NBS_RUNTIME_ROOT": str(runtime_root),
         "SEICHE_NBS_RUNTIME_TEST_ONLY": "1",
         "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
-        "SEICHE_NBS_RUNTIME_TEST_PYTHON": sys.executable,
+        "SEICHE_NBS_RUNTIME_TEST_PYTHON": _isolated_nbs_runtime_test_python(),
     }
     return asset_root, runtime_root, environment
 
