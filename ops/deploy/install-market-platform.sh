@@ -1035,11 +1035,13 @@ DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker
 DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
 run_recovery_proof_preflight() {
     SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+        SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
         SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
         /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
 run_data_readiness_preflight() {
-    SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
+    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
+        SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
         /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
 activate_data_readiness_after_proof() {

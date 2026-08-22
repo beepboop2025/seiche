@@ -285,6 +285,17 @@ mutation. It starts a previously active timer only after exact-SHA health and
 promotion, and restores prior bytes, absence, enablement, and activity on a
 rollback.
 
+The five-minute data-readiness monitor treats an absent configuration as
+unconfigured and a valid `CANARY=1` configuration as manual bootstrap. Once
+`CANARY=0` arms the daily schedule, readiness requires a root-private,
+destination-bound `last_success` with exact object versions, 90-day COMPLIANCE
+evidence, and a restore verification no older than 36 hours. A stopped timer or
+a job that never starts therefore becomes an alert when the last recoverable
+proof crosses that bound, without creating a circular dependency between
+candidate readiness and post-promotion timer activation. Root-owned release
+preflights skip only this freshness check so a stale proof cannot prevent
+deployment of its own repair; the persistent monitor never sets that bypass.
+
 This is off-node protection, not provider or account independence. A separate
 provider/account copy and a downtime recovery exercise into explicitly chosen
 non-production paths remain the stronger disaster-recovery boundary.

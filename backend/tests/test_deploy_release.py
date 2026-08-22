@@ -1359,6 +1359,24 @@ fi
 
 
 @pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_release_readiness_preflights_have_scoped_offsite_repair_bypass(
+    script_path: Path,
+) -> None:
+    script = script_path.read_text()
+    helper_start = script.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
+    if script_path == DEPLOY_WRAPPER:
+        helper_end = script.index("start_market_services() {", helper_start)
+    else:
+        helper_end = script.index(
+            'if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then',
+            helper_start,
+        )
+    helper = script[helper_start:helper_end]
+
+    assert helper.count("SEICHE_DATA_READINESS_SKIP_OFFSITE=1") == 2
+
+
+@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
 def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
     script_path: Path, tmp_path: Path
 ):
@@ -1703,8 +1721,7 @@ def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
     assert "upstream_products=FDR007,SHIBOR_ON" in installer
     assert "canonical_outputs=CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON" in installer
     assert (
-        "collection_scope=automated_bounded_fdr007_and_shibor_on_history"
-        in installer
+        "collection_scope=automated_bounded_fdr007_and_shibor_on_history" in installer
     )
     assert "permitted_use=internal_research_only" in installer
     assert "publication=prohibited" in installer

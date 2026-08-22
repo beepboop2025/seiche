@@ -145,6 +145,12 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "SEICHE_DATA_READINESS_RECEIPT_UID": str(os.getuid()),
         "SEICHE_DATA_READINESS_RECEIPT_GROUP": grp.getgrgid(os.getgid()).gr_name,
         "SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH": str(deployed_sha_path),
+        "SEICHE_DATA_READINESS_OFFSITE_ENV_FILE": str(tmp_path / "offsite-backup.env"),
+        "SEICHE_DATA_READINESS_OFFSITE_STATUS_PATH": str(
+            tmp_path / "offsite-state" / "status.json"
+        ),
+        "SEICHE_DATA_READINESS_OFFSITE_UID": str(os.getuid()),
+        "SEICHE_DATA_READINESS_OFFSITE_GID": str(os.getgid()),
         "SEICHE_DATA_READINESS_NOW_EPOCH": str(int(NOW.timestamp())),
         "SEICHE_DATA_READINESS_REQUIRED_UNITS": (
             "seiche-api.service seiche-market-worker.service "
@@ -182,6 +188,111 @@ def _run(tmp_path: Path, **updates: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _write_offsite_config(env: dict[str, str], *, canary: str = "0") -> Path:
+    path = Path(env["SEICHE_DATA_READINESS_OFFSITE_ENV_FILE"])
+    path.write_text(
+        "SEICHE_OFFSITE_BACKUP_BUCKET=seiche-recovery\n"
+        "SEICHE_OFFSITE_BACKUP_PREFIX=seiche/market-backups/v1\n"
+        "SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE=anchor\n"
+        "SEICHE_OFFSITE_BACKUP_WRITE_ENABLED=1\n"
+        f"SEICHE_OFFSITE_BACKUP_CANARY={canary}\n"
+        "SEICHE_OFFSITE_BACKUP_KEY_ID=market-key-2026-08-v1\n"
+        "SEICHE_OFFSITE_BACKUP_DESTINATION_ID=hetzner-primary-v1\n"
+        "SEICHE_OFFSITE_BACKUP_RETENTION_MODE=COMPLIANCE\n"
+        "SEICHE_OFFSITE_BACKUP_RETENTION_DAYS=90\n"
+    )
+    path.chmod(0o600)
+    return path
+
+
+def _write_offsite_status(
+    env: dict[str, str],
+    *,
+    verified_at: datetime | None = None,
+    bucket: str = "seiche-recovery",
+    object_lock: dict[str, object] | None = None,
+    current_status: str = "success",
+) -> Path:
+    path = Path(env["SEICHE_DATA_READINESS_OFFSITE_STATUS_PATH"])
+    path.parent.mkdir(mode=0o700)
+    path.parent.chmod(0o700)
+    prefix = "seiche/market-backups/v1"
+    endpoint = "https://nbg1.your-objectstorage.com"
+    region = "nbg1"
+    snapshot_id = "20260822T020000Z"
+    attempt_id = "20260822T052000Z-1234"
+    lock = object_lock or {"mode": "COMPLIANCE", "days": 90}
+    destination = {
+        "id": "hetzner-primary-v1",
+        "endpoint": endpoint,
+        "region": region,
+        "bucket": bucket,
+        "prefix": prefix,
+    }
+    receipt_key = f"{prefix}/canary/v1/RECEIPT.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "seiche.market-offsite-backup-status.v1",
+                "status": current_status,
+                "observed_at": (NOW - timedelta(minutes=30)).isoformat(),
+                "attempt_id": attempt_id,
+                "snapshot_id": snapshot_id,
+                "source_revision": "b" * 40,
+                "provider": "hetzner-object-storage",
+                "bucket": bucket,
+                "prefix": prefix,
+                "key_id": "market-key-2026-08-v1",
+                "destination": destination,
+                "ciphertext_sha256": "c" * 64,
+                "ciphertext_bytes": 123456,
+                "ciphertext_version_id": "ciphertext-version-1",
+                "ciphertext_etag": '"0123456789abcdef"',
+                "checksum_version_id": "checksum-version-1",
+                "checksum_etag": '"1234567890abcdef"',
+                "source_inventory_sha256": "d" * 64,
+                "source_content_set_sha256": "e" * 64,
+                "object_lock": lock,
+                "remote_receipt_key": receipt_key,
+                "remote_receipt_version_id": "receipt-version-1",
+                "remote_receipt_etag": '"2345678901abcdef"',
+                "restore_verified": current_status == "success",
+                "failure_class": (
+                    "operational_failure" if current_status == "failed" else None
+                ),
+                "last_success": {
+                    "attempt_id": attempt_id,
+                    "snapshot_id": snapshot_id,
+                    "source_revision": "b" * 40,
+                    "bucket": bucket,
+                    "prefix": prefix,
+                    "key_id": "market-key-2026-08-v1",
+                    "destination": destination,
+                    "ciphertext_sha256": "c" * 64,
+                    "ciphertext_bytes": 123456,
+                    "ciphertext_version_id": "ciphertext-version-1",
+                    "ciphertext_etag": '"0123456789abcdef"',
+                    "checksum_version_id": "checksum-version-1",
+                    "checksum_etag": '"1234567890abcdef"',
+                    "source_inventory_sha256": "d" * 64,
+                    "source_content_set_sha256": "e" * 64,
+                    "remote_receipt_key": receipt_key,
+                    "remote_receipt_version_id": "receipt-version-1",
+                    "remote_receipt_etag": '"2345678901abcdef"',
+                    "object_lock": lock,
+                    "restore_verified": True,
+                    "verified_at": (
+                        verified_at or NOW - timedelta(hours=1)
+                    ).isoformat(),
+                },
+            }
+        )
+        + "\n"
+    )
+    path.chmod(0o600)
+    return path
+
+
 def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     tmp_path: Path,
 ) -> None:
@@ -190,6 +301,255 @@ def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "seiche data readiness: ready\n"
     assert result.stderr == ""
+
+
+def test_unconfigured_offsite_does_not_gate_readiness(tmp_path: Path) -> None:
+    result = _run(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_canary_mode_does_not_require_offsite_status(tmp_path: Path) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env, canary="1")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_orphan_offsite_status_does_not_configure_the_monitor(
+    tmp_path: Path,
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_status(env, verified_at=NOW - timedelta(days=30))
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("current_status", ["success", "running", "failed"])
+def test_scheduled_mode_accepts_fresh_restore_verified_last_success(
+    tmp_path: Path, current_status: str
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    _write_offsite_status(env, current_status=current_status)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "version",
+        "receipt_key",
+        "endpoint",
+        "top_bucket",
+        "top_lock",
+        "status",
+    ],
+)
+def test_scheduled_mode_rejects_impossible_producer_status_shape(
+    tmp_path: Path, drift: str
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    status_path = _write_offsite_status(env)
+    document = json.loads(status_path.read_text())
+    if drift == "version":
+        document["last_success"]["ciphertext_version_id"] = "has spaces"
+    elif drift == "receipt_key":
+        document["last_success"]["remote_receipt_key"] = (
+            "seiche/market-backups/v1/custom/RECEIPT.json"
+        )
+    elif drift == "endpoint":
+        document["last_success"]["destination"]["endpoint"] = "wrong.example"
+    elif drift == "top_bucket":
+        document["bucket"] = "wrong-recovery"
+    elif drift == "top_lock":
+        document["object_lock"] = {"mode": "GOVERNANCE", "days": 90}
+    else:
+        document["status"] = "complete"
+    status_path.write_text(json.dumps(document) + "\n")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: offsite backup proof missing or invalid\n"
+    )
+
+
+def test_scheduled_mode_requires_status(tmp_path: Path) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: offsite backup proof missing or invalid\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("verified_at", "expected"),
+    [
+        (NOW - timedelta(hours=36, seconds=1), "offsite backup proof stale"),
+        (
+            NOW + timedelta(minutes=5, seconds=1),
+            "offsite backup proof timestamp is in the future",
+        ),
+    ],
+)
+def test_scheduled_mode_rejects_stale_and_future_proofs(
+    tmp_path: Path, verified_at: datetime, expected: str
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    _write_offsite_status(env, verified_at=verified_at)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == f"seiche data readiness: {expected}\n"
+
+
+def test_release_repair_bypass_skips_only_offsite_freshness(tmp_path: Path) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    _write_offsite_status(env, verified_at=NOW - timedelta(days=30))
+    env["SEICHE_DATA_READINESS_SKIP_OFFSITE"] = "1"
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_invalid_release_repair_bypass_fails_configuration(tmp_path: Path) -> None:
+    result = _run(tmp_path, SEICHE_DATA_READINESS_SKIP_OFFSITE="yes")
+
+    assert result.returncode == 1
+    assert result.stderr == "seiche data readiness: configuration invalid\n"
+
+
+@pytest.mark.parametrize("drift", ["bucket", "object_lock"])
+def test_scheduled_mode_rejects_destination_or_object_lock_mismatch(
+    tmp_path: Path, drift: str
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    if drift == "bucket":
+        _write_offsite_status(env, bucket="wrong-recovery")
+    else:
+        _write_offsite_status(env, object_lock={"mode": "GOVERNANCE", "days": 90})
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: offsite backup proof missing or invalid\n"
+    )
+
+
+@pytest.mark.parametrize("drift", ["symlink", "hardlink", "mode", "owner", "parent"])
+def test_scheduled_mode_rejects_unsafe_status_identity(
+    tmp_path: Path, drift: str
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    _write_offsite_config(env)
+    status = _write_offsite_status(env)
+    if drift == "symlink":
+        target = status.with_name("status-target.json")
+        target.write_text(status.read_text())
+        target.chmod(0o600)
+        status.unlink()
+        status.symlink_to(target)
+    elif drift == "hardlink":
+        os.link(status, status.with_name("status-hardlink.json"))
+    elif drift == "mode":
+        status.chmod(0o640)
+    elif drift == "owner":
+        env["SEICHE_DATA_READINESS_OFFSITE_UID"] = str(os.getuid() + 1)
+    else:
+        status.parent.chmod(0o750)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    expected = (
+        "offsite backup configuration invalid"
+        if drift == "owner"
+        else "offsite backup proof missing or invalid"
+    )
+    assert result.stderr == f"seiche data readiness: {expected}\n"
 
 
 @pytest.mark.parametrize(
@@ -515,8 +875,7 @@ def test_inactive_required_unit_fails_closed(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert result.stderr == (
-        "seiche data readiness: required unit inactive: "
-        "seiche-market-worker.service\n"
+        "seiche data readiness: required unit inactive: seiche-market-worker.service\n"
     )
 
 
@@ -525,8 +884,7 @@ def test_active_but_disabled_required_timer_fails_closed(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert result.stderr == (
-        "seiche data readiness: required timer disabled: "
-        "seiche-data-readiness.timer\n"
+        "seiche data readiness: required timer disabled: seiche-data-readiness.timer\n"
     )
 
 
@@ -561,6 +919,8 @@ def test_systemd_units_are_alerting_hardened_and_five_minutely() -> None:
     assert "ProtectHome=read-only" in service
     assert "CapabilityBoundingSet=\n" in service
     assert "ReadOnlyPaths=/home/seiche/app" in service
+    assert "-/var/lib/seiche-offsite-backup" in service
+    assert "SEICHE_DATA_READINESS_SKIP_OFFSITE" not in service
     assert "IPAddressAllow=localhost" in service
     assert "After=seiche-market-worker.service seiche-source-worker.service" in timer
     assert "OnCalendar=*-*-* *:00/5:00" in timer

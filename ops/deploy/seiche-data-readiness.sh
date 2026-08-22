@@ -13,12 +13,18 @@ BACKUP_DIR="${SEICHE_DATA_READINESS_BACKUP_DIR:-/var/backups/seiche-market}"
 BACKUP_ARTIFACT="${SEICHE_DATA_READINESS_BACKUP_ARTIFACT:-}"
 RESTORE_RECEIPT="${SEICHE_DATA_READINESS_RESTORE_RECEIPT:-/var/lib/seiche-recovery-proof/backup-restore-check.status}"
 DEPLOYED_SHA_PATH="${SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+OFFSITE_ENV_FILE="${SEICHE_DATA_READINESS_OFFSITE_ENV_FILE:-/etc/seiche/offsite-backup.env}"
+OFFSITE_STATUS_PATH="${SEICHE_DATA_READINESS_OFFSITE_STATUS_PATH:-/var/lib/seiche-offsite-backup/status.json}"
 RECEIPT_UID="${SEICHE_DATA_READINESS_RECEIPT_UID:-0}"
 RECEIPT_GROUP="${SEICHE_DATA_READINESS_RECEIPT_GROUP:-seiche}"
+OFFSITE_UID="${SEICHE_DATA_READINESS_OFFSITE_UID:-0}"
+OFFSITE_GID="${SEICHE_DATA_READINESS_OFFSITE_GID:-0}"
 PROOF_ONLY="${SEICHE_DATA_READINESS_PROOF_ONLY:-0}"
+SKIP_OFFSITE="${SEICHE_DATA_READINESS_SKIP_OFFSITE:-0}"
 MAX_GENERATED_AGE="${SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS:-900}"
 MAX_BACKUP_AGE="${SEICHE_DATA_READINESS_BACKUP_MAX_AGE_SECONDS:-129600}"
 MAX_RESTORE_AGE="${SEICHE_DATA_READINESS_RESTORE_MAX_AGE_SECONDS:-691200}"
+MAX_OFFSITE_AGE="${SEICHE_DATA_READINESS_OFFSITE_MAX_AGE_SECONDS:-129600}"
 MAX_FUTURE_SKEW="${SEICHE_DATA_READINESS_MAX_FUTURE_SKEW_SECONDS:-300}"
 DISK_CRITICAL_PERCENT="${SEICHE_DATA_READINESS_DISK_CRITICAL_PERCENT:-90}"
 CURL_TIMEOUT="${SEICHE_DATA_READINESS_CURL_TIMEOUT_SECONDS:-10}"
@@ -67,6 +73,7 @@ for value in \
     "$MAX_GENERATED_AGE" \
     "$MAX_BACKUP_AGE" \
     "$MAX_RESTORE_AGE" \
+    "$MAX_OFFSITE_AGE" \
     "$MAX_FUTURE_SKEW" \
     "$CURL_TIMEOUT" \
     "$DISK_CRITICAL_PERCENT"; do
@@ -85,7 +92,17 @@ case "$PROOF_ONLY" in
     0|1) ;;
     *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
 esac
+case "$SKIP_OFFSITE" in
+    0|1) ;;
+    *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
 case "$RECEIPT_UID" in
+    ''|*[!0-9]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
+case "$OFFSITE_UID" in
+    ''|*[!0-9]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+esac
+case "$OFFSITE_GID" in
     ''|*[!0-9]*) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
 esac
 case "$RECEIPT_GROUP" in
@@ -104,6 +121,13 @@ case "$DEPLOYED_SHA_PATH" in
     /*) ;;
     *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
 esac
+for path in "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH"; do
+    case "$path" in
+        /) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+        /*) ;;
+        *) add_failure "configuration invalid"; CONFIG_VALID=0 ;;
+    esac
+done
 if [ -n "$BACKUP_ARTIFACT" ]; then
     case "$BACKUP_ARTIFACT" in
         /*) ;;
@@ -140,7 +164,9 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
             "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$DEPLOYED_SHA_PATH" \
             "$RECEIPT_UID" "$RECEIPT_GROUP" \
             "$MAX_GENERATED_AGE" "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" \
-            "$MAX_FUTURE_SKEW" "$NOW_EPOCH" 2>/dev/null <<'PY'
+            "$MAX_OFFSITE_AGE" "$MAX_FUTURE_SKEW" "$NOW_EPOCH" \
+            "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" \
+            "$OFFSITE_UID" "$OFFSITE_GID" "$SKIP_OFFSITE" 2>/dev/null <<'PY'
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -165,16 +191,26 @@ import time
     max_generated_raw,
     max_backup_raw,
     max_restore_raw,
+    max_offsite_raw,
     max_future_skew_raw,
     now_raw,
+    offsite_env_raw,
+    offsite_status_raw,
+    offsite_uid_raw,
+    offsite_gid_raw,
+    skip_offsite_raw,
 ) = sys.argv[1:]
 health_available = health_available_raw == "1"
 max_generated = int(max_generated_raw)
 max_backup = int(max_backup_raw)
 max_restore = int(max_restore_raw)
+max_offsite = int(max_offsite_raw)
 max_future_skew = int(max_future_skew_raw)
 now = float(now_raw) if now_raw else time.time()
 receipt_uid = int(receipt_uid_raw)
+offsite_uid = int(offsite_uid_raw)
+offsite_gid = int(offsite_gid_raw)
+skip_offsite = skip_offsite_raw == "1"
 reasons: list[str] = []
 
 
@@ -388,6 +424,238 @@ elif checked_at > now + max_future_skew:
 elif now - checked_at > max_restore:
     add("restore receipt stale")
 
+
+def secure_private_file(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == offsite_uid
+        and metadata.st_gid == offsite_gid
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+    )
+
+
+def secure_status_file(path: Path) -> bool:
+    try:
+        parent = path.parent.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(parent.st_mode)
+        and parent.st_uid == offsite_uid
+        and parent.st_gid == offsite_gid
+        and stat.S_IMODE(parent.st_mode) == 0o700
+        and secure_private_file(path)
+    )
+
+
+def bounded_version(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(
+        r"[A-Za-z0-9._~+/=-]{1,1024}", value
+    ) is not None
+
+
+offsite_env = Path(offsite_env_raw)
+offsite_status = Path(offsite_status_raw)
+try:
+    offsite_env_exists = offsite_env.exists() or offsite_env.is_symlink()
+except OSError:
+    offsite_env_exists = True
+
+if not skip_offsite and offsite_env_exists:
+    settings: dict[str, str] = {}
+    expected_settings = {
+        "SEICHE_OFFSITE_BACKUP_BUCKET",
+        "SEICHE_OFFSITE_BACKUP_PREFIX",
+        "SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE",
+        "SEICHE_OFFSITE_BACKUP_WRITE_ENABLED",
+        "SEICHE_OFFSITE_BACKUP_CANARY",
+        "SEICHE_OFFSITE_BACKUP_KEY_ID",
+        "SEICHE_OFFSITE_BACKUP_DESTINATION_ID",
+        "SEICHE_OFFSITE_BACKUP_RETENTION_MODE",
+        "SEICHE_OFFSITE_BACKUP_RETENTION_DAYS",
+    }
+    try:
+        if not secure_private_file(offsite_env) or offsite_env.stat().st_size > 8192:
+            raise ValueError
+        for line in offsite_env.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if not separator or not key or key in settings:
+                raise ValueError
+            settings[key] = value
+        if (
+            set(settings) != expected_settings
+            or re.fullmatch(
+                r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+                settings["SEICHE_OFFSITE_BACKUP_BUCKET"],
+            )
+            is None
+            or re.fullmatch(
+                r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*",
+                settings["SEICHE_OFFSITE_BACKUP_PREFIX"],
+            )
+            is None
+            or ".." in settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
+            or settings["SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE"] != "anchor"
+            or settings["SEICHE_OFFSITE_BACKUP_CANARY"] not in {"0", "1"}
+            or settings["SEICHE_OFFSITE_BACKUP_WRITE_ENABLED"] != "1"
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}",
+                settings["SEICHE_OFFSITE_BACKUP_KEY_ID"],
+            )
+            is None
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}",
+                settings["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"],
+            )
+            is None
+            or settings["SEICHE_OFFSITE_BACKUP_RETENTION_MODE"] != "COMPLIANCE"
+            or settings["SEICHE_OFFSITE_BACKUP_RETENTION_DAYS"] != "90"
+        ):
+            raise ValueError
+    except (OSError, UnicodeError, ValueError):
+        add("offsite backup configuration invalid")
+    else:
+        if settings["SEICHE_OFFSITE_BACKUP_CANARY"] == "0":
+            verified_at: float | None = None
+            try:
+                if (
+                    not secure_status_file(offsite_status)
+                    or offsite_status.stat().st_size > 256 * 1024
+                ):
+                    raise ValueError
+                status_document = json.loads(
+                    offsite_status.read_text(encoding="utf-8")
+                )
+                if not isinstance(status_document, dict):
+                    raise ValueError
+                success = status_document.get("last_success")
+                if not isinstance(success, dict):
+                    raise ValueError
+                destination = success.get("destination")
+                current_destination = status_document.get("destination")
+                if not isinstance(destination, dict) or not isinstance(
+                    current_destination, dict
+                ):
+                    raise ValueError
+                version_fields = (
+                    "ciphertext_version_id",
+                    "checksum_version_id",
+                    "remote_receipt_version_id",
+                )
+                receipt_key = success.get("remote_receipt_key")
+                prefix = settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
+                snapshot_id = success.get("snapshot_id")
+                attempt_id = success.get("attempt_id")
+                canary_receipt = f"{prefix}/canary/v1/RECEIPT.json"
+                scheduled_receipt = (
+                    f"{prefix}/snapshots/{snapshot_id}/attempts/"
+                    f"{attempt_id}/RECEIPT.json"
+                )
+                etag_fields = (
+                    "ciphertext_etag",
+                    "checksum_etag",
+                    "remote_receipt_etag",
+                )
+                current_state = status_document.get("status")
+                valid = (
+                    status_document.get("schema")
+                    == "seiche.market-offsite-backup-status.v1"
+                    and current_state in {"running", "failed", "success"}
+                    and status_document.get("provider")
+                    == "hetzner-object-storage"
+                    and status_document.get("bucket")
+                    == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+                    and status_document.get("prefix") == prefix
+                    and status_document.get("key_id")
+                    == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
+                    and current_destination.get("id")
+                    == settings["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]
+                    and current_destination.get("bucket")
+                    == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+                    and current_destination.get("prefix") == prefix
+                    and re.fullmatch(
+                        r"https://[a-z0-9.-]+",
+                        current_destination.get("endpoint", ""),
+                    )
+                    is not None
+                    and re.fullmatch(
+                        r"[A-Za-z0-9_-]+",
+                        current_destination.get("region", ""),
+                    )
+                    is not None
+                    and status_document.get("object_lock")
+                    == {"mode": "COMPLIANCE", "days": 90}
+                    and status_document.get("restore_verified")
+                    is (current_state == "success")
+                    and success.get("restore_verified") is True
+                    and success.get("bucket")
+                    == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+                    and success.get("prefix")
+                    == settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
+                    and success.get("key_id")
+                    == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
+                    and destination.get("id")
+                    == settings["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]
+                    and destination.get("bucket")
+                    == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+                    and destination.get("prefix") == prefix
+                    and destination.get("endpoint")
+                    == current_destination.get("endpoint")
+                    and destination.get("region")
+                    == current_destination.get("region")
+                    and success.get("object_lock")
+                    == {"mode": "COMPLIANCE", "days": 90}
+                    and re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", snapshot_id or "")
+                    is not None
+                    and re.fullmatch(
+                        r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", attempt_id or ""
+                    )
+                    is not None
+                    and re.fullmatch(
+                        r"[0-9a-f]{40}", success.get("source_revision", "")
+                    )
+                    is not None
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}", success.get("ciphertext_sha256", "")
+                    )
+                    is not None
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        success.get("source_inventory_sha256", ""),
+                    )
+                    is not None
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        success.get("source_content_set_sha256", ""),
+                    )
+                    is not None
+                    and isinstance(success.get("ciphertext_bytes"), int)
+                    and success["ciphertext_bytes"] > 0
+                    and receipt_key in {canary_receipt, scheduled_receipt}
+                    and all(bounded_version(success.get(field)) for field in version_fields)
+                    and all(
+                        isinstance(success.get(field), str)
+                        and re.fullmatch(r'"[A-Fa-f0-9-]{16,128}"', success[field])
+                        is not None
+                        for field in etag_fields
+                    )
+                )
+                verified_at = timestamp(success.get("verified_at"))
+                if not valid or verified_at is None:
+                    raise ValueError
+            except (OSError, UnicodeError, ValueError):
+                add("offsite backup proof missing or invalid")
+            else:
+                if verified_at > now + max_future_skew:
+                    add("offsite backup proof timestamp is in the future")
+                elif now - verified_at > max_offsite:
+                    add("offsite backup proof stale")
+
 for reason in reasons:
     print(reason)
 raise SystemExit(1 if reasons else 0)
@@ -411,7 +679,11 @@ PY
                 "deployed release SHA missing or invalid"|\
                 "restore receipt belongs to a different release"|\
                 "restore receipt timestamp is in the future"|\
-                "restore receipt stale")
+                "restore receipt stale"|\
+                "offsite backup configuration invalid"|\
+                "offsite backup proof missing or invalid"|\
+                "offsite backup proof timestamp is in the future"|\
+                "offsite backup proof stale")
                     add_failure "$reason"
                     RECOGNIZED_REASON=1
                     ;;
