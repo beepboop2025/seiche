@@ -2,6 +2,12 @@ import { memo, useMemo, useState } from "react";
 import Chart, { type ChartSeries } from "../Chart";
 import { Any, AsOf, Fault, Method, fmt, ordinal } from "../lib";
 import OilStructure from "./OilStructure";
+import {
+  calculateScenario,
+  initialScenario,
+  type Scenario,
+  type ScenarioOutputs,
+} from "./oilFundingScenario";
 import "../styles-oil.css";
 
 const C = {
@@ -44,132 +50,6 @@ const DOLLAR_PARKING_SERIES: ChartSeries[] = [
 ];
 const ZERO_LINE = { value: 0, color: C.muted, label: "zero" };
 
-interface Scenario {
-  oilPrice: number;
-  fundingRate: number;
-  usdInr: number;
-  tenorDays: number;
-  storagePerDay: number;
-  insuranceRate: number;
-  forwardSpread: number;
-  cargoBarrelsM: number;
-  dailyThroughputMbd: number;
-  voyageDays: number;
-  baselineVoyageDays: number;
-  hedgeBarrelsM: number;
-  oilPriceChange: number;
-  initialMarginRateChange: number;
-  indiaImportMbd: number;
-  indiaOilShock: number;
-  rbiUsdSalesB: number;
-  liquidityReplenishment: number;
-  underRecoveryCroreDay: number;
-  compensationLagDays: number;
-  cpFundingShare: number;
-}
-
-interface ScenarioOutputs {
-  carry: {
-    storage: number;
-    financing: number;
-    insurance: number;
-    required: number;
-    headroom: number;
-  };
-  trade: {
-    cargoCredit: number;
-    financingCost: number;
-    inTransit: number;
-    incremental: number;
-    multiple: number;
-  };
-  margin: { variation: number; initial: number; sameDay: number };
-  india: {
-    annualImportUsd: number;
-    annualImportInr: number;
-    rbiGross: number;
-    rbiUnreplenished: number;
-    omcStock: number;
-    omcCp: number;
-  };
-}
-
-const finite = (value: unknown, fallback: number): number => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
-function initialScenario(engine: Any): Scenario {
-  const a = engine?.scenario?.assumptions ?? {};
-  const live = engine?.live ?? {};
-  return {
-    oilPrice: finite(a.oil_price_usd_per_bbl ?? live.wti?.price_usd_per_bbl, 80),
-    fundingRate: finite(a.funding_rate_pct, 5),
-    usdInr: finite(a.usd_inr ?? live.inr?.per_usd, 84),
-    tenorDays: finite(a.tenor_days, 90),
-    storagePerDay: finite(a.storage_usd_per_bbl_day, 0.03),
-    insuranceRate: finite(a.insurance_rate_pct, 0.5),
-    forwardSpread: finite(a.forward_spread_usd_per_bbl, 0),
-    cargoBarrelsM: finite(a.barrels_per_cargo_m, 2),
-    dailyThroughputMbd: finite(a.daily_throughput_mbd, 0.2),
-    voyageDays: finite(a.voyage_days, 45),
-    baselineVoyageDays: finite(a.baseline_voyage_days, 15),
-    hedgeBarrelsM: finite(a.net_short_hedge_m_bbl, 1),
-    oilPriceChange: finite(a.oil_price_change_usd_per_bbl, 8),
-    initialMarginRateChange: finite(a.initial_margin_rate_change_pct, 5),
-    indiaImportMbd: finite(a.india_import_mbd, 5),
-    indiaOilShock: finite(a.india_oil_shock_usd_per_bbl, 10),
-    rbiUsdSalesB: finite(a.rbi_usd_sales_b, 2),
-    liquidityReplenishment: finite(a.liquidity_replenishment_pct, 25),
-    underRecoveryCroreDay: finite(a.under_recovery_inr_crore_day, 1000),
-    compensationLagDays: finite(a.compensation_lag_days, 30),
-    cpFundingShare: finite(a.cp_funding_share_pct, 40),
-  };
-}
-
-function calculateScenario(s: Scenario): ScenarioOutputs {
-  const yearFraction = s.tenorDays / 365;
-  const storage = s.storagePerDay * s.tenorDays;
-  const financing = s.oilPrice * (s.fundingRate / 100) * yearFraction;
-  const insurance = s.oilPrice * (s.insuranceRate / 100) * yearFraction;
-  const required = storage + financing + insurance;
-  const cargoCredit = s.oilPrice * s.cargoBarrelsM * 1_000_000;
-  const inTransit = s.oilPrice * s.dailyThroughputMbd * 1_000_000 * s.voyageDays;
-  const baselineInTransit = s.oilPrice * s.dailyThroughputMbd * 1_000_000 * s.baselineVoyageDays;
-  const variation = Math.max(0, s.hedgeBarrelsM * 1_000_000 * s.oilPriceChange);
-  const initial = Math.abs(s.hedgeBarrelsM) * 1_000_000 * s.oilPrice * s.initialMarginRateChange / 100;
-  const annualImportUsd = s.indiaImportMbd * 1_000_000 * s.indiaOilShock * 365;
-  const rbiGross = s.rbiUsdSalesB * 1_000_000_000 * s.usdInr;
-  const rbiUnreplenished = rbiGross * (1 - s.liquidityReplenishment / 100);
-  const omcStock = s.underRecoveryCroreDay * 10_000_000 * s.compensationLagDays;
-
-  return {
-    carry: {
-      storage,
-      financing,
-      insurance,
-      required,
-      headroom: s.forwardSpread - required,
-    },
-    trade: {
-      cargoCredit,
-      financingCost: cargoCredit * (s.fundingRate / 100) * s.voyageDays / 365,
-      inTransit,
-      incremental: inTransit - baselineInTransit,
-      multiple: s.baselineVoyageDays > 0 ? s.voyageDays / s.baselineVoyageDays : 0,
-    },
-    margin: { variation, initial, sameDay: variation + initial },
-    india: {
-      annualImportUsd,
-      annualImportInr: annualImportUsd * s.usdInr,
-      rbiGross,
-      rbiUnreplenished,
-      omcStock,
-      omcCp: omcStock * s.cpFundingShare / 100,
-    },
-  };
-}
-
 const compactUsd = (value: number): string => {
   const sign = value < 0 ? "−" : "";
   const v = Math.abs(value);
@@ -183,6 +63,15 @@ const compactUsdMaybe = (value: unknown, scale = 1): string => {
   if (value == null || !Number.isFinite(Number(value))) return "—";
   return compactUsd(Number(value) * scale);
 };
+
+const fundingRateDisplay = (value: number | null): string =>
+  value == null ? "unavailable" : `${fmt(value, 2)}%`;
+
+const usdPerBarrelDisplay = (value: number | null): string =>
+  value == null ? "unavailable" : `$${fmt(value, 2)}/bbl`;
+
+const usdDisplay = (value: number | null): string =>
+  value == null ? "unavailable" : `$${fmt(value, 2)}`;
 
 const compactInr = (value: number): string => {
   const sign = value < 0 ? "−" : "";
@@ -221,20 +110,20 @@ function TransmissionLoop({ s, out, live }: { s: Scenario; out: ScenarioOutputs;
           <span className="oil-loop__lane-label">RATES → OIL</span>
           <div className="oil-node oil-node--crude">
             <span>OIL CURVE</span>
-            <strong>${fmt(out.carry.required, 2)}/bbl</strong>
-            <small>{fmt(s.tenorDays, 0)}d contango hurdle</small>
+            <strong>{usdPerBarrelDisplay(out.carry.required)}</strong>
+            <small>{out.carry.required == null ? "funding input unavailable" : `${fmt(s.tenorDays, 0)}d contango hurdle`}</small>
           </div>
           <i aria-hidden="true">←</i>
           <div className="oil-node">
             <span>COST OF CARRY</span>
-            <strong>${fmt(out.carry.financing, 2)}</strong>
-            <small>funding component</small>
+            <strong>{usdDisplay(out.carry.financing)}</strong>
+            <small>{out.carry.financing == null ? "funding input unavailable" : "funding component"}</small>
           </div>
           <i aria-hidden="true">←</i>
           <div className="oil-node oil-node--dollar">
             <span>MONEY MARKET</span>
-            <strong>{fmt(s.fundingRate, 2)}%</strong>
-            <small>funding rate</small>
+            <strong>{fundingRateDisplay(s.fundingRate)}</strong>
+            <small>{s.fundingRate == null ? "no observed rate" : "funding rate"}</small>
           </div>
         </div>
         <div className="oil-loop__turn oil-loop__turn--right" aria-hidden="true" />
@@ -622,6 +511,7 @@ function Slider({ id, label, value, min, max, step, display, onChange }: {
         max={max}
         step={step}
         value={value}
+        aria-valuetext={display}
         onChange={(event) => onChange(Number(event.currentTarget.value))}
       />
     </label>
@@ -629,6 +519,15 @@ function Slider({ id, label, value, min, max, step, display, onChange }: {
 }
 
 function CarryCurve({ s, out }: { s: Scenario; out: ScenarioOutputs }) {
+  const fundingRate = s.fundingRate;
+  const required = out.carry.required;
+  if (fundingRate == null || required == null) {
+    return (
+      <div className="oil-empty" role="status">
+        Funding rate unavailable — move the funding-rate control to set an explicit scenario assumption.
+      </div>
+    );
+  }
   const width = 690, height = 250;
   const pad = { left: 58, right: 24, top: 24, bottom: 48 };
   const maxRate = 12;
@@ -648,7 +547,7 @@ function CarryCurve({ s, out }: { s: Scenario; out: ScenarioOutputs }) {
       className="oil-carry-curve"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
-      aria-label={`Required ${s.tenorDays}-day contango across funding rates; at ${s.fundingRate}% the hurdle is ${out.carry.required.toFixed(2)} dollars per barrel`}
+      aria-label={`Required ${s.tenorDays}-day contango across funding rates; at ${fundingRate}% the hurdle is ${required.toFixed(2)} dollars per barrel`}
     >
       <defs>
         <linearGradient id="oil-carry-fill" x1="0" x2="0" y1="0" y2="1">
@@ -670,10 +569,10 @@ function CarryCurve({ s, out }: { s: Scenario; out: ScenarioOutputs }) {
       </>}
       <path d={`${path} L${x(maxRate)},${height - pad.bottom} L${x(0)},${height - pad.bottom} Z`} fill="url(#oil-carry-fill)" />
       <path className="oil-carry-path" d={path} />
-      <line className="oil-current-guide" x1={x(s.fundingRate)} x2={x(s.fundingRate)} y1={y(out.carry.required)} y2={height - pad.bottom} />
-      <circle className="oil-current-dot" cx={x(s.fundingRate)} cy={y(out.carry.required)} r="5" />
-      <text className="oil-current-label" x={Math.min(x(s.fundingRate) + 9, width - 150)} y={Math.max(y(out.carry.required) - 10, 16)}>
-        now ${fmt(out.carry.required, 2)}/bbl
+      <line className="oil-current-guide" x1={x(fundingRate)} x2={x(fundingRate)} y1={y(required)} y2={height - pad.bottom} />
+      <circle className="oil-current-dot" cx={x(fundingRate)} cy={y(required)} r="5" />
+      <text className="oil-current-label" x={Math.min(x(fundingRate) + 9, width - 150)} y={Math.max(y(required) - 10, 16)}>
+        now ${fmt(required, 2)}/bbl
       </text>
       <text className="oil-axis-label" x={(pad.left + width - pad.right) / 2} y={height - 3} textAnchor="middle">annual funding rate</text>
     </svg>
@@ -696,6 +595,8 @@ function ScenarioLab({ engine, s, setS, base }: {
   const field = (key: keyof Scenario) => (value: number) => setS((current) => ({ ...current, [key]: value }));
   const maxMargin = Math.max(out.margin.variation, out.margin.initial, 1);
   const maxVoyage = Math.max(s.voyageDays, s.baselineVoyageDays, 1);
+  const fundingUnavailable = s.fundingRate == null;
+  const headroom = out.carry.headroom;
 
   return (
     <section className="oil-lab" aria-labelledby="oil-lab-title">
@@ -713,7 +614,7 @@ function ScenarioLab({ engine, s, setS, base }: {
             <button type="button" onClick={() => setS(base)}>RESET TO OBSERVED</button>
           </div>
           <Slider id="oil-price" label="Oil price" value={s.oilPrice} min={20} max={200} step={1} display={`$${fmt(s.oilPrice, 0)}/bbl`} onChange={field("oilPrice")} />
-          <Slider id="oil-funding" label="Funding rate" value={s.fundingRate} min={0} max={12} step={0.05} display={`${fmt(s.fundingRate, 2)}%`} onChange={field("fundingRate")} />
+          <Slider id="oil-funding" label="Funding rate" value={s.fundingRate ?? 5} min={0} max={12} step={0.05} display={fundingRateDisplay(s.fundingRate)} onChange={field("fundingRate")} />
           <Slider id="oil-forward" label="Forward spread" value={s.forwardSpread} min={-10} max={15} step={0.1} display={`${s.forwardSpread > 0 ? "+" : ""}$${fmt(s.forwardSpread, 1)}/bbl`} onChange={field("forwardSpread")} />
           <Slider id="oil-voyage" label="Voyage length" value={s.voyageDays} min={5} max={90} step={1} display={`${fmt(s.voyageDays, 0)} days`} onChange={field("voyageDays")} />
           <Slider id="oil-jump" label="Oil price jump" value={s.oilPriceChange} min={0} max={40} step={0.5} display={`+$${fmt(s.oilPriceChange, 1)}/bbl`} onChange={field("oilPriceChange")} />
@@ -738,18 +639,27 @@ function ScenarioLab({ engine, s, setS, base }: {
               <Slider id="oil-cpshare" label="CP funding share" value={s.cpFundingShare} min={0} max={100} step={5} display={`${fmt(s.cpFundingShare, 0)}%`} onChange={field("cpFundingShare")} />
             </div>
           </details>
-          <div className="oil-controls__note">Initialized from WTI, SOFR and USD/INR through {engine.asof}. All other values are explicit defaults.</div>
+          <div className="oil-controls__note">
+            {fundingUnavailable
+              ? "Observed SOFR is unavailable. Rate-dependent outputs stay unavailable until you move the funding-rate control to set an explicit scenario assumption."
+              : `Initialized from WTI, SOFR and USD/INR through ${engine.asof}. All other values are explicit defaults.`}
+          </div>
         </aside>
 
         <div className="oil-lab__results" aria-live="polite">
           <article className="oil-result oil-result--carry">
             <div className="oil-result__head"><span>01</span><div><h3>Cost of carry</h3><p>the reverse channel · rates price the curve</p></div></div>
             <div className="oil-output-grid">
-              <OutputMetric label="required contango" value={`$${fmt(out.carry.required, 2)}/bbl`} detail={`${fmt(s.tenorDays, 0)}-day hurdle`} tone="crude" />
-              <OutputMetric label="forward headroom" value={`${out.carry.headroom >= 0 ? "+" : "−"}$${fmt(Math.abs(out.carry.headroom), 2)}/bbl`} detail={out.carry.headroom >= 0 ? "mechanically covers carry" : "below mechanical carry"} tone={out.carry.headroom >= 0 ? "calm" : "stress"} />
+              <OutputMetric label="required contango" value={usdPerBarrelDisplay(out.carry.required)} detail={fundingUnavailable ? "funding input unavailable" : `${fmt(s.tenorDays, 0)}-day hurdle`} tone="crude" />
+              <OutputMetric
+                label="forward headroom"
+                value={headroom == null ? "unavailable" : `${headroom >= 0 ? "+" : "−"}$${fmt(Math.abs(headroom), 2)}/bbl`}
+                detail={headroom == null ? "funding input unavailable" : headroom >= 0 ? "mechanically covers carry" : "below mechanical carry"}
+                tone={headroom == null ? "" : headroom >= 0 ? "calm" : "stress"}
+              />
             </div>
             <CarryCurve s={s} out={out} />
-            <div className="oil-equation">contango = <b>${fmt(out.carry.storage, 2)}</b> storage + <b>${fmt(out.carry.financing, 2)}</b> funding + <b>${fmt(out.carry.insurance, 2)}</b> insurance</div>
+            <div className="oil-equation">contango = <b>${fmt(out.carry.storage, 2)}</b> storage + <b>{usdDisplay(out.carry.financing)}</b> funding + <b>${fmt(out.carry.insurance, 2)}</b> insurance</div>
           </article>
 
           <div className="oil-result-pair">
@@ -763,7 +673,7 @@ function ScenarioLab({ engine, s, setS, base }: {
               <div className="oil-output-grid oil-output-grid--compact">
                 <OutputMetric label="capital in transit" value={compactUsd(out.trade.inTransit)} detail={`${fmt(out.trade.multiple, 1)}× baseline`} />
                 <OutputMetric label="incremental tie-up" value={compactUsd(out.trade.incremental)} detail="vs baseline voyage" />
-                <OutputMetric label="voyage interest" value={compactUsd(out.trade.financingCost)} detail="per cargo" />
+                <OutputMetric label="voyage interest" value={out.trade.financingCost == null ? "unavailable" : compactUsd(out.trade.financingCost)} detail={out.trade.financingCost == null ? "funding input unavailable" : "per cargo"} />
               </div>
             </article>
 
