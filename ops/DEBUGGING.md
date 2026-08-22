@@ -31,14 +31,17 @@ PID=$(systemctl show -p MainPID --value seiche-api)
 /home/seiche/app/backend/.venv/bin/memray flamegraph /tmp/seiche-live.bin -o /tmp/seiche-live.html
 ```
 
-## The same tools gate CI
+## Memory and in-process stacks gate CI
 
 - `pytest --memray` enforces the `limit_memory("256 MB")` leak canary on the
   engine tests (fattest test peaks ~65MiB — only an order-of-magnitude
   regression trips it).
-- `--pystack-threshold=300` makes any test that hangs >5 minutes print its
-  full stack instead of timing out silently — the deploy gate can never again
-  eat a hang without saying where.
+- `-o faulthandler_timeout=300` makes any test that runs for more than five
+  minutes dump every Python thread from inside pytest. It needs no `ptrace`
+  capability, so the release poller keeps its hardened capability boundary
+  while still explaining a slow or wedged test.
 
-Both flags run in `.github/workflows/publish.yml` and in the box deploy gate
-(`update.sh`); plain local `pytest` runs without them are unaffected.
+Both settings run in `.github/workflows/publish.yml` and in the signed release
+poller gate. PyStack remains the operator tool for deliberately authorized
+live/native inspection; it is not used by the sandboxed automatic gate. Plain
+local `pytest` runs without these settings are unaffected.

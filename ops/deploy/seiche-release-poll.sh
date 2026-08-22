@@ -36,7 +36,7 @@ GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
 ADMISSION_WAIT_SECONDS="${SEICHE_CONTROL_ADMISSION_WAIT_SECONDS:-900}"
 ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
-TEST_COMMAND="python -m pytest backend/tests -q --memray --pystack-threshold=300"
+TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
 STARTED_AT=$(date -u +%FT%TZ)
 CANDIDATE_ADDED=""
 HEALTH_BODY=""
@@ -366,7 +366,7 @@ as_service "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
   as_service env \
     PATH="$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$TIMEOUT" -k 30 3600 "$VENV/bin/python" -m pytest backend/tests -q \
-      --memray --pystack-threshold=300
+      --memray -o faulthandler_timeout=300
 ) || fail "candidate full test gate failed or timed out"
 as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
   || fail "candidate tests modified tracked release files"

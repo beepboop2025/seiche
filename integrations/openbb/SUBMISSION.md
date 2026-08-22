@@ -25,6 +25,7 @@ not configured, leave the ledger at `prepared` and restore the OIDC path.
 ```bash
 gh workflow run publish-openbb.yml \
   --repo beepboop2025/seiche \
+  --ref v0.11.0 \
   -f release_tag=v0.11.0 \
   -f openbb_version=0.1.0
 ```
@@ -34,7 +35,7 @@ gh workflow run publish-openbb.yml \
 After publication, all of these must pass before requesting an OpenBB listing:
 
 ```bash
-python -m venv /tmp/openbb-seiche-public
+python3 -m venv /tmp/openbb-seiche-public
 /tmp/openbb-seiche-public/bin/python -m pip install \
   "openbb-core==1.6.13" "openbb-seiche==0.1.0"
 /tmp/openbb-seiche-public/bin/openbb-build

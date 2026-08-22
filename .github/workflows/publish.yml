@@ -99,7 +99,7 @@ jobs:
           # Match the hardened UMask of seiche-release-poll.service so CI
           # catches permission-sensitive fixture drift before host activation.
           umask 0077
-          python -m pytest backend/tests -q --memray --pystack-threshold=300
+          python -m pytest backend/tests -q --memray -o faulthandler_timeout=300
           mkdir -p ".cache/publish-gates/$GITHUB_SHA"
           printf '%s\n' "$GITHUB_SHA" > ".cache/publish-gates/$GITHUB_SHA/validated-sha"
 

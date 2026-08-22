@@ -2351,6 +2351,8 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
     assert 'as_service "$TIMEOUT"' in gate_slice
+    assert "-o faulthandler_timeout=300" in gate_slice
+    assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
     assert "production unchanged" in poller[superseded:gate_receipt]
     assert "gate-only success" in poller[gate_only:deployed]

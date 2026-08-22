@@ -272,6 +272,18 @@ class PublicCatalogContracts(unittest.TestCase):
             command = command.split("```", maxsplit=1)[0]
             self.assertIn("--ref v0.11.0", command)
             self.assertIn("release_tag=v0.11.0", command)
+        openbb_submission = _read("integrations/openbb/SUBMISSION.md")
+        openbb_command = openbb_submission.split(
+            "gh workflow run publish-openbb.yml", maxsplit=1
+        )[1].split("```", maxsplit=1)[0]
+        self.assertIn("--repo beepboop2025/seiche", openbb_command)
+        self.assertIn("--ref v0.11.0", openbb_command)
+        self.assertIn("release_tag=v0.11.0", openbb_command)
+        self.assertIn("openbb_version=0.1.0", openbb_command)
+        self.assertIn(
+            "python3 -m venv /tmp/openbb-seiche-public", openbb_submission
+        )
+        self.assertNotIn("\npython -m venv ", openbb_submission)
         self.assertNotIn("gh workflow run publish-container.yml", publishing)
         self.assertIn(
             "refuses to replace a higher bare-semantic version",
