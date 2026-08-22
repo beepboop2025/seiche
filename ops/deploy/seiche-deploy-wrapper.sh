@@ -903,7 +903,7 @@ fi
 # (write-beside + rename) so the running copy keeps its inode and this run
 # finishes on the code it started with — no re-exec, so no loop.
 SYNC_FAIL=""
-for pair in "seiche-deploy-wrapper.sh:/root/seiche-deploy-wrapper.sh" \
+for pair in "seiche-deploy-wrapper.sh:/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh" \
             "box-update.sh:/home/seiche/update.sh"; do
   src="$APP/ops/deploy/${pair%%:*}"
   dst="${pair##*:}"

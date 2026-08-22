@@ -10,7 +10,8 @@ name: deploy-hetzner
 #
 # Defense in depth for a public repo:
 # - the key's public half sits in root's authorized_keys behind a FORCED
-#   COMMAND (/root/seiche-deploy-wrapper.sh) with no-pty/no-forwarding, so
+#   COMMAND (/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh) with
+#   no-pty/no-forwarding, so
 #   even a leaked key can only trigger the deploy script, nothing else;
 # - the wrapper runs the box's test-gated update.sh as the unprivileged
 #   seiche user (pull → pip install → pytest, rollback on red) and only a

@@ -7,7 +7,8 @@
 # The engine deploy is the same rollback-owning chain used by the host release
 # poller and by the disabled/manual deploy-hetzner recovery workflow:
 #
-#   /root/seiche-deploy-wrapper.sh          (mirror: seiche-deploy-wrapper.sh)
+#   /var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh
+#                                           (mirror: seiche-deploy-wrapper.sh)
 #     └─ /home/seiche/update.sh             (mirror: box-update.sh)
 #        pull main → pip install → focused smoke suite, rollback on red
 #     └─ systemctl restart seiche-api + poll cache-only /api/health
@@ -21,8 +22,10 @@ set -uo pipefail
 
 APP_DIR=/home/seiche/app
 
-if [ ! -x /root/seiche-deploy-wrapper.sh ]; then
-    echo "FATAL: /root/seiche-deploy-wrapper.sh missing — this is not the production box (or the wrapper was removed). See header." >&2
+DEPLOY_WRAPPER=/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh
+
+if [ ! -x "$DEPLOY_WRAPPER" ]; then
+    echo "FATAL: $DEPLOY_WRAPPER missing — this is not the production box (or the wrapper was removed). See header." >&2
     exit 1
 fi
 
@@ -39,7 +42,7 @@ fi
 # bootstrap or un-wedge a box by hand. The auto chain no longer depends on
 # it: the wrapper re-syncs both mirrors from the POST-pull checkout on every
 # deploy, effective the next run, and fails the run loud if the sync drifts.
-for pair in "seiche-deploy-wrapper.sh:/root/seiche-deploy-wrapper.sh" \
+for pair in "seiche-deploy-wrapper.sh:$DEPLOY_WRAPPER" \
             "box-update.sh:/home/seiche/update.sh"; do
     src="$APP_DIR/ops/deploy/${pair%%:*}"
     dst="${pair##*:}"
@@ -58,6 +61,6 @@ for pair in "seiche-deploy-wrapper.sh:/root/seiche-deploy-wrapper.sh" \
     fi
 done
 
-/root/seiche-deploy-wrapper.sh || exit 1
+"$DEPLOY_WRAPPER" || exit 1
 
 echo "Deployed $(git -C "$APP_DIR" rev-parse --short HEAD) — $(git -C "$APP_DIR" log -1 --format=%s)"

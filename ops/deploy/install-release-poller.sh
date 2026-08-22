@@ -7,7 +7,7 @@ set -euo pipefail
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 SYSTEMD_DIR="${SEICHE_SYSTEMD_DIR:-/etc/systemd/system}"
 SCRIPT_DEST="${SEICHE_RELEASE_POLLER_DEST:-/usr/local/sbin/seiche-release-poll}"
-DEPLOY_WRAPPER="${SEICHE_DEPLOY_WRAPPER:-/root/seiche-deploy-wrapper.sh}"
+DEPLOY_WRAPPER="${SEICHE_DEPLOY_WRAPPER:-/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh}"
 RUNTIME_DIR="${SEICHE_CONTROL_RUNTIME_DIR:-/run/seiche-control}"
 CONTROL_LOCK="$RUNTIME_DIR/release.lock"
 SYSTEMCTL="${SEICHE_SYSTEMCTL_BIN:-systemctl}"
@@ -17,18 +17,22 @@ FLOCK="${SEICHE_FLOCK_BIN:-flock}"
 SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
 ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"
 SOURCE_DIR="$APP_DIR/ops/deploy"
+SOURCE_WRAPPER="$SOURCE_DIR/seiche-deploy-wrapper.sh"
 SOURCE_SIGNER="$SOURCE_DIR/release-allowed-signers"
 ALLOWED_SIGNERS="${SEICHE_RELEASE_ALLOWED_SIGNERS_DEST:-/etc/seiche-release.allowed-signers}"
 SIGNING_PRINCIPAL=beepboop2025@users.noreply.github.com
 SCRIPT_DIR=$(dirname -- "$SCRIPT_DEST")
+WRAPPER_DIR=$(dirname -- "$DEPLOY_WRAPPER")
 STAGE_DIR=""
 SCRIPT_NEW=""
+WRAPPER_NEW=""
 SIGNER_STAGE=""
 INSTALL_STARTED=""
 INSTALL_COMMITTED=""
 WAS_ENABLED=""
 WAS_ACTIVE=""
 HAD_SCRIPT=""
+HAD_WRAPPER=""
 HAD_SERVICE=""
 HAD_TIMER=""
 
@@ -39,13 +43,16 @@ fail() {
 
 remove_staging() {
   [ -z "$SCRIPT_NEW" ] || rm -f -- "$SCRIPT_NEW"
+  [ -z "$WRAPPER_NEW" ] || rm -f -- "$WRAPPER_NEW"
   [ -z "$SIGNER_STAGE" ] || rm -f -- "$SIGNER_STAGE"
   if [ -n "$STAGE_DIR" ]; then
     rm -f -- \
       "$STAGE_DIR/seiche-release-poll" \
+      "$STAGE_DIR/seiche-deploy-wrapper.sh" \
       "$STAGE_DIR/seiche-release-poll.service" \
       "$STAGE_DIR/seiche-release-poll.timer" \
       "$STAGE_DIR/previous-script" \
+      "$STAGE_DIR/previous-wrapper" \
       "$STAGE_DIR/previous-service" \
       "$STAGE_DIR/previous-timer"
     rmdir "$STAGE_DIR" 2>/dev/null || true
@@ -68,12 +75,14 @@ restore_file() {
 
 rollback_install() {
   local failed=""
-  echo "install: restoring the previous release-poller files and timer state" >&2
+  echo "install: restoring the previous release-controller files and timer state" >&2
   restore_file "$SYSTEMD_DIR/seiche-release-poll.timer" \
     "$STAGE_DIR/previous-timer" "$HAD_TIMER" || failed=1
   restore_file "$SYSTEMD_DIR/seiche-release-poll.service" \
     "$STAGE_DIR/previous-service" "$HAD_SERVICE" || failed=1
   restore_file "$SCRIPT_DEST" "$STAGE_DIR/previous-script" "$HAD_SCRIPT" \
+    || failed=1
+  restore_file "$DEPLOY_WRAPPER" "$STAGE_DIR/previous-wrapper" "$HAD_WRAPPER" \
     || failed=1
   "$SYSTEMCTL" daemon-reload || failed=1
   if [ -n "$WAS_ENABLED" ]; then
@@ -87,7 +96,7 @@ rollback_install() {
     "$SYSTEMCTL" stop seiche-release-poll.timer 2>/dev/null || true
   fi
   [ -z "$failed" ] || {
-    echo "FAIL: release-poller install rollback was incomplete; inspect the three installed files and timer state" >&2
+    echo "FAIL: release-controller install rollback was incomplete; inspect the four installed files and timer state" >&2
     return 1
   }
 }
@@ -127,13 +136,35 @@ if [ -e "$SCRIPT_DIR" ] || [ -L "$SCRIPT_DIR" ]; then
 else
   install -d -o root -g root -m 0755 "$SCRIPT_DIR"
 fi
-[ -x "$DEPLOY_WRAPPER" ] \
-  || fail "the rollback-owning deploy wrapper is missing: $DEPLOY_WRAPPER"
-# The dollar expression is deliberately matched literally in the installed file.
-# shellcheck disable=SC2016
-grep -Fq 'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}' "$DEPLOY_WRAPPER" \
-  || fail "installed deploy wrapper lacks the expected-target-SHA safety pin"
+if [ -e "$WRAPPER_DIR" ] || [ -L "$WRAPPER_DIR" ]; then
+  [ -d "$WRAPPER_DIR" ] && [ ! -L "$WRAPPER_DIR" ] \
+    || fail "unsafe deploy-wrapper directory: $WRAPPER_DIR"
+else
+  if [ "$(id -u)" -eq 0 ]; then
+    install -d -o root -g root -m 0700 "$WRAPPER_DIR"
+  else
+    install -d -m 0700 "$WRAPPER_DIR"
+  fi
+fi
+"$SYSTEM_PYTHON" - "$WRAPPER_DIR" "$EXPECTED_SIGNER_UID" \
+  "$EXPECTED_SIGNER_GID" <<'PY' \
+  || fail "deploy-wrapper directory metadata is unsafe"
+import os
+import stat
+import sys
+
+path, uid, gid = sys.argv[1:]
+info = os.lstat(path)
+if (
+    not stat.S_ISDIR(info.st_mode)
+    or info.st_uid != int(uid)
+    or info.st_gid != int(gid)
+    or stat.S_IMODE(info.st_mode) != 0o700
+):
+    raise SystemExit(1)
+PY
 for source in \
+    seiche-deploy-wrapper.sh \
     seiche-release-poll.sh \
     seiche-release-poll.service \
     seiche-release-poll.timer \
@@ -142,6 +173,7 @@ for source in \
     || fail "missing or unsafe release-poller source: $SOURCE_DIR/$source"
 done
 for destination in \
+    "$DEPLOY_WRAPPER" \
     "$SCRIPT_DEST" \
     "$SYSTEMD_DIR/seiche-release-poll.service" \
     "$SYSTEMD_DIR/seiche-release-poll.timer"; do
@@ -150,7 +182,12 @@ for destination in \
       || fail "unsafe installed release-poller path: $destination"
   fi
 done
+bash -n "$SOURCE_WRAPPER"
 bash -n "$SOURCE_DIR/seiche-release-poll.sh"
+# The dollar expression is deliberately matched literally in the reviewed source.
+# shellcheck disable=SC2016
+grep -Fq 'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}' "$SOURCE_WRAPPER" \
+  || fail "reviewed deploy wrapper lacks the expected-target-SHA safety pin"
 
 # Validate the reviewed repository copy without following symlinks or accepting
 # comments/options/multiple principals. The resulting canonical line is the
@@ -304,6 +341,8 @@ if "$SYSTEMCTL" is-active --quiet seiche-release-poll.timer 2>/dev/null; then
 fi
 
 STAGE_DIR=$(mktemp -d "$SYSTEMD_DIR/.seiche-release-poll.XXXXXX")
+install -m 0700 "$SOURCE_WRAPPER" \
+  "$STAGE_DIR/seiche-deploy-wrapper.sh"
 install -m 0755 "$SOURCE_DIR/seiche-release-poll.sh" \
   "$STAGE_DIR/seiche-release-poll"
 install -m 0644 "$SOURCE_DIR/seiche-release-poll.service" \
@@ -311,7 +350,12 @@ install -m 0644 "$SOURCE_DIR/seiche-release-poll.service" \
 install -m 0644 "$SOURCE_DIR/seiche-release-poll.timer" \
   "$STAGE_DIR/seiche-release-poll.timer"
 bash -n "$STAGE_DIR/seiche-release-poll"
+bash -n "$STAGE_DIR/seiche-deploy-wrapper.sh"
 
+if [ -e "$DEPLOY_WRAPPER" ]; then
+  cp -p -- "$DEPLOY_WRAPPER" "$STAGE_DIR/previous-wrapper"
+  HAD_WRAPPER=1
+fi
 if [ -e "$SCRIPT_DEST" ]; then
   cp -p -- "$SCRIPT_DEST" "$STAGE_DIR/previous-script"
   HAD_SCRIPT=1
@@ -328,12 +372,18 @@ if [ -e "$SYSTEMD_DIR/seiche-release-poll.timer" ]; then
 fi
 
 # Keep every rename on its destination filesystem.  From the first rename
-# onward the EXIT trap restores all three prior files and the prior timer state
+# onward the EXIT trap restores all four prior files and the prior timer state
 # on syntax, daemon-reload, activation, signal, or other failure.
+WRAPPER_NEW=$(mktemp "$WRAPPER_DIR/.seiche-deploy-wrapper.XXXXXX")
+install -m 0700 "$STAGE_DIR/seiche-deploy-wrapper.sh" "$WRAPPER_NEW"
+"$SYNC" -f "$WRAPPER_NEW"
+INSTALL_STARTED=1
+mv -f -- "$WRAPPER_NEW" "$DEPLOY_WRAPPER"
+WRAPPER_NEW=""
+
 SCRIPT_NEW=$(mktemp "$SCRIPT_DIR/.seiche-release-poll.XXXXXX")
 install -m 0755 "$STAGE_DIR/seiche-release-poll" "$SCRIPT_NEW"
 "$SYNC" -f "$SCRIPT_NEW"
-INSTALL_STARTED=1
 mv -f -- "$SCRIPT_NEW" "$SCRIPT_DEST"
 SCRIPT_NEW=""
 
@@ -345,7 +395,7 @@ mv -f -- "$STAGE_DIR/seiche-release-poll.service" \
   "$SYSTEMD_DIR/seiche-release-poll.service"
 mv -f -- "$STAGE_DIR/seiche-release-poll.timer" \
   "$SYSTEMD_DIR/seiche-release-poll.timer"
-"$SYNC" "$SCRIPT_DIR" "$SYSTEMD_DIR"
+"$SYNC" "$WRAPPER_DIR" "$SCRIPT_DIR" "$SYSTEMD_DIR"
 "$SYSTEMCTL" daemon-reload
 
 if [ "$ENABLE" = 1 ]; then

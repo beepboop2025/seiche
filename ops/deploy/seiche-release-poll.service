@@ -30,11 +30,12 @@ CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SE
 AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=read-only
-# Candidate checkout, controller state, the market repository/export, and the
-# rollback-owned acceptance marker are the only application data this root
-# controller may change. /opt, /usr/local (including ExecStart), other homes,
-# and unrelated /var state stay read-only in the service mount namespace.
-ReadWritePaths=/home/seiche /root
+# Candidate checkout, controller state (including its root-owned deploy
+# wrapper), the market repository/export, and the rollback-owned acceptance
+# marker are the only application data this root controller may change. /root,
+# /opt, /usr/local (including ExecStart), other homes, and unrelated /var state
+# stay read-only in the service mount namespace.
+ReadWritePaths=/home/seiche
 ReadWritePaths=/var/lib/seiche-control /var/lib/seiche-deploy /var/lib/seiche /var/backups/seiche-market
 ReadWritePaths=/run/seiche-control /run/seiche-deploy /run/seiche-release /run/lock
 # These roots contain only root-owned release configuration. The rc paths are

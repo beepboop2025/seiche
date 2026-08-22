@@ -2542,6 +2542,7 @@ def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     source = app / "ops" / "deploy"
     source.mkdir(parents=True)
     for path in (
+        DEPLOY_WRAPPER,
         RELEASE_POLLER,
         RELEASE_POLLER_SERVICE,
         RELEASE_POLLER_TIMER,
@@ -2554,11 +2555,15 @@ def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     runtime = tmp_path / "run"
     systemd.mkdir()
     binary_dir.mkdir()
+    wrapper_dir = tmp_path / "deploy" / "bin"
+    wrapper_dir.mkdir(parents=True, mode=0o700)
     wrapper = _executable(
-        tmp_path / "seiche-deploy-wrapper",
+        wrapper_dir / "seiche-deploy-wrapper.sh",
         "EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n",
     )
+    old_wrapper = wrapper.read_text()
     installed = {
+        wrapper: old_wrapper,
         binary_dir / "seiche-release-poll": "old script\n",
         systemd / "seiche-release-poll.service": "old service\n",
         systemd / "seiche-release-poll.timer": "old timer\n",
@@ -2613,7 +2618,8 @@ esac
 
     assert result.returncode != 0
     assert (
-        "restoring the previous release-poller files and timer state" in result.stderr
+        "restoring the previous release-controller files and timer state"
+        in result.stderr
     )
     for path, body in installed.items():
         assert path.read_text() == body
@@ -2634,6 +2640,7 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     source = app / "ops" / "deploy"
     source.mkdir(parents=True)
     for path in (
+        DEPLOY_WRAPPER,
         RELEASE_POLLER,
         RELEASE_POLLER_SERVICE,
         RELEASE_POLLER_TIMER,
@@ -2645,10 +2652,7 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     binary_dir = tmp_path / "sbin"
     systemd.mkdir()
     binary_dir.mkdir()
-    wrapper = _executable(
-        tmp_path / "seiche-deploy-wrapper",
-        "EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}\nexit 0\n",
-    )
+    wrapper = tmp_path / "deploy" / "bin" / "seiche-deploy-wrapper.sh"
     installed_signer = tmp_path / "seiche-release.allowed-signers"
     wrong_pin = (
         "beepboop2025@users.noreply.github.com ssh-ed25519 "
@@ -2679,12 +2683,79 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     assert installed_signer.read_text(encoding="ascii") == wrong_pin
 
 
+def test_release_poller_installer_bootstraps_private_control_wrapper(tmp_path):
+    app = tmp_path / "app"
+    source = app / "ops" / "deploy"
+    source.mkdir(parents=True)
+    for path in (
+        DEPLOY_WRAPPER,
+        RELEASE_POLLER,
+        RELEASE_POLLER_SERVICE,
+        RELEASE_POLLER_TIMER,
+        RELEASE_ALLOWED_SIGNERS,
+    ):
+        shutil.copy2(path, source / path.name)
+
+    systemd = tmp_path / "systemd"
+    binary_dir = tmp_path / "sbin"
+    runtime = tmp_path / "run"
+    wrapper = tmp_path / "deploy" / "bin" / "seiche-deploy-wrapper.sh"
+    systemd.mkdir()
+    binary_dir.mkdir()
+    calls = tmp_path / "systemctl.calls"
+    systemctl = _executable(
+        tmp_path / "systemctl",
+        f'''printf '%s\n' "$*" >>"{calls}"
+case "$1" in
+  is-enabled|is-active) exit 1 ;;
+  daemon-reload|enable|start|disable|stop) exit 0 ;;
+  *) exit 64 ;;
+esac
+''',
+    )
+    always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
+    installed_signer = tmp_path / "seiche-release.allowed-signers"
+    env = os.environ | {
+        "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+        "SEICHE_APP_DIR": str(app),
+        "SEICHE_SYSTEMD_DIR": str(systemd),
+        "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
+        "SEICHE_DEPLOY_WRAPPER": str(wrapper),
+        "SEICHE_CONTROL_RUNTIME_DIR": str(runtime),
+        "SEICHE_SYSTEMCTL_BIN": str(systemctl),
+        "SEICHE_SYSTEMD_ANALYZE_BIN": str(always_ok),
+        "SEICHE_SYNC_BIN": str(always_ok),
+        "SEICHE_FLOCK_BIN": str(always_ok),
+        "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+    }
+
+    result = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert wrapper.read_bytes() == DEPLOY_WRAPPER.read_bytes()
+    assert wrapper.stat().st_mode & 0o777 == 0o700
+    assert wrapper.parent.stat().st_mode & 0o777 == 0o700
+    assert (binary_dir / "seiche-release-poll").read_bytes() == (
+        RELEASE_POLLER.read_bytes()
+    )
+    assert "disable --now seiche-release-poll.timer" in calls.read_text().splitlines()
+
+
 def test_release_poller_units_are_inert_until_an_explicit_handoff():
     installer = RELEASE_POLLER_INSTALLER.read_text()
     service = RELEASE_POLLER_SERVICE.read_text()
     timer = RELEASE_POLLER_TIMER.read_text()
 
     assert "expected-target-SHA safety pin" in installer
+    assert "/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh" in installer
+    assert 'mv -f -- "$WRAPPER_NEW" "$DEPLOY_WRAPPER"' in installer
     assert 'exec 9>"$CONTROL_LOCK"' in installer
     assert '"$FLOCK" --nonblock 9' in installer
     assert installer.index('mv -f -- "$SCRIPT_NEW" "$SCRIPT_DEST"') < installer.index(
@@ -2728,6 +2799,7 @@ def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
     assert "RestrictSUIDSGID=false" in service
     assert "CAP_FSETID" in capabilities
     assert "/var/lib/seiche" in writable_paths
+    assert "/var/lib/seiche-deploy" in writable_paths
 
     # Allowing that one setgid collaboration directory does not reopen the
     # controller's host namespace or privilege-escalation surfaces.
@@ -2753,6 +2825,22 @@ def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
     assert "/opt" not in writable_paths
     assert "/usr" not in writable_paths
     assert "/usr/local" not in writable_paths
+    assert "/root" not in writable_paths
+
+
+def test_release_controller_wrapper_stays_outside_protected_homes():
+    canonical = "/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh"
+    poller = RELEASE_POLLER.read_text()
+    installer = RELEASE_POLLER_INSTALLER.read_text()
+    wrapper = DEPLOY_WRAPPER.read_text()
+    update = (ROOT / "ops" / "deploy" / "update.sh").read_text()
+    service = RELEASE_POLLER_SERVICE.read_text()
+
+    for source in (poller, installer, wrapper, update):
+        assert canonical in source
+        assert "/root/seiche-deploy-wrapper.sh" not in source
+    assert "ProtectHome=read-only" in service
+    assert "ReadWritePaths=/home/seiche /root" not in service
 
 
 def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
