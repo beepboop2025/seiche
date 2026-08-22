@@ -49,7 +49,7 @@ ledger status. The auditable source of truth is
 
 | Surface | What is available | Status |
 |---|---|---|
-| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable/tested in repo; signed 0.1.0 PyPI publication and official-list submission packet prepared |
+| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable/tested in repo; signed 0.1.0 PyPI publication and current ecosystem-list submission packet prepared |
 | **Zenodo** | Release deposition metadata, citation identity, and related-source records ([metadata](.zenodo.json)) | Prepared; no deposit or DOI claimed |
 | **Hugging Face** | Rights-reviewed direct-OFR dataset card and staging layout ([dataset card](distribution/datasets/huggingface/README.md)) | Validated draft; upload prepared |
 | **Kaggle** | Dataset metadata and reference-only staging layout ([metadata](distribution/datasets/kaggle/dataset-metadata.json)) | Validated draft; upload prepared |

@@ -2,7 +2,7 @@
 
 `openbb-seiche` is an independently versioned OpenBB provider and router. The
 package is ready for PyPI trusted publication, but neither a PyPI page nor an
-OpenBB documentation entry is claimed until its public receipt exists.
+OpenBB ecosystem listing is claimed until its public receipt exists.
 
 ## Publication gate
 
@@ -53,20 +53,49 @@ PY
 Record both the immutable PyPI version URL and the successful GitHub Actions
 run in `distribution/submissions.csv`.
 
-## Official OpenBB provider-list request
+## Current OpenBB ecosystem-list request
 
-OpenBB's provider page explicitly invites published extensions through a pull
-request. The current upstream source is:
+Do not submit a provider-table row to `OpenBB-finance/openbb-docs`. In July
+2026, an OpenBB maintainer closed
+[openbb-docs PR #165](https://github.com/OpenBB-finance/openbb-docs/pull/165)
+and directed the third-party provider author to
+[`OpenBB-finance/awesome-openbb`](https://github.com/OpenBB-finance/awesome-openbb),
+not the documentation repository, because the provider list is changing for
+ODP v5. Reconfirm that route immediately before submission; upstream review
+policy can change.
 
-`OpenBB-finance/openbb-docs/content/odp/python/extensions/providers/index.mdx`
+The current target is a pull request against
+[`OpenBB-finance/awesome-openbb/README.md`](https://github.com/OpenBB-finance/awesome-openbb/blob/main/README.md).
+That repository describes itself as a curated list of community-built OpenBB
+apps, data connectors, and integrations. It has a merged precedent for a
+pip-installable extension in
+[awesome-openbb PR #3](https://github.com/OpenBB-finance/awesome-openbb/pull/3),
+but the maintainer requested and tested an OpenBB Workspace app before merging
+it. A provider-only contribution is therefore review-gated; a pending pull
+request is not evidence that this package shape will be accepted.
 
-Once the PyPI receipt is live, add this row to the unofficial third-party table
-using the table's then-current formatting:
+After the immutable PyPI `0.1.0` receipt is live, add this block under the
+then-current **Applications → Live data** format:
 
-```text
-openbb-seiche | Seiche funding-liquidity and world-markets evidence connector | pip install openbb-seiche | None | -
+```markdown
+**Seiche**: Source-clocked funding-liquidity and world-markets evidence for OpenBB, with explicit data-health and research-not-advice boundaries.
+- Open source: [github.com/beepboop2025/seiche](https://github.com/beepboop2025/seiche)
+- PyPI: [openbb-seiche](https://pypi.org/project/openbb-seiche/0.1.0/)
+- Install: `pip install openbb-seiche`
+- OpenBB usage: `obb.seiche.funding_stress(provider="seiche")` or `obb.seiche.world_markets(selector="summary", provider="seiche")`
+- API required: None; the extension reads Seiche's anonymous hosted API
+- Author: [beepboop2025](https://github.com/beepboop2025)
 ```
 
-The pull request should link the PyPI version, this repository, the package
-tests, and Seiche's research-not-advice boundary. Keep the ledger `prepared`
-until OpenBB merges the request and the rendered documentation page is public.
+The pull-request body should link the immutable PyPI version, its successful
+trusted-publishing run, this repository and signed release, the OpenBB package
+tests, and Seiche's research-not-advice boundary. State plainly that the current
+artifact is a Python provider/router, not a hosted OpenBB Workspace app. If a
+maintainer requests an app or widgets, keep the ledger `prepared`; build and
+test that real surface before changing the submission copy.
+
+Keep `distribution/submissions.csv` at `prepared`, with an empty `receipt_url`,
+while publication or review is pending. Change it to `listed` only after the
+upstream README contains the Seiche entry; then record both the merged pull
+request and the rendered README entry. A community-list merge is a listing
+receipt, not an OpenBB endorsement or approval of Seiche's financial claims.

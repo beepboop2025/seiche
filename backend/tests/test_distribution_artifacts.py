@@ -284,6 +284,13 @@ class PublicCatalogContracts(unittest.TestCase):
             "python3 -m venv /tmp/openbb-seiche-public", openbb_submission
         )
         self.assertNotIn("\npython -m venv ", openbb_submission)
+        distribution = _read("docs/DISTRIBUTION.md")
+        self.assertIn("OpenBB-finance/awesome-openbb", publishing)
+        self.assertNotIn("OpenBB's docs", publishing)
+        self.assertIn("`awesome-openbb` ecosystem-list", distribution)
+        self.assertNotIn("documentation pull request", distribution)
+        self.assertIn("OpenBB-finance/openbb-docs", openbb_submission)
+        self.assertIn("not the documentation repository", openbb_submission)
         self.assertNotIn("gh workflow run publish-container.yml", publishing)
         self.assertIn(
             "refuses to replace a higher bare-semantic version",

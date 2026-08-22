@@ -155,7 +155,8 @@ lock and exact PyPI existence preflight reject attempts to retry 0.1.0 on future
 Seiche releases. Its build, independent exact verifier, permissionless smoke,
 and OIDC-only publisher are separate runners. The OpenBB listing remains
 receipt-gated until the PyPI version is public and OpenBB accepts the prepared
-documentation pull request.
+`awesome-openbb` ecosystem-list pull request. A merge is a community-listing
+receipt, not an OpenBB endorsement of Seiche or its financial claims.
 
 Seiche is research software and not investment advice. Publications should cite
 the primary data providers for any underlying observations as well as the

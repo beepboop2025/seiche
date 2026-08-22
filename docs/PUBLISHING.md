@@ -163,8 +163,10 @@ listed here as a runbook rather than automated blind.
    ```
    After the immutable PyPI page and clean-install receipt are public, use
    [`integrations/openbb/SUBMISSION.md`](../integrations/openbb/SUBMISSION.md)
-   to open the prepared provider-list pull request against OpenBB's docs. Do not
-   describe the extension as OpenBB-listed until that pull request is merged.
+   to open the prepared ecosystem-list pull request against
+   `OpenBB-finance/awesome-openbb`. Do not describe the extension as
+   OpenBB-listed until that pull request is merged and its public README entry
+   is independently verified; a merge is not an OpenBB endorsement.
 
 ## 1. Official MCP registry (registry.modelcontextprotocol.io)
 
@@ -230,5 +232,5 @@ so the crawlers find it.
 3. Preserve separate Zenodo DOI, MCP Registry, and anonymous GHCR receipts.
 4. Use browser OAuth only if the OIDC workflow is unavailable.
 5. Submit to any aggregator that does not ingest the official registry.
-6. Publish `openbb-seiche` through OIDC and retain both the PyPI and accepted
-   OpenBB documentation receipts.
+6. Publish `openbb-seiche` through OIDC and retain both the PyPI receipt and the
+   accepted `awesome-openbb` ecosystem-list receipt.
