@@ -70,7 +70,7 @@ The market worker and one-shot backfill load `cfets-access.env` optionally and
 read only the fixed approval and evidence paths. The adapter safely opens both
 artifacts without following their final symlinks, validates metadata and exact
 scope, hashes their bytes, and compares both digests to their pins. It validates
-the same approval generation before each request, after every response, and
+the same approval generation before every request, after every response, and
 again after reducing a response to its permitted fields. The collector
 supervisor independently repeats availability validation immediately before
 the raw-capture, normalized-batch, and observation sinks. The separately
