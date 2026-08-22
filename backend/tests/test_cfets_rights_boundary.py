@@ -357,6 +357,12 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
         "method": "CFETS values are absent, never interpreted as calm.",
         "caveats": ["DR007 is the transaction population behind FDR007."],
     }
+    payload["deep"]["discussion_cards"] = [
+        {
+            "name": "Public discussion of SHIBOR liquidity",
+            "label": "Public discussion of FDR007 methodology",
+        }
+    ]
 
     assert assemble._snapshot_contains_restricted_cfets(payload) is False
     assert assemble._servable_snapshot(payload) is True
@@ -432,6 +438,17 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
         {"deep": {"wrapper": {"columns": ["date", "SHIBOR_ON"]}}},
         {"deep": {"wrapper": {"selected_series": "CN.CFETS.SHIBOR_ON"}}},
         {"deep": {"wrapper": {"upstream_product_id": "FDR007"}}},
+        {"deep": {"opaque": "CN CFETS FDR007"}},
+        {"deep": {"wrapper": {"metrics": ["SHIBOR_ON"]}}},
+        {
+            "deep": {
+                "wrapper": {
+                    "instruments": [{"opaque": "CN-FDR007"}]
+                }
+            }
+        },
+        {"deep": {"wrapper": {"features": {"primary": "cfets rates"}}}},
+        {"deep": {"wrapper": {"inputs": ["CFETS FDR007"]}}},
         {
             "deep": {
                 "wrapper": {
@@ -553,6 +570,58 @@ def test_poisoned_mcp_ttl_cache_is_quarantined(fake_snap) -> None:
         mcp_server._cache.update(snap=poisoned, at=123.0)
         assert mcp_server._rights_safe_memo(poisoned) is None
         assert mcp_server._cache == {"snap": None, "at": 0.0}
+    finally:
+        mcp_server._cache.clear()
+        mcp_server._cache.update(prior)
+
+
+def test_rest_overview_quarantines_unknown_scalar_identity_bypass(
+    fake_snap, monkeypatch
+) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["deep"]["opaque"] = "CN CFETS FDR007"
+    clean = deepcopy(fake_snap)
+    _reset_cache()
+    assemble._cache.update(at=1.0, payload=poisoned, source="rebuilt")
+    api._OVERVIEW_WIRE.update(src=None, body=None, gz=None, etag=None)
+    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+
+    async def clean_rebuild() -> dict:
+        return clean
+
+    monkeypatch.setattr(assemble, "_build_snapshot", clean_rebuild)
+    response = TestClient(api.app).get(
+        "/api/overview",
+        headers={"Accept-Encoding": "identity"},
+    )
+
+    assert response.status_code == 200
+    assert "CN CFETS FDR007" not in response.text
+    assert assemble._cache["payload"] is None
+    assert assemble._cache["release_receipt"] is None
+
+
+def test_mcp_tool_quarantines_plural_container_identity_bypass(
+    fake_snap, monkeypatch
+) -> None:
+    poisoned = deepcopy(fake_snap)
+    poisoned["deep"]["wrapper"] = {"metrics": ["SHIBOR_ON"]}
+    clean = deepcopy(fake_snap)
+    _reset_cache()
+    assemble._cache.update(at=1.0, payload=poisoned, source="rebuilt")
+
+    async def clean_rebuild() -> dict:
+        return clean
+
+    monkeypatch.setattr(assemble, "_build_snapshot", clean_rebuild)
+    prior = dict(mcp_server._cache)
+    try:
+        mcp_server._cache.update(snap=poisoned, at=123.0)
+        result = mcp_server.tool_stress_now({}, False)
+
+        assert result["composite"] == clean["engines"]["composite"]
+        assert mcp_server._cache["snap"] is clean
+        assert assemble._cache["payload"] is None
     finally:
         mcp_server._cache.clear()
         mcp_server._cache.update(prior)

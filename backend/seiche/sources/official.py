@@ -2013,6 +2013,20 @@ def _require_cfets_access_license(*, today: date | None = None) -> _CFETSApprova
     return _CFETSApproval(actual_hash, valid_until)
 
 
+def _revalidate_cfets_approval(
+    expected: _CFETSApproval,
+) -> _CFETSApproval:
+    """Require the same live approval generation at an I/O boundary."""
+
+    current = _require_cfets_access_license(today=_cfets_access_today())
+    if current.artifact_sha256 != expected.artifact_sha256:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval changed during collection; no further request or "
+            "retained write was made"
+        )
+    return current
+
+
 def _rbnz_request_headers(*, navigation: bool) -> dict[str, str]:
     """Identify Seiche honestly on an operator-approved RBNZ connection."""
 
@@ -2589,26 +2603,21 @@ def build_official_adapters(
             follow_redirects=False,
         )
         schema_response.raise_for_status()
-
-        fdr_day = _cfets_access_today()
-        fdr_approval = _require_cfets_access_license(today=fdr_day)
-        if fdr_approval.artifact_sha256 != approval.artifact_sha256:
-            raise CFETSAccessPolicyUnavailableError(
-                "CFETS approval changed during collection; no further request "
-                "was made"
-            )
+        fdr_approval = _revalidate_cfets_approval(approval)
         fdr = await client.get(
             _CFETS_FDR007_ENDPOINT,
             headers={"Referer": "https://www.chinamoney.com.cn/english/bmkfrr/"},
             follow_redirects=False,
         )
         fdr.raise_for_status()
+        _revalidate_cfets_approval(approval)
         retained_fdr007 = _minimize_cfets_fdr007_payload(
             schema_response.content,
             fdr.content,
             start=window_start,
             end=end,
         )
+        fdr_approval = _revalidate_cfets_approval(approval)
         documents = [
             FetchedDocument(
                 _cfets_document_uri(fdr.url, fdr_approval),
@@ -2625,13 +2634,7 @@ def build_official_adapters(
             end,
             maximum_days=360,
         ):
-            window_day = _cfets_access_today()
-            window_approval = _require_cfets_access_license(today=window_day)
-            if window_approval.artifact_sha256 != approval.artifact_sha256:
-                raise CFETSAccessPolicyUnavailableError(
-                    "CFETS approval changed during collection; no further request "
-                    "was made"
-                )
+            window_approval = _revalidate_cfets_approval(approval)
             shibor = await client.get(
                 _CFETS_SHIBOR_ON_ENDPOINT,
                 params={
@@ -2643,15 +2646,18 @@ def build_official_adapters(
                 follow_redirects=False,
             )
             shibor.raise_for_status()
+            _revalidate_cfets_approval(approval)
+            retained_shibor_on = _minimize_cfets_shibor_on_payload(
+                shibor.content,
+                start=chunk_start,
+                end=chunk_end,
+            )
+            window_approval = _revalidate_cfets_approval(approval)
             documents.append(
                 FetchedDocument(
                     _cfets_document_uri(shibor.url, window_approval),
                     "application/vnd.seiche.cfets-retained-projection+json",
-                    _minimize_cfets_shibor_on_payload(
-                        shibor.content,
-                        start=chunk_start,
-                        end=chunk_end,
-                    ),
+                    retained_shibor_on,
                     "CN.CFETS.SHIBOR_ON",
                 )
             )

@@ -69,11 +69,13 @@ review horizons longer than 366 days before replacing either collector unit.
 The market worker and one-shot backfill load `cfets-access.env` optionally and
 read only the fixed approval and evidence paths. The adapter safely opens both
 artifacts without following their final symlinks, validates metadata and exact
-scope, hashes their bytes, and compares both digests to their pins. It repeats
-the full validation before the named FDR007 data request and before every
-bounded SHIBOR history window. The separately approved schema endpoint must
-name the chart columns and graphs exactly before the headerless FDR chart is
-accepted. Redirects are not followed.
+scope, hashes their bytes, and compares both digests to their pins. It validates
+the same approval generation before each request, after every response, and
+again after reducing a response to its permitted fields. The collector
+supervisor independently repeats availability validation immediately before
+the raw-capture, normalized-batch, and observation sinks. The separately
+approved schema endpoint must name the chart columns and graphs exactly before
+the headerless FDR chart is accepted. Redirects are not followed.
 
 Upstream bodies exist only transiently in process memory. Before a document can
 reach raw-capture persistence, the adapter reduces it to the approved

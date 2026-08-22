@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from seiche import store
+from seiche.collectors import CollectorRunStatus, CollectorSupervisor
 from seiche.domain.observation import (
     RATE_ROLES,
     CanonicalUnit,
@@ -24,10 +25,15 @@ from seiche.domain.observation import (
     RateCompounding,
     RedistributionStatus,
     SemanticRole,
+    evidence_sha256,
 )
 from seiche.markets.registry import default_registry
 from seiche.repository import SQLiteMarketRepository
-from seiche.sources.base import SourcePolicyUnavailableError
+from seiche.sources.base import (
+    ObservationBatch,
+    RawCapture,
+    SourcePolicyUnavailableError,
+)
 from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
@@ -782,6 +788,84 @@ def _cfets_success_response(request: httpx.Request) -> httpx.Response:
     )
 
 
+class _CFETSFinalResponseProbe:
+    """Expose fetch completion to the supervisor persistence regression."""
+
+    market_id = "CN-CNY"
+    adapter_id = "cfets_rates"
+
+    def __init__(
+        self,
+        delegate: FunctionalCanonicalAdapter,
+        client: httpx.AsyncClient,
+    ) -> None:
+        self.delegate = delegate
+        self.client = client
+        self.fetch_completed = False
+
+    def check_availability(self) -> None:
+        self.delegate.check_availability()
+
+    async def collect(self) -> ObservationBatch:
+        documents = tuple(await self.delegate.fetcher(self.client))
+        self.fetch_completed = True
+        payload = documents[0].payload
+        captured_at = datetime(2026, 8, 14, tzinfo=UTC)
+        return ObservationBatch(
+            market_id=self.market_id,
+            adapter_id=self.adapter_id,
+            captured_at=captured_at,
+            observations=(),
+            raw_capture=RawCapture(
+                market_id=self.market_id,
+                adapter_id=self.adapter_id,
+                captured_at=captured_at,
+                source_uri=documents[0].source_uri,
+                media_type=documents[0].media_type,
+                payload=payload,
+                evidence_hash=evidence_sha256(payload),
+            ),
+        )
+
+
+class _CFETSPersistenceRecorder:
+    def __init__(self) -> None:
+        self.writes: list[object] = []
+
+    def write(self, value: object) -> list[str]:
+        self.writes.append(value)
+        return []
+
+
+async def _run_cfets_final_response_probe(
+    delegate: FunctionalCanonicalAdapter,
+    handler,
+) -> tuple[
+    _CFETSFinalResponseProbe,
+    list,
+    _CFETSPersistenceRecorder,
+    _CFETSPersistenceRecorder,
+    list[tuple],
+]:
+    raw_sink = _CFETSPersistenceRecorder()
+    normalized_sink = _CFETSPersistenceRecorder()
+    observation_writes: list[tuple] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = _CFETSFinalResponseProbe(delegate, client)
+        supervisor = CollectorSupervisor(
+            raw_sink=raw_sink,
+            normalized_sink=normalized_sink,
+            observation_writer=lambda rows: observation_writes.append(rows) or len(rows),
+            persistence_retry_limit=0,
+        )
+        supervisor.register(probe)
+        runs = await supervisor.run_due(
+            now=datetime(2026, 8, 14, tzinfo=UTC),
+            force=True,
+        )
+    return probe, runs, raw_sink, normalized_sink, observation_writes
+
+
 def _rbnz_mock_transport(handler) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
 
@@ -1296,6 +1380,81 @@ async def test_cfets_valid_bounded_licence_proof_enables_collection(
 
 
 @pytest.mark.asyncio
+async def test_cfets_single_window_final_response_revocation_persists_nothing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch)
+    evidence_path = official._CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = _cfets_success_response(request)
+        if request.url.path.endswith("/ShiborHis"):
+            evidence_path.unlink()
+        return response
+
+    probe, runs, raw_sink, normalized_sink, observation_writes = (
+        await _run_cfets_final_response_probe(
+            _official_adapter("cfets_rates"),
+            handler,
+        )
+    )
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+    assert probe.fetch_completed is False
+    assert runs[0].status is CollectorRunStatus.UNAVAILABLE
+    assert raw_sink.writes == []
+    assert normalized_sink.writes == []
+    assert observation_writes == []
+
+
+@pytest.mark.asyncio
+async def test_cfets_single_window_midnight_expiry_persists_nothing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(
+        tmp_path,
+        monkeypatch,
+        valid_until="2026-08-14",
+    )
+    current_day = [date(2026, 8, 14)]
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: current_day[0])
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = _cfets_success_response(request)
+        if request.url.path.endswith("/ShiborHis"):
+            current_day[0] = date(2026, 8, 15)
+        return response
+
+    probe, runs, raw_sink, normalized_sink, observation_writes = (
+        await _run_cfets_final_response_probe(
+            _official_adapter("cfets_rates"),
+            handler,
+        )
+    )
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+    assert probe.fetch_completed is False
+    assert runs[0].status is CollectorRunStatus.UNAVAILABLE
+    assert raw_sink.writes == []
+    assert normalized_sink.writes == []
+    assert observation_writes == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("corruption", "message"),
     (
@@ -1438,14 +1597,8 @@ async def test_cfets_reuses_adapter_with_a_fresh_date_for_each_collection(
 ) -> None:
     _approve_cfets_access(tmp_path, monkeypatch)
     dates = iter(
-        (
-            date(2026, 8, 14),
-            date(2026, 8, 14),
-            date(2026, 8, 14),
-            date(2026, 8, 15),
-            date(2026, 8, 15),
-            date(2026, 8, 15),
-        )
+        (date(2026, 8, 14),) * 7
+        + (date(2026, 8, 15),) * 7
     )
     monkeypatch.setattr(official, "_cfets_access_today", lambda: next(dates))
     shibor_end_dates: list[str] = []
@@ -1469,7 +1622,7 @@ async def test_cfets_expiry_between_backfill_chunks_stops_before_next_request(
     monkeypatch,
 ) -> None:
     _approve_cfets_access(tmp_path, monkeypatch, valid_until="2026-08-14")
-    dates = iter((date(2026, 8, 14), date(2026, 8, 14), date(2026, 8, 15)))
+    dates = iter((date(2026, 8, 14),) * 7 + (date(2026, 8, 15),))
     monkeypatch.setattr(official, "_cfets_access_today", lambda: next(dates))
     requests: list[httpx.Request] = []
 
@@ -1485,6 +1638,7 @@ async def test_cfets_expiry_between_backfill_chunks_stops_before_next_request(
     assert [request.url.path for request in requests] == [
         "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
         "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
     ]
 
 

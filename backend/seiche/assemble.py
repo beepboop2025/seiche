@@ -210,6 +210,12 @@ RESTRICTED_SNAPSHOT_PROSE_FIELDS = frozenset({
     "title",
 })
 RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES = ("_id", "_ids", "_series")
+RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
+    "features",
+    "inputs",
+    "instruments",
+    "metrics",
+})
 RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
     "_url",
     "_urls",
@@ -1839,6 +1845,34 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
     }
     restricted_tokens = {"cfets", "chinamoney", "shibor", "fdr007", "dr007"}
+    identity_qualifiers = {
+        "1d",
+        "7d",
+        "benchmark",
+        "china",
+        "cn",
+        "cny",
+        "column",
+        "columns",
+        "feature",
+        "fixing",
+        "id",
+        "input",
+        "instrument",
+        "market",
+        "metric",
+        "money",
+        "on",
+        "overnight",
+        "parity",
+        "rate",
+        "rates",
+        "repo",
+        "secured",
+        "series",
+        "unsecured",
+        "usdcny",
+    }
 
     def restricted_identifier(value: object, *, typed: bool = False) -> bool:
         if not isinstance(value, str):
@@ -1848,10 +1882,15 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         if (
             folded in RESTRICTED_SNAPSHOT_IDENTIFIERS
             or normalized in normalized_identifiers
-            or folded.startswith("cn.cfets.")
+            or re.fullmatch(r"cn\.cfets\.[a-z0-9_.:-]+", folded)
         ):
             return True
-        return typed and bool(restricted_tokens & set(re.findall(r"[a-z0-9]+", folded)))
+        if not typed:
+            return False
+        tokens = set(re.findall(r"[a-z0-9]+", folded))
+        return bool(restricted_tokens & tokens) and tokens <= (
+            restricted_tokens | identity_qualifiers
+        )
 
     def restricted_mirror_url(value: object) -> bool:
         if not isinstance(value, str):
@@ -1873,6 +1912,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     def identity_field(field: str) -> bool:
         return (
             field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS
+            or field in RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS
             or field.endswith(RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES)
         )
 
@@ -1951,7 +1991,9 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             )
         if restricted_mirror_url(value) and path and url_field(path[-1]):
             return True
-        return typed_identity and restricted_identifier(value, typed=True)
+        return restricted_identifier(value) or (
+            typed_identity and restricted_identifier(value, typed=True)
+        )
 
     return walk(payload)
 
