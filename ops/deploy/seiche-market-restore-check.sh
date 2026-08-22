@@ -3,9 +3,8 @@
 set -euo pipefail
 umask 0077
 
-STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
-STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-$STATE_DIR/validation/backup-restore-check.status}"
+STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-/var/lib/seiche-recovery-proof/backup-restore-check.status}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
 POSTGRES_GROUP="${SEICHE_POSTGRES_OS_GROUP:-}"

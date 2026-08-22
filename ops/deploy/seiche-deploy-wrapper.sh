@@ -296,6 +296,7 @@ fi
 # pre-deploy files instead of assuming the rollback commit can reproduce local
 # unit state. The root-only /run copy lives only for this locked deployment.
 DATA_UNIT_NAMES=(
+  seiche-market-backfill.service
   seiche-source-worker.service
   seiche-data-readiness.service
   seiche-data-readiness.timer
@@ -485,6 +486,11 @@ restore_market_services() {
 }
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
+run_recovery_proof_preflight() {
+  SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+    SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
+    /usr/bin/bash "$DATA_READINESS_SCRIPT"
+}
 run_data_readiness_preflight() {
   SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
     /usr/bin/bash "$DATA_READINESS_SCRIPT"
@@ -493,7 +499,7 @@ activate_data_readiness_after_proof() {
   # An already-current v2 backup and restore receipt avoid a redundant drill.
   # A first v2/fresh host fails this preflight and must create and restore one
   # real snapshot before the persistent timer is allowed to become active.
-  if ! run_data_readiness_preflight; then
+  if ! run_recovery_proof_preflight; then
     echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
     if ! systemctl start seiche-market-backup.service; then
       echo "FAIL: v2 data-readiness bootstrap backup failed; readiness timer remains stopped"
@@ -503,10 +509,14 @@ activate_data_readiness_after_proof() {
       echo "FAIL: v2 data-readiness bootstrap restore check failed; readiness timer remains stopped"
       return 1
     fi
-    if ! run_data_readiness_preflight; then
+    if ! run_recovery_proof_preflight; then
       echo "FAIL: v2 data-readiness bootstrap did not pass; readiness timer remains stopped"
       return 1
     fi
+  fi
+  if ! run_data_readiness_preflight; then
+    echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
+    return 1
   fi
   if ! systemctl enable --now seiche-data-readiness.timer; then
     echo "FAIL: proven readiness timer could not be activated"
@@ -524,13 +534,20 @@ start_market_services() {
   systemctl reset-failed \
     seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
     || true
-  systemctl start --no-block \
-    seiche-market-backfill.service seiche-market-worker.service
+  # The worker is Type=notify and ordered after the one-shot backfill.  Wait
+  # for both jobs here: a --no-block start races the readiness preflight, which
+  # can mistake an activating worker for a stale recovery proof and repeat the
+  # full backup/restore drill on the controller's same-SHA convergence pass.
+  if ! systemctl start \
+      seiche-market-backfill.service seiche-market-worker.service; then
+    echo "FAIL: market backfill/worker did not become ready"
+    return 1
+  fi
   # Type=notify makes this block until the initial durable sweep has completed.
   # Only then submit the persistent readiness timer; its After= on the market
   # worker keeps a missed run queued until every collector startup is complete.
-  ensure_source_worker_ready
-  activate_data_readiness_after_proof
+  ensure_source_worker_ready || return 1
+  activate_data_readiness_after_proof || return 1
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {

@@ -45,4 +45,4 @@ RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native
 ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market
-ReadWritePaths=/var/lib/seiche/validation /run/lock
+ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock

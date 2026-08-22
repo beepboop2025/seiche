@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import grp
 import json
 import os
 from pathlib import Path
@@ -54,7 +55,9 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     snapshot = backup_dir / (NOW - timedelta(hours=1)).strftime("%Y%m%dT%H%M%SZ")
     snapshot.mkdir()
     (snapshot / "SHA256SUMS").write_text("verified\n")
-    restore_receipt = tmp_path / "backup-restore-check.status"
+    recovery_proof_dir = tmp_path / "recovery-proof"
+    recovery_proof_dir.mkdir(mode=0o750)
+    restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
         "schema=seiche.market-backup-restore-check.v2\n"
         f"checked_at={(NOW - timedelta(hours=1)).isoformat()}\n"
@@ -69,6 +72,9 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "can_publish=false\n"
         "can_execute=false\n"
     )
+    restore_receipt.chmod(0o640)
+    deployed_sha_path = tmp_path / "deployed-sha"
+    deployed_sha_path.write_text("a" * 40 + "\n")
     unit_calls = tmp_path / "unit-calls.log"
 
     curl = _executable(
@@ -132,6 +138,9 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "SEICHE_DATA_READINESS_HEALTH_URL": "http://127.0.0.1:8787/api/health",
         "SEICHE_DATA_READINESS_BACKUP_DIR": str(backup_dir),
         "SEICHE_DATA_READINESS_RESTORE_RECEIPT": str(restore_receipt),
+        "SEICHE_DATA_READINESS_RECEIPT_UID": str(os.getuid()),
+        "SEICHE_DATA_READINESS_RECEIPT_GROUP": grp.getgrgid(os.getgid()).gr_name,
+        "SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH": str(deployed_sha_path),
         "SEICHE_DATA_READINESS_NOW_EPOCH": str(int(NOW.timestamp())),
         "SEICHE_DATA_READINESS_REQUIRED_UNITS": (
             "seiche-api.service seiche-market-worker.service "
@@ -250,6 +259,19 @@ def test_health_fetch_failure_is_nonzero_without_reflecting_curl_details(
     assert result.returncode == 1
     assert result.stderr == "seiche data readiness: API health fetch failed\n"
     assert "secret.example" not in result.stderr
+
+
+def test_proof_only_skips_operational_health_units_and_disk(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        SEICHE_DATA_READINESS_PROOF_ONLY="1",
+        FAKE_CURL_FAIL="1",
+        FAKE_INACTIVE_UNIT="seiche-market-worker.service",
+        FAKE_DISK_PERCENT="99",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "seiche data readiness: ready\n"
 
 
 def test_stale_backup_and_restore_receipt_fail_at_default_limits(
@@ -388,6 +410,102 @@ def test_restore_receipt_requires_the_complete_v2_pass_contract(
     )
 
 
+def test_restore_receipt_must_belong_to_the_current_deployed_release(
+    tmp_path: Path,
+) -> None:
+    env, _, restore_receipt = _layout(tmp_path)
+    restore_receipt.write_text(
+        restore_receipt.read_text().replace(
+            "deployed_sha=" + "a" * 40,
+            "deployed_sha=" + "b" * 40,
+        )
+    )
+    mismatch = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert mismatch.returncode == 1
+    assert mismatch.stderr == (
+        "seiche data readiness: restore receipt belongs to a different release\n"
+    )
+
+
+@pytest.mark.parametrize("marker_kind", ["missing", "symlink", "invalid"])
+def test_deployed_release_sha_marker_fails_closed(
+    tmp_path: Path,
+    marker_kind: str,
+) -> None:
+    env, _, _ = _layout(tmp_path)
+    marker = Path(env["SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH"])
+    if marker_kind == "missing":
+        marker.unlink()
+    elif marker_kind == "symlink":
+        target = tmp_path / "deployed-sha-target"
+        target.write_text("a" * 40 + "\n")
+        marker.unlink()
+        marker.symlink_to(target)
+    else:
+        marker.write_text("not-a-git-sha\n")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: deployed release SHA missing or invalid\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "unsafe_kind",
+    ["owner", "mode", "hardlink", "parent_mode", "symlink"],
+)
+def test_restore_receipt_identity_and_directory_are_fail_closed(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    env, _, receipt = _layout(tmp_path)
+    if unsafe_kind == "owner":
+        env["SEICHE_DATA_READINESS_RECEIPT_UID"] = str(os.getuid() + 1)
+    elif unsafe_kind == "mode":
+        receipt.chmod(0o660)
+    elif unsafe_kind == "hardlink":
+        os.link(receipt, receipt.with_name("forged-hardlink"))
+    elif unsafe_kind == "parent_mode":
+        receipt.parent.chmod(0o770)
+    else:
+        target = receipt.with_name("forged-target")
+        target.write_text(receipt.read_text())
+        target.chmod(0o640)
+        receipt.unlink()
+        receipt.symlink_to(target)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "seiche data readiness: restore receipt missing or invalid\n"
+    )
+
+
 def test_inactive_required_unit_fails_closed(tmp_path: Path) -> None:
     result = _run(tmp_path, FAKE_INACTIVE_UNIT="seiche-market-worker.service")
 
@@ -458,6 +576,7 @@ def test_capability_free_readiness_service_can_traverse_restore_receipt_tree() -
     assert "CapabilityBoundingSet=\n" in service
     assert "install -d -o seiche -g seiche -m 0750 \\\n" in installer
     assert '"$STATE_DIR" "$STATE_DIR/raw"' in installer
-    assert '"$STATE_DIR/validation"' in installer
+    assert 'install -d -o root -g seiche -m 0750 "$RECOVERY_PROOF_DIR"' in installer
+    assert "/var/lib/seiche-recovery-proof" in service
     assert 'chown root:seiche "$STATUS_STAGE"' in restore_check
     assert 'chmod 0640 "$STATUS_STAGE"' in restore_check

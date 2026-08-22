@@ -90,7 +90,7 @@ def test_series_json_refuses_licensed_series(client, monkeypatch):
     # ships anonymously in a different format.
     monkeypatch.setattr(store, "load_series",
                         lambda m: pytest.fail("must refuse before loading"))
-    for mnemonic in ("SP500", "VIX", "BTC_USD", "SHIBOR_ON"):
+    for mnemonic in ("SP500", "VIX", "BTC_USD"):
         r = client.get(f"/api/series/{mnemonic}")
         assert r.status_code == 403, mnemonic
         assert "redistribution" in r.json()["detail"], mnemonic
@@ -129,10 +129,11 @@ def test_series_index_catalogs_every_registry_series(client):
     # (BIS, CFETS, exchanges) are marked too, not just the FRED-hosted four
     assert spx["json"] is None
     assert rows["SOFR"]["json"] == "/api/series/SOFR"
-    for licensed in ("BTC_USD", "SHIBOR_ON", "CREDIT_GAP_US"):
+    for licensed in ("BTC_USD", "CREDIT_GAP_US"):
         row = rows[licensed]
         assert row["csv"] is None and row["json"] is None, licensed
         assert row["csv_restricted"] is True, licensed
+    assert not ({"SHIBOR_ON", "CN_FDR007", "CN_PARITY"} & set(rows))
 
 
 def test_csv_route_not_shadowed_by_generic_series_route(client, monkeypatch):
@@ -218,8 +219,7 @@ def test_csv_export_is_allowlisted_by_upstream():
     # FRED-hosted third-party index data stays refused, by name
     assert "mirrored on FRED" in (m.csv_restriction("VIX") or "")
     # licensed non-US upstreams are refused with their owner named
-    for mnemonic, owner in (("SHIBOR_ON", "CFETS"),
-                            ("CREDIT_GAP_US", "Bank for International Settlements"),
+    for mnemonic, owner in (("CREDIT_GAP_US", "Bank for International Settlements"),
                             ("BTC_USD", "exchanges")):
         reason = m.csv_restriction(mnemonic)
         assert reason and owner in reason, (mnemonic, reason)

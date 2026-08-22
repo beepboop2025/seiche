@@ -65,9 +65,11 @@ journalctl -u seiche-market-backup.service -n 100 --no-pager
 `seiche-market-restore-check.timer` runs Sundays at 07:30 UTC with up to fifteen
 minutes of jitter. It selects the newest committed snapshot, verifies every
 checksum, extracts the state tar archive into a temporary directory under the
-validation root, verifies the restored API SQLite database with
+recovery-proof root, verifies the restored API SQLite database with
 `PRAGMA quick_check`, and restores the dump into a uniquely named scratch
-database. Every restored critical-table count must meet or exceed the recorded
+database. Temporary extraction happens inside that dedicated root-controlled
+directory. Every restored critical-table count must meet or exceed the
+recorded
 pre-dump floor before the filesystem scratch trees and scratch database are
 removed. This lets continuous ingestion proceed during `pg_dump` without
 turning ordinary appends into false backup failures.
@@ -77,7 +79,7 @@ A trap drops the scratch database after either success or failure. A successful
 check atomically records its receipt at:
 
 ```text
-/var/lib/seiche/validation/backup-restore-check.status
+/var/lib/seiche-recovery-proof/backup-restore-check.status
 ```
 
 Both services share `/run/lock/seiche-market-backup.lock`, so a manual check
@@ -89,7 +91,7 @@ Operator checks:
 ```sh
 systemctl start seiche-market-restore-check.service
 journalctl -u seiche-market-restore-check.service -n 100 --no-pager
-cat /var/lib/seiche/validation/backup-restore-check.status
+cat /var/lib/seiche-recovery-proof/backup-restore-check.status
 ```
 
 ## Continuous collection and data readiness

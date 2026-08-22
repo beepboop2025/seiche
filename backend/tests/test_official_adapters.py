@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import io
 import json
+import os
 import re
+import urllib.parse
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -12,6 +15,7 @@ import httpx
 import pytest
 
 from seiche import store
+from seiche.collectors import CollectorRunStatus, CollectorSupervisor
 from seiche.domain.observation import (
     RATE_ROLES,
     CanonicalUnit,
@@ -21,10 +25,15 @@ from seiche.domain.observation import (
     RateCompounding,
     RedistributionStatus,
     SemanticRole,
+    evidence_sha256,
 )
 from seiche.markets.registry import default_registry
 from seiche.repository import SQLiteMarketRepository
-from seiche.sources.base import SourcePolicyUnavailableError
+from seiche.sources.base import (
+    ObservationBatch,
+    RawCapture,
+    SourcePolicyUnavailableError,
+)
 from seiche.sources.canonical import (
     FetchedDocument,
     FunctionalCanonicalAdapter,
@@ -687,6 +696,176 @@ def _approve_rbnz_access(monkeypatch) -> None:
     )
 
 
+def _cfets_approval_payload(
+    *,
+    valid_until: str = "2027-08-14",
+    overrides: dict[str, str] | None = None,
+    extra_fields: dict[str, str] | None = None,
+) -> bytes:
+    fields = {
+        **official._CFETS_APPROVAL_FIXED_FIELDS,
+        "licence_evidence_path": str(
+            official._CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+        ),
+        "licence_evidence_sha256": "c" * 64,
+        "valid_until": valid_until,
+    }
+    fields.update(overrides or {})
+    fields.update(extra_fields or {})
+    return "".join(f"{key}={value}\n" for key, value in fields.items()).encode()
+
+
+def _approve_cfets_access(
+    tmp_path,
+    monkeypatch,
+    *,
+    valid_until: str = "2027-08-14",
+    overrides: dict[str, str] | None = None,
+    extra_fields: dict[str, str] | None = None,
+):
+    evidence_path = tmp_path / "cfets-licence-evidence.pdf"
+    evidence_payload = b"%PDF-1.7\n% reviewed CFETS permission fixture\n%%EOF\n"
+    evidence_path.write_bytes(evidence_payload)
+    evidence_path.chmod(0o640)
+    monkeypatch.setattr(
+        official,
+        "_CFETS_LICENCE_EVIDENCE_CANONICAL_PATH",
+        evidence_path,
+    )
+    scoped_overrides = {
+        "licence_evidence_path": str(evidence_path),
+        "licence_evidence_sha256": hashlib.sha256(evidence_payload).hexdigest(),
+        **(overrides or {}),
+    }
+    approval_path = tmp_path / "cfets-approval.conf"
+    payload = _cfets_approval_payload(
+        valid_until=valid_until,
+        overrides=scoped_overrides,
+        extra_fields=extra_fields,
+    )
+    approval_path.write_bytes(payload)
+    approval_path.chmod(0o640)
+    artifact_sha256 = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(official, "_CFETS_APPROVAL_CANONICAL_PATH", approval_path)
+    monkeypatch.setattr(
+        official,
+        "_cfets_approval_expected_owner",
+        lambda: (os.getuid(), os.getgid()),
+    )
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: date(2026, 8, 14))
+    monkeypatch.setenv(official._CFETS_APPROVAL_PATH_ENV, str(approval_path))
+    monkeypatch.setenv(official._CFETS_APPROVAL_SHA256_ENV, artifact_sha256)
+    return approval_path, artifact_sha256
+
+
+def _cfets_success_response(request: httpx.Request) -> httpx.Response:
+    if request.url.path.endswith("/fdr-settings.json"):
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "columns": list(official._CFETS_FDR_CHART_COLUMNS),
+                "graphs": [
+                    {"gid": graph_id, "title": graph_id}
+                    for graph_id in official._CFETS_FDR_GRAPH_IDS
+                ],
+            },
+        )
+    if request.url.path.endswith("/fdr-chrt.csv"):
+        return httpx.Response(
+            200,
+            request=request,
+            content=b"2026-08-11,0,0,0,0,0,1.51,1.52,1.53\n",
+        )
+    start = date.fromisoformat(request.url.params["startDate"])
+    end = date.fromisoformat(request.url.params["endDate"])
+    fixture_day = date(2026, 8, 11)
+    event_day = fixture_day if start <= fixture_day <= end else end
+    return httpx.Response(
+        200,
+        request=request,
+        json={"records": [{"showDateCN": event_day.isoformat(), "ON": "1.31"}]},
+    )
+
+
+class _CFETSFinalResponseProbe:
+    """Expose fetch completion to the supervisor persistence regression."""
+
+    market_id = "CN-CNY"
+    adapter_id = "cfets_rates"
+
+    def __init__(
+        self,
+        delegate: FunctionalCanonicalAdapter,
+        client: httpx.AsyncClient,
+    ) -> None:
+        self.delegate = delegate
+        self.client = client
+        self.fetch_completed = False
+
+    def check_availability(self) -> None:
+        self.delegate.check_availability()
+
+    async def collect(self) -> ObservationBatch:
+        documents = tuple(await self.delegate.fetcher(self.client))
+        self.fetch_completed = True
+        payload = documents[0].payload
+        captured_at = datetime(2026, 8, 14, tzinfo=UTC)
+        return ObservationBatch(
+            market_id=self.market_id,
+            adapter_id=self.adapter_id,
+            captured_at=captured_at,
+            observations=(),
+            raw_capture=RawCapture(
+                market_id=self.market_id,
+                adapter_id=self.adapter_id,
+                captured_at=captured_at,
+                source_uri=documents[0].source_uri,
+                media_type=documents[0].media_type,
+                payload=payload,
+                evidence_hash=evidence_sha256(payload),
+            ),
+        )
+
+
+class _CFETSPersistenceRecorder:
+    def __init__(self) -> None:
+        self.writes: list[object] = []
+
+    def write(self, value: object) -> list[str]:
+        self.writes.append(value)
+        return []
+
+
+async def _run_cfets_final_response_probe(
+    delegate: FunctionalCanonicalAdapter,
+    handler,
+) -> tuple[
+    _CFETSFinalResponseProbe,
+    list,
+    _CFETSPersistenceRecorder,
+    _CFETSPersistenceRecorder,
+    list[tuple],
+]:
+    raw_sink = _CFETSPersistenceRecorder()
+    normalized_sink = _CFETSPersistenceRecorder()
+    observation_writes: list[tuple] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        probe = _CFETSFinalResponseProbe(delegate, client)
+        supervisor = CollectorSupervisor(
+            raw_sink=raw_sink,
+            normalized_sink=normalized_sink,
+            observation_writer=lambda rows: observation_writes.append(rows) or len(rows),
+            persistence_retry_limit=0,
+        )
+        supervisor.register(probe)
+        runs = await supervisor.run_due(
+            now=datetime(2026, 8, 14, tzinfo=UTC),
+            force=True,
+        )
+    return probe, runs, raw_sink, normalized_sink, observation_writes
+
+
 def _rbnz_mock_transport(handler) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
 
@@ -1015,6 +1194,479 @@ def test_rbnz_workbook_archive_row_and_cell_bounds_fail_closed(monkeypatch) -> N
     monkeypatch.setattr(official, "_RBNZ_MAX_WORKBOOK_CELLS", 1)
     with pytest.raises(ValueError, match="cell limit"):
         parse_rbnz(document)
+
+
+@pytest.mark.asyncio
+async def test_cfets_access_defaults_off_before_any_request(monkeypatch) -> None:
+    monkeypatch.delenv(official._CFETS_APPROVAL_PATH_ENV, raising=False)
+    monkeypatch.delenv(official._CFETS_APPROVAL_SHA256_ENV, raising=False)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    adapter = _official_adapter("cfets_rates")
+    with pytest.raises(SourcePolicyUnavailableError) as availability:
+        adapter.check_availability()
+    assert official._CFETS_APPROVAL_PATH_ENV in str(availability.value)
+    assert official._CFETS_APPROVAL_SHA256_ENV in str(availability.value)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match="operator-held"):
+            await adapter.fetcher(client)
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        ("missing", "missing or cannot be opened safely"),
+        ("symlink", "missing or cannot be opened safely"),
+        ("mode", "ownership, mode, or file type is unsafe"),
+        ("owner", "ownership, mode, or file type is unsafe"),
+        ("schema", "missing or unknown fields"),
+        ("hash", "digest does not match"),
+        ("path", "operator-held data licence"),
+        ("scope_endpoint", "does not grant the exact endpoints"),
+        ("scope_product", "does not grant the exact endpoints"),
+        ("scope_output", "does not grant the exact endpoints"),
+        ("scope_use", "does not grant the exact endpoints"),
+        ("scope_publication", "does not grant the exact endpoints"),
+        ("scope_retention", "does not grant the exact endpoints"),
+        ("evidence_missing", "licence evidence is missing"),
+        ("evidence_symlink", "licence evidence is missing"),
+        ("evidence_mode", "licence evidence ownership, mode"),
+        ("evidence_hash", "licence evidence digest does not match"),
+        ("evidence_path", "does not name the canonical licence evidence"),
+    ),
+)
+async def test_cfets_unsafe_or_unscoped_artifact_never_reaches_network(
+    tmp_path,
+    monkeypatch,
+    failure: str,
+    message: str,
+) -> None:
+    kwargs = {}
+    if failure == "schema":
+        kwargs["extra_fields"] = {"unexpected": "field"}
+    elif failure == "scope_endpoint":
+        kwargs["overrides"] = {"endpoints": official._CFETS_SHIBOR_ON_ENDPOINT}
+    elif failure == "scope_product":
+        kwargs["overrides"] = {"upstream_products": "SHIBOR_ON"}
+    elif failure == "scope_output":
+        kwargs["overrides"] = {"canonical_outputs": "CN.CFETS.SHIBOR_ON"}
+    elif failure == "scope_use":
+        kwargs["overrides"] = {"permitted_use": "commercial_analytics"}
+    elif failure == "scope_publication":
+        kwargs["overrides"] = {"publication": "allowed"}
+    elif failure == "scope_retention":
+        kwargs["overrides"] = {"raw_response_retention": "allowed"}
+    elif failure == "evidence_hash":
+        kwargs["overrides"] = {"licence_evidence_sha256": "d" * 64}
+    elif failure == "evidence_path":
+        kwargs["overrides"] = {
+            "licence_evidence_path": str(tmp_path / "redirected-evidence.pdf")
+        }
+    approval_path, _ = _approve_cfets_access(tmp_path, monkeypatch, **kwargs)
+    evidence_path = official._CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+    if failure == "missing":
+        approval_path.unlink()
+    elif failure == "symlink":
+        payload = approval_path.read_bytes()
+        target = tmp_path / "approval-target.conf"
+        target.write_bytes(payload)
+        target.chmod(0o640)
+        approval_path.unlink()
+        approval_path.symlink_to(target)
+    elif failure == "mode":
+        approval_path.chmod(0o644)
+    elif failure == "owner":
+        monkeypatch.setattr(
+            official,
+            "_cfets_approval_expected_owner",
+            lambda: (os.getuid() + 1, os.getgid()),
+        )
+    elif failure == "hash":
+        monkeypatch.setenv(official._CFETS_APPROVAL_SHA256_ENV, "d" * 64)
+    elif failure == "path":
+        monkeypatch.setenv(
+            official._CFETS_APPROVAL_PATH_ENV,
+            str(tmp_path / "redirected-approval.conf"),
+        )
+    elif failure == "evidence_missing":
+        evidence_path.unlink()
+    elif failure == "evidence_symlink":
+        payload = evidence_path.read_bytes()
+        target = tmp_path / "evidence-target.pdf"
+        target.write_bytes(payload)
+        target.chmod(0o640)
+        evidence_path.unlink()
+        evidence_path.symlink_to(target)
+    elif failure == "evidence_mode":
+        evidence_path.chmod(0o644)
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    adapter = _official_adapter("cfets_rates")
+    with pytest.raises(SourcePolicyUnavailableError, match=message):
+        adapter.check_availability()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match=message):
+            await adapter.fetcher(client)
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_cfets_valid_bounded_licence_proof_enables_collection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _, artifact_sha256 = _approve_cfets_access(tmp_path, monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _cfets_success_response(request)
+
+    adapter = _official_adapter("cfets_rates")
+    adapter.check_availability()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        documents = tuple(await adapter.fetcher(client))
+
+    assert [document.label for document in documents] == [
+        "CN.CFETS.FDR007",
+        "CN.CFETS.SHIBOR_ON",
+    ]
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+    generation = f"cfets-approval-v2-{artifact_sha256[:16]}"
+    assert all(
+        urllib.parse.parse_qs(urllib.parse.urlsplit(document.source_uri).fragment)
+        == {official._CFETS_RIGHTS_GENERATION_KEY: [generation]}
+        for document in documents
+    )
+    points = tuple(
+        point
+        for document in documents
+        for point in official.parse_cfets_rates(document)
+    )
+    assert all(
+        re.fullmatch(
+            rf"cfets:{generation}:2026-08-11:[0-9a-f]{{16}}",
+            str(point.revision_id),
+        )
+        for point in points
+    )
+    retained = [json.loads(document.payload) for document in documents]
+    assert all(
+        projection["raw_response_retained"] is False
+        and projection["columns"] == ["event_date", "value"]
+        and set(projection["records"][0]) == {"event_date", "value"}
+        for projection in retained
+    )
+    assert all(b"FDR001" not in document.payload for document in documents)
+    assert all(b"FDR014" not in document.payload for document in documents)
+
+
+@pytest.mark.asyncio
+async def test_cfets_single_window_final_response_revocation_persists_nothing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch)
+    evidence_path = official._CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = _cfets_success_response(request)
+        if request.url.path.endswith("/ShiborHis"):
+            evidence_path.unlink()
+        return response
+
+    probe, runs, raw_sink, normalized_sink, observation_writes = (
+        await _run_cfets_final_response_probe(
+            _official_adapter("cfets_rates"),
+            handler,
+        )
+    )
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+    assert probe.fetch_completed is False
+    assert runs[0].status is CollectorRunStatus.UNAVAILABLE
+    assert raw_sink.writes == []
+    assert normalized_sink.writes == []
+    assert observation_writes == []
+
+
+@pytest.mark.asyncio
+async def test_cfets_single_window_midnight_expiry_persists_nothing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(
+        tmp_path,
+        monkeypatch,
+        valid_until="2026-08-14",
+    )
+    current_day = [date(2026, 8, 14)]
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: current_day[0])
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = _cfets_success_response(request)
+        if request.url.path.endswith("/ShiborHis"):
+            current_day[0] = date(2026, 8, 15)
+        return response
+
+    probe, runs, raw_sink, normalized_sink, observation_writes = (
+        await _run_cfets_final_response_probe(
+            _official_adapter("cfets_rates"),
+            handler,
+        )
+    )
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+    assert probe.fetch_completed is False
+    assert runs[0].status is CollectorRunStatus.UNAVAILABLE
+    assert raw_sink.writes == []
+    assert normalized_sink.writes == []
+    assert observation_writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("schema_columns", "chart columns changed"),
+        ("fdr_width", "does not match named columns"),
+        ("shibor_fields", "changed named fields"),
+        ("shibor_window", "outside the approved query window"),
+    ),
+)
+async def test_cfets_named_schema_changes_fail_before_retained_documents(
+    tmp_path,
+    monkeypatch,
+    corruption: str,
+    message: str,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if corruption == "schema_columns" and request.url.path.endswith(
+            "/fdr-settings.json"
+        ):
+            response = _cfets_success_response(request)
+            payload = response.json()
+            payload["columns"][7] = "DR007"
+            return httpx.Response(200, request=request, json=payload)
+        if corruption == "fdr_width" and request.url.path.endswith("/fdr-chrt.csv"):
+            return httpx.Response(200, request=request, content=b"2026-08-11,1.52\n")
+        if corruption == "shibor_fields" and request.url.path.endswith("/ShiborHis"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"records": [{"showDateCN": "2026-08-11", "1W": "1.31"}]},
+            )
+        if corruption == "shibor_window" and request.url.path.endswith("/ShiborHis"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={"records": [{"showDateCN": "1999-01-01", "ON": "1.31"}]},
+            )
+        return _cfets_success_response(request)
+
+    adapter = _official_adapter("cfets_rates")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match=message):
+            await adapter.fetcher(client)
+
+    assert requests
+
+
+@pytest.mark.asyncio
+async def test_cfets_exact_endpoint_scope_does_not_follow_redirects(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            302,
+            request=request,
+            headers={"Location": "https://example.invalid/unapproved-mirror"},
+        )
+
+    adapter = _official_adapter("cfets_rates")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter.fetcher(client)
+
+    assert [str(request.url) for request in requests] == [
+        official._CFETS_SCHEMA_ENDPOINT
+    ]
+
+
+def test_cfets_parser_refuses_unminimized_upstream_bodies() -> None:
+    raw = FetchedDocument(
+        official._CFETS_SHIBOR_ON_ENDPOINT,
+        "application/json",
+        b'{"records":[{"showDateCN":"2026-08-11","ON":"1.31",'
+        b'"1W":"1.40"}]}',
+        "CN.CFETS.SHIBOR_ON",
+    )
+
+    with pytest.raises(ValueError, match="retained projection"):
+        official.parse_cfets_rates(raw)
+
+
+def test_cfets_source_catalog_remains_metadata_only() -> None:
+    spec = default_registry().get("CN-CNY").adapter_map["cfets_rates"]
+    instruments = default_registry().get("CN-CNY").instrument_map
+
+    assert spec.classification is ConnectorClassification.LICENSED
+    assert spec.redistribution_status is RedistributionStatus.METADATA_ONLY
+    assert ("CN-CNY", "cfets_rates") in PRODUCTION_ADAPTER_KEYS
+    assert "CN.CFETS.FDR007" in instruments
+    assert "CN.CFETS.DR007" not in instruments
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("valid_until", "message"),
+    (
+        ("2026-08-13", "review has expired"),
+        ("2027-08-16", "reviewed within 366 days"),
+    ),
+)
+async def test_cfets_expired_or_overlong_proof_stays_offline(
+    tmp_path,
+    monkeypatch,
+    valid_until: str,
+    message: str,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch, valid_until=valid_until)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    adapter = _official_adapter("cfets_rates")
+    with pytest.raises(SourcePolicyUnavailableError, match=message):
+        adapter.check_availability()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match=message):
+            await adapter.fetcher(client)
+
+    assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_cfets_reuses_adapter_with_a_fresh_date_for_each_collection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch)
+    dates = iter(
+        (date(2026, 8, 14),) * 7
+        + (date(2026, 8, 15),) * 7
+    )
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: next(dates))
+    shibor_end_dates: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/ShiborHis"):
+            shibor_end_dates.append(request.url.params["endDate"])
+        return _cfets_success_response(request)
+
+    adapter = _official_adapter("cfets_rates")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await adapter.fetcher(client)
+        await adapter.fetcher(client)
+
+    assert shibor_end_dates == ["2026-08-14", "2026-08-15"]
+
+
+@pytest.mark.asyncio
+async def test_cfets_expiry_between_backfill_chunks_stops_before_next_request(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _approve_cfets_access(tmp_path, monkeypatch, valid_until="2026-08-14")
+    dates = iter((date(2026, 8, 14),) * 7 + (date(2026, 8, 15),))
+    monkeypatch.setattr(official, "_cfets_access_today", lambda: next(dates))
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _cfets_success_response(request)
+
+    adapter = _official_adapter("cfets_rates", backfill=True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match="review has expired"):
+            await adapter.fetcher(client)
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cfets_revocation_between_backfill_chunks_stops_next_request(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    approval_path, _ = _approve_cfets_access(tmp_path, monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        response = _cfets_success_response(request)
+        if request.url.path.endswith("/ShiborHis"):
+            approval_path.unlink()
+        return response
+
+    adapter = _official_adapter("cfets_rates", backfill=True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourcePolicyUnavailableError, match="missing"):
+            await adapter.fetcher(client)
+
+    assert [request.url.path for request in requests] == [
+        "/r/cms/www/chinamoney/data/currency/fdr-settings.json",
+        "/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+        "/ags/ms/cm-u-bk-shibor/ShiborHis",
+    ]
 
 
 @pytest.mark.asyncio

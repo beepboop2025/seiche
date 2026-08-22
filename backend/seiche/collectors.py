@@ -298,6 +298,11 @@ class CollectorSupervisor:
         for attempt in range(self.persistence_retry_limit + 1):
             try:
                 return await asyncio.to_thread(operation)
+            except SourcePolicyUnavailableError:
+                # Policy revocation is deterministic and must remain an
+                # UNAVAILABLE abstention, not be retried or disguised as a
+                # persistence outage.
+                raise
             except Exception as exc:  # noqa: BLE001 - bounded persistence boundary
                 deterministic = isinstance(exc, (ImportError, TypeError, ValueError))
                 if deterministic or attempt == self.persistence_retry_limit:
@@ -471,24 +476,41 @@ class CollectorSupervisor:
             batch = None
 
         if batch is not None:
+            def persist_if_available(operation: Callable[[], _T]) -> _T:
+                # Run this in the same worker invocation as the write so an
+                # approval cannot be revoked between an outer preflight and
+                # entry into a raw, normalized, or observation sink. Retries
+                # repeat the check before making another write attempt.
+                if callable(availability_check):
+                    availability_check()
+                return operation()
+
             try:
                 if self.raw_sink is not None and batch.raw_capture is not None:
                     raw_sink = self.raw_sink
                     raw_capture = batch.raw_capture
                     await self._persist_with_retry(
-                        lambda: raw_sink.write(raw_capture),
+                        lambda: persist_if_available(
+                            lambda: raw_sink.write(raw_capture)
+                        ),
                         stage="raw capture",
                     )
                 if self.normalized_sink is not None:
                     normalized_sink = self.normalized_sink
                     await self._persist_with_retry(
-                        lambda: normalized_sink.write(batch),
+                        lambda: persist_if_available(
+                            lambda: normalized_sink.write(batch)
+                        ),
                         stage="normalized batch",
                     )
                 written = await self._persist_with_retry(
-                    lambda: self.observation_writer(batch.observations),
+                    lambda: persist_if_available(
+                        lambda: self.observation_writer(batch.observations)
+                    ),
                     stage="observation writer",
                 )
+            except SourcePolicyUnavailableError as exc:
+                return unavailable_run(exc, attempts=attempts)
             except Exception as exc:  # noqa: BLE001 — isolation boundary
                 fault = exc
             else:

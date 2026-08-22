@@ -221,6 +221,8 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     (state / "normalized").mkdir()
     (state / "exports").mkdir()
     (state / "validation").mkdir()
+    recovery_proof = tmp_path / "recovery-proof"
+    recovery_proof.mkdir(mode=0o750)
     (state / "raw" / "capture.json").write_text("official evidence\n")
     api_data = tmp_path / "app" / "backend" / "data"
     api_data.mkdir(parents=True)
@@ -237,6 +239,9 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
             "SEICHE_API_DATA_DIR": str(api_data),
             "SEICHE_MARKET_BACKUP_DIR": str(backup),
             "SEICHE_DEPLOYED_SHA_PATH": str(marker),
+            "SEICHE_RESTORE_STATUS_PATH": str(
+                recovery_proof / "backup-restore-check.status"
+            ),
             "SEICHE_BACKUP_STAMP": "20260810T020000Z",
             "SEICHE_BACKUP_RETENTION_DAYS": "21",
         }
@@ -347,15 +352,16 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     result = _run(RESTORE_SCRIPT, env)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    status = (state / "validation" / "backup-restore-check.status").read_text()
+    status_path = Path(env["SEICHE_RESTORE_STATUS_PATH"])
+    status = status_path.read_text()
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
     assert "critical_table_count_floor=11|12|13|14" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
     assert "api_data_archive_restore=pass" in status
-    assert not list((state / "validation").glob(".backup-state-restore.*"))
-    assert not list((state / "validation").glob(".backup-api-data-restore.*"))
+    assert not list(status_path.parent.glob(".backup-state-restore.*"))
+    assert not list(status_path.parent.glob(".backup-api-data-restore.*"))
     assert "can_publish=false" in status
     log = calls.read_text()
     assert "setpriv " in log
@@ -390,7 +396,7 @@ def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
     assert result.stderr == (
         "seiche market restore check: snapshot manifest contract is invalid\n"
     )
-    assert not (state / "validation" / "backup-restore-check.status").exists()
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
     assert not any(line.startswith("createdb ") for line in calls.read_text().splitlines())
 
 
@@ -442,7 +448,7 @@ def test_failed_restore_drops_scratch_and_preserves_last_good_status(tmp_path: P
     assert _run(BACKUP_SCRIPT, env).returncode == 0
     env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
     assert _run(RESTORE_SCRIPT, env).returncode == 0
-    status_path = state / "validation" / "backup-restore-check.status"
+    status_path = Path(env["SEICHE_RESTORE_STATUS_PATH"])
     before = status_path.read_bytes()
     env["FAKE_COUNTS"] = "1|12|13|14"
 

@@ -1002,9 +1002,11 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     assert "systemctl reset-failed" in start
     assert "seiche-market-worker.service seiche-source-worker.service" in start
     assert "seiche-market-backfill.service seiche-market-worker.service" in start
+    candidate_market = start.index("if ! systemctl start")
     candidate_source = start.index("ensure_source_worker_ready")
     candidate_timer = start.index("activate_data_readiness_after_proof")
-    assert candidate_source < candidate_timer
+    assert candidate_market < candidate_source < candidate_timer
+    assert "systemctl start --no-block" not in start
     assert "systemctl start --no-block seiche-source-worker.service" not in start
     assert "seiche-source-worker.service seiche-data-readiness.timer" not in start
 
@@ -1019,6 +1021,114 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     restored = rollback.index("restore_market_services", reset)
     assert rollback_timer_stop < rollback_writer_stop < reset < restored
     assert "seiche-source-worker.service" in rollback[rollback_writer_stop:reset]
+
+
+def test_wrapper_waits_for_market_worker_before_readiness(tmp_path: Path):
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("start_market_services() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+state=${FAKE_DATA_STATE:?}
+printf 'systemctl %s\n' "$*" >>"$state/calls.log"
+case "$*" in
+  "reset-failed seiche-market-worker.service seiche-source-worker.service")
+    exit 0
+    ;;
+  "start seiche-market-backfill.service seiche-market-worker.service")
+    touch "$state/market-worker.ready"
+    exit 0
+    ;;
+  *--no-block*)
+    exit 91
+    ;;
+  *)
+    exit 92
+    ;;
+esac
+""",
+    )
+    harness = f"""
+ensure_source_worker_ready() {{
+  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 81
+  printf '%s\n' source-ready >>"$FAKE_DATA_STATE/calls.log"
+}}
+activate_data_readiness_after_proof() {{
+  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 82
+  printf '%s\n' readiness >>"$FAKE_DATA_STATE/calls.log"
+}}
+{helper}
+start_market_services
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        env=os.environ
+        | {
+            "FAKE_DATA_STATE": str(state),
+            "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (state / "calls.log").read_text().splitlines() == [
+        "systemctl reset-failed seiche-market-worker.service seiche-source-worker.service",
+        "systemctl start seiche-market-backfill.service seiche-market-worker.service",
+        "source-ready",
+        "readiness",
+    ]
+
+
+def test_wrapper_never_activates_readiness_after_source_start_failure(
+    tmp_path: Path,
+) -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("start_market_services() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        """
+case "$*" in
+  "reset-failed seiche-market-worker.service seiche-source-worker.service") exit 0 ;;
+  "start seiche-market-backfill.service seiche-market-worker.service") exit 0 ;;
+  *) exit 92 ;;
+esac
+""",
+    )
+    harness = f"""
+ensure_source_worker_ready() {{ return 83; }}
+activate_data_readiness_after_proof() {{ touch "$FAKE_ACTIVATED"; }}
+{helper}
+start_market_services
+"""
+    activated = tmp_path / "activated"
+
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        env=os.environ
+        | {
+            "FAKE_ACTIVATED": str(activated),
+            "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert not activated.exists()
 
 
 def test_wrapper_starts_source_worker_before_strict_candidate_health():
@@ -1098,6 +1208,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     ]
 
     for unit in (
+        "seiche-market-backfill.service",
         "seiche-source-worker.service",
         "seiche-data-readiness.service",
         "seiche-data-readiness.timer",
@@ -1184,10 +1295,13 @@ count=0
 [ ! -f "$count_file" ] || count=$(cat "$count_file")
 count=$((count + 1))
 printf '%s\n' "$count" >"$count_file"
-printf 'readiness %s\n' "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
+kind=full
+[ "${SEICHE_DATA_READINESS_PROOF_ONLY:-0}" != "1" ] || kind=proof
+printf 'readiness %s %s\n' "$kind" "${SEICHE_DATA_READINESS_REQUIRED_UNITS:-}" >>"$state/calls.log"
 case "${FAKE_READINESS_MODE:?}" in
   current) exit 0 ;;
-  fresh) [ "$count" -gt 1 ] ;;
+  fresh) [ "$kind" = full ] || [ "$count" -gt 1 ] ;;
+  operational-fail) [ "$kind" = proof ] ;;
   always-fail) exit 1 ;;
   *) exit 64 ;;
 esac
@@ -1241,16 +1355,20 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
         "systemctl",
         "systemctl",
         "readiness",
+        "readiness",
         "systemctl",
     ]
     assert calls[1:] == [
         "systemctl start seiche-market-backup.service",
         "systemctl start seiche-market-restore-check.service",
         calls[3],
+        calls[4],
         "systemctl enable --now seiche-data-readiness.timer",
     ]
-    assert "seiche-data-readiness.timer" not in calls[0]
+    assert calls[0].startswith("readiness proof ")
     assert calls[0] == calls[3]
+    assert calls[4].startswith("readiness full ")
+    assert "seiche-data-readiness.timer" not in calls[4]
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1263,9 +1381,10 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     )
 
     assert result.returncode == 0, result.stderr
-    assert len(calls) == 2
-    assert calls[0].startswith("readiness ")
-    assert calls[1] == "systemctl enable --now seiche-data-readiness.timer"
+    assert len(calls) == 3
+    assert calls[0].startswith("readiness proof ")
+    assert calls[1].startswith("readiness full ")
+    assert calls[2] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1276,6 +1395,7 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
         ("fresh", "start seiche-market-backup.service"),
         ("fresh", "start seiche-market-restore-check.service"),
         ("always-fail", ""),
+        ("operational-fail", ""),
         ("current", "enable --now seiche-data-readiness.timer"),
     ],
 )
@@ -1293,8 +1413,14 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
     )
 
     assert result.returncode != 0
-    assert calls[0].startswith("readiness ")
+    assert calls[0].startswith("readiness proof ")
     assert not (state / "readiness-timer.enabled").exists()
+    if readiness_mode == "operational-fail":
+        assert len(calls) == 2
+        assert calls[1].startswith("readiness full ")
+        assert not any(
+            call.startswith("systemctl start seiche-market-backup") for call in calls
+        )
     if fail_command != "enable --now seiche-data-readiness.timer":
         assert "systemctl enable --now seiche-data-readiness.timer" not in calls
 
@@ -1342,7 +1468,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-source-worker.service" in installer
     assert "seiche-data-readiness.service" in installer
     assert "seiche-data-readiness.timer" in installer
-    assert "ReadWritePaths=$STATE_DIR/validation" in installer
+    assert "ReadWritePaths=$RECOVERY_PROOF_DIR" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     early_enable = installer[
         installer.index("systemctl daemon-reload") : installer.index(
@@ -1361,17 +1487,24 @@ def test_market_platform_units_are_independent_and_postgres_backed():
         'mv -f "$WORKER_UNIT_STAGE_DIR/seiche-market-worker.service"'
     )
     assert installer.index("systemd-analyze verify", 0, worker_verify) < worker_install
-    data_verify = installer.index("source worker/readiness units failed verification")
+    data_verify = installer.index("data-plane units failed verification")
     source_install = installer.index(
         'mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service"'
     )
     readiness_install = installer.index(
         'mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"'
     )
+    backfill_install = installer.index(
+        'mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"'
+    )
+    assert (
+        '"$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"'
+        in installer[installer.index("cleanup() {") : data_verify]
+    )
     assert installer.index("systemd-analyze verify", worker_install, data_verify) < (
         source_install
     )
-    assert data_verify < source_install < readiness_install
+    assert data_verify < source_install < readiness_install < backfill_install
     assert "SEICHE_FUNDING_EXPORT_READER_GROUP" in installer
     assert 'groupadd --system "$EXPORT_READER_GROUP"' in installer
     assert 'setfacl -m "g:$EXPORT_READER_GROUP:--x"' in installer
@@ -1392,6 +1525,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     )
     installer_timer = installer_start.index("activate_data_readiness_after_proof")
     assert installer_source < installer_timer
+    assert "systemctl start --no-block" not in installer_start
     assert (
         "systemctl start --no-block seiche-source-worker.service" not in installer_start
     )
@@ -1490,7 +1624,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in restore
     assert "seiche-market-restore-check.sh" in restore
     assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
-    assert "ReadWritePaths=/var/lib/seiche/validation /run/lock" in restore
+    assert "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock" in restore
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
     assert "NoNewPrivileges=true" in restore
@@ -1510,6 +1644,73 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "BOK ECOS env ownership/mode is unsafe" in installer
     assert "SEICHE_BOK_ECOS_API_KEY=[A-Za-z0-9]{8,128}" in installer
     assert 'wc -l <"$BOK_ECOS_ENV_FILE"' in installer
+
+
+def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
+    installer = MARKET_INSTALLER.read_text()
+    worker = MARKET_WORKER.read_text()
+    backfill = (ROOT / "ops" / "deploy" / "seiche-market-backfill.service").read_text()
+    source_worker = SOURCE_WORKER.read_text()
+    runbook = (ROOT / "docs" / "CFETS_ACCESS_BOUNDARY.md").read_text()
+
+    for unit in (worker, backfill):
+        assert "EnvironmentFile=-/etc/seiche/cfets-access.env" in unit
+        assert "ReadOnlyPaths=-/etc/seiche/cfets-approval.conf" in unit
+        assert "-/etc/seiche/cfets-licence-evidence.pdf" in unit
+    assert "cfets-access.env" not in source_worker
+    assert "cfets-approval.conf" not in source_worker
+
+    assert "CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env" in installer
+    assert "CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf" in installer
+    assert (
+        "CFETS_LICENCE_EVIDENCE_FILE=/etc/seiche/cfets-licence-evidence.pdf"
+        in installer
+    )
+    assert "SEICHE_CFETS_ACCESS_ENV_FILE" not in installer
+    assert "SEICHE_CFETS_APPROVAL_FILE" not in installer
+    assert "CFETS access env ownership/mode is unsafe" in installer
+    assert "CFETS approval artifact ownership/mode is unsafe" in installer
+    assert "CFETS approval artifact size is unsafe" in installer
+    assert "CFETS approval artifact contract is invalid" in installer
+    assert "CFETS approval artifact digest mismatch" in installer
+    assert "CFETS licence evidence ownership/mode is unsafe" in installer
+    assert "CFETS licence evidence size is unsafe" in installer
+    assert "CFETS licence evidence digest mismatch" in installer
+    assert "CFETS approval review window is unsafe" in installer
+    assert "CFETS approval artifacts have no access env pin" in installer
+    assert "SEICHE_CFETS_APPROVAL_PATH=$CFETS_APPROVAL_FILE" in installer
+    assert "SEICHE_CFETS_APPROVAL_SHA256=[0-9a-f]{64}" in installer
+    assert "stat -c '%U:%G:%a:%h' \"$CFETS_APPROVAL_FILE\"" in installer
+    assert '/usr/bin/sha256sum "$CFETS_APPROVAL_FILE"' in installer
+    assert "schema=seiche.cfets-approval.v2" in installer
+    assert "upstream_products=FDR007,SHIBOR_ON" in installer
+    assert "canonical_outputs=CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON" in installer
+    assert (
+        "collection_scope=automated_bounded_fdr007_and_shibor_on_history"
+        in installer
+    )
+    assert "permitted_use=internal_research_only" in installer
+    assert "publication=prohibited" in installer
+    assert "raw_response_retention=prohibited" in installer
+    assert "retained_projection=event_date,value" in installer
+    assert "licence_evidence_path=$CFETS_LICENCE_EVIDENCE_FILE" in installer
+    assert "/usr/bin/sha256sum" in installer
+    assert '"$CFETS_LICENCE_EVIDENCE_FILE" | cut' in installer
+    assert "CFETS_REVIEW_DAYS" in installer
+    assert '"$CFETS_REVIEW_DAYS" -gt 366' in installer
+    assert installer.index("CFETS approval artifact digest mismatch") < installer.index(
+        "WORKER_UNIT_STAGE_DIR=$(mktemp"
+    )
+
+    for contract in (
+        "root:seiche",
+        "0640",
+        "internal_research_only",
+        "publication=prohibited",
+        "no more than 366 days",
+        "before every",
+    ):
+        assert contract in runbook
 
 
 def test_legacy_updater_is_retired_before_other_host_services_change():

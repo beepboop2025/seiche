@@ -358,12 +358,12 @@ REFEREE_GRANGER_LAGS = 6        # OLS F-test lag depth
 REFEREE_OOS_BURN_M = 84         # months reserved before the walk-forward eval
 
 # Harbors: national money markets as harbors off the dollar ocean. Overnight
-# anchors, keyless: daily where a qualifying feed exists (€STR above, SHIBOR
-# O/N via CFETS below), monthly OECD MEI mirrors on FRED where one does not
+# anchors use daily data where a qualifying public feed exists and monthly
+# OECD MEI mirrors on FRED where one does not
 # (India/Japan/Korea call rates — published ~2 months late BY DESIGN, hence
 # freq "ML"). China's OECD mirror went stale upstream in mid-2025 (probed
-# 2026-07-13) — SHIBOR is the daily replacement, not a supplement. FX legs
-# are the Fed's own H.10 daily fixes, quoted local-per-USD.
+# 2026-07-13), and no local China rate is active on the public v1 board. FX
+# legs are the Fed's own H.10 daily fixes, quoted local-per-USD.
 GLOBAL_MM_FRED_SERIES = [
     SeriesSpec("CALL_IN", "fred", "IRSTCI01INM156N", "India call money rate (OECD MEI, monthly)", "%", "ML", 1440, start="2000-01-01"),
     SeriesSpec("CALL_JP", "fred", "IRSTCI01JPM156N", "Japan uncollateralized call rate (OECD MEI, monthly)", "%", "ML", 1440, start="2000-01-01"),
@@ -374,16 +374,10 @@ GLOBAL_MM_FRED_SERIES = [
     SeriesSpec("EURUSD", "fred", "DEXUSEU", "US dollars per euro (H.10)", "$", "D", 360),
 ]
 
-# CFETS chinamoney: keyless JSON, honest UA accepted (verified live
-# 2026-07-13) — but range-limited (~1 month per request) and burst-throttled
-# (rapid consecutive hits return empty bodies, observed same day). The
-# collector therefore makes ONE request per refresh and accrues history in
-# the store, Palimpsest-style; z-scores stay quarantined until enough local
-# history exists.
-CHINAMONEY_SERIES = [
-    SeriesSpec("SHIBOR_ON", "chinamoney", "shibor:ON", "SHIBOR overnight (CFETS)", "%", "D", 360),
-]
-CHINAMONEY_WINDOW_D = 45       # single-request fetch window (range-limited API)
+# The old v1 ChinaMoney SHIBOR declaration is deliberately absent from
+# ALL_SERIES. It described a direct, ungated collector and made a retired feed
+# look available in the public series catalog. The canonical CN-CNY pack keeps
+# CFETS instrument metadata behind its separate approval boundary instead.
 
 # BOJ stat-search flat files: keyless CSV, refreshed ~09:00 JST daily
 # (verified live 2026-07-13 — surfaced by the OpenManus mm-japan sweep).
@@ -570,7 +564,7 @@ ALL_SERIES: dict[str, SeriesSpec] = {
     + OIL_FUNDING_EIA_SERIES
     + EIA_INVENTORY_SERIES
     + ESTUARY_FRED_SERIES
-    + GLOBAL_MM_FRED_SERIES + CHINAMONEY_SERIES + BOJ_SERIES
+    + GLOBAL_MM_FRED_SERIES + BOJ_SERIES
     + PRETRAIN_FRED_SERIES + OFR_SERIES + ECB_SERIES + CRYPTO_SERIES + BIS_SERIES
     + REFEREE_SERIES
 }
@@ -1178,11 +1172,13 @@ PALIMPSEST_SERIES = [
                "Newly censor-targeted terms", "terms", "D", PALIMPSEST_TTL_MIN),
     SeriesSpec("PALIMPSEST_GFI", "palimpsest", "history.jsonl:gfi",
                "Generative Firewall Index (LLM refusal tomography)", "0-100", "D", PALIMPSEST_TTL_MIN),
-    # China econ telemetry: official CFETS benchmarks republished by the
-    # palimpsest GH-Actions vantage with git-accrued history (signal added
-    # 2026-07-13). FDR007 = 7d depository-institutions repo fixing, the
-    # closest public daily proxy to the PBOC's DR007 policy anchor — the
-    # secured leg beside SHIBOR's unsecured one.
+]
+
+# Historical cache identities only. They are intentionally not appended to
+# ALL_SERIES and therefore cannot appear in the live series catalog or either
+# raw-history route. Existing local bytes remain preserved for an operator-led
+# rights migration, but no active collector references these specifications.
+QUARANTINED_CFETS_LEGACY_SERIES = [
     SeriesSpec("CN_FDR007", "palimpsest", "china-econ-history.jsonl:fdr007",
                "China FDR007, the 7d repo fixing for depository institutions (CFETS)", "%", "D", PALIMPSEST_TTL_MIN),
     SeriesSpec("CN_PARITY", "palimpsest", "china-econ-history.jsonl:usdcny_parity",

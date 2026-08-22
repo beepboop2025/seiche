@@ -7,6 +7,8 @@ ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+RECOVERY_PROOF_DIR=/var/lib/seiche-recovery-proof
+RESTORE_STATUS_PATH=$RECOVERY_PROOF_DIR/backup-restore-check.status
 EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-readers}"
 FUNDING_EXPORT_DIR="$STATE_DIR/exports/us-usd-funding-core-v1"
 FUNDING_EXPORT_FILE="$FUNDING_EXPORT_DIR/us-usd-funding-core-v1.json"
@@ -14,6 +16,12 @@ DELIVERY_ENV_FILE="${SEICHE_WORLD_MODEL_DELIVERY_ENV_FILE:-$ENV_DIR/world-model-
 # Both market units load this exact root-controlled path. Keep validation and
 # consumption inseparable instead of offering an override that systemd ignores.
 RBNZ_ACCESS_ENV_FILE=/etc/seiche/rbnz-access.env
+# CFETS collection is disabled unless these two root-controlled files form one
+# content-bound approval object.  The env file names the fixed artifact and
+# pins its digest; the artifact itself binds datasets, use, and expiry.
+CFETS_ACCESS_ENV_FILE=/etc/seiche/cfets-access.env
+CFETS_APPROVAL_FILE=/etc/seiche/cfets-approval.conf
+CFETS_LICENCE_EVIDENCE_FILE=/etc/seiche/cfets-licence-evidence.pdf
 # BOK ECOS embeds its individually issued key in the request path.  Provision
 # it separately so the idempotent market.env rewrite can never erase or copy
 # the credential into a broader service surface.
@@ -178,6 +186,7 @@ install -d -o seiche -g seiche -m 0750 \
     "$FUNDING_EXPORT_DIR"
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
+install -d -o root -g seiche -m 0750 "$RECOVERY_PROOF_DIR"
 install -d -o root -g seiche -m 0750 "$PROMOTION_REQUEST_DIR"
 
 # Give the future Lab runtime access to only the stable funding-core export.
@@ -219,7 +228,8 @@ cleanup() {
         rm -f -- \
             "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
-            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+            "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
+            "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
         rmdir "$DATA_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
     if [ -n "$WORKER_UNIT_STAGE_DIR" ]; then
@@ -267,6 +277,130 @@ if [ -e "$RBNZ_ACCESS_ENV_FILE" ] || [ -L "$RBNZ_ACCESS_ENV_FILE" ]; then
         echo "market platform: RBNZ access env contract is invalid" >&2
         exit 1
     fi
+fi
+
+# CFETS values remain metadata-only and collection remains off by default.
+# When legal approval exists, validate the exact environment/artifact pair
+# before installing either writer unit.  An orphan artifact is rejected so an
+# operator cannot mistake unused evidence for an enabled collection boundary.
+if [ -e "$CFETS_ACCESS_ENV_FILE" ] || [ -L "$CFETS_ACCESS_ENV_FILE" ]; then
+    [ -f "$CFETS_ACCESS_ENV_FILE" ] && [ ! -L "$CFETS_ACCESS_ENV_FILE" ] || {
+        echo "market platform: CFETS access env is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a' "$CFETS_ACCESS_ENV_FILE")" = "root:seiche:640" ] || {
+        echo "market platform: CFETS access env ownership/mode is unsafe" >&2
+        exit 1
+    }
+    if ! { [ "$(wc -l <"$CFETS_ACCESS_ENV_FILE" | tr -d '[:space:]')" = "2" ] \
+        && grep -Fqx \
+            "SEICHE_CFETS_APPROVAL_PATH=$CFETS_APPROVAL_FILE" \
+            "$CFETS_ACCESS_ENV_FILE" \
+        && grep -Eq '^SEICHE_CFETS_APPROVAL_SHA256=[0-9a-f]{64}$' \
+            "$CFETS_ACCESS_ENV_FILE"; }; then
+        echo "market platform: CFETS access env contract is invalid" >&2
+        exit 1
+    fi
+    [ -f "$CFETS_APPROVAL_FILE" ] && [ ! -L "$CFETS_APPROVAL_FILE" ] || {
+        echo "market platform: CFETS approval artifact is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a:%h' "$CFETS_APPROVAL_FILE")" = "root:seiche:640:1" ] || {
+        echo "market platform: CFETS approval artifact ownership/mode is unsafe" >&2
+        exit 1
+    }
+    CFETS_APPROVAL_BYTES=$(wc -c <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')
+    if [ "$CFETS_APPROVAL_BYTES" -lt 1 ] || [ "$CFETS_APPROVAL_BYTES" -gt 4096 ]; then
+        echo "market platform: CFETS approval artifact size is unsafe" >&2
+        exit 1
+    fi
+    if ! { [ "$(wc -l <"$CFETS_APPROVAL_FILE" | tr -d '[:space:]')" = "13" ] \
+        && grep -Fqx 'schema=seiche.cfets-approval.v2' "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'publisher=China Foreign Exchange Trade System' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx \
+            'endpoints=https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-settings.json,https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-chrt.csv,https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'upstream_products=FDR007,SHIBOR_ON' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'canonical_outputs=CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx \
+            'collection_scope=automated_bounded_fdr007_and_shibor_on_history' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'permitted_use=internal_research_only' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'publication=prohibited' "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'raw_response_retention=prohibited' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx 'retained_projection=event_date,value' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Fqx \
+            "licence_evidence_path=$CFETS_LICENCE_EVIDENCE_FILE" \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Eq '^licence_evidence_sha256=[0-9a-f]{64}$' \
+            "$CFETS_APPROVAL_FILE" \
+        && grep -Eq '^valid_until=[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
+            "$CFETS_APPROVAL_FILE"; }; then
+        echo "market platform: CFETS approval artifact contract is invalid" >&2
+        exit 1
+    fi
+    [ -f "$CFETS_LICENCE_EVIDENCE_FILE" ] \
+        && [ ! -L "$CFETS_LICENCE_EVIDENCE_FILE" ] || {
+        echo "market platform: CFETS licence evidence is not a regular file" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a:%h' "$CFETS_LICENCE_EVIDENCE_FILE")" = \
+        "root:seiche:640:1" ] || {
+        echo "market platform: CFETS licence evidence ownership/mode is unsafe" >&2
+        exit 1
+    }
+    CFETS_EVIDENCE_BYTES=$(wc -c <"$CFETS_LICENCE_EVIDENCE_FILE" \
+        | tr -d '[:space:]')
+    if [ "$CFETS_EVIDENCE_BYTES" -lt 1 ] \
+        || [ "$CFETS_EVIDENCE_BYTES" -gt 16777216 ]; then
+        echo "market platform: CFETS licence evidence size is unsafe" >&2
+        exit 1
+    fi
+    CFETS_EXPECTED_EVIDENCE_SHA=$(sed -n \
+        's/^licence_evidence_sha256=//p' "$CFETS_APPROVAL_FILE")
+    CFETS_ACTUAL_EVIDENCE_SHA=$(/usr/bin/sha256sum \
+        "$CFETS_LICENCE_EVIDENCE_FILE" | cut -d ' ' -f 1)
+    [ "$CFETS_ACTUAL_EVIDENCE_SHA" = "$CFETS_EXPECTED_EVIDENCE_SHA" ] || {
+        echo "market platform: CFETS licence evidence digest mismatch" >&2
+        exit 1
+    }
+    CFETS_EXPECTED_SHA=$(sed -n \
+        's/^SEICHE_CFETS_APPROVAL_SHA256=//p' "$CFETS_ACCESS_ENV_FILE")
+    CFETS_ACTUAL_SHA=$(/usr/bin/sha256sum "$CFETS_APPROVAL_FILE" | cut -d ' ' -f 1)
+    [ "$CFETS_ACTUAL_SHA" = "$CFETS_EXPECTED_SHA" ] || {
+        echo "market platform: CFETS approval artifact digest mismatch" >&2
+        exit 1
+    }
+    CFETS_VALID_UNTIL=$(sed -n 's/^valid_until=//p' "$CFETS_APPROVAL_FILE")
+    CFETS_CANONICAL_VALID_UNTIL=$(/usr/bin/date -u -d "$CFETS_VALID_UNTIL" +%F \
+        2>/dev/null) || {
+        echo "market platform: CFETS approval expiry is invalid" >&2
+        exit 1
+    }
+    [ "$CFETS_CANONICAL_VALID_UNTIL" = "$CFETS_VALID_UNTIL" ] || {
+        echo "market platform: CFETS approval expiry is not canonical" >&2
+        exit 1
+    }
+    CFETS_TODAY_EPOCH=$(/usr/bin/date -u -d "$(/usr/bin/date -u +%F)" +%s)
+    CFETS_VALID_UNTIL_EPOCH=$(/usr/bin/date -u -d "$CFETS_VALID_UNTIL" +%s)
+    CFETS_REVIEW_DAYS=$((
+        (CFETS_VALID_UNTIL_EPOCH - CFETS_TODAY_EPOCH) / 86400
+    ))
+    if [ "$CFETS_REVIEW_DAYS" -lt 0 ] || [ "$CFETS_REVIEW_DAYS" -gt 366 ]; then
+        echo "market platform: CFETS approval review window is unsafe" >&2
+        exit 1
+    fi
+elif [ -e "$CFETS_APPROVAL_FILE" ] || [ -L "$CFETS_APPROVAL_FILE" ] \
+    || [ -e "$CFETS_LICENCE_EVIDENCE_FILE" ] \
+    || [ -L "$CFETS_LICENCE_EVIDENCE_FILE" ]; then
+    echo "market platform: CFETS approval artifacts have no access env pin" >&2
+    exit 1
 fi
 
 # The BOK key is optional at the platform level: without it the two KR
@@ -325,11 +459,14 @@ install -m 0644 "$READINESS_SERVICE_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service"
 install -m 0644 "$READINESS_TIMER_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
+install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
+    "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
 if ! systemd-analyze verify \
         "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
-        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"; then
-    echo "market platform: source worker/readiness units failed verification" >&2
+        "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
+        "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"; then
+    echo "market platform: data-plane units failed verification" >&2
     exit 1
 fi
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
@@ -338,11 +475,11 @@ mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
     "$READINESS_SERVICE_DESTINATION"
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
     "$READINESS_TIMER_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
+    /etc/systemd/system/seiche-market-backfill.service
 rmdir "$DATA_UNIT_STAGE_DIR"
 DATA_UNIT_STAGE_DIR=""
 
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
-    /etc/systemd/system/seiche-market-backfill.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
     /etc/systemd/system/seiche-market-validation.service
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.timer" \
@@ -418,10 +555,11 @@ cat >"$RESTORE_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
+Environment=SEICHE_RESTORE_STATUS_PATH=$RESTORE_STATUS_PATH
 ReadOnlyPaths=
 ReadOnlyPaths=$APP_DIR $BACKUP_DIR
 ReadWritePaths=
-ReadWritePaths=$STATE_DIR/validation /run/lock
+ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock
 EOF
 chmod 0644 "$RESTORE_STAGE"
 mv -f "$RESTORE_STAGE" \
@@ -518,12 +656,17 @@ systemctl enable --now \
 # Persistent run cannot page during planned startup.
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+run_recovery_proof_preflight() {
+    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+        SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
+        /usr/bin/bash "$DATA_READINESS_SCRIPT"
+}
 run_data_readiness_preflight() {
     SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
         /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
 activate_data_readiness_after_proof() {
-    if ! run_data_readiness_preflight; then
+    if ! run_recovery_proof_preflight; then
         echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
         if ! systemctl start seiche-market-backup.service; then
             echo "market platform: v2 readiness bootstrap backup failed; timer remains stopped" >&2
@@ -533,10 +676,14 @@ activate_data_readiness_after_proof() {
             echo "market platform: v2 readiness bootstrap restore check failed; timer remains stopped" >&2
             return 1
         fi
-        if ! run_data_readiness_preflight; then
+        if ! run_recovery_proof_preflight; then
             echo "market platform: v2 readiness bootstrap failed; timer remains stopped" >&2
             return 1
         fi
+    fi
+    if ! run_data_readiness_preflight; then
+        echo "market platform: operational readiness failed; timer remains stopped" >&2
+        return 1
     fi
     if ! systemctl enable --now seiche-data-readiness.timer; then
         echo "market platform: proven readiness timer could not be activated" >&2
@@ -544,7 +691,10 @@ activate_data_readiness_after_proof() {
     fi
 }
 if [ "${SEICHE_DEFER_MARKET_START:-0}" != "1" ]; then
-    systemctl start --no-block \
+    # Wait for the Type=notify market worker (and its ordered one-shot
+    # backfill) before evaluating readiness. Otherwise a valid fresh recovery
+    # receipt can trigger a redundant backup/restore drill during activation.
+    systemctl start \
         seiche-market-backfill.service seiche-market-worker.service
     systemctl start seiche-source-worker.service
     activate_data_readiness_after_proof

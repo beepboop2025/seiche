@@ -691,6 +691,7 @@ _OVERVIEW_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=240"
 
 
 def _overview_wire(payload: dict) -> dict[str, Any]:
+    assemble._assert_snapshot_rights(payload)
     if _OVERVIEW_WIRE["src"] is not payload:
         public_payload = sanitize_public_fault_payload(payload)
         body = json.dumps(
