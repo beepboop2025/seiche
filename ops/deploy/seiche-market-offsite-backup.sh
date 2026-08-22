@@ -5,7 +5,6 @@
 set -Eeuo pipefail
 umask 0077
 
-APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 BACKUP_ROOT="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 WORK_ROOT="${SEICHE_OFFSITE_BACKUP_WORK_DIR:-/var/cache/seiche-market-offsite-backup}"
 STATUS_PATH="${SEICHE_OFFSITE_BACKUP_STATUS_PATH:-/var/lib/seiche-offsite-backup/status.json}"
@@ -13,6 +12,7 @@ CONFIG_ENV_FILE="${SEICHE_OFFSITE_BACKUP_ENV_FILE:-/etc/seiche/offsite-backup.en
 PASSPHRASE_FILE="${SEICHE_OFFSITE_BACKUP_PASSPHRASE_FILE:-/etc/seiche/offsite-backup.passphrase}"
 CREDENTIAL_ENV_FILE="${SEICHE_OFFSITE_BACKUP_CREDENTIAL_ENV_FILE:-/root/.config/anchor/object-storage.env}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+RELEASE_SHA="${SEICHE_RELEASE_SHA:-}"
 LOCK_PATH="${SEICHE_OFFSITE_BACKUP_LOCK_PATH:-/run/lock/seiche-market-backup.lock}"
 RUN_LOCK_PATH="${SEICHE_OFFSITE_BACKUP_RUN_LOCK_PATH:-/run/lock/seiche-market-offsite-backup.lock}"
 BUCKET="${SEICHE_OFFSITE_BACKUP_BUCKET:-}"
@@ -34,7 +34,6 @@ CURL_BIN="${SEICHE_OFFSITE_CURL_BIN:-curl}"
 DATE_BIN="${SEICHE_OFFSITE_DATE_BIN:-date}"
 DF_BIN="${SEICHE_OFFSITE_DF_BIN:-df}"
 FLOCK_BIN="${SEICHE_OFFSITE_FLOCK_BIN:-flock}"
-GIT_BIN="${SEICHE_OFFSITE_GIT_BIN:-git}"
 GPG_BIN="${SEICHE_OFFSITE_GPG_BIN:-gpg}"
 PYTHON_BIN="${SEICHE_OFFSITE_PYTHON_BIN:-python3}"
 RCLONE_BIN="${SEICHE_OFFSITE_RCLONE_BIN:-rclone}"
@@ -65,12 +64,11 @@ require_absolute_nonroot_path() {
 
 for command_name in basename chmod cmp dirname grep mkdir mktemp mountpoint mv \
         realpath rm stat tr "$AWK_BIN" "$CURL_BIN" "$DATE_BIN" "$DF_BIN" "$FLOCK_BIN" \
-        "$GIT_BIN" "$GPG_BIN" "$PYTHON_BIN" "$RCLONE_BIN" \
+        "$GPG_BIN" "$PYTHON_BIN" "$RCLONE_BIN" \
         "$SHA256SUM_BIN" "$TAR_BIN"; do
     require_command "$command_name"
 done
 for specification in \
-        "application directory:$APP_DIR" \
         "backup root:$BACKUP_ROOT" \
         "work root:$WORK_ROOT" \
         "status path:$STATUS_PATH" \
@@ -86,6 +84,8 @@ for specification in \
 done
 [ "$LOCK_PATH" != "$RUN_LOCK_PATH" ] \
     || fail "local backup and offsite run locks must be distinct"
+printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+    || fail "controller release SHA is missing or malformed"
 
 if [ "${EUID:-$($PYTHON_BIN -c 'import os; print(os.geteuid())')}" -ne 0 ] \
         && [ "$ALLOW_NON_ROOT_TEST" != 1 ]; then
@@ -192,8 +192,6 @@ grep -Fxq -- --force-aead <<<"$GPG_OPTIONS" \
 grep -Fxq -- --aead-algo <<<"$GPG_OPTIONS" \
     || fail "GPG runtime cannot select the reviewed AEAD algorithm"
 
-[ -d "$APP_DIR" ] && [ ! -L "$APP_DIR" ] \
-    || fail "application directory is missing or symlinked"
 [ -d "$BACKUP_ROOT" ] && [ ! -L "$BACKUP_ROOT" ] \
     || fail "local backup root is missing or symlinked"
 BACKUP_ROOT=$(realpath -e -- "$BACKUP_ROOT")
@@ -450,12 +448,9 @@ esac
 DEPLOYED_SHA=$(tr -d '\n' <"$DEPLOYED_SHA_PATH")
 printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     || fail "deployed SHA receipt is malformed"
-APP_SHA=$($GIT_BIN -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)
-printf '%s' "$APP_SHA" | grep -Eq '^[0-9a-f]{40}$' \
-    || fail "application checkout SHA is unavailable"
 [ "$SOURCE_REVISION" = "$DEPLOYED_SHA" ] \
-    && [ "$SOURCE_REVISION" = "$APP_SHA" ] \
-    || fail "snapshot, deployed receipt, and application checkout SHAs differ"
+    && [ "$SOURCE_REVISION" = "$RELEASE_SHA" ] \
+    || fail "snapshot, deployed receipt, and controller release SHAs differ"
 
 SNAPSHOT_TIMESTAMP="${SNAPSHOT_ID:0:4}-${SNAPSHOT_ID:4:2}-${SNAPSHOT_ID:6:2}T${SNAPSHOT_ID:9:2}:${SNAPSHOT_ID:11:2}:${SNAPSHOT_ID:13:2}Z"
 SNAPSHOT_EPOCH=$($DATE_BIN -u -d "$SNAPSHOT_TIMESTAMP" +%s 2>/dev/null || true)

@@ -121,17 +121,6 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
     )
     _executable(tools / "mountpoint", "raise SystemExit(1)\n")
     fake_flock = _executable(tools / "flock", "raise SystemExit(0)\n")
-    fake_git = _executable(
-        tools / "git",
-        """
-        import os
-        import sys
-
-        if sys.argv[-2:] != ["rev-parse", "HEAD"]:
-            raise SystemExit(93)
-        print(os.environ["FAKE_REVISION"])
-        """,
-    )
     fake_date = _executable(
         tools / "date",
         """
@@ -326,7 +315,6 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
     return {
         "stat": fake_stat,
         "flock": fake_flock,
-        "git": fake_git,
         "date": fake_date,
         "df": fake_df,
         "sha": fake_sha,
@@ -341,8 +329,6 @@ def _layout(
     tmp_path: Path, *, extra_snapshot_member: bool = False
 ) -> tuple[dict[str, str], Path, Path, Path]:
     fake = _fake_tools(tmp_path)
-    app = tmp_path / "app"
-    app.mkdir()
     backup_root = tmp_path / "backups"
     snapshot = _snapshot(backup_root, extra=extra_snapshot_member)
     work_root = tmp_path / "work"
@@ -365,7 +351,6 @@ def _layout(
     env = os.environ | {
         "PATH": f"{tmp_path / 'tools'}:{os.environ['PATH']}",
         "SEICHE_OFFSITE_ALLOW_NON_ROOT_TEST": "1",
-        "SEICHE_APP_DIR": str(app),
         "SEICHE_MARKET_BACKUP_DIR": str(backup_root),
         "SEICHE_OFFSITE_BACKUP_WORK_DIR": str(work_root),
         "SEICHE_OFFSITE_BACKUP_STATUS_PATH": str(status_path),
@@ -387,7 +372,6 @@ def _layout(
         "SEICHE_OFFSITE_BACKUP_MIN_FREE_MB": "256",
         "SEICHE_OFFSITE_BACKUP_SNAPSHOT_ID": SNAPSHOT_ID,
         "SEICHE_OFFSITE_FLOCK_BIN": str(fake["flock"]),
-        "SEICHE_OFFSITE_GIT_BIN": str(fake["git"]),
         "SEICHE_OFFSITE_DATE_BIN": str(fake["date"]),
         "SEICHE_OFFSITE_DF_BIN": str(fake["df"]),
         "SEICHE_OFFSITE_SHA256SUM_BIN": str(fake["sha"]),
@@ -403,7 +387,7 @@ def _layout(
         "RCLONE_CONFIG_ANCHOR_TYPE": "s3",
         "RCLONE_CONFIG_ANCHOR_PROVIDER": "Other",
         "RCLONE_CONFIG_ANCHOR_ACL": "private",
-        "FAKE_REVISION": REVISION,
+        "SEICHE_RELEASE_SHA": REVISION,
         "FAKE_SNAPSHOT_PATH": str(snapshot),
         "FAKE_REMOTE_ROOT": str(remote_root),
         "FAKE_CALLS": str(calls),
@@ -713,7 +697,14 @@ def test_incomplete_snapshot_and_sha_mismatch_fail_before_network(tmp_path: Path
     Path(env["SEICHE_DEPLOYED_SHA_PATH"]).write_text(f"{'b' * 40}\n")
     mismatch = _run(env)
     assert mismatch.returncode != 0
-    assert "checkout SHAs differ" in mismatch.stderr
+    assert "controller release SHAs differ" in mismatch.stderr
+    assert not [call for call in _calls(calls_path) if call[0] == "rclone"]
+
+    Path(env["SEICHE_DEPLOYED_SHA_PATH"]).write_text(f"{REVISION}\n")
+    env["SEICHE_RELEASE_SHA"] = "c" * 40
+    release_mismatch = _run(env)
+    assert release_mismatch.returncode != 0
+    assert "controller release SHAs differ" in release_mismatch.stderr
     assert not [call for call in _calls(calls_path) if call[0] == "rclone"]
 
 
@@ -801,7 +792,7 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
         assert forbidden not in script
     assert "CREDENTIAL_ENV_FILE" in script
     assert "seiche/market-backups/v1" in script
-    assert "snapshot, deployed receipt, and application checkout SHAs differ" in script
+    assert "snapshot, deployed receipt, and controller release SHAs differ" in script
     assert "--exclusive --nonblock 8" in script
     assert "refusing to clean a mounted stale offsite run" in script
     assert "require_empty_canary_version_history" in script
@@ -812,6 +803,14 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
 
     assert "EnvironmentFile=/root/.config/anchor/object-storage.env" in service
     assert "EnvironmentFile=/etc/seiche/offsite-backup.env" in service
+    assert "EnvironmentFile=/etc/seiche/release.env" in service
+    assert "AssertPathExists=/etc/seiche/release.env" in service
+    assert "User=root\n" in service
+    assert "Group=root\n" in service
+    assert "SupplementaryGroups=" not in service
+    assert "ExecStart=/usr/bin/bash /home/seiche/app" not in service
+    assert "AssertFileIsExecutable=/home/seiche/app" not in service
+    assert "ReadOnlyPaths=/home/seiche/app" not in service
     assert (
         "AssertFileIsExecutable=/etc/seiche/libexec/"
         "seiche-market-offsite-backup.sh" in service
