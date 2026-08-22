@@ -622,8 +622,10 @@ jobs:
             "${RUNNER_TEMP}/openbb-source-second" \
             "${RUNNER_TEMP}/openbb-dist-first" \
             "${RUNNER_TEMP}/openbb-dist-second"
-          git archive HEAD | tar -x -C "${RUNNER_TEMP}/openbb-source-first"
-          git archive HEAD | tar -x -C "${RUNNER_TEMP}/openbb-source-second"
+          git -C "$GITHUB_WORKSPACE" archive HEAD \
+            | tar -x -C "${RUNNER_TEMP}/openbb-source-first"
+          git -C "$GITHUB_WORKSPACE" archive HEAD \
+            | tar -x -C "${RUNNER_TEMP}/openbb-source-second"
           find "${RUNNER_TEMP}/openbb-source-first/integrations/openbb" \
             -type f -exec touch -t 202001010000 {} +
           find "${RUNNER_TEMP}/openbb-source-second/integrations/openbb" \

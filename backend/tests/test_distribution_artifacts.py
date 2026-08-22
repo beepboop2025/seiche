@@ -613,7 +613,7 @@ class WorkflowContracts(unittest.TestCase):
             "python -m build --no-isolation",
             "python -m twine check",
             'SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"',
-            "git archive HEAD | tar -x",
+            'git -C "$GITHUB_WORKSPACE" archive HEAD',
             "touch -t 202001010000",
             "touch -t 202401010000",
             'cmp --silent "$artifact"',
@@ -622,6 +622,10 @@ class WorkflowContracts(unittest.TestCase):
             'version("openbb-seiche") == "0.1.0"',
         ):
             self.assertIn(required, job)
+        self.assertEqual(
+            job.count('git -C "$GITHUB_WORKSPACE" archive HEAD'),
+            2,
+        )
         self.assertNotIn("openbb", workflow.split("  contracts-and-container:\n", 1)[1])
 
     def test_openbb_publication_is_signed_reproducible_and_oidc_only(self) -> None:
