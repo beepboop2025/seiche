@@ -172,6 +172,20 @@ _CACHE_TTL_S = 300
 _cache: dict[str, Any] = {"snap": None, "at": 0.0}
 
 
+def _rights_safe_memo(candidate: object) -> dict | None:
+    """Quarantine an MCP TTL entry before it can outlive assembler validation."""
+
+    if not isinstance(candidate, dict):
+        return None
+    from seiche import assemble
+
+    if assemble._snapshot_contains_restricted_cfets(candidate):
+        if _cache.get("snap") is candidate:
+            _cache.update(snap=None, at=0.0)
+        return None
+    return candidate
+
+
 def _get_snapshot(force: bool = False) -> dict:
     """Return the live board, memoised for _CACHE_TTL_S. Synchronous wrapper
     around the async assembler, bridged through _run() — never asyncio.run().
@@ -180,7 +194,7 @@ def _get_snapshot(force: bool = False) -> dict:
     from seiche import assemble
 
     now = time.time()
-    cached = _cache["snap"]
+    cached = _rights_safe_memo(_cache["snap"])
     current = assemble.cached_snapshot()
     if not force and current is not None and current is not cached:
         # The assembler can replace its restart seed with a fully rebuilt
@@ -191,6 +205,7 @@ def _get_snapshot(force: bool = False) -> dict:
     if not force and cached is not None and now - _cache["at"] < _CACHE_TTL_S:
         return cached
     snap = _run(assemble.snapshot(force=force))
+    assemble._assert_snapshot_rights(snap)
     _cache.update(snap=snap, at=now)
     return snap
 
@@ -215,8 +230,8 @@ def _get_completed_snapshot() -> dict | None:
         _cache.update(snap=current, at=memo_time)
         return current
 
-    cached = _cache.get("snap")
-    if isinstance(cached, dict):
+    cached = _rights_safe_memo(_cache.get("snap"))
+    if cached is not None:
         return cached
 
     assemble.restore_cached_snapshot()

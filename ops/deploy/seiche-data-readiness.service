@@ -8,8 +8,8 @@ OnFailure=undertow-failure-alert@%n.service
 Type=oneshot
 User=root
 # The monitor drops every capability. Its primary group therefore supplies
-# ordinary traverse/read access to the seiche:seiche 0750 validation tree and
-# the root:seiche 0640 restore receipt without granting DAC bypass.
+# ordinary traverse/read access to the root:seiche 0750 recovery-proof tree
+# and its root:seiche 0640 receipt without granting DAC bypass.
 Group=seiche
 EnvironmentFile=-/etc/seiche/data-readiness.env
 ExecStart=/usr/bin/bash /home/seiche/app/ops/deploy/seiche-data-readiness.sh
@@ -48,4 +48,4 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
 SystemCallArchitectures=native
-ReadOnlyPaths=/home/seiche/app /etc/seiche /var/lib/seiche /var/backups/seiche-market
+ReadOnlyPaths=/home/seiche/app /etc/seiche /var/lib/seiche /var/lib/seiche-recovery-proof /var/backups/seiche-market

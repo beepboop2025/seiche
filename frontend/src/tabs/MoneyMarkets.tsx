@@ -1226,7 +1226,7 @@ function ChinaDesk({
   const fxRows = labeledSeriesRows(engine?.fx_rows, engine?.fx_labels, "CHINA");
   const benchmark = market ? comparisonBenchmark(market) : null;
   const unsecuredRate = market?.metrics.find((metric) => metric.id.includes("SHIBOR")) || null;
-  const securedRate = market?.metrics.find((metric) => metric.id.includes("DR007")) || null;
+  const securedRate = market?.metrics.find((metric) => metric.id.includes("FDR007")) || null;
   const canonicalCoverage = clamp(finite(market?.coverage.coverage_pct) || 0, 0, 100);
   return (
     <div className="mm-china-desk">
@@ -1241,7 +1241,7 @@ function ChinaDesk({
 
       <section className="mm-china-pulse" aria-label="Latest China money-market readings">
         <article><span>UNSECURED CASH</span><strong>{isPublicValue(unsecuredRate) ? fmt(unsecuredRate?.value, unsecuredRate?.unit) : "WITHHELD"}</strong><p>{unsecuredRate?.label || "SHIBOR overnight"}</p><small>{statusLabel(unsecuredRate)}</small></article>
-        <article><span>SECURED 7-DAY</span><strong>{isPublicValue(securedRate) ? fmt(securedRate?.value, securedRate?.unit) : "WITHHELD"}</strong><p>{securedRate?.label || "DR007"}</p><small>{statusLabel(securedRate)}</small></article>
+        <article><span>SECURED 7-DAY FIXING</span><strong>{isPublicValue(securedRate) ? fmt(securedRate?.value, securedRate?.unit) : "WITHHELD"}</strong><p>{securedRate?.label || "FDR007"}</p><small>{statusLabel(securedRate)}</small></article>
         <article><span>RATE EVIDENCE</span><strong>{[unsecuredRate, securedRate].filter((metric) => (metric?.availability || "").toUpperCase() === "RESTRICTED").length} / 2</strong><p>fixings rights-restricted</p><small>metadata only · never treated as calm</small></article>
         <article><span>CNY / 60 DAYS</span><strong>{fmt(china?.fx?.chg_60d_pct, "%", true)}</strong><p>{china?.fx?.vol10_ann_pct == null ? "volatility unavailable" : fmt(china.fx.vol10_ann_pct, "%") + " 10d annualized vol"}</p><small>{shortDate(china?.fx?.asof)}</small></article>
         <article><span>COMPOSITE PRESSURE</span><strong>WITHHELD</strong><p>rights-cleared projection pending</p><small>no legacy rate blend reused</small></article>
@@ -1271,7 +1271,7 @@ function ChinaDesk({
 
       <section className="mm-china-interpretation">
         <article><span>01 / PRICE</span><h3>Is unsecured cash repricing?</h3><p>{isPublicValue(unsecuredRate) ? `${unsecuredRate?.label || "The unsecured fixing"} is public in the canonical pack; its native changes appear in the Market Lab.` : "The exact fixing and its rate changes stay withheld under the canonical source terms, so Seiche leaves the direction open."}</p></article>
-        <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The secured fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "DR007 is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing—not as an easy collateral market."}</p></article>
+        <article><span>02 / COLLATERAL</span><h3>Does secured funding confirm it?</h3><p>{isPublicValue(securedRate) ? "The FDR007 fixing is public, but it still cannot be subtracted from a different-tenor unsecured contract as if the two matched." : "FDR007, a fixing calculated from underlying DR007 transactions, is registered as secured seven-day evidence, but its exact quote is rights-restricted. Missing confirmation is shown as missing—not as an easy collateral market."}</p></article>
         <article><span>03 / EXTERNAL VALVE</span><h3>Is pressure escaping through CNY?</h3><p>{china?.fx?.chg_60d_pct == null ? "The currency leg is unavailable." : `CNY moved ${fmt(china.fx.chg_60d_pct, "%", true)} versus USD over 60 days, with ${fmt(china.fx.vol10_ann_pct, "%")} annualized 10-day volatility.`}</p></article>
         <article className="mm-counter"><span>COUNTERCASE</span><h3>Policy and calendar can dominate.</h3><p>Tax dates, holiday liquidity operations, reserve requirements and benchmark changes can move one valve without producing broad funding stress.</p></article>
       </section>
@@ -1558,7 +1558,7 @@ export default function MoneyMarkets({ snap }: Props) {
     { id: "briefing", label: "Briefing", note: "what matters now" },
     { id: "world", label: "World map", note: "compare clearing systems" },
     { id: "lab", label: "Market lab", note: selected?.currency || "one market at a time" },
-    ...(hasChinaDesk ? [{ id: "china" as DeskView, label: "China desk", note: "SHIBOR · DR007 · CNY" }] : []),
+    ...(hasChinaDesk ? [{ id: "china" as DeskView, label: "China desk", note: "SHIBOR · FDR007 · CNY" }] : []),
     { id: "notes", label: "Data notes", note: "methods and coverage" },
   ];
   const declaredMarketCount = atlas?.coverage?.declared_markets ?? atlas?.markets.length;
@@ -1645,7 +1645,7 @@ export default function MoneyMarkets({ snap }: Props) {
               <section className="mm-brief-actions" aria-label="Continue the analysis">
                 <button type="button" onClick={() => setView("world")}><span>COMPARE</span><b>See every clearing system</b><small>Pressure, coverage and native clock →</small></button>
                 <button type="button" onClick={() => openMarket(selected.market_id)}><span>DIAGNOSE</span><b>Open {selected.currency}</b><small>History, spread and distribution →</small></button>
-                {hasChinaDesk && <button type="button" onClick={() => setView("china")}><span>SPECIAL SITUATION</span><b>Read China’s three valves</b><small>SHIBOR, DR007 and CNY →</small></button>}
+                {hasChinaDesk && <button type="button" onClick={() => setView("china")}><span>SPECIAL SITUATION</span><b>Read China’s three valves</b><small>SHIBOR, FDR007 and CNY →</small></button>}
               </section>
             </div>
           )}

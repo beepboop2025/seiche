@@ -11,11 +11,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Leak canary (Bloomberg pytest-memray): the fattest engine test peaks ~65MiB,
-# so 256MB per test is pure headroom — only an order-of-magnitude regression
-# trips it. Inert unless pytest runs with --memray (CI does; local dev may not).
-pytestmark = pytest.mark.limit_memory("256 MB")
-
 from seiche.engines import (
     backtest,
     basins,
@@ -29,6 +24,11 @@ from seiche.engines import (
     turn,
 )
 from seiche.engines import rvxray, weather
+
+# Leak canary (Bloomberg pytest-memray): the fattest engine test peaks ~65MiB,
+# so 256MB per test is pure headroom — only an order-of-magnitude regression
+# trips it. Inert unless pytest runs with --memray (CI does; local dev may not).
+pytestmark = pytest.mark.limit_memory("256 MB")
 
 
 def _bdays(n: int, start: str = "2019-01-01") -> pd.DatetimeIndex:
@@ -417,11 +417,11 @@ def test_basins_excludes_small_value_ops(rng):
     assert r["swap_lines"]["small_value_ops_excluded"] == 1
 
 
-def test_basins_daily_asia_anchors_join_and_quarantine(rng):
+def test_basins_optional_asia_rate_stays_uncalibrated_with_short_history(rng):
     idx = _bdays(700)
     widx = pd.date_range(idx[0], idx[-1], freq="W-WED")
     tona = pd.Series(rng.normal(0.9, 0.01, len(idx)), index=idx)     # deep history
-    shibor = pd.Series(rng.normal(1.36, 0.01, 20), index=idx[-20:])  # accruing
+    china_rate = pd.Series(rng.normal(1.36, 0.01, 20), index=idx[-20:])
     r = basins.analyze(
         spread_us_bp=pd.Series(rng.normal(0, 2, len(idx)), index=idx),
         estr=pd.Series(2.0, index=idx),
@@ -432,7 +432,7 @@ def test_basins_daily_asia_anchors_join_and_quarantine(rng):
         foreign_rrp_m=pd.Series(300000.0, index=widx),
         fx_ops=[],
         tona=tona,
-        shibor_on=shibor,
+        shibor_on=china_rate,
         jpy=pd.Series(rng.normal(160, 2, len(idx)), index=idx),
         cny=pd.Series(rng.normal(6.8, 0.05, len(idx)), index=idx),
         krw=pd.Series(rng.normal(1500, 20, len(idx)), index=idx),
@@ -441,8 +441,8 @@ def test_basins_daily_asia_anchors_join_and_quarantine(rng):
     by = {b["basin"]: b for b in r["basins"]}
     assert "JAPAN" in by and by["JAPAN"]["z"] is not None      # 700 obs: z live
     assert "CHINA" in by and by["CHINA"]["z"] is None          # 20 obs: quarantined
-    assert "accruing" in by["CHINA"]["anchor"]
-    # the tide panel counts the new FX legs (SHIBOR column too short to matter)
+    assert "z requires" in by["CHINA"]["anchor"]
+    # The tide panel counts the FX legs; the optional rate is too short to matter.
     assert r["tide"]["n_series"] >= 9
 
 

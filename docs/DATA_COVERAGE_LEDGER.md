@@ -68,6 +68,9 @@ zero degraded, zero failed, and zero faults. The local cache grew from the
 dated audit's 180,036 observations to 204,980. All ten H.10 currencies above
 were filled with 2,402 observations each (24,020 total), covering 2017-01-03
 through 2026-08-14. A subsequent complete board build returned 100% coverage.
+That 29-group result predates the rights quarantine. The legacy sweep now omits
+ChinaMoney entirely and Palimpsest collects only its three native censorship
+series; no current run may treat cached CFETS-derived rows as an active source.
 
 This is local functional evidence, not a production-health claim. The same
 series counts, worker heartbeat, and board result must be independently checked
@@ -137,17 +140,17 @@ Every block below is returned under `payload.engines`, included in
 | `roguewave` | `READY` | `SPREAD` | None. |
 | `caesar` | `READY` | `SPREAD` | None. |
 | `warehouse` | `READY` | NY Fed primary-dealer position tables | SEC N-MFP and Treasury TIC would add counterpart/holder structure. |
-| `basins` | `READY_PARTIAL` | `SPREAD`, `ESTR`, `ECB_DFR`, `SONIA`, `DXY_BROAD`, `SWAP_LINES`, `FOREIGN_RRP`, NY Fed FX operations, `INR`, USDT peg, `TONA`, `SHIBOR_ON`, `CNY`, `JPY`, `KRW` | China z-score unlocks at 60 observations; dated cache had 58. |
+| `basins` | `READY_PARTIAL` | `SPREAD`, `ESTR`, `ECB_DFR`, `SONIA`, `DXY_BROAD`, `SWAP_LINES`, `FOREIGN_RRP`, NY Fed FX operations, `INR`, USDT peg, `TONA`, `CNY`, `JPY`, `KRW` | China participates through Federal Reserve H.10 CNY FX only; no local China rate node is used pending redistribution permission. |
 | `thermohaline` | `READY` | BIS `GLI_OFFSHORE_USD/LOANS/DEBT`, `GLI_EME_USD`, `CREDIT_GAP_US/CN` | Quarterly publication lag is native, not failure. |
-| `harbors` | `READY_PARTIAL` | Euro `ESTR/EURUSD`; China `SHIBOR_ON/CN_FDR007/CNY`; India `CALL_IN/INR`; Japan `TONA/JPY`; Korea `CALL_KR/KRW`; US `EFFR` | Wire canonical daily RBI/BOK rates into legacy; China percentile history is still accruing. |
-| `spillover` | `READY_PARTIAL` | `EFFR`, `ESTR`, `SHIBOR_ON`, `TONA`, `EURUSD`, `CNY`, `JPY`, `INR`, `KRW` | India/Korea currently contribute FX but not a daily local-rate node. |
+| `harbors` | `READY_PARTIAL` | Euro `ESTR/EURUSD`; China H.10 `CNY` FX only; India `CALL_IN/INR`; Japan `TONA/JPY`; Korea `CALL_KR/KRW`; US `EFFR` | China local rate and regime are unavailable, not calm, pending redistribution permission; canonical RBI/BOK rates can replace the monthly mirrors. |
+| `spillover` | `READY_PARTIAL` | `EFFR`, `ESTR`, `TONA`, `EURUSD`, `CNY`, `JPY`, `INR`, `KRW` | China, India, and Korea contribute FX but no current daily local-rate node. |
 | `stationkeeping` | `READY` | `TGA`, `RRP`, `WALCL` | None. |
 | `farbasin` | `READY_PARTIAL` | `PALIMPSEST_FEAR`, `PALIMPSEST_NEW`, `PALIMPSEST_GFI`, latest target board | Context works; model entry waits for 250 daily observations. |
 | `moorings` | `READY` | Stablecoin board/total, `USDT_USD`, `BTC_USD` | None. |
 | `cpsentinel` | `READY` | DeFiLlama hacks, `CP_SPREAD` | None. |
 | `oilfunding` | `READY` | `WTI_SPOT`, `BRENT_SPOT`, `SOFR`, IORB, CP rates, `DGS3M`, `INR`, energy/core CPI, `CUSTODY_TSY`, `FOREIGN_RRP`, `CUSHING_STOCKS` | Live futures curve remains scenario-only because the old public EIA table ended. |
 | `ballast` | `READY` | CFTC commodity positions, `WTI_SPOT`, `HENRY_HUB_SPOT`, `CRUDE_STOCKS_EX_SPR`, `SOFR`, IORB, `CP_NONFIN_3M`, `DGS3M` | EIA bulk can improve latency/resilience, not basic functionality. |
-| `estuary` | `READY_PARTIAL` | 22 named H.10 FX rows; ESTR/SONIA/TONA/SHIBOR/India/Korea rates; `DXY_BROAD/AFE/EME`; 10 energy/industrial/food rows; USD funding, swap lines, foreign RRP, FIMA, BIS offshore credit | The ten added H.10 histories passed a local real sweep; production deployment is still pending. Four qualifying FX and commodity histories already suffice. |
+| `estuary` | `READY_PARTIAL` | 22 named H.10 FX rows; ESTR/SONIA/TONA plus India/Korea rates; `DXY_BROAD/AFE/EME`; 10 energy/industrial/food rows; USD funding, swap lines, foreign RRP, FIMA, BIS offshore credit | CNY remains an H.10 FX row with no China policy-rate differential. The ten added H.10 histories passed a local real sweep; four qualifying FX and commodity histories already suffice. |
 | `windfetch` | `LIVE_ONLY` | Undertow current-affairs pack | No honest historical archive. |
 | `sonar` | `READY_PARTIAL` | Every available FRED/OFR legacy series plus `SPREAD`, `TAIL`, `SRF`, `TGA`, crypto/stablecoin and Palimpsest | The H.10 expansion is locally filled; production verification remains. |
 | `composite` | `READY` | Scores from tails, kink, weather, confession (`SRF/DW`), RV X-Ray, resonance, Hydrophone, Undertow, auctions, Warehouse, RRP buffers | Missing subscores are renormalized, never imputed as zero. |
@@ -206,7 +209,7 @@ API reads sealed canonical observations only.
 | `UK-GBP` local gauge | `policy_relative_overnight`: `SONIA UNSECURED_OVERNIGHT` minus `BOE_BANK_RATE POLICY_TARGET` | Policy and SONIA adapters implemented; SONIA derived-only | Source-complete; RONIA would add the optional secured/unsecured component. |
 | `JP-JPY` local gauge | `policy_relative_overnight`: `TONA UNSECURED_OVERNIGHT` minus `BOJ_BASIC_LOAN POLICY_CEILING` | BOJ rate/account adapters implemented | Source-complete; canonical history and validation must accrue. |
 | `KR-KRW` local gauge | Required policy-relative BOK call minus base rate; optional corridor | BOK policy and call adapters implemented but individually issued API key required; all BOK adapters are `METADATA_ONLY` while redistribution review remains open | Rows can be collected into the private canonical store, but the public gauge stays unavailable until terms review closes; corridor also waits for BOK facility rows; pack remains reference/forward-only. |
-| `CN-CNY` local gauge | `term_funding`: `DR007 TERM_1W` minus `SHIBOR_ON UNSECURED_OVERNIGHT` | CFETS adapter implemented but `METADATA_ONLY` | Public gauge unavailable until redistribution permission or a derived-entitled replacement exists. |
+| `CN-CNY` local gauge | `term_funding`: `FDR007 TERM_1W` minus `SHIBOR_ON UNSECURED_OVERNIGHT` | Conditionally licensed CFETS adapter implemented but `METADATA_ONLY`; FDR007 is a fixing based on DR007 transactions, not DR007 itself | Public gauge unavailable until redistribution permission or a derived-entitled replacement exists. |
 | `HK-HKD` local gauge | `liquidity_buffer_drain`: `HKMA_AGGREGATE_BALANCE SYSTEM_LIQUIDITY` | HKMA adapter implemented | Source-complete narrow gauge; HONIA/HIBOR/basis add breadth. |
 | `IN-INR` local gauge | `corridor_pressure`: `CALL_WAR UNSECURED_OVERNIGHT` within `RBI_SDF POLICY_FLOOR` and `RBI_MSF POLICY_CEILING` | RBI adapter implemented; most optional official roles included | Source-complete; licensed TREPS/CP/CD/basis add breadth. |
 | `AU-AUD` local gauge | `policy_relative_overnight`: `AONIA UNSECURED_OVERNIGHT` minus `RBA_CASH_TARGET POLICY_TARGET` | RBA cash/policy adapters implemented | Source-complete; secured overnight/BBSW optional. |
@@ -281,14 +284,14 @@ and candidate IDs.
 |---:|:---:|---|---|
 | 1 | P0 | Acquire/licence and backfill at least two public-derivable `FX_SWAP_BASIS` histories | Turns Global Tide from null to numeric. |
 | 2 | P0 | Create signed, content-bound ALFRED/as-published histories for all eight History inputs | Turns Backtest from UNVERIFIED to runnable and upgrades History/ML/Stack/Book evidence. |
-| 3 | P0 | Obtain redistribution permission or a derived-entitled replacement for DR007 and SHIBOR | Makes China's required term-funding component publicly calculable. |
+| 3 | P0 | Obtain redistribution permission or a derived-entitled replacement for FDR007 and SHIBOR | Makes China's required term-funding component publicly calculable. |
 | 4 | P0 | Obtain written RBNZ automated-access approval and an unambiguously classified NZ unsecured overnight series | Makes New Zealand's required corridor component possible. |
 | 5 | P0 | Persist/backfill and continuously materialize canonical histories for source-complete non-US packs | Converts implemented adapters into durable local gauges without buying duplicate data. |
 | 6 | P1 | Map a defensible canonical US `POLICY_FLOOR` | Unlocks the sole missing domestic US corridor component. |
 | 7 | P1 | Implement BOK liquidity-adjustment deposit/loan collection | Activates Korea's optional corridor component. |
 | 8 | P1 | Obtain KOFR redistribution rights or a derivable licensed substitute | Adds Korea secured/unsecured stress. |
 | 9 | P1 | Feed canonical RBI `CALL_WAR` and BOK `CALL_OVERNIGHT_ALL` into legacy Harbors/Estuary/Spillover | Replaces two-month-lagged OECD mirrors in three published engines. |
-| 10 | P1 | Backfill/accumulate SHIBOR and `CN_FDR007` past 60 observations | Unlocks China z/percentile scoring in Basins and Harbors. |
+| 10 | P1 | After rank 3 closes, backfill the rights-approved China local-rate replacements past their calibration minimums | Unlocks China rate z/percentile scoring without reviving quarantined cached values. |
 | 11 | P1 | Accumulate/backfill Palimpsest to 250 daily observations | Moves Far Basin from context-only to model-eligible. |
 | 12 | P1 | Persist per-row observation clocks for NY Fed, Treasury and CFTC table envelopes | Prevents fresh HTTP fetches from masking stale tables. |
 | 13 | P1 | Deploy and independently verify the completed ten-currency H.10 backfill on Hetzner | Immediately thickens Estuary and Sonar in production. |

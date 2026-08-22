@@ -229,6 +229,16 @@ adapters require an individually issued `SEICHE_BOK_ECOS_API_KEY` and fail
 closed when it is absent; KOFR remains metadata-only until its redistribution
 and operational contract can be promoted safely.
 
+The CFETS adapter is likewise catalogued but unavailable by default. It makes
+no request unless root-controlled approval and licence-evidence artifacts bind
+the exact schema/FDR007/SHIBOR endpoints, upstream products, canonical outputs,
+selected-field retention, internal-research-only use, prohibited publication,
+and a review deadline no more than 366 days ahead. FDR007 is the fixing
+calculated from underlying DR007 transactions; the adapter does not relabel it
+as DR007. Approval is revalidated before every data request and does not change
+the pack's `metadata_only` redistribution status. See the
+[CFETS access boundary](CFETS_ACCESS_BOUNDARY.md).
+
 Licensed and tenant adapters remain declarations until an entitled deployment
 supplies credentials/data. Their absence is a capability state, never a zero.
 

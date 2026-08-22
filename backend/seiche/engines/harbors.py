@@ -6,7 +6,7 @@ rate, what the currency is doing against the dollar, and whether local
 policy is being forced. Five harbors clear the keyless-and-honest bar today:
 
   EURO AREA — €STR daily (ECB Data Portal)
-  CHINA     — SHIBOR O/N daily (CFETS; local history accrues, see collector)
+  CHINA     — Federal Reserve H.10 CNY FX only; local rate unavailable
   INDIA     — call money monthly (OECD MEI via FRED, ~2 months late BY DESIGN)
   JAPAN     — TONA daily (BOJ stat-search flat file, history to 1998)
   KOREA     — overnight call rate monthly (OECD MEI via FRED)
@@ -123,9 +123,9 @@ def analyze(harbors: dict[str, dict], effr: pd.Series) -> dict:
             entry["rate"] = None
         entry["regime"] = regime
 
-        # optional second anchor (e.g. China's secured leg beside SHIBOR's
-        # unsecured one) — display-only, never blended into the stress score,
-        # and no cross-tenor spread is computed (o/n vs 7d are not comparable)
+        # Optional second anchor — display-only, never blended into the stress
+        # score. No cross-tenor spread is computed because unlike tenors are
+        # not comparable.
         r2 = spec.get("rate2", pd.Series(dtype=float))
         r2 = r2.dropna() if r2 is not None else pd.Series(dtype=float)
         if not r2.empty:
@@ -218,8 +218,8 @@ def analyze(harbors: dict[str, dict], effr: pd.Series) -> dict:
         "caveats": [
             "India/Japan/Korea anchor rates are OECD MEI monthly mirrors, ~2 months late "
             "by design — charted as points, never interpolated to fake a daily feed",
-            "SHIBOR history accrues locally (the CFETS API serves ~1 month per request); "
-            "China scores stay quarantined until enough own history exists",
+            "China is FX-only from Federal Reserve H.10; its local benchmark rate "
+            "and local-rate regime are unavailable pending redistribution permission",
             "stress percentiles are each harbor's own history — no cross-economy calibration",
         ],
         "method": (

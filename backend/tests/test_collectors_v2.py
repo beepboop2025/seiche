@@ -15,7 +15,11 @@ from seiche.collectors import (
     FileRawCaptureSink,
 )
 from seiche.domain.observation import evidence_sha256
-from seiche.sources.base import ObservationBatch, RawCapture
+from seiche.sources.base import (
+    ObservationBatch,
+    RawCapture,
+    SourcePolicyUnavailableError,
+)
 
 
 @dataclass
@@ -81,6 +85,127 @@ class _RecordingSink:
         if self.fail_first and self.calls == 1:
             raise OSError("temporary sink failure")
         return []
+
+
+@pytest.mark.asyncio
+async def test_supervisor_revalidates_availability_inside_every_sink_write() -> None:
+    now = datetime(2026, 8, 11, 10, tzinfo=UTC)
+    events: list[str] = []
+    payload = b'{"selected":true}'
+
+    class CheckedAdapter:
+        market_id = "HK-HKD"
+        adapter_id = "hkma_official"
+
+        def check_availability(self) -> None:
+            events.append("availability")
+
+        async def collect(self) -> ObservationBatch:
+            events.append("collect")
+            return ObservationBatch(
+                market_id=self.market_id,
+                adapter_id=self.adapter_id,
+                captured_at=now,
+                observations=(),
+                raw_capture=RawCapture(
+                    market_id=self.market_id,
+                    adapter_id=self.adapter_id,
+                    captured_at=now,
+                    source_uri="https://source.example/selected",
+                    media_type="application/json",
+                    payload=payload,
+                    evidence_hash=evidence_sha256(payload),
+                ),
+            )
+
+    class OrderedSink:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def write(self, _value) -> list[str]:
+            events.append(self.label)
+            return []
+
+    def write_observations(_observations: tuple) -> int:
+        events.append("observations")
+        return 0
+
+    supervisor = CollectorSupervisor(
+        raw_sink=OrderedSink("raw"),
+        normalized_sink=OrderedSink("normalized"),
+        observation_writer=write_observations,
+        sleep=_no_sleep,
+    )
+    supervisor.register(CheckedAdapter())
+
+    runs = await supervisor.run_due(now=now)
+
+    assert runs[0].status is CollectorRunStatus.SUCCESS
+    assert events == [
+        "availability",
+        "collect",
+        "availability",
+        "raw",
+        "availability",
+        "normalized",
+        "availability",
+        "observations",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_supervisor_revocation_before_raw_sink_is_unavailable_and_writes_nothing(
+) -> None:
+    now = datetime(2026, 8, 11, 10, tzinfo=UTC)
+    payload = b'{"selected":true}'
+    checks = 0
+    raw_sink = _RecordingSink()
+    normalized_sink = _RecordingSink()
+    observation_writes: list[tuple] = []
+
+    class RevokedAdapter:
+        market_id = "HK-HKD"
+        adapter_id = "hkma_official"
+
+        def check_availability(self) -> None:
+            nonlocal checks
+            checks += 1
+            if checks > 1:
+                raise SourcePolicyUnavailableError("approval revoked")
+
+        async def collect(self) -> ObservationBatch:
+            return ObservationBatch(
+                market_id=self.market_id,
+                adapter_id=self.adapter_id,
+                captured_at=now,
+                observations=(),
+                raw_capture=RawCapture(
+                    market_id=self.market_id,
+                    adapter_id=self.adapter_id,
+                    captured_at=now,
+                    source_uri="https://source.example/selected",
+                    media_type="application/json",
+                    payload=payload,
+                    evidence_hash=evidence_sha256(payload),
+                ),
+            )
+
+    supervisor = CollectorSupervisor(
+        raw_sink=raw_sink,
+        normalized_sink=normalized_sink,
+        observation_writer=lambda rows: observation_writes.append(rows) or len(rows),
+        sleep=_no_sleep,
+    )
+    supervisor.register(RevokedAdapter())
+
+    runs = await supervisor.run_due(now=now)
+
+    assert runs[0].status is CollectorRunStatus.UNAVAILABLE
+    assert runs[0].attempts == 1
+    assert checks == 2
+    assert raw_sink.calls == 0
+    assert normalized_sink.calls == 0
+    assert observation_writes == []
 
 
 @pytest.mark.asyncio

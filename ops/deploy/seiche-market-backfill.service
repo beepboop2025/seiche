@@ -11,6 +11,7 @@ WorkingDirectory=/home/seiche/app
 EnvironmentFile=/etc/seiche/market.env
 EnvironmentFile=-/etc/seiche/rbnz-access.env
 EnvironmentFile=-/etc/seiche/bok-ecos.env
+EnvironmentFile=-/etc/seiche/cfets-access.env
 ExecStart=/home/seiche/app/backend/.venv/bin/seiche market-backfill
 TimeoutStartSec=2h
 # Backfill is throughput work, not request-path work. Keep one CPU available to
@@ -23,5 +24,6 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+ReadOnlyPaths=-/etc/seiche/cfets-approval.conf -/etc/seiche/cfets-licence-evidence.pdf
 ReadWritePaths=/var/lib/seiche
 UMask=0027

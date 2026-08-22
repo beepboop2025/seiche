@@ -10,18 +10,23 @@ from __future__ import annotations
 import asyncio
 import calendar as civil_calendar
 import csv
+import grp
 import hashlib
+import hmac
 import html
 import io
 import json
 import logging
 import os
 import re
+import stat
 import urllib.parse
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -56,6 +61,71 @@ _BOK_ECOS_SERIES = {
     "KR.BOK.BASE_RATE": ("722Y001", "0101000"),
     "KR.BOK.CALL_OVERNIGHT_ALL": ("817Y002", "010101000"),
 }
+
+_CFETS_TERMS_URI = "https://www.chinamoney.com.cn/english/svcmds/"
+_CFETS_SCHEMA_ENDPOINT = (
+    "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/"
+    "fdr-settings.json"
+)
+_CFETS_FDR007_ENDPOINT = (
+    "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/"
+    "fdr-chrt.csv"
+)
+_CFETS_SHIBOR_ON_ENDPOINT = (
+    "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis"
+)
+_CFETS_APPROVAL_PATH_ENV = "SEICHE_CFETS_APPROVAL_PATH"
+_CFETS_APPROVAL_SHA256_ENV = "SEICHE_CFETS_APPROVAL_SHA256"
+_CFETS_APPROVAL_CANONICAL_PATH = Path("/etc/seiche/cfets-approval.conf")
+_CFETS_LICENCE_EVIDENCE_CANONICAL_PATH = Path(
+    "/etc/seiche/cfets-licence-evidence.pdf"
+)
+_CFETS_APPROVAL_GROUP = "seiche"
+_CFETS_APPROVAL_MODE = 0o640
+_CFETS_APPROVAL_MAX_BYTES = 4096
+_CFETS_LICENCE_EVIDENCE_MAX_BYTES = 16 * 1024 * 1024
+_CFETS_MAX_LICENSE_REVIEW_DAYS = 366
+_CFETS_FDR_CHART_COLUMNS = (
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "FDR001",
+    "FDR007",
+    "FDR014",
+)
+_CFETS_FDR_GRAPH_IDS = ("FDR001", "FDR007", "FDR014")
+_CFETS_RETAINED_PROJECTION_SCHEMA = "seiche.cfets-retained-projection.v1"
+_CFETS_RETAINED_PROJECTION_COLUMNS = ("event_date", "value")
+_CFETS_APPROVAL_FIXED_FIELDS = {
+    "schema": "seiche.cfets-approval.v2",
+    "publisher": "China Foreign Exchange Trade System",
+    "endpoints": ",".join(
+        (
+            _CFETS_SCHEMA_ENDPOINT,
+            _CFETS_FDR007_ENDPOINT,
+            _CFETS_SHIBOR_ON_ENDPOINT,
+        )
+    ),
+    "upstream_products": "FDR007,SHIBOR_ON",
+    "canonical_outputs": "CN.CFETS.FDR007,CN.CFETS.SHIBOR_ON",
+    "collection_scope": "automated_bounded_fdr007_and_shibor_on_history",
+    "permitted_use": "internal_research_only",
+    "publication": "prohibited",
+    "raw_response_retention": "prohibited",
+    "retained_projection": "event_date,value",
+}
+_CFETS_APPROVAL_FIELDS = frozenset(
+    {
+        *_CFETS_APPROVAL_FIXED_FIELDS,
+        "licence_evidence_path",
+        "licence_evidence_sha256",
+        "valid_until",
+    }
+)
+_CFETS_RIGHTS_GENERATION_KEY = "seiche-rights-generation"
 
 
 def _redact_bok_ecos_credential(value: object, api_key: str | None = None) -> str:
@@ -133,6 +203,20 @@ class BOKECOSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
 
 class BOKECOSSourceError(RuntimeError):
     """A credential-safe BOK ECOS source failure suitable for public faults."""
+
+
+class CFETSAccessPolicyUnavailableError(SourcePolicyUnavailableError):
+    """CFETS value collection was withheld before any source request."""
+
+
+@dataclass(frozen=True, slots=True)
+class _CFETSApproval:
+    artifact_sha256: str
+    valid_until: date
+
+    @property
+    def rights_generation(self) -> str:
+        return f"cfets-approval-v2-{self.artifact_sha256[:16]}"
 
 
 def _bok_ecos_api_key() -> str:
@@ -450,59 +534,249 @@ def parse_bok_ecos(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
     return tuple(points)
 
 
-def parse_cfets_csv(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
-    points: list[ParsedPoint] = []
-    for raw_line in document.payload.decode("utf-8-sig").splitlines():
-        row = next(csv.reader([raw_line]))
-        if not row:
-            continue
-        event_day = _date(row[0], "%Y-%m-%d")
-        if event_day is None:
-            continue
-        if document.label == "CN.CFETS.DR007":
-            # CFETS' FDR007 fixing is the public depository-institution
-            # seven-day repo benchmark corresponding to this pack role.
-            column = 7
-        else:
-            column = 1
-        if len(row) <= column:
-            continue
-        value = _number(row[column])
-        if value is None:
-            continue
-        points.append(
-            ParsedPoint(document.label, event_day, value, raw_line.encode("utf-8"))
+def _cfets_rights_generation(document: FetchedDocument) -> str | None:
+    fragment = urllib.parse.urlsplit(document.source_uri).fragment
+    if not fragment:
+        return None
+    try:
+        values = urllib.parse.parse_qs(
+            fragment,
+            keep_blank_values=True,
+            strict_parsing=True,
         )
-    if not points:
-        raise ValueError("CFETS CSV contains no numeric observations")
-    return tuple(points)
+    except ValueError as exc:
+        raise ValueError("CFETS document has invalid local rights lineage") from exc
+    generations = values.get(_CFETS_RIGHTS_GENERATION_KEY)
+    if set(values) != {_CFETS_RIGHTS_GENERATION_KEY} or generations is None:
+        raise ValueError("CFETS document has unknown local rights lineage")
+    if len(generations) != 1 or not re.fullmatch(
+        r"cfets-approval-v2-[0-9a-f]{16}", generations[0]
+    ):
+        raise ValueError("CFETS document has invalid local rights generation")
+    return generations[0]
+
+
+def _cfets_revision_id(
+    document: FetchedDocument,
+    event_day: date,
+    row_evidence: bytes,
+) -> str | None:
+    generation = _cfets_rights_generation(document)
+    if generation is None:
+        return None
+    row_hash = hashlib.sha256(row_evidence).hexdigest()[:16]
+    return f"cfets:{generation}:{event_day.isoformat()}:{row_hash}"
+
+
+def _cfets_document_uri(uri: object, approval: _CFETSApproval) -> str:
+    parts = urllib.parse.urlsplit(str(uri))
+    if parts.fragment:
+        raise ValueError("CFETS response URI unexpectedly contained a fragment")
+    fragment = urllib.parse.urlencode(
+        {_CFETS_RIGHTS_GENERATION_KEY: approval.rights_generation}
+    )
+    return urllib.parse.urlunsplit((*parts[:4], fragment))
+
+
+def _cfets_retained_projection(
+    *,
+    upstream_product: str,
+    canonical_output: str,
+    records: list[dict[str, str]],
+) -> bytes:
+    """Encode only the fields the approval permits Seiche to retain."""
+
+    return json.dumps(
+        {
+            "schema": _CFETS_RETAINED_PROJECTION_SCHEMA,
+            "upstream_product": upstream_product,
+            "canonical_output": canonical_output,
+            "columns": list(_CFETS_RETAINED_PROJECTION_COLUMNS),
+            "raw_response_retained": False,
+            "records": records,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _cfets_event_date(value: object) -> date | None:
+    """Accept the exact date grammar declared by the retained projection."""
+
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == value else None
+
+
+def _validate_cfets_fdr_schema(payload: bytes) -> None:
+    """Bind the headerless chart file to CFETS' separately named schema."""
+
+    try:
+        schema = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("CFETS FDR schema response is not valid JSON") from exc
+    if not isinstance(schema, dict):
+        raise ValueError("CFETS FDR schema response is not an object")
+    if schema.get("columns") != list(_CFETS_FDR_CHART_COLUMNS):
+        raise ValueError("CFETS FDR chart columns changed")
+    graphs = schema.get("graphs")
+    if not isinstance(graphs, list) or tuple(
+        graph.get("gid") if isinstance(graph, dict) else None for graph in graphs
+    ) != _CFETS_FDR_GRAPH_IDS:
+        raise ValueError("CFETS FDR graph identities changed")
+
+
+def _minimize_cfets_fdr007_payload(
+    schema_payload: bytes,
+    csv_payload: bytes,
+    *,
+    start: date,
+    end: date,
+) -> bytes:
+    """Validate FDR007 by name and discard every unapproved response field."""
+
+    _validate_cfets_fdr_schema(schema_payload)
+    selected_index = _CFETS_FDR_CHART_COLUMNS.index("FDR007")
+    records: list[dict[str, str]] = []
+    seen_dates: set[date] = set()
+    try:
+        text = csv_payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("CFETS FDR chart is not UTF-8") from exc
+    for row in csv.reader(io.StringIO(text)):
+        if not row or not any(field.strip() for field in row):
+            continue
+        if len(row) != len(_CFETS_FDR_CHART_COLUMNS):
+            raise ValueError("CFETS FDR chart row does not match named columns")
+        event_day = _cfets_event_date(row[0])
+        if event_day is None:
+            raise ValueError("CFETS FDR007 row has an invalid event date")
+        if event_day < start or event_day > end:
+            continue
+        value = _number(row[selected_index])
+        if value is None:
+            raise ValueError("CFETS FDR007 row is malformed")
+        if event_day in seen_dates:
+            raise ValueError("CFETS FDR007 response contains duplicate dates")
+        seen_dates.add(event_day)
+        records.append(
+            {"event_date": event_day.isoformat(), "value": str(value)}
+        )
+    if not records:
+        raise ValueError("CFETS FDR007 response contains no observations")
+    return _cfets_retained_projection(
+        upstream_product="FDR007",
+        canonical_output="CN.CFETS.FDR007",
+        records=records,
+    )
+
+
+def _minimize_cfets_shibor_on_payload(
+    payload: bytes,
+    *,
+    start: date,
+    end: date,
+) -> bytes:
+    """Validate named SHIBOR fields and retain only date plus overnight rate."""
+
+    try:
+        decoded = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("CFETS SHIBOR response is not valid JSON") from exc
+    records = decoded.get("records") if isinstance(decoded, dict) else None
+    if not isinstance(records, list):
+        raise ValueError("CFETS SHIBOR response has no records list")
+    selected: list[dict[str, str]] = []
+    seen_dates: set[date] = set()
+    for row in records:
+        if not isinstance(row, dict) or "showDateCN" not in row or "ON" not in row:
+            raise ValueError("CFETS SHIBOR row changed named fields")
+        event_day = _cfets_event_date(row["showDateCN"])
+        value = _number(row["ON"])
+        if event_day is None or value is None:
+            raise ValueError("CFETS SHIBOR overnight row is malformed")
+        if event_day in seen_dates:
+            raise ValueError("CFETS SHIBOR response contains duplicate dates")
+        seen_dates.add(event_day)
+        if event_day < start or event_day > end:
+            raise ValueError("CFETS SHIBOR row falls outside the approved query window")
+        selected.append(
+            {"event_date": event_day.isoformat(), "value": str(value)}
+        )
+    if not selected:
+        raise ValueError("CFETS SHIBOR response contains no overnight values")
+    return _cfets_retained_projection(
+        upstream_product="SHIBOR_ON",
+        canonical_output="CN.CFETS.SHIBOR_ON",
+        records=selected,
+    )
 
 
 def parse_cfets_rates(document: FetchedDocument) -> tuple[ParsedPoint, ...]:
-    if document.label == "CN.CFETS.DR007":
-        return parse_cfets_csv(document)
-    payload = json.loads(document.payload)
-    records = payload.get("records")
-    if not isinstance(records, list):
-        raise ValueError("CFETS SHIBOR response has no records")
+    """Parse the selected-field retention envelope, never an upstream body."""
+
+    try:
+        payload = json.loads(document.payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("CFETS retained projection is not valid JSON") from exc
+    expected_product = {
+        "CN.CFETS.FDR007": "FDR007",
+        "CN.CFETS.SHIBOR_ON": "SHIBOR_ON",
+    }.get(document.label)
+    if expected_product is None:
+        raise ValueError(f"unknown CFETS retained projection {document.label!r}")
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema",
+        "upstream_product",
+        "canonical_output",
+        "columns",
+        "raw_response_retained",
+        "records",
+    }:
+        raise ValueError("CFETS retained projection has an invalid schema")
+    if (
+        payload["schema"] != _CFETS_RETAINED_PROJECTION_SCHEMA
+        or payload["upstream_product"] != expected_product
+        or payload["canonical_output"] != document.label
+        or payload["columns"] != list(_CFETS_RETAINED_PROJECTION_COLUMNS)
+        or payload["raw_response_retained"] is not False
+        or not isinstance(payload["records"], list)
+    ):
+        raise ValueError("CFETS retained projection changed its approved scope")
     points: list[ParsedPoint] = []
-    for row in records:
-        if not isinstance(row, dict):
-            continue
-        event_day = _date(row.get("showDateCN"), "%Y-%m-%d")
-        value = _number(row.get("ON"))
-        if event_day is None or value is None:
-            continue
+    seen_dates: set[date] = set()
+    for row in payload["records"]:
+        if not isinstance(row, dict) or set(row) != set(
+            _CFETS_RETAINED_PROJECTION_COLUMNS
+        ):
+            raise ValueError("CFETS retained row has an invalid schema")
+        if not all(isinstance(row[field], str) for field in row):
+            raise ValueError("CFETS retained row fields must be strings")
+        event_day = _cfets_event_date(row["event_date"])
+        value = _number(row["value"])
+        if event_day is None or value is None or event_day in seen_dates:
+            raise ValueError("CFETS retained row is malformed or duplicated")
+        seen_dates.add(event_day)
+        row_evidence = _row_evidence(expected_product, row)
         points.append(
             ParsedPoint(
-                "CN.CFETS.SHIBOR_ON",
+                document.label,
                 event_day,
                 value,
-                _row_evidence("SHIBOR_ON", row),
+                row_evidence,
+                revision_id=_cfets_revision_id(
+                    document,
+                    event_day,
+                    row_evidence,
+                ),
             )
         )
     if not points:
-        raise ValueError("CFETS SHIBOR response contains no overnight values")
+        raise ValueError("CFETS retained projection contains no observations")
     return tuple(points)
 
 
@@ -1490,6 +1764,269 @@ def _require_rbnz_access_approval() -> None:
         )
 
 
+def _cfets_access_today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _cfets_approval_expected_owner() -> tuple[int, int]:
+    try:
+        group_id = grp.getgrnam(_CFETS_APPROVAL_GROUP).gr_gid
+    except KeyError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval cannot be validated because the service group is absent; "
+            "no request was made"
+        ) from exc
+    return 0, group_id
+
+
+def _read_cfets_approval_bytes(path: Path) -> bytes:
+    """Open one immutable approval identity without following the final symlink."""
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval validation requires no-follow file opens; "
+            "no request was made"
+        )
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact is missing or cannot be opened safely; "
+            "no request was made"
+        ) from exc
+    try:
+        metadata = os.fstat(descriptor)
+        expected_uid, expected_gid = _cfets_approval_expected_owner()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or stat.S_IMODE(metadata.st_mode) != _CFETS_APPROVAL_MODE
+            or metadata.st_nlink != 1
+        ):
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact ownership, mode, or file type is unsafe; "
+                "no request was made"
+            )
+        if not 0 < metadata.st_size <= _CFETS_APPROVAL_MAX_BYTES:
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact size is unsafe; no request was made"
+            )
+        chunks: list[bytes] = []
+        remaining = _CFETS_APPROVAL_MAX_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 4096))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+    if len(payload) != metadata.st_size:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact changed while being read; no request was made"
+        )
+    return payload
+
+
+def _hash_cfets_licence_evidence(path: Path) -> str:
+    """Hash the fixed operator evidence without following or retaining it.
+
+    The approval file is only a scope declaration.  Its evidence digest is
+    meaningful only when it matches an actual root-controlled permission
+    artifact, so runtime validates both objects before opening the network.
+    """
+
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS licence evidence validation requires no-follow file opens; "
+            "no request was made"
+        )
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS licence evidence is missing or cannot be opened safely; "
+            "no request was made"
+        ) from exc
+    try:
+        before = os.fstat(descriptor)
+        expected_uid, expected_gid = _cfets_approval_expected_owner()
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != expected_uid
+            or before.st_gid != expected_gid
+            or stat.S_IMODE(before.st_mode) != _CFETS_APPROVAL_MODE
+            or before.st_nlink != 1
+        ):
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS licence evidence ownership, mode, or file type is unsafe; "
+                "no request was made"
+            )
+        if not 0 < before.st_size <= _CFETS_LICENCE_EVIDENCE_MAX_BYTES:
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS licence evidence size is unsafe; no request was made"
+            )
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _CFETS_LICENCE_EVIDENCE_MAX_BYTES:
+                raise CFETSAccessPolicyUnavailableError(
+                    "CFETS licence evidence size is unsafe; no request was made"
+                )
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if total != before.st_size or identity_before != identity_after:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS licence evidence changed while being read; no request was made"
+        )
+    return digest.hexdigest()
+
+
+def _parse_cfets_approval(payload: bytes) -> tuple[dict[str, str], date]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact is not UTF-8; no request was made"
+        ) from exc
+    if "\r" in text or not text.endswith("\n"):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has a non-canonical line format; "
+            "no request was made"
+        )
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if (
+            separator != "="
+            or not re.fullmatch(r"[a-z0-9_]+", key)
+            or not value
+            or key in fields
+        ):
+            raise CFETSAccessPolicyUnavailableError(
+                "CFETS approval artifact key/value schema is invalid; "
+                "no request was made"
+            )
+        fields[key] = value
+    if fields.keys() != _CFETS_APPROVAL_FIELDS:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has missing or unknown fields; no request was made"
+        )
+    if any(fields[key] != value for key, value in _CFETS_APPROVAL_FIXED_FIELDS.items()):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact does not grant the exact endpoints, products, "
+            "canonical outputs, selected-field retention, research-only, and "
+            "nonpublication scope; no request was made"
+        )
+    if fields["licence_evidence_path"] != str(
+        _CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+    ):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact does not name the canonical licence evidence; "
+            "no request was made"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", fields["licence_evidence_sha256"]):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has no valid licence-evidence digest; "
+            "no request was made"
+        )
+    try:
+        valid_until = date.fromisoformat(fields["valid_until"])
+    except ValueError as exc:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact has no valid ISO expiry; no request was made"
+        ) from exc
+    if valid_until.isoformat() != fields["valid_until"]:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact expiry is not canonical; no request was made"
+        )
+    return fields, valid_until
+
+
+def _require_cfets_access_license(*, today: date | None = None) -> _CFETSApproval:
+    """Validate content-bound, scope-bound proof before any CFETS request."""
+
+    configured_path = os.getenv(_CFETS_APPROVAL_PATH_ENV, "").strip()
+    expected_hash = os.getenv(_CFETS_APPROVAL_SHA256_ENV, "").strip().lower()
+    if configured_path != str(_CFETS_APPROVAL_CANONICAL_PATH) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_hash
+    ):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS value collection is disabled before any request: an "
+            f"operator-held data licence or written permission is required; see "
+            f"{_CFETS_TERMS_URI}. Configure {_CFETS_APPROVAL_PATH_ENV} and "
+            f"{_CFETS_APPROVAL_SHA256_ENV} only after approval"
+        )
+    payload = _read_cfets_approval_bytes(_CFETS_APPROVAL_CANONICAL_PATH)
+    actual_hash = hashlib.sha256(payload).hexdigest()
+    if not hmac.compare_digest(actual_hash, expected_hash):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval artifact digest does not match the configured proof; "
+            "no request was made"
+        )
+    fields, valid_until = _parse_cfets_approval(payload)
+    evidence_hash = _hash_cfets_licence_evidence(
+        _CFETS_LICENCE_EVIDENCE_CANONICAL_PATH
+    )
+    if not hmac.compare_digest(
+        evidence_hash,
+        fields["licence_evidence_sha256"],
+    ):
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS licence evidence digest does not match the approval artifact; "
+            "no request was made"
+        )
+    review_days = (valid_until - (today or _cfets_access_today())).days
+    if review_days < 0:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS data-licence review has expired; no request was made"
+        )
+    if review_days > _CFETS_MAX_LICENSE_REVIEW_DAYS:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS data-licence proof must be reviewed within 366 days; "
+            "no request was made"
+        )
+    return _CFETSApproval(actual_hash, valid_until)
+
+
+def _revalidate_cfets_approval(
+    expected: _CFETSApproval,
+) -> _CFETSApproval:
+    """Require the same live approval generation at an I/O boundary."""
+
+    current = _require_cfets_access_license(today=_cfets_access_today())
+    if current.artifact_sha256 != expected.artifact_sha256:
+        raise CFETSAccessPolicyUnavailableError(
+            "CFETS approval changed during collection; no further request or "
+            "retained write was made"
+        )
+    return current
+
+
 def _rbnz_request_headers(*, navigation: bool) -> dict[str, str]:
     """Identify Seiche honestly on an operator-approved RBNZ connection."""
 
@@ -2055,19 +2592,38 @@ def build_official_adapters(
     )
 
     async def fetch_cfets(client):
-        end = now.date()
+        collection_day = _cfets_access_today()
+        approval = _require_cfets_access_license(today=collection_day)
+        end = collection_day
         window_start = start if backfill else max(start, end - timedelta(days=31))
-        fdr = await client.get(
-            "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/fdr-chrt.csv",
+
+        schema_response = await client.get(
+            _CFETS_SCHEMA_ENDPOINT,
             headers={"Referer": "https://www.chinamoney.com.cn/english/bmkfrr/"},
+            follow_redirects=False,
+        )
+        schema_response.raise_for_status()
+        fdr_approval = _revalidate_cfets_approval(approval)
+        fdr = await client.get(
+            _CFETS_FDR007_ENDPOINT,
+            headers={"Referer": "https://www.chinamoney.com.cn/english/bmkfrr/"},
+            follow_redirects=False,
         )
         fdr.raise_for_status()
+        _revalidate_cfets_approval(approval)
+        retained_fdr007 = _minimize_cfets_fdr007_payload(
+            schema_response.content,
+            fdr.content,
+            start=window_start,
+            end=end,
+        )
+        fdr_approval = _revalidate_cfets_approval(approval)
         documents = [
             FetchedDocument(
-                str(fdr.url),
-                "text/csv",
-                fdr.content,
-                "CN.CFETS.DR007",
+                _cfets_document_uri(fdr.url, fdr_approval),
+                "application/vnd.seiche.cfets-retained-projection+json",
+                retained_fdr007,
+                "CN.CFETS.FDR007",
             )
         ]
         # CFETS states and enforces a one-year maximum per historical query.
@@ -2078,29 +2634,44 @@ def build_official_adapters(
             end,
             maximum_days=360,
         ):
+            window_approval = _revalidate_cfets_approval(approval)
             shibor = await client.get(
-                "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis",
+                _CFETS_SHIBOR_ON_ENDPOINT,
                 params={
                     "lang": "en",
                     "startDate": chunk_start.isoformat(),
                     "endDate": chunk_end.isoformat(),
                 },
                 headers={"Referer": "https://www.chinamoney.com.cn/english/bmkshibor/"},
+                follow_redirects=False,
             )
             shibor.raise_for_status()
-            records = shibor.json().get("records") or []
-            if records:
-                documents.append(
-                    FetchedDocument(
-                        str(shibor.url),
-                        "application/json",
-                        shibor.content,
-                        "CN.CFETS.SHIBOR_ON",
-                    )
+            _revalidate_cfets_approval(approval)
+            retained_shibor_on = _minimize_cfets_shibor_on_payload(
+                shibor.content,
+                start=chunk_start,
+                end=chunk_end,
+            )
+            window_approval = _revalidate_cfets_approval(approval)
+            documents.append(
+                FetchedDocument(
+                    _cfets_document_uri(shibor.url, window_approval),
+                    "application/vnd.seiche.cfets-retained-projection+json",
+                    retained_shibor_on,
+                    "CN.CFETS.SHIBOR_ON",
                 )
+            )
         return tuple(documents)
 
-    add("CN-CNY", "cfets_rates", "cfets_rates", fetch_cfets, parse_cfets_rates, 90)
+    add(
+        "CN-CNY",
+        "cfets_rates",
+        "cfets_rates",
+        fetch_cfets,
+        parse_cfets_rates,
+        90,
+        availability_check=_require_cfets_access_license,
+    )
 
     add(
         "HK-HKD",

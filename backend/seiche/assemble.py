@@ -23,10 +23,14 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import re
 import subprocess
 import time
 import traceback
+import unicodedata
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -40,7 +44,6 @@ from seiche.config import (
     BALLAST_EIA_RELEASE_LAG_DAYS,
     BIS_SERIES,
     BOJ_SERIES,
-    CHINAMONEY_SERIES,
     COMPOSITE_WEIGHTS,
     CROWD_LOOKBACK_WEEKS,
     CRYPTO_PRODUCTS,
@@ -137,7 +140,7 @@ from seiche.engines import undertow as eng_undertow
 from seiche.engines import warehouse as eng_warehouse
 from seiche.engines import weather as eng_weather
 from seiche import editorial
-from seiche.sources import bis, boj, cftc, chinamoney, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
+from seiche.sources import bis, boj, cftc, crypto, ecb, eia_petroleum, fedtext, fiscaldata, fred, gdelt, llamahacks, nyfed, nyfed_rde, ofr, palimpsest, td_auctions, windfetch
 from seiche.sources.base import Series, SourceFault, utcnow_iso
 
 CACHE_MIN = 15
@@ -145,6 +148,218 @@ DEEP_TTL_MIN = 12 * 60
 LAST_GOOD_SNAPSHOT_KEY = "live-snapshot:last-known-good:v1"
 STATIC_SNAPSHOT_PATH = (
     Path(__file__).resolve().with_name("bootstrap_snapshot.json")
+)
+PALIMPSEST_NATIVE_ENGINE_SERIES = {
+    "PALIMPSEST_FEAR": "ddti-history.jsonl:top_threat",
+    "PALIMPSEST_NEW": "ddti-history.jsonl:n_new",
+    "PALIMPSEST_GFI": "history.jsonl:gfi",
+}
+RESTRICTED_SNAPSHOT_IDENTIFIERS = frozenset({
+    "china money",
+    "chinamoney",
+    "cfets",
+    "cfets_rates",
+    "shibor",
+    "shibor_on",
+    "shibor:on",
+    "cn.cfets.shibor_on",
+    "cn.cfets.fdr007",
+    "cn.cfets.dr007",
+    "cn_fdr007",
+    "cn_parity",
+    "usdcny_parity",
+    "fdr007",
+    "dr007",
+    "china-econ-history.jsonl:fdr007",
+    "china-econ-history.jsonl:usdcny_parity",
+    "cn·rate",
+})
+RESTRICTED_SNAPSHOT_IDENTITY_FIELDS = frozenset({
+    "adapter",
+    "adapter_id",
+    "benchmark",
+    "columns",
+    "id",
+    "input_series",
+    "instrument_id",
+    "label",
+    "metric",
+    "mnemonic",
+    "name",
+    "node",
+    "rate_label",
+    "remote_id",
+    "series",
+    "series_id",
+    "source",
+    "source_id",
+    "source_uri",
+})
+RESTRICTED_SNAPSHOT_PROSE_FIELDS = frozenset({
+    "caveat",
+    "caveats",
+    "description",
+    "detail",
+    "explanation",
+    "message",
+    "method",
+    "note",
+    "notes",
+    "reason",
+    "summary",
+    "term",
+    "text",
+    "title",
+})
+RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES = ("_id", "_ids", "_series")
+RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
+    "benchmarks",
+    "components",
+    "covariates",
+    "exposures",
+    "factors",
+    "features",
+    "indicators",
+    "inputs",
+    "instruments",
+    "measures",
+    "metrics",
+    "outputs",
+    "parameters",
+    "predictors",
+    "regressors",
+    "signals",
+    "sources",
+    "targets",
+    "variables",
+})
+RESTRICTED_SNAPSHOT_DISPLAY_IDENTITY_FIELDS = frozenset({
+    "label",
+    "name",
+    "rate_label",
+})
+RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS = frozenset({
+    "amount",
+    "balance",
+    "beta",
+    "close",
+    "contribution",
+    "corr",
+    "correlation",
+    "fixing",
+    "high",
+    "index",
+    "last",
+    "last_pct",
+    "latest_pct",
+    "level",
+    "low",
+    "mid",
+    "notional",
+    "open",
+    "pctl",
+    "percentile",
+    "price",
+    "pressure",
+    "quote",
+    "rate",
+    "rate2",
+    "rate_pct",
+    "raw_value",
+    "score",
+    "spread",
+    "spread_bp",
+    "stress",
+    "value",
+    "value_bp",
+    "volume",
+    "weight",
+    "z",
+    "zscore",
+})
+RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS = frozenset({
+    "data",
+    "data_points",
+    "history",
+    "measurement",
+    "measurements",
+    "observations",
+    "points",
+    "quotes",
+    "rate_rows",
+    "rates",
+    "records",
+    "rows",
+    "series",
+    "values",
+})
+RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES = (
+    "_data",
+    "_history",
+    "_observations",
+    "_points",
+    "_quotes",
+    "_records",
+    "_rows",
+    "_series",
+)
+RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS = frozenset({
+    "count",
+    "mention_count",
+    "n_mentions",
+    "n_new",
+    "n_obs",
+    "n_terms",
+    "rank",
+    "status_code",
+    "year",
+})
+RESTRICTED_SNAPSHOT_METRIC_PREFIXES = (
+    "change_",
+    "chg_",
+    "delta_",
+    "diff_",
+)
+RESTRICTED_SNAPSHOT_METRIC_SUFFIXES = (
+    "_amount",
+    "_b",
+    "_balance",
+    "_bp",
+    "_bps",
+    "_cny",
+    "_index",
+    "_level",
+    "_levels",
+    "_m",
+    "_notional",
+    "_pctl",
+    "_percent",
+    "_percentile",
+    "_pct",
+    "_price",
+    "_prices",
+    "_quote",
+    "_quotes",
+    "_rate",
+    "_rates",
+    "_score",
+    "_spread",
+    "_spreads",
+    "_usd",
+    "_value",
+    "_values",
+    "_volume",
+    "_z",
+)
+FARBASIN_TARGET_PATH = ("engines", "farbasin", "top_targets")
+FARBASIN_TARGET_FIELDS = frozenset({"domain", "is_new", "term", "threat"})
+RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
+    "_url",
+    "_urls",
+    "_uri",
+    "_uris",
+    "_href",
+    "_hrefs",
 )
 _cache: dict = {
     "at": 0.0,
@@ -204,7 +419,6 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
             guard("llama_hacks", llamahacks.fetch_all(client, faults)),
             guard("windfetch", windfetch.fetch_all(client, faults)),
             guard("ecb", ecb.fetch_many(client, [s.mnemonic for s in ECB_SERIES], faults)),
-            guard("chinamoney", chinamoney.fetch_many(client, [s.mnemonic for s in CHINAMONEY_SERIES], faults)),
             guard("boj", boj.fetch_many(client, [s.mnemonic for s in BOJ_SERIES], faults)),
             guard("bis", bis.fetch_many(client, [s.mnemonic for s in BIS_SERIES], faults)),
             guard("crypto", crypto.fetch_all(client, CRYPTO_PRODUCTS, faults)),
@@ -229,13 +443,47 @@ async def _gather_sources() -> tuple[dict, list[dict]]:
     return out, faults
 
 
+def _rights_eligible_sources(src: dict) -> dict:
+    """Project collected data onto the redistribution-safe engine boundary.
+
+    This deliberately leaves the durable source cache untouched.  ChinaMoney
+    and non-native Palimpsest fields may remain available for a future licensed
+    migration, but they cannot enter engines, provenance, snapshots, or replay
+    products in the current public release.
+    The Federal Reserve H.10 ``CNY`` series lives in ``fred`` and is preserved.
+    """
+    eligible = dict(src)
+    eligible.pop("chinamoney", None)
+
+    palimpsest_block = src.get("palimpsest")
+    if isinstance(palimpsest_block, dict):
+        safe_palimpsest = dict(palimpsest_block)
+        series = palimpsest_block.get("series")
+        safe_series: dict[str, Series] = {}
+        if isinstance(series, dict):
+            for mnemonic, value in series.items():
+                expected_remote_id = PALIMPSEST_NATIVE_ENGINE_SERIES.get(mnemonic)
+                if (
+                    expected_remote_id is not None
+                    and isinstance(value, Series)
+                    and value.mnemonic == mnemonic
+                    and value.source == "palimpsest"
+                    and value.remote_id == expected_remote_id
+                ):
+                    safe_series[mnemonic] = value
+        safe_palimpsest["series"] = safe_series
+        eligible["palimpsest"] = safe_palimpsest
+    return eligible
+
+
 def _truncate_sources(src: dict, asof: pd.Timestamp) -> dict:
     """Time Machine: cut every series at the replay date. Pure copies — the
     cached live sources are never mutated."""
+    src = _rights_eligible_sources(src)
     out: dict = {}
     for group in ("fred", "fred_cp_rates", "fred_custody", "ofr", "ofr_gcf",
                   "ofr_pd_financing", "ecb", "eia_petroleum", "eia_inventory",
-                  "bis", "chinamoney", "boj"):
+                  "bis", "boj"):
         cut = {}
         for m, s in (src.get(group) or {}).items():
             cutoff = (
@@ -430,6 +678,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     present from the truncated series they are handed, but a forward calendar
     has no series to infer it from: without this, a replayed board would carry
     a settlement table built around the wall clock and blob-cache it forever."""
+    src = _rights_eligible_sources(src)
     fred_s = src.get("fred", {})
     ofr_s = src.get("ofr", {})
     frames = (src.get("nyfed_rates") or {}).get("frames", {})
@@ -676,7 +925,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     # --- Global basins ---
     ecb_s = src.get("ecb", {})
     boj_s = src.get("boj", {})
-    cm_s = src.get("chinamoney", {})
     run("basins", lambda: eng_basins.analyze(
         spread_us_bp=drv["spread_bp"],
         estr=_pts(ecb_s, "ESTR"),
@@ -689,7 +937,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
         inr=_pts(fred_s, "INR"),
         usdt_peg_bp=drv["usdt_peg_bp"],
         tona=_pts(boj_s, "TONA"),
-        shibor_on=_pts(cm_s, "SHIBOR_ON"),
         cny=_pts(fred_s, "CNY"),
         jpy=_pts(fred_s, "JPY"),
         krw=_pts(fred_s, "KRW"),
@@ -699,7 +946,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     run("thermohaline", lambda: eng_thermohaline.analyze(src.get("bis") or {}))
 
     # --- Harbors (national money markets — the holistic world view) ---
-    pal_series = (src.get("palimpsest") or {}).get("series", {})
     eurusd = _pts(fred_s, "EURUSD")
     run("harbors", lambda: eng_harbors.analyze(
         {
@@ -708,9 +954,7 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
                 "fx": (1.0 / eurusd.replace(0, np.nan)).dropna(), "fx_label": "EUR per USD",
             },
             "CHINA": {
-                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N (CFETS)", "cadence": "daily",
-                "rate2": _pts(pal_series, "CN_FDR007"),
-                "rate2_label": "FDR007 secured 7d (≈DR007 proxy)",
+                "cadence": "FX daily; local rate unavailable",
                 "fx": _pts(fred_s, "CNY"), "fx_label": "CNY per USD",
             },
             "INDIA": {
@@ -739,7 +983,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
     run("spillover", lambda: eng_spillover.analyze({
         "US·rate": _pts(fred_s, "EFFR"),
         "EUR·rate": _pts(ecb_s, "ESTR"),
-        "CN·rate": _pts(cm_s, "SHIBOR_ON"),
         "JP·rate": _pts(src.get("boj", {}), "TONA"),
         "EUR·fx": (1.0 / eurusd.replace(0, np.nan)).dropna(),
         "CNY·fx": _pts(fred_s, "CNY"),
@@ -859,7 +1102,6 @@ def _run_engines(src: dict, drv: dict, faults: list[dict], asof: pd.Timestamp | 
             "CNY": {
                 "label": "Chinese yuan", "bucket": "EM", "series": _pts(fred_s, "CNY"),
                 "quote": "local_per_usd", "source_id": "DEXCHUS",
-                "rate": _pts(cm_s, "SHIBOR_ON"), "rate_label": "SHIBOR O/N", "rate_cadence": "daily",
             },
             "INR": {
                 "label": "Indian rupee", "bucket": "EM", "series": _pts(fred_s, "INR"),
@@ -1087,6 +1329,11 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
     # minutes, so a transient fault can't poison the whole data-day (bit us
     # twice during the v2 build).
     cached = store.load_blob(cache_key)
+    if cached is not None and _snapshot_contains_restricted_cfets({"deep": cached}):
+        logging.getLogger("seiche.assemble").warning(
+            "ignored deep cache containing restricted CFETS-derived data"
+        )
+        cached = None
     if cached is not None:
         ttl_min = DEEP_TTL_MIN if cached.get("_all_ok") else 30
         ts = cached.get("_computed_at")
@@ -1143,6 +1390,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         faults.append({"source": "deep:history", "detail": f"{type(e).__name__}: {e}"})
         out["history"] = safe_failure_envelope(e)
         _bind_deep_history_boundary(out)
+        _assert_snapshot_rights({"deep": out})
         store.save_blob(cache_key, out)
         return out
 
@@ -1486,6 +1734,7 @@ def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict
         if k not in ("ok", "historical_evidence") and not str(k).startswith("_")
     )
     out["_computed_at"] = utcnow_iso()
+    _assert_snapshot_rights({"deep": out})
     store.save_blob(cache_key, out)
     return out
 
@@ -1587,6 +1836,7 @@ def _calendar(src: dict, engines: dict, deep: dict, drv: dict) -> dict:
 
 
 def _provenance(src: dict) -> list[dict]:
+    src = _rights_eligible_sources(src)
     prov = []
     for group in ("fred", "ofr", "ecb", "eia_petroleum", "eia_inventory"):
         for s in (src.get(group) or {}).values():
@@ -1717,6 +1967,437 @@ def _attest(day: str, record: dict) -> None:
 # Entry points
 # ---------------------------------------------------------------------------
 
+def _snapshot_contains_restricted_cfets(payload: object) -> bool:
+    """Recursively detect restricted data identities and derived engine rows.
+
+    Ordinary prose leaves are exempt unless their containing mapping is
+    structurally quantitative. This validator follows typed identifiers (for
+    example ``mnemonic`` and ``source``), exact restricted keys, and the known
+    legacy engine shapes. It therefore finds a poisoned row under any wrapper
+    without rejecting lawful editorial or exact-schema Palimpsest target text
+    that happens to discuss a benchmark.
+    """
+
+    def folded_text(value: str) -> str:
+        return unicodedata.normalize("NFKC", value).strip().casefold()
+
+    normalized_identifiers = {
+        re.sub(r"[^a-z0-9]+", "_", folded_text(value)).strip("_")
+        for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
+    }
+    compact_identifiers = {
+        re.sub(r"[^a-z0-9]+", "", folded_text(value))
+        for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
+    }
+    restricted_tokens = {"cfets", "chinamoney", "shibor", "fdr007", "dr007"}
+    identity_qualifiers = {
+        "1d",
+        "7d",
+        "benchmark",
+        "china",
+        "cn",
+        "cny",
+        "column",
+        "columns",
+        "feature",
+        "fixing",
+        "id",
+        "input",
+        "instrument",
+        "market",
+        "metric",
+        "money",
+        "on",
+        "observed",
+        "overnight",
+        "parity",
+        "rate",
+        "rates",
+        "repo",
+        "secured",
+        "series",
+        "unsecured",
+        "usdcny",
+    }
+
+    def restricted_identifier(
+        value: object,
+        *,
+        typed: bool = False,
+        strict: bool = False,
+    ) -> bool:
+        if not isinstance(value, str):
+            return False
+        folded = folded_text(value)
+        normalized = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
+        compact = re.sub(r"[^a-z0-9]+", "", folded)
+        if (
+            folded in RESTRICTED_SNAPSHOT_IDENTIFIERS
+            or normalized in normalized_identifiers
+            or compact in compact_identifiers
+            or re.fullmatch(r"cn\.cfets\.[a-z0-9_.:-]+", folded)
+        ):
+            return True
+        if not typed:
+            return False
+        tokens = set(re.findall(r"[a-z0-9]+", folded))
+        if strict:
+            return bool(restricted_tokens & tokens) or any(
+                marker in compact for marker in restricted_tokens
+            )
+        return bool(restricted_tokens & tokens) and tokens <= (
+            restricted_tokens | identity_qualifiers
+        )
+
+    def restricted_mirror_url(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        try:
+            parsed = urllib.parse.urlsplit(unicodedata.normalize("NFKC", value).strip())
+        except ValueError:
+            return False
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        path = urllib.parse.unquote(parsed.path).casefold()
+        if host == "chinamoney.com.cn" or host.endswith(".chinamoney.com.cn"):
+            return True
+        if host in {"palimpsest.info", "www.palimpsest.info"}:
+            return "/readings/china-econ" in path
+        if host == "raw.githubusercontent.com":
+            return "/palimpsest/" in path and "/china-econ" in path
+        return False
+
+    def identity_field(field: str) -> bool:
+        return (
+            field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS
+            or field in RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS
+            or field.endswith(RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES)
+        )
+
+    def strict_identity_field(field: str) -> bool:
+        return identity_field(field) and (
+            field not in RESTRICTED_SNAPSHOT_DISPLAY_IDENTITY_FIELDS
+        )
+
+    def url_field(field: str) -> bool:
+        return (
+            field in {"href", "hrefs", "mirror", "mirrors", "url", "urls", "uri", "uris"}
+            or field.endswith(RESTRICTED_SNAPSHOT_URL_SUFFIXES)
+        )
+
+    def restricted_engine_shape(value: dict) -> bool:
+        if str(value.get("harbor", "")).upper() == "CHINA" and (
+            value.get("rate") is not None
+            or value.get("rate2") is not None
+            or value.get("regime") is not None
+        ):
+            return True
+        if (
+            str(value.get("basin", "")).upper() == "CHINA"
+            and {"anchor", "value_bp", "z", "asof"} & set(value)
+        ):
+            return True
+        if str(value.get("key", "")).upper() == "CNY" and any(
+            value.get(field) is not None
+            for field in (
+                "policy_diff_vs_effr_bp",
+                "policy_rate_label",
+                "policy_rate_cadence",
+                "policy_asof",
+            )
+        ):
+            return True
+        rate_labels = value.get("rate_labels")
+        if (
+            isinstance(rate_labels, list)
+            and ("harbors" in value or "rate_rows" in value)
+            and any(str(label).upper() == "CHINA" for label in rate_labels)
+        ):
+            return True
+        return False
+
+    def restricted_quantitative_identity(
+        value: object,
+        *,
+        strict: bool = False,
+    ) -> bool:
+        if isinstance(value, (list, tuple)):
+            return any(
+                restricted_quantitative_identity(item, strict=strict) for item in value
+            )
+        if isinstance(value, dict):
+            return any(
+                restricted_quantitative_identity(item, strict=strict)
+                for item in value.values()
+            )
+        return restricted_mirror_url(value) or restricted_identifier(
+            value,
+            typed=True,
+            strict=strict,
+        )
+
+    def restricted_quantitative_member(field: str, value: object) -> bool:
+        """Scan one quantitative-row member using its declared semantic role."""
+
+        if isinstance(value, dict):
+            return any(
+                restricted_quantitative_member(folded_text(str(key)), nested)
+                for key, nested in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(restricted_quantitative_member(field, item) for item in value)
+        return restricted_mirror_url(value) or restricted_identifier(
+            value,
+            typed=True,
+            strict=field not in RESTRICTED_SNAPSHOT_PROSE_FIELDS,
+        )
+
+    def restricted_target_identity(value: object) -> bool:
+        if isinstance(value, dict):
+            return any(restricted_target_identity(item) for item in value.values())
+        return restricted_quantitative_identity(value)
+
+    def quantitative_scalar(value: object) -> bool:
+        return not isinstance(value, (bool, np.bool_)) and isinstance(
+            value,
+            (int, float, np.integer, np.floating),
+        )
+
+    def numeric_observation(value: object) -> bool:
+        if quantitative_scalar(value):
+            return True
+        if not isinstance(value, str):
+            return False
+        try:
+            return math.isfinite(float(unicodedata.normalize("NFKC", value).strip()))
+        except ValueError:
+            return False
+
+    def observed_series_has_data(value: object, *, field: str) -> bool:
+        if (
+            field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+            and not isinstance(value, (dict, list, tuple))
+        ):
+            return False
+        if isinstance(value, dict):
+            return any(
+                observed_series_has_data(
+                    nested,
+                    field=folded_text(str(key)),
+                )
+                for key, nested in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return False
+            if any(
+                observed_series_has_data(item, field=field)
+                for item in value
+                if isinstance(item, (dict, list, tuple))
+            ):
+                return True
+            return any(numeric_observation(item) for item in value)
+        return numeric_observation(value)
+
+    def quantitative_field(field: str, value: object) -> bool:
+        if value is None:
+            return False
+        if (
+            field in RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS
+            or field.endswith(RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES)
+        ):
+            return observed_series_has_data(value, field=field)
+        if field in RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS:
+            return True
+        if field.startswith(RESTRICTED_SNAPSHOT_METRIC_PREFIXES):
+            return True
+        if field.endswith(RESTRICTED_SNAPSHOT_METRIC_SUFFIXES):
+            return True
+        return False
+
+    def lawful_farbasin_target(
+        value: dict,
+        path: tuple[str, ...],
+        sequence_depth: int,
+    ) -> bool:
+        """Admit only the real Palimpsest target schema at its exact path."""
+
+        if (
+            path != FARBASIN_TARGET_PATH
+            or sequence_depth != 1
+            or set(value) != FARBASIN_TARGET_FIELDS
+        ):
+            return False
+        threat = value["threat"]
+        threat_ok = threat is None or (
+            not isinstance(threat, bool)
+            and isinstance(threat, (int, float))
+            and (not isinstance(threat, float) or math.isfinite(threat))
+        )
+        return (
+            isinstance(value["term"], str)
+            and (value["domain"] is None or isinstance(value["domain"], str))
+            and threat_ok
+            and (value["is_new"] is None or isinstance(value["is_new"], bool))
+        )
+
+    def quantitative_subtree(field: str, value: object) -> bool:
+        if quantitative_scalar(value):
+            return field not in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+        if (
+            field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+            and isinstance(value, (dict, list, tuple))
+        ):
+            return observed_series_has_data(value, field=field)
+        if quantitative_field(field, value):
+            return True
+        return False
+
+    def restricted_quantitative_mapping(value: dict) -> bool:
+        """Detect restricted identities carried by a quantitative record.
+
+        Quantitative meaning is structural: a numeric sibling, a named or
+        patterned metric, or a non-empty observed-series container is enough.
+        Once established, every direct string/list sibling is interpreted as
+        typed identity rather than prose, so novel aliases cannot reopen the
+        boundary.
+        """
+
+        has_quantitative_value = any(
+            quantitative_subtree(folded_text(str(key)), nested)
+            for key, nested in value.items()
+        )
+        if not has_quantitative_value:
+            return False
+        return any(
+            restricted_quantitative_member(folded_text(str(key)), nested)
+            for key, nested in value.items()
+        )
+
+    def walk(
+        value: object,
+        *,
+        path: tuple[str, ...] = (),
+        typed_identity: bool = False,
+        strict_identity: bool = False,
+        prose_context: bool = False,
+        sequence_depth: int = 0,
+    ) -> bool:
+        if isinstance(value, dict):
+            # Prose authority is leaf-only. A mapping beneath an audited prose
+            # key is a new structural object: discard inherited prose context
+            # and require each of its exact keys to establish its own role.
+            # Thus {"text": "SHIBOR"} remains lawful prose, while
+            # {"source": "chinamoney"} is a restricted identity.
+            prose_context = False
+            if typed_identity and restricted_quantitative_identity(
+                value,
+                strict=strict_identity,
+            ):
+                return True
+            target_is_lawful = lawful_farbasin_target(value, path, sequence_depth)
+            if (
+                path == FARBASIN_TARGET_PATH
+                and restricted_target_identity(value.get("term"))
+                and not target_is_lawful
+            ):
+                return True
+            if restricted_engine_shape(value) or (
+                not target_is_lawful and restricted_quantitative_mapping(value)
+            ):
+                return True
+            for key, nested in value.items():
+                key_text = str(key)
+                field = folded_text(key_text)
+                # Trust exceptions compare the producer's raw schema keys.
+                # Normalization is reserved for deny classification below.
+                child_path = (*path, key_text)
+                if restricted_identifier(key_text, typed=True, strict=True):
+                    return True
+                if (
+                    not prose_context
+                    and url_field(field)
+                    and restricted_mirror_url(nested)
+                ):
+                    return True
+                if (
+                    not prose_context
+                    and field == "nodes"
+                    and isinstance(nested, (list, tuple))
+                    and any(restricted_identifier(item, typed=True) for item in nested)
+                ):
+                    return True
+                child_prose = (
+                    prose_context or field in RESTRICTED_SNAPSHOT_PROSE_FIELDS
+                )
+                child_identity = (
+                    False if child_prose else typed_identity or identity_field(field)
+                )
+                child_strict_identity = (
+                    False
+                    if child_prose
+                    else strict_identity or strict_identity_field(field)
+                )
+                if walk(
+                    nested,
+                    path=child_path,
+                    typed_identity=child_identity,
+                    strict_identity=child_strict_identity,
+                    prose_context=child_prose,
+                    sequence_depth=0,
+                ):
+                    return True
+            return False
+        if isinstance(value, (list, tuple)):
+            return any(
+                walk(
+                    item,
+                    path=path,
+                    typed_identity=typed_identity,
+                    strict_identity=strict_identity,
+                    prose_context=prose_context,
+                    sequence_depth=sequence_depth + 1,
+                )
+                for item in value
+            )
+        if prose_context:
+            return False
+        if restricted_mirror_url(value):
+            return True
+        return restricted_identifier(value) or (
+            typed_identity
+            and restricted_identifier(value, typed=True, strict=strict_identity)
+        )
+
+    return walk(payload)
+
+
+def _assert_snapshot_rights(payload: object) -> None:
+    if _snapshot_contains_restricted_cfets(payload):
+        raise ValueError("snapshot contains restricted CFETS-derived data")
+
+
+def _safe_memory_snapshot() -> dict | None:
+    """Return the in-process payload or quarantine it before any public read."""
+
+    payload = _cache.get("payload")
+    if payload is None:
+        return None
+    if not isinstance(payload, dict) or _snapshot_contains_restricted_cfets(payload):
+        logging.getLogger("seiche.assemble").error(
+            "quarantined invalid in-process snapshot before public cache read"
+        )
+        _cache.update(
+            at=0.0,
+            payload=None,
+            source=None,
+            release_receipt=None,
+            release_handoff_id=None,
+            producer_sha=None,
+        )
+        return None
+    return payload
+
+
 def _servable_snapshot(payload: object) -> bool:
     """Whether a saved payload can safely cover the public boot window.
 
@@ -1725,7 +2406,7 @@ def _servable_snapshot(payload: object) -> bool:
     release's completed gauge is still a better, timestamped answer than seven
     minutes of timeouts while the new process trains its deep layer.
     """
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or _snapshot_contains_restricted_cfets(payload):
         return False
     engines = payload.get("engines")
     composite = engines.get("composite") if isinstance(engines, dict) else None
@@ -1818,7 +2499,7 @@ def restore_cached_snapshot() -> str | None:
     Returns the source name for startup logging, or ``None`` when no safe
     snapshot exists.
     """
-    if _cache["payload"] is not None:
+    if _safe_memory_snapshot() is not None:
         return "memory"
 
     log = logging.getLogger("seiche.assemble")
@@ -1962,6 +2643,7 @@ def _handoff_body(payload: dict, release_receipt: dict, producer_sha: str) -> di
 
 
 def _build_handoff(payload: dict, release_receipt: dict, producer_sha: str) -> dict:
+    _assert_snapshot_rights(payload)
     body = _handoff_body(payload, release_receipt, producer_sha)
     _release_receipt_snapshot_ids(release_receipt, payload)
     return {**body, "handoff_id": _handoff_digest(body)}
@@ -2132,12 +2814,12 @@ def cached_snapshot() -> dict | None:
     :func:`snapshot`, it never acquires the build lock, schedules a refresh,
     or turns a cold-cache read into a full board build.
     """
-    return _cache["payload"]
+    return _safe_memory_snapshot()
 
 
 def cached_snapshot_was_rebuilt() -> bool:
     """True only after this process completed the full assembly pipeline."""
-    return _cache["payload"] is not None and _cache.get("source") == "rebuilt"
+    return _safe_memory_snapshot() is not None and _cache.get("source") == "rebuilt"
 
 
 def cached_snapshot_release_receipt() -> dict | None:
@@ -2209,6 +2891,7 @@ async def _publish_rebuilt_snapshot(
     state; ordinary v1 memory/PIT publication remains the live process's
     established behavior while the candidate health gate runs.
     """
+    _assert_snapshot_rights(payload)
     _cache.update(
         at=time.time(),
         payload=payload,
@@ -2237,7 +2920,7 @@ async def snapshot(force: bool = False) -> dict:
     Cold start / force → build inline; boot warming makes cold rare.
     """
     global _refreshing
-    cached = _cache["payload"]
+    cached = _safe_memory_snapshot()
     if not force and cached is not None:
         if time.time() - _cache["at"] < CACHE_MIN * 60:
             return cached
@@ -2246,9 +2929,10 @@ async def snapshot(force: bool = False) -> dict:
             asyncio.get_running_loop().create_task(_refresh_stale())
         return cached
     async with _lock:
-        if not force and _cache["payload"] is not None \
+        locked_cached = _safe_memory_snapshot()
+        if not force and locked_cached is not None \
                 and time.time() - _cache["at"] < CACHE_MIN * 60:
-            return _cache["payload"]
+            return locked_cached
         return await _build_snapshot()
 
 
@@ -2267,6 +2951,7 @@ async def _refresh_stale() -> None:
 async def _build_snapshot() -> dict:
     """Assemble the full payload. Caller holds `_lock`."""
     src, faults = await _gather_sources()
+    src = _rights_eligible_sources(src)
     drv = _derived(src)
     # The engine + deep stages are synchronous CPU work (the deep layer
     # trains sklearn models in mlpred.walk_forward — minutes, not ms).
@@ -2276,6 +2961,9 @@ async def _build_snapshot() -> dict:
     # keep-warm cycle trained). One rebuild at a time is still guaranteed
     # by the caller holding `_lock`.
     engines = await asyncio.to_thread(_run_engines, src, drv, faults)
+    # Engine results are the first completed value-bearing projection. Reject
+    # restricted rows before the deep layer can cache or otherwise consume them.
+    _assert_snapshot_rights({"engines": _strip_private(engines)})
     deep = await asyncio.to_thread(_deep_layer, src, drv, engines, faults)
     # Model Court sits on the finished deep layer (published payloads, never
     # raw series) and re-reads the as-published odds ledger on every rebuild,
@@ -2317,6 +3005,9 @@ async def _build_snapshot() -> dict:
             headline=headline,
         ),
     }
+    # The complete internal board must clear the same boundary before the
+    # Navigator sees it or PIT/notary/materialization performs any side effect.
+    _assert_snapshot_rights(payload)
     # The Navigator commits AFTER the board is assembled (its whole world
     # is the context pack of this payload), once per data-day, cached —
     # a re-run must never let the model revise the morning's number.
@@ -2334,6 +3025,7 @@ async def _build_snapshot() -> dict:
             nav = {**nav, "record": eng_navigator.score_record(
                 store.load_pit_records(), drv["spread_bp"])}
     payload["navigator"] = nav
+    _assert_snapshot_rights(payload)
     _record_pit(engines, deep, nav)
     # v2 never collects at request time. The existing US cycle is the first
     # producer during migration: once its payload is complete, a pack-local
@@ -2360,13 +3052,17 @@ async def snapshot_asof(date: str) -> dict:
     asof = pd.Timestamp(date).normalize()
     key = f"asof:{asof.date().isoformat()}"
     cached = store.load_blob(key)
-    if cached is not None:
+    if cached is not None and not _snapshot_contains_restricted_cfets(cached):
         if "historical_evidence" not in cached:
             cached = {
                 **cached,
                 "historical_evidence": eng_history.vintage_evidence(None),
             }
         return cached
+    if cached is not None:
+        logging.getLogger("seiche.assemble").warning(
+            "ignored replay cache containing restricted CFETS-derived data"
+        )
 
     async with _lock:
         src, faults = await _gather_sources()
@@ -2390,5 +3086,6 @@ async def snapshot_asof(date: str) -> dict:
         "engines": _strip_private(engines),
         "faults": faults,
     }
+    _assert_snapshot_rights(payload)
     store.save_blob(key, payload)
     return payload
