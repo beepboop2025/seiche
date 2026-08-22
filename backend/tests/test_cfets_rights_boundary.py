@@ -579,6 +579,18 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         {"term": "SHIBOR", "rate_rows": [["2026-08-22", 1.31]]},
         {"term": "FDR007", "quotes": [1.52]},
         {"term": "SHIBOR", "rates": [1.31]},
+        {
+            "label": (
+                "China FDR007, the 7d repo fixing for depository institutions "
+                "(CFETS)"
+            ),
+            "value": 1.52,
+        },
+        {"label": "USD/CNY central parity fix (CFETS)", "value": 7.18},
+        {"ＳＯＵＲＣＥ": "CFETS official feed", "value": 1.31},
+        {"term": "SHIBOR", "ＲＯＷＳ": [["2026-08-22", 1.31]]},
+        {"term": "SHIBOR", "rows": [["2026-08-22", "1.31"]]},
+        {"China FDR007 official fixing (CFETS)": 1.52},
     ),
     ids=(
         "change-bp",
@@ -606,6 +618,12 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         "rate-rows-container",
         "quotes-container",
         "rates-container",
+        "legacy-fdr-label",
+        "legacy-parity-label",
+        "fullwidth-source-key",
+        "fullwidth-rows-key",
+        "numeric-string-row",
+        "decorated-restricted-key",
     ),
 )
 def test_reported_quantitative_mapping_bypasses_are_not_servable(
@@ -711,9 +729,17 @@ def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
     assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_PREFIXES) == metric_prefixes
     assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_SUFFIXES) == metric_suffixes
     assert assemble.RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS == observed_fields
-    assert assemble.RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS == frozenset(
-        {"mention_count"}
-    )
+    assert assemble.RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS == frozenset({
+        "count",
+        "mention_count",
+        "n_mentions",
+        "n_new",
+        "n_obs",
+        "n_terms",
+        "rank",
+        "status_code",
+        "year",
+    })
 
     for sibling in assemble.RESTRICTED_SNAPSHOT_PROSE_FIELDS | {
         "label",
@@ -773,6 +799,9 @@ def test_quantitative_mapping_rule_preserves_long_form_prose() -> None:
         {"term": "SHIBOR", "rows": [None]},
         {"term": "FDR007", "series": {"status": "unavailable"}},
         {"term": "SHIBOR", "mention_count": 2},
+        {"term": "SHIBOR", "history": [{"mention_count": 2}]},
+        {"term": "SHIBOR", "history": {"status_code": 404}},
+        {"term": "FDR007", "history": {"year": 2026}},
     )
 
     for row in lawful_rows:
@@ -930,6 +959,13 @@ def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
         {"CN_PARITY": {"value": 7.18}},
         {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
         {
+            "label": (
+                "China FDR007, the 7d repo fixing for depository institutions "
+                "(CFETS)"
+            ),
+            "value": 1.52,
+        },
+        {
             "rows": [["2026-08-22", 1.52]],
             "meta": {
                 "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
@@ -961,6 +997,13 @@ async def test_replay_cache_does_not_serve_nested_restricted_payload(
     (
         {"adapter_id": "cfets_rates", "value": 1.31},
         {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "label": (
+                "China FDR007, the 7d repo fixing for depository institutions "
+                "(CFETS)"
+            ),
+            "value": 1.52,
+        },
         {
             "rows": [["2026-08-22", 1.52]],
             "meta": {

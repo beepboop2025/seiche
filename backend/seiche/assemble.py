@@ -303,7 +303,17 @@ RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES = (
     "_rows",
     "_series",
 )
-RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS = frozenset({"mention_count"})
+RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS = frozenset({
+    "count",
+    "mention_count",
+    "n_mentions",
+    "n_new",
+    "n_obs",
+    "n_terms",
+    "rank",
+    "status_code",
+    "year",
+})
 RESTRICTED_SNAPSHOT_METRIC_PREFIXES = (
     "change_",
     "chg_",
@@ -2125,6 +2135,22 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             strict=strict,
         )
 
+    def restricted_quantitative_member(field: str, value: object) -> bool:
+        """Scan one quantitative-row member using its declared semantic role."""
+
+        if isinstance(value, dict):
+            return any(
+                restricted_quantitative_member(folded_text(str(key)), nested)
+                for key, nested in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(restricted_quantitative_member(field, item) for item in value)
+        return restricted_mirror_url(value) or restricted_identifier(
+            value,
+            typed=True,
+            strict=field not in RESTRICTED_SNAPSHOT_PROSE_FIELDS,
+        )
+
     def restricted_target_identity(value: object) -> bool:
         if isinstance(value, dict):
             return any(restricted_target_identity(item) for item in value.values())
@@ -2136,14 +2162,39 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             (int, float, np.integer, np.floating),
         )
 
-    def observed_series_has_data(value: object) -> bool:
+    def numeric_observation(value: object) -> bool:
         if quantitative_scalar(value):
             return True
+        if not isinstance(value, str):
+            return False
+        try:
+            return math.isfinite(float(unicodedata.normalize("NFKC", value).strip()))
+        except ValueError:
+            return False
+
+    def observed_series_has_data(value: object, *, field: str) -> bool:
+        if field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS:
+            return False
         if isinstance(value, dict):
-            return any(observed_series_has_data(item) for item in value.values())
+            return any(
+                observed_series_has_data(
+                    nested,
+                    field=folded_text(str(key)),
+                )
+                for key, nested in value.items()
+            )
         if isinstance(value, (list, tuple)):
-            return any(observed_series_has_data(item) for item in value)
-        return False
+            if not value:
+                return False
+            if any(
+                observed_series_has_data(item, field=field)
+                for item in value
+                if isinstance(item, (dict, list, tuple))
+            ):
+                return True
+            scalar_items = value[1:] if len(value) > 1 else value
+            return any(numeric_observation(item) for item in scalar_items)
+        return numeric_observation(value)
 
     def quantitative_field(field: str, value: object) -> bool:
         if value is None:
@@ -2152,7 +2203,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             field in RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS
             or field.endswith(RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES)
         ):
-            return observed_series_has_data(value)
+            return observed_series_has_data(value, field=field)
         if field in RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS:
             return True
         if field.startswith(RESTRICTED_SNAPSHOT_METRIC_PREFIXES):
@@ -2205,13 +2256,14 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         """
 
         has_quantitative_value = any(
-            quantitative_subtree(str(key).casefold(), nested)
+            quantitative_subtree(folded_text(str(key)), nested)
             for key, nested in value.items()
         )
         if not has_quantitative_value:
             return False
         return any(
-            restricted_quantitative_identity(nested) for nested in value.values()
+            restricted_quantitative_member(folded_text(str(key)), nested)
+            for key, nested in value.items()
         )
 
     def walk(
@@ -2248,9 +2300,9 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
                 return True
             for key, nested in value.items():
                 key_text = str(key)
-                field = key_text.casefold()
+                field = folded_text(key_text)
                 child_path = (*path, field)
-                if restricted_identifier(key_text, typed=True):
+                if restricted_identifier(key_text, typed=True, strict=True):
                     return True
                 if (
                     not prose_context
