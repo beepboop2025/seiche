@@ -57,6 +57,10 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     (snapshot / "SHA256SUMS").write_text("verified\n")
     recovery_proof_dir = tmp_path / "recovery-proof"
     recovery_proof_dir.mkdir(mode=0o750)
+    # The release gate runs with UMask=0077, which narrows mkdir(0750) to 0700.
+    # Set the fixture's production contract explicitly so these host-free tests
+    # do not depend on the invoking shell or systemd unit's ambient umask.
+    recovery_proof_dir.chmod(0o750)
     restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
         "schema=seiche.market-backup-restore-check.v2\n"
