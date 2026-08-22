@@ -7,8 +7,15 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
-from seiche.domain.observation import SemanticRole
+from seiche.domain.observation import (
+    ConnectorClassification,
+    RedistributionStatus,
+    SemanticRole,
+)
 from seiche.markets.calibration import get_local_calibration
+from seiche.markets.materialize import _public_instrument_ids
+from seiche.markets.registry import default_registry
+from seiche.sources.official import PRODUCTION_ADAPTER_KEYS
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "docs" / "data-source-expansion.json"
@@ -45,6 +52,52 @@ REQUIRED_CANDIDATE_FIELDS = {
     "implementation_status",
     "blocker",
     "next_action",
+}
+
+# Explicit bindings keep the source-rights ledger and executable market packs
+# comparable without guessing from publisher names or overlapping semantic
+# roles.  A candidate can describe more than one production adapter.
+CANDIDATE_ADAPTER_KEYS = {
+    "ecb_data_api": (
+        ("EA-EUR", "ecb_benchmark"),
+        ("EA-EUR", "ecb_policy"),
+        ("EA-EUR", "ecb_liquidity"),
+    ),
+    "hkma_open_api": (("HK-HKD", "hkma_official"),),
+    "bok_ecos_api": (
+        ("KR-KRW", "bok_ecos_policy"),
+        ("KR-KRW", "bok_ecos_money_market"),
+    ),
+    "cfets_money_market_rates": (("CN-CNY", "cfets_rates"),),
+    "pbc_open_market_operations": (("CN-CNY", "pbc_operations"),),
+    "rbnz_statistics": (
+        ("NZ-NZD", "rbnz_policy"),
+        ("NZ-NZD", "rbnz_wholesale"),
+    ),
+    "ksd_kofr": (("KR-KRW", "ksd_kofr"),),
+    "rbi_money_market_operations": (("IN-INR", "rbi_official"),),
+    "rba_statistical_tables": (
+        ("AU-AUD", "rba_cash"),
+        ("AU-AUD", "rba_policy"),
+    ),
+    "mas_domestic_interest_rates": (
+        ("SG-SGD", "mas_sora"),
+        ("SG-SGD", "mas_rates"),
+    ),
+    "boj_stat_search": (
+        ("JP-JPY", "boj_rates"),
+        ("JP-JPY", "boj_accounts"),
+    ),
+    "boe_iadb": (
+        ("UK-GBP", "boe_sonia"),
+        ("UK-GBP", "boe_policy"),
+    ),
+    "nyfed_markets_api": (
+        ("US-USD", "nyfed_rates"),
+        ("US-USD", "nyfed_unsecured_rates"),
+        ("US-USD", "nyfed_facilities"),
+    ),
+    "treasury_fiscaldata": (("US-USD", "fiscaldata"),),
 }
 
 
@@ -142,6 +195,55 @@ def test_source_candidates_have_safe_urls_roles_and_explicit_rights() -> None:
     assert by_id["cfets_money_market_rates"]["rights_status"] == "metadata_only"
     assert by_id["ksd_kofr"]["rights_status"] == "metadata_only"
     assert by_id["rbnz_statistics"]["rights_status"] == "permission_required"
+
+
+def test_allowed_pack_adapters_have_reviewed_production_contracts() -> None:
+    """An ALLOWED declaration needs both implemented rights and runtime code."""
+
+    candidates = {item["id"]: item for item in _ledger()["candidates"]}
+    registry = default_registry()
+
+    for candidate_id, adapter_keys in CANDIDATE_ADAPTER_KEYS.items():
+        candidate = candidates[candidate_id]
+        for market_id, adapter_id in adapter_keys:
+            adapter = registry.get(market_id).adapter_map[adapter_id]
+            if adapter.redistribution_status is not RedistributionStatus.ALLOWED:
+                continue
+            assert candidate["rights_status"] != "review_required", (
+                f"{market_id}/{adapter_id} is ALLOWED while {candidate_id} "
+                "still requires rights review"
+            )
+            assert candidate["implementation_status"] != "declared_not_implemented", (
+                f"{market_id}/{adapter_id} is ALLOWED while {candidate_id} "
+                "is declared_not_implemented"
+            )
+            assert (market_id, adapter_id) in PRODUCTION_ADAPTER_KEYS
+
+    for pack in registry.list():
+        for adapter in pack.source_adapters:
+            if adapter.redistribution_status is RedistributionStatus.ALLOWED:
+                assert (pack.market_id, adapter.adapter_id) in PRODUCTION_ADAPTER_KEYS
+
+
+def test_pbc_operations_stay_out_of_the_public_boundary_until_reviewed() -> None:
+    candidate = {item["id"]: item for item in _ledger()["candidates"]}[
+        "pbc_open_market_operations"
+    ]
+    pack = default_registry().get("CN-CNY")
+    adapter = pack.adapter_map["pbc_operations"]
+    pbc_instrument_ids = {
+        instrument.instrument_id
+        for instrument in pack.instruments
+        if instrument.source_adapter_id == "pbc_operations"
+    }
+
+    assert candidate["rights_status"] == "review_required"
+    assert candidate["implementation_status"] == "declared_not_implemented"
+    assert adapter.classification is ConnectorClassification.UNAVAILABLE
+    assert adapter.redistribution_status is RedistributionStatus.METADATA_ONLY
+    assert (pack.market_id, adapter.adapter_id) not in PRODUCTION_ADAPTER_KEYS
+    assert pbc_instrument_ids
+    assert pbc_instrument_ids.isdisjoint(_public_instrument_ids(pack))
 
 
 def test_documented_korea_calibration_matches_executable_contract() -> None:

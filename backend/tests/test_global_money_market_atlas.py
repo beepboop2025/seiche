@@ -79,6 +79,27 @@ def _row(
     )
 
 
+def _pbc_calendar_test_pack():
+    """Opt a local fixture into PBC values without weakening the real pack."""
+
+    pack = default_registry().get("CN-CNY")
+    pbc = pack.adapter_map["pbc_operations"]
+    assert pbc.classification is ConnectorClassification.UNAVAILABLE
+    assert pbc.redistribution_status is RedistributionStatus.METADATA_ONLY
+    allowed_pbc = replace(
+        pbc,
+        classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.ALLOWED,
+    )
+    return replace(
+        pack,
+        source_adapters=tuple(
+            allowed_pbc if adapter.adapter_id == pbc.adapter_id else adapter
+            for adapter in pack.source_adapters
+        ),
+    )
+
+
 def test_all_declared_and_planned_markets_remain_visible_without_data():
     out = build_global_money_market_atlas(
         default_registry().list(),
@@ -870,7 +891,7 @@ def test_publication_clock_respects_weekends_holidays_and_china_working_weekends
     assert holiday_metric["missed_publication_opportunities"] == 0
     assert holiday_metric["expected_next_update"].startswith("2026-07-06")
 
-    china_pack = default_registry().get("CN-CNY")
+    china_pack = _pbc_calendar_test_pack()
     before_working_weekend = datetime(2026, 2, 13, tzinfo=UTC)
     china_row = _row(
         "CN-CNY",
@@ -897,7 +918,7 @@ def test_publication_clock_respects_weekends_holidays_and_china_working_weekends
 
 
 def test_invalid_calendar_fails_loud_unknown_and_stored_staleness_is_lower_bound():
-    china_pack = default_registry().get("CN-CNY")
+    china_pack = _pbc_calendar_test_pack()
     event_time = datetime(2026, 12, 30, tzinfo=UTC)
     row = _row(
         "CN-CNY",

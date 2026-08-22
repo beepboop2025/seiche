@@ -61,9 +61,13 @@ PACK = MarketPack(
     ),
     policy_regime=PolicyRegime.QUANTITY_TARGETING,
     source_adapters=(
+        # Official publication is not itself a grant of automated access or
+        # redistribution.  The source ledger still records an open rights
+        # review and no production adapter, so this declaration must fail
+        # closed until both conditions change through review.
         SourceAdapterSpec(
-            "pbc_operations", ConnectorClassification.OFFICIAL_OPEN, "P1D", _CLOCK,
-            RedistributionStatus.ALLOWED,
+            "pbc_operations", ConnectorClassification.UNAVAILABLE, "P1D", _CLOCK,
+            RedistributionStatus.METADATA_ONLY,
         ),
         SourceAdapterSpec(
             "cfets_rates", ConnectorClassification.LICENSED, "P1D", _CLOCK,
