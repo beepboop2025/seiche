@@ -798,7 +798,10 @@ restore_preupdate_api() {
     echo "FAIL: pre-update api could not be restored"
     return 1
   fi
-  deadline=$((SECONDS + 480))
+  # Rebuilding the same board is not faster merely because this is recovery.
+  # Match the candidate's 15-minute strict-health budget so a CPU-bound but
+  # progressing known-good API is not abandoned with every writer stopped.
+  deadline=$((SECONDS + 900))
   until curl -sf -m 10 \
       'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ] \
@@ -1307,7 +1310,7 @@ restore_preupdate_data_units \
   || { echo "FAIL: rollback data units could not be restored; data workers remain stopped"; exit 1; }
 systemctl restart seiche-api
 sleep 3
-if systemctl is-active --quiet seiche-api && rollback_health_wait 480; then
+if systemctl is-active --quiet seiche-api && rollback_health_wait 900; then
   write_deployed_state "$DEPLOYED" || {
     echo "FAIL: rollback is healthy but deployed state could not be recorded"
     exit 1

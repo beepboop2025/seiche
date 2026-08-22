@@ -56,6 +56,7 @@ jobs:
         run: pip install -e "./backend[dev,collectors,postgres]"
       - name: Run market architecture and PostgreSQL contracts
         run: >-
+          umask 0077 &&
           python -m pytest -q
           backend/tests/test_market_packs.py
           backend/tests/test_global_money_market_atlas.py
@@ -74,6 +75,7 @@ jobs:
           backend/tests/test_mcp_server.py
           backend/tests/test_mcp_http.py
           backend/tests/test_deploy_release.py
+          backend/tests/test_storage_preflight.py
           backend/tests/test_market_backup.py
           backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py

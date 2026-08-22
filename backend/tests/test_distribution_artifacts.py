@@ -273,6 +273,10 @@ class PublicCatalogContracts(unittest.TestCase):
             self.assertIn("--ref v0.11.0", command)
             self.assertIn("release_tag=v0.11.0", command)
         self.assertNotIn("gh workflow run publish-container.yml", publishing)
+        self.assertIn(
+            "refuses to replace a higher bare-semantic version",
+            _read("docs/DISTRIBUTION.md"),
+        )
         container_recovery = publishing.split(
             "gh run rerun WORKFLOW_RUN_ID", maxsplit=1
         )[1].split("```", maxsplit=1)[0]
@@ -457,7 +461,8 @@ class WorkflowContracts(unittest.TestCase):
             'fixed_tags=("$VERSION" "$RELEASE_TAG" "sha-${REVISION:0:12}")',
             "current-latest-index.json",
             "latest-decision.txt",
-            "actions/attest@",
+            "current GHCR latest index bytes do not match its digest",
+            "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
             "actions/attest-build-provenance@",
             "subject-digest: ${{ env.AMD_DIGEST }}",
             "subject-digest: ${{ env.ARM_DIGEST }}",
@@ -473,6 +478,9 @@ class WorkflowContracts(unittest.TestCase):
             '--source-ref "refs/tags/$RELEASE_TAG"',
             '--source-digest "$REVISION"',
             "--predicate-type https://cyclonedx.org/bom",
+            "gh_2.98.0_linux_amd64.tar.gz",
+            "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de",
+            "public attestation verification is empty",
         ):
             self.assertIn(required, workflow)
         self.assertIn("release tag", workflow)

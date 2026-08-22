@@ -821,6 +821,7 @@ jobs:
               CURRENT_LATEST_DIGEST="$current_latest_digest" \
                 NEW_ROOT_DIGEST="$root_digest" \
                 python3 -I -S - <<'PY'
+          import hashlib
           import json
           import os
           import re
@@ -834,10 +835,15 @@ jobs:
                   raise SystemExit(f"GHCR latest has a non-release version: {value!r}")
               return tuple(int(part) for part in match.groups())
 
-          index = json.loads(
-              (Path(os.environ["RUNNER_TEMP"]) / "current-latest-index.json")
-              .read_text(encoding="utf-8")
-          )
+          body = (
+              Path(os.environ["RUNNER_TEMP"]) / "current-latest-index.json"
+          ).read_bytes()
+          if (
+              f"sha256:{hashlib.sha256(body).hexdigest()}"
+              != os.environ["CURRENT_LATEST_DIGEST"]
+          ):
+              raise SystemExit("current GHCR latest index bytes do not match its digest")
+          index = json.loads(body)
           if index.get("mediaType") != "application/vnd.oci.image.index.v1+json":
               raise SystemExit("GHCR latest is not the expected OCI image index")
           current = index.get("annotations", {}).get(
@@ -865,6 +871,9 @@ jobs:
             if [[ "$move_latest" == "true" ]]; then
               regctl image copy "$IMAGE_NAME@$root_digest" "$IMAGE_NAME:latest"
               test "$(regctl image digest "$IMAGE_NAME:latest")" = "$root_digest"
+            else
+              test "$(regctl image digest "$IMAGE_NAME:latest")" = \
+                "$current_latest_digest"
             fi
           fi
           echo "root_digest=$root_digest" >> "$GITHUB_OUTPUT"
@@ -965,7 +974,7 @@ jobs:
         run: |
           tool_dir="${RUNNER_TEMP}/seiche-tools"
           regctl_path="$tool_dir/regctl"
-          gh_archive="${RUNNER_TEMP}/gh_2.86.0_linux_amd64.tar.gz"
+          gh_archive="${RUNNER_TEMP}/gh_2.98.0_linux_amd64.tar.gz"
           mkdir -p "$tool_dir"
           curl --fail --location --proto '=https' --tlsv1.2 \
             'https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64' \
@@ -973,12 +982,12 @@ jobs:
           echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  $regctl_path" |
             sha256sum --check --strict
           curl --fail --location --proto '=https' --tlsv1.2 \
-            'https://github.com/cli/cli/releases/download/v2.86.0/gh_2.86.0_linux_amd64.tar.gz' \
+            'https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz' \
             --output "$gh_archive"
-          echo "f3b08bd6a28420cc2229b0a1a687fa25f2b838d3f04b297414c1041ca68103c7  $gh_archive" |
+          echo "3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de  $gh_archive" |
             sha256sum --check --strict
           tar --extract --gzip --file "$gh_archive" \
-            --strip-components=2 --directory "$tool_dir" gh_2.86.0_linux_amd64/bin/gh
+            --strip-components=2 --directory "$tool_dir" gh_2.98.0_linux_amd64/bin/gh
           chmod 0755 "$regctl_path" "$tool_dir/gh"
           echo "$tool_dir" >> "$GITHUB_PATH"
           "$regctl_path" version
@@ -1047,6 +1056,18 @@ jobs:
               "${verify_common[@]}" \
               --predicate-type https://cyclonedx.org/bom \
               > "${RUNNER_TEMP}/anonymous-arm64-sbom.json"
-          test -s "${RUNNER_TEMP}/anonymous-root-provenance.json"
-          test -s "${RUNNER_TEMP}/anonymous-amd64-sbom.json"
-          test -s "${RUNNER_TEMP}/anonymous-arm64-sbom.json"
+          python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          for filename in (
+              "anonymous-root-provenance.json",
+              "anonymous-amd64-sbom.json",
+              "anonymous-arm64-sbom.json",
+          ):
+              results = json.loads((root / filename).read_text(encoding="utf-8"))
+              if not isinstance(results, list) or not results:
+                  raise SystemExit(f"public attestation verification is empty: {filename}")
+          PY

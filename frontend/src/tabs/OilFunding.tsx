@@ -1,12 +1,17 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Chart, { type ChartSeries } from "../Chart";
 import { Any, AsOf, Fault, Method, fmt, ordinal } from "../lib";
 import OilStructure from "./OilStructure";
 import {
   calculateScenario,
   initialScenario,
+  reconcileScenarioDefaults,
+  scenarioSource,
+  scenarioSourceNote,
   type Scenario,
+  type ScenarioField,
   type ScenarioOutputs,
+  type ScenarioSource,
 } from "./oilFundingScenario";
 import "../styles-oil.css";
 
@@ -585,14 +590,15 @@ function OutputMetric({ label, value, detail, tone = "" }: {
   return <div className={`oil-output ${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
 }
 
-function ScenarioLab({ engine, s, setS, base }: {
-  engine: Any;
+function ScenarioLab({ s, source, editedFields, onFieldChange, onReset }: {
   s: Scenario;
-  setS: React.Dispatch<React.SetStateAction<Scenario>>;
-  base: Scenario;
+  source: ScenarioSource;
+  editedFields: ReadonlySet<ScenarioField>;
+  onFieldChange: (field: ScenarioField, value: number) => void;
+  onReset: () => void;
 }) {
   const out = calculateScenario(s);
-  const field = (key: keyof Scenario) => (value: number) => setS((current) => ({ ...current, [key]: value }));
+  const field = (key: ScenarioField) => (value: number) => onFieldChange(key, value);
   const maxMargin = Math.max(out.margin.variation, out.margin.initial, 1);
   const maxVoyage = Math.max(s.voyageDays, s.baselineVoyageDays, 1);
   const fundingUnavailable = s.fundingRate == null;
@@ -611,7 +617,7 @@ function ScenarioLab({ engine, s, setS, base }: {
         <aside className="oil-controls">
           <div className="oil-controls__head">
             <div><span>ASSUMPTIONS</span><strong>Transmission controls</strong></div>
-            <button type="button" onClick={() => setS(base)}>RESET TO OBSERVED</button>
+            <button type="button" onClick={onReset}>RESET TO SNAPSHOT DEFAULTS</button>
           </div>
           <Slider id="oil-price" label="Oil price" value={s.oilPrice} min={20} max={200} step={1} display={`$${fmt(s.oilPrice, 0)}/bbl`} onChange={field("oilPrice")} />
           <Slider id="oil-funding" label="Funding rate" value={s.fundingRate ?? 5} min={0} max={12} step={0.05} display={fundingRateDisplay(s.fundingRate)} onChange={field("fundingRate")} />
@@ -640,9 +646,7 @@ function ScenarioLab({ engine, s, setS, base }: {
             </div>
           </details>
           <div className="oil-controls__note">
-            {fundingUnavailable
-              ? "Observed SOFR is unavailable. Rate-dependent outputs stay unavailable until you move the funding-rate control to set an explicit scenario assumption."
-              : `Initialized from WTI, SOFR and USD/INR through ${engine.asof}. All other values are explicit defaults.`}
+            {scenarioSourceNote(source, s, editedFields)}
           </div>
         </aside>
 
@@ -743,14 +747,34 @@ function SourcesAndLimits({ engine }: { engine: Any }) {
 }
 
 export default function OilFunding({ snap }: { snap: Any }) {
-  const engine = snap.engines?.oilfunding;
-  if (!engine?.ok) {
-    return <div className="grid"><Fault name="Oil × Funding" reason={engine?.reason ?? "not yet present in this snapshot"} span={12} /></div>;
-  }
-  const base = initialScenario(engine);
+  const engine = snap.engines?.oilfunding ?? {};
+  const base = useMemo(() => initialScenario(engine), [engine]);
+  const refreshedSource = useMemo(() => scenarioSource(engine), [engine]);
   const [scenario, setScenario] = useState<Scenario>(() => base);
+  const [source, setSource] = useState<ScenarioSource>(() => refreshedSource);
+  const editedFields = useRef<Set<ScenarioField>>(new Set());
+
+  useEffect(() => {
+    if (!engine.ok) return;
+    setScenario((current) => reconcileScenarioDefaults(current, base, editedFields.current));
+    setSource(refreshedSource);
+  }, [base, engine.ok, refreshedSource]);
+
+  const updateScenarioField = (field: ScenarioField, value: number) => {
+    editedFields.current.add(field);
+    setScenario((current) => ({ ...current, [field]: value }));
+  };
+  const resetScenario = () => {
+    editedFields.current.clear();
+    setScenario(base);
+    setSource(refreshedSource);
+  };
   const outputs = calculateScenario(scenario);
   const live = engine.live ?? {};
+
+  if (!engine.ok) {
+    return <div className="grid"><Fault name="Oil × Funding" reason={engine.reason ?? "not yet present in this snapshot"} span={12} /></div>;
+  }
 
   return (
     <div className="oil-page">
@@ -822,7 +846,13 @@ export default function OilFunding({ snap }: { snap: Any }) {
       <BallastSection ballast={snap.engines?.ballast} />
       <ObservedEvidence engine={engine} />
       <OilStructure engine={engine} />
-      <ScenarioLab engine={engine} s={scenario} setS={setScenario} base={base} />
+      <ScenarioLab
+        s={scenario}
+        source={source}
+        editedFields={editedFields.current}
+        onFieldChange={updateScenarioField}
+        onReset={resetScenario}
+      />
       <SourcesAndLimits engine={engine} />
     </div>
   );

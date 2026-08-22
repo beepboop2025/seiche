@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
+
 from fastapi.testclient import TestClient
 
 from seiche import api, context_views
@@ -60,6 +63,34 @@ def _snapshot() -> dict:
     }
 
 
+def _missing_sofr_snapshot() -> dict:
+    snapshot = deepcopy(_snapshot())
+    engine = snapshot["engines"]["oilfunding"]
+    engine["live"]["sofr_iorb"] = {
+        "spread_bp": None,
+        "change_20d_bp": None,
+        "percentile_3y": None,
+        "asof": None,
+    }
+    engine["scenario"] = {
+        "assumptions": {"funding_rate_pct": None},
+        "funding_rate_evidence": {
+            "value_pct": None,
+            "basis": "unavailable",
+            "asof": None,
+        },
+        "outputs": {
+            "carry": {
+                "financing_cost_usd_per_bbl": None,
+                "required_contango_usd_per_bbl": None,
+                "mechanical_headroom_usd_per_bbl": None,
+            },
+            "trade_finance": {"cargo_financing_cost_usd": None},
+        },
+    }
+    return snapshot
+
+
 def test_context_views_are_compact_versioned_and_context_only():
     snapshot = _snapshot()
     oil = context_views.oil_funding(snapshot)
@@ -102,6 +133,37 @@ def test_oil_view_exposes_bounded_ballast_and_market_structure(fake_snap):
     assert payload["market_structure"]["cushing"]["live"]["stocks_m_bbl"] == 21.0
     assert payload["market_structure"]["cushing"]["capacity_asof"] == "2024-03-31"
     assert "gross cash-transfer scale" in payload["reading"]
+
+
+def test_missing_sofr_stays_nullable_in_the_versioned_view_and_rest(monkeypatch):
+    snapshot = _missing_sofr_snapshot()
+    payload = context_views.oil_funding(snapshot)
+
+    assert payload["schema"] == "seiche.oil-funding.v1"
+    assert payload["funding"]["sofr_iorb"]["spread_bp"] is None
+    assert payload["scenario"]["assumptions"]["funding_rate_pct"] is None
+    assert payload["scenario"]["funding_rate_evidence"] == {
+        "value_pct": None,
+        "basis": "unavailable",
+        "asof": None,
+    }
+    assert payload["scenario"]["outputs"]["carry"] == {
+        "financing_cost_usd_per_bbl": None,
+        "required_contango_usd_per_bbl": None,
+        "mechanical_headroom_usd_per_bbl": None,
+    }
+    assert json.dumps(payload, allow_nan=False)
+
+    async def fake_snapshot():
+        return snapshot
+
+    monkeypatch.setattr(api.assemble, "snapshot", fake_snapshot)
+    response = TestClient(api.app).get("/api/oil-funding")
+    assert response.status_code == 200
+    assert response.json()["scenario"]["funding_rate_evidence"]["basis"] == "unavailable"
+    assert response.json()["scenario"]["outputs"]["trade_finance"][
+        "cargo_financing_cost_usd"
+    ] is None
 
 
 def test_public_routes_serve_schema_identity(monkeypatch):

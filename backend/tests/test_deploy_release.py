@@ -1261,9 +1261,16 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
         rollback.index("restore_preupdate_market_worker_unit")
         < rollback.index("restore_preupdate_data_units")
         < rollback.index("systemctl restart seiche-api")
-        < rollback.index("rollback_health_wait 480")
+        < rollback.index("rollback_health_wait 900")
         < rollback.index("restore_market_services")
     )
+
+    restore_api = wrapper[
+        wrapper.index("restore_preupdate_api()") : wrapper.index(
+            "restore_quiesced_api()"
+        )
+    ]
+    assert "deadline=$((SECONDS + 900))" in restore_api
 
 
 def _run_readiness_activation_helper(
@@ -2882,7 +2889,7 @@ def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     restart = rollback.index("systemctl restart seiche-api")
     assert validate < verify_commit < stop_api < rewrite_release < reset < restart
     assert "systemctl stop seiche-api 2>/dev/null || true" not in rollback
-    assert "rollback_health_wait 480" in rollback
+    assert "rollback_health_wait 900" in rollback
     rollback_health = wrapper[
         wrapper.index("rollback_health_wait()") : wrapper.index("market_health()")
     ]

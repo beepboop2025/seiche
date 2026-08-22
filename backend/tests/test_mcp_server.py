@@ -1022,6 +1022,57 @@ def test_oil_funding_context_uses_the_shared_chartless_contract(stubbed):
     assert "charts" not in p
 
 
+def test_oil_funding_context_preserves_nullable_sofr_contract(
+    monkeypatch, stubbed, fake_snap
+):
+    oil_engine = fake_snap["engines"]["oilfunding"]
+    unavailable_oil = {
+        **oil_engine,
+        "live": {
+            **oil_engine["live"],
+            "sofr_iorb": {
+                "spread_bp": None,
+                "change_20d_bp": None,
+                "percentile_3y": None,
+                "asof": None,
+            },
+        },
+        "scenario": {
+            "assumptions": {"funding_rate_pct": None},
+            "funding_rate_evidence": {
+                "value_pct": None,
+                "basis": "unavailable",
+                "asof": None,
+            },
+            "outputs": {
+                "carry": {
+                    "financing_cost_usd_per_bbl": None,
+                    "required_contango_usd_per_bbl": None,
+                    "mechanical_headroom_usd_per_bbl": None,
+                },
+                "trade_finance": {"cargo_financing_cost_usd": None},
+            },
+        },
+    }
+    snapshot = {
+        **fake_snap,
+        "engines": {**fake_snap["engines"], "oilfunding": unavailable_oil},
+    }
+    monkeypatch.setattr(mcp, "_get_snapshot", lambda force=False: snapshot)
+
+    payload = _payload(_call("oil_funding_context"))
+
+    assert payload["schema"] == "seiche.oil-funding.v1"
+    assert payload["funding"]["sofr_iorb"]["spread_bp"] is None
+    assert payload["scenario"]["funding_rate_evidence"]["basis"] == "unavailable"
+    assert payload["scenario"]["outputs"]["carry"][
+        "required_contango_usd_per_bbl"
+    ] is None
+    assert payload["scenario"]["outputs"]["trade_finance"][
+        "cargo_financing_cost_usd"
+    ] is None
+
+
 def test_fx_materials_passage_keeps_the_holdout_ledger(stubbed):
     p = _payload(_call("fx_materials_passage"))
     assert p["schema"] == "seiche.estuary.v1"

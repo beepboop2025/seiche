@@ -13,6 +13,7 @@ import { Any, AsOf, Decomp, fmt, Num, ordinal as ord, ordinalSuffix as suffix, R
 import { useDepth } from "../depth";
 import { API_BASE } from "../apiBase";
 import WeekAhead from "../WeekAhead";
+import { rvMetricQualityLabel, rvQualityLabel } from "../rvxrayQuality";
 import "../styles-board.css";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
@@ -283,13 +284,23 @@ function Positioning({ rv, wh, crowd, gen }: { rv: Any; wh: Any; crowd: Any; gen
   const worstRow = crowd?.ok
     ? [...(crowd.rows ?? [])].sort((a: Any, b: Any) => Math.abs(b.z ?? 0) - Math.abs(a.z ?? 0))[0]
     : null;
+  const pairQuality = rvMetricQualityLabel(rv, "pair_proxy_b");
+  const dv01Quality = rvMetricQualityLabel(rv, "dv01_m_per_bp");
+  const changeQuality = rvQualityLabel(rv?.pair_change_13w_quality);
+  const scoreQuality = rv?.score_eligible === false ? "score withheld" : null;
+  const rvQuality = [
+    pairQuality ? `pair proxy ${pairQuality}` : null,
+    dv01Quality ? `DV01 ${dv01Quality}` : null,
+    changeQuality ? `Δ13w ${changeQuality}` : null,
+    scoreQuality,
+  ].filter(Boolean).join(" · ");
   return (
     <div className="dive-layer" style={{ animationDelay: "0.32s" }}>
       <Kicker k="Positioning · who is leaning on the water" sub="the leverage that turns a slosh into a wave · CFTC T+3, shown not hidden" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 28, marginTop: 14 }}>
         {rv?.ok ? (
-          <BigCell title="RV X-Ray" big={`$${fmt(rv.pair_proxy_b, 0)}B`} asof={rv.asof} gen={gen}
-            sub={`leveraged Treasury pair proxy · z ${fmt(rv.size_z, 2)} · DV01 $${fmt(rv.dv01_m_per_bp, 0)}M/bp · Δ13w ${signed(rv.pair_change_13w_b, 0)}B`} />
+          <BigCell title="RV X-Ray" big={rv.pair_proxy_b == null ? "—" : `$${fmt(rv.pair_proxy_b, 0)}B`} asof={rv.asof} gen={gen}
+            sub={`${rvQuality ? `${rvQuality} · ` : ""}leveraged Treasury pair proxy · z ${fmt(rv.size_z, 2)} · DV01 ${rv.dv01_m_per_bp == null ? "—" : `$${fmt(rv.dv01_m_per_bp, 0)}M/bp`} · Δ13w ${rv.pair_change_13w_b == null ? "—" : `${signed(rv.pair_change_13w_b, 0)}B`}`} />
         ) : <BigCell title="RV X-Ray" big="—" sub={rv?.reason ?? "engine down"} />}
         {wh?.ok ? (
           <BigCell title="Dealer Warehouse" bigColor={wh.total_pctl >= 90 ? "var(--strain)" : undefined} asof={wh.asof} gen={gen}

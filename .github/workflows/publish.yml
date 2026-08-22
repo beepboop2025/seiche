@@ -96,6 +96,9 @@ jobs:
       - name: Engine tests (publish gates on green)
         if: steps.publish-gate.outputs.run-full-suite == 'true'
         run: |
+          # Match the hardened UMask of seiche-release-poll.service so CI
+          # catches permission-sensitive fixture drift before host activation.
+          umask 0077
           python -m pytest backend/tests -q --memray --pystack-threshold=300
           mkdir -p ".cache/publish-gates/$GITHUB_SHA"
           printf '%s\n' "$GITHUB_SHA" > ".cache/publish-gates/$GITHUB_SHA/validated-sha"
@@ -165,10 +168,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend (snapshot baked into dist/)
+      - name: Test and build frontend (snapshot baked into dist/)
         run: |
           cd frontend
           npm ci
+          npm run test:oil-funding
           npm run build
 
       # The SPA shell ships an empty <div id="root">, so anything that does not

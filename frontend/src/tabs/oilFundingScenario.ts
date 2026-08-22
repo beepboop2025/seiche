@@ -48,6 +48,38 @@ export interface ScenarioOutputs {
   };
 }
 
+export type ScenarioField = keyof Scenario;
+
+export interface ScenarioSource {
+  snapshotAsOf: string | null;
+  fundingRateAsOf: string | null;
+  fundingRateBasis: string;
+}
+
+export const SCENARIO_FIELDS = [
+  "oilPrice",
+  "fundingRate",
+  "usdInr",
+  "tenorDays",
+  "storagePerDay",
+  "insuranceRate",
+  "forwardSpread",
+  "cargoBarrelsM",
+  "dailyThroughputMbd",
+  "voyageDays",
+  "baselineVoyageDays",
+  "hedgeBarrelsM",
+  "oilPriceChange",
+  "initialMarginRateChange",
+  "indiaImportMbd",
+  "indiaOilShock",
+  "rbiUsdSalesB",
+  "liquidityReplenishment",
+  "underRecoveryCroreDay",
+  "compensationLagDays",
+  "cpFundingShare",
+] as const satisfies readonly ScenarioField[];
+
 const finite = (value: unknown, fallback: number): number => {
   if (value == null || (typeof value === "string" && value.trim() === "")) return fallback;
   const parsed = Number(value);
@@ -86,6 +118,55 @@ export function initialScenario(engine: Record<string, any>): Scenario {
     compensationLagDays: finite(a.compensation_lag_days, 30),
     cpFundingShare: finite(a.cp_funding_share_pct, 40),
   };
+}
+
+export function scenarioSource(engine: Record<string, any>): ScenarioSource {
+  const evidence = engine?.scenario?.funding_rate_evidence ?? {};
+  return {
+    snapshotAsOf: typeof engine?.asof === "string" ? engine.asof : null,
+    fundingRateAsOf: typeof evidence.asof === "string" ? evidence.asof : null,
+    fundingRateBasis: typeof evidence.basis === "string" ? evidence.basis : "unavailable",
+  };
+}
+
+export function reconcileScenarioDefaults(
+  current: Scenario,
+  refreshed: Scenario,
+  editedFields: ReadonlySet<ScenarioField>,
+): Scenario {
+  return Object.fromEntries(
+    SCENARIO_FIELDS.map((field) => [
+      field,
+      editedFields.has(field) ? current[field] : refreshed[field],
+    ]),
+  ) as unknown as Scenario;
+}
+
+export function scenarioSourceNote(
+  source: ScenarioSource,
+  scenario: Scenario,
+  editedFields: ReadonlySet<ScenarioField>,
+): string {
+  const snapshotClock = source.snapshotAsOf ?? "date unavailable";
+  const editedCount = editedFields.size;
+  const editNote = editedCount > 0
+    ? ` ${editedCount} edited control${editedCount === 1 ? " remains" : "s remain"} an explicit scenario assumption.`
+    : " All other values are explicit defaults.";
+
+  if (scenario.fundingRate == null) {
+    return `Defaults synchronized from the ${snapshotClock} snapshot. Observed SOFR is unavailable; rate-dependent outputs remain unavailable until the funding-rate control is moved.${editNote}`;
+  }
+  if (editedFields.has("fundingRate")) {
+    return `Defaults synchronized from the ${snapshotClock} snapshot. The funding rate is an explicit user scenario assumption.${editNote}`;
+  }
+  if (source.fundingRateBasis === "observed_sofr") {
+    const rateClock = source.fundingRateAsOf ?? "date unavailable";
+    return `Defaults synchronized from the ${snapshotClock} snapshot; observed SOFR is dated ${rateClock}.${editNote}`;
+  }
+  if (source.fundingRateBasis === "explicit_scenario_assumption") {
+    return `Defaults synchronized from the ${snapshotClock} snapshot; the server supplied an explicit funding-rate assumption.${editNote}`;
+  }
+  return `Defaults synchronized from the ${snapshotClock} snapshot; funding-rate provenance is unavailable.${editNote}`;
 }
 
 export function calculateScenario(s: Scenario): ScenarioOutputs {

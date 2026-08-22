@@ -44,6 +44,9 @@ Published images use these tags:
   `sha-`;
 - `latest` for a non-prerelease GitHub Release.
 
+Before moving `latest`, the publisher hashes and parses the current index and
+refuses to replace a higher bare-semantic version with an older release.
+
 Each GHCR publication is multi-platform for `linux/amd64` and `linux/arm64`.
 BuildKit exports each platform exactly once as an OCI archive. A source-free job
 validates and scans those exact child manifests, and another source-free job

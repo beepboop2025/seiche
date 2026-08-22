@@ -228,9 +228,7 @@ def test_projection_is_versioned_citable_bounded_and_honest() -> None:
     assert warehouse["evidence_statuses"] == ["observed", "derived"]
     assert warehouse["observed_facts"]["total_net_b"] == 410.0
     assert warehouse["analytics"]["total_pctl"] == 88.0
-    assert payload["capital_markets"]["execution_liquidity"]["status"] == (
-        "structural"
-    )
+    assert payload["capital_markets"]["execution_liquidity"]["status"] == ("structural")
     assert "LICENSED-SENTINEL" not in json.dumps(payload)
     assert not ({"charts", "history", "series", "index_series"} & _keys(payload))
     assert payload["methodology"]["boundedness"] == {
@@ -264,9 +262,10 @@ def test_official_registry_contains_verified_primary_urls() -> None:
     assert all(item["status"] == "structural" for item in sources)
     by_id = {item["id"]: item for item in sources}
     assert by_id["cftc_commitments_of_traders"]["used_in_snapshot"] is True
-    assert "capital_markets.positioning[]" in by_id[
-        "cftc_commitments_of_traders"
-    ]["projection_paths"]
+    assert (
+        "capital_markets.positioning[]"
+        in by_id["cftc_commitments_of_traders"]["projection_paths"]
+    )
     assert by_id["sec_edgar_api"]["used_in_snapshot"] is False
     assert by_id["sec_edgar_api"]["catalog_role"] == "official_reference_only"
 
@@ -436,7 +435,9 @@ def test_rest_route_restores_persisted_state_without_building(monkeypatch) -> No
     assert response.json()["generated_at"] == _snapshot()["generated_at"]
 
 
-def test_restored_money_market_freshness_is_reaged_without_building(monkeypatch) -> None:
+def test_restored_money_market_freshness_is_reaged_without_building(
+    monkeypatch,
+) -> None:
     snapshot = _snapshot()
     desk = snapshot["engines"]["money_market"]
     desk["asof"] = "2000-01-03"
@@ -471,9 +472,7 @@ def test_restored_money_market_freshness_is_reaged_without_building(monkeypatch)
         ),
     )
 
-    response = TestClient(api.app).get(
-        "/api/v2/world-markets?section=money_markets"
-    )
+    response = TestClient(api.app).get("/api/v2/world-markets?section=money_markets")
     payload = response.json()
     refreshed = next(
         item
@@ -484,9 +483,7 @@ def test_restored_money_market_freshness_is_reaged_without_building(monkeypatch)
 
     assert response.status_code == 200
     assert refreshed["freshness"] == "stale"
-    assert payload["money_markets"]["freshness"]["evaluation_asof"] != (
-        "2000-01-03"
-    )
+    assert payload["money_markets"]["freshness"]["evaluation_asof"] != ("2000-01-03")
 
 
 def test_rest_section_selector_matches_mcp_projection_shape(monkeypatch) -> None:
@@ -504,7 +501,100 @@ def test_rest_section_selector_matches_mcp_projection_shape(monkeypatch) -> None
     assert client.get("/api/v2/world-markets?section=unknown").status_code == 422
 
 
-def test_rest_cold_cache_returns_typed_unavailable_without_building(monkeypatch) -> None:
+def test_rvxray_quality_survives_projection_rest_and_mcp(monkeypatch) -> None:
+    snapshot = _snapshot()
+    snapshot["engines"]["rvxray"].update(
+        score_eligible=False,
+        metric_coverage={
+            "pair_proxy_b": {
+                "status": "partial",
+                "usable_rows": 1,
+                "total_rows": 2,
+                "coverage_pct": 50.0,
+            },
+            "gross_short_b": {
+                "status": "complete",
+                "usable_rows": 2,
+                "total_rows": 2,
+                "coverage_pct": 100.0,
+            },
+        },
+        pair_change_13w_quality={
+            "status": "unavailable",
+            "required_prior_asof": "2026-05-19",
+            "reason": "exact_13_week_report_unavailable",
+        },
+        series_quality={"policy": "non_complete_aggregates_are_null"},
+    )
+
+    projected = project_world_markets(snapshot, selector="capital_markets")
+    expected = next(
+        item
+        for item in projected["capital_markets"]["positioning"]
+        if item["id"] == "rvxray"
+    )["quality"]
+    assert expected["score_eligible"] is False
+    assert expected["metric_coverage"]["pair_proxy_b"]["status"] == "partial"
+    assert expected["pair_change_13w_quality"]["status"] == "unavailable"
+    assert expected["series_quality"]["policy"] == "non_complete_aggregates_are_null"
+
+    monkeypatch.setattr(api.assemble, "cached_snapshot", lambda: snapshot)
+    rest = TestClient(api.app).get("/api/v2/world-markets?section=capital_markets")
+    assert rest.status_code == 200
+    rest_rv = next(
+        item
+        for item in rest.json()["capital_markets"]["positioning"]
+        if item["id"] == "rvxray"
+    )
+    assert rest_rv["quality"] == expected
+
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: snapshot)
+    response = mcp.dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": "rv-quality",
+            "method": "tools/call",
+            "params": {
+                "name": "world_markets_context",
+                "arguments": {"section": "capital_markets"},
+            },
+        },
+        public=True,
+    )
+    mcp_rv = next(
+        item
+        for item in _mcp_payload(response)["capital_markets"]["positioning"]
+        if item["id"] == "rvxray"
+    )
+    assert mcp_rv["quality"] == expected
+
+
+def test_rvxray_all_null_current_headline_projects_as_unavailable() -> None:
+    snapshot = _snapshot()
+    snapshot["engines"]["rvxray"].update(
+        current_available=False,
+        current_reason="no usable current UST position metrics",
+        pair_proxy_b=None,
+        gross_short_b=None,
+        net_b=None,
+        dv01_m_per_bp=None,
+    )
+
+    projected = project_world_markets(snapshot, selector="capital_markets")
+    rv = next(
+        item
+        for item in projected["capital_markets"]["positioning"]
+        if item["id"] == "rvxray"
+    )
+
+    assert rv["status"] == "unavailable"
+    assert rv["reason"] == "no usable current UST position metrics"
+    assert "source_registry_ids" not in rv
+
+
+def test_rest_cold_cache_returns_typed_unavailable_without_building(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(api.assemble, "cached_snapshot", lambda: None)
     monkeypatch.setattr(api.assemble, "restore_cached_snapshot", lambda: None)
 
@@ -553,13 +643,13 @@ def test_mcp_tool_selectors_are_public_chartless_and_cache_only(monkeypatch) -> 
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
         public=True,
     )["result"]["tools"]
-    descriptor = next(item for item in listed if item["name"] == "world_markets_context")
+    descriptor = next(
+        item for item in listed if item["name"] == "world_markets_context"
+    )
     assert descriptor["inputSchema"]["properties"]["section"]["enum"] == list(
         WORLD_MARKETS_SELECTORS
     )
-    assert descriptor["outputSchema"]["properties"]["schema"] == {
-        "type": "string"
-    }
+    assert descriptor["outputSchema"]["properties"]["schema"] == {"type": "string"}
     assert "world_markets_context" in mcp.SERVER_INSTRUCTIONS
     assert "Undertow" in mcp.SERVER_INSTRUCTIONS
 
@@ -596,9 +686,7 @@ def test_api_discovery_and_openapi_publish_world_markets() -> None:
     route = spec["paths"]["/api/v2/world-markets"]["get"]
     assert set(route["responses"]) == {"200", "503"}
     assert route["parameters"][0]["name"] == "section"
-    assert route["parameters"][0]["schema"]["enum"] == list(
-        WORLD_MARKETS_SELECTORS
-    )
+    assert route["parameters"][0]["schema"]["enum"] == list(WORLD_MARKETS_SELECTORS)
     success = route["responses"]["200"]["content"]["application/json"]["schema"]
     assert success["properties"]["schema"]["const"] == WORLD_MARKETS_SCHEMA
     assert "never starts collection or model fitting" in route["description"]

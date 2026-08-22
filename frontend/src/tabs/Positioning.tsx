@@ -1,6 +1,25 @@
 import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method, ordinal } from "../lib";
+import { rvMetricQualityLabel, rvQualityLabel } from "../rvxrayQuality";
+
+function RvMetric({ label, value, prefix = "", suffix = "", digits = 0, quality, tone = "" }: {
+  label: string;
+  value: number | null | undefined;
+  prefix?: string;
+  suffix?: string;
+  digits?: number;
+  quality?: string | null;
+  tone?: string;
+}) {
+  return (
+    <div className="item">
+      <div className="k">{label}</div>
+      <div className={`v ${tone}`}>{value == null ? "—" : `${prefix}${fmt(value, digits)}${suffix}`}</div>
+      {quality ? <div className="coverage">{quality}</div> : null}
+    </div>
+  );
+}
 
 function RvCard({ e }: { e: Any }) {
   if (!e?.ok) return <Fault name="RV X-Ray" reason={e?.reason} span={8} />;
@@ -9,12 +28,12 @@ function RvCard({ e }: { e: Any }) {
       <h2>RV X-Ray</h2>
       <div className="sub">Treasury RV complex — CFTC leveraged-fund shorts × repo funding (T+3 by nature)</div>
       <div className="kv">
-        <div className="item"><div className="k">pair proxy</div><div className="v">${fmt(e.pair_proxy_b, 0)}B</div></div>
-        <div className="item"><div className="k">gross lev short</div><div className="v">${fmt(e.gross_short_b, 0)}B</div></div>
-        <div className="item"><div className="k">DV01</div><div className="v">${fmt(e.dv01_m_per_bp, 0)}M/bp</div></div>
-        <div className="item"><div className="k">Δ 13w</div><div className={`v ${(e.pair_change_13w_b ?? 0) > 50 ? "warn" : ""}`}>{fmt(e.pair_change_13w_b, 0)}B</div></div>
-        <div className="item"><div className="k">size z</div><div className="v">{fmt(e.size_z, 2)}</div></div>
-        <div className="item"><div className="k">DVP volume</div><div className="v">${fmt(e.dvp_volume_b, 0)}B/d</div></div>
+        <RvMetric label="pair proxy" value={e.pair_proxy_b} prefix="$" suffix="B" quality={rvMetricQualityLabel(e, "pair_proxy_b")} />
+        <RvMetric label="gross lev short" value={e.gross_short_b} prefix="$" suffix="B" quality={rvMetricQualityLabel(e, "gross_short_b")} />
+        <RvMetric label="DV01" value={e.dv01_m_per_bp} prefix="$" suffix="M/bp" quality={rvMetricQualityLabel(e, "dv01_m_per_bp")} />
+        <RvMetric label="Δ 13w" value={e.pair_change_13w_b} suffix="B" quality={rvQualityLabel(e.pair_change_13w_quality)} tone={e.pair_change_13w_b > 50 ? "warn" : ""} />
+        <RvMetric label="size z" value={e.size_z} digits={2} quality={e.score_eligible === false ? "WITHHELD · pair coverage/history" : null} />
+        <RvMetric label="DVP volume" value={e.dvp_volume_b} prefix="$" suffix="B/d" />
       </div>
       <Chart
         rows={e.series}
@@ -23,19 +42,23 @@ function RvCard({ e }: { e: Any }) {
           { label: "gross short $B", color: P.accentSoft },
         ]}
       />
+      {e.series_quality?.policy === "non_complete_aggregates_are_null"
+        ? <div className="coverage">Chart gaps mark incomplete contract coverage; no partial total is plotted as a full observation.</div>
+        : null}
       <table className="mini">
         <thead><tr><th>shock</th><th>MTM loss</th><th>assumed unwind (10%)</th><th>days of DVP volume</th></tr></thead>
         <tbody>
           {e.scenarios.map((s: Any) => (
             <tr key={s.shock_bp}>
               <td>{s.shock_bp}bp</td>
-              <td className="num">${fmt(s.mtm_loss_b, 1)}B</td>
-              <td className="num">${fmt(s.assumed_unwind_b, 0)}B</td>
-              <td className="num">{fmt(s.unwind_days_of_dvp, 2)}</td>
+              <td className="num">{s.mtm_loss_b == null ? "—" : `$${fmt(s.mtm_loss_b, 1)}B`}</td>
+              <td className="num">{s.assumed_unwind_b == null ? "—" : `$${fmt(s.assumed_unwind_b, 0)}B`}</td>
+              <td className="num">{s.unwind_days_of_dvp == null ? "—" : fmt(s.unwind_days_of_dvp, 2)}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <div className="coverage">Shock outputs are withheld unless every required current aggregate has complete expected-contract coverage; — means withheld or unavailable.</div>
       <Method>{e.method}</Method>
     </div>
   );

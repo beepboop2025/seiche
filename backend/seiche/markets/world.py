@@ -295,10 +295,7 @@ def _bounded_value(value: Any, depth: int = 0) -> Any:
             and str(key).lower() not in _OMITTED_NESTED_KEYS
         }
     if isinstance(value, (list, tuple)):
-        return [
-            _bounded_value(item, depth + 1)
-            for item in value[:_NESTED_LIST_LIMIT]
-        ]
+        return [_bounded_value(item, depth + 1) for item in value[:_NESTED_LIST_LIMIT]]
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, (str, int, bool)) or value is None:
@@ -309,9 +306,7 @@ def _bounded_value(value: Any, depth: int = 0) -> Any:
 def _pick(value: Any, *fields: str) -> dict[str, Any]:
     source = _object(value)
     return {
-        field: _bounded_value(source.get(field))
-        for field in fields
-        if field in source
+        field: _bounded_value(source.get(field)) for field in fields if field in source
     }
 
 
@@ -579,9 +574,7 @@ def _forex_currency(item: Mapping[str, Any]) -> dict[str, Any]:
     )
     return {
         **_pick(raw, "key", "label", "bucket"),
-        "status": (
-            "derived" if analytics["status"] == "derived" else spot["status"]
-        ),
+        "status": ("derived" if analytics["status"] == "derived" else spot["status"]),
         "spot": spot,
         "analytics": analytics,
     }
@@ -815,19 +808,27 @@ def _capital_blocks(
             blocks.append(_warehouse_block(engine))
             continue
         available = engine.get("ok") is True and isinstance(engine.get("asof"), str)
+        if engine_id == "rvxray" and engine.get("current_available") is False:
+            available = False
         item = {
             "id": engine_id,
             "status": evidence_status if available else "unavailable",
             **_pick(engine, *fields),
         }
-        if available:
-            item["source_registry_ids"] = list(
-                _CAPITAL_SOURCE_IDS.get(engine_id, [])
+        if engine_id == "rvxray":
+            quality = _pick(
+                engine,
+                "score_eligible",
+                "metric_coverage",
+                "pair_change_13w_quality",
+                "series_quality",
             )
+            if quality:
+                item["quality"] = quality
+        if available:
+            item["source_registry_ids"] = list(_CAPITAL_SOURCE_IDS.get(engine_id, []))
             if engine_id == "rvxray" and engine.get("dvp_volume_b") is not None:
-                item["source_registry_ids"].append(
-                    "ofr_short_term_funding_data_api"
-                )
+                item["source_registry_ids"].append("ofr_short_term_funding_data_api")
             if engine_id == "supplydesk":
                 item["clock_role"] = "scenario_evaluation_not_evidence_clock"
         if engine_id == "auctions" and isinstance(item.get("recent_auctions"), list):
@@ -836,7 +837,12 @@ def _capital_blocks(
                 dict(value) for value in recent if isinstance(value, Mapping)
             ]
         if not available:
-            item["reason"] = _reason(engine, f"{engine_id} is unavailable")
+            item["reason"] = (
+                engine.get("current_reason")
+                if engine_id == "rvxray"
+                and isinstance(engine.get("current_reason"), str)
+                else _reason(engine, f"{engine_id} is unavailable")
+            )
         blocks.append(item)
     return blocks
 
@@ -973,11 +979,7 @@ def _capital_evidence_clocks(values: list[dict[str, Any]]) -> list[str]:
         ):
             continue
         keys = ("as_of", "asof", "funding_asof")
-        clocks.extend(
-            value[key]
-            for key in keys
-            if isinstance(value.get(key), str)
-        )
+        clocks.extend(value[key] for key in keys if isinstance(value.get(key), str))
     return clocks
 
 
@@ -988,9 +990,7 @@ def _capital_markets(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     headline = _object(snapshot.get("headline"))
     positioning = _capital_blocks(engines, _CAPITAL_POSITIONING_BLOCKS)
     primary_market = _capital_blocks(engines, _CAPITAL_PRIMARY_BLOCKS)
-    global_liquidity = _capital_global_liquidity(
-        _object(engines.get("thermohaline"))
-    )
+    global_liquidity = _capital_global_liquidity(_object(engines.get("thermohaline")))
     risk_context = _capital_risk_context(composite, tell, headline)
     evidence = [risk_context, global_liquidity, *positioning, *primary_market]
     as_of_candidates = _capital_evidence_clocks(evidence)
