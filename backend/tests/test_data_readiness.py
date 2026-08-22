@@ -918,6 +918,11 @@ def test_systemd_units_are_alerting_hardened_and_five_minutely() -> None:
     assert "ProtectSystem=strict" in service
     assert "ProtectHome=read-only" in service
     assert "CapabilityBoundingSet=\n" in service
+    assert (
+        "ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh"
+        in service
+    )
+    assert "/home/seiche/app/ops/deploy/seiche-data-readiness.sh" not in service
     assert "ReadOnlyPaths=/home/seiche/app" in service
     assert "-/var/lib/seiche-offsite-backup" in service
     assert "SEICHE_DATA_READINESS_SKIP_OFFSITE" not in service

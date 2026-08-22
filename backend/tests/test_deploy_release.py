@@ -1220,6 +1220,13 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
         "seiche-market-offsite-backup.timer",
     ):
         assert unit in unit_names
+    for artifact in (
+        "data-readiness-helper",
+        "market-offsite-backup-helper",
+        "/etc/seiche/libexec/seiche-data-readiness.sh",
+        "/etc/seiche/libexec/seiche-market-offsite-backup.sh",
+    ):
+        assert artifact in unit_names
     assert 'mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX"' in capture
     assert '[ -L "$destination" ] || [ ! -f "$destination" ]' in capture
     assert 'cp -p -- "$destination"' in capture
@@ -1323,6 +1330,14 @@ case "${FAKE_READINESS_MODE:?}" in
   *) exit 64 ;;
 esac
 """,
+    )
+    runtime_readiness = f'DATA_READINESS_SCRIPT="{readiness}"'
+    helper = helper.replace(
+        "DATA_READINESS_SCRIPT=/etc/seiche/libexec/seiche-data-readiness.sh",
+        runtime_readiness,
+    ).replace(
+        'DATA_READINESS_SCRIPT="$READINESS_SCRIPT_INSTALLED"',
+        runtime_readiness,
     )
     state = tmp_path / "state"
     state.mkdir()
@@ -1503,6 +1518,19 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-source-worker.service" in installer
     assert "seiche-data-readiness.service" in installer
     assert "seiche-data-readiness.timer" in installer
+    assert (
+        "READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-data-readiness.sh"
+        in installer
+    )
+    assert "install_runtime_shell_helper()" in installer
+    assert 'install -o root -g root -m 0755 "$source" "$stage"' in installer
+    assert '/usr/bin/bash -n "$stage"' in installer
+    assert '/usr/bin/sync -f "$stage"' in installer
+    assert (
+        "install_runtime_shell_helper \\\n"
+        '    "$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED"' in installer
+    )
+    assert 'DATA_READINESS_SCRIPT="$READINESS_SCRIPT_INSTALLED"' in installer
     assert "ReadWritePaths=$RECOVERY_PROOF_DIR" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
     readiness_boundary = installer.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
@@ -1595,6 +1623,10 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=/home/seiche/app/backend/data" in source_worker
     assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in source_worker
     assert "OnFailure=undertow-failure-alert@%n.service" in readiness_service
+    assert (
+        "ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh"
+        in readiness_service
+    )
     assert (
         "After=seiche-market-worker.service seiche-source-worker.service"
         in readiness_timer

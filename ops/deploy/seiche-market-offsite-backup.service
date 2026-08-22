@@ -9,7 +9,7 @@ AssertPathExists=/etc/seiche/offsite-backup.env
 AssertPathExists=/etc/seiche/offsite-backup.passphrase
 AssertPathExists=/root/.config/anchor/object-storage.env
 AssertPathExists=/var/lib/seiche-deploy/deployed-sha
-AssertFileIsExecutable=/home/seiche/app/ops/deploy/seiche-market-offsite-backup.sh
+AssertFileIsExecutable=/etc/seiche/libexec/seiche-market-offsite-backup.sh
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]
@@ -19,7 +19,7 @@ Group=root
 EnvironmentFile=/root/.config/anchor/object-storage.env
 EnvironmentFile=/etc/seiche/offsite-backup.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/bash /home/seiche/app/ops/deploy/seiche-market-offsite-backup.sh
+ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-market-offsite-backup.sh
 TimeoutStartSec=6h
 TimeoutStopSec=15m
 KillMode=control-group

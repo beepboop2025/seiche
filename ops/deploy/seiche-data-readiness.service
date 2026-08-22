@@ -14,7 +14,7 @@ User=root
 # and its root:seiche 0640 receipt without granting DAC bypass.
 Group=seiche
 EnvironmentFile=-/etc/seiche/data-readiness.env
-ExecStart=/usr/bin/bash /home/seiche/app/ops/deploy/seiche-data-readiness.sh
+ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh
 TimeoutStartSec=60
 UMask=0077
 Nice=10

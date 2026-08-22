@@ -349,6 +349,8 @@ DATA_UNIT_NAMES=(
 )
 DATA_ARTIFACT_NAMES=(
   storage-preflight-helper
+  data-readiness-helper
+  market-offsite-backup-helper
   api-market-platform-dropin
   release-poll-storage-dropin
   validation-state-dropin
@@ -357,6 +359,8 @@ DATA_ARTIFACT_NAMES=(
 )
 DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
+  /etc/seiche/libexec/seiche-data-readiness.sh
+  /etc/seiche/libexec/seiche-market-offsite-backup.sh
   /etc/systemd/system/seiche-api.service.d/market-platform.conf
   /etc/systemd/system/seiche-release-poll.service.d/storage-volume.conf
   /etc/systemd/system/seiche-market-validation.service.d/state-path.conf
@@ -705,7 +709,7 @@ restore_market_services() {
       2>/dev/null || true
 }
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
-DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
+DATA_READINESS_SCRIPT=/etc/seiche/libexec/seiche-data-readiness.sh
 run_recovery_proof_preflight() {
   SEICHE_DATA_READINESS_PROOF_ONLY=1 \
     SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \

@@ -11,6 +11,8 @@ OFFSITE_ENV_FILE=/etc/seiche/offsite-backup.env
 OFFSITE_PASSPHRASE_FILE=/etc/seiche/offsite-backup.passphrase
 OFFSITE_CREDENTIAL_ENV_FILE=/root/.config/anchor/object-storage.env
 OFFSITE_STATUS_PATH=/var/lib/seiche-offsite-backup/status.json
+OFFSITE_SCRIPT_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.sh"
+OFFSITE_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-market-offsite-backup.sh
 OFFSITE_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.service"
 OFFSITE_SERVICE_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.service
 OFFSITE_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.timer"
@@ -55,6 +57,8 @@ READINESS_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.service"
 READINESS_SERVICE_DESTINATION=/etc/systemd/system/seiche-data-readiness.service
 READINESS_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.timer"
 READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
+READINESS_SCRIPT_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-data-readiness.sh
 LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
 
 if [ "$STATE_DIR" != /var/lib/seiche ] \
@@ -159,6 +163,38 @@ STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
 /usr/bin/sync /etc/systemd/system
 systemctl daemon-reload
 systemctl start seiche-storage-preflight.service
+
+# The release wrapper uses umask 0077 while it checks out an exact candidate.
+# Git therefore may materialize tracked executable files as seiche:seiche 0700.
+# Capability-free root services cannot rely on root's DAC override to read
+# those files, and the offsite service also cannot traverse /home/seiche as
+# group root. Install the reviewed helpers into a root-owned runtime boundary
+# instead of executing mutable checkout bytes directly from /home.
+install_runtime_shell_helper() {
+    local source=$1 destination=$2 label=$3 stage=""
+    if [ ! -f "$source" ] || [ -L "$source" ] \
+            || [ "$(stat -c '%h' "$source")" != 1 ]; then
+        echo "market platform: $label source is missing or unsafe" >&2
+        return 1
+    fi
+    stage=$(mktemp \
+        "$STORAGE_PREFLIGHT_INSTALL_DIR/.${label}.XXXXXX") || return 1
+    if ! install -o root -g root -m 0755 "$source" "$stage" \
+            || ! /usr/bin/bash -n "$stage" \
+            || ! /usr/bin/sync -f "$stage" \
+            || ! mv -f -- "$stage" "$destination" \
+            || ! /usr/bin/sync "$STORAGE_PREFLIGHT_INSTALL_DIR"; then
+        rm -f -- "$stage"
+        echo "market platform: $label installation failed" >&2
+        return 1
+    fi
+}
+install_runtime_shell_helper \
+    "$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED" \
+    seiche-data-readiness
+install_runtime_shell_helper \
+    "$OFFSITE_SCRIPT_SOURCE" "$OFFSITE_SCRIPT_INSTALLED" \
+    seiche-market-offsite-backup
 
 systemctl enable --now postgresql
 
@@ -1032,7 +1068,7 @@ fi
 # succeeds and backup/restore readiness has been proven, so an overdue
 # Persistent run cannot page during planned startup.
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
-DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+DATA_READINESS_SCRIPT="$READINESS_SCRIPT_INSTALLED"
 run_recovery_proof_preflight() {
     SEICHE_DATA_READINESS_PROOF_ONLY=1 \
         SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \

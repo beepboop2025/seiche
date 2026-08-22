@@ -812,6 +812,15 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
 
     assert "EnvironmentFile=/root/.config/anchor/object-storage.env" in service
     assert "EnvironmentFile=/etc/seiche/offsite-backup.env" in service
+    assert (
+        "AssertFileIsExecutable=/etc/seiche/libexec/"
+        "seiche-market-offsite-backup.sh" in service
+    )
+    assert (
+        "ExecStart=/usr/bin/bash /etc/seiche/libexec/"
+        "seiche-market-offsite-backup.sh" in service
+    )
+    assert "/home/seiche/app/ops/deploy/seiche-market-offsite-backup.sh" not in service
     assert "ProtectSystem=strict" in service
     assert "CapabilityBoundingSet=\n" in service
     assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in service
@@ -833,12 +842,24 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
     assert "systemctl disable --now seiche-market-offsite-backup.timer" in installer
     assert "systemctl enable seiche-market-offsite-backup.timer" in installer
     assert "OFFSITE_APP_SHA" in installer and "OFFSITE_DEPLOYED_SHA" in installer
+    assert (
+        "OFFSITE_SCRIPT_INSTALLED=/etc/seiche/libexec/"
+        "seiche-market-offsite-backup.sh" in installer
+    )
+    assert (
+        "install_runtime_shell_helper \\\n"
+        '    "$OFFSITE_SCRIPT_SOURCE" "$OFFSITE_SCRIPT_INSTALLED"' in installer
+    )
 
     assert "OFFSITE_TIMER_WAS_ACTIVE" in wrapper
     assert "OFFSITE_TIMER_WAS_ENABLED" in wrapper
     assert "seiche-market-offsite-backup.service" in wrapper
     assert "seiche-market-offsite-backup.timer" in wrapper
     assert "candidate offsite backup timer remains enabled after rollback" in wrapper
-    assert wrapper.count(
-        "seiche-market-offsite-backup.timer seiche-market-offsite-backup.service"
-    ) >= 3
+    assert "/etc/seiche/libexec/seiche-market-offsite-backup.sh" in wrapper
+    assert (
+        wrapper.count(
+            "seiche-market-offsite-backup.timer seiche-market-offsite-backup.service"
+        )
+        >= 3
+    )
