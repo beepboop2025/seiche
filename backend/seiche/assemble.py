@@ -211,10 +211,25 @@ RESTRICTED_SNAPSHOT_PROSE_FIELDS = frozenset({
 })
 RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES = ("_id", "_ids", "_series")
 RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
+    "benchmarks",
+    "components",
+    "covariates",
+    "exposures",
+    "factors",
     "features",
+    "indicators",
     "inputs",
     "instruments",
+    "measures",
     "metrics",
+    "outputs",
+    "parameters",
+    "predictors",
+    "regressors",
+    "signals",
+    "sources",
+    "targets",
+    "variables",
 })
 RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
     "_url",
@@ -1958,6 +1973,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         *,
         path: tuple[str, ...] = (),
         typed_identity: bool = False,
+        prose_context: bool = False,
     ) -> bool:
         if isinstance(value, dict):
             if restricted_engine_shape(value):
@@ -1968,28 +1984,46 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
                 child_path = (*path, field)
                 if restricted_identifier(key_text, typed=True):
                     return True
-                if url_field(field) and restricted_mirror_url(nested):
-                    return True
-                if field == "nodes" and isinstance(nested, (list, tuple)) and any(
-                    restricted_identifier(item, typed=True) for item in nested
+                if (
+                    not prose_context
+                    and url_field(field)
+                    and restricted_mirror_url(nested)
                 ):
                     return True
-                child_identity = typed_identity or identity_field(field)
-                if field in RESTRICTED_SNAPSHOT_PROSE_FIELDS:
-                    child_identity = False
+                if (
+                    not prose_context
+                    and field == "nodes"
+                    and isinstance(nested, (list, tuple))
+                    and any(restricted_identifier(item, typed=True) for item in nested)
+                ):
+                    return True
+                child_prose = (
+                    prose_context or field in RESTRICTED_SNAPSHOT_PROSE_FIELDS
+                )
+                child_identity = (
+                    False if child_prose else typed_identity or identity_field(field)
+                )
                 if walk(
                     nested,
                     path=child_path,
                     typed_identity=child_identity,
+                    prose_context=child_prose,
                 ):
                     return True
             return False
         if isinstance(value, (list, tuple)):
             return any(
-                walk(item, path=path, typed_identity=typed_identity)
+                walk(
+                    item,
+                    path=path,
+                    typed_identity=typed_identity,
+                    prose_context=prose_context,
+                )
                 for item in value
             )
-        if restricted_mirror_url(value) and path and url_field(path[-1]):
+        if prose_context:
+            return False
+        if restricted_mirror_url(value):
             return True
         return restricted_identifier(value) or (
             typed_identity and restricted_identifier(value, typed=True)

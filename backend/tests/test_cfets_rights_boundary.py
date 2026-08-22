@@ -335,13 +335,15 @@ def test_missing_china_rate_stays_unavailable_instead_of_scoring_as_calm() -> No
     assert "CHINA" in result["fx_labels"]
 
 
-def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
+def test_lawful_palimpsest_exact_term_is_servable_by_rest(
+    fake_snap, monkeypatch
+) -> None:
     payload = deepcopy(fake_snap)
     payload["engines"]["farbasin"] = {
         "ok": True,
         "top_targets": [
             {
-                "term": "SHIBOR liquidity debate",
+                "term": "SHIBOR",
                 "domain": "public discussion",
                 "threat": 0.72,
                 "is_new": True,
@@ -354,6 +356,13 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
             "The retired mirror was documented at "
             "https://palimpsest.info/readings/china-econ-latest.json."
         ),
+        "notes": [
+            "SHIBOR",
+            (
+                "https://www.chinamoney.com.cn/ags/ms/"
+                "cm-u-bk-shibor/ShiborHis"
+            ),
+        ],
         "method": "CFETS values are absent, never interpreted as calm.",
         "caveats": ["DR007 is the transaction population behind FDR007."],
     }
@@ -366,6 +375,20 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
 
     assert assemble._snapshot_contains_restricted_cfets(payload) is False
     assert assemble._servable_snapshot(payload) is True
+
+    async def lawful_snapshot(force: bool = False) -> dict:
+        return payload
+
+    monkeypatch.delenv("SEICHE_BOARD_AUTH", raising=False)
+    monkeypatch.setattr(assemble, "snapshot", lawful_snapshot)
+    api._OVERVIEW_WIRE.update(src=None, body=None, gz=None, etag=None)
+    response = TestClient(api.app).get(
+        "/api/overview",
+        headers={"Accept-Encoding": "identity"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["engines"]["farbasin"]["top_targets"][0]["term"] == "SHIBOR"
 
 
 @pytest.mark.parametrize(
@@ -449,6 +472,20 @@ def test_lawful_palimpsest_target_text_may_discuss_shibor(fake_snap) -> None:
         },
         {"deep": {"wrapper": {"features": {"primary": "cfets rates"}}}},
         {"deep": {"wrapper": {"inputs": ["CFETS FDR007"]}}},
+        {"deep": {"wrapper": {"outputs": ["CFETS FDR007"]}}},
+        {"deep": {"wrapper": {"factors": ["CFETS FDR007"]}}},
+        {"deep": {"wrapper": {"signals": ["CFETS FDR007"]}}},
+        {"deep": {"wrapper": {"predictors": ["CFETS FDR007"]}}},
+        {
+            "deep": {
+                "wrapper": {
+                    "opaque": (
+                        "https://www.chinamoney.com.cn/ags/ms/"
+                        "cm-u-bk-shibor/ShiborHis"
+                    )
+                }
+            }
+        },
         {
             "deep": {
                 "wrapper": {
