@@ -197,10 +197,7 @@ class SeicheWorldMarketsFetcher(
             raise OpenBBError(
                 "Seiche world-markets response is missing its citation block."
             )
-        if (
-            not isinstance(scope, dict)
-            or scope.get("coverage_claim") != COVERAGE_CLAIM
-        ):
+        if not isinstance(scope, dict) or scope.get("coverage_claim") != COVERAGE_CLAIM:
             raise OpenBBError(
                 "Seiche world-markets response has an unsupported coverage claim."
             )
