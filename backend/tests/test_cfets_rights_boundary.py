@@ -546,37 +546,287 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
     assert assemble._servable_snapshot(payload) is False
 
 
-def test_prose_alias_and_data_value_field_permutation_matrix_is_fail_closed() -> None:
-    restricted_uri = (
-        "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis"
-    )
-    for prose_field in assemble.RESTRICTED_SNAPSHOT_PROSE_FIELDS:
-        for value_field in assemble.RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS:
-            row = {
-                prose_field: "CN.CFETS.FDR007",
-                value_field: 1.52,
-            }
-            assert assemble._snapshot_contains_restricted_cfets(row), (
-                prose_field,
-                value_field,
-            )
+@pytest.mark.parametrize(
+    "record",
+    (
+        {"term": "FDR007", "chg_6m_bp": 25},
+        {"term": "SHIBOR", "percentile_3y": 88},
+        {"term": "FDR007", "pctl": 99},
+        {"term": "SHIBOR", "policy_diff_vs_effr_bp": 12},
+        {"term": "FDR007", "rows": [["2026-08-22", 1.52]]},
+        {"term": "SHIBOR", "points": [["2026-08-22", 1.31]]},
+        {"label": "SHIBOR observed overnight rate", "last_pct": 1.31},
+        {"payload": "CFETS FDR007 rate", "value": 1.52},
+    ),
+    ids=(
+        "change-bp",
+        "numbered-percentile",
+        "pctl",
+        "policy-difference",
+        "rows",
+        "points",
+        "observed-label",
+        "unknown-payload",
+    ),
+)
+def test_reported_quantitative_mapping_bypasses_are_not_servable(
+    fake_snap, record
+) -> None:
+    payload = deepcopy(fake_snap)
+    payload["deep"]["quantitative_bypass"] = record
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is True
+    assert assemble._servable_snapshot(payload) is False
+
+
+def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
+    exact_fields = frozenset({
+        "amount",
+        "balance",
+        "beta",
+        "close",
+        "contribution",
+        "corr",
+        "correlation",
+        "fixing",
+        "high",
+        "index",
+        "last",
+        "last_pct",
+        "latest_pct",
+        "level",
+        "low",
+        "mid",
+        "notional",
+        "open",
+        "pctl",
+        "percentile",
+        "price",
+        "pressure",
+        "quote",
+        "rate",
+        "rate2",
+        "rate_pct",
+        "raw_value",
+        "score",
+        "spread",
+        "spread_bp",
+        "stress",
+        "value",
+        "value_bp",
+        "values",
+        "volume",
+        "weight",
+        "z",
+        "zscore",
+    })
+    metric_prefixes = frozenset({"change_", "chg_", "delta_", "diff_"})
+    metric_suffixes = frozenset({
+        "_amount",
+        "_b",
+        "_balance",
+        "_bp",
+        "_bps",
+        "_cny",
+        "_index",
+        "_level",
+        "_levels",
+        "_m",
+        "_notional",
+        "_pctl",
+        "_percent",
+        "_percentile",
+        "_pct",
+        "_price",
+        "_prices",
+        "_quote",
+        "_quotes",
+        "_rate",
+        "_rates",
+        "_score",
+        "_spread",
+        "_spreads",
+        "_usd",
+        "_value",
+        "_values",
+        "_volume",
+        "_z",
+    })
+    observed_fields = frozenset({
+        "data",
+        "history",
+        "observations",
+        "points",
+        "records",
+        "rows",
+        "series",
+        "values",
+    })
+
+    assert assemble.RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS == exact_fields
+    assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_PREFIXES) == metric_prefixes
+    assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_SUFFIXES) == metric_suffixes
+    assert assemble.RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS == observed_fields
+
+    for sibling in assemble.RESTRICTED_SNAPSHOT_PROSE_FIELDS | {
+        "label",
+        "name",
+        "opaque",
+        "payload",
+    }:
         assert assemble._snapshot_contains_restricted_cfets(
-            {prose_field: restricted_uri, "value": 1.52}
-        ), prose_field
-        for suffix in assemble.RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES:
-            assert assemble._snapshot_contains_restricted_cfets(
-                {prose_field: "CN.CFETS.FDR007", f"observed{suffix}": 1.52}
-            ), (prose_field, suffix)
+            {sibling: "CFETS FDR007 rate", "arbitrary_numeric": 1.52}
+        ), sibling
+    for field in exact_fields:
+        assert assemble._snapshot_contains_restricted_cfets(
+            {"term": "FDR007", field: "reported"}
+        ), field
+    for prefix in metric_prefixes:
+        assert assemble._snapshot_contains_restricted_cfets(
+            {"term": "SHIBOR", f"{prefix}6m": "reported"}
+        ), prefix
+    for suffix in metric_suffixes:
+        assert assemble._snapshot_contains_restricted_cfets(
+            {"payload": "CFETS FDR007 rate", f"liquidity{suffix}": "reported"}
+        ), suffix
+    for field in observed_fields:
+        assert assemble._snapshot_contains_restricted_cfets(
+            {"term": "SHIBOR", field: [["2026-08-22", "reported"]]}
+        ), field
+    assert assemble._snapshot_contains_restricted_cfets(
+        {"aliases": ["public", "FDR007"], "arbitrary_numeric": 1.52}
+    )
+    assert assemble._snapshot_contains_restricted_cfets(
+        {
+            "payload": (
+                "https://www.chinamoney.com.cn/ags/ms/"
+                "cm-u-bk-shibor/ShiborHis"
+            ),
+            "arbitrary_numeric": 1.52,
+        }
+    )
 
 
-def test_quantitative_row_rule_preserves_pure_and_palimpsest_prose() -> None:
-    assert not assemble._snapshot_contains_restricted_cfets({"text": "SHIBOR"})
-    assert not assemble._snapshot_contains_restricted_cfets(
-        {"term": "SHIBOR", "threat": 0.72, "is_new": True}
+def test_quantitative_mapping_rule_preserves_long_form_prose() -> None:
+    lawful_rows = (
+        {"text": "SHIBOR"},
+        {"description": {"text": "SHIBOR"}},
+        {
+            "description": "Public discussion of SHIBOR liquidity",
+            "value": 1.31,
+        },
+        {
+            "method": "Method compares FDR007 with public benchmark concepts",
+            "score": 7,
+        },
+        {
+            "caveat": "CFETS data are unavailable and omitted from this analysis",
+            "rows": [["2026-08-22", 1.31]],
+        },
     )
-    assert not assemble._snapshot_contains_restricted_cfets(
-        {"description": {"text": "SHIBOR"}}
-    )
+
+    for row in lawful_rows:
+        assert not assemble._snapshot_contains_restricted_cfets(row), row
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": 0.72,
+            "is_new": True,
+        },
+        {"term": "SHIBOR", "domain": None, "threat": None, "is_new": None},
+        {"term": "FDR007", "domain": "news", "threat": 2.5, "is_new": False},
+    ),
+)
+def test_exact_farbasin_target_schema_is_lawful_at_its_real_path(
+    fake_snap, target
+) -> None:
+    payload = deepcopy(fake_snap)
+    payload["engines"]["farbasin"] = {"ok": True, "top_targets": [target]}
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is False
+    assert assemble._servable_snapshot(payload) is True
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": 0.72,
+            "is_new": True,
+            "last_pct": 1.31,
+        },
+        {
+            "term": "FDR007",
+            "domain": "news",
+            "threat": 2.5,
+            "is_new": False,
+            "value": 1.52,
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": 0.72,
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": 0.72,
+            "is_new": True,
+            "extra": "metadata",
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": True,
+            "is_new": True,
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": float("inf"),
+            "is_new": True,
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": float("nan"),
+            "is_new": True,
+        },
+    ),
+    ids=(
+        "last-pct",
+        "value",
+        "omitted-field",
+        "extra-field",
+        "boolean-threat",
+        "infinite-threat",
+        "nan-threat",
+    ),
+)
+def test_farbasin_target_exception_rejects_shape_drift(fake_snap, target) -> None:
+    payload = deepcopy(fake_snap)
+    payload["engines"]["farbasin"] = {"ok": True, "top_targets": [target]}
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is True
+    assert assemble._servable_snapshot(payload) is False
+
+
+def test_farbasin_target_shape_is_not_an_exception_outside_its_path() -> None:
+    target = {
+        "term": "SHIBOR",
+        "domain": "public discussion",
+        "threat": 0.72,
+        "is_new": True,
+    }
+
+    assert assemble._snapshot_contains_restricted_cfets({"wrapper": target}) is True
 
 
 def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
@@ -707,20 +957,32 @@ def test_rest_overview_quarantines_unknown_scalar_identity_bypass(
     assert assemble._cache["release_receipt"] is None
 
 
-def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
-    fake_snap, monkeypatch
+@pytest.mark.parametrize(
+    "target",
+    (
+        {
+            "term": {
+                "text": "CN.CFETS.SHIBOR_ON",
+                "value": 1.31,
+            }
+        },
+        {
+            "term": "SHIBOR",
+            "domain": "public discussion",
+            "threat": 0.72,
+            "is_new": True,
+            "last_pct": 1.31,
+        },
+    ),
+    ids=("nested-term-mapping", "farbasin-extra-quote"),
+)
+def test_rest_overview_quarantines_palimpsest_target_shape_bypasses(
+    fake_snap, monkeypatch, target
 ) -> None:
     poisoned = deepcopy(fake_snap)
     poisoned["engines"]["farbasin"] = {
         "ok": True,
-        "top_targets": [
-            {
-                "term": {
-                    "text": "CN.CFETS.SHIBOR_ON",
-                    "value": 1.31,
-                }
-            }
-        ],
+        "top_targets": [target],
     }
     clean = deepcopy(fake_snap)
     _reset_cache()
@@ -738,7 +1000,7 @@ def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
     )
 
     assert response.status_code == 200
-    assert "CN.CFETS.SHIBOR_ON" not in response.text
+    assert "SHIBOR" not in response.text
     assert assemble._cache["payload"] is None
     assert assemble._cache["release_receipt"] is None
 
@@ -748,9 +1010,11 @@ def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
     (
         {"metrics": ["SHIBOR_ON"]},
         {"notes": [{"text": "CN.CFETS.FDR007", "value": 1.52}]},
+        {"payload": "CFETS FDR007 rate", "value": 1.52},
+        {"term": "SHIBOR", "points": [["2026-08-22", 1.31]]},
     ),
 )
-def test_mcp_tool_quarantines_plural_and_nested_prose_mapping_bypasses(
+def test_mcp_tool_quarantines_structural_identity_bypasses(
     fake_snap, monkeypatch, poison
 ) -> None:
     poisoned = deepcopy(fake_snap)

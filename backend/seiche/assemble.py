@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -231,55 +232,95 @@ RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
     "targets",
     "variables",
 })
-RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS = frozenset({
+RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS = frozenset({
     "amount",
-    "change",
-    "change_bp",
-    "change_pct",
+    "balance",
+    "beta",
     "close",
+    "contribution",
+    "corr",
+    "correlation",
+    "fixing",
     "high",
+    "index",
     "last",
     "last_pct",
+    "latest_pct",
     "level",
     "low",
     "mid",
+    "notional",
     "open",
+    "pctl",
     "percentile",
     "price",
-    "price_usd",
-    "price_usd_per_bbl",
     "pressure",
     "quote",
     "rate",
     "rate2",
     "rate_pct",
     "raw_value",
+    "score",
     "spread",
     "spread_bp",
     "stress",
     "value",
     "value_bp",
-    "value_pct",
     "values",
+    "volume",
+    "weight",
     "z",
     "zscore",
 })
-RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES = (
+RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS = frozenset({
+    "data",
+    "history",
+    "observations",
+    "points",
+    "records",
+    "rows",
+    "series",
+    "values",
+})
+RESTRICTED_SNAPSHOT_METRIC_PREFIXES = (
+    "change_",
+    "chg_",
+    "delta_",
+    "diff_",
+)
+RESTRICTED_SNAPSHOT_METRIC_SUFFIXES = (
     "_amount",
-    "_close",
+    "_b",
+    "_balance",
+    "_bp",
+    "_bps",
+    "_cny",
+    "_index",
     "_level",
     "_levels",
+    "_m",
+    "_notional",
+    "_pctl",
+    "_percent",
+    "_percentile",
+    "_pct",
     "_price",
     "_prices",
     "_quote",
     "_quotes",
     "_rate",
     "_rates",
+    "_score",
     "_spread",
     "_spreads",
+    "_usd",
     "_value",
     "_values",
+    "_volume",
+    "_z",
 )
+FARBASIN_TARGET_PATH = ("engines", "farbasin", "top_targets")
+FARBASIN_TARGET_FIELDS = frozenset({"domain", "is_new", "term", "threat"})
 RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
     "_url",
     "_urls",
@@ -1897,11 +1938,12 @@ def _attest(day: str, record: dict) -> None:
 def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     """Recursively detect restricted data identities and derived engine rows.
 
-    Ordinary prose is never scanned.  This validator follows typed identifiers
-    (for example ``mnemonic`` and ``source``), exact restricted keys, and the
-    known legacy engine shapes.  It therefore finds a poisoned row under any
-    wrapper without rejecting lawful editorial or Palimpsest target text that
-    happens to discuss a benchmark.
+    Ordinary prose leaves are exempt unless their containing mapping is
+    structurally quantitative. This validator follows typed identifiers (for
+    example ``mnemonic`` and ``source``), exact restricted keys, and the known
+    legacy engine shapes. It therefore finds a poisoned row under any wrapper
+    without rejecting lawful editorial or exact-schema Palimpsest target text
+    that happens to discuss a benchmark.
     """
 
     normalized_identifiers = {
@@ -1927,6 +1969,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         "metric",
         "money",
         "on",
+        "observed",
         "overnight",
         "parity",
         "rate",
@@ -2017,37 +2060,76 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             return True
         return False
 
-    def data_value_field(field: str, value: object) -> bool:
-        return value is not None and (
-            field in RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS
-            or field.endswith(RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES)
-        )
-
-    def restricted_prose_identity(value: object) -> bool:
+    def restricted_quantitative_identity(value: object) -> bool:
         if isinstance(value, (list, tuple)):
-            return any(restricted_prose_identity(item) for item in value)
+            return any(restricted_quantitative_identity(item) for item in value)
         if isinstance(value, dict):
             return False
         return restricted_mirror_url(value) or restricted_identifier(value, typed=True)
 
-    def restricted_data_row(value: dict) -> bool:
-        """Detect a restricted identity laundered through a prose-named label.
+    def restricted_target_identity(value: object) -> bool:
+        if isinstance(value, dict):
+            return any(restricted_target_identity(item) for item in value.values())
+        return restricted_quantitative_identity(value)
 
-        Prose aliases describe text until a sibling field makes the mapping a
-        quantitative row. Palimpsest's ``threat`` is deliberately absent from
-        the value-field contract, so censorship targets remain lawful prose.
+    def quantitative_scalar(value: object) -> bool:
+        return not isinstance(value, (bool, np.bool_)) and isinstance(
+            value,
+            (int, float, np.integer, np.floating),
+        )
+
+    def quantitative_field(field: str, value: object) -> bool:
+        if value is None:
+            return False
+        if field in RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS:
+            return True
+        if field.startswith(RESTRICTED_SNAPSHOT_METRIC_PREFIXES):
+            return True
+        if field.endswith(RESTRICTED_SNAPSHOT_METRIC_SUFFIXES):
+            return True
+        return (
+            field in RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS
+            and isinstance(value, (dict, list, tuple))
+            and bool(value)
+        )
+
+    def lawful_farbasin_target(value: dict, path: tuple[str, ...]) -> bool:
+        """Admit only the real Palimpsest target schema at its exact path."""
+
+        if path != FARBASIN_TARGET_PATH or set(value) != FARBASIN_TARGET_FIELDS:
+            return False
+        threat = value["threat"]
+        threat_ok = threat is None or (
+            not isinstance(threat, bool)
+            and isinstance(threat, (int, float))
+            and (not isinstance(threat, float) or math.isfinite(threat))
+        )
+        return (
+            isinstance(value["term"], str)
+            and (value["domain"] is None or isinstance(value["domain"], str))
+            and threat_ok
+            and (value["is_new"] is None or isinstance(value["is_new"], bool))
+        )
+
+    def restricted_quantitative_mapping(value: dict) -> bool:
+        """Detect restricted identities carried by a quantitative record.
+
+        Quantitative meaning is structural: a numeric sibling, a named or
+        patterned metric, or a non-empty observed-series container is enough.
+        Once established, every direct string/list sibling is interpreted as
+        typed identity rather than prose, so novel aliases cannot reopen the
+        boundary.
         """
 
-        has_data_value = any(
-            data_value_field(str(key).casefold(), nested)
+        has_quantitative_value = any(
+            quantitative_scalar(nested)
+            or quantitative_field(str(key).casefold(), nested)
             for key, nested in value.items()
         )
-        if not has_data_value:
+        if not has_quantitative_value:
             return False
         return any(
-            str(key).casefold() in RESTRICTED_SNAPSHOT_PROSE_FIELDS
-            and restricted_prose_identity(nested)
-            for key, nested in value.items()
+            restricted_quantitative_identity(nested) for nested in value.values()
         )
 
     def walk(
@@ -2064,7 +2146,16 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             # Thus {"text": "SHIBOR"} remains lawful prose, while
             # {"source": "chinamoney"} is a restricted identity.
             prose_context = False
-            if restricted_engine_shape(value) or restricted_data_row(value):
+            target_is_lawful = lawful_farbasin_target(value, path)
+            if (
+                path == FARBASIN_TARGET_PATH
+                and restricted_target_identity(value.get("term"))
+                and not target_is_lawful
+            ):
+                return True
+            if restricted_engine_shape(value) or (
+                not target_is_lawful and restricted_quantitative_mapping(value)
+            ):
                 return True
             for key, nested in value.items():
                 key_text = str(key)
