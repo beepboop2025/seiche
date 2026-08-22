@@ -1,0 +1,15 @@
+[Unit]
+Description=Upload and restore-verify a Seiche market snapshot daily
+
+[Timer]
+# Local Seiche backup starts at 02:00 UTC and MyQuant at 03:04 UTC. Keep this
+# network-heavy round trip in a later, separately jittered window.
+OnCalendar=*-*-* 05:20:00 UTC
+RandomizedDelaySec=20m
+FixedRandomDelay=true
+AccuracySec=1m
+Persistent=true
+Unit=seiche-market-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

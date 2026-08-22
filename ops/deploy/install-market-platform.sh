@@ -7,6 +7,14 @@ ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+OFFSITE_ENV_FILE=/etc/seiche/offsite-backup.env
+OFFSITE_PASSPHRASE_FILE=/etc/seiche/offsite-backup.passphrase
+OFFSITE_CREDENTIAL_ENV_FILE=/root/.config/anchor/object-storage.env
+OFFSITE_STATUS_PATH=/var/lib/seiche-offsite-backup/status.json
+OFFSITE_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.service"
+OFFSITE_SERVICE_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.service
+OFFSITE_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.timer"
+OFFSITE_TIMER_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.timer
 STORAGE_PREFLIGHT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.py"
 STORAGE_PREFLIGHT_INSTALL_DIR=/etc/seiche/libexec
 STORAGE_PREFLIGHT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-storage-preflight.py"
@@ -302,6 +310,8 @@ RESTORE_STAGE=""
 PROMOTION_UNIT_STAGE_DIR=""
 WORKER_UNIT_STAGE_DIR=""
 DATA_UNIT_STAGE_DIR=""
+OFFSITE_CONFIGURED=0
+OFFSITE_CANARY=1
 STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
 STORAGE_PREFLIGHT_STAGE=""
 RELEASE_POLL_STORAGE_STAGE=""
@@ -313,7 +323,9 @@ cleanup() {
             "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
-            "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
+            "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
+            "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.service" \
+            "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer"
         rmdir "$DATA_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
     if [ -n "$WORKER_UNIT_STAGE_DIR" ]; then
@@ -513,6 +525,124 @@ if [ -e "$BOK_ECOS_ENV_FILE" ] || [ -L "$BOK_ECOS_ENV_FILE" ]; then
     fi
 fi
 
+# Off-node backup configuration is an all-or-none operator boundary. The
+# shared Anchor credential already lives outside Git and is never copied or
+# printed here; Seiche contributes only a dedicated bucket/prefix policy and a
+# separately escrowed encryption passphrase. A configured canary remains
+# manual, and scheduled mode requires the successful canary receipt.
+if [ -e "$OFFSITE_ENV_FILE" ] || [ -L "$OFFSITE_ENV_FILE" ] \
+        || [ -e "$OFFSITE_PASSPHRASE_FILE" ] \
+        || [ -L "$OFFSITE_PASSPHRASE_FILE" ]; then
+    [ -f "$OFFSITE_ENV_FILE" ] && [ ! -L "$OFFSITE_ENV_FILE" ] \
+        && [ -f "$OFFSITE_PASSPHRASE_FILE" ] \
+        && [ ! -L "$OFFSITE_PASSPHRASE_FILE" ] || {
+        echo "market platform: offsite backup configuration is incomplete or unsafe" >&2
+        exit 1
+    }
+    [ "$(stat -c '%U:%G:%a:%h' "$OFFSITE_ENV_FILE")" = root:root:600:1 ] \
+        && [ "$(stat -c '%U:%G:%a:%h' "$OFFSITE_PASSPHRASE_FILE")" \
+            = root:root:400:1 ] || {
+        echo "market platform: offsite backup configuration ownership or mode is unsafe" >&2
+        exit 1
+    }
+    [ -f "$OFFSITE_CREDENTIAL_ENV_FILE" ] \
+        && [ ! -L "$OFFSITE_CREDENTIAL_ENV_FILE" ] \
+        && [ "$(stat -c '%U:%G:%a:%h' "$OFFSITE_CREDENTIAL_ENV_FILE")" \
+            = root:root:600:1 ] || {
+        echo "market platform: shared Object Storage credential is missing or unsafe" >&2
+        exit 1
+    }
+    OFFSITE_CANARY=$(/usr/bin/python3 - "$OFFSITE_ENV_FILE" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+values: dict[str, str] = {}
+for line in path.read_text(encoding="utf-8").splitlines():
+    if line.count("=") != 1:
+        raise SystemExit(1)
+    key, value = line.split("=", 1)
+    if key in values:
+        raise SystemExit(1)
+    values[key] = value
+expected = {
+    "SEICHE_OFFSITE_BACKUP_BUCKET",
+    "SEICHE_OFFSITE_BACKUP_PREFIX",
+    "SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE",
+    "SEICHE_OFFSITE_BACKUP_WRITE_ENABLED",
+    "SEICHE_OFFSITE_BACKUP_CANARY",
+    "SEICHE_OFFSITE_BACKUP_KEY_ID",
+    "SEICHE_OFFSITE_BACKUP_DESTINATION_ID",
+    "SEICHE_OFFSITE_BACKUP_RETENTION_MODE",
+    "SEICHE_OFFSITE_BACKUP_RETENTION_DAYS",
+}
+valid = (
+    set(values) == expected
+    and re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", values["SEICHE_OFFSITE_BACKUP_BUCKET"])
+    and re.fullmatch(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*", values["SEICHE_OFFSITE_BACKUP_PREFIX"])
+    and ".." not in values["SEICHE_OFFSITE_BACKUP_PREFIX"]
+    and values["SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE"] == "anchor"
+    and values["SEICHE_OFFSITE_BACKUP_WRITE_ENABLED"] == "1"
+    and values["SEICHE_OFFSITE_BACKUP_CANARY"] in {"0", "1"}
+    and re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}",
+        values["SEICHE_OFFSITE_BACKUP_KEY_ID"],
+    )
+    and re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}",
+        values["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"],
+    )
+    and values["SEICHE_OFFSITE_BACKUP_RETENTION_MODE"] == "COMPLIANCE"
+    and values["SEICHE_OFFSITE_BACKUP_RETENTION_DAYS"] == "90"
+)
+if not valid:
+    raise SystemExit(1)
+print(values["SEICHE_OFFSITE_BACKUP_CANARY"])
+PY
+    ) || {
+        echo "market platform: offsite backup environment contract is invalid" >&2
+        exit 1
+    }
+    /usr/bin/python3 - "$OFFSITE_PASSPHRASE_FILE" <<'PY' || {
+from pathlib import Path
+import sys
+
+body = Path(sys.argv[1]).read_bytes()
+if not body.endswith(b"\n") or body.count(b"\n") != 1:
+    raise SystemExit(1)
+value = body[:-1]
+if not 32 <= len(value) <= 4096 or b"\r" in value or b"\0" in value:
+    raise SystemExit(1)
+PY
+        echo "market platform: offsite backup passphrase contract is invalid" >&2
+        exit 1
+    }
+    if ! command -v gpg >/dev/null 2>&1; then
+        echo "market platform: GPG with authenticated AEAD support is required" >&2
+        exit 1
+    fi
+    GPG_OPTIONS=$(gpg --dump-options) || {
+        echo "market platform: GPG runtime options cannot be inspected" >&2
+        exit 1
+    }
+    if ! grep -Fxq -- --force-aead <<<"$GPG_OPTIONS" \
+            || ! grep -Fxq -- --aead-algo <<<"$GPG_OPTIONS"; then
+        echo "market platform: GPG with authenticated AEAD support is required" >&2
+        exit 1
+    fi
+    command -v rclone >/dev/null 2>&1 || {
+        echo "market platform: rclone is required for configured offsite backups" >&2
+        exit 1
+    }
+    OFFSITE_CONFIGURED=1
+fi
+if systemctl is-active --quiet seiche-market-offsite-backup.service \
+        2>/dev/null; then
+    echo "market platform: offsite backup service must finish before unit installation" >&2
+    exit 1
+fi
+
 # Fail before changing service units if the application user cannot reach the
 # exact socket/port written above. pg_wrapper succeeding as postgres is not a
 # substitute for validating the DSN the API and collectors will actually use.
@@ -550,11 +680,17 @@ install -m 0644 "$READINESS_TIMER_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
 install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
     "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
+install -m 0644 "$OFFSITE_SERVICE_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.service"
+install -m 0644 "$OFFSITE_TIMER_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer"
 if ! systemd-analyze verify \
         "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
-        "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"; then
+        "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
+        "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.service" \
+        "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer"; then
     echo "market platform: data-plane units failed verification" >&2
     exit 1
 fi
@@ -566,6 +702,10 @@ mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
     "$READINESS_TIMER_DESTINATION"
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
     /etc/systemd/system/seiche-market-backfill.service
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.service" \
+    "$OFFSITE_SERVICE_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer" \
+    "$OFFSITE_TIMER_DESTINATION"
 rmdir "$DATA_UNIT_STAGE_DIR"
 DATA_UNIT_STAGE_DIR=""
 
@@ -762,6 +902,8 @@ SYSTEMD_VERIFY_UNITS=(
     /etc/systemd/system/seiche-market-validation.timer
     /etc/systemd/system/seiche-market-backup.service
     /etc/systemd/system/seiche-market-backup.timer
+    /etc/systemd/system/seiche-market-offsite-backup.service
+    /etc/systemd/system/seiche-market-offsite-backup.timer
     /etc/systemd/system/seiche-market-restore-check.service
     /etc/systemd/system/seiche-market-restore-check.timer
     /etc/systemd/system/seiche-data-readiness.service
@@ -793,6 +935,98 @@ systemctl enable --now seiche-market-validation.timer
 # release remains behind the deploy health gate.
 systemctl enable --now \
     seiche-market-backup.timer seiche-market-restore-check.timer
+
+# Installing code is not authority for the first immutable write. A canary
+# configuration keeps the timer disabled so an operator must start the service
+# once and inspect its round-trip receipt. Scheduled mode is accepted only
+# after that receipt exists for the configured destination. During a release,
+# enablement is recorded but the timer is started only when the checkout and
+# deployed receipt already reconcile; the deploy wrapper restores a
+# previously-active timer after the new SHA has passed health.
+offsite_canary_receipt_is_valid() {
+    [ -f "$OFFSITE_STATUS_PATH" ] && [ ! -L "$OFFSITE_STATUS_PATH" ] \
+        && [ "$(stat -c '%U:%G:%a:%h' "$OFFSITE_STATUS_PATH")" \
+            = root:root:600:1 ] || return 1
+    /usr/bin/python3 - "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" <<'PY'
+import json
+import sys
+
+env_path, status_path = sys.argv[1:]
+settings = {}
+for line in open(env_path, encoding="utf-8"):
+    key, value = line.rstrip("\n").split("=", 1)
+    settings[key] = value
+try:
+    status = json.load(open(status_path, encoding="utf-8"))
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+success = status.get("last_success")
+resolved_status = (
+    status.get("status") == "success"
+    or (
+        status.get("status") == "failed"
+        and status.get("remote_receipt_key") is None
+        and status.get("remote_receipt_version_id") is None
+    )
+)
+valid = (
+    status.get("schema") == "seiche.market-offsite-backup-status.v1"
+    and resolved_status
+    and status.get("bucket") == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+    and status.get("prefix") == settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
+    and status.get("key_id") == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
+    and status.get("destination", {}).get("id")
+        == settings["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]
+    and status.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
+    and isinstance(success, dict)
+    and success.get("restore_verified") is True
+    and success.get("bucket") == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
+    and success.get("prefix") == settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
+    and success.get("key_id") == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
+    and success.get("destination", {}).get("id")
+        == settings["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]
+    and success.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
+    and isinstance(success.get("remote_receipt_key"), str)
+    and (
+        success["remote_receipt_key"]
+        == settings["SEICHE_OFFSITE_BACKUP_PREFIX"] + "/canary/v1/RECEIPT.json"
+        or success["remote_receipt_key"].startswith(
+            settings["SEICHE_OFFSITE_BACKUP_PREFIX"] + "/snapshots/"
+        )
+    )
+    and isinstance(success.get("ciphertext_version_id"), str)
+    and bool(success["ciphertext_version_id"])
+    and isinstance(success.get("remote_receipt_version_id"), str)
+    and bool(success["remote_receipt_version_id"])
+)
+raise SystemExit(0 if valid else 1)
+PY
+}
+if [ "$OFFSITE_CONFIGURED" = 1 ] && [ "$OFFSITE_CANARY" = 0 ]; then
+    offsite_canary_receipt_is_valid || {
+        echo "market platform: scheduled offsite backup lacks a valid canary receipt" >&2
+        exit 1
+    }
+    systemctl enable seiche-market-offsite-backup.timer
+    OFFSITE_APP_SHA=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)
+    OFFSITE_DEPLOYED_SHA=$(tr -d '\n' <"$DEPLOY_STATE_DIR/deployed-sha" \
+        2>/dev/null || true)
+    if [ "$OFFSITE_APP_SHA" = "$OFFSITE_DEPLOYED_SHA" ] \
+            && printf '%s' "$OFFSITE_APP_SHA" \
+                | grep -Eq '^[0-9a-f]{40}$'; then
+        systemctl start seiche-market-offsite-backup.timer
+    fi
+else
+    systemctl disable --now seiche-market-offsite-backup.timer \
+        >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-offsite-backup.timer \
+            2>/dev/null \
+            || systemctl is-active --quiet seiche-market-offsite-backup.timer \
+                2>/dev/null; then
+        echo "market platform: unproven offsite backup timer is still active or enabled" >&2
+        exit 1
+    fi
+fi
 # The source worker is Type=notify and reports READY only after its first
 # durable sweep. Keep the persistent readiness timer stopped until that gate
 # succeeds and backup/restore readiness has been proven, so an overdue

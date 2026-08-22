@@ -279,6 +279,8 @@ BACKUP_TIMER_WAS_ACTIVE=""
 BACKUP_TIMER_WAS_ENABLED=""
 RESTORE_TIMER_WAS_ACTIVE=""
 RESTORE_TIMER_WAS_ENABLED=""
+OFFSITE_TIMER_WAS_ACTIVE=""
+OFFSITE_TIMER_WAS_ENABLED=""
 if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then
   MARKET_WORKER_WAS_ACTIVE=1
 fi
@@ -318,6 +320,12 @@ fi
 if systemctl is-enabled --quiet seiche-market-restore-check.timer 2>/dev/null; then
   RESTORE_TIMER_WAS_ENABLED=1
 fi
+if systemctl is-active --quiet seiche-market-offsite-backup.timer 2>/dev/null; then
+  OFFSITE_TIMER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-market-offsite-backup.timer 2>/dev/null; then
+  OFFSITE_TIMER_WAS_ENABLED=1
+fi
 
 # Capture every market-platform unit and generated storage-policy artifact this
 # deploy can replace. A rollback must restore exact host bytes (or exact prior
@@ -333,6 +341,8 @@ DATA_UNIT_NAMES=(
   seiche-market-validation.timer
   seiche-market-backup.service
   seiche-market-backup.timer
+  seiche-market-offsite-backup.service
+  seiche-market-offsite-backup.timer
   seiche-market-restore-check.service
   seiche-market-restore-check.timer
   seiche-snapshot-promote.service
@@ -453,6 +463,7 @@ restore_preupdate_data_units() {
     seiche-data-readiness.timer seiche-data-readiness.service \
     seiche-market-validation.timer seiche-market-validation.service \
     seiche-market-backup.timer seiche-market-backup.service \
+    seiche-market-offsite-backup.timer seiche-market-offsite-backup.service \
     seiche-market-restore-check.timer seiche-market-restore-check.service \
     2>/dev/null || true
   stage=$(mktemp -d /etc/systemd/system/.seiche-data-units-restore.XXXXXX) \
@@ -520,6 +531,9 @@ restore_preupdate_data_units() {
   fi
   if [ -z "$RESTORE_TIMER_WAS_ENABLED" ]; then
     systemctl disable seiche-market-restore-check.timer >/dev/null 2>&1 || true
+  fi
+  if [ -z "$OFFSITE_TIMER_WAS_ENABLED" ]; then
+    systemctl disable seiche-market-offsite-backup.timer >/dev/null 2>&1 || true
   fi
   for index in "${!DATA_ARTIFACT_NAMES[@]}"; do
     artifact=${DATA_ARTIFACT_NAMES[$index]}
@@ -630,6 +644,22 @@ restore_preupdate_data_units() {
       return 1
     fi
   fi
+  if [ -n "$OFFSITE_TIMER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-offsite-backup.timer >/dev/null \
+        || ! systemctl is-enabled --quiet \
+          seiche-market-offsite-backup.timer; then
+      echo "FAIL: offsite backup timer enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-offsite-backup.timer \
+      >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-offsite-backup.timer \
+        2>/dev/null; then
+      echo "FAIL: candidate offsite backup timer remains enabled after rollback"
+      return 1
+    fi
+  fi
   DATA_UNITS_MAY_HAVE_CHANGED=""
   echo "data collection and readiness units restored to pre-deploy state"
 }
@@ -668,6 +698,11 @@ restore_market_services() {
   [ -z "$RESTORE_TIMER_WAS_ACTIVE" ] \
     || systemctl start --no-block seiche-market-restore-check.timer 2>/dev/null \
     || true
+  [ -z "$OFFSITE_TIMER_WAS_ACTIVE" ] \
+    || ! systemctl is-enabled --quiet seiche-market-offsite-backup.timer \
+      2>/dev/null \
+    || systemctl start --no-block seiche-market-offsite-backup.timer \
+      2>/dev/null || true
 }
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
@@ -733,6 +768,13 @@ start_market_services() {
   # worker keeps a missed run queued until every collector startup is complete.
   ensure_source_worker_ready || return 1
   activate_data_readiness_after_proof || return 1
+  if [ -n "$OFFSITE_TIMER_WAS_ACTIVE" ] \
+      && systemctl is-enabled --quiet seiche-market-offsite-backup.timer; then
+    systemctl start seiche-market-offsite-backup.timer || {
+      echo "FAIL: offsite backup timer could not be restored after exact-SHA promotion"
+      return 1
+    }
+  fi
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {
@@ -841,6 +883,7 @@ systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \
   seiche-market-backup.timer seiche-market-backup.service \
+  seiche-market-offsite-backup.timer seiche-market-offsite-backup.service \
   seiche-market-restore-check.timer seiche-market-restore-check.service \
   2>/dev/null || true
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
@@ -1274,6 +1317,7 @@ systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \
   seiche-market-backup.timer seiche-market-backup.service \
+  seiche-market-offsite-backup.timer seiche-market-offsite-backup.service \
   seiche-market-restore-check.timer seiche-market-restore-check.service \
   2>/dev/null || true
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \

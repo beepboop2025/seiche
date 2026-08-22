@@ -1216,6 +1216,8 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
         "seiche-source-worker.service",
         "seiche-data-readiness.service",
         "seiche-data-readiness.timer",
+        "seiche-market-offsite-backup.service",
+        "seiche-market-offsite-backup.timer",
     ):
         assert unit in unit_names
     assert 'mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX"' in capture
@@ -1232,12 +1234,16 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     )
     assert "SOURCE_WORKER_WAS_ENABLED" in restore
     assert "READINESS_TIMER_WAS_ENABLED" in restore
+    assert "OFFSITE_TIMER_WAS_ENABLED" in restore
     assert "systemctl enable seiche-source-worker.service" in restore
     assert "systemctl disable seiche-source-worker.service" in restore
     assert "systemctl is-enabled --quiet seiche-source-worker.service" in restore
     assert "systemctl enable seiche-data-readiness.timer" in restore
     assert "systemctl disable seiche-data-readiness.timer" in restore
     assert "systemctl is-enabled --quiet seiche-data-readiness.timer" in restore
+    assert "systemctl enable seiche-market-offsite-backup.timer" in restore
+    assert "systemctl disable seiche-market-offsite-backup.timer" in restore
+    assert "systemctl is-enabled --quiet seiche-market-offsite-backup.timer" in restore
 
     capture_call = wrapper.index("if ! capture_preupdate_data_units; then")
     quiesce = wrapper.index(
