@@ -106,7 +106,7 @@ async def _keep_warm() -> None:
     log = logging.getLogger("seiche.api")
     while True:
         try:
-            await assemble.snapshot()
+            await assemble.snapshot(force=True)
         except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
             log.exception("background board refresh failed; retrying next cycle")
         await asyncio.sleep(_REFRESH_EVERY_S)

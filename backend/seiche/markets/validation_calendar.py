@@ -21,7 +21,7 @@ from seiche.markets.base import (
 )
 
 
-FIXTURE_SET_VERSION = "market-calendar-2026-v1"
+FIXTURE_SET_VERSION = "market-calendar-2026-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +159,15 @@ REPRESENTATIVE_FIXTURES: Mapping[str, tuple[CalendarFixture, ...]] = MappingProx
                 "JP-JPY",
                 "JP-BOJ-NET",
                 date(2026, 9, 22),
+                False,
+            ),
+        ),
+        "KR-KRW": (
+            _business_fixture(
+                "kr-bok-wire-labor-day-2026",
+                "KR-KRW",
+                "KR-BOK-WIRE",
+                date(2026, 5, 1),
                 False,
             ),
         ),

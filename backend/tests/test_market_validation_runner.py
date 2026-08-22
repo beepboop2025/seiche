@@ -8,9 +8,10 @@ import pytest
 
 from seiche import store
 from seiche.domain.observation import (
-    CanonicalUnit,
+    ConnectorClassification,
     Observation,
     QualityState,
+    RedistributionStatus,
     SemanticRole,
     StalenessState,
     evidence_sha256,
@@ -25,11 +26,17 @@ from seiche.markets.calibration import (
     ComponentCalibration,
     EngineKind,
     LocalCalibration,
+    get_local_calibration,
 )
+from seiche.markets.china_cny import PACK as CHINA_PACK
 from seiche.markets.materialize import build_local_products
 from seiche.markets.registry import MarketRegistry
 from seiche.markets.us_usd import PACK as US_PACK
 from seiche.markets.validation import (
+    LEGACY_CFETS_CONTRACT_QUARANTINE_ID,
+    LEGACY_CFETS_RIGHTS_CUTOVER_UTC,
+    LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT,
+    LEGACY_CFETS_SHIBOR_PENDING_REASON,
     _extra_reporting_lag,
     _missing_source_failure_injection,
     _revision_vintage_leakage,
@@ -154,6 +161,42 @@ def _compact_rows(
     ]
 
 
+def _cfets_shibor_observation(
+    *,
+    knowledge_time: datetime,
+    connector_classification: ConnectorClassification,
+    redistribution_status: RedistributionStatus = RedistributionStatus.METADATA_ONLY,
+    instrument_id: str = "CN.CFETS.SHIBOR_ON",
+    source: str = "cfets_rates",
+    market_id: str = "CN-CNY",
+) -> Observation:
+    instrument = CHINA_PACK.instrument_map["CN.CFETS.SHIBOR_ON"]
+    return Observation(
+        market_id=market_id,
+        monetary_area_id=CHINA_PACK.monetary_area_id,
+        jurisdiction_codes=CHINA_PACK.jurisdiction_codes,
+        currency=CHINA_PACK.currency,
+        instrument_id=instrument_id,
+        semantic_role=instrument.semantic_role,
+        value=155,
+        canonical_unit=instrument.canonical_unit,
+        rate_compounding=instrument.rate_compounding,
+        day_count=instrument.day_count,
+        event_time=knowledge_time - timedelta(days=1),
+        source_publication_time=knowledge_time - timedelta(minutes=1),
+        knowledge_time=knowledge_time,
+        revision_id="legacy-contract",
+        source=source,
+        evidence_hash=evidence_sha256(
+            f"{market_id}:{instrument_id}:{source}:{knowledge_time.isoformat()}"
+        ),
+        connector_classification=connector_classification,
+        redistribution_status=redistribution_status,
+        quality=QualityState.VERIFIED,
+        staleness=StalenessState.FRESH,
+    )
+
+
 def test_schema_passes_only_when_every_ready_role_has_canonical_evidence() -> None:
     pack, calibration = _compact_contract()
     event_time = datetime(2026, 8, 6, tzinfo=UTC)
@@ -167,6 +210,121 @@ def test_schema_passes_only_when_every_ready_role_has_canonical_evidence() -> No
     assert missing.status is ValidationStatus.PENDING
     assert missing.reasons == ("READY_CAPABILITY_OBSERVATIONS_MISSING",)
     assert missing.metrics["ready_roles_missing"] == ["SECURED_OVERNIGHT"]
+
+
+def test_schema_does_not_conflate_shared_source_label_with_adapter_id() -> None:
+    pack, calibration = _compact_contract()
+    event_time = datetime(2026, 8, 6, tzinfo=UTC)
+    knowledge_time = event_time + timedelta(hours=1)
+    rows = _compact_rows(event_time=event_time, knowledge_time=knowledge_time)
+    rows[0] = replace(rows[0], source="fred")
+
+    result = _schema_and_units(pack, calibration, rows)
+
+    assert result.status is ValidationStatus.PASS
+    assert result.metrics["mismatch_codes"] == []
+    assert "legacy_contract_quarantine" not in result.metrics
+
+
+def test_schema_quarantines_exact_pre_cutover_cfets_shibor_contract() -> None:
+    row = _cfets_shibor_observation(
+        knowledge_time=LEGACY_CFETS_RIGHTS_CUTOVER_UTC - timedelta(seconds=1),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+    )
+
+    result = _schema_and_units(
+        CHINA_PACK,
+        get_local_calibration(CHINA_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.PENDING
+    assert result.reasons == (LEGACY_CFETS_SHIBOR_PENDING_REASON,)
+    assert result.metrics["mismatch_codes"] == []
+    quarantine = result.metrics["legacy_contract_quarantine"]
+    assert quarantine == {
+        "policy_id": LEGACY_CFETS_CONTRACT_QUARANTINE_ID,
+        "rights_transition_commit": LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT,
+        "cutoff_utc": "2026-08-22T01:06:45Z",
+        "instrument_id": "CN.CFETS.SHIBOR_ON",
+        "legacy_connector_classification": "official_open",
+        "required_redistribution_status": "metadata_only",
+        "rows_pending": 1,
+    }
+
+
+def test_schema_accepts_current_licensed_cfets_contract() -> None:
+    row = _cfets_shibor_observation(
+        knowledge_time=LEGACY_CFETS_RIGHTS_CUTOVER_UTC - timedelta(seconds=1),
+        connector_classification=ConnectorClassification.LICENSED,
+    )
+
+    result = _schema_and_units(
+        CHINA_PACK,
+        get_local_calibration(CHINA_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.PASS
+    assert result.reasons == ()
+    assert result.metrics["legacy_contract_quarantine"]["rows_pending"] == 0
+
+
+def test_schema_rejects_official_open_cfets_contract_at_or_after_cutover() -> None:
+    row = _cfets_shibor_observation(
+        knowledge_time=LEGACY_CFETS_RIGHTS_CUTOVER_UTC,
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+    )
+
+    result = _schema_and_units(
+        CHINA_PACK,
+        get_local_calibration(CHINA_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.FAIL
+    assert result.reasons == ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",)
+    assert result.metrics["legacy_contract_quarantine"]["rows_pending"] == 0
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_reason"),
+    [
+        (
+            {"redistribution_status": RedistributionStatus.ALLOWED},
+            "OBSERVATION_REDISTRIBUTION_POLICY_MISMATCH",
+        ),
+        ({"source": "legacy_cfets_alias"}, "OBSERVATION_SOURCE_MISMATCH"),
+        ({"market_id": "HK-HKD"}, "OBSERVATION_MARKET_MISMATCH"),
+        (
+            {"instrument_id": "CN.CFETS.FDR007"},
+            "OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",
+        ),
+        (
+            {"instrument_id": "CN.CFETS.DR007"},
+            "OBSERVATION_INSTRUMENT_UNDECLARED",
+        ),
+    ],
+)
+def test_schema_rejects_non_exact_legacy_cfets_contracts(
+    changes: dict[str, object],
+    expected_reason: str,
+) -> None:
+    row = _cfets_shibor_observation(
+        knowledge_time=LEGACY_CFETS_RIGHTS_CUTOVER_UTC - timedelta(seconds=1),
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        **changes,
+    )
+
+    result = _schema_and_units(
+        CHINA_PACK,
+        get_local_calibration(CHINA_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.FAIL
+    assert expected_reason in result.reasons
+    assert result.metrics["legacy_contract_quarantine"]["rows_pending"] == 0
 
 
 def test_truncation_replay_uses_a_real_future_suffix(tmp_path, monkeypatch) -> None:

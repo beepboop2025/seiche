@@ -14,7 +14,12 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from seiche.domain.observation import Observation, SemanticRole
+from seiche.domain.observation import (
+    ConnectorClassification,
+    Observation,
+    RedistributionStatus,
+    SemanticRole,
+)
 from seiche.markets.base import (
     CapabilityStatus,
     MarketPack,
@@ -43,7 +48,19 @@ from seiche.repository import MarketRepository, get_repository
 
 
 VALIDATION_RUNNER_ID = "market-validate"
-VALIDATION_RUNNER_VERSION = "market-validation-policy-v3"
+VALIDATION_RUNNER_VERSION = "market-validation-policy-v4"
+
+# Commit d540e2d8a0ffb7a5f1e88d4996003c200e014679 changed the declared
+# ``cfets_rates`` contract from OFFICIAL_OPEN to LICENSED.  Its canonical
+# commit timestamp is 2026-08-22T01:06:45Z.  Rows learned strictly before that
+# instant are immutable evidence created under the old contract; they remain
+# quarantined for review rather than being rewritten or silently accepted.
+LEGACY_CFETS_CONTRACT_QUARANTINE_ID = "cfets-shibor-contract-generation-quarantine-v1"
+LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT = "d540e2d8a0ffb7a5f1e88d4996003c200e014679"
+LEGACY_CFETS_RIGHTS_CUTOVER_UTC = datetime(2026, 8, 22, 1, 6, 45, tzinfo=UTC)
+LEGACY_CFETS_SHIBOR_PENDING_REASON = (
+    "LEGACY_CFETS_SHIBOR_PRE_CUTOVER_CONTRACT_QUARANTINED"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +292,47 @@ def _required_ready_roles(pack: MarketPack) -> frozenset[SemanticRole]:
     )
 
 
+def _is_legacy_cfets_shibor_contract(
+    pack: MarketPack,
+    observation: Observation,
+) -> bool:
+    """Match only the immutable SHIBOR contract superseded by the cutover."""
+
+    instrument = pack.instrument_map.get(observation.instrument_id)
+    if instrument is None:
+        return False
+    adapter = pack.adapter_map.get(instrument.source_adapter_id)
+    if adapter is None:
+        return False
+    return (
+        pack.market_id == "CN-CNY"
+        and pack.monetary_area_id == "CN"
+        and pack.jurisdiction_codes == ("CN",)
+        and pack.currency == "CNY"
+        and instrument.instrument_id == "CN.CFETS.SHIBOR_ON"
+        and instrument.source_adapter_id == "cfets_rates"
+        and adapter.classification is ConnectorClassification.LICENSED
+        and adapter.redistribution_status is RedistributionStatus.METADATA_ONLY
+        and observation.market_id == pack.market_id
+        and observation.monetary_area_id == pack.monetary_area_id
+        and observation.jurisdiction_codes == pack.jurisdiction_codes
+        and observation.currency == pack.currency
+        and observation.instrument_id == instrument.instrument_id
+        and observation.semantic_role is instrument.semantic_role
+        and observation.canonical_unit is instrument.canonical_unit
+        and observation.rate_compounding is instrument.rate_compounding
+        and observation.day_count is instrument.day_count
+        and observation.source == instrument.source_adapter_id
+        and observation.connector_classification
+        is ConnectorClassification.OFFICIAL_OPEN
+        and observation.redistribution_status is RedistributionStatus.METADATA_ONLY
+        and observation.usable
+        and observation.event_time < LEGACY_CFETS_RIGHTS_CUTOVER_UTC
+        and observation.source_publication_time < LEGACY_CFETS_RIGHTS_CUTOVER_UTC
+        and observation.knowledge_time < LEGACY_CFETS_RIGHTS_CUTOVER_UTC
+    )
+
+
 def _schema_and_units(
     pack: MarketPack,
     calibration: LocalCalibration,
@@ -282,6 +340,7 @@ def _schema_and_units(
 ) -> GateAssessment:
     mismatches: set[str] = set()
     conversions_checked = 0
+    legacy_cfets_rows_pending = 0
     for instrument in pack.instruments:
         try:
             normalized = instrument.normalize(Decimal("1"))
@@ -298,6 +357,12 @@ def _schema_and_units(
             mismatches.add("OBSERVATION_INSTRUMENT_UNDECLARED")
             continue
         adapter = pack.adapter_map[instrument.source_adapter_id]
+        legacy_cfets_contract = _is_legacy_cfets_shibor_contract(
+            pack,
+            observation,
+        )
+        if legacy_cfets_contract:
+            legacy_cfets_rows_pending += 1
         if observation.market_id != pack.market_id:
             mismatches.add("OBSERVATION_MARKET_MISMATCH")
         if observation.monetary_area_id != pack.monetary_area_id:
@@ -314,19 +379,26 @@ def _schema_and_units(
             mismatches.add("OBSERVATION_COMPOUNDING_MISMATCH")
         if observation.day_count is not instrument.day_count:
             mismatches.add("OBSERVATION_DAY_COUNT_MISMATCH")
-        if observation.connector_classification is not adapter.classification:
+        if (
+            pack.market_id == "CN-CNY"
+            and instrument.source_adapter_id == "cfets_rates"
+            and observation.source != "cfets_rates"
+        ):
+            mismatches.add("OBSERVATION_SOURCE_MISMATCH")
+        if (
+            observation.connector_classification is not adapter.classification
+            and not legacy_cfets_contract
+        ):
             mismatches.add("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH")
         if observation.redistribution_status is not adapter.redistribution_status:
             mismatches.add("OBSERVATION_REDISTRIBUTION_POLICY_MISMATCH")
 
-    present_roles = {
-        item.semantic_role for item in observations if item.usable
-    }
+    present_roles = {item.semantic_role for item in observations if item.usable}
     missing_roles = sorted(
         role.value for role in _required_ready_roles(pack) - present_roles
     )
     metrics: dict[str, object] = {
-        "implementation": "schema-and-units-v1",
+        "implementation": "schema-and-units-v2",
         "declared_instruments": len(pack.instruments),
         "declared_adapters": len(pack.source_adapters),
         "unit_conversions_checked": conversions_checked,
@@ -339,7 +411,22 @@ def _schema_and_units(
             and calibration.calibration_id == pack.calibration_id
         ),
     }
-    if calibration.market_id != pack.market_id or calibration.calibration_id != pack.calibration_id:
+    if pack.market_id == "CN-CNY":
+        metrics["legacy_contract_quarantine"] = {
+            "policy_id": LEGACY_CFETS_CONTRACT_QUARANTINE_ID,
+            "rights_transition_commit": LEGACY_CFETS_RIGHTS_TRANSITION_COMMIT,
+            "cutoff_utc": LEGACY_CFETS_RIGHTS_CUTOVER_UTC.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "instrument_id": "CN.CFETS.SHIBOR_ON",
+            "legacy_connector_classification": "official_open",
+            "required_redistribution_status": "metadata_only",
+            "rows_pending": legacy_cfets_rows_pending,
+        }
+    if (
+        calibration.market_id != pack.market_id
+        or calibration.calibration_id != pack.calibration_id
+    ):
         mismatches.add("CALIBRATION_PACK_MISMATCH")
         metrics["mismatch_codes"] = sorted(mismatches)
     if mismatches:
@@ -350,11 +437,21 @@ def _schema_and_units(
             tuple(sorted(mismatches)),
         )
     if missing_roles:
+        reasons = ["READY_CAPABILITY_OBSERVATIONS_MISSING"]
+        if legacy_cfets_rows_pending:
+            reasons.append(LEGACY_CFETS_SHIBOR_PENDING_REASON)
         return GateAssessment(
             ValidationCheck.SCHEMA_AND_UNITS,
             ValidationStatus.PENDING,
             metrics,
-            ("READY_CAPABILITY_OBSERVATIONS_MISSING",),
+            tuple(sorted(reasons)),
+        )
+    if legacy_cfets_rows_pending:
+        return GateAssessment(
+            ValidationCheck.SCHEMA_AND_UNITS,
+            ValidationStatus.PENDING,
+            metrics,
+            (LEGACY_CFETS_SHIBOR_PENDING_REASON,),
         )
     return GateAssessment(
         ValidationCheck.SCHEMA_AND_UNITS,

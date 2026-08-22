@@ -49,6 +49,13 @@ def test_built_in_pack_calendar_gate_passes_when_horizon_is_available(
     assert metrics["failed_fixture_ids"] == []
 
 
+def test_every_registered_pack_has_representative_calendar_evidence() -> None:
+    registered = {pack.market_id for pack in default_registry().list()}
+
+    assert set(REPRESENTATIVE_FIXTURES) == registered
+    assert all(REPRESENTATIVE_FIXTURES[market_id] for market_id in registered)
+
+
 def test_china_is_pending_when_next_official_calendar_is_not_published() -> None:
     result = assess_calendar_and_timezone(
         default_registry().get("CN-CNY"),
@@ -67,13 +74,40 @@ def test_china_is_pending_when_next_official_calendar_is_not_published() -> None
     assert metrics["calendar_day_fixtures_checked"] == 2
 
 
-def test_known_china_working_weekend_and_ecb_boe_clocks_are_versioned() -> None:
+def test_korea_is_pending_only_for_the_unpublished_next_year_calendar() -> None:
+    result = assess_calendar_and_timezone(
+        default_registry().get("KR-KRW"),
+        as_of=AS_OF,
+    )
+
+    assert result["status"] == "PENDING"
+    assert result["reasons"] == ["NEXT_YEAR_CALENDAR_UNAVAILABLE"]
+    metrics = result["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["year_checks_available"] == 2
+    assert metrics["unavailable_years"] == [
+        {"calendar_role": "holiday", "year": 2027},
+        {"calendar_role": "settlement", "year": 2027},
+    ]
+    assert metrics["calendar_day_fixtures_checked"] == 1
+    assert metrics["failed_fixture_ids"] == []
+
+
+def test_known_business_days_and_ecb_boe_clocks_are_versioned() -> None:
     china = REPRESENTATIVE_FIXTURES["CN-CNY"]
     assert any(
         isinstance(item, BusinessDayFixture)
         and item.fixture_id == "cn-spring-festival-working-weekend-2026"
         and item.expected_business_day
         for item in china
+    )
+    korea = REPRESENTATIVE_FIXTURES["KR-KRW"]
+    assert any(
+        isinstance(item, BusinessDayFixture)
+        and item.fixture_id == "kr-bok-wire-labor-day-2026"
+        and item.day.isoformat() == "2026-05-01"
+        and not item.expected_business_day
+        for item in korea
     )
 
     for market_id, adapter_id in (
@@ -86,7 +120,13 @@ def test_known_china_working_weekend_and_ecb_boe_clocks_are_versioned() -> None:
             if isinstance(item, PublicationClockFixture)
         )
         assert fixture.adapter_id == adapter_id
-        assert fixture.fixture_version == "market-calendar-2026-v1"
+        assert fixture.fixture_version == "market-calendar-2026-v2"
+
+    assert all(
+        item.fixture_version == "market-calendar-2026-v2"
+        for fixtures in REPRESENTATIVE_FIXTURES.values()
+        for item in fixtures
+    )
 
 
 def test_malformed_fixture_is_a_deterministic_failure() -> None:

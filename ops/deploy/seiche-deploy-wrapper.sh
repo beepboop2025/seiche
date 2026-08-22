@@ -706,6 +706,7 @@ restore_market_services() {
 }
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
+DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
 run_recovery_proof_preflight() {
   SEICHE_DATA_READINESS_PROOF_ONLY=1 \
     SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
@@ -717,7 +718,85 @@ run_data_readiness_preflight() {
     SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
     /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
+validate_data_readiness_convergence_wait() {
+  case "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" in
+    0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;;
+    *)
+      echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
+      return 1
+      ;;
+  esac
+  if [ "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" -gt 900 ]; then
+    echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
+    return 1
+  fi
+}
+converge_operational_data_readiness() {
+  local readiness_output readiness_status deadline
+
+  if readiness_output=$(run_data_readiness_preflight 2>&1); then
+    readiness_status=0
+  else
+    readiness_status=$?
+  fi
+  if [ "$readiness_status" -eq 0 ]; then
+    if [ "$readiness_output" != "seiche data readiness: ready" ]; then
+      printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
+        "$readiness_output"
+      return 1
+    fi
+    return 0
+  fi
+  if [ "$readiness_status" -ne 1 ] \
+      || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
+    [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
+    return 1
+  fi
+
+  if ! systemctl is-active --quiet seiche-api.service; then
+    echo "FAIL: seiche-api is not active before stale snapshot refresh"
+    return 1
+  fi
+  if ! /usr/bin/curl --fail --silent --show-error --proto '=http' \
+      --connect-timeout 10 --max-time 10 --output /dev/null \
+      'http://127.0.0.1:8787/api/gauge'; then
+    echo "FAIL: stale API snapshot refresh trigger failed"
+    return 1
+  fi
+
+  deadline=$((SECONDS + DATA_READINESS_CONVERGENCE_WAIT_SECONDS))
+  while true; do
+    if ! systemctl is-active --quiet seiche-api.service; then
+      echo "FAIL: seiche-api died during stale snapshot convergence"
+      return 1
+    fi
+    if readiness_output=$(run_data_readiness_preflight 2>&1); then
+      readiness_status=0
+    else
+      readiness_status=$?
+    fi
+    if [ "$readiness_status" -eq 0 ]; then
+      if [ "$readiness_output" != "seiche data readiness: ready" ]; then
+        printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
+          "$readiness_output"
+        return 1
+      fi
+      return 0
+    fi
+    if [ "$readiness_status" -ne 1 ] \
+        || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
+      [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
+      return 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "FAIL: API snapshot remained stale after ${DATA_READINESS_CONVERGENCE_WAIT_SECONDS}s"
+      return 1
+    fi
+    sleep 10
+  done
+}
 activate_data_readiness_after_proof() {
+  validate_data_readiness_convergence_wait || return 1
   # An already-current v2 backup and restore receipt avoid a redundant drill.
   # A first v2/fresh host fails this preflight and must create and restore one
   # real snapshot before the persistent timer is allowed to become active.
@@ -736,8 +815,14 @@ activate_data_readiness_after_proof() {
       return 1
     fi
   fi
-  if ! run_data_readiness_preflight; then
+  if ! converge_operational_data_readiness; then
     echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
+    return 1
+  fi
+  # A refresh may take most of the candidate's freshness window. Re-read the
+  # private exact-release contract before making readiness monitoring durable.
+  if ! candidate_health_once "$AFTER"; then
+    echo "FAIL: exact candidate health drifted during data-readiness convergence"
     return 1
   fi
   if ! systemctl enable --now seiche-data-readiness.timer; then

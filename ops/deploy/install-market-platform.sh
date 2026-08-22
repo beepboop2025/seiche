@@ -1195,6 +1195,7 @@ fi
 # Persistent run cannot page during planned startup.
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
 run_recovery_proof_preflight() {
     SEICHE_DATA_READINESS_PROOF_ONLY=1 \
         SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
@@ -1206,7 +1207,85 @@ run_data_readiness_preflight() {
         SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
         /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
+validate_data_readiness_convergence_wait() {
+    case "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" in
+        0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;;
+        *)
+            echo "market platform: data-readiness convergence wait must be an integer from 0 to 900 seconds" >&2
+            return 1
+            ;;
+    esac
+    if [ "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" -gt 900 ]; then
+        echo "market platform: data-readiness convergence wait must be an integer from 0 to 900 seconds" >&2
+        return 1
+    fi
+}
+converge_operational_data_readiness() {
+    local readiness_output readiness_status deadline
+
+    if readiness_output=$(run_data_readiness_preflight 2>&1); then
+        readiness_status=0
+    else
+        readiness_status=$?
+    fi
+    if [ "$readiness_status" -eq 0 ]; then
+        if [ "$readiness_output" != "seiche data readiness: ready" ]; then
+            printf 'market platform: operational readiness returned unexpected success output: %s\n' \
+                "$readiness_output" >&2
+            return 1
+        fi
+        return 0
+    fi
+    if [ "$readiness_status" -ne 1 ] \
+            || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
+        [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
+        return 1
+    fi
+
+    if ! systemctl is-active --quiet seiche-api.service; then
+        echo "market platform: seiche-api is not active before stale snapshot refresh" >&2
+        return 1
+    fi
+    if ! /usr/bin/curl --fail --silent --show-error --proto '=http' \
+            --connect-timeout 10 --max-time 10 --output /dev/null \
+            'http://127.0.0.1:8787/api/gauge'; then
+        echo "market platform: stale API snapshot refresh trigger failed" >&2
+        return 1
+    fi
+
+    deadline=$((SECONDS + DATA_READINESS_CONVERGENCE_WAIT_SECONDS))
+    while true; do
+        if ! systemctl is-active --quiet seiche-api.service; then
+            echo "market platform: seiche-api died during stale snapshot convergence" >&2
+            return 1
+        fi
+        if readiness_output=$(run_data_readiness_preflight 2>&1); then
+            readiness_status=0
+        else
+            readiness_status=$?
+        fi
+        if [ "$readiness_status" -eq 0 ]; then
+            if [ "$readiness_output" != "seiche data readiness: ready" ]; then
+                printf 'market platform: operational readiness returned unexpected success output: %s\n' \
+                    "$readiness_output" >&2
+                return 1
+            fi
+            return 0
+        fi
+        if [ "$readiness_status" -ne 1 ] \
+                || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
+            [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
+            return 1
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "market platform: API snapshot remained stale after ${DATA_READINESS_CONVERGENCE_WAIT_SECONDS}s" >&2
+            return 1
+        fi
+        sleep 10
+    done
+}
 activate_data_readiness_after_proof() {
+    validate_data_readiness_convergence_wait || return 1
     if ! run_recovery_proof_preflight; then
         echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
         if ! systemctl start seiche-market-backup.service; then
@@ -1222,7 +1301,7 @@ activate_data_readiness_after_proof() {
             return 1
         fi
     fi
-    if ! run_data_readiness_preflight; then
+    if ! converge_operational_data_readiness; then
         echo "market platform: operational readiness failed; timer remains stopped" >&2
         return 1
     fi
