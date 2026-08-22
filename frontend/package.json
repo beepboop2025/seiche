@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:oil-funding": "node --test tests/oilFundingScenario.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
