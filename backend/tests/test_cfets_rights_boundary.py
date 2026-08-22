@@ -590,6 +590,16 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         {"ＳＯＵＲＣＥ": "CFETS official feed", "value": 1.31},
         {"term": "SHIBOR", "ＲＯＷＳ": [["2026-08-22", 1.31]]},
         {"term": "SHIBOR", "rows": [["2026-08-22", "1.31"]]},
+        {"term": "SHIBOR", "rows": [[1.31, "2026-08-22"]]},
+        {"term": "SHIBOR", "rows": [["1.31", "2026-08-22"]]},
+        {
+            "term": "SHIBOR",
+            "history": {"mention_count": {"value": 1.31}},
+        },
+        {
+            "term": "SHIBOR",
+            "history": {"n_obs": [{"value": "1.52"}]},
+        },
         {"China FDR007 official fixing (CFETS)": 1.52},
     ),
     ids=(
@@ -623,6 +633,10 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         "fullwidth-source-key",
         "fullwidth-rows-key",
         "numeric-string-row",
+        "value-first-row",
+        "numeric-string-first-row",
+        "qualitative-counter-mapping-drift",
+        "qualitative-counter-list-drift",
         "decorated-restricted-key",
     ),
 )
@@ -924,6 +938,29 @@ def test_farbasin_target_exception_requires_one_level_list(
         "ok": True,
         "top_targets": malformed,
     }
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is True
+    assert assemble._servable_snapshot(payload) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ("ＥＮＧＩＮＥＳ", "ＦＡＲＢＡＳＩＮ", "ＴＯＰ＿ＴＡＲＧＥＴＳ"),
+        ("ENGINES", "FARBASIN", "TOP_TARGETS"),
+        (" engines ", " farbasin ", " top_targets "),
+    ),
+)
+def test_farbasin_target_exception_requires_exact_raw_path(fake_snap, path) -> None:
+    target = {
+        "term": "SHIBOR",
+        "domain": "lookalike path",
+        "threat": 0.72,
+        "is_new": True,
+    }
+    payload = deepcopy(fake_snap)
+    root, engine, targets = path
+    payload[root] = {engine: {targets: [target]}}
 
     assert assemble._snapshot_contains_restricted_cfets(payload) is True
     assert assemble._servable_snapshot(payload) is False

@@ -2173,7 +2173,10 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             return False
 
     def observed_series_has_data(value: object, *, field: str) -> bool:
-        if field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS:
+        if (
+            field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+            and not isinstance(value, (dict, list, tuple))
+        ):
             return False
         if isinstance(value, dict):
             return any(
@@ -2192,8 +2195,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
                 if isinstance(item, (dict, list, tuple))
             ):
                 return True
-            scalar_items = value[1:] if len(value) > 1 else value
-            return any(numeric_observation(item) for item in scalar_items)
+            return any(numeric_observation(item) for item in value)
         return numeric_observation(value)
 
     def quantitative_field(field: str, value: object) -> bool:
@@ -2301,7 +2303,9 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             for key, nested in value.items():
                 key_text = str(key)
                 field = folded_text(key_text)
-                child_path = (*path, field)
+                # Trust exceptions compare the producer's raw schema keys.
+                # Normalization is reserved for deny classification below.
+                child_path = (*path, key_text)
                 if restricted_identifier(key_text, typed=True, strict=True):
                     return True
                 if (
