@@ -155,3 +155,5 @@ def test_static_publish_reuses_only_an_exact_sha_gate():
     assert "= \"$GITHUB_SHA\"" in workflow
     assert "if: steps.publish-gate.outputs.run-full-suite == 'true'" in workflow
     assert 'printf \'%s\\n\' "$GITHUB_SHA"' in workflow[tested:exported]
+    assert "-o faulthandler_timeout=300" in workflow[tested:exported]
+    assert "--pystack-threshold" not in workflow[tested:exported]
