@@ -113,3 +113,13 @@ def test_account_copy_matches_the_authenticated_mcp_surface():
     assert len(GATED) == 5
     assert "five additional hosted MCP tools" in account
     assert "five bearer-token MCP tools" in support
+
+
+def test_support_page_exposes_github_sponsors_as_support_not_product_access():
+    support = (REPO / "frontend" / "public" / "support.html").read_text()
+    funding = (REPO / ".github" / "FUNDING.yml").read_text()
+
+    assert "https://github.com/sponsors/beepboop2025" in support
+    assert "GitHub checkout · Stripe Connect payout" in support
+    assert "does not unlock a paid product tier" in support
+    assert "github: [beepboop2025]" in funding

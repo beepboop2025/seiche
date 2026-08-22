@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Support Seiche</title>
-<meta name="description" content="Seiche is free and runs on support. Help keep its infrastructure running with a contribution in Bitcoin, Ethereum, Solana, Tron or TON.">
+<meta name="description" content="Seiche is free and runs on support. Contribute through GitHub Sponsors or with Bitcoin, Ethereum, Solana, Tron or TON.">
 <link rel="canonical" href="https://seiche.info/support">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
@@ -31,8 +31,13 @@
   button.copy:hover { background:rgba(156,143,232,.12); border-color:#8071cc; }
   .warn { color:#787f95; font-size:11px; }
   .note { border-left:2px solid #8071cc; padding-left:12px; margin-top:24px; color:#9aa0b6; font-size:12.5px; }
+  .sponsor { display:inline-block; border:1px solid #6e5db5; border-radius:999px; padding:5px 15px;
+             color:#edeef4; background:rgba(156,143,232,.14); font-size:11px; font-weight:600;
+             letter-spacing:.04em; }
+  .sponsor:hover { background:rgba(156,143,232,.24); text-decoration:none; }
   .coin { position:relative; }
   @media(min-width:560px){ .coin { padding-right:128px; } .coin .qr { position:absolute; right:16px; top:50%; transform:translateY(-50%); } }
+  @media(min-width:560px){ .coin.card { padding-right:16px; } }
   .coin .qr { width:96px; height:96px; border-radius:8px; display:block; margin-top:10px; }
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}'></script><!-- End Cloudflare Web Analytics -->
@@ -42,6 +47,12 @@
 <p class="dim">seiche.info · the funding-stress terminal</p>
 
 <p>The Seiche website is free and open: every tab, the Time Machine and the dispatch archive are available without an account, and the code is open source. Voluntary support below keeps that public infrastructure running and does not itself unlock an entitlement. Separately, some machine interfaces have clearly posted commercial rails: five bearer-token MCP tools and x402 per-call routes. Those are provisioned only under the price and access terms shown for that interface. Optional accounts can also hold email alerts; ask <a href="mailto:desk@seiche.info?subject=Seiche%20alerts%20account">desk@seiche.info</a> for help.</p>
+
+<div class="coin card">
+  <span class="name">GITHUB SPONSORS · ONE-TIME / MONTHLY</span><span class="net">GitHub checkout · Stripe Connect payout</span>
+  <p>Use the existing GitHub Sponsors page for a one-time contribution or recurring support. It funds the open public infrastructure; it is not an Undertow subscription and does not unlock a paid product tier.</p>
+  <div class="row"><a class="sponsor" href="https://github.com/sponsors/beepboop2025" rel="me">support through GitHub</a><span class="warn">GitHub account and payment method required</span></div>
+</div>
 
 <div class="coin">
   <span class="name">BITCOIN · BTC</span><span class="net">Bitcoin network only</span>
