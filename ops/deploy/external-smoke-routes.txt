@@ -41,3 +41,7 @@ GET|/mcp|200|text/event-stream|stateless
 GET|/riptide/|200|application/json|"name": "riptide"
 GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"
 GET|/palimpsest/osint/osint-china.json|200|application/json|"schema": "palimpsest-nemesis.public-snapshot"
+GET|/palimpsest/baike-public-snapshot/baike-public-snapshot-latest.json|200|application/json|"method_version": 1
+GET|/palimpsest/peer-context/peer-context-latest.json|200|application/json|"schema_version": "palimpsest-peer-context.v1"
+GET|/palimpsest/greatfire-context/greatfire-context-latest.json|200|application/json|"schema_version": "palimpsest-greatfire-context/v1"
+GET|/palimpsest/public-deletion-ledgers/public-deletion-ledgers-latest.json|200|application/json|"method_version": 1

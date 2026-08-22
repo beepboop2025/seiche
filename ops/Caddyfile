@@ -189,6 +189,56 @@ api.seiche.info {
         file_server
     }
 
+    # Palimpsest exposes four additional sanitized host-built readings through
+    # exact filenames only. The readings directory itself has no wildcard route.
+    @palimpsest_baike_public path \
+        /palimpsest/baike-public-snapshot/baike-public-snapshot-latest.json
+    handle @palimpsest_baike_public {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/baike-public-snapshot
+        root * /var/lib/palimpsest/readings
+        file_server
+    }
+
+    @palimpsest_peer_context path \
+        /palimpsest/peer-context/peer-context-latest.json
+    handle @palimpsest_peer_context {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/peer-context
+        root * /var/lib/palimpsest/readings
+        file_server
+    }
+
+    @palimpsest_greatfire_context path \
+        /palimpsest/greatfire-context/greatfire-context-latest.json
+    handle @palimpsest_greatfire_context {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/greatfire-context
+        root * /var/lib/palimpsest/readings
+        file_server
+    }
+
+    @palimpsest_public_deletion path \
+        /palimpsest/public-deletion-ledgers/public-deletion-ledgers-latest.json
+    handle @palimpsest_public_deletion {
+        header Access-Control-Allow-Origin "https://palimpsest.info"
+        header Cache-Control "no-store, no-transform"
+        header Content-Disposition "inline"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /palimpsest/public-deletion-ledgers
+        root * /var/lib/palimpsest/readings
+        file_server
+    }
+
     # ScamShield publishes one atomic, HMAC-authenticated social-observation
     # generation. Expose only its three fixed importer aliases; the private
     # spool and the generations parent never receive an edge route.

@@ -1238,6 +1238,20 @@ case "$url" in
         type=application/json
         body='{{"schema": "palimpsest-nemesis.public-snapshot"}}'
         ;;
+    */palimpsest/baike-public-snapshot/baike-public-snapshot-latest.json)
+        type=application/json; body='{{"method_version": 1}}'
+        ;;
+    */palimpsest/peer-context/peer-context-latest.json)
+        type=application/json
+        body='{{"schema_version": "palimpsest-peer-context.v1"}}'
+        ;;
+    */palimpsest/greatfire-context/greatfire-context-latest.json)
+        type=application/json
+        body='{{"schema_version": "palimpsest-greatfire-context/v1"}}'
+        ;;
+    */palimpsest/public-deletion-ledgers/public-deletion-ledgers-latest.json)
+        type=application/json; body='{{"method_version": 1}}'
+        ;;
     *) type=text/plain; body='generic' ;;
 esac
 if [ "${{SMOKE_SCENARIO:-success}}" = redirect ] && [[ "$url" = */api/subscribe ]]; then
@@ -1338,6 +1352,21 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         "GET|/palimpsest/osint/osint-china.json|200|application/json|"
         '"schema": "palimpsest-nemesis.public-snapshot"'
     ) in definitions
+    palimpsest_host_routes = {
+        "/palimpsest/baike-public-snapshot/baike-public-snapshot-latest.json": (
+            '"method_version": 1'
+        ),
+        "/palimpsest/peer-context/peer-context-latest.json": (
+            '"schema_version": "palimpsest-peer-context.v1"'
+        ),
+        "/palimpsest/greatfire-context/greatfire-context-latest.json": (
+            '"schema_version": "palimpsest-greatfire-context/v1"'
+        ),
+        "/palimpsest/public-deletion-ledgers/"
+        "public-deletion-ledgers-latest.json": '"method_version": 1',
+    }
+    for route, identity in palimpsest_host_routes.items():
+        assert f"GET|{route}|200|application/json|{identity}" in definitions
     env, calls = _smoke_env(tmp_path)
     result = subprocess.run(
         ["bash", str(EXTERNAL_SMOKE)], env=env, text=True, capture_output=True
@@ -1345,6 +1374,8 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
     assert "https://edge.invalid/.well-known/mcp.json" in calls.read_text()
+    for route in palimpsest_host_routes:
+        assert f"https://edge.invalid{route}" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
 
 
@@ -5977,6 +6008,32 @@ def test_palimpsest_bleedthrough_edge_is_an_exact_sanitized_allowlist():
     assert "uri strip_prefix /palimpsest/bleedthrough" in block
     assert "root * /var/lib/palimpsest/readings" in block
     assert "file_server" in block
+    assert "reverse_proxy" not in block
+
+
+def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
+    caddy = CADDYFILE.read_text()
+    block = caddy[
+        caddy.index("# Palimpsest exposes four additional") : caddy.index(
+            "# ScamShield publishes one atomic"
+        )
+    ]
+    routes = {
+        "baike-public-snapshot": "baike-public-snapshot-latest.json",
+        "peer-context": "peer-context-latest.json",
+        "greatfire-context": "greatfire-context-latest.json",
+        "public-deletion-ledgers": "public-deletion-ledgers-latest.json",
+    }
+
+    for prefix, filename in routes.items():
+        assert f"path \\\n        /palimpsest/{prefix}/{filename}" in block
+        assert f"uri strip_prefix /palimpsest/{prefix}" in block
+    assert block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 4
+    assert block.count('header Cache-Control "no-store, no-transform"') == 4
+    assert block.count('header Content-Disposition "inline"') == 4
+    assert block.count("root * /var/lib/palimpsest/readings") == 4
+    assert block.count("file_server") == 4
+    assert "handle_path /palimpsest/" not in block
     assert "reverse_proxy" not in block
 
 
