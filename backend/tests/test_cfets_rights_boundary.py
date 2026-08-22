@@ -557,6 +557,28 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         {"term": "SHIBOR", "points": [["2026-08-22", 1.31]]},
         {"label": "SHIBOR observed overnight rate", "last_pct": 1.31},
         {"payload": "CFETS FDR007 rate", "value": 1.52},
+        {"term": "FDR-007", "value": 1.52},
+        {"term": "FDR 007", "value": 1.52},
+        {"metric": "FDR007 official", "value": 1.52},
+        {"source": "CFETS official feed", "last_pct": 1.31},
+        {"metric": "SHIBOR O/N", "value": 1.31},
+        {"metric": "ＦＤＲ００７", "value": 1.52},
+        {"metric": "ＳＨＩＢＯＲ", "value": 1.31},
+        {"source": {"text": "CFETS official feed"}},
+        {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "rows": [["2026-08-22", 1.52]],
+            "meta": {
+                "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
+            },
+        },
+        {"term": {"text": "FDR007"}, "value": 1.52},
+        {"metadata": {"term": "FDR007"}, "quote": 1.52},
+        {"term": "SHIBOR", "measurement": {"value": 1.31}},
+        {"term": "FDR007", "data_points": [["2026-08-22", 1.52]]},
+        {"term": "SHIBOR", "rate_rows": [["2026-08-22", 1.31]]},
+        {"term": "FDR007", "quotes": [1.52]},
+        {"term": "SHIBOR", "rates": [1.31]},
     ),
     ids=(
         "change-bp",
@@ -567,6 +589,23 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         "points",
         "observed-label",
         "unknown-payload",
+        "punctuated-fdr",
+        "spaced-fdr",
+        "typed-extra-token",
+        "typed-extra-words",
+        "typed-split-overnight",
+        "fullwidth-fdr",
+        "fullwidth-shibor",
+        "nested-strict-source",
+        "nested-identity",
+        "nested-mirror-url",
+        "nested-term-identity",
+        "nested-metadata-identity",
+        "nested-measurement-value",
+        "data-points-container",
+        "rate-rows-container",
+        "quotes-container",
+        "rates-container",
     ),
 )
 def test_reported_quantitative_mapping_bypasses_are_not_servable(
@@ -614,7 +653,6 @@ def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
         "stress",
         "value",
         "value_bp",
-        "values",
         "volume",
         "weight",
         "z",
@@ -654,9 +692,15 @@ def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
     })
     observed_fields = frozenset({
         "data",
+        "data_points",
         "history",
+        "measurement",
+        "measurements",
         "observations",
         "points",
+        "quotes",
+        "rate_rows",
+        "rates",
         "records",
         "rows",
         "series",
@@ -667,6 +711,9 @@ def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
     assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_PREFIXES) == metric_prefixes
     assert frozenset(assemble.RESTRICTED_SNAPSHOT_METRIC_SUFFIXES) == metric_suffixes
     assert assemble.RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS == observed_fields
+    assert assemble.RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS == frozenset(
+        {"mention_count"}
+    )
 
     for sibling in assemble.RESTRICTED_SNAPSHOT_PROSE_FIELDS | {
         "label",
@@ -687,11 +734,11 @@ def test_quantitative_mapping_field_matrix_is_fail_closed() -> None:
         ), prefix
     for suffix in metric_suffixes:
         assert assemble._snapshot_contains_restricted_cfets(
-            {"payload": "CFETS FDR007 rate", f"liquidity{suffix}": "reported"}
+            {"payload": "CFETS FDR007 rate", f"liquidity{suffix}": [1.52]}
         ), suffix
     for field in observed_fields:
         assert assemble._snapshot_contains_restricted_cfets(
-            {"term": "SHIBOR", field: [["2026-08-22", "reported"]]}
+            {"term": "SHIBOR", field: [["2026-08-22", 1.31]]}
         ), field
     assert assemble._snapshot_contains_restricted_cfets(
         {"aliases": ["public", "FDR007"], "arbitrary_numeric": 1.52}
@@ -723,6 +770,9 @@ def test_quantitative_mapping_rule_preserves_long_form_prose() -> None:
             "caveat": "CFETS data are unavailable and omitted from this analysis",
             "rows": [["2026-08-22", 1.31]],
         },
+        {"term": "SHIBOR", "rows": [None]},
+        {"term": "FDR007", "series": {"status": "unavailable"}},
+        {"term": "SHIBOR", "mention_count": 2},
     )
 
     for row in lawful_rows:
@@ -829,6 +879,27 @@ def test_farbasin_target_shape_is_not_an_exception_outside_its_path() -> None:
     assert assemble._snapshot_contains_restricted_cfets({"wrapper": target}) is True
 
 
+@pytest.mark.parametrize("top_targets", ("mapping", "nested-lists"))
+def test_farbasin_target_exception_requires_one_level_list(
+    fake_snap, top_targets
+) -> None:
+    target = {
+        "term": "SHIBOR",
+        "domain": "public discussion",
+        "threat": 0.72,
+        "is_new": True,
+    }
+    malformed = target if top_targets == "mapping" else [[[target]]]
+    payload = deepcopy(fake_snap)
+    payload["engines"]["farbasin"] = {
+        "ok": True,
+        "top_targets": malformed,
+    }
+
+    assert assemble._snapshot_contains_restricted_cfets(payload) is True
+    assert assemble._servable_snapshot(payload) is False
+
+
 def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
     fake_snap, monkeypatch, tmp_path
 ) -> None:
@@ -853,13 +924,26 @@ def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
     assert assemble.cached_snapshot() == fake_snap
 
 
+@pytest.mark.parametrize(
+    "nested",
+    (
+        {"CN_PARITY": {"value": 7.18}},
+        {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "rows": [["2026-08-22", 1.52]],
+            "meta": {
+                "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
+            },
+        },
+    ),
+)
 @pytest.mark.asyncio
 async def test_replay_cache_does_not_serve_nested_restricted_payload(
-    monkeypatch,
+    monkeypatch, nested
 ) -> None:
     cached = {
         "ok": True,
-        "arbitrary_wrapper": {"CN_PARITY": {"value": 7.18}},
+        "arbitrary_wrapper": nested,
     }
 
     async def rebuild_required():
@@ -872,9 +956,24 @@ async def test_replay_cache_does_not_serve_nested_restricted_payload(
         await assemble.snapshot_asof("2026-08-20")
 
 
-def test_handoff_builder_rejects_poison_before_receipt_construction(fake_snap) -> None:
+@pytest.mark.parametrize(
+    "poison",
+    (
+        {"adapter_id": "cfets_rates", "value": 1.31},
+        {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "rows": [["2026-08-22", 1.52]],
+            "meta": {
+                "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
+            },
+        },
+    ),
+)
+def test_handoff_builder_rejects_poison_before_receipt_construction(
+    fake_snap, poison
+) -> None:
     poisoned = deepcopy(fake_snap)
-    poisoned["nested"] = {"adapter_id": "cfets_rates", "value": 1.31}
+    poisoned["nested"] = poison
 
     with pytest.raises(ValueError, match="restricted CFETS-derived data"):
         assemble._build_handoff(poisoned, {}, "a" * 40)
@@ -891,9 +990,24 @@ def test_live_publication_rejects_poison_before_cache_or_handoff(fake_snap) -> N
     assert assemble.cached_snapshot() is None
 
 
-def test_poisoned_memory_and_public_wire_caches_are_quarantined(fake_snap) -> None:
+@pytest.mark.parametrize(
+    "poison",
+    (
+        {"input_series": ["CN_FDR007"]},
+        {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "rows": [["2026-08-22", 1.52]],
+            "meta": {
+                "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
+            },
+        },
+    ),
+)
+def test_poisoned_memory_and_public_wire_caches_are_quarantined(
+    fake_snap, poison
+) -> None:
     poisoned = deepcopy(fake_snap)
-    poisoned["deep"]["wrapper"] = {"input_series": ["CN_FDR007"]}
+    poisoned["deep"]["wrapper"] = poison
     _reset_cache()
     assemble._cache.update(
         at=1.0,
@@ -1012,6 +1126,13 @@ def test_rest_overview_quarantines_palimpsest_target_shape_bypasses(
         {"notes": [{"text": "CN.CFETS.FDR007", "value": 1.52}]},
         {"payload": "CFETS FDR007 rate", "value": 1.52},
         {"term": "SHIBOR", "points": [["2026-08-22", 1.31]]},
+        {"value": 1.52, "meta": {"text": "CN.CFETS.FDR007"}},
+        {
+            "rows": [["2026-08-22", 1.52]],
+            "meta": {
+                "note": "https://www.chinamoney.com.cn/english/bmkshibor/"
+            },
+        },
     ),
 )
 def test_mcp_tool_quarantines_structural_identity_bypasses(

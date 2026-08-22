@@ -29,6 +29,7 @@ import re
 import subprocess
 import time
 import traceback
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -232,6 +233,11 @@ RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
     "targets",
     "variables",
 })
+RESTRICTED_SNAPSHOT_DISPLAY_IDENTITY_FIELDS = frozenset({
+    "label",
+    "name",
+    "rate_label",
+})
 RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS = frozenset({
     "amount",
     "balance",
@@ -266,7 +272,6 @@ RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS = frozenset({
     "stress",
     "value",
     "value_bp",
-    "values",
     "volume",
     "weight",
     "z",
@@ -274,14 +279,31 @@ RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS = frozenset({
 })
 RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS = frozenset({
     "data",
+    "data_points",
     "history",
+    "measurement",
+    "measurements",
     "observations",
     "points",
+    "quotes",
+    "rate_rows",
+    "rates",
     "records",
     "rows",
     "series",
     "values",
 })
+RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES = (
+    "_data",
+    "_history",
+    "_observations",
+    "_points",
+    "_quotes",
+    "_records",
+    "_rows",
+    "_series",
+)
+RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS = frozenset({"mention_count"})
 RESTRICTED_SNAPSHOT_METRIC_PREFIXES = (
     "change_",
     "chg_",
@@ -1946,8 +1968,15 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     that happens to discuss a benchmark.
     """
 
+    def folded_text(value: str) -> str:
+        return unicodedata.normalize("NFKC", value).strip().casefold()
+
     normalized_identifiers = {
-        re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+        re.sub(r"[^a-z0-9]+", "_", folded_text(value)).strip("_")
+        for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
+    }
+    compact_identifiers = {
+        re.sub(r"[^a-z0-9]+", "", folded_text(value))
         for value in RESTRICTED_SNAPSHOT_IDENTIFIERS
     }
     restricted_tokens = {"cfets", "chinamoney", "shibor", "fdr007", "dr007"}
@@ -1981,20 +2010,31 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         "usdcny",
     }
 
-    def restricted_identifier(value: object, *, typed: bool = False) -> bool:
+    def restricted_identifier(
+        value: object,
+        *,
+        typed: bool = False,
+        strict: bool = False,
+    ) -> bool:
         if not isinstance(value, str):
             return False
-        folded = value.strip().casefold()
+        folded = folded_text(value)
         normalized = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
+        compact = re.sub(r"[^a-z0-9]+", "", folded)
         if (
             folded in RESTRICTED_SNAPSHOT_IDENTIFIERS
             or normalized in normalized_identifiers
+            or compact in compact_identifiers
             or re.fullmatch(r"cn\.cfets\.[a-z0-9_.:-]+", folded)
         ):
             return True
         if not typed:
             return False
         tokens = set(re.findall(r"[a-z0-9]+", folded))
+        if strict:
+            return bool(restricted_tokens & tokens) or any(
+                marker in compact for marker in restricted_tokens
+            )
         return bool(restricted_tokens & tokens) and tokens <= (
             restricted_tokens | identity_qualifiers
         )
@@ -2003,7 +2043,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         if not isinstance(value, str):
             return False
         try:
-            parsed = urllib.parse.urlsplit(value.strip())
+            parsed = urllib.parse.urlsplit(unicodedata.normalize("NFKC", value).strip())
         except ValueError:
             return False
         host = (parsed.hostname or "").casefold().rstrip(".")
@@ -2021,6 +2061,11 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             field in RESTRICTED_SNAPSHOT_IDENTITY_FIELDS
             or field in RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS
             or field.endswith(RESTRICTED_SNAPSHOT_IDENTITY_SUFFIXES)
+        )
+
+    def strict_identity_field(field: str) -> bool:
+        return identity_field(field) and (
+            field not in RESTRICTED_SNAPSHOT_DISPLAY_IDENTITY_FIELDS
         )
 
     def url_field(field: str) -> bool:
@@ -2060,12 +2105,25 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             return True
         return False
 
-    def restricted_quantitative_identity(value: object) -> bool:
+    def restricted_quantitative_identity(
+        value: object,
+        *,
+        strict: bool = False,
+    ) -> bool:
         if isinstance(value, (list, tuple)):
-            return any(restricted_quantitative_identity(item) for item in value)
+            return any(
+                restricted_quantitative_identity(item, strict=strict) for item in value
+            )
         if isinstance(value, dict):
-            return False
-        return restricted_mirror_url(value) or restricted_identifier(value, typed=True)
+            return any(
+                restricted_quantitative_identity(item, strict=strict)
+                for item in value.values()
+            )
+        return restricted_mirror_url(value) or restricted_identifier(
+            value,
+            typed=True,
+            strict=strict,
+        )
 
     def restricted_target_identity(value: object) -> bool:
         if isinstance(value, dict):
@@ -2078,25 +2136,43 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             (int, float, np.integer, np.floating),
         )
 
+    def observed_series_has_data(value: object) -> bool:
+        if quantitative_scalar(value):
+            return True
+        if isinstance(value, dict):
+            return any(observed_series_has_data(item) for item in value.values())
+        if isinstance(value, (list, tuple)):
+            return any(observed_series_has_data(item) for item in value)
+        return False
+
     def quantitative_field(field: str, value: object) -> bool:
         if value is None:
             return False
+        if (
+            field in RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS
+            or field.endswith(RESTRICTED_SNAPSHOT_OBSERVED_SERIES_SUFFIXES)
+        ):
+            return observed_series_has_data(value)
         if field in RESTRICTED_SNAPSHOT_QUANTITATIVE_FIELDS:
             return True
         if field.startswith(RESTRICTED_SNAPSHOT_METRIC_PREFIXES):
             return True
         if field.endswith(RESTRICTED_SNAPSHOT_METRIC_SUFFIXES):
             return True
-        return (
-            field in RESTRICTED_SNAPSHOT_OBSERVED_SERIES_FIELDS
-            and isinstance(value, (dict, list, tuple))
-            and bool(value)
-        )
+        return False
 
-    def lawful_farbasin_target(value: dict, path: tuple[str, ...]) -> bool:
+    def lawful_farbasin_target(
+        value: dict,
+        path: tuple[str, ...],
+        sequence_depth: int,
+    ) -> bool:
         """Admit only the real Palimpsest target schema at its exact path."""
 
-        if path != FARBASIN_TARGET_PATH or set(value) != FARBASIN_TARGET_FIELDS:
+        if (
+            path != FARBASIN_TARGET_PATH
+            or sequence_depth != 1
+            or set(value) != FARBASIN_TARGET_FIELDS
+        ):
             return False
         threat = value["threat"]
         threat_ok = threat is None or (
@@ -2111,6 +2187,13 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             and (value["is_new"] is None or isinstance(value["is_new"], bool))
         )
 
+    def quantitative_subtree(field: str, value: object) -> bool:
+        if quantitative_scalar(value):
+            return field not in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+        if quantitative_field(field, value):
+            return True
+        return False
+
     def restricted_quantitative_mapping(value: dict) -> bool:
         """Detect restricted identities carried by a quantitative record.
 
@@ -2122,8 +2205,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         """
 
         has_quantitative_value = any(
-            quantitative_scalar(nested)
-            or quantitative_field(str(key).casefold(), nested)
+            quantitative_subtree(str(key).casefold(), nested)
             for key, nested in value.items()
         )
         if not has_quantitative_value:
@@ -2137,7 +2219,9 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         *,
         path: tuple[str, ...] = (),
         typed_identity: bool = False,
+        strict_identity: bool = False,
         prose_context: bool = False,
+        sequence_depth: int = 0,
     ) -> bool:
         if isinstance(value, dict):
             # Prose authority is leaf-only. A mapping beneath an audited prose
@@ -2146,7 +2230,12 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             # Thus {"text": "SHIBOR"} remains lawful prose, while
             # {"source": "chinamoney"} is a restricted identity.
             prose_context = False
-            target_is_lawful = lawful_farbasin_target(value, path)
+            if typed_identity and restricted_quantitative_identity(
+                value,
+                strict=strict_identity,
+            ):
+                return True
+            target_is_lawful = lawful_farbasin_target(value, path, sequence_depth)
             if (
                 path == FARBASIN_TARGET_PATH
                 and restricted_target_identity(value.get("term"))
@@ -2182,11 +2271,18 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
                 child_identity = (
                     False if child_prose else typed_identity or identity_field(field)
                 )
+                child_strict_identity = (
+                    False
+                    if child_prose
+                    else strict_identity or strict_identity_field(field)
+                )
                 if walk(
                     nested,
                     path=child_path,
                     typed_identity=child_identity,
+                    strict_identity=child_strict_identity,
                     prose_context=child_prose,
+                    sequence_depth=0,
                 ):
                     return True
             return False
@@ -2196,7 +2292,9 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
                     item,
                     path=path,
                     typed_identity=typed_identity,
+                    strict_identity=strict_identity,
                     prose_context=prose_context,
+                    sequence_depth=sequence_depth + 1,
                 )
                 for item in value
             )
@@ -2205,7 +2303,8 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
         if restricted_mirror_url(value):
             return True
         return restricted_identifier(value) or (
-            typed_identity and restricted_identifier(value, typed=True)
+            typed_identity
+            and restricted_identifier(value, typed=True, strict=strict_identity)
         )
 
     return walk(payload)
