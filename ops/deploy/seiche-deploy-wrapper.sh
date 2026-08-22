@@ -711,6 +711,9 @@ restore_market_services() {
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT=/etc/seiche/libexec/seiche-data-readiness.sh
 DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
+# Full board assembly can exceed the freshness horizon on the shared host.
+# This is a fixed, reviewed controller budget rather than caller configuration.
+API_FULL_REBUILD_WAIT_SECONDS=1800
 run_recovery_proof_preflight() {
   SEICHE_DATA_READINESS_PROOF_ONLY=1 \
     SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
@@ -734,7 +737,7 @@ ensure_candidate_fresh_for_readiness() {
     fi
     sleep 3
   fi
-  if candidate_health_wait 900 "$AFTER" 900; then
+  if candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
     return 0
   fi
   echo "data readiness: background refresh missed its deadline; restarting the exact candidate"
@@ -743,7 +746,7 @@ ensure_candidate_fresh_for_readiness() {
     return 1
   fi
   sleep 3
-  if ! candidate_health_wait 900 "$AFTER" 900; then
+  if ! candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
     echo "FAIL: API did not produce a fresh exact candidate after recovery proof"
     return 1
   fi
@@ -964,9 +967,9 @@ restore_preupdate_api() {
     return 1
   fi
   # Rebuilding the same board is not faster merely because this is recovery.
-  # Match the candidate's 15-minute strict-health budget so a CPU-bound but
+  # Match the candidate's reviewed full-rebuild budget so a CPU-bound but
   # progressing known-good API is not abandoned with every writer stopped.
-  deadline=$((SECONDS + 900))
+  deadline=$((SECONDS + API_FULL_REBUILD_WAIT_SECONDS))
   until curl -sf -m 10 \
       'http://127.0.0.1:8787/api/health?require_rebuilt=true' >/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ] \
@@ -1390,7 +1393,7 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
     echo "FAIL: accepted release source worker did not become ready"
     exit 1
   }
-  candidate_health_wait 900 "$AFTER" || {
+  candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" || {
     echo "FAIL: accepted release did not recover strict health; market writers remain stopped"
     exit 1
   }
@@ -1430,7 +1433,8 @@ else
   echo "FAIL: seiche-api could not be restarted onto the candidate"
 fi
 if [ -n "$RESTARTED" ] && systemctl is-active --quiet seiche-api; then
-  if ensure_source_worker_ready && candidate_health_wait 900 "$AFTER"; then
+  if ensure_source_worker_ready \
+      && candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"; then
     if market_health; then
       if deploy_pull_unit; then
         if promote_snapshot_handoff; then
@@ -1506,7 +1510,8 @@ restore_preupdate_data_units \
   || { echo "FAIL: rollback data units could not be restored; data workers remain stopped"; exit 1; }
 systemctl restart seiche-api
 sleep 3
-if systemctl is-active --quiet seiche-api && rollback_health_wait 900; then
+if systemctl is-active --quiet seiche-api \
+    && rollback_health_wait "$API_FULL_REBUILD_WAIT_SECONDS"; then
   write_deployed_state "$DEPLOYED" || {
     echo "FAIL: rollback is healthy but deployed state could not be recorded"
     exit 1

@@ -1142,13 +1142,59 @@ def test_wrapper_starts_source_worker_before_strict_candidate_health():
     normal_branch = wrapper.index('HEALTHY=""', accepted_branch)
     accepted_body = wrapper[accepted_branch:normal_branch]
     assert accepted_body.index("ensure_source_worker_ready") < accepted_body.index(
-        'candidate_health_wait 900 "$AFTER"'
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
     )
 
     normal_body = wrapper[normal_branch:]
     assert normal_body.index("ensure_source_worker_ready") < normal_body.index(
-        'candidate_health_wait 900 "$AFTER"'
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
     )
+
+
+def test_deploy_wrapper_warmup_timeout_contract():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    full_wait = 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
+
+    assert wrapper.count("API_FULL_REBUILD_WAIT_SECONDS=1800") == 1
+
+    refresh = wrapper[
+        wrapper.index("ensure_candidate_fresh_for_readiness() {") : wrapper.index(
+            "validate_data_readiness_convergence_wait() {"
+        )
+    ]
+    assert refresh.count(f"{full_wait} 900") == 2
+
+    restore = wrapper[
+        wrapper.index("restore_preupdate_api() {") : wrapper.index(
+            "restore_quiesced_api() {"
+        )
+    ]
+    assert restore.count("deadline=$((SECONDS + API_FULL_REBUILD_WAIT_SECONDS))") == 1
+
+    accepted_start = wrapper.index(
+        'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
+    )
+    normal_start = wrapper.index('HEALTHY=""', accepted_start)
+    accepted = wrapper[accepted_start:normal_start]
+    normal = wrapper[normal_start : wrapper.index('if [ -n "$HEALTHY" ]', normal_start)]
+    assert accepted.count(full_wait) == 1
+    assert normal.count(full_wait) == 1
+
+    rollback = wrapper[wrapper.index("# A red warm-up") :]
+    assert rollback.count('rollback_health_wait "$API_FULL_REBUILD_WAIT_SECONDS"') == 1
+
+    promotion = wrapper[
+        wrapper.index("promote_snapshot_handoff() {") : wrapper.index(
+            "MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1"
+        )
+    ]
+    readiness = wrapper[
+        wrapper.index("activate_data_readiness_after_proof() {") : wrapper.index(
+            "ensure_source_worker_ready() {"
+        )
+    ]
+    assert 'candidate_health_wait 120 "$AFTER"' in promotion
+    assert 'candidate_health_wait 120 "$AFTER" 900' in readiness
 
 
 def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
@@ -1276,7 +1322,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
         rollback.index("restore_preupdate_market_worker_unit")
         < rollback.index("restore_preupdate_data_units")
         < rollback.index("systemctl restart seiche-api")
-        < rollback.index("rollback_health_wait 900")
+        < rollback.index('rollback_health_wait "$API_FULL_REBUILD_WAIT_SECONDS"')
         < rollback.index("restore_market_services")
     )
 
@@ -1285,7 +1331,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
             "restore_quiesced_api()"
         )
     ]
-    assert "deadline=$((SECONDS + 900))" in restore_api
+    assert "deadline=$((SECONDS + API_FULL_REBUILD_WAIT_SECONDS))" in restore_api
 
 
 def _run_readiness_activation_helper(
@@ -1517,6 +1563,7 @@ def _run_candidate_health_wait_helper(
     window: int,
     max_generated_age: int = 900,
     api_active: bool = True,
+    report_elapsed: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     wrapper = DEPLOY_WRAPPER.read_text()
     helper_start = wrapper.index("parse_candidate_health()")
@@ -1539,6 +1586,16 @@ printf 'curl %s\n' "$*" >>"$state/calls.log"
 case "${FAKE_CANDIDATE_RESPONSE_MODE:?}" in
   reseals)
     if [ "$count" -eq 1 ]; then
+      exit 22
+    else
+      printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
+        "${FAKE_GENERATED_AT:?}" "${FAKE_EXPECTED_SHA:?}" \
+        "${FAKE_ACTIVATION_TOKEN:?}"
+    fi
+    ;;
+  reseals-after-900)
+    if [ "$count" -le 91 ]; then
+      printf 'http-503\n' >>"$state/calls.log"
       exit 22
     else
       printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
@@ -1573,11 +1630,16 @@ printf 'systemctl %s\n' "$*" >>"${FAKE_CANDIDATE_STATE:?}/calls.log"
             "bash",
             "-c",
             f"""
-sleep() {{ printf 'sleep %s\n' "$1" >>"$FAKE_CANDIDATE_STATE/calls.log"; }}
+sleep() {{
+  printf 'sleep %s\n' "$1" >>"$FAKE_CANDIDATE_STATE/calls.log"
+  SECONDS=$((SECONDS + $1))
+}}
 {helper}
+SECONDS=0
 candidate_health_wait {window} {expected_sha} {max_generated_age}
 status=$?
 [ "$status" -ne 0 ] || printf 'activation-token=%s\n' "$ACTIVATION_TOKEN"
+[ "${{FAKE_REPORT_ELAPSED:?}}" != 1 ] || printf 'elapsed-seconds=%s\n' "$SECONDS"
 exit "$status"
 """,
         ],
@@ -1591,6 +1653,7 @@ exit "$status"
             "FAKE_ACTIVATION_TOKEN": activation_token,
             "FAKE_GENERATED_AT": datetime.now(UTC).isoformat(),
             "FAKE_API_ACTIVE": "1" if api_active else "0",
+            "FAKE_REPORT_ELAPSED": "1" if report_elapsed else "0",
             "PATH": f"{fake_curl.parent}:{os.environ['PATH']}",
         },
         text=True,
@@ -1621,6 +1684,25 @@ def test_candidate_health_wait_recovers_when_exact_evidence_reseals_after_refres
     assert calls[1] == "systemctl is-active --quiet seiche-api"
     assert calls[2] == "sleep 10"
     assert result.stdout == f"activation-token={'c' * 64}\n"
+
+
+def test_candidate_health_wait_allows_503_past_900_before_full_rebuild_bound(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_candidate_health_wait_helper(
+        tmp_path,
+        response_mode="reseals-after-900",
+        window=1800,
+        report_elapsed=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls.count("http-503") == 91
+    assert calls.count("systemctl is-active --quiet seiche-api") == 91
+    assert calls.count("sleep 10") == 91
+    assert f"activation-token={'c' * 64}" in result.stdout
+    elapsed = int(result.stdout.split("elapsed-seconds=", 1)[1].splitlines()[0])
+    assert 900 < elapsed < 1800
 
 
 def test_candidate_health_wait_rejects_exact_sha_drift_at_its_bound(
@@ -1695,7 +1777,7 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
         expected_kinds += ["curl", "candidate-health-wait"]
         expected_calls += [
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
-            "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+            "candidate-health-wait 1800 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
     final_readiness = calls[-3] if script_path == DEPLOY_WRAPPER else calls[-2]
     expected_kinds.append("readiness")
@@ -1727,7 +1809,7 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     if script_path == DEPLOY_WRAPPER:
         expected_calls += [
             "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
-            "candidate-health-wait 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+            "candidate-health-wait 1800 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
         ]
     final_readiness = calls[-3] if script_path == DEPLOY_WRAPPER else calls[-2]
     expected_calls.append(final_readiness)
@@ -2019,7 +2101,7 @@ def test_wrapper_refresh_failure_after_recovery_proof_stays_fail_closed(
     assert result.returncode != 0
     assert not (state / "readiness-timer.enabled").exists()
     assert "systemctl restart seiche-api" in calls
-    assert sum(call.startswith("candidate-health-wait 900 ") for call in calls) == 2
+    assert sum(call.startswith("candidate-health-wait 1800 ") for call in calls) == 2
     assert not any(call.startswith("readiness full ") for call in calls)
 
 
@@ -2044,7 +2126,7 @@ def test_wrapper_refresh_restart_fallback_can_recover(
     assert calls.count("systemctl restart seiche-api") == 1
     expected_waits = 2 if candidate_health_wait_mode == "fail-once" else 1
     assert (
-        sum(call.startswith("candidate-health-wait 900 ") for call in calls)
+        sum(call.startswith("candidate-health-wait 1800 ") for call in calls)
         == expected_waits
     )
     assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
@@ -2060,7 +2142,9 @@ def test_recovery_refresh_does_not_rewrite_or_repromote_the_release() -> None:
     ]
 
     assert "/api/gauge" in refresh
-    assert 'candidate_health_wait 900 "$AFTER" 900' in refresh
+    assert (
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900' in refresh
+    )
     assert "write_deployed_state" not in refresh
     assert "write_release_env" not in refresh
     assert "promote_snapshot_handoff" not in refresh
@@ -2691,11 +2775,11 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     ]
     assert "if ! systemctl is-active --quiet seiche-api; then" in already
     assert already.index("systemctl restart seiche-api") < already.index(
-        'candidate_health_wait 900 "$AFTER"'
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
     )
     assert "without moving the checkout" in already
     assert "market writers remain stopped" in already
-    assert 'candidate_health_wait 900 "$AFTER"' in already
+    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in already
     assert "market_health" in already
     assert "deploy_pull_unit" in already
     assert "promote_snapshot_handoff" in already
@@ -3981,7 +4065,7 @@ def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():
     restart = rollback.index("systemctl restart seiche-api")
     assert validate < verify_commit < stop_api < rewrite_release < reset < restart
     assert "systemctl stop seiche-api 2>/dev/null || true" not in rollback
-    assert "rollback_health_wait 900" in rollback
+    assert 'rollback_health_wait "$API_FULL_REBUILD_WAIT_SECONDS"' in rollback
     rollback_health = wrapper[
         wrapper.index("rollback_health_wait()") : wrapper.index("market_health()")
     ]
