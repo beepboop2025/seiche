@@ -853,10 +853,10 @@ activate_data_readiness_after_proof() {
     echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
     return 1
   fi
-  # A forced refresh publishes its in-memory board before the exact release
-  # handoff finishes sealing. Readiness can therefore turn green during that
-  # short interval; wait for the strict SHA-bound capability instead of
-  # accepting ordinary API health without current release evidence.
+  # A background snapshot refresh publishes its in-memory board before the
+  # exact release handoff finishes sealing. Readiness can therefore turn green
+  # during that short interval; wait for the strict SHA-bound capability
+  # instead of accepting ordinary API health without current release evidence.
   if ! candidate_health_wait 120 "$AFTER" 900; then
     echo "FAIL: exact candidate evidence did not reseal after data-readiness convergence"
     return 1

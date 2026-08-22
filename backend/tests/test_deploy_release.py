@@ -1539,7 +1539,7 @@ printf 'curl %s\n' "$*" >>"$state/calls.log"
 case "${FAKE_CANDIDATE_RESPONSE_MODE:?}" in
   reseals)
     if [ "$count" -eq 1 ]; then
-      printf '{"status":"rebuilt_without_market_evidence"}\n'
+      exit 22
     else
       printf '{"generated_at":"%s","release_candidate":{"producer_sha":"%s","activation_token":"%s"}}\n' \
         "${FAKE_GENERATED_AT:?}" "${FAKE_EXPECTED_SHA:?}" \
