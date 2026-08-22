@@ -25,6 +25,9 @@ TIMEOUT="${SEICHE_CONTROL_TIMEOUT:-timeout}"
 SLEEP="${SEICHE_CONTROL_SLEEP:-sleep}"
 SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
 SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
+RECEIPT_UID="${SEICHE_CONTROL_RECEIPT_UID:-0}"
+RECEIPT_GID="${SEICHE_CONTROL_RECEIPT_GID:-0}"
+RECEIPT_MODE="${SEICHE_CONTROL_RECEIPT_MODE:-400}"
 ALLOWED_SIGNERS="${SEICHE_CONTROL_ALLOWED_SIGNERS:-/etc/seiche-release.allowed-signers}"
 SIGNING_PRINCIPAL="${SEICHE_CONTROL_SIGNING_PRINCIPAL:-beepboop2025@users.noreply.github.com}"
 AUTOMATION_AUTHOR="${SEICHE_CONTROL_AUTOMATION_AUTHOR:-desk@seiche.info}"
@@ -35,11 +38,18 @@ SSH_KEYGEN="${SEICHE_CONTROL_SSH_KEYGEN:-/usr/bin/ssh-keygen}"
 GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
 ADMISSION_WAIT_SECONDS="${SEICHE_CONTROL_ADMISSION_WAIT_SECONDS:-900}"
 ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
+RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.timer}"
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
 STARTED_AT=$(date -u +%FT%TZ)
 CANDIDATE_ADDED=""
 HEALTH_BODY=""
+RELEASE_TIMER_STATE_CAPTURED=0
+RELEASE_TIMER_WAS_ENABLED=0
+RELEASE_TIMER_WAS_ACTIVE=0
+RELEASE_TIMER_RESTORE_REQUIRED=0
+TARGET_DURABLY_DEPLOYED=0
+DEPLOY_WRAPPER_HANDOFF_STARTED=0
 
 fail() {
   echo "FAIL: $*" >&2
@@ -183,8 +193,200 @@ wait_for_post_gate_admission() {
   done
 }
 
+receipt_path_exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+validate_receipt() {
+  local path="$1" kind="$2" commit="$3" tree="$4" gate_digest="${5:-}"
+  "$SYSTEM_PYTHON" - "$path" "$kind" "$commit" "$tree" \
+    "$INSTALL_COMMAND" "$TEST_COMMAND" "$gate_digest" \
+    "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+(
+    path,
+    kind,
+    commit,
+    tree,
+    install_command,
+    test_command,
+    gate_digest,
+    expected_uid,
+    expected_gid,
+    expected_mode,
+) = sys.argv[1:]
+
+descriptor = -1
+try:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+    )
+    info = os.fstat(descriptor)
+    assert stat.S_ISREG(info.st_mode)
+    assert info.st_nlink == 1
+    assert info.st_uid == int(expected_uid)
+    assert info.st_gid == int(expected_gid)
+    assert stat.S_IMODE(info.st_mode) == int(expected_mode, 8)
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        descriptor = -1
+        payload = json.load(handle)
+
+    assert kind in {"gate", "release"}
+    assert re.fullmatch(r"[0-9a-f]{40}", commit)
+    assert re.fullmatch(r"[0-9a-f]{40}", tree)
+    common = {
+        "schema": "seiche.release-receipt.v1",
+        "kind": kind,
+        "commit": commit,
+        "tree": tree,
+        "conclusion": "success",
+    }
+    for key, value in common.items():
+        assert payload.get(key) == value
+    timestamp = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+    assert timestamp.fullmatch(payload.get("started_at", ""))
+    assert timestamp.fullmatch(payload.get("completed_at", ""))
+    assert payload["started_at"] <= payload["completed_at"]
+    if kind == "gate":
+        assert set(payload) == {
+            "schema",
+            "kind",
+            "commit",
+            "tree",
+            "started_at",
+            "completed_at",
+            "conclusion",
+            "install_command",
+            "test_command",
+        }
+        assert payload["install_command"] == install_command
+        assert payload["test_command"] == test_command
+    else:
+        assert set(payload) == {
+            "schema",
+            "kind",
+            "commit",
+            "tree",
+            "started_at",
+            "completed_at",
+            "conclusion",
+            "gate_receipt_sha256",
+        }
+        assert re.fullmatch(r"[0-9a-f]{64}", gate_digest)
+        assert payload["gate_receipt_sha256"] == gate_digest
+except (AssertionError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1) from None
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+PY
+}
+
+# Return 0 only for a complete, exact gate+release evidence chain. A missing
+# member returns 1 so the caller converges by running the full gate. Any
+# existing but invalid member returns 2 and must fail closed.
+receipt_pair_status() {
+  local commit="$1" tree="$2" gate_receipt="$3" release_receipt="$4"
+  local gate_present=0 release_present=0 gate_digest=""
+  receipt_path_exists "$gate_receipt" && gate_present=1
+  receipt_path_exists "$release_receipt" && release_present=1
+
+  if [ "$gate_present" = 0 ]; then
+    [ "$release_present" = 0 ] && return 1
+    return 2
+  fi
+  validate_receipt "$gate_receipt" gate "$commit" "$tree" || return 2
+  [ "$release_present" = 1 ] || return 1
+  gate_digest=$("$SHA256SUM" "$gate_receipt" | awk '{print $1}') || return 2
+  [[ "$gate_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
+  validate_receipt \
+    "$release_receipt" release "$commit" "$tree" "$gate_digest" || return 2
+  return 0
+}
+
+capture_release_timer_state() {
+  local enabled_state="" active_state=""
+  [ "$RELEASE_TIMER_STATE_CAPTURED" = 0 ] || return 1
+  enabled_state=$("$SYSTEMCTL" show \
+    --property=UnitFileState --value "$RELEASE_TIMER_UNIT") || return 1
+  case "$enabled_state" in
+    enabled|enabled-runtime) RELEASE_TIMER_WAS_ENABLED=1 ;;
+    disabled|disabled-runtime) RELEASE_TIMER_WAS_ENABLED=0 ;;
+    *) return 1 ;;
+  esac
+  active_state=$("$SYSTEMCTL" show \
+    --property=ActiveState --value "$RELEASE_TIMER_UNIT") || return 1
+  case "$active_state" in
+    active) RELEASE_TIMER_WAS_ACTIVE=1 ;;
+    inactive) RELEASE_TIMER_WAS_ACTIVE=0 ;;
+    *) return 1 ;;
+  esac
+  RELEASE_TIMER_STATE_CAPTURED=1
+  RELEASE_TIMER_RESTORE_REQUIRED=1
+}
+
+release_timer_is_ready() {
+  "$SYSTEMCTL" is-enabled --quiet "$RELEASE_TIMER_UNIT" \
+    && "$SYSTEMCTL" is-active --quiet "$RELEASE_TIMER_UNIT"
+}
+
+ensure_release_timer_ready() {
+  "$SYSTEMCTL" enable "$RELEASE_TIMER_UNIT" || return 1
+  "$SYSTEMCTL" start "$RELEASE_TIMER_UNIT" || return 1
+  release_timer_is_ready
+}
+
+activate_release_timer_for_deploy() {
+  capture_release_timer_state || return 1
+  ensure_release_timer_ready
+}
+
+restore_release_timer_state() {
+  local failed=0
+  [ "$RELEASE_TIMER_STATE_CAPTURED" = 1 ] || return 0
+  [ "$RELEASE_TIMER_RESTORE_REQUIRED" = 1 ] || return 0
+  if [ "$TARGET_DURABLY_DEPLOYED" = 1 ]; then
+    ensure_release_timer_ready || return 1
+    RELEASE_TIMER_RESTORE_REQUIRED=0
+    return 0
+  fi
+
+  if [ "$RELEASE_TIMER_WAS_ACTIVE" = 1 ]; then
+    "$SYSTEMCTL" start "$RELEASE_TIMER_UNIT" || failed=1
+  else
+    "$SYSTEMCTL" stop "$RELEASE_TIMER_UNIT" || failed=1
+  fi
+  if [ "$RELEASE_TIMER_WAS_ENABLED" = 1 ]; then
+    "$SYSTEMCTL" enable "$RELEASE_TIMER_UNIT" || failed=1
+  else
+    "$SYSTEMCTL" disable "$RELEASE_TIMER_UNIT" || failed=1
+  fi
+  [ "$failed" = 0 ] || return 1
+  RELEASE_TIMER_RESTORE_REQUIRED=0
+}
+
+load_deployed_state() {
+  DEPLOYED_STATE_VALUE=""
+  if [ ! -e "$DEPLOY_STATE" ] && [ ! -L "$DEPLOY_STATE" ]; then
+    return 1
+  fi
+  if [ -L "$DEPLOY_STATE" ] || [ ! -f "$DEPLOY_STATE" ] \
+      || [ "$(stat -c '%U:%G:%a:%h' "$DEPLOY_STATE")" != "root:root:600:1" ] \
+      || ! IFS= read -r DEPLOYED_STATE_VALUE <"$DEPLOY_STATE" \
+      || ! valid_sha "$DEPLOYED_STATE_VALUE"; then
+    return 2
+  fi
+  return 0
+}
+
 cleanup() {
-  local status=$?
+  local status=$? cleanup_deploy_state_status=0
   trap - EXIT INT TERM
   if [ -n "$HEALTH_BODY" ]; then
     rm -f -- "$HEALTH_BODY" || true
@@ -195,6 +397,24 @@ cleanup() {
       [ "$status" -ne 0 ] || status=1
     fi
     as_service git -C "$APP_DIR" worktree prune || true
+  fi
+  # TERM/INT can skip the normal post-wrapper branch. Re-read the wrapper's
+  # synced acceptance marker before rolling its timer dependency back; once
+  # the exact target is durable, the active timer belongs to recovery.
+  if [ "$RELEASE_TIMER_STATE_CAPTURED" = 1 ] \
+      && [ "$RELEASE_TIMER_RESTORE_REQUIRED" = 1 ] \
+      && [ "$DEPLOY_WRAPPER_HANDOFF_STARTED" = 1 ] \
+      && [ "${DEPLOYED:-}" != "${TARGET:-}" ] \
+      && valid_sha "${TARGET:-}"; then
+    load_deployed_state || cleanup_deploy_state_status=$?
+    if [ "$cleanup_deploy_state_status" = 0 ] \
+        && [ "$DEPLOYED_STATE_VALUE" = "$TARGET" ]; then
+      TARGET_DURABLY_DEPLOYED=1
+    fi
+  fi
+  if ! restore_release_timer_state; then
+    echo "FAIL: prior release timer state could not be restored" >&2
+    [ "$status" -ne 0 ] || status=1
   fi
   exit "$status"
 }
@@ -225,6 +445,11 @@ fi
 if [[ ! "$ADMISSION_RETRY_SECONDS" =~ ^[0-9]+$ ]] \
     || (( ADMISSION_RETRY_SECONDS < 1 || ADMISSION_RETRY_SECONDS > 300 )); then
   fail "SEICHE_CONTROL_ADMISSION_RETRY_SECONDS must be an integer from 1 to 300"
+fi
+if [[ ! "$RECEIPT_UID" =~ ^[0-9]+$ ]] \
+    || [[ ! "$RECEIPT_GID" =~ ^[0-9]+$ ]] \
+    || [[ ! "$RECEIPT_MODE" =~ ^[0-7]{3,4}$ ]]; then
+  fail "release receipt ownership policy is invalid"
 fi
 for path in "$STATE_DIR" "$RECEIPT_DIR" "$CANDIDATE_PARENT" "$RUNTIME_DIR"; do
   if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
@@ -266,6 +491,19 @@ if is_inert_automation_content_commit "$TARGET"; then
   exit 0
 fi
 verify_target_signature "$TARGET"
+TARGET_TREE=$(as_service git -C "$APP_DIR" rev-parse "$TARGET^{tree}") \
+  || fail "target tree identity could not be resolved"
+valid_sha "$TARGET_TREE" || fail "target tree identity is invalid"
+GATE_RECEIPT="$RECEIPT_DIR/$TARGET.gate.json"
+RELEASE_RECEIPT="$RECEIPT_DIR/$TARGET.release.json"
+RECEIPT_PAIR_STATUS=0
+receipt_pair_status \
+  "$TARGET" "$TARGET_TREE" "$GATE_RECEIPT" "$RELEASE_RECEIPT" \
+  || RECEIPT_PAIR_STATUS=$?
+case "$RECEIPT_PAIR_STATUS" in
+  0|1) ;;
+  *) fail "existing release receipt evidence is invalid for $TARGET" ;;
+esac
 
 ADMISSION_STATUS=0
 SEICHE_DEPLOY_ADMISSION_ONLY=1 "$DEPLOY_WRAPPER" \
@@ -280,14 +518,13 @@ case "$ADMISSION_STATUS" in
 esac
 
 DEPLOYED=""
-if [ -e "$DEPLOY_STATE" ] || [ -L "$DEPLOY_STATE" ]; then
-  if [ -L "$DEPLOY_STATE" ] || [ ! -f "$DEPLOY_STATE" ] \
-      || [ "$(stat -c '%U:%G:%a' "$DEPLOY_STATE")" != "root:root:600" ] \
-      || ! IFS= read -r DEPLOYED <"$DEPLOY_STATE" \
-      || ! valid_sha "$DEPLOYED"; then
-    fail "deployed release state is unsafe or invalid"
-  fi
-fi
+DEPLOY_STATE_STATUS=0
+load_deployed_state || DEPLOY_STATE_STATUS=$?
+case "$DEPLOY_STATE_STATUS" in
+  0) DEPLOYED="$DEPLOYED_STATE_VALUE" ;;
+  1) ;;
+  *) fail "deployed release state is unsafe or invalid" ;;
+esac
 
 health_matches() {
   local expected="$1"
@@ -323,9 +560,10 @@ PY
 }
 
 if [ "$GATE_ONLY" != 1 ] \
+    && [ "$RECEIPT_PAIR_STATUS" = 0 ] \
     && [ "$DEPLOYED" = "$TARGET" ] \
     && health_matches "$TARGET"; then
-  echo "release poll: ${TARGET:0:7} is already deployed and strictly healthy"
+  echo "release poll: ${TARGET:0:7} is already deployed, strictly healthy, and fully receipted"
   exit 0
 fi
 
@@ -352,6 +590,8 @@ CANDIDATE_SHA=$(as_service git -C "$CANDIDATE_DIR" rev-parse HEAD) \
 CANDIDATE_TREE=$(as_service git -C "$CANDIDATE_DIR" rev-parse "HEAD^{tree}") \
   || fail "candidate tree identity could not be resolved"
 valid_sha "$CANDIDATE_TREE" || fail "candidate tree identity is invalid"
+[ "$CANDIDATE_TREE" = "$TARGET_TREE" ] \
+  || fail "candidate tree does not match the selected target tree"
 as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
   || fail "candidate worktree is dirty before the gate"
 
@@ -387,33 +627,10 @@ fi
 
 write_receipt() {
   local kind="$1" path="$2" gate_digest="${3:-}" stage=""
-  if [ -e "$path" ] || [ -L "$path" ]; then
-    if [ -L "$path" ] || [ ! -f "$path" ] \
-        || [ "$(stat -c '%U:%G:%a' "$path")" != "root:root:400" ]; then
-      fail "$kind receipt is unsafe: $path"
-    fi
-    "$SYSTEM_PYTHON" - "$path" "$kind" "$TARGET" "$CANDIDATE_TREE" \
-      "$INSTALL_COMMAND" "$TEST_COMMAND" "$gate_digest" <<'PY' \
-      || fail "existing receipt does not bind this exact candidate"
-import json
-import sys
-
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-expected = {
-    "schema": "seiche.release-receipt.v1",
-    "kind": sys.argv[2],
-    "commit": sys.argv[3],
-    "tree": sys.argv[4],
-    "conclusion": "success",
-}
-for key, value in expected.items():
-    assert payload.get(key) == value
-if sys.argv[2] == "gate":
-    assert payload.get("install_command") == sys.argv[5]
-    assert payload.get("test_command") == sys.argv[6]
-else:
-    assert payload.get("gate_receipt_sha256") == sys.argv[7]
-PY
+  if receipt_path_exists "$path"; then
+    validate_receipt "$path" "$kind" "$TARGET" "$CANDIDATE_TREE" \
+      "$gate_digest" \
+      || fail "existing $kind receipt does not bind this exact candidate safely"
     return 0
   fi
   stage=$(mktemp "$RECEIPT_DIR/.${TARGET}.${kind}.XXXXXX") \
@@ -467,7 +684,6 @@ PY
   fi
 }
 
-GATE_RECEIPT="$RECEIPT_DIR/$TARGET.gate.json"
 write_receipt gate "$GATE_RECEIPT"
 GATE_DIGEST=$("$SHA256SUM" "$GATE_RECEIPT" | awk '{print $1}') \
   || fail "could not digest the candidate gate receipt"
@@ -510,9 +726,24 @@ fi
 # The wrapper owns checkout mutation, service quiescence, exact-candidate
 # readiness, snapshot promotion, Caddy convergence, and automatic rollback.
 # A non-zero result remains non-zero even when its rollback recovered service.
+activate_release_timer_for_deploy \
+  || fail "release timer could not be made enabled and active before deployment"
 DEPLOY_STATUS=0
+DEPLOY_WRAPPER_HANDOFF_STARTED=1
 SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER" \
   || DEPLOY_STATUS=$?
+DEPLOY_STATE_STATUS=0
+load_deployed_state || DEPLOY_STATE_STATUS=$?
+case "$DEPLOY_STATE_STATUS" in
+  0)
+    DEPLOYED_AFTER="$DEPLOYED_STATE_VALUE"
+    if [ "$DEPLOYED_AFTER" = "$TARGET" ]; then
+      TARGET_DURABLY_DEPLOYED=1
+    fi
+    ;;
+  1) DEPLOYED_AFTER="" ;;
+  *) fail "deploy wrapper left an unsafe deployed release state" ;;
+esac
 case "$DEPLOY_STATUS" in
   0) ;;
   75)
@@ -521,12 +752,13 @@ case "$DEPLOY_STATUS" in
     ;;
   *) fail "deploy wrapper rejected ${TARGET:0:7}; its rollback path owns recovery" ;;
 esac
-if ! IFS= read -r DEPLOYED_AFTER <"$DEPLOY_STATE" \
-    || [ "$DEPLOYED_AFTER" != "$TARGET" ] \
+if [ "$TARGET_DURABLY_DEPLOYED" != 1 ] \
     || ! health_matches "$TARGET"; then
   fail "deploy wrapper returned without an exact healthy deployed target"
 fi
+release_timer_is_ready \
+  || fail "release timer is not enabled and active after deployment"
 
-RELEASE_RECEIPT="$RECEIPT_DIR/$TARGET.release.json"
 write_receipt release "$RELEASE_RECEIPT" "$GATE_DIGEST"
+RELEASE_TIMER_RESTORE_REQUIRED=0
 echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, $RELEASE_RECEIPT)"

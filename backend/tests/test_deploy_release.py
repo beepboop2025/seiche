@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -2301,7 +2302,8 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         'if is_inert_automation_content_commit "$TARGET"', selected
     )
     signature = poller.index('verify_target_signature "$TARGET"', inert_content)
-    admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", signature)
+    receipt_pair = poller.index("receipt_pair_status", signature)
+    admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", receipt_pair)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
@@ -2319,15 +2321,22 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     post_gate_superseded = poller.index(
         'if [ "$LATEST" != "$TARGET" ]', post_gate_refetch
     )
-    deploy_status = poller.index("DEPLOY_STATUS=0", post_gate_superseded)
+    timer_activation = poller.index(
+        "activate_release_timer_for_deploy", post_gate_superseded
+    )
+    deploy_status = poller.index("DEPLOY_STATUS=0", timer_activation)
+    handoff_started = poller.index(
+        "DEPLOY_WRAPPER_HANDOFF_STARTED=1", deploy_status
+    )
     deployed = poller.index(
-        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', deploy_status
+        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', handoff_started
     )
 
     assert (
         selected
         < inert_content
         < signature
+        < receipt_pair
         < admission
         < detached
         < full_gate
@@ -2338,7 +2347,9 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < post_gate_admission
         < post_gate_refetch
         < post_gate_superseded
+        < timer_activation
         < deploy_status
+        < handoff_started
         < deployed
     )
     assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
@@ -2366,6 +2377,26 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "DEPLOY_STATUS=0" in after_deploy
     assert 'case "$DEPLOY_STATUS"' in after_deploy
     assert "shared host became busy" in after_deploy
+    assert 'TARGET_DURABLY_DEPLOYED=1' in after_deploy
+    assert "release_timer_is_ready" in after_deploy
+    early_exit = poller[
+        poller.index('if [ "$GATE_ONLY" != 1 ]') : poller.index(
+            "# The candidate uses a detached worktree"
+        )
+    ]
+    assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit
+    assert "fully receipted" in early_exit
+    receipt_decision = poller[receipt_pair:admission]
+    assert '0|1) ;;' in receipt_decision
+    assert "existing release receipt evidence is invalid" in receipt_decision
+    cleanup = poller[poller.index("cleanup() {") : poller.index("# Regression tests")]
+    assert "restore_release_timer_state" in cleanup
+    assert cleanup.index("load_deployed_state") < cleanup.index(
+        "restore_release_timer_state"
+    )
+    assert '[ "$DEPLOY_WRAPPER_HANDOFF_STARTED" = 1 ]' in cleanup
+    assert '[ "${DEPLOYED:-}" != "${TARGET:-}" ]' in cleanup
+    assert 'DEPLOYED_STATE_VALUE" = "$TARGET' in cleanup
 
 
 def _post_gate_admission(
@@ -2439,6 +2470,364 @@ def test_post_gate_admission_returns_deferred_at_its_bound(tmp_path):
     )
 
     assert result.returncode == 75
+
+
+def _release_receipt_pair(
+    tmp_path: Path,
+    *,
+    tamper: str | None = None,
+) -> tuple[Path, Path, str, str]:
+    commit = "a" * 40
+    tree = "b" * 40
+    started = "2026-08-22T01:02:03Z"
+    completed = "2026-08-22T01:03:04Z"
+    gate_payload = {
+        "schema": "seiche.release-receipt.v1",
+        "kind": "gate",
+        "commit": commit,
+        "tree": tree,
+        "started_at": started,
+        "completed_at": completed,
+        "conclusion": "success",
+        "install_command": "python -m pip install -q -e ./backend[dev,collectors]",
+        "test_command": (
+            "python -m pytest backend/tests -q --memray "
+            "-o faulthandler_timeout=300"
+        ),
+    }
+    if tamper == "commit":
+        gate_payload["commit"] = "c" * 40
+    elif tamper == "tree":
+        gate_payload["tree"] = "d" * 40
+    elif tamper == "install_command":
+        gate_payload["install_command"] = "python -m pip install unreviewed"
+    elif tamper == "test_command":
+        gate_payload["test_command"] = "python -m pytest -q"
+
+    gate = tmp_path / f"{commit}.gate.json"
+    gate.write_text(
+        json.dumps(gate_payload, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    gate.chmod(0o400)
+    gate_digest = hashlib.sha256(gate.read_bytes()).hexdigest()
+    release_payload = {
+        "schema": "seiche.release-receipt.v1",
+        "kind": "release",
+        "commit": commit,
+        "tree": tree,
+        "started_at": started,
+        "completed_at": completed,
+        "conclusion": "success",
+        "gate_receipt_sha256": gate_digest,
+    }
+    if tamper == "gate_digest":
+        release_payload["gate_receipt_sha256"] = "e" * 64
+    release = tmp_path / f"{commit}.release.json"
+    release.write_text(
+        json.dumps(release_payload, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    release.chmod(0o400)
+    if tamper == "unsafe_mode":
+        gate.chmod(0o600)
+    elif tamper == "extra_link":
+        os.link(gate, tmp_path / "gate-alias.json")
+    return gate, release, commit, tree
+
+
+def _receipt_pair_result(
+    gate: Path,
+    release: Path,
+    commit: str,
+    tree: str,
+) -> subprocess.CompletedProcess[str]:
+    sha256sum = shutil.which("sha256sum")
+    if sha256sum is None:
+        pytest.skip("sha256sum is required for the release-receipt contract")
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+        "SEICHE_CONTROL_SHA256SUM": sha256sum,
+        "SEICHE_CONTROL_RECEIPT_UID": str(os.getuid()),
+        "SEICHE_CONTROL_RECEIPT_GID": str(os.getgid()),
+        "SEICHE_CONTROL_RECEIPT_MODE": "400",
+    }
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; receipt_pair_status "$2" "$3" "$4" "$5"',
+            "seiche-receipt-test",
+            str(RELEASE_POLLER),
+            commit,
+            tree,
+            str(gate),
+            str(release),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_complete_release_receipt_pair_is_accepted(tmp_path):
+    gate, release, commit, tree = _release_receipt_pair(tmp_path)
+
+    result = _receipt_pair_result(gate, release, commit, tree)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_missing_release_receipt_requests_full_gate_convergence(tmp_path):
+    gate, release, commit, tree = _release_receipt_pair(tmp_path)
+    release.unlink()
+
+    result = _receipt_pair_result(gate, release, commit, tree)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "commit",
+        "tree",
+        "install_command",
+        "test_command",
+        "gate_digest",
+        "unsafe_mode",
+        "extra_link",
+    ),
+)
+def test_invalid_existing_release_receipt_evidence_fails_closed(tmp_path, tamper):
+    gate, release, commit, tree = _release_receipt_pair(tmp_path, tamper=tamper)
+
+    result = _receipt_pair_result(gate, release, commit, tree)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+
+
+def _fake_release_timer_systemctl(tmp_path: Path, *, enabled: bool, active: bool):
+    state = tmp_path / "timer-state"
+    state.mkdir()
+    (state / "enabled").write_text(f"{int(enabled)}\n", encoding="ascii")
+    (state / "active").write_text(f"{int(active)}\n", encoding="ascii")
+    systemctl = _executable(
+        tmp_path / "systemctl",
+        'state=${FAKE_TIMER_STATE:?}\n'
+        'command=${1:?}\n'
+        'shift\n'
+        'printf "%s %s\\n" "$command" "$*" >>"$state/calls"\n'
+        'if [ "${FAKE_TIMER_QUERY_ERROR:-0}" = 1 ] && [ "$command" = show ]; then\n'
+        '  exit 69\n'
+        'fi\n'
+        'if [ -n "${FAKE_TIMER_FAIL_COMMAND:-}" ] '
+        '&& [ "$command" = "$FAKE_TIMER_FAIL_COMMAND" ]; then\n'
+        '  exit 70\n'
+        'fi\n'
+        'case "$command" in\n'
+        '  show)\n'
+        '    case "$*" in\n'
+        '      "--property=UnitFileState --value "*)\n'
+        '        if [ "$(cat "$state/enabled")" = 1 ]; then '
+        'echo enabled; else echo disabled; fi ;;\n'
+        '      "--property=ActiveState --value "*)\n'
+        '        if [ "$(cat "$state/active")" = 1 ]; then '
+        'echo active; else echo inactive; fi ;;\n'
+        '      *) exit 65 ;;\n'
+        '    esac ;;\n'
+        '  is-enabled) [ "$(cat "$state/enabled")" = 1 ] ;;\n'
+        '  is-active) [ "$(cat "$state/active")" = 1 ] ;;\n'
+        '  enable) printf "1\\n" >"$state/enabled" ;;\n'
+        '  disable) printf "0\\n" >"$state/enabled" ;;\n'
+        '  start) printf "1\\n" >"$state/active" ;;\n'
+        '  stop) printf "0\\n" >"$state/active" ;;\n'
+        '  *) exit 64 ;;\n'
+        'esac\n',
+    )
+    return state, systemctl
+
+
+@pytest.mark.parametrize(
+    ("enabled", "active"),
+    ((False, False), (True, False), (False, True), (True, True)),
+)
+def test_release_timer_activation_and_restoration_preserve_prior_state(
+    tmp_path, enabled, active
+):
+    state, systemctl = _fake_release_timer_systemctl(
+        tmp_path, enabled=enabled, active=active
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_SYSTEMCTL": str(systemctl),
+        "FAKE_TIMER_STATE": str(state),
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; activate_release_timer_for_deploy; '
+            'release_timer_is_ready; restore_release_timer_state',
+            "seiche-timer-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (state / "enabled").read_text(encoding="ascii") == f"{int(enabled)}\n"
+    assert (state / "active").read_text(encoding="ascii") == f"{int(active)}\n"
+    calls = (state / "calls").read_text(encoding="utf-8").splitlines()
+    capture_enabled = calls.index(
+        "show --property=UnitFileState --value seiche-release-poll.timer"
+    )
+    capture_active = calls.index(
+        "show --property=ActiveState --value seiche-release-poll.timer"
+    )
+    enable_timer = calls.index("enable seiche-release-poll.timer")
+    start_timer = calls.index("start seiche-release-poll.timer")
+    assert capture_enabled < capture_active < enable_timer < start_timer
+
+
+def test_durable_deployment_keeps_release_timer_active_for_recovery(tmp_path):
+    state, systemctl = _fake_release_timer_systemctl(
+        tmp_path, enabled=False, active=False
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_SYSTEMCTL": str(systemctl),
+        "FAKE_TIMER_STATE": str(state),
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; activate_release_timer_for_deploy; '
+            'printf "0\\n" >"$FAKE_TIMER_STATE/enabled"; '
+            'printf "0\\n" >"$FAKE_TIMER_STATE/active"; '
+            'TARGET_DURABLY_DEPLOYED=1; restore_release_timer_state',
+            "seiche-timer-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (state / "enabled").read_text(encoding="ascii") == "1\n"
+    assert (state / "active").read_text(encoding="ascii") == "1\n"
+
+
+def test_indeterminate_release_timer_state_fails_before_mutation(tmp_path):
+    state, systemctl = _fake_release_timer_systemctl(
+        tmp_path, enabled=True, active=True
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_SYSTEMCTL": str(systemctl),
+        "FAKE_TIMER_STATE": str(state),
+        "FAKE_TIMER_QUERY_ERROR": "1",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; activate_release_timer_for_deploy',
+            "seiche-timer-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert (state / "enabled").read_text(encoding="ascii") == "1\n"
+    assert (state / "active").read_text(encoding="ascii") == "1\n"
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "enable seiche-release-poll.timer" not in calls
+    assert "start seiche-release-poll.timer" not in calls
+
+
+@pytest.mark.parametrize("failed_command", ("enable", "start"))
+def test_partial_release_timer_activation_restores_prior_state(
+    tmp_path, failed_command
+):
+    state, systemctl = _fake_release_timer_systemctl(
+        tmp_path, enabled=False, active=False
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_SYSTEMCTL": str(systemctl),
+        "FAKE_TIMER_STATE": str(state),
+        "FAKE_TIMER_FAIL_COMMAND": failed_command,
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; status=0; '
+            'activate_release_timer_for_deploy || status=$?; '
+            'restore_release_timer_state; exit "$status"',
+            "seiche-timer-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert (state / "enabled").read_text(encoding="ascii") == "0\n"
+    assert (state / "active").read_text(encoding="ascii") == "0\n"
+
+
+def test_preexisting_target_marker_cannot_fake_a_handoff_transition(tmp_path):
+    state, systemctl = _fake_release_timer_systemctl(
+        tmp_path, enabled=False, active=False
+    )
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_SYSTEMCTL": str(systemctl),
+        "FAKE_TIMER_STATE": str(state),
+        "FAKE_TIMER_FAIL_COMMAND": "start",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; '
+            'TARGET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; '
+            'DEPLOYED="$TARGET"; DEPLOY_WRAPPER_HANDOFF_STARTED=1; '
+            'load_deployed_state() { DEPLOYED_STATE_VALUE="$TARGET"; return 0; }; '
+            'activate_release_timer_for_deploy || true; cleanup',
+            "seiche-timer-test",
+            str(RELEASE_POLLER),
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (state / "enabled").read_text(encoding="ascii") == "0\n"
+    assert (state / "active").read_text(encoding="ascii") == "0\n"
 
 
 def test_release_signature_boundary_accepts_only_the_pinned_signed_identity(tmp_path):
@@ -2553,14 +2942,16 @@ def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
         'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', gate
     )
     exact_health = writer.index('health_matches "$TARGET"', deploy)
-    release = writer.index('write_receipt release "$RELEASE_RECEIPT"', exact_health)
+    timer_ready = writer.index("release_timer_is_ready", exact_health)
+    release = writer.index('write_receipt release "$RELEASE_RECEIPT"', timer_ready)
+    timer_accepted = writer.index("RELEASE_TIMER_RESTORE_REQUIRED=0", release)
 
     assert 'chmod 0400 "$stage"' in writer
     assert 'ln "$stage" "$path"' in writer
     assert 'mv -n "$stage" "$path"' not in writer
     assert '"conclusion": "success"' in writer
     assert '"gate_receipt_sha256"' in writer
-    assert gate < deploy < exact_health < release
+    assert gate < deploy < exact_health < timer_ready < release < timer_accepted
     assert (
         "wrapper failure never writes"
         in (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
