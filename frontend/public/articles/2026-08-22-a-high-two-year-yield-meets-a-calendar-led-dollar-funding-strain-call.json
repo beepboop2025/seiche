@@ -1,0 +1,106 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-22-a-high-two-year-yield-meets-a-calendar-led-dollar-funding-strain-call",
+  "product": "seiche",
+  "slug": "2026-08-22-a-high-two-year-yield-meets-a-calendar-led-dollar-funding-strain-call",
+  "date": "2026-08-22",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "A high two-year yield meets a calendar-led dollar-funding strain call",
+  "dek": "Seiche’s board reads STRAIN, but the decisive pressure is scheduled Treasury settlement against reserves below an estimated kink—not broad confirmation from overnight cash pricing.",
+  "canonical_url": "https://seiche.info/articles/2026-08-22-a-high-two-year-yield-meets-a-calendar-led-dollar-funding-strain-call/",
+  "published_at": "2026-08-22T11:11:04Z",
+  "evidence_as_of": "2026-08-21",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-22-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1102,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:69d48c5a2a3db212a46268e82a52255c9e736237237b26659005a97af7e9fbb1",
+    "memory_fingerprint": "sha256:550c2376a8cc21e31ff1dec1fd6ee8e764281608c127e029240fa5bfadf1cb0b",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "7478b6faafffc83e7f3b8c6f0a9c964d8349f434f0ad58f8906fb2536e381488",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the lede around the fresh observed two-year yield print and the calendar-led nature of the strain reading.",
+      "Removed unsupported investment-advice language and tightened causal claims into conditional, observable mechanisms.",
+      "Strengthened the counter-case around SOFR below IORB, zero Standing Repo Facility use, and low broader market stress.",
+      "Added an explicit research boundary and retained source URLs within the permitted list.",
+      "Replaced the rejected reserve-kink figure with the dossier’s editorial evidence figure of $768B.",
+      "Retained the calendar-led mechanism and made the counter-case capable of disconfirming the strain thesis.",
+      "Preserved the required research boundary, all required sections, and permitted source links."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:69d48c5a2a3db212a46268e82a52255c9e736237237b26659005a97af7e9fbb1",
+      "memory_fingerprint": "sha256:550c2376a8cc21e31ff1dec1fd6ee8e764281608c127e029240fa5bfadf1cb0b",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
