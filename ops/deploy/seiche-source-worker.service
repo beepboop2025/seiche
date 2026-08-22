@@ -1,7 +1,9 @@
 [Unit]
 Description=Seiche broad official-source collection worker
-After=network-online.target postgresql.service
+Requires=seiche-storage-preflight.service
+After=network-online.target postgresql.service seiche-storage-preflight.service
 Wants=network-online.target postgresql.service
+RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 StartLimitIntervalSec=15min
 StartLimitBurst=5

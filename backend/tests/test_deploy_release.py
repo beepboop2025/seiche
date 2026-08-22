@@ -1164,6 +1164,10 @@ def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
     assert helper.index('mv -f "$candidate" "$destination"') < helper.index(
         "systemctl daemon-reload"
     )
+    assert "MARKET_WORKER_WAS_ENABLED" in helper
+    assert "systemctl enable seiche-market-worker.service" in helper
+    assert "systemctl disable seiche-market-worker.service" in helper
+    assert "systemctl is-enabled --quiet seiche-market-worker.service" in helper
 
     deploy = wrapper.index("MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1")
     provision = wrapper.index("deploy_market_platform ||", deploy)
@@ -1175,9 +1179,9 @@ def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
         )
     ]
     assert (
-        recovery.index("restore_quiesced_api")
-        < recovery.index("restore_preupdate_market_worker_unit")
+        recovery.index("restore_preupdate_market_worker_unit")
         < recovery.index("restore_preupdate_data_units")
+        < recovery.index("restore_quiesced_api")
         < recovery.index("restore_market_services")
     )
 
@@ -1246,9 +1250,9 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
 
     recovery = wrapper[wrapper.index("restore_pre_restart_services() {") : quiesce]
     assert (
-        recovery.index("restore_quiesced_api")
-        < recovery.index("restore_preupdate_market_worker_unit")
+        recovery.index("restore_preupdate_market_worker_unit")
         < recovery.index("restore_preupdate_data_units")
+        < recovery.index("restore_quiesced_api")
         < recovery.index("restore_market_services")
     )
 
@@ -1470,11 +1474,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "seiche-data-readiness.timer" in installer
     assert "ReadWritePaths=$RECOVERY_PROOF_DIR" in installer
     assert "systemctl enable --now seiche-market-validation.timer" in installer
-    early_enable = installer[
-        installer.index("systemctl daemon-reload") : installer.index(
-            "DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="
-        )
-    ]
+    readiness_boundary = installer.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
+    activation_reload = installer.rindex(
+        "systemctl daemon-reload", 0, readiness_boundary
+    )
+    early_enable = installer[activation_reload:readiness_boundary]
     assert (
         "seiche-data-readiness.timer"
         not in early_enable.split(

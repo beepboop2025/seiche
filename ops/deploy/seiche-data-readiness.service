@@ -1,7 +1,9 @@
 [Unit]
 Description=Fail closed on stale Seiche data-plane readiness
-After=network-online.target seiche-api.service
+Requires=seiche-storage-preflight.service
+After=network-online.target seiche-api.service seiche-storage-preflight.service
 Wants=network-online.target
+RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]

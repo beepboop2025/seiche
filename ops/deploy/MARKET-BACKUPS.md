@@ -4,6 +4,12 @@
 the canonical PostgreSQL-backed market data plane. They do not collect data,
 run a model, publish research, or grant execution authority.
 
+Production filesystem evidence state and these snapshots are mount-guarded on
+the pinned Hetzner Volume. Live PostgreSQL `PGDATA` and the compatibility/API
+tree remain outside this phase. See [HETZNER-VOLUME.md](HETZNER-VOLUME.md) for
+the exact scope, identity contract, fail-closed systemd ordering, and
+operator-gated cutover sequence.
+
 ## Narrow funding-export access
 
 The installer creates the system group `seiche-world-model-readers`. Members
@@ -131,12 +137,12 @@ journalctl -u seiche-data-readiness.service -n 100 --no-pager
 
 ## Durability boundary
 
-These units create and exercise **local** recovery points. They do not upload
-anything. No Hetzner Object Storage, S3, Restic, rclone, or MinIO credential is
-read or provisioned, and the unrelated Econ MinIO service on the same node must
-not be reused as an off-node backup.
+These units create and exercise **Volume-local** recovery points. They do not
+upload anything. No Hetzner Object Storage, S3, Restic, rclone, or MinIO
+credential is read or provisioned, and the unrelated Econ MinIO service on the
+same node must not be reused as an off-node backup.
 
 Production disaster recovery still requires a separately reviewed, private
 off-node destination with least-privilege credentials, retention, and a full
-operator restore drill. Until that exists, loss of the node's single disk can
-remove both the live data and these local snapshots.
+operator restore drill. The live tree and snapshots intentionally share this
+one Volume, so loss or corruption of that Volume can remove both.

@@ -1,7 +1,9 @@
 [Unit]
 Description=Commit a verified local Seiche market-data snapshot
-After=postgresql.service
+Requires=seiche-storage-preflight.service
+After=postgresql.service seiche-storage-preflight.service
 Wants=postgresql.service
+RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]

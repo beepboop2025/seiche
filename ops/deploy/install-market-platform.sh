@@ -7,6 +7,13 @@ ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+STORAGE_PREFLIGHT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.py"
+STORAGE_PREFLIGHT_INSTALL_DIR=/etc/seiche/libexec
+STORAGE_PREFLIGHT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-storage-preflight.py"
+STORAGE_PREFLIGHT_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.service"
+STORAGE_PREFLIGHT_UNIT_DESTINATION=/etc/systemd/system/seiche-storage-preflight.service
+RELEASE_POLL_STORAGE_DROPIN_DIR=/etc/systemd/system/seiche-release-poll.service.d
+RELEASE_POLL_STORAGE_DROPIN=$RELEASE_POLL_STORAGE_DROPIN_DIR/storage-volume.conf
 RECOVERY_PROOF_DIR=/var/lib/seiche-recovery-proof
 RESTORE_STATUS_PATH=$RECOVERY_PROOF_DIR/backup-restore-check.status
 EXPORT_READER_GROUP="${SEICHE_FUNDING_EXPORT_READER_GROUP:-seiche-world-model-readers}"
@@ -42,6 +49,33 @@ READINESS_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.timer"
 READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
 LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
 
+if [ "$STATE_DIR" != /var/lib/seiche ] \
+        || [ "$BACKUP_DIR" != /var/backups/seiche-market ]; then
+    echo "market platform: guarded storage paths are fixed at /var/lib/seiche and /var/backups/seiche-market" >&2
+    exit 1
+fi
+
+# A missing volume otherwise leaves ordinary directories on the root disk, and
+# the install -d calls below would silently begin a split-brain data plane.
+# Check every binary needed to install the dedicated preflight before touching
+# either guarded path.
+[ -x /usr/bin/python3 ] || {
+    echo "market platform: /usr/bin/python3 is required for storage preflight" >&2
+    exit 1
+}
+[ -x /usr/bin/sync ] || {
+    echo "market platform: /usr/bin/sync is required for storage preflight installation" >&2
+    exit 1
+}
+[ -x /usr/bin/findmnt ] || {
+    echo "market platform: /usr/bin/findmnt is required before storage cutover" >&2
+    exit 1
+}
+[ -f "$STORAGE_PREFLIGHT_SOURCE" ] && [ ! -L "$STORAGE_PREFLIGHT_SOURCE" ] || {
+    echo "market platform: storage preflight source is missing or unsafe" >&2
+    exit 1
+}
+
 PACKAGES=()
 if ! command -v psql >/dev/null 2>&1; then
     PACKAGES+=(postgresql)
@@ -72,6 +106,52 @@ fi
 install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"
 SEICHE_DEPLOY_STATE_DIR="$DEPLOY_STATE_DIR" \
     /usr/bin/bash "$LEGACY_UPDATE_RETIRER"
+
+# The release poller executes this installer with PrivateDevices=true. Install
+# the candidate helper and unit atomically, then ask PID 1 to run the proof in
+# the guard's own device-visible sandbox. The deploy wrapper captured the prior
+# bytes/absence before checkout mutation and owns restoration on any red gate.
+STORAGE_PREFLIGHT_STAGE=""
+STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
+cleanup_early_storage_staging() {
+    rm -f -- "$STORAGE_PREFLIGHT_STAGE"
+    if [ -n "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR" ]; then
+        rm -f -- \
+            "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service"
+        rmdir "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR" 2>/dev/null || true
+    fi
+}
+trap cleanup_early_storage_staging EXIT
+install -d -o root -g root -m 0755 "$STORAGE_PREFLIGHT_INSTALL_DIR"
+STORAGE_PREFLIGHT_STAGE=$(mktemp \
+    "$STORAGE_PREFLIGHT_INSTALL_DIR/.seiche-storage-preflight.XXXXXX")
+install -o root -g root -m 0755 "$STORAGE_PREFLIGHT_SOURCE" \
+    "$STORAGE_PREFLIGHT_STAGE"
+/usr/bin/python3 "$STORAGE_PREFLIGHT_STAGE" --help >/dev/null
+STORAGE_PREFLIGHT_UNIT_STAGE_DIR=$(mktemp -d \
+    /etc/systemd/system/.seiche-storage-preflight-stage.XXXXXX)
+install -m 0644 "$STORAGE_PREFLIGHT_UNIT_SOURCE" \
+    "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service"
+if ! systemd-analyze verify \
+        "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service"; then
+    echo "market platform: storage preflight unit failed verification" >&2
+    exit 1
+fi
+/usr/bin/sync -f "$STORAGE_PREFLIGHT_STAGE"
+/usr/bin/sync -f \
+    "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service"
+mv -f "$STORAGE_PREFLIGHT_STAGE" "$STORAGE_PREFLIGHT_INSTALLED"
+STORAGE_PREFLIGHT_STAGE=""
+/usr/bin/sync "$STORAGE_PREFLIGHT_INSTALL_DIR"
+mv -f \
+    "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service" \
+    "$STORAGE_PREFLIGHT_UNIT_DESTINATION"
+rmdir "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR"
+STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
+/usr/bin/sync /etc/systemd/system
+systemctl daemon-reload
+systemctl start seiche-storage-preflight.service
+
 systemctl enable --now postgresql
 
 # Debian assigns the next free port when another local service already owns
@@ -222,8 +302,12 @@ RESTORE_STAGE=""
 PROMOTION_UNIT_STAGE_DIR=""
 WORKER_UNIT_STAGE_DIR=""
 DATA_UNIT_STAGE_DIR=""
+STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
+STORAGE_PREFLIGHT_STAGE=""
+RELEASE_POLL_STORAGE_STAGE=""
 cleanup() {
-    rm -f -- "$ENV_STAGE" "$VALIDATION_STAGE" "$BACKUP_STAGE" "$RESTORE_STAGE"
+    rm -f -- "$ENV_STAGE" "$VALIDATION_STAGE" "$BACKUP_STAGE" "$RESTORE_STAGE" \
+        "$STORAGE_PREFLIGHT_STAGE" "$RELEASE_POLL_STORAGE_STAGE"
     if [ -n "$DATA_UNIT_STAGE_DIR" ]; then
         rm -f -- \
             "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
@@ -239,6 +323,11 @@ cleanup() {
     if [ -n "$PROMOTION_UNIT_STAGE_DIR" ]; then
         rm -f -- "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"
         rmdir "$PROMOTION_UNIT_STAGE_DIR" 2>/dev/null || true
+    fi
+    if [ -n "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR" ]; then
+        rm -f -- \
+            "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR/seiche-storage-preflight.service"
+        rmdir "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -627,6 +716,11 @@ fi
 install -d -m 0755 /etc/systemd/system/seiche-api.service.d
 DROPIN=$(mktemp /etc/systemd/system/seiche-api.service.d/.market-platform.XXXXXX)
 cat >"$DROPIN" <<EOF
+[Unit]
+Requires=seiche-storage-preflight.service
+After=seiche-storage-preflight.service
+RequiresMountsFor=$STATE_DIR $BACKUP_DIR
+
 [Service]
 EnvironmentFile=-$ENV_DIR/market.env
 EnvironmentFile=-$ENV_DIR/release.env
@@ -638,6 +732,55 @@ ReadWritePaths=$STATE_DIR
 EOF
 chmod 0644 "$DROPIN"
 mv -f "$DROPIN" /etc/systemd/system/seiche-api.service.d/market-platform.conf
+
+# install-release-poller.sh owns the canonical poller unit and is intentionally
+# not rerun from an application release. Converge a narrow drop-in here so the
+# already-installed controller joins the same mount/preflight transaction.
+install -d -m 0755 "$RELEASE_POLL_STORAGE_DROPIN_DIR"
+RELEASE_POLL_STORAGE_STAGE=$(mktemp \
+    "$RELEASE_POLL_STORAGE_DROPIN_DIR/.storage-volume.XXXXXX")
+cat >"$RELEASE_POLL_STORAGE_STAGE" <<EOF
+[Unit]
+Requires=seiche-storage-preflight.service
+After=seiche-storage-preflight.service
+RequiresMountsFor=$STATE_DIR $BACKUP_DIR
+EOF
+chmod 0644 "$RELEASE_POLL_STORAGE_STAGE"
+mv -f "$RELEASE_POLL_STORAGE_STAGE" "$RELEASE_POLL_STORAGE_DROPIN"
+RELEASE_POLL_STORAGE_STAGE=""
+
+# Verify the complete installed candidate graph, including the generated API
+# and release-poller drop-ins. Subset checks above provide an early parse gate;
+# this canonical-name pass catches cross-unit ordering cycles before PID 1 sees
+# any of the new dependency graph.
+SYSTEMD_VERIFY_UNITS=(
+    /etc/systemd/system/seiche-storage-preflight.service
+    /etc/systemd/system/seiche-market-worker.service
+    /etc/systemd/system/seiche-source-worker.service
+    /etc/systemd/system/seiche-market-backfill.service
+    /etc/systemd/system/seiche-market-validation.service
+    /etc/systemd/system/seiche-market-validation.timer
+    /etc/systemd/system/seiche-market-backup.service
+    /etc/systemd/system/seiche-market-backup.timer
+    /etc/systemd/system/seiche-market-restore-check.service
+    /etc/systemd/system/seiche-market-restore-check.timer
+    /etc/systemd/system/seiche-data-readiness.service
+    /etc/systemd/system/seiche-data-readiness.timer
+    /etc/systemd/system/seiche-snapshot-promote.service
+    /etc/systemd/system/seiche-api.service
+    /etc/systemd/system/seiche-release-poll.service
+    /etc/systemd/system/seiche-release-poll.timer
+)
+for unit in "${SYSTEMD_VERIFY_UNITS[@]}"; do
+    [ -f "$unit" ] && [ ! -L "$unit" ] || {
+        echo "market platform: required systemd unit is missing or unsafe: $unit" >&2
+        exit 1
+    }
+done
+if ! systemd-analyze verify "${SYSTEMD_VERIFY_UNITS[@]}"; then
+    echo "market platform: combined candidate systemd graph failed verification" >&2
+    exit 1
+fi
 
 systemctl daemon-reload
 systemctl enable \

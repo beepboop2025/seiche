@@ -267,13 +267,23 @@ if ! admit_shared_host; then
   exit 75
 fi
 MARKET_WORKER_WAS_ACTIVE=""
+MARKET_WORKER_WAS_ENABLED=""
 MARKET_BACKFILL_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ENABLED=""
 READINESS_TIMER_WAS_ACTIVE=""
 READINESS_TIMER_WAS_ENABLED=""
+VALIDATION_TIMER_WAS_ACTIVE=""
+VALIDATION_TIMER_WAS_ENABLED=""
+BACKUP_TIMER_WAS_ACTIVE=""
+BACKUP_TIMER_WAS_ENABLED=""
+RESTORE_TIMER_WAS_ACTIVE=""
+RESTORE_TIMER_WAS_ENABLED=""
 if systemctl is-active --quiet seiche-market-worker.service 2>/dev/null; then
   MARKET_WORKER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-market-worker.service 2>/dev/null; then
+  MARKET_WORKER_WAS_ENABLED=1
 fi
 if systemctl is-active --quiet seiche-market-backfill.service 2>/dev/null; then
   MARKET_BACKFILL_WAS_ACTIVE=1
@@ -290,21 +300,63 @@ fi
 if systemctl is-enabled --quiet seiche-data-readiness.timer 2>/dev/null; then
   READINESS_TIMER_WAS_ENABLED=1
 fi
+if systemctl is-active --quiet seiche-market-validation.timer 2>/dev/null; then
+  VALIDATION_TIMER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-market-validation.timer 2>/dev/null; then
+  VALIDATION_TIMER_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet seiche-market-backup.timer 2>/dev/null; then
+  BACKUP_TIMER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-market-backup.timer 2>/dev/null; then
+  BACKUP_TIMER_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet seiche-market-restore-check.timer 2>/dev/null; then
+  RESTORE_TIMER_WAS_ACTIVE=1
+fi
+if systemctl is-enabled --quiet seiche-market-restore-check.timer 2>/dev/null; then
+  RESTORE_TIMER_WAS_ENABLED=1
+fi
 
-# The source collector and readiness monitor are arriving together, and an old
-# release may have any subset of their units (or none). Capture the host's exact
-# pre-deploy files instead of assuming the rollback commit can reproduce local
-# unit state. The root-only /run copy lives only for this locked deployment.
+# Capture every market-platform unit and generated storage-policy artifact this
+# deploy can replace. A rollback must restore exact host bytes (or exact prior
+# absence); resetting the application checkout alone cannot reproduce drop-ins
+# or root-controlled helpers. The /run copy lives only for this locked deploy.
 DATA_UNIT_NAMES=(
+  seiche-storage-preflight.service
   seiche-market-backfill.service
   seiche-source-worker.service
   seiche-data-readiness.service
   seiche-data-readiness.timer
+  seiche-market-validation.service
+  seiche-market-validation.timer
+  seiche-market-backup.service
+  seiche-market-backup.timer
+  seiche-market-restore-check.service
+  seiche-market-restore-check.timer
+  seiche-snapshot-promote.service
+)
+DATA_ARTIFACT_NAMES=(
+  storage-preflight-helper
+  api-market-platform-dropin
+  release-poll-storage-dropin
+  validation-state-dropin
+  backup-paths-dropin
+  restore-paths-dropin
+)
+DATA_ARTIFACT_PATHS=(
+  /etc/seiche/libexec/seiche-storage-preflight.py
+  /etc/systemd/system/seiche-api.service.d/market-platform.conf
+  /etc/systemd/system/seiche-release-poll.service.d/storage-volume.conf
+  /etc/systemd/system/seiche-market-validation.service.d/state-path.conf
+  /etc/systemd/system/seiche-market-backup.service.d/paths.conf
+  /etc/systemd/system/seiche-market-restore-check.service.d/paths.conf
 )
 DATA_UNIT_ROLLBACK_DIR=""
 DATA_UNITS_MAY_HAVE_CHANGED=""
 cleanup_preupdate_data_units() {
-  local unit
+  local artifact index unit
   [ -n "$DATA_UNIT_ROLLBACK_DIR" ] || return 0
   case "$DATA_UNIT_ROLLBACK_DIR" in
     "$DEPLOY_RUNTIME_DIR"/.data-units.*) ;;
@@ -317,11 +369,16 @@ cleanup_preupdate_data_units() {
     rm -f -- "$DATA_UNIT_ROLLBACK_DIR/$unit.present" \
       "$DATA_UNIT_ROLLBACK_DIR/$unit.absent"
   done
+  for index in "${!DATA_ARTIFACT_NAMES[@]}"; do
+    artifact=${DATA_ARTIFACT_NAMES[$index]}
+    rm -f -- "$DATA_UNIT_ROLLBACK_DIR/$artifact.present" \
+      "$DATA_UNIT_ROLLBACK_DIR/$artifact.absent"
+  done
   rmdir "$DATA_UNIT_ROLLBACK_DIR" 2>/dev/null || return 1
   DATA_UNIT_ROLLBACK_DIR=""
 }
 capture_preupdate_data_units() {
-  local unit destination
+  local artifact destination index unit
   DATA_UNIT_ROLLBACK_DIR=$(mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX") \
     || return 1
   if ! chown root:root "$DATA_UNIT_ROLLBACK_DIR" \
@@ -345,6 +402,28 @@ capture_preupdate_data_units() {
       return 1
     fi
   done
+  if [ "${#DATA_ARTIFACT_NAMES[@]}" -ne "${#DATA_ARTIFACT_PATHS[@]}" ]; then
+    cleanup_preupdate_data_units || true
+    echo "FAIL: data artifact rollback manifest is inconsistent"
+    return 1
+  fi
+  for index in "${!DATA_ARTIFACT_NAMES[@]}"; do
+    artifact=${DATA_ARTIFACT_NAMES[$index]}
+    destination=${DATA_ARTIFACT_PATHS[$index]}
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+      if [ -L "$destination" ] || [ ! -f "$destination" ] \
+          || ! cp -p -- "$destination" \
+            "$DATA_UNIT_ROLLBACK_DIR/$artifact.present"; then
+        cleanup_preupdate_data_units || true
+        echo "FAIL: pre-deploy data artifact is unsafe or unreadable"
+        return 1
+      fi
+    elif ! install -m 0600 /dev/null \
+        "$DATA_UNIT_ROLLBACK_DIR/$artifact.absent"; then
+      cleanup_preupdate_data_units || true
+      return 1
+    fi
+  done
 }
 cleanup_data_unit_restore_stage() {
   local stage="$1" unit
@@ -358,7 +437,7 @@ cleanup_data_unit_restore_stage() {
   rmdir "$stage" 2>/dev/null || true
 }
 restore_preupdate_data_units() {
-  local stage unit captured destination
+  local artifact artifact_stage captured destination index stage unit
   local -a candidates=()
   [ -n "$DATA_UNITS_MAY_HAVE_CHANGED" ] || return 0
   case "$DATA_UNIT_ROLLBACK_DIR" in
@@ -368,6 +447,14 @@ restore_preupdate_data_units() {
       return 1
       ;;
   esac
+  # A failed installer may already have enabled persistent candidate timers.
+  # Quiesce every reader/writer before restoring files or generated drop-ins.
+  systemctl stop \
+    seiche-data-readiness.timer seiche-data-readiness.service \
+    seiche-market-validation.timer seiche-market-validation.service \
+    seiche-market-backup.timer seiche-market-backup.service \
+    seiche-market-restore-check.timer seiche-market-restore-check.service \
+    2>/dev/null || true
   stage=$(mktemp -d /etc/systemd/system/.seiche-data-units-restore.XXXXXX) \
     || return 1
   chmod 0700 "$stage" || {
@@ -393,6 +480,22 @@ restore_preupdate_data_units() {
       return 1
     fi
   done
+  for index in "${!DATA_ARTIFACT_NAMES[@]}"; do
+    artifact=${DATA_ARTIFACT_NAMES[$index]}
+    captured="$DATA_UNIT_ROLLBACK_DIR/$artifact.present"
+    if [ -f "$captured" ] && [ ! -L "$captured" ] \
+        && [ ! -e "$DATA_UNIT_ROLLBACK_DIR/$artifact.absent" ]; then
+      :
+    elif [ -f "$DATA_UNIT_ROLLBACK_DIR/$artifact.absent" ] \
+        && [ ! -L "$DATA_UNIT_ROLLBACK_DIR/$artifact.absent" ] \
+        && [ ! -e "$captured" ]; then
+      :
+    else
+      cleanup_data_unit_restore_stage "$stage"
+      echo "FAIL: pre-deploy data artifact snapshot is incomplete"
+      return 1
+    fi
+  done
   if (( ${#candidates[@]} > 0 )) \
       && ! systemd-analyze verify "${candidates[@]}"; then
     cleanup_data_unit_restore_stage "$stage"
@@ -409,6 +512,39 @@ restore_preupdate_data_units() {
   if [ -z "$READINESS_TIMER_WAS_ENABLED" ]; then
     systemctl disable seiche-data-readiness.timer >/dev/null 2>&1 || true
   fi
+  if [ -z "$VALIDATION_TIMER_WAS_ENABLED" ]; then
+    systemctl disable seiche-market-validation.timer >/dev/null 2>&1 || true
+  fi
+  if [ -z "$BACKUP_TIMER_WAS_ENABLED" ]; then
+    systemctl disable seiche-market-backup.timer >/dev/null 2>&1 || true
+  fi
+  if [ -z "$RESTORE_TIMER_WAS_ENABLED" ]; then
+    systemctl disable seiche-market-restore-check.timer >/dev/null 2>&1 || true
+  fi
+  for index in "${!DATA_ARTIFACT_NAMES[@]}"; do
+    artifact=${DATA_ARTIFACT_NAMES[$index]}
+    destination=${DATA_ARTIFACT_PATHS[$index]}
+    captured="$DATA_UNIT_ROLLBACK_DIR/$artifact.present"
+    if [ -f "$captured" ]; then
+      artifact_stage=$(mktemp \
+        "$(dirname "$destination")/.seiche-data-artifact-restore.XXXXXX") \
+        || {
+          cleanup_data_unit_restore_stage "$stage"
+          return 1
+        }
+      if ! cp -p -- "$captured" "$artifact_stage" \
+          || ! mv -f -- "$artifact_stage" "$destination"; then
+        rm -f -- "$artifact_stage"
+        cleanup_data_unit_restore_stage "$stage"
+        echo "FAIL: pre-deploy data artifacts could not be restored"
+        return 1
+      fi
+    elif ! rm -f -- "$destination"; then
+      cleanup_data_unit_restore_stage "$stage"
+      echo "FAIL: candidate-only data artifacts could not be removed"
+      return 1
+    fi
+  done
   for unit in "${DATA_UNIT_NAMES[@]}"; do
     destination="/etc/systemd/system/$unit"
     if [ -f "$DATA_UNIT_ROLLBACK_DIR/$unit.present" ]; then
@@ -454,6 +590,46 @@ restore_preupdate_data_units() {
       return 1
     fi
   fi
+  if [ -n "$VALIDATION_TIMER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-validation.timer >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-market-validation.timer; then
+      echo "FAIL: validation timer enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-validation.timer >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-validation.timer 2>/dev/null; then
+      echo "FAIL: candidate validation timer remains enabled after rollback"
+      return 1
+    fi
+  fi
+  if [ -n "$BACKUP_TIMER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-backup.timer >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-market-backup.timer; then
+      echo "FAIL: backup timer enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-backup.timer >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-backup.timer 2>/dev/null; then
+      echo "FAIL: candidate backup timer remains enabled after rollback"
+      return 1
+    fi
+  fi
+  if [ -n "$RESTORE_TIMER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-restore-check.timer >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-market-restore-check.timer; then
+      echo "FAIL: restore-check timer enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-restore-check.timer >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-restore-check.timer \
+        2>/dev/null; then
+      echo "FAIL: candidate restore-check timer remains enabled after rollback"
+      return 1
+    fi
+  fi
   DATA_UNITS_MAY_HAVE_CHANGED=""
   echo "data collection and readiness units restored to pre-deploy state"
 }
@@ -479,10 +655,19 @@ restore_market_services() {
   if [ -n "$READINESS_TIMER_WAS_ACTIVE" ]; then
     if [ -z "$SOURCE_WORKER_WAS_ACTIVE" ]; then
       echo "FAIL: readiness timer remains stopped because source readiness is unknown"
-      return 0
+    else
+      systemctl start --no-block seiche-data-readiness.timer 2>/dev/null || true
     fi
-    systemctl start --no-block seiche-data-readiness.timer 2>/dev/null || true
   fi
+  [ -z "$VALIDATION_TIMER_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-market-validation.timer 2>/dev/null \
+    || true
+  [ -z "$BACKUP_TIMER_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-market-backup.timer 2>/dev/null \
+    || true
+  [ -z "$RESTORE_TIMER_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-market-restore-check.timer 2>/dev/null \
+    || true
 }
 DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
 DATA_READINESS_SCRIPT="$APP/ops/deploy/seiche-data-readiness.sh"
@@ -578,6 +763,19 @@ restore_preupdate_market_worker_unit() {
     return 1
   fi
   rmdir "$stage"
+  if [ -n "$MARKET_WORKER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-worker.service >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-market-worker.service; then
+      echo "FAIL: market worker enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-worker.service >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-worker.service 2>/dev/null; then
+      echo "FAIL: candidate market worker remains enabled after rollback"
+      return 1
+    fi
+  fi
   MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
   echo "market worker unit restored from ${restore_sha:0:7}"
 }
@@ -621,10 +819,6 @@ restore_quiesced_api() {
   fi
 }
 restore_pre_restart_services() {
-  if ! restore_quiesced_api; then
-    echo "FAIL: market writers remain stopped because api recovery failed"
-    return 1
-  fi
   if ! restore_preupdate_market_worker_unit; then
     echo "FAIL: market writers remain stopped because their unit recovery failed"
     return 1
@@ -633,9 +827,18 @@ restore_pre_restart_services() {
     echo "FAIL: data workers remain stopped because their unit recovery failed"
     return 1
   fi
+  if ! restore_quiesced_api; then
+    echo "FAIL: market writers remain stopped because api recovery failed"
+    return 1
+  fi
   restore_market_services
 }
 systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+  2>/dev/null || true
+systemctl stop \
+  seiche-market-validation.timer seiche-market-validation.service \
+  seiche-market-backup.timer seiche-market-backup.service \
+  seiche-market-restore-check.timer seiche-market-restore-check.service \
   2>/dev/null || true
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
   seiche-source-worker.service \
@@ -1064,6 +1267,11 @@ fi
 # needs a human even when the rollback lands. Never rely on cancellation.
 echo "FAIL: ${AFTER:0:7} did not come healthy after restart"
 systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+  2>/dev/null || true
+systemctl stop \
+  seiche-market-validation.timer seiche-market-validation.service \
+  seiche-market-backup.timer seiche-market-backup.service \
+  seiche-market-restore-check.timer seiche-market-restore-check.service \
   2>/dev/null || true
 systemctl stop seiche-market-worker.service seiche-market-backfill.service \
   seiche-source-worker.service 2>/dev/null || true

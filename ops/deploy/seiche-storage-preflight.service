@@ -1,0 +1,38 @@
+[Unit]
+Description=Prove Seiche durable storage is the pinned Hetzner Volume
+After=local-fs.target
+RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
+OnFailure=undertow-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /etc/seiche/libexec/seiche-storage-preflight.py --config /etc/seiche/storage-volume.env
+TimeoutStartSec=30
+UMask=0077
+
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+AmbientCapabilities=
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+ReadOnlyPaths=/etc/seiche
+ReadWritePaths=/var/lib/seiche /var/backups/seiche-market

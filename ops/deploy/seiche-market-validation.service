@@ -1,7 +1,9 @@
 [Unit]
 Description=Seiche monetary-area validation evidence run
-After=network-online.target postgresql.service
+Requires=seiche-storage-preflight.service
+After=network-online.target postgresql.service seiche-storage-preflight.service
 Wants=network-online.target postgresql.service
+RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
 
 [Service]
 Type=oneshot
