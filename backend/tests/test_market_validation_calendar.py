@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -67,6 +67,38 @@ def test_china_is_pending_when_next_official_calendar_is_not_published() -> None
     assert metrics["calendar_day_fixtures_checked"] == 2
 
 
+def test_korea_is_pending_only_for_the_unpublished_next_year_calendar() -> None:
+    result = assess_calendar_and_timezone(
+        default_registry().get("KR-KRW"),
+        as_of=AS_OF,
+    )
+
+    assert result["status"] == "PENDING"
+    assert result["reasons"] == ["NEXT_YEAR_CALENDAR_UNAVAILABLE"]
+    metrics = result["metrics"]
+    assert isinstance(metrics, dict)
+    assert metrics["required_years"] == [2026, 2027]
+    assert metrics["year_checks_available"] == 2
+    assert metrics["unavailable_years"] == [
+        {"calendar_role": "holiday", "year": 2027},
+        {"calendar_role": "settlement", "year": 2027},
+    ]
+    assert metrics["calendar_day_fixtures_checked"] == 1
+    assert metrics["failed_fixture_ids"] == []
+
+    fixture = REPRESENTATIVE_FIXTURES["KR-KRW"]
+    assert fixture == (
+        BusinessDayFixture(
+            fixture_id="kr-regional-election-2026",
+            fixture_version="market-calendar-2026-v2",
+            market_id="KR-KRW",
+            calendar_id="KR-BOK-WIRE",
+            day=date(2026, 6, 3),
+            expected_business_day=False,
+        ),
+    )
+
+
 def test_known_china_working_weekend_and_ecb_boe_clocks_are_versioned() -> None:
     china = REPRESENTATIVE_FIXTURES["CN-CNY"]
     assert any(
@@ -86,7 +118,7 @@ def test_known_china_working_weekend_and_ecb_boe_clocks_are_versioned() -> None:
             if isinstance(item, PublicationClockFixture)
         )
         assert fixture.adapter_id == adapter_id
-        assert fixture.fixture_version == "market-calendar-2026-v1"
+        assert fixture.fixture_version == "market-calendar-2026-v2"
 
 
 def test_malformed_fixture_is_a_deterministic_failure() -> None:

@@ -9,16 +9,25 @@ successful.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from seiche.domain.observation import Observation, SemanticRole
+from seiche.domain.observation import (
+    ConnectorClassification,
+    Observation,
+    QualityState,
+    RedistributionStatus,
+    SemanticRole,
+)
 from seiche.markets.base import (
     CapabilityStatus,
+    InstrumentSpec,
     MarketPack,
     REQUIRED_VALIDATION_CHECKS,
+    SourceAdapterSpec,
     ValidationCheck,
     ValidationOutcome,
     ValidationResult,
@@ -43,7 +52,56 @@ from seiche.repository import MarketRepository, get_repository
 
 
 VALIDATION_RUNNER_ID = "market-validate"
-VALIDATION_RUNNER_VERSION = "market-validation-policy-v3"
+VALIDATION_RUNNER_VERSION = "market-validation-policy-v4"
+
+_LEGACY_CFETS_MARKET_ID = "CN-CNY"
+_LEGACY_CFETS_ADAPTER_ID = "cfets_rates"
+_LEGACY_CFETS_INSTRUMENT_IDS = frozenset({"CN.CFETS.SHIBOR_ON"})
+_LEGACY_CFETS_QUALITIES = frozenset(
+    {QualityState.ESTIMATED, QualityState.PROVISIONAL}
+)
+# The signed d540e2d8a0ffb7a5f1e88d4996003c200e014679 contract change
+# was followed by the old market writer beginning shutdown in the production
+# systemd journal at
+# 2026-08-22T01:07:16.781347Z. Use the earlier whole-second boundary so no
+# observation created during shutdown can be mistaken for reviewed history.
+_LEGACY_CFETS_CONTRACT_CUTOVER = datetime(2026, 8, 22, 1, 7, 16, tzinfo=UTC)
+_LEGACY_CFETS_CONTRACT_COMMIT = "d540e2d8a0ffb7a5f1e88d4996003c200e014679"
+
+
+def _is_quarantined_legacy_cfets_contract(
+    pack: MarketPack,
+    instrument: InstrumentSpec,
+    adapter: SourceAdapterSpec,
+    observation: Observation,
+) -> bool:
+    """Recognize the one reviewed, more-restrictive CFETS contract migration."""
+
+    return (
+        pack.market_id == _LEGACY_CFETS_MARKET_ID
+        and instrument.instrument_id in _LEGACY_CFETS_INSTRUMENT_IDS
+        and instrument.source_adapter_id == _LEGACY_CFETS_ADAPTER_ID
+        and adapter.adapter_id == _LEGACY_CFETS_ADAPTER_ID
+        and observation.market_id == pack.market_id
+        and observation.monetary_area_id == pack.monetary_area_id
+        and observation.jurisdiction_codes == pack.jurisdiction_codes
+        and observation.currency == pack.currency
+        and observation.semantic_role is instrument.semantic_role
+        and observation.canonical_unit is instrument.canonical_unit
+        and observation.rate_compounding is instrument.rate_compounding
+        and observation.day_count is instrument.day_count
+        and observation.source == _LEGACY_CFETS_ADAPTER_ID
+        and observation.quality in _LEGACY_CFETS_QUALITIES
+        and observation.revision_id
+        == f"sha256:{observation.evidence_hash[:20]}"
+        and observation.knowledge_time < _LEGACY_CFETS_CONTRACT_CUTOVER
+        and observation.connector_classification
+        is ConnectorClassification.OFFICIAL_OPEN
+        and adapter.classification is ConnectorClassification.LICENSED
+        and observation.redistribution_status
+        is RedistributionStatus.METADATA_ONLY
+        and adapter.redistribution_status is RedistributionStatus.METADATA_ONLY
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +339,11 @@ def _schema_and_units(
     observations: list[Observation],
 ) -> GateAssessment:
     mismatches: set[str] = set()
+    legacy_contract_quarantine_counts: Counter[str] = Counter()
+    legacy_contract_quarantine_bounds: dict[
+        str, tuple[datetime, datetime]
+    ] = {}
+    legacy_contract_quarantine_qualities: dict[str, Counter[str]] = {}
     conversions_checked = 0
     for instrument in pack.instruments:
         try:
@@ -315,7 +378,32 @@ def _schema_and_units(
         if observation.day_count is not instrument.day_count:
             mismatches.add("OBSERVATION_DAY_COUNT_MISMATCH")
         if observation.connector_classification is not adapter.classification:
-            mismatches.add("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH")
+            if _is_quarantined_legacy_cfets_contract(
+                pack,
+                instrument,
+                adapter,
+                observation,
+            ):
+                legacy_contract_quarantine_counts[observation.instrument_id] += 1
+                bounds = legacy_contract_quarantine_bounds.get(
+                    observation.instrument_id
+                )
+                if bounds is None:
+                    legacy_contract_quarantine_bounds[observation.instrument_id] = (
+                        observation.knowledge_time,
+                        observation.knowledge_time,
+                    )
+                else:
+                    legacy_contract_quarantine_bounds[observation.instrument_id] = (
+                        min(bounds[0], observation.knowledge_time),
+                        max(bounds[1], observation.knowledge_time),
+                    )
+                legacy_contract_quarantine_qualities.setdefault(
+                    observation.instrument_id,
+                    Counter(),
+                )[observation.quality.value] += 1
+            else:
+                mismatches.add("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH")
         if observation.redistribution_status is not adapter.redistribution_status:
             mismatches.add("OBSERVATION_REDISTRIBUTION_POLICY_MISMATCH")
 
@@ -325,8 +413,63 @@ def _schema_and_units(
     missing_roles = sorted(
         role.value for role in _required_ready_roles(pack) - present_roles
     )
+    legacy_contract_quarantine_diagnostics: list[dict[str, object]] = []
+    for instrument_id, row_count in sorted(
+        legacy_contract_quarantine_counts.items()
+    ):
+        earliest, latest = legacy_contract_quarantine_bounds[instrument_id]
+        legacy_contract_quarantine_diagnostics.append(
+            {
+                "instrument_id": instrument_id,
+                "rows": row_count,
+                "adapter_id": _LEGACY_CFETS_ADAPTER_ID,
+                "observed_connector_classification": (
+                    ConnectorClassification.OFFICIAL_OPEN.value
+                ),
+                "current_connector_classification": (
+                    ConnectorClassification.LICENSED.value
+                ),
+                "observed_redistribution_status": (
+                    RedistributionStatus.METADATA_ONLY.value
+                ),
+                "current_redistribution_status": (
+                    RedistributionStatus.METADATA_ONLY.value
+                ),
+                "quality_counts": dict(
+                    sorted(
+                        legacy_contract_quarantine_qualities[
+                            instrument_id
+                        ].items()
+                    )
+                ),
+                "required_revision_id_contract": "sha256:<evidence_hash[:20]>",
+                "earliest_knowledge_time": earliest.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "latest_knowledge_time": latest.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "knowledge_time_cutover_exclusive": (
+                    _LEGACY_CFETS_CONTRACT_CUTOVER.isoformat().replace(
+                        "+00:00", "Z"
+                    )
+                ),
+                "contract_change_commit": _LEGACY_CFETS_CONTRACT_COMMIT,
+            }
+        )
+    calibration_matches_pack = (
+        calibration.market_id == pack.market_id
+        and calibration.calibration_id == pack.calibration_id
+    )
+    if not calibration_matches_pack:
+        mismatches.add("CALIBRATION_PACK_MISMATCH")
+    if mismatches and legacy_contract_quarantine_counts:
+        # The connector transition is pending only when it is the sole hard
+        # schema delta. A mixed batch retains the general equality failure.
+        mismatches.add("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH")
+
     metrics: dict[str, object] = {
-        "implementation": "schema-and-units-v1",
+        "implementation": "schema-and-units-v2",
         "declared_instruments": len(pack.instruments),
         "declared_adapters": len(pack.source_adapters),
         "unit_conversions_checked": conversions_checked,
@@ -334,14 +477,14 @@ def _schema_and_units(
         "ready_roles_required": len(_required_ready_roles(pack)),
         "ready_roles_missing": missing_roles,
         "mismatch_codes": sorted(mismatches),
-        "calibration_matches_pack": (
-            calibration.market_id == pack.market_id
-            and calibration.calibration_id == pack.calibration_id
+        "legacy_connector_contract_quarantined_rows": sum(
+            legacy_contract_quarantine_counts.values()
         ),
+        "legacy_connector_contract_quarantine_by_instrument": (
+            legacy_contract_quarantine_diagnostics
+        ),
+        "calibration_matches_pack": calibration_matches_pack,
     }
-    if calibration.market_id != pack.market_id or calibration.calibration_id != pack.calibration_id:
-        mismatches.add("CALIBRATION_PACK_MISMATCH")
-        metrics["mismatch_codes"] = sorted(mismatches)
     if mismatches:
         return GateAssessment(
             ValidationCheck.SCHEMA_AND_UNITS,
@@ -349,12 +492,17 @@ def _schema_and_units(
             metrics,
             tuple(sorted(mismatches)),
         )
+    pending_reasons: list[str] = []
+    if legacy_contract_quarantine_counts:
+        pending_reasons.append("LEGACY_CONNECTOR_CONTRACT_QUARANTINED")
     if missing_roles:
+        pending_reasons.append("READY_CAPABILITY_OBSERVATIONS_MISSING")
+    if pending_reasons:
         return GateAssessment(
             ValidationCheck.SCHEMA_AND_UNITS,
             ValidationStatus.PENDING,
             metrics,
-            ("READY_CAPABILITY_OBSERVATIONS_MISSING",),
+            tuple(pending_reasons),
         )
     return GateAssessment(
         ValidationCheck.SCHEMA_AND_UNITS,

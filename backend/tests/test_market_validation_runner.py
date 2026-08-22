@@ -8,9 +8,10 @@ import pytest
 
 from seiche import store
 from seiche.domain.observation import (
-    CanonicalUnit,
+    ConnectorClassification,
     Observation,
     QualityState,
+    RedistributionStatus,
     SemanticRole,
     StalenessState,
     evidence_sha256,
@@ -25,7 +26,9 @@ from seiche.markets.calibration import (
     ComponentCalibration,
     EngineKind,
     LocalCalibration,
+    get_local_calibration,
 )
+from seiche.markets.china_cny import PACK as CN_PACK
 from seiche.markets.materialize import build_local_products
 from seiche.markets.registry import MarketRegistry
 from seiche.markets.us_usd import PACK as US_PACK
@@ -167,6 +170,226 @@ def test_schema_passes_only_when_every_ready_role_has_canonical_evidence() -> No
     assert missing.status is ValidationStatus.PENDING
     assert missing.reasons == ("READY_CAPABILITY_OBSERVATIONS_MISSING",)
     assert missing.metrics["ready_roles_missing"] == ["SECURED_OVERNIGHT"]
+
+
+def _legacy_cfets_observation(
+    instrument_id: str,
+    *,
+    event_time: datetime,
+    knowledge_time: datetime,
+    quality: QualityState = QualityState.PROVISIONAL,
+) -> Observation:
+    instrument = CN_PACK.instrument_map[instrument_id]
+    adapter = CN_PACK.adapter_map[instrument.source_adapter_id]
+    evidence_hash = evidence_sha256(
+        f"{instrument_id}:{event_time.isoformat()}:{knowledge_time.isoformat()}"
+    )
+    return Observation(
+        market_id=CN_PACK.market_id,
+        monetary_area_id=CN_PACK.monetary_area_id,
+        jurisdiction_codes=CN_PACK.jurisdiction_codes,
+        currency=CN_PACK.currency,
+        instrument_id=instrument.instrument_id,
+        semantic_role=instrument.semantic_role,
+        value=Decimal("150"),
+        canonical_unit=instrument.canonical_unit,
+        rate_compounding=instrument.rate_compounding,
+        day_count=instrument.day_count,
+        event_time=event_time,
+        source_publication_time=knowledge_time - timedelta(minutes=1),
+        knowledge_time=knowledge_time,
+        revision_id=f"sha256:{evidence_hash[:20]}",
+        source=adapter.adapter_id,
+        evidence_hash=evidence_hash,
+        connector_classification=ConnectorClassification.OFFICIAL_OPEN,
+        redistribution_status=RedistributionStatus.METADATA_ONLY,
+        quality=quality,
+        staleness=StalenessState.FRESH,
+    )
+
+
+def test_schema_quarantines_provenance_bounded_cfets_history_without_rewriting_rows(
+) -> None:
+    calibration = get_local_calibration(CN_PACK.market_id)
+    event_time = datetime(2026, 8, 6, tzinfo=UTC)
+    rows = [
+        _legacy_cfets_observation(
+            "CN.CFETS.SHIBOR_ON",
+            event_time=event_time,
+            knowledge_time=event_time + timedelta(hours=1),
+        ),
+        _legacy_cfets_observation(
+            "CN.CFETS.SHIBOR_ON",
+            event_time=event_time + timedelta(days=1),
+            knowledge_time=event_time + timedelta(days=1, hours=1),
+            quality=QualityState.ESTIMATED,
+        ),
+        _legacy_cfets_observation(
+            "CN.CFETS.SHIBOR_ON",
+            event_time=event_time,
+            knowledge_time=event_time + timedelta(hours=1),
+        ),
+    ]
+    original_rows = tuple(rows)
+
+    result = _schema_and_units(CN_PACK, calibration, rows)
+
+    assert result.status is ValidationStatus.PENDING
+    assert result.reasons == ("LEGACY_CONNECTOR_CONTRACT_QUARANTINED",)
+    assert result.metrics["mismatch_codes"] == []
+    assert result.metrics["legacy_connector_contract_quarantined_rows"] == 3
+    assert result.metrics[
+        "legacy_connector_contract_quarantine_by_instrument"
+    ] == [
+        {
+            "instrument_id": "CN.CFETS.SHIBOR_ON",
+            "rows": 3,
+            "adapter_id": "cfets_rates",
+            "observed_connector_classification": "official_open",
+            "current_connector_classification": "licensed",
+            "observed_redistribution_status": "metadata_only",
+            "current_redistribution_status": "metadata_only",
+            "quality_counts": {"estimated": 1, "provisional": 2},
+            "required_revision_id_contract": "sha256:<evidence_hash[:20]>",
+            "earliest_knowledge_time": "2026-08-06T01:00:00Z",
+            "latest_knowledge_time": "2026-08-07T01:00:00Z",
+            "knowledge_time_cutover_exclusive": "2026-08-22T01:07:16Z",
+            "contract_change_commit": (
+                "d540e2d8a0ffb7a5f1e88d4996003c200e014679"
+            ),
+        },
+    ]
+    assert tuple(rows) == original_rows
+    assert all(
+        row.connector_classification is ConnectorClassification.OFFICIAL_OPEN
+        for row in rows
+    )
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected_reasons"),
+    [
+        (
+            {"quality": QualityState.VERIFIED},
+            ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",),
+        ),
+        (
+            {"source": "not-the-cfets-adapter"},
+            ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",),
+        ),
+        (
+            {"connector_classification": ConnectorClassification.TENANT_PROVIDED},
+            ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",),
+        ),
+        (
+            {"revision_id": "sha256:00000000000000000000"},
+            ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",),
+        ),
+        (
+            {"knowledge_time": datetime(2026, 8, 22, 1, 7, 16, tzinfo=UTC)},
+            ("OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",),
+        ),
+        (
+            {"redistribution_status": RedistributionStatus.DERIVED_ONLY},
+            (
+                "OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",
+                "OBSERVATION_REDISTRIBUTION_POLICY_MISMATCH",
+            ),
+        ),
+    ],
+)
+def test_schema_fails_closed_for_unreviewed_cfets_contract_variants(
+    changes: dict[str, object],
+    expected_reasons: tuple[str, ...],
+) -> None:
+    event_time = datetime(2026, 8, 6, tzinfo=UTC)
+    legacy = _legacy_cfets_observation(
+        "CN.CFETS.SHIBOR_ON",
+        event_time=event_time,
+        knowledge_time=event_time + timedelta(hours=1),
+    )
+
+    result = _schema_and_units(
+        CN_PACK,
+        get_local_calibration(CN_PACK.market_id),
+        [replace(legacy, **changes)],
+    )
+
+    assert result.status is ValidationStatus.FAIL
+    assert result.reasons == expected_reasons
+    assert result.metrics["legacy_connector_contract_quarantined_rows"] == 0
+
+
+def test_schema_quarantines_the_last_observed_pre_cutover_cfets_row() -> None:
+    event_time = datetime(2026, 8, 21, tzinfo=UTC)
+    last_observed_legacy_knowledge_time = datetime(
+        2026,
+        8,
+        21,
+        20,
+        3,
+        9,
+        tzinfo=UTC,
+    )
+    row = _legacy_cfets_observation(
+        "CN.CFETS.SHIBOR_ON",
+        event_time=event_time,
+        knowledge_time=last_observed_legacy_knowledge_time,
+        quality=QualityState.ESTIMATED,
+    )
+
+    result = _schema_and_units(
+        CN_PACK,
+        get_local_calibration(CN_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.PENDING
+    assert result.reasons == ("LEGACY_CONNECTOR_CONTRACT_QUARANTINED",)
+    assert result.metrics["legacy_connector_contract_quarantined_rows"] == 1
+
+
+def test_schema_does_not_quarantine_impossible_pre_contract_fdr007_rows() -> None:
+    event_time = datetime(2026, 8, 6, tzinfo=UTC)
+    row = _legacy_cfets_observation(
+        "CN.CFETS.FDR007",
+        event_time=event_time,
+        knowledge_time=event_time + timedelta(hours=1),
+    )
+
+    result = _schema_and_units(
+        CN_PACK,
+        get_local_calibration(CN_PACK.market_id),
+        [row],
+    )
+
+    assert result.status is ValidationStatus.FAIL
+    assert result.reasons == (
+        "OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",
+    )
+    assert result.metrics["legacy_connector_contract_quarantined_rows"] == 0
+
+
+def test_schema_does_not_hide_other_mismatches_on_a_quarantined_cfets_row() -> None:
+    event_time = datetime(2026, 8, 6, tzinfo=UTC)
+    legacy = _legacy_cfets_observation(
+        "CN.CFETS.SHIBOR_ON",
+        event_time=event_time,
+        knowledge_time=event_time + timedelta(hours=1),
+    )
+
+    result = _schema_and_units(
+        CN_PACK,
+        get_local_calibration(CN_PACK.market_id),
+        [replace(legacy, currency="USD")],
+    )
+
+    assert result.status is ValidationStatus.FAIL
+    assert result.reasons == (
+        "OBSERVATION_CONNECTOR_CLASSIFICATION_MISMATCH",
+        "OBSERVATION_CURRENCY_MISMATCH",
+    )
+    assert result.metrics["legacy_connector_contract_quarantined_rows"] == 0
 
 
 def test_truncation_replay_uses_a_real_future_suffix(tmp_path, monkeypatch) -> None:
