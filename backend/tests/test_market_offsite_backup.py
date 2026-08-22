@@ -29,6 +29,56 @@ def _executable(path: Path, body: str) -> Path:
     return path
 
 
+def _installer_script_normalizer() -> str:
+    installer = INSTALLER.read_text()
+    start = installer.index("normalize_root_service_script() {")
+    end = installer.index("\nPY\n}\n", start) + len("\nPY\n}\n")
+    return installer[start:end]
+
+
+def _tracked_offsite_script_fixture(tmp_path: Path) -> tuple[Path, str, Path]:
+    repo = tmp_path / "app"
+    relative_path = "ops/deploy/seiche-market-offsite-backup.sh"
+    source = repo / relative_path
+    source.parent.mkdir(parents=True)
+    shutil.copyfile(SCRIPT, source)
+    source.chmod(0o755)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "--", relative_path], check=True)
+    source.chmod(0o700)
+    return repo, relative_path, source
+
+
+def _run_script_normalizer(
+    repo: Path, relative_path: str, expected_uid: int, expected_gid: int
+) -> subprocess.CompletedProcess[str]:
+    harness = (
+        "set -euo pipefail\n"
+        "APP_DIR=$1\n"
+        "READINESS_SCRIPT_RELATIVE=$2\n"
+        "OFFSITE_SCRIPT_RELATIVE=$3\n"
+        "shift 3\n"
+        f"{_installer_script_normalizer()}\n"
+        'normalize_root_service_script "$@"\n'
+    )
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            harness,
+            "normalizer",
+            str(repo),
+            "ops/deploy/seiche-data-readiness.sh",
+            "ops/deploy/seiche-market-offsite-backup.sh",
+            relative_path,
+            str(expected_uid),
+            str(expected_gid),
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+
 def _snapshot(
     backup_root: Path, *, snapshot_id: str = SNAPSHOT_ID, extra: bool = False
 ) -> Path:
@@ -862,3 +912,20 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
         )
         >= 3
     )
+
+
+def test_installer_normalizes_tracked_offsite_script_from_0700_to_0755(
+    tmp_path: Path,
+) -> None:
+    repo, relative_path, source = _tracked_offsite_script_fixture(tmp_path)
+    metadata = source.stat()
+
+    result = _run_script_normalizer(
+        repo, relative_path, metadata.st_uid, metadata.st_gid
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert source.stat().st_mode & 0o7777 == 0o755
+    installer = INSTALLER.read_text()
+    normalize_call = installer.index('"$OFFSITE_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID"')
+    assert normalize_call < installer.index("systemctl daemon-reload")

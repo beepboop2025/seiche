@@ -29,6 +29,56 @@ def _executable(path: Path, body: str) -> Path:
     return path
 
 
+def _installer_script_normalizer() -> str:
+    installer = INSTALLER.read_text()
+    start = installer.index("normalize_root_service_script() {")
+    end = installer.index("\nPY\n}\n", start) + len("\nPY\n}\n")
+    return installer[start:end]
+
+
+def _tracked_script_fixture(tmp_path: Path) -> tuple[Path, str, Path]:
+    repo = tmp_path / "app"
+    relative_path = "ops/deploy/seiche-data-readiness.sh"
+    source = repo / relative_path
+    source.parent.mkdir(parents=True)
+    shutil.copyfile(SCRIPT, source)
+    source.chmod(0o755)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "--", relative_path], check=True)
+    source.chmod(0o700)
+    return repo, relative_path, source
+
+
+def _run_script_normalizer(
+    repo: Path, relative_path: str, expected_uid: int, expected_gid: int
+) -> subprocess.CompletedProcess[str]:
+    harness = (
+        "set -euo pipefail\n"
+        "APP_DIR=$1\n"
+        "READINESS_SCRIPT_RELATIVE=$2\n"
+        "OFFSITE_SCRIPT_RELATIVE=$3\n"
+        "shift 3\n"
+        f"{_installer_script_normalizer()}\n"
+        'normalize_root_service_script "$@"\n'
+    )
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            harness,
+            "normalizer",
+            str(repo),
+            "ops/deploy/seiche-data-readiness.sh",
+            "ops/deploy/seiche-market-offsite-backup.sh",
+            relative_path,
+            str(expected_uid),
+            str(expected_gid),
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+
 def _health(
     *,
     generated_at: datetime | None = None,
@@ -931,6 +981,107 @@ def test_systemd_units_are_alerting_hardened_and_five_minutely() -> None:
     assert "OnCalendar=*-*-* *:00/5:00" in timer
     assert "Persistent=true" in timer
     assert "Unit=seiche-data-readiness.service" in timer
+
+
+def test_installer_normalizes_tracked_readiness_script_from_0700_to_0755(
+    tmp_path: Path,
+) -> None:
+    repo, relative_path, source = _tracked_script_fixture(tmp_path)
+    metadata = source.stat()
+
+    result = _run_script_normalizer(
+        repo, relative_path, metadata.st_uid, metadata.st_gid
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert source.stat().st_mode & 0o7777 == 0o755
+    installer = INSTALLER.read_text()
+    normalize_call = installer.index(
+        '"$READINESS_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID"'
+    )
+    assert normalize_call < installer.index("systemctl daemon-reload")
+
+
+def test_installer_preserves_an_already_0755_tracked_readiness_script(
+    tmp_path: Path,
+) -> None:
+    repo, relative_path, source = _tracked_script_fixture(tmp_path)
+    source.chmod(0o755)
+    metadata = source.stat()
+
+    result = _run_script_normalizer(
+        repo, relative_path, metadata.st_uid, metadata.st_gid
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert source.stat().st_mode & 0o7777 == 0o755
+
+
+@pytest.mark.parametrize(
+    "unsafe_kind",
+    (
+        "symlink",
+        "nonregular",
+        "wrong_owner",
+        "hardlink",
+        "mode",
+        "bytes",
+        "index_mode",
+        "untracked",
+    ),
+)
+def test_installer_rejects_unsafe_readiness_script_source(
+    tmp_path: Path, unsafe_kind: str
+) -> None:
+    repo, relative_path, source = _tracked_script_fixture(tmp_path)
+    expected_uid = source.stat().st_uid
+    expected_gid = source.stat().st_gid
+    if unsafe_kind == "symlink":
+        replacement = tmp_path / "replacement.sh"
+        shutil.copyfile(SCRIPT, replacement)
+        replacement.chmod(0o700)
+        source.unlink()
+        source.symlink_to(replacement)
+    elif unsafe_kind == "nonregular":
+        source.unlink()
+        source.mkdir()
+    elif unsafe_kind == "wrong_owner":
+        expected_uid += 1
+    elif unsafe_kind == "hardlink":
+        replacement = tmp_path / "replacement.sh"
+        shutil.copyfile(SCRIPT, replacement)
+        replacement.chmod(0o700)
+        source.unlink()
+        os.link(replacement, source)
+    elif unsafe_kind == "mode":
+        source.chmod(0o744)
+    elif unsafe_kind == "bytes":
+        source.write_text("#!/usr/bin/env bash\nexit 0\n")
+        source.chmod(0o700)
+    elif unsafe_kind == "index_mode":
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "update-index",
+                "--chmod=-x",
+                "--",
+                relative_path,
+            ],
+            check=True,
+        )
+    else:
+        subprocess.run(
+            ["git", "-C", str(repo), "rm", "--cached", "--", relative_path],
+            check=True,
+            capture_output=True,
+        )
+
+    result = _run_script_normalizer(repo, relative_path, expected_uid, expected_gid)
+
+    assert result.returncode != 0
+    assert "market platform: root service script" in result.stderr
 
 
 def test_capability_free_readiness_service_can_traverse_restore_receipt_tree() -> None:

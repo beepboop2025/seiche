@@ -17,6 +17,7 @@ OFFSITE_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.service
 OFFSITE_SERVICE_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.service
 OFFSITE_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.timer"
 OFFSITE_TIMER_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.timer
+OFFSITE_SCRIPT_RELATIVE=ops/deploy/seiche-market-offsite-backup.sh
 STORAGE_PREFLIGHT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.py"
 STORAGE_PREFLIGHT_INSTALL_DIR=/etc/seiche/libexec
 STORAGE_PREFLIGHT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-storage-preflight.py"
@@ -59,7 +60,155 @@ READINESS_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.timer"
 READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
 READINESS_SCRIPT_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
 READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-data-readiness.sh
+READINESS_SCRIPT_RELATIVE=ops/deploy/seiche-data-readiness.sh
 LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
+
+# Git creates an executable as 0700 when the signed release gate's UMask=0077
+# is active. These two scripts are later read by capability-free root units, so
+# bind each source to its tracked 100755 blob and normalize the already-open
+# regular file without ever following a replacement symlink.
+normalize_root_service_script() {
+    local relative_path="$1"
+    local expected_uid="$2"
+    local expected_gid="$3"
+    case "$relative_path" in
+        "$READINESS_SCRIPT_RELATIVE"|"$OFFSITE_SCRIPT_RELATIVE") ;;
+        *)
+            echo "market platform: refusing to normalize an unknown root service script: $relative_path" >&2
+            return 1
+            ;;
+    esac
+    /usr/bin/python3 - \
+        "$APP_DIR" "$relative_path" "$expected_uid" "$expected_gid" <<'PY'
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+import sys
+
+repo_text, relative_path, expected_uid_text, expected_gid_text = sys.argv[1:]
+
+
+def fail(reason: str) -> None:
+    print(
+        f"market platform: root service script {reason}: {relative_path}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+try:
+    expected_uid = int(expected_uid_text)
+    expected_gid = int(expected_gid_text)
+except ValueError:
+    fail("expected ownership is invalid")
+if expected_uid < 0 or expected_gid < 0:
+    fail("expected ownership is invalid")
+
+repo = Path(repo_text)
+source = repo / relative_path
+try:
+    repo_metadata = os.lstat(repo)
+except OSError:
+    fail("repository is missing or unsafe")
+if not stat.S_ISDIR(repo_metadata.st_mode):
+    fail("repository is missing or unsafe")
+
+git_command = [
+    "/usr/bin/git",
+    "-c",
+    f"safe.directory={repo}",
+    "-C",
+    str(repo),
+]
+try:
+    tracked = subprocess.run(
+        [*git_command, "ls-files", "--stage", "--", relative_path],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+except OSError:
+    fail("tracked identity cannot be inspected")
+lines = tracked.stdout.splitlines()
+if tracked.returncode != 0 or len(lines) != 1 or "\t" not in lines[0]:
+    fail("is not one tracked 100755 file")
+index_fields, tracked_path = lines[0].split("\t", 1)
+fields = index_fields.split()
+if (
+    tracked_path != relative_path
+    or len(fields) != 3
+    or fields[0] != "100755"
+    or fields[2] != "0"
+    or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", fields[1]) is None
+):
+    fail("is not one tracked 100755 file")
+expected_object = fields[1]
+
+descriptor = -1
+try:
+    if not hasattr(os, "O_NOFOLLOW"):
+        fail("no-follow validation is unavailable")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
+    descriptor = os.open(source, flags)
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        fail("source is not one regular file")
+    if before.st_uid != expected_uid or before.st_gid != expected_gid:
+        fail("source ownership is unsafe")
+    source_mode = stat.S_IMODE(before.st_mode)
+    if source_mode not in (0o700, 0o755):
+        fail("source mode is unsafe")
+    with os.fdopen(os.dup(descriptor), "rb") as handle:
+        source_bytes = handle.read()
+    digest = subprocess.run(
+        [*git_command, "hash-object", "--stdin"],
+        input=source_bytes,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if (
+        digest.returncode != 0
+        or digest.stdout.decode("ascii", errors="replace").strip()
+        != expected_object
+    ):
+        fail("bytes do not match the tracked object")
+    try:
+        os.fchmod(descriptor, 0o755)
+    except OSError:
+        fail("mode normalization failed")
+    after = os.fstat(descriptor)
+    if (
+        after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+        or after.st_uid != expected_uid
+        or after.st_gid != expected_gid
+        or after.st_nlink != 1
+        or not stat.S_ISREG(after.st_mode)
+        or stat.S_IMODE(after.st_mode) != 0o755
+    ):
+        fail("mode normalization failed")
+    visible = os.lstat(source)
+    if (
+        visible.st_dev != after.st_dev
+        or visible.st_ino != after.st_ino
+        or visible.st_uid != expected_uid
+        or visible.st_gid != expected_gid
+        or visible.st_nlink != 1
+        or not stat.S_ISREG(visible.st_mode)
+        or stat.S_IMODE(visible.st_mode) != 0o755
+    ):
+        fail("path changed during mode normalization")
+except OSError:
+    fail("source is missing or unsafe")
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+PY
+}
 
 if [ "$STATE_DIR" != /var/lib/seiche ] \
         || [ "$BACKUP_DIR" != /var/backups/seiche-market ]; then
@@ -87,6 +236,19 @@ fi
     echo "market platform: storage preflight source is missing or unsafe" >&2
     exit 1
 }
+[ -x /usr/bin/git ] || {
+    echo "market platform: /usr/bin/git is required to verify root service scripts" >&2
+    exit 1
+}
+if ! SEICHE_SERVICE_UID=$(/usr/bin/id -u seiche) \
+        || ! SEICHE_SERVICE_GID=$(/usr/bin/id -g seiche); then
+    echo "market platform: seiche service ownership cannot be resolved" >&2
+    exit 1
+fi
+normalize_root_service_script \
+    "$READINESS_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID" "$SEICHE_SERVICE_GID"
+normalize_root_service_script \
+    "$OFFSITE_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID" "$SEICHE_SERVICE_GID"
 
 PACKAGES=()
 if ! command -v psql >/dev/null 2>&1; then
