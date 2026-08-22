@@ -480,7 +480,10 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
         {
             "deep": {
                 "wrapper": {
-                    "description": {"source": "chinamoney", "value": 1.52}
+                    "description": {
+                        "text": "CN.CFETS.FDR007",
+                        "value": 1.52,
+                    }
                 }
             }
         },
@@ -488,7 +491,7 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
             "deep": {
                 "wrapper": {
                     "notes": [
-                        {"series": "CN.CFETS.FDR007", "value": 1.52}
+                        {"text": "CN.CFETS.FDR007", "value": 1.52}
                     ]
                 }
             }
@@ -500,7 +503,7 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
                     "top_targets": [
                         {
                             "term": {
-                                "instrument_id": "CN.CFETS.SHIBOR_ON",
+                                "text": "CN.CFETS.SHIBOR_ON",
                                 "value": 1.31,
                             }
                         }
@@ -508,6 +511,7 @@ def test_lawful_palimpsest_exact_term_is_servable_by_rest(
                 }
             }
         },
+        {"title": "SHIBOR", "value": 1.31},
         {
             "deep": {
                 "wrapper": {
@@ -540,6 +544,39 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
 
     assert assemble._snapshot_contains_restricted_cfets(payload) is True
     assert assemble._servable_snapshot(payload) is False
+
+
+def test_prose_alias_and_data_value_field_permutation_matrix_is_fail_closed() -> None:
+    restricted_uri = (
+        "https://www.chinamoney.com.cn/ags/ms/cm-u-bk-shibor/ShiborHis"
+    )
+    for prose_field in assemble.RESTRICTED_SNAPSHOT_PROSE_FIELDS:
+        for value_field in assemble.RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS:
+            row = {
+                prose_field: "CN.CFETS.FDR007",
+                value_field: 1.52,
+            }
+            assert assemble._snapshot_contains_restricted_cfets(row), (
+                prose_field,
+                value_field,
+            )
+        assert assemble._snapshot_contains_restricted_cfets(
+            {prose_field: restricted_uri, "value": 1.52}
+        ), prose_field
+        for suffix in assemble.RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES:
+            assert assemble._snapshot_contains_restricted_cfets(
+                {prose_field: "CN.CFETS.FDR007", f"observed{suffix}": 1.52}
+            ), (prose_field, suffix)
+
+
+def test_quantitative_row_rule_preserves_pure_and_palimpsest_prose() -> None:
+    assert not assemble._snapshot_contains_restricted_cfets({"text": "SHIBOR"})
+    assert not assemble._snapshot_contains_restricted_cfets(
+        {"term": "SHIBOR", "threat": 0.72, "is_new": True}
+    )
+    assert not assemble._snapshot_contains_restricted_cfets(
+        {"description": {"text": "SHIBOR"}}
+    )
 
 
 def test_restart_ignores_poisoned_durable_snapshot_and_uses_clean_static(
@@ -679,7 +716,7 @@ def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
         "top_targets": [
             {
                 "term": {
-                    "instrument_id": "CN.CFETS.SHIBOR_ON",
+                    "text": "CN.CFETS.SHIBOR_ON",
                     "value": 1.31,
                 }
             }
@@ -710,7 +747,7 @@ def test_rest_overview_quarantines_palimpsest_term_mapping_bypass(
     "poison",
     (
         {"metrics": ["SHIBOR_ON"]},
-        {"notes": [{"series": "CN.CFETS.FDR007", "value": 1.52}]},
+        {"notes": [{"text": "CN.CFETS.FDR007", "value": 1.52}]},
     ),
 )
 def test_mcp_tool_quarantines_plural_and_nested_prose_mapping_bypasses(

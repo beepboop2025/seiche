@@ -231,6 +231,55 @@ RESTRICTED_SNAPSHOT_IDENTITY_CONTAINERS = frozenset({
     "targets",
     "variables",
 })
+RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS = frozenset({
+    "amount",
+    "change",
+    "change_bp",
+    "change_pct",
+    "close",
+    "high",
+    "last",
+    "last_pct",
+    "level",
+    "low",
+    "mid",
+    "open",
+    "percentile",
+    "price",
+    "price_usd",
+    "price_usd_per_bbl",
+    "pressure",
+    "quote",
+    "rate",
+    "rate2",
+    "rate_pct",
+    "raw_value",
+    "spread",
+    "spread_bp",
+    "stress",
+    "value",
+    "value_bp",
+    "value_pct",
+    "values",
+    "z",
+    "zscore",
+})
+RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES = (
+    "_amount",
+    "_close",
+    "_level",
+    "_levels",
+    "_price",
+    "_prices",
+    "_quote",
+    "_quotes",
+    "_rate",
+    "_rates",
+    "_spread",
+    "_spreads",
+    "_value",
+    "_values",
+)
 RESTRICTED_SNAPSHOT_URL_SUFFIXES = (
     "_url",
     "_urls",
@@ -1968,6 +2017,39 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             return True
         return False
 
+    def data_value_field(field: str, value: object) -> bool:
+        return value is not None and (
+            field in RESTRICTED_SNAPSHOT_DATA_VALUE_FIELDS
+            or field.endswith(RESTRICTED_SNAPSHOT_DATA_VALUE_SUFFIXES)
+        )
+
+    def restricted_prose_identity(value: object) -> bool:
+        if isinstance(value, (list, tuple)):
+            return any(restricted_prose_identity(item) for item in value)
+        if isinstance(value, dict):
+            return False
+        return restricted_mirror_url(value) or restricted_identifier(value, typed=True)
+
+    def restricted_data_row(value: dict) -> bool:
+        """Detect a restricted identity laundered through a prose-named label.
+
+        Prose aliases describe text until a sibling field makes the mapping a
+        quantitative row. Palimpsest's ``threat`` is deliberately absent from
+        the value-field contract, so censorship targets remain lawful prose.
+        """
+
+        has_data_value = any(
+            data_value_field(str(key).casefold(), nested)
+            for key, nested in value.items()
+        )
+        if not has_data_value:
+            return False
+        return any(
+            str(key).casefold() in RESTRICTED_SNAPSHOT_PROSE_FIELDS
+            and restricted_prose_identity(nested)
+            for key, nested in value.items()
+        )
+
     def walk(
         value: object,
         *,
@@ -1982,7 +2064,7 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
             # Thus {"text": "SHIBOR"} remains lawful prose, while
             # {"source": "chinamoney"} is a restricted identity.
             prose_context = False
-            if restricted_engine_shape(value):
+            if restricted_engine_shape(value) or restricted_data_row(value):
                 return True
             for key, nested in value.items():
                 key_text = str(key)
