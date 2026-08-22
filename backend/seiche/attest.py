@@ -482,6 +482,57 @@ def _current_operator_public_key(attest_dir: str | None = None) -> str:
     return public_key
 
 
+def verify_trusted_ed25519_signature(
+    message: bytes,
+    signature_hex: str,
+    signer_public_key_hex: str,
+    *,
+    attest_dir: str | None = None,
+) -> None:
+    """Verify one detached signature under Seiche's authenticated trust policy.
+
+    The key carried beside a detached signature is only an identifier.  It is
+    accepted solely when it is already present in the release-pinned hosted
+    allowlist or the installation's explicit trust policy; mutable sidecar
+    material never bootstraps authority.  Successful verification returns
+    ``None`` and every malformed, untrusted, or invalid input fails closed.
+    """
+
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    if not isinstance(message, bytes) or not message:
+        raise ValueError("signature message must be non-empty bytes")
+    if (
+        not isinstance(signature_hex, str)
+        or _ED25519_SIGNATURE_RE.fullmatch(signature_hex) is None
+    ):
+        raise ValueError("Ed25519 signature is malformed")
+    if (
+        not isinstance(signer_public_key_hex, str)
+        or _SHA256_RE.fullmatch(signer_public_key_hex) is None
+    ):
+        raise ValueError("Ed25519 signer key is malformed")
+    # Request-facing verifiers must not let ambient process configuration
+    # replace the release-pinned hosted identity.  Tests and non-hosted
+    # installations can opt into a separate authenticated policy only by
+    # passing its directory explicitly.
+    trusted_keys = (
+        PRODUCTION_TRUSTED_OPERATOR_KEYS
+        if attest_dir is None
+        else _trusted_operator_keys(attest_dir)
+    )
+    if signer_public_key_hex not in trusted_keys:
+        raise ValueError("Ed25519 signer key is not trusted")
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(
+            bytes.fromhex(signer_public_key_hex)
+        )
+        public_key.verify(bytes.fromhex(signature_hex), message)
+    except (InvalidSignature, TypeError, ValueError) as exc:
+        raise ValueError("Ed25519 signature is invalid") from exc
+
+
 def _sig_message(stream: str, day: str, record_hash_hex: str) -> bytes:
     return f"{DOMAIN}:{stream}:{day}:{record_hash_hex}".encode()
 

@@ -14,6 +14,7 @@
   seiche mcp                 serve the board to AI agents over MCP (stdio)
   seiche source-collect      refresh the broad legacy source cache once
   seiche source-worker       refresh legacy sources continuously
+  seiche nbs-intake          inspect or ingest signed NBS browser exports
 
 Exit codes: 0 fine, 1 hard failure, 2 = alerts fired or validation pending.
 """
@@ -982,6 +983,98 @@ def cmd_source_worker(args) -> int:
     return 0
 
 
+def _default_nbs_root() -> str:
+    return os.getenv("SEICHE_NBS_ROOT", "/var/lib/seiche-nbs").strip() or (
+        "/var/lib/seiche-nbs"
+    )
+
+
+def _default_nbs_public_dir() -> str:
+    configured = os.getenv("SEICHE_NBS_PUBLIC_DIR", "").strip()
+    if configured:
+        return configured
+    return str(Path(_default_nbs_root()) / "public")
+
+
+def cmd_nbs_intake(args) -> int:
+    """Operate the offline, signed, metadata-only NBS evidence boundary."""
+
+    from seiche import nbs_intake
+
+    try:
+        if args.nbs_action == "catalog":
+            payload = nbs_intake.nbs_public_catalog()
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
+        if args.nbs_action == "status":
+            try:
+                context = nbs_intake.load_public_context_strict_from_public_dir(
+                    args.public_dir,
+                    attest_dir=args.attest_dir,
+                )
+            except nbs_intake.NBSNotOnboardedError:
+                payload = nbs_intake.nbs_public_catalog()
+            else:
+                payload = context.to_dict()
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if payload.get("available") is True else 2
+        if args.nbs_action == "claim":
+            claim = nbs_intake.build_signature_claim_from_manifest_file(
+                args.manifest,
+                signed_at=args.signed_at,
+                signer_key_id=args.signer_key_id,
+            )
+            # No trailing newline: these are the exact bytes the detached
+            # Ed25519 signature must cover.
+            sys.stdout.write(nbs_intake.encode_signature_claim(claim).decode("utf-8"))
+            sys.stdout.flush()
+            return 0
+        if args.nbs_action == "ingest":
+            context = nbs_intake.ingest_signed_export(
+                args.manifest,
+                args.signature,
+                args.raw,
+                root=args.root,
+                attest_dir=args.attest_dir,
+            )
+            print(json.dumps(context.to_dict(), indent=2, sort_keys=True))
+            return 0
+    except nbs_intake.NBSIntakeError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": "seiche.nbs-intake-error.v1",
+                    "status": "rejected",
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": "seiche.nbs-intake-error.v1",
+                    "status": "failed",
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": "NBS operation failed; inspect protected service logs",
+                    },
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    raise RuntimeError(f"unsupported NBS intake action: {args.nbs_action}")
+
+
+
 def _aware_iso_timestamp(value: str) -> datetime:
     """Argparse converter which refuses ambiguous local/naive cutoffs."""
 
@@ -1235,6 +1328,67 @@ def main() -> None:
     )
     p.add_argument("--poll-seconds", type=_positive_int, default=300)
     p.set_defaults(fn=cmd_source_worker)
+
+    p = sub.add_parser(
+        "nbs-intake",
+        help="inspect or ingest offline signed NBS browser exports",
+    )
+    nbs_sub = p.add_subparsers(dest="nbs_action", required=True)
+
+    nbs_sub.add_parser(
+        "catalog",
+        help="print the code-owned metadata-only source catalog",
+    ).set_defaults(fn=cmd_nbs_intake)
+
+    nbs_status = nbs_sub.add_parser(
+        "status",
+        help="verify the public-only signed revision head",
+    )
+    nbs_status.add_argument(
+        "--public-dir",
+        default=_default_nbs_public_dir(),
+        help="public NBS directory (never the restricted evidence root)",
+    )
+    nbs_status.add_argument(
+        "--attest-dir",
+        help="explicit operator-controlled trust-policy directory",
+    )
+    nbs_status.set_defaults(fn=cmd_nbs_intake)
+
+    nbs_claim = nbs_sub.add_parser(
+        "claim",
+        help="emit exact canonical bytes for offline Ed25519 signing",
+    )
+    nbs_claim.add_argument("manifest", help="canonical owner-export manifest JSON")
+    nbs_claim.add_argument(
+        "--signed-at",
+        required=True,
+        help="UTC signing timestamp with an explicit offset",
+    )
+    nbs_claim.add_argument(
+        "--signer-key-id",
+        required=True,
+        help="trusted Ed25519 public key as 64 lowercase hex characters",
+    )
+    nbs_claim.set_defaults(fn=cmd_nbs_intake)
+
+    nbs_ingest = nbs_sub.add_parser(
+        "ingest",
+        help="verify and atomically commit one signed export",
+    )
+    nbs_ingest.add_argument("manifest", help="canonical owner-export manifest JSON")
+    nbs_ingest.add_argument("signature", help="canonical detached-signature sidecar")
+    nbs_ingest.add_argument("raw", help="exact raw NBS browser CSV export")
+    nbs_ingest.add_argument(
+        "--root",
+        default=_default_nbs_root(),
+        help="restricted/public NBS store root",
+    )
+    nbs_ingest.add_argument(
+        "--attest-dir",
+        help="explicit operator-controlled trust-policy directory",
+    )
+    nbs_ingest.set_defaults(fn=cmd_nbs_intake)
 
     from seiche.markets.base import ValidationCheck
 
