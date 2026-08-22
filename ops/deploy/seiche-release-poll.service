@@ -3,14 +3,17 @@ Description=Gate and deploy the exact trusted Seiche main commit
 Requires=seiche-storage-preflight.service
 After=network-online.target seiche-storage-preflight.service
 Wants=network-online.target
-RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
+RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]
 Type=oneshot
-Environment=SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers
-Environment=SEICHE_CONTROL_SIGNING_PRINCIPAL=beepboop2025@users.noreply.github.com
-ExecStart=/usr/local/sbin/seiche-release-poll
+UnsetEnvironment=LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_LIBRARY_PATH LD_PRELOAD
+UnsetEnvironment=LD_PROFILE LD_PROFILE_OUTPUT LD_SHOW_AUXV LD_TRACE_LOADED_OBJECTS
+UnsetEnvironment=LD_BIND_NOW LD_DYNAMIC_WEAK LD_HWCAP_MASK LD_ORIGIN_PATH
+UnsetEnvironment=LD_ASSUME_KERNEL LD_PREFER_MAP_32BIT_EXEC LD_USE_LOAD_BIAS
+UnsetEnvironment=GLIBC_TUNABLES GCONV_PATH LOCPATH
+ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers SEICHE_CONTROL_SIGNING_PRINCIPAL=beepboop2025@users.noreply.github.com /usr/bin/bash -p /usr/local/sbin/seiche-release-poll
 TimeoutStartSec=3h
 TimeoutStopSec=2min
 KillMode=mixed
@@ -31,12 +34,14 @@ AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=read-only
 # Candidate checkout, controller state (including its root-owned deploy
-# wrapper), the market repository/export, and the rollback-owned acceptance
-# marker are the only application data this root controller may change. /root,
-# /opt, /usr/local (including ExecStart), other homes, and unrelated /var state
-# stay read-only in the service mount namespace.
+# wrapper), the market repository/export, the separately permissioned NBS
+# evidence root, and the rollback-owned acceptance marker are the only
+# application data this root controller may change. /root, unrelated /opt and
+# /usr/local (including ExecStart), other homes, and unrelated /var state stay
+# read-only in the service mount namespace.
 ReadWritePaths=/home/seiche
-ReadWritePaths=/var/lib/seiche-control /var/lib/seiche-deploy /var/lib/seiche /var/backups/seiche-market
+ReadWritePaths=/var/lib/seiche-control /var/lib/seiche-deploy /var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
+ReadWritePaths=/opt/seiche-nbs-intake
 ReadWritePaths=/run/seiche-control /run/seiche-deploy /run/seiche-release /run/lock
 # These roots contain only root-owned release configuration. The rc paths are
 # needed because Debian's `systemctl enable postgresql` synchronizes its SysV

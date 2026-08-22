@@ -207,6 +207,145 @@ def _ingest(
     return store.ingest(manifest_path, signature_path, raw_path)
 
 
+def _store_snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
+    """Capture mutation-relevant tree state without depending on read atimes."""
+
+    snapshot: list[tuple[object, ...]] = []
+    for path in sorted((root, *root.rglob("*")), key=lambda item: str(item)):
+        metadata = path.lstat()
+        body = path.read_bytes() if stat.S_ISREG(metadata.st_mode) else None
+        snapshot.append(
+            (
+                str(path.relative_to(root.parent)),
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mode,
+                metadata.st_nlink,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+                metadata.st_uid,
+                metadata.st_gid,
+                body,
+            )
+        )
+    return tuple(snapshot)
+
+
+def _install_production_guard(
+    monkeypatch: pytest.MonkeyPatch,
+    root_descriptor: int,
+    *,
+    token: bytes | None = None,
+) -> int:
+    selected_token = token or secrets.token_bytes(32)
+    token_read, token_write = os.pipe()
+    os.write(token_write, selected_token)
+    os.close(token_write)
+    monkeypatch.setenv(nbs._PRODUCTION_GUARD_ROOT_FD_ENV, str(root_descriptor))
+    monkeypatch.setenv(nbs._PRODUCTION_GUARD_TOKEN_FD_ENV, str(token_read))
+    monkeypatch.setenv(nbs._PRODUCTION_GUARD_TOKEN_ENV, selected_token.hex())
+    return token_read
+
+
+def test_production_store_refuses_direct_library_use_without_bootstrapping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    production = tmp_path / "production-nbs"
+    monkeypatch.setattr(nbs, "PRODUCTION_NBS_ROOT", production)
+    monkeypatch.setattr(nbs.os, "geteuid", lambda: 0)
+
+    with pytest.raises(nbs.NBSIntegrityError, match="root descriptor"):
+        nbs.NBSIntakeStore(production).ingest(
+            tmp_path / "manifest.json",
+            tmp_path / "signature.json",
+            tmp_path / "raw.csv",
+        )
+
+    assert not production.exists()
+
+
+def test_production_store_rejects_a_custom_trust_policy_before_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    production = tmp_path / "production-nbs"
+    monkeypatch.setattr(nbs, "PRODUCTION_NBS_ROOT", production)
+
+    with pytest.raises(nbs.NBSIntegrityError, match="release-pinned"):
+        nbs.NBSIntakeStore(production, attest_dir=str(tmp_path / "custom-trust"))
+
+    assert not production.exists()
+
+
+@pytest.mark.parametrize("kind", ["descendant", "alias"])
+def test_production_tree_aliases_and_descendants_cannot_be_custom_stores(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    production = tmp_path / "production-nbs"
+    production.mkdir()
+    monkeypatch.setattr(nbs, "PRODUCTION_NBS_ROOT", production)
+    selected = production / "nested"
+    if kind == "alias":
+        selected = tmp_path / "production-alias"
+        selected.symlink_to(production, target_is_directory=True)
+
+    with pytest.raises(nbs.NBSIntegrityError, match="exact canonical root"):
+        nbs.NBSIntakeStore(selected).ingest(
+            tmp_path / "manifest.json",
+            tmp_path / "signature.json",
+            tmp_path / "raw.csv",
+        )
+
+
+def test_production_guard_is_one_use_and_pins_the_visible_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    production = tmp_path / "production-nbs"
+    production.mkdir()
+    monkeypatch.setattr(nbs, "PRODUCTION_NBS_ROOT", production)
+    monkeypatch.setattr(nbs.os, "geteuid", lambda: 0)
+    root_descriptor = os.open(production, os.O_RDONLY | os.O_DIRECTORY)
+    token_descriptor = _install_production_guard(monkeypatch, root_descriptor)
+    try:
+        with nbs._production_ingest_authorization(production):
+            assert nbs._PRODUCTION_GUARD_TOKEN_ENV not in os.environ
+        with (
+            pytest.raises(nbs.NBSIntegrityError, match="root descriptor"),
+            nbs._production_ingest_authorization(production),
+        ):
+            pass
+    finally:
+        os.close(token_descriptor)
+        os.close(root_descriptor)
+
+
+def test_production_guard_detects_visible_root_replacement_after_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    production = tmp_path / "production-nbs"
+    production.mkdir()
+    monkeypatch.setattr(nbs, "PRODUCTION_NBS_ROOT", production)
+    monkeypatch.setattr(nbs.os, "geteuid", lambda: 0)
+    root_descriptor = os.open(production, os.O_RDONLY | os.O_DIRECTORY)
+    token_descriptor = _install_production_guard(monkeypatch, root_descriptor)
+    try:
+        with (
+            pytest.raises(nbs.NBSIntegrityError, match="visible root"),
+            nbs._production_ingest_authorization(production),
+        ):
+            production.rename(tmp_path / "detached-production-nbs")
+            production.mkdir()
+    finally:
+        os.close(token_descriptor)
+        os.close(root_descriptor)
+
+
 def test_manifest_file_claim_helper_preserves_intake_canonicality(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
@@ -320,6 +459,109 @@ def test_ingest_persists_restricted_evidence_and_metadata_only_projection(
     assert loaded.to_dict() == public
 
 
+def test_full_store_audit_is_strictly_read_only_and_preserves_empty_state(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_key, _public_key, trust = signer
+    empty = tmp_path / "empty-store"
+    (empty / "restricted").mkdir(parents=True)
+    (empty / "public" / "revisions").mkdir(parents=True)
+    empty.chmod(0o750)
+    (empty / "restricted").chmod(0o700)
+    (empty / "public").chmod(0o750)
+    (empty / "public" / "revisions").chmod(0o2750)
+    assert nbs.NBSIntakeStore(empty).audit_store_strict() == "not_onboarded"
+
+    root = tmp_path / "audited-store"
+    store = nbs.NBSIntakeStore(root, attest_dir=str(trust))
+    _ingest(store, _bundle(tmp_path, private_key, tag="audited"))
+    before = _store_snapshot(root)
+
+    def mutation_forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("read-only audit reached a writer primitive")
+
+    monkeypatch.setattr(store, "_locked", mutation_forbidden)
+    monkeypatch.setattr(store, "_ensure_layout", mutation_forbidden)
+    monkeypatch.setattr(store, "_reconcile_atomic_orphans", mutation_forbidden)
+
+    assert store.audit_store_strict() == "verified_head"
+    assert _store_snapshot(root) == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_raw",
+        "corrupt_raw",
+        "missing_manifest",
+        "corrupt_manifest",
+        "missing_signature",
+        "corrupt_signature",
+        "missing_restricted_head",
+        "corrupt_restricted_head",
+        "orphan_raw_object",
+        "extra_root_entry",
+        "symlink_raw_object",
+        "hardlinked_raw_object",
+        "restricted_public_mismatch",
+    ],
+)
+def test_full_store_audit_rejects_every_incomplete_or_divergent_custody_state(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+    mutation: str,
+) -> None:
+    private_key, _public_key, trust = signer
+    bundle = _bundle(tmp_path, private_key, tag=f"audit-{mutation}")
+    root = tmp_path / "store"
+    store = nbs.NBSIntakeStore(root, attest_dir=str(trust))
+    _ingest(store, bundle)
+    raw_sha256 = str(bundle[3]["raw_evidence"]["sha256"])
+    raw_path = store.objects / raw_sha256[:2] / raw_sha256
+    export = store.exports / "nbs-2026-07-r1"
+    projection = store.revisions / "nbs-2026-07-r1.json"
+
+    if mutation == "missing_raw":
+        raw_path.unlink()
+    elif mutation == "corrupt_raw":
+        raw_path.write_bytes(b"corrupt restricted raw evidence")
+    elif mutation == "missing_manifest":
+        (export / "manifest.json").unlink()
+    elif mutation == "corrupt_manifest":
+        (export / "manifest.json").write_bytes(b"{}")
+    elif mutation == "missing_signature":
+        (export / "signature.json").unlink()
+    elif mutation == "corrupt_signature":
+        (export / "signature.json").write_bytes(b"{}")
+    elif mutation == "missing_restricted_head":
+        store.restricted_head.unlink()
+    elif mutation == "corrupt_restricted_head":
+        store.restricted_head.write_bytes(b"{}")
+    elif mutation == "orphan_raw_object":
+        orphan_sha256 = "f" * 64
+        if orphan_sha256 == raw_sha256:
+            orphan_sha256 = "e" * 64
+        orphan_bucket = store.objects / orphan_sha256[:2]
+        orphan_bucket.mkdir(mode=0o700)
+        orphan = orphan_bucket / orphan_sha256
+        orphan.write_bytes(b"unreferenced raw evidence")
+        orphan.chmod(0o600)
+    elif mutation == "extra_root_entry":
+        (root / "unexpected").write_text("unknown topology")
+    elif mutation == "symlink_raw_object":
+        raw_path.unlink()
+        raw_path.symlink_to(bundle[2])
+    elif mutation == "hardlinked_raw_object":
+        os.link(raw_path, tmp_path / "external-raw-hardlink")
+    else:
+        projection.write_bytes(projection.read_bytes() + b"\n")
+
+    with pytest.raises(nbs.NBSIntegrityError):
+        store.audit_store_strict()
+
+
 def test_public_catalog_is_pure_metadata_and_hard_disables_values() -> None:
     catalog = nbs.nbs_public_catalog()
 
@@ -359,6 +601,48 @@ def test_public_catalog_is_pure_metadata_and_hard_disables_values() -> None:
     assert nbs.MAX_RAW_BYTES == 32 * 1024 * 1024
     assert nbs.MAX_MANIFEST_BYTES == 256 * 1024
     assert nbs.MAX_SIGNATURE_BYTES == 4 * 1024
+
+
+def test_public_projection_is_committed_with_the_api_reader_group(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> None:
+    private_key, _public_key, trust = signer
+    root = tmp_path / "store"
+    initial = nbs.NBSIntakeStore(root, attest_dir=str(trust))
+    initial._ensure_layout()
+    process_gid = (root / ".staging").stat().st_gid
+    candidate_gids = [gid for gid in os.getgroups() if gid != process_gid]
+    if os.geteuid() == 0 and not candidate_gids:
+        candidate_gids.append(process_gid + 1)
+    if not candidate_gids:
+        pytest.skip("a second assignable group is required for the group-boundary test")
+    api_gid = candidate_gids[0]
+    try:
+        for directory, mode in (
+            (root / "public", 0o750),
+            (root / "public" / "revisions", 0o2750),
+        ):
+            os.chown(directory, -1, api_gid)
+            directory.chmod(mode)
+    except PermissionError:
+        pytest.skip("the current account cannot assign a supplementary test group")
+
+    store = nbs.NBSIntakeStore(root, attest_dir=str(trust))
+    context = _ingest(
+        store,
+        _bundle(tmp_path, private_key, tag="public-reader-group"),
+    )
+
+    projection = store.revisions / f"{context.revision_id}.json"
+    public_head = store.public_head
+    assert (root / ".staging").stat().st_gid == process_gid
+    assert projection.stat().st_gid == api_gid
+    assert public_head.stat().st_gid == api_gid
+    assert stat.S_IMODE(projection.stat().st_mode) == 0o640
+    assert stat.S_IMODE(public_head.stat().st_mode) == 0o640
+    assert projection.stat().st_mode & stat.S_IRGRP
+    assert public_head.stat().st_mode & stat.S_IRGRP
 
 
 def test_manifest_nonce_is_unique_lowercase_hex_and_stays_restricted(
@@ -805,7 +1089,7 @@ def test_exact_retry_recovers_after_restricted_commit_before_publication(
     original_publish = nbs._atomic_publish
     failed = False
 
-    def crash_before_public(path, payload, *, mode, kind, staging_dir):
+    def crash_before_public(path, payload, *, mode, kind, staging_dir, gid=None):
         nonlocal failed
         if kind == "public projection" and not failed:
             failed = True
@@ -816,6 +1100,7 @@ def test_exact_retry_recovers_after_restricted_commit_before_publication(
             mode=mode,
             kind=kind,
             staging_dir=staging_dir,
+            gid=gid,
         )
 
     monkeypatch.setattr(nbs, "_atomic_publish", crash_before_public)

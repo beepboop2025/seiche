@@ -95,7 +95,7 @@ def test_ingest_prints_only_the_public_projection(monkeypatch, capsys) -> None:
         manifest="manifest.json",
         signature="signature.json",
         raw="owner-export.csv",
-        root="/var/lib/seiche-nbs",
+        root="/tmp/seiche-nbs-test-store",
         attest_dir="/etc/seiche/attest",
     )
 
@@ -106,11 +106,54 @@ def test_ingest_prints_only_the_public_projection(monkeypatch, capsys) -> None:
             "manifest.json",
             "signature.json",
             "owner-export.csv",
-            "/var/lib/seiche-nbs",
+            "/tmp/seiche-nbs-test-store",
             "/etc/seiche/attest",
         )
     ]
     assert json.loads(capsys.readouterr().out) == public
+
+
+def test_direct_cli_cannot_write_the_production_store(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(nbs_intake.os, "geteuid", lambda: 0)
+    for name in (
+        nbs_intake._PRODUCTION_GUARD_ROOT_FD_ENV,
+        nbs_intake._PRODUCTION_GUARD_TOKEN_FD_ENV,
+        nbs_intake._PRODUCTION_GUARD_TOKEN_ENV,
+    ):
+        monkeypatch.delenv(name, raising=False)
+    args = SimpleNamespace(
+        nbs_action="ingest",
+        manifest="manifest.json",
+        signature="signature.json",
+        raw="owner-export.csv",
+        root="/var/lib/seiche-nbs",
+        attest_dir=None,
+    )
+
+    assert cli.cmd_nbs_intake(args) == 1
+
+    error = json.loads(capsys.readouterr().err)
+    assert error["status"] == "rejected"
+    assert error["error"]["type"] == "NBSIntegrityError"
+    assert "root descriptor" in error["error"]["message"]
+
+
+def test_direct_cli_cannot_override_production_trust(monkeypatch, capsys) -> None:
+    args = SimpleNamespace(
+        nbs_action="ingest",
+        manifest="manifest.json",
+        signature="signature.json",
+        raw="owner-export.csv",
+        root="/var/lib/seiche-nbs",
+        attest_dir="/etc/seiche/attest",
+    )
+
+    assert cli.cmd_nbs_intake(args) == 1
+
+    error = json.loads(capsys.readouterr().err)
+    assert error["status"] == "rejected"
+    assert error["error"]["type"] == "NBSIntegrityError"
+    assert "release-pinned" in error["error"]["message"]
 
 
 def test_integrity_rejection_is_structured_and_nonzero(monkeypatch, capsys) -> None:

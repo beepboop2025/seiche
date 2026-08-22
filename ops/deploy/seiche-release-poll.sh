@@ -17,7 +17,7 @@ RUNTIME_DIR="${SEICHE_CONTROL_RUNTIME_DIR:-/run/seiche-control}"
 CONTROL_LOCK="$RUNTIME_DIR/release.lock"
 DEPLOY_STATE="${SEICHE_CONTROL_DEPLOY_STATE:-/var/lib/seiche-deploy/deployed-sha}"
 DEPLOY_WRAPPER="${SEICHE_CONTROL_DEPLOY_WRAPPER:-/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh}"
-RUNUSER="${SEICHE_CONTROL_RUNUSER:-runuser}"
+RUNUSER=/usr/sbin/runuser
 SYSTEMCTL="${SEICHE_CONTROL_SYSTEMCTL:-systemctl}"
 CURL="${SEICHE_CONTROL_CURL:-curl}"
 SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
@@ -63,6 +63,21 @@ fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
+
+# A test-only source harness may replace runuser with a local executable. The
+# production controller always uses the fixed Ubuntu util-linux path and fails
+# closed if an ambient process attempts to override it.
+if [ -n "${SEICHE_CONTROL_RUNUSER:-}" ]; then
+  [ "${SEICHE_CONTROL_LIBRARY_ONLY:-0}" = 1 ] \
+    || fail "SEICHE_CONTROL_RUNUSER is unavailable in production"
+  case "$SEICHE_CONTROL_RUNUSER" in
+    /*) ;;
+    *) fail "test runuser override must be absolute" ;;
+  esac
+  [ -x "$SEICHE_CONTROL_RUNUSER" ] \
+    || fail "test runuser override is not executable"
+  RUNUSER=$SEICHE_CONTROL_RUNUSER
+fi
 
 valid_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]]
@@ -111,7 +126,7 @@ import sys
 
 runner, service_user, *command = sys.argv[1:]
 os.setsid()
-os.execvp(runner, [runner, "-u", service_user, "--", *command])
+os.execv(runner, [runner, "-u", service_user, "--", *command])
 ' "$RUNUSER" "$SERVICE_USER" "$@" &
   GATE_PROCESS_PID=$!
 
@@ -354,12 +369,31 @@ verify_target_signature() {
   fi
 }
 
+run_deploy_wrapper() {
+  local mode="$1" target="${2:-}"
+  case "$mode" in
+    admission)
+      /usr/bin/env -i \
+        HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_DEPLOY_ADMISSION_ONLY=1 \
+        /usr/bin/bash -p "$DEPLOY_WRAPPER"
+      ;;
+    deploy)
+      valid_sha "$target" || fail "deploy-wrapper handoff target is invalid"
+      /usr/bin/env -i \
+        HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_EXPECTED_TARGET_SHA="$target" \
+        /usr/bin/bash -p "$DEPLOY_WRAPPER"
+      ;;
+    *) fail "deploy-wrapper handoff mode is invalid" ;;
+  esac
+}
+
 wait_for_post_gate_admission() {
   local deadline=$((SECONDS + ADMISSION_WAIT_SECONDS)) status=0
   while true; do
     status=0
-    SEICHE_DEPLOY_ADMISSION_ONLY=1 "$DEPLOY_WRAPPER" \
-      || status=$?
+    run_deploy_wrapper admission || status=$?
     case "$status" in
       0) return 0 ;;
       75)
@@ -708,8 +742,7 @@ case "$RECEIPT_PAIR_STATUS" in
 esac
 
 ADMISSION_STATUS=0
-SEICHE_DEPLOY_ADMISSION_ONLY=1 "$DEPLOY_WRAPPER" \
-  || ADMISSION_STATUS=$?
+run_deploy_wrapper admission || ADMISSION_STATUS=$?
 case "$ADMISSION_STATUS" in
   0) ;;
   75)
@@ -945,8 +978,7 @@ activate_release_timer_for_deploy \
   || fail "release timer could not be made enabled and active before deployment"
 DEPLOY_STATUS=0
 DEPLOY_WRAPPER_HANDOFF_STARTED=1
-SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER" \
-  || DEPLOY_STATUS=$?
+run_deploy_wrapper deploy "$TARGET" || DEPLOY_STATUS=$?
 DEPLOY_STATE_STATUS=0
 load_deployed_state || DEPLOY_STATE_STATUS=$?
 case "$DEPLOY_STATE_STATUS" in

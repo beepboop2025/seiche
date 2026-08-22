@@ -71,6 +71,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from seiche.config import DATA_DIR, DB_PATH
+from seiche.nbs_trust import PRODUCTION_TRUSTED_OPERATOR_KEYS
 
 logger = logging.getLogger("seiche.attest")
 
@@ -113,14 +114,6 @@ _MAX_OTS_PENDING_URI_BYTES = 1000
 _MAX_OTS_RECURSION_DEPTH = 256
 _MAX_OTS_TIMESTAMP_NODES = 4096
 _OTS_PENDING_URI_RE = re.compile(rb"^[A-Za-z0-9._/:\-]{0,1000}$")
-
-# Seiche's production signing identity is release-pinned rather than learned
-# from mutable attestation storage. Rotations add a new key here through the
-# normal signed-release review; old keys remain so historical signatures stay
-# verifiable. Custom installations bootstrap their own explicit trust file.
-PRODUCTION_TRUSTED_OPERATOR_KEYS = frozenset(
-    {"8c2fead17b95e9bed153b7acea346202ebdb987467abcadcdf5799f9ca3e1510"}
-)
 
 
 # ---------------------------------------------------------------------------

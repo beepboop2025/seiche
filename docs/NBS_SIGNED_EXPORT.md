@@ -118,13 +118,41 @@ Copy only `manifest.json`, `signature.json`, and the exact browser CSV to an
 operator-controlled intake directory on the host. Then run:
 
 ```bash
-sudo seiche nbs-intake ingest \
-  manifest.json signature.json nbs-export.csv \
-  --root /var/lib/seiche-nbs
+sudo /etc/seiche/libexec/seiche-nbs-intake.py \
+  manifest.json signature.json nbs-export.csv
 ```
 
+The production launcher has the exact `#!/usr/bin/python3 -I` shebang and no
+root override, so direct execution through `sudo` starts the system interpreter
+in isolated mode even when the caller supplies a hostile `PYTHONPATH`. It
+requires effective UID 0, resolves the named `seiche` group, takes the
+root-owned `0600` single-link market-backup lock with a fixed 300-second wait,
+safely opens and retains the canonical root:`seiche` mode `0750`
+`/var/lib/seiche-nbs` directory, and runs the complete fixed-path storage-volume
+v2 preflight. A missing root is rejected rather than created on the host root
+disk.
+
+The launcher selects a root-owned, read-only package from
+`/opt/seiche-nbs-intake/releases/<40-hex-sha>/seiche` through the protected
+single-link `/opt/seiche-nbs-intake/current-sha` pointer. It accepts exactly
+`__init__.py`, `nbs_intake.py`, and `nbs_trust.py`, runs the child under
+`/usr/bin/python3 -I -B`, and proves both security-sensitive modules resolved
+from that same release. Only then does it give the child a one-use inherited
+directory descriptor and random pipe-token capability. It revalidates the
+runtime pointer, storage proof, production descriptor/path identity, named
+group, and backup-lock identity after every child outcome before unlocking.
+
 The command prints only the metadata-only public projection. It never prints
-the raw CSV or private manifest records. The equivalent library entry point is:
+the raw CSV or private manifest records. Direct
+`seiche nbs-intake ingest --root /var/lib/seiche-nbs`, direct
+`NBSIntakeStore.ingest()`, and `ingest_signed_export()` calls against the
+production tree are rejected because they do not hold that launcher
+capability. Path aliases, an exact-root bind-mount alias, and lexical or
+resolved descendants of the production root cannot be presented as custom
+stores.
+
+The library entry point remains available for isolated development and tests
+using a custom root outside the production tree:
 
 ```python
 from seiche.nbs_intake import ingest_signed_export
@@ -133,7 +161,7 @@ context = ingest_signed_export(
     "manifest.json",
     "signature.json",
     "nbs-export.csv",
-    root="/var/lib/seiche-nbs",
+    root="/tmp/seiche-nbs-development-store",
 )
 print(context.revision_id)
 ```
@@ -152,7 +180,10 @@ Intake completes only after all of these pass:
 An exact retry is idempotent. A reused export ID with different bytes, a
 non-adjacent per-series period, chain splice, suffix deletion, fork, rollback or
 untrusted signer fails closed. A failed intake must not change the committed
-head.
+head. Public projection files and the public head are assigned the reviewed
+`seiche` reader group on their staged inode before rename, then verified as
+single-link mode `0640`; setgid inheritance alone is not treated as proof of
+API readability.
 
 After ingest, verify through the least-privileged reader:
 
@@ -186,21 +217,55 @@ must never appear as `as_of` or advance World Markets coverage/freshness clocks.
 The NBS tree is deliberately separate from service-writable `/var/lib/seiche`:
 root-only evidence must not sit below an ancestor the API or collectors can
 rename. The normal market-platform state archive includes both
-`/var/lib/seiche` and `/var/lib/seiche-nbs`, so the restricted store, public
-projections and both head receipts stay in the same checksummed and encrypted
-backup transaction. A restore is not accepted merely because files exist: run
-the strict loader and confirm the complete chain and committed head before
-restarting the API.
+`/var/lib/seiche` and `/var/lib/seiche-nbs`, so the restricted raw and numeric
+evidence, metadata-only public projections, and both head receipts stay in one
+checksummed disaster-recovery snapshot. This local snapshot is deliberately
+unencrypted at the archive layer, but its directory is root-only mode `0700`
+and every committed member is mode `0600`. Host access controls are therefore
+part of its custody boundary.
+
+The closed snapshot manifest is `seiche.market-backup.v3`. It binds
+`nbs_state_root=/var/lib/seiche-nbs`,
+`nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1`, and
+`nbs_full_store_audit_result=required_at_restore`. A v2 snapshot predates this
+recovery contract and cannot satisfy NBS disaster-recovery readiness merely by
+containing a public revisions directory.
+
+The optional offsite lane encrypts the complete closed snapshot before upload;
+only ciphertext and a metadata-only receipt leave the host. Restricted raw and
+numeric evidence is intentionally present inside the protected local snapshot
+and encrypted offsite object so it can be recovered, but it is excluded from
+public projections, REST, MCP, frontend payloads, and every unencrypted offsite
+surface. A restore is not accepted merely because files exist: run the sealed
+full-store audit and confirm every restricted manifest and Ed25519 signature,
+every referenced raw object's size and SHA-256 commitment, the exact raw-object
+set, the restricted chain and head, the public chain and head, and the exact
+public bytes committed by each corresponding restricted pair. Missing or
+orphaned raw objects, missing or corrupt manifests/signatures/heads, extra
+topology, and restricted/public divergence all fail closed before a scratch
+database is created.
+
+Restore extraction intentionally discards archived ownership and permissions.
+The restore checker first rejects symlinks, hard links, unknown members, and an
+inexact tree, then normalizes only the code-owned modes in its isolated scratch
+directory. It imports `NBSIntakeStore.audit_store_strict()` and the trust policy
+only from the root-owned sealed runtime. That audit never takes the intake lock,
+creates a layout, reconciles staging, changes a mode, or removes a file. The v4
+restore receipt records `nbs_full_store_audit_result=not_onboarded` for the one
+safely empty provisioned state or `verified_head` for a complete signed history.
+Only those two results satisfy recovery readiness.
 
 The local head receipt detects a missing suffix or pointer while that receipt is
 present. It cannot distinguish a whole-store rollback in which an older,
 internally consistent revisions directory and older receipt are restored
-together. The encrypted append-only offsite backup receipt is therefore the
-external witness: restore the exact immutable ciphertext object version named
-by the latest accepted remote receipt, verify its ciphertext and closed
-source-content digests, then run the strict loader against the restored public
-chain before activation. Do not describe local validation alone as complete
-rollback detection.
+together. The append-only offsite receipt for the encrypted archive is therefore
+the external witness: restore the exact immutable ciphertext object version
+named by the latest accepted remote receipt, verify its ciphertext and closed
+source-content digests, then run the sealed full-store audit against the
+restored public and restricted chains before activation. The offsite metadata
+retains `nbs_full_store_audit_result=required_at_restore`; encryption and object-store
+round-trip checks do not substitute for the local sealed semantic audit. Do not
+describe local validation alone as complete rollback detection.
 
 Never recover by deleting a head receipt, renaming a revision or editing JSON.
 Restore the exact signed objects and receipts from the offsite copy. If that is

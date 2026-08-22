@@ -4,19 +4,22 @@
 # gate is green and the GitHub Actions deploy trigger has been disabled.
 set -euo pipefail
 
-APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
+ASSET_ROOT="${SEICHE_PRIVILEGED_ASSET_ROOT:?signed privileged asset root is required}"
+RELEASE_TARGET="${SEICHE_RELEASE_TARGET_SHA:?exact release target SHA is required}"
 SYSTEMD_DIR="${SEICHE_SYSTEMD_DIR:-/etc/systemd/system}"
 SCRIPT_DEST="${SEICHE_RELEASE_POLLER_DEST:-/usr/local/sbin/seiche-release-poll}"
 DEPLOY_WRAPPER="${SEICHE_DEPLOY_WRAPPER:-/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh}"
 RUNTIME_DIR="${SEICHE_CONTROL_RUNTIME_DIR:-/run/seiche-control}"
+NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
+NBS_RUNTIME_ROOT="${SEICHE_NBS_RUNTIME_ROOT:-/opt/seiche-nbs-intake}"
 CONTROL_LOCK="$RUNTIME_DIR/release.lock"
 SYSTEMCTL="${SEICHE_SYSTEMCTL_BIN:-systemctl}"
 SYSTEMD_ANALYZE="${SEICHE_SYSTEMD_ANALYZE_BIN:-systemd-analyze}"
 SYNC="${SEICHE_SYNC_BIN:-/usr/bin/sync}"
 FLOCK="${SEICHE_FLOCK_BIN:-flock}"
-SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-python3}"
+SYSTEM_PYTHON="${SEICHE_CONTROL_PYTHON:-/usr/bin/python3}"
 ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"
-SOURCE_DIR="$APP_DIR/ops/deploy"
+SOURCE_DIR="$ASSET_ROOT/ops/deploy"
 SOURCE_WRAPPER="$SOURCE_DIR/seiche-deploy-wrapper.sh"
 SOURCE_SIGNER="$SOURCE_DIR/release-allowed-signers"
 ALLOWED_SIGNERS="${SEICHE_RELEASE_ALLOWED_SIGNERS_DEST:-/etc/seiche-release.allowed-signers}"
@@ -29,6 +32,8 @@ WRAPPER_NEW=""
 SIGNER_STAGE=""
 INSTALL_STARTED=""
 INSTALL_COMMITTED=""
+NBS_RUNTIME_ANCHOR_CREATED=""
+NBS_RUNTIME_ANCHOR_IDENTITY=""
 WAS_ENABLED=""
 WAS_ACTIVE=""
 HAD_SCRIPT=""
@@ -39,6 +44,398 @@ HAD_TIMER=""
 fail() {
   echo "FAIL: $*" >&2
   exit 1
+}
+
+validate_signed_controller_assets() {
+  "$SYSTEM_PYTHON" -I -B - "$ASSET_ROOT" "$RELEASE_TARGET" \
+    "$EXPECTED_SIGNER_UID" "$EXPECTED_SIGNER_GID" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+root_text, target, uid_text, gid_text = sys.argv[1:]
+uid, gid = int(uid_text), int(gid_text)
+sha_re = re.compile(r"[0-9a-f]{40}")
+required = {
+    "ops/deploy/release-allowed-signers": "100644",
+    "ops/deploy/seiche-deploy-wrapper.sh": "100644",
+    "ops/deploy/seiche-release-poll.service": "100644",
+    "ops/deploy/seiche-release-poll.sh": "100755",
+    "ops/deploy/seiche-release-poll.timer": "100644",
+}
+
+
+def reject(message: str) -> None:
+    raise SystemExit(f"signed controller assets {message}")
+
+
+if (
+    not root_text.startswith("/")
+    or os.path.normpath(root_text) != root_text
+    or root_text == "/"
+    or sha_re.fullmatch(target) is None
+):
+    reject("path or target is invalid")
+root = Path(root_text)
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+root_fd = os.open("/", flags)
+try:
+    for component in root.parts[1:]:
+        child = os.open(component, flags, dir_fd=root_fd)
+        visible = os.stat(component, dir_fd=root_fd, follow_symlinks=False)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(visible.st_mode) or (
+            visible.st_dev,
+            visible.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            os.close(child)
+            reject("has an unsafe path component")
+        os.close(root_fd)
+        root_fd = child
+    metadata = os.fstat(root_fd)
+    if (
+        metadata.st_uid != uid
+        or metadata.st_gid != gid
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        reject("root metadata is unsafe")
+
+    def read_file(path: str, mode: int, maximum: int) -> bytes:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=root_fd,
+        )
+        try:
+            info = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != uid
+                or info.st_gid != gid
+                or stat.S_IMODE(info.st_mode) != mode
+                or info.st_size > maximum
+            ):
+                reject(f"file metadata is unsafe: {path}")
+            body = bytearray()
+            while len(body) <= maximum:
+                chunk = os.read(descriptor, min(65536, maximum + 1 - len(body)))
+                if not chunk:
+                    break
+                body.extend(chunk)
+            if len(body) > maximum:
+                reject(f"file is too large: {path}")
+            return bytes(body)
+        finally:
+            os.close(descriptor)
+
+    if read_file(".target-sha", 0o600, 41) != f"{target}\n".encode("ascii"):
+        reject("target marker mismatch")
+    try:
+        manifest = json.loads(
+            read_file(".seiche-release-assets.json", 0o600, 2 * 1024 * 1024)
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        reject(f"manifest is invalid: {exc}")
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema") != "seiche.signed-privileged-assets.v1"
+        or manifest.get("target_sha") != target
+        or manifest.get("git_object_format") != "sha1"
+        or not isinstance(manifest.get("entries"), list)
+    ):
+        reject("manifest contract is invalid")
+    entries = {}
+    for entry in manifest["entries"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            reject("manifest has a malformed entry")
+        path = entry["path"]
+        if path in entries:
+            reject(f"manifest repeats path: {path}")
+        entries[path] = entry
+    for path, git_mode in required.items():
+        entry = entries.get(path)
+        if (
+            not isinstance(entry, dict)
+            or entry.get("git_mode") != git_mode
+            or type(entry.get("size")) is not int
+            or not isinstance(entry.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is None
+        ):
+            reject(f"manifest lacks required path/mode: {path}")
+        body = read_file(path, 0o755 if git_mode == "100755" else 0o644, 16 * 1024 * 1024)
+        if len(body) != entry["size"] or hashlib.sha256(body).hexdigest() != entry["sha256"]:
+            reject(f"bytes do not match manifest: {path}")
+finally:
+    os.close(root_fd)
+PY
+}
+
+ensure_nbs_runtime_anchor() {
+  "$SYSTEM_PYTHON" -I -B - "$NBS_RUNTIME_ROOT" \
+    "$EXPECTED_SIGNER_UID" "$EXPECTED_SIGNER_GID" \
+    "${SEICHE_ALLOW_NON_ROOT_INSTALL_TEST:-0}" <<'PY'
+import ctypes
+import errno
+import os
+from pathlib import Path
+import secrets
+import shutil
+import stat
+import sys
+
+path_text, uid_text, gid_text, portable_text = sys.argv[1:]
+uid, gid = int(uid_text), int(gid_text)
+path = Path(path_text)
+if (
+    not path_text.startswith("/")
+    or os.path.normpath(path_text) != path_text
+    or path_text == "/"
+    or portable_text not in {"0", "1"}
+):
+    raise SystemExit("NBS runtime anchor path is invalid")
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+parent_fd = os.open("/", flags)
+created_anchor = False
+try:
+    parent_metadata = os.fstat(parent_fd)
+    for component in path.parent.parts[1:]:
+        if (
+            (parent_metadata.st_uid, parent_metadata.st_gid)
+            not in {(0, 0), (uid, gid)}
+            or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+        ):
+            raise SystemExit("NBS runtime anchor ancestry is unsafe")
+        child = os.open(component, flags, dir_fd=parent_fd)
+        visible = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(visible.st_mode) or (
+            visible.st_dev,
+            visible.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            os.close(child)
+            raise SystemExit("NBS runtime anchor ancestry changed identity")
+        os.close(parent_fd)
+        parent_fd = child
+        parent_metadata = opened
+    if (
+        (parent_metadata.st_uid, parent_metadata.st_gid)
+        not in {(0, 0), (uid, gid)}
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
+        raise SystemExit("NBS runtime anchor parent is unsafe")
+    for name in os.listdir(parent_fd):
+        if name.startswith(".seiche-nbs-intake-anchor-"):
+            raise SystemExit(
+                "interrupted NBS runtime anchor stage requires empty root-owned inspection"
+            )
+    try:
+        anchor_fd = os.open(path.name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        stage = f".seiche-nbs-intake-anchor-{secrets.token_hex(16)}"
+        stage_path = path.parent / stage
+        created = False
+        try:
+            os.mkdir(stage, 0o700, dir_fd=parent_fd)
+            created = True
+            stage_fd = os.open(stage, flags, dir_fd=parent_fd)
+            try:
+                if (os.fstat(stage_fd).st_uid, os.fstat(stage_fd).st_gid) != (uid, gid):
+                    os.fchown(stage_fd, uid, gid)
+                os.fchmod(stage_fd, 0o755)
+                os.fsync(stage_fd)
+            finally:
+                os.close(stage_fd)
+            os.fsync(parent_fd)
+            if sys.platform.startswith("linux"):
+                libc = ctypes.CDLL(None, use_errno=True)
+                renameat2 = getattr(libc, "renameat2", None)
+                if renameat2 is None:
+                    raise SystemExit("Linux renameat2 is required")
+                renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+                renameat2.restype = ctypes.c_int
+                if renameat2(parent_fd, stage.encode(), parent_fd, path.name.encode(), 1) != 0:
+                    error = ctypes.get_errno()
+                    if error != errno.EEXIST:
+                        raise SystemExit(f"NBS runtime anchor publication failed: {error}")
+                    raise SystemExit("NBS runtime anchor appeared concurrently")
+            elif portable_text == "1" and uid != 0:
+                os.rename(stage, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            else:
+                raise SystemExit("production anchor publication requires Linux")
+            created = False
+            created_anchor = True
+            os.fsync(parent_fd)
+        finally:
+            if created:
+                try:
+                    shutil.rmtree(stage_path)
+                except FileNotFoundError:
+                    pass
+        anchor_fd = os.open(path.name, flags, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(anchor_fd)
+        visible = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or opened.st_uid != uid
+            or opened.st_gid != gid
+            or stat.S_IMODE(opened.st_mode) != 0o755
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise SystemExit("NBS runtime anchor metadata is unsafe")
+        print(
+            f"{'created' if created_anchor else 'existing'}:"
+            f"{opened.st_dev}:{opened.st_ino}"
+        )
+    finally:
+        os.close(anchor_fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
+remove_created_nbs_runtime_anchor() {
+  [ -n "$NBS_RUNTIME_ANCHOR_CREATED" ] || return 0
+  "$SYSTEM_PYTHON" -I -B - "$NBS_RUNTIME_ROOT" \
+    "$EXPECTED_SIGNER_UID" "$EXPECTED_SIGNER_GID" \
+    "$NBS_RUNTIME_ANCHOR_IDENTITY" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+path_text, uid_text, gid_text, identity = sys.argv[1:]
+uid, gid = int(uid_text), int(gid_text)
+path = Path(path_text)
+if not path_text.startswith("/") or os.path.normpath(path_text) != path_text:
+    raise SystemExit(1)
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+parent_fd = os.open("/", flags)
+try:
+    for component in path.parent.parts[1:]:
+        child = os.open(component, flags, dir_fd=parent_fd)
+        visible = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(visible.st_mode) or (
+            visible.st_dev,
+            visible.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            os.close(child)
+            raise SystemExit(1)
+        os.close(parent_fd)
+        parent_fd = child
+    anchor_fd = os.open(path.name, flags, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(anchor_fd)
+        if (
+            opened.st_uid != uid
+            or opened.st_gid != gid
+            or stat.S_IMODE(opened.st_mode) != 0o755
+            or f"{opened.st_dev}:{opened.st_ino}" != identity
+            or os.listdir(anchor_fd)
+        ):
+            raise SystemExit(1)
+    finally:
+        os.close(anchor_fd)
+    os.rmdir(path.name, dir_fd=parent_fd)
+    os.fsync(parent_fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
+verify_system_ed25519() {
+  "$SYSTEM_PYTHON" -I -B - <<'PY'
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+private_key = Ed25519PrivateKey.generate()
+public_key = private_key.public_key()
+message = b"seiche-controller-ed25519-self-test"
+signature = private_key.sign(message)
+public_key.verify(signature, message)
+PY
+}
+
+validate_nbs_state_root() {
+  "$SYSTEM_PYTHON" -I -B - "$NBS_STATE_DIR" "$EXPECTED_NBS_UID" \
+    "$EXPECTED_NBS_GID" <<'PY'
+import os
+import stat
+import sys
+
+path, uid, gid = sys.argv[1:]
+if not path.startswith("/") or os.path.normpath(path) != path or path == "/":
+    raise SystemExit(1)
+
+
+def snapshot() -> tuple[tuple[int, int], ...]:
+    descriptor = os.open(
+        "/", os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    )
+    identities: list[tuple[int, int]] = []
+    try:
+        for component in path.split("/")[1:]:
+            child = os.open(
+                component,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=descriptor,
+            )
+            visible = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            opened = os.fstat(child)
+            if (
+                not stat.S_ISDIR(visible.st_mode)
+                or (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino)
+            ):
+                os.close(child)
+                raise SystemExit(1)
+            identities.append((opened.st_dev, opened.st_ino))
+            os.close(descriptor)
+            descriptor = child
+        final = os.fstat(descriptor)
+        if (
+            final.st_uid != int(uid)
+            or final.st_gid != int(gid)
+            or stat.S_IMODE(final.st_mode) != 0o750
+        ):
+            raise SystemExit(1)
+        return tuple(identities)
+    finally:
+        os.close(descriptor)
+
+
+try:
+    before = snapshot()
+    after = snapshot()
+except OSError:
+    raise SystemExit(1) from None
+if not before or before != after:
+    raise SystemExit(1)
+PY
 }
 
 remove_staging() {
@@ -107,6 +504,12 @@ cleanup() {
   if [ -n "$INSTALL_STARTED" ] && [ -z "$INSTALL_COMMITTED" ]; then
     rollback_install || status=1
   fi
+  if [ -z "$INSTALL_COMMITTED" ] && [ -n "$NBS_RUNTIME_ANCHOR_CREATED" ]; then
+    if ! remove_created_nbs_runtime_anchor; then
+      echo "WARN: retaining changed/nonempty NBS runtime anchor for root inspection" >&2
+      status=1
+    fi
+  fi
   remove_staging
   exit "$status"
 }
@@ -120,13 +523,63 @@ fi
 if [ "$(id -u)" -eq 0 ]; then
   EXPECTED_SIGNER_UID=0
   EXPECTED_SIGNER_GID=0
+  [ "$SYSTEM_PYTHON" = /usr/bin/python3 ] \
+    || fail "production controller installation requires /usr/bin/python3"
+  [ "$NBS_STATE_DIR" = /var/lib/seiche-nbs ] \
+    || fail "NBS evidence root is fixed at /var/lib/seiche-nbs"
+  [ "$NBS_RUNTIME_ROOT" = /opt/seiche-nbs-intake ] \
+    || fail "NBS runtime root is fixed at /opt/seiche-nbs-intake"
+  EXPECTED_NBS_UID=0
+  EXPECTED_NBS_GID=$("$SYSTEM_PYTHON" -I -B - <<'PY'
+import grp
+
+try:
+    gid = grp.getgrnam("seiche").gr_gid
+except KeyError:
+    raise SystemExit(1) from None
+if gid <= 0:
+    raise SystemExit(1)
+print(gid)
+PY
+  ) \
+    || fail "the seiche group is required for the NBS evidence root"
 else
   EXPECTED_SIGNER_UID=$(id -u)
   EXPECTED_SIGNER_GID=$(id -g)
+  [ "$NBS_STATE_DIR" != /var/lib/seiche-nbs ] \
+    || fail "non-root install tests must isolate the NBS evidence root"
+  [ "$NBS_RUNTIME_ROOT" != /opt/seiche-nbs-intake ] \
+    || fail "non-root install tests must isolate the NBS runtime root"
+  case "$NBS_STATE_DIR" in
+    /*) ;;
+    *) fail "NBS evidence root must be an absolute path" ;;
+  esac
+  case "$NBS_RUNTIME_ROOT" in
+    /*) ;;
+    *) fail "NBS runtime root must be an absolute path" ;;
+  esac
+  EXPECTED_NBS_UID=$EXPECTED_SIGNER_UID
+  EXPECTED_NBS_GID=$EXPECTED_SIGNER_GID
 fi
 case "$ENABLE" in
   0|1) ;;
   *) fail "SEICHE_ENABLE_RELEASE_POLLER must be exactly 0 or 1" ;;
+esac
+validate_signed_controller_assets \
+  || fail "signed privileged controller assets are invalid"
+validate_nbs_state_root \
+  || fail "NBS evidence root is absent or has unsafe metadata"
+verify_system_ed25519 \
+  || fail "isolated system Python Ed25519 support is unavailable"
+NBS_RUNTIME_ANCHOR_RESULT=$(ensure_nbs_runtime_anchor) \
+  || fail "NBS runtime anchor is absent or unsafe"
+case "$NBS_RUNTIME_ANCHOR_RESULT" in
+  created:*)
+    NBS_RUNTIME_ANCHOR_CREATED=1
+    NBS_RUNTIME_ANCHOR_IDENTITY=${NBS_RUNTIME_ANCHOR_RESULT#created:}
+    ;;
+  existing:*) ;;
+  *) fail "NBS runtime anchor result is invalid" ;;
 esac
 [ -d "$SYSTEMD_DIR" ] && [ ! -L "$SYSTEMD_DIR" ] \
   || fail "unsafe systemd directory: $SYSTEMD_DIR"
@@ -146,7 +599,7 @@ else
     install -d -m 0700 "$WRAPPER_DIR"
   fi
 fi
-"$SYSTEM_PYTHON" - "$WRAPPER_DIR" "$EXPECTED_SIGNER_UID" \
+"$SYSTEM_PYTHON" -I -B - "$WRAPPER_DIR" "$EXPECTED_SIGNER_UID" \
   "$EXPECTED_SIGNER_GID" <<'PY' \
   || fail "deploy-wrapper directory metadata is unsafe"
 import os
@@ -189,10 +642,12 @@ bash -n "$SOURCE_DIR/seiche-release-poll.sh"
 grep -Fq 'EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}' "$SOURCE_WRAPPER" \
   || fail "reviewed deploy wrapper lacks the expected-target-SHA safety pin"
 
-# Validate the reviewed repository copy without following symlinks or accepting
-# comments/options/multiple principals. The resulting canonical line is the
-# one durable host trust anchor this installer may create or confirm.
-EXPECTED_SIGNER=$("$SYSTEM_PYTHON" - "$SOURCE_SIGNER" "$SIGNING_PRINCIPAL" <<'PY'
+# Validate the exact signed-asset copy without following symlinks or accepting
+# comments/options/multiple principals. Production may only confirm the durable
+# host trust anchor provisioned out of band before asset authentication; the
+# creation path below exists solely for the isolated non-root installer harness.
+EXPECTED_SIGNER=$("$SYSTEM_PYTHON" -I -B - \
+  "$SOURCE_SIGNER" "$SIGNING_PRINCIPAL" <<'PY'
 import base64
 import os
 import stat
@@ -239,7 +694,7 @@ PY
 ) || fail "reviewed release signer source is invalid"
 
 validate_installed_signer() {
-  "$SYSTEM_PYTHON" - "$ALLOWED_SIGNERS" "$EXPECTED_SIGNER" \
+  "$SYSTEM_PYTHON" -I -B - "$ALLOWED_SIGNERS" "$EXPECTED_SIGNER" \
     "$EXPECTED_SIGNER_UID" "$EXPECTED_SIGNER_GID" <<'PY'
 import os
 import stat
@@ -277,7 +732,7 @@ PY
 SIGNER_DIR=$(dirname -- "$ALLOWED_SIGNERS")
 [ -d "$SIGNER_DIR" ] && [ ! -L "$SIGNER_DIR" ] \
   || fail "unsafe release signer directory: $SIGNER_DIR"
-"$SYSTEM_PYTHON" - "$SIGNER_DIR" "$EXPECTED_SIGNER_UID" \
+"$SYSTEM_PYTHON" -I -B - "$SIGNER_DIR" "$EXPECTED_SIGNER_UID" \
   "$EXPECTED_SIGNER_GID" <<'PY' \
   || fail "release signer directory metadata is unsafe"
 import os
@@ -298,6 +753,9 @@ if [ -e "$ALLOWED_SIGNERS" ] || [ -L "$ALLOWED_SIGNERS" ]; then
   validate_installed_signer \
     || fail "refusing to replace the pinned Seiche release signer"
 else
+  if [ "$(id -u)" -eq 0 ]; then
+    fail "production requires the out-of-band Seiche release signer trust anchor"
+  fi
   SIGNER_STAGE=$(mktemp "$SIGNER_DIR/.seiche-release.allowed-signers.XXXXXX") \
     || fail "could not stage the pinned Seiche release signer"
   printf '%s\n' "$EXPECTED_SIGNER" >"$SIGNER_STAGE"

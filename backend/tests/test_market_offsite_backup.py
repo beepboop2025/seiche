@@ -12,6 +12,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-offsite-backup.sh"
@@ -29,56 +31,6 @@ def _executable(path: Path, body: str) -> Path:
     return path
 
 
-def _installer_script_normalizer() -> str:
-    installer = INSTALLER.read_text()
-    start = installer.index("normalize_root_service_script() {")
-    end = installer.index("\nPY\n}\n", start) + len("\nPY\n}\n")
-    return installer[start:end]
-
-
-def _tracked_offsite_script_fixture(tmp_path: Path) -> tuple[Path, str, Path]:
-    repo = tmp_path / "app"
-    relative_path = "ops/deploy/seiche-market-offsite-backup.sh"
-    source = repo / relative_path
-    source.parent.mkdir(parents=True)
-    shutil.copyfile(SCRIPT, source)
-    source.chmod(0o755)
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "--", relative_path], check=True)
-    source.chmod(0o700)
-    return repo, relative_path, source
-
-
-def _run_script_normalizer(
-    repo: Path, relative_path: str, expected_uid: int, expected_gid: int
-) -> subprocess.CompletedProcess[str]:
-    harness = (
-        "set -euo pipefail\n"
-        "APP_DIR=$1\n"
-        "READINESS_SCRIPT_RELATIVE=$2\n"
-        "OFFSITE_SCRIPT_RELATIVE=$3\n"
-        "shift 3\n"
-        f"{_installer_script_normalizer()}\n"
-        'normalize_root_service_script "$@"\n'
-    )
-    return subprocess.run(
-        [
-            "bash",
-            "-c",
-            harness,
-            "normalizer",
-            str(repo),
-            "ops/deploy/seiche-data-readiness.sh",
-            "ops/deploy/seiche-market-offsite-backup.sh",
-            relative_path,
-            str(expected_uid),
-            str(expected_gid),
-        ],
-        text=True,
-        capture_output=True,
-    )
-
-
 def _snapshot(
     backup_root: Path, *, snapshot_id: str = SNAPSHOT_ID, extra: bool = False
 ) -> Path:
@@ -91,13 +43,16 @@ def _snapshot(
         "table-counts.txt": b"11|12|13|14\n",
         "deployed-sha.txt": f"{REVISION}\n".encode(),
         "manifest.env": (
-            "schema=seiche.market-backup.v2\n"
+            "schema=seiche.market-backup.v3\n"
             f"created_at={snapshot_id}\n"
             "database=seiche\n"
             "postgres_port=5433\n"
             "state_root=/var/lib/seiche\n"
+            "nbs_state_root=/var/lib/seiche-nbs\n"
             "api_data_root=/home/seiche/app/backend/data\n"
             "critical_table_count_semantics=pre_dump_lower_bound\n"
+            "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1\n"
+            "nbs_full_store_audit_result=required_at_restore\n"
             "research_only=true\n"
             "can_publish=false\n"
             "can_execute=false\n"
@@ -119,7 +74,7 @@ def _snapshot(
     )
     (snapshot / "SHA256SUMS").write_text(inventory)
     if extra:
-        (snapshot / "uncommitted.tmp").write_text("not part of v2\n")
+        (snapshot / "uncommitted.tmp").write_text("not part of v3\n")
     return snapshot
 
 
@@ -140,6 +95,29 @@ def _rewrite_inventory(snapshot: Path) -> None:
                 digest.update(chunk)
         lines.append(f"{digest.hexdigest()}  {name}\n")
     (snapshot / "SHA256SUMS").write_text("".join(lines))
+
+
+def _rewrite_manifest_fields(
+    snapshot: Path,
+    *,
+    replacements: dict[str, str] | None = None,
+    removals: frozenset[str] = frozenset(),
+) -> None:
+    replacements = replacements or {}
+    rewritten = []
+    seen = set()
+    for line in (snapshot / "manifest.env").read_text().splitlines():
+        key, _separator, value = line.partition("=")
+        if key in removals:
+            continue
+        if key in replacements:
+            value = replacements[key]
+            seen.add(key)
+        rewritten.append(f"{key}={value}\n")
+    if seen != set(replacements):
+        raise AssertionError("test attempted to replace an absent manifest field")
+    (snapshot / "manifest.env").write_text("".join(rewritten))
+    _rewrite_inventory(snapshot)
 
 
 def _fake_tools(tmp_path: Path) -> dict[str, Path]:
@@ -481,7 +459,7 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     status = json.loads(status_path.read_text())
-    assert status["schema"] == "seiche.market-offsite-backup-status.v1"
+    assert status["schema"] == "seiche.market-offsite-backup-status.v2"
     assert status["status"] == "success"
     assert status["restore_verified"] is True
     assert status["source_revision"] == REVISION
@@ -490,13 +468,16 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     assert status["last_success"]["bucket"] == "seiche-recovery"
     assert status["last_success"]["prefix"] == "seiche/market-backups/v1"
     assert status["last_success"]["key_id"] == "market-key-2026-08-v1"
-    assert status["last_success"]["destination"]["id"] == (
-        "hetzner-hel1-primary-v1"
-    )
+    assert status["last_success"]["destination"]["id"] == ("hetzner-hel1-primary-v1")
+    for record in (status, status["last_success"]):
+        assert record["source_backup_schema"] == "seiche.market-backup.v3"
+        assert record["nbs_state_root"] == "/var/lib/seiche-nbs"
+        assert (
+            record["nbs_full_store_audit_contract"] == "seiche.nbs-full-store-audit.v1"
+        )
+        assert record["nbs_full_store_audit_result"] == "required_at_restore"
     assert status["last_success"]["ciphertext_version_id"].startswith("version-")
-    assert status["last_success"]["remote_receipt_version_id"].startswith(
-        "version-"
-    )
+    assert status["last_success"]["remote_receipt_version_id"].startswith("version-")
     assert status["remote_receipt_key"] == (
         "seiche/market-backups/v1/canary/v1/RECEIPT.json"
     )
@@ -512,6 +493,22 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
         "RECEIPT.json",
         "seiche-market-backup.tar.gpg",
     ]
+    receipt_path = next(remote_root.rglob("RECEIPT.json"))
+    receipt = json.loads(receipt_path.read_text())
+    assert receipt["schema"] == "seiche.market-offsite-backup-receipt.v2"
+    assert receipt["source_backup_schema"] == "seiche.market-backup.v3"
+    assert receipt["nbs_state_root"] == "/var/lib/seiche-nbs"
+    assert receipt["nbs_full_store_audit_contract"] == "seiche.nbs-full-store-audit.v1"
+    assert receipt["nbs_full_store_audit_result"] == "required_at_restore"
+    assert "closed-v3" in receipt["verification"]
+    assert "nbs-full-store-audit-required-at-restore" in receipt["verification"]
+    assert not {
+        "nbs_revision_id",
+        "nbs_public_head",
+        "nbs_restricted_members",
+        "nbs_raw_values",
+        "nbs_numeric_values",
+    }.intersection(receipt)
     rclone_calls = [call for call in _calls(calls_path) if call[0] == "rclone"]
     assert rclone_calls
     assert {call[1] for call in rclone_calls} == {"copyto"}
@@ -588,9 +585,10 @@ def test_scheduled_mode_blocks_unresolved_running_or_receipt_intent(tmp_path: Pa
         "FAKE_ATTEMPT_STAMP": "20260823T052000Z",
     }
 
-    for state, receipt_key, receipt_version in (
-        ("running", None, None),
+    for schema, state, receipt_key, receipt_version in (
+        ("seiche.market-offsite-backup-status.v1", "running", None, None),
         (
+            "seiche.market-offsite-backup-status.v2",
             "failed",
             "seiche/market-backups/v1/snapshots/20260823T020000Z/"
             "attempts/20260823T052000Z-99/RECEIPT.json",
@@ -598,6 +596,7 @@ def test_scheduled_mode_blocks_unresolved_running_or_receipt_intent(tmp_path: Pa
         ),
     ):
         unresolved = successful | {
+            "schema": schema,
             "status": state,
             "attempt_id": "20260823T052000Z-99",
             "snapshot_id": "20260823T020000Z",
@@ -679,7 +678,9 @@ def test_old_canary_cannot_authorize_key_or_endpoint_rotation(tmp_path: Path):
             }
         )
         assert result.returncode != 0
-        assert "scheduled mode requires a successful first-write canary" in result.stderr
+        assert (
+            "scheduled mode requires a successful first-write canary" in result.stderr
+        )
 
     assert [call for call in _calls(calls_path) if call[0] == "rclone"] == rclone_calls
     assert json.loads(status_path.read_text())["last_success"]["key_id"] == (
@@ -732,13 +733,91 @@ def test_restored_hash_failure_preserves_last_success_and_no_new_receipt(
     assert len(list(remote_root.rglob("seiche-market-backup.tar.gpg"))) == 2
 
 
+def test_legacy_v2_snapshot_cannot_masquerade_after_rehash(tmp_path: Path):
+    env, status_path, remote_root, calls_path = _layout(tmp_path)
+    snapshot = Path(env["FAKE_SNAPSHOT_PATH"])
+    _rewrite_manifest_fields(
+        snapshot,
+        replacements={"schema": "seiche.market-backup.v2"},
+        removals=frozenset(
+            {
+                "nbs_state_root",
+                "nbs_full_store_audit_contract",
+                "nbs_full_store_audit_result",
+            }
+        ),
+    )
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "closed v3 contract" in result.stderr
+    assert not status_path.exists()
+    assert not any(remote_root.iterdir())
+    assert not _calls(calls_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("nbs_state_root", None),
+        ("nbs_state_root", "/var/lib/seiche-nbs-alias"),
+        ("nbs_full_store_audit_contract", "seiche.nbs-full-store-audit.v2"),
+        ("nbs_full_store_audit_result", "verified_head"),
+    ),
+)
+def test_v3_snapshot_rejects_changed_nbs_audit_contract_before_network(
+    tmp_path: Path, field: str, value: str | None
+):
+    env, status_path, remote_root, calls_path = _layout(tmp_path)
+    snapshot = Path(env["FAKE_SNAPSHOT_PATH"])
+    if value is None:
+        _rewrite_manifest_fields(snapshot, removals=frozenset({field}))
+    else:
+        _rewrite_manifest_fields(snapshot, replacements={field: value})
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "closed v3 contract" in result.stderr
+    assert not status_path.exists()
+    assert not any(remote_root.iterdir())
+    assert not _calls(calls_path)
+
+
+def test_legacy_canary_status_cannot_authorize_scheduled_v3_write(tmp_path: Path):
+    env, status_path, _remote_root, calls_path = _layout(tmp_path)
+    assert _run(env).returncode == 0
+    rclone_calls = [call for call in _calls(calls_path) if call[0] == "rclone"]
+    status = json.loads(status_path.read_text())
+    status["schema"] = "seiche.market-offsite-backup-status.v1"
+    for record in (status, status["last_success"]):
+        record["source_backup_schema"] = "seiche.market-backup.v2"
+        record.pop("nbs_state_root")
+        record.pop("nbs_full_store_audit_contract")
+        record.pop("nbs_full_store_audit_result")
+    status_path.write_text(json.dumps(status) + "\n")
+
+    result = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "FAKE_ATTEMPT_STAMP": "20260823T052000Z",
+        }
+    )
+
+    assert result.returncode != 0
+    assert "scheduled mode requires a successful first-write canary" in result.stderr
+    assert [call for call in _calls(calls_path) if call[0] == "rclone"] == rclone_calls
+
+
 def test_incomplete_snapshot_and_sha_mismatch_fail_before_network(tmp_path: Path):
     env, status_path, remote_root, calls_path = _layout(
         tmp_path, extra_snapshot_member=True
     )
     incomplete = _run(env)
     assert incomplete.returncode != 0
-    assert "closed v2 contract" in incomplete.stderr
+    assert "closed v3 contract" in incomplete.stderr
     assert not status_path.exists()
     assert not any(remote_root.iterdir())
 
@@ -914,18 +993,14 @@ def test_systemd_installer_and_rollback_contracts_are_closed():
     )
 
 
-def test_installer_normalizes_tracked_offsite_script_from_0700_to_0755(
-    tmp_path: Path,
-) -> None:
-    repo, relative_path, source = _tracked_offsite_script_fixture(tmp_path)
-    metadata = source.stat()
-
-    result = _run_script_normalizer(
-        repo, relative_path, metadata.st_uid, metadata.st_gid
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert source.stat().st_mode & 0o7777 == 0o755
+def test_signed_asset_pipeline_requires_executable_offsite_script() -> None:
     installer = INSTALLER.read_text()
-    normalize_call = installer.index('"$OFFSITE_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID"')
-    assert normalize_call < installer.index("systemctl daemon-reload")
+    wrapper = DEPLOY_WRAPPER.read_text()
+
+    assert '"ops/deploy/seiche-market-offsite-backup.sh": "100755"' in wrapper
+    assert 'git_mode not in {"100644", "100755"}' in wrapper
+    assert 'mode = 0o755 if git_mode == "100755" else 0o644' in installer
+    assert (
+        "install_runtime_shell_helper \\\n"
+        '    "$OFFSITE_SCRIPT_SOURCE" "$OFFSITE_SCRIPT_INSTALLED"'
+    ) in installer

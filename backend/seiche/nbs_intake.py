@@ -35,7 +35,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 
-from seiche.attest import verify_trusted_ed25519_signature
+from seiche.nbs_trust import verify_trusted_ed25519_signature
 
 NBS_EXPORT_SCHEMA = "seiche.nbs-owner-export.v1"
 NBS_SIGNATURE_SCHEMA = "seiche.nbs-owner-export-signature.v1"
@@ -49,6 +49,14 @@ NBS_BROWSER_SOURCE_URL = (
     "https://data.stats.gov.cn/dg/website/page.html#/pc/national/en/monthData"
 )
 NBS_RAW_FORMAT = "nbs-browser-tab-comma-wide-v1"
+PRODUCTION_NBS_ROOT = Path("/var/lib/seiche-nbs")
+
+# The production writer is a root-owned operator launcher.  These private
+# process-capability variables are populated only for its one deployed child;
+# they are intentionally consumed before any evidence bytes are read.
+_PRODUCTION_GUARD_ROOT_FD_ENV = "SEICHE_NBS_INTAKE_GUARD_ROOT_FD"
+_PRODUCTION_GUARD_TOKEN_FD_ENV = "SEICHE_NBS_INTAKE_GUARD_TOKEN_FD"
+_PRODUCTION_GUARD_TOKEN_ENV = "SEICHE_NBS_INTAKE_GUARD_TOKEN"
 
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_SIGNATURE_BYTES = 4 * 1024
@@ -100,6 +108,136 @@ class NBSNotOnboardedError(NBSIntakeError):
 
 class NBSConflictError(NBSIntakeError):
     """An immutable identity, predecessor, or revision chain conflicts."""
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _production_root_selection(root: str | os.PathLike[str]) -> bool:
+    """Return true only for the canonical production root.
+
+    A custom store remains a supported development/test boundary.  An alias or
+    descendant of the production tree is not a custom store: allowing either
+    would bypass the mount proof while still writing production evidence.
+    """
+
+    selected = Path(os.path.abspath(os.fspath(root)))
+    resolved = Path(os.path.realpath(selected))
+    if selected == PRODUCTION_NBS_ROOT:
+        return True
+    try:
+        aliases_production = selected.samefile(PRODUCTION_NBS_ROOT)
+    except OSError:
+        aliases_production = False
+    if aliases_production:
+        raise NBSIntegrityError(
+            "production NBS intake must use the exact canonical root"
+        )
+    if _path_is_within(selected, PRODUCTION_NBS_ROOT) or _path_is_within(
+        resolved, PRODUCTION_NBS_ROOT
+    ):
+        raise NBSIntegrityError(
+            "production NBS intake must use the exact canonical root"
+        )
+    return False
+
+
+def _guard_descriptor(value: str | None, *, kind: str) -> int:
+    if (
+        value is None
+        or not value.isascii()
+        or not value.isdecimal()
+        or value != str(int(value))
+        or int(value) < 3
+    ):
+        raise NBSIntegrityError(f"production NBS {kind} is unavailable")
+    return int(value)
+
+
+def _require_visible_guard_root(descriptor: int) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        visible = os.stat(PRODUCTION_NBS_ROOT, follow_symlinks=False)
+    except OSError as exc:
+        raise NBSIntegrityError(
+            "production NBS root capability is unavailable"
+        ) from exc
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or not stat.S_ISDIR(visible.st_mode)
+        or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+    ):
+        raise NBSIntegrityError(
+            "production NBS root capability does not match the visible root"
+        )
+
+
+@contextmanager
+def _production_ingest_authorization(
+    root: str | os.PathLike[str],
+) -> Iterator[None]:
+    """Consume and retain the operator launcher's one-use production grant."""
+
+    if not _production_root_selection(root):
+        yield
+        return
+    if os.geteuid() != 0:
+        raise NBSIntegrityError("production NBS intake must run as root")
+
+    root_value = os.environ.pop(_PRODUCTION_GUARD_ROOT_FD_ENV, None)
+    token_fd_value = os.environ.pop(_PRODUCTION_GUARD_TOKEN_FD_ENV, None)
+    token_value = os.environ.pop(_PRODUCTION_GUARD_TOKEN_ENV, None)
+    root_source = _guard_descriptor(root_value, kind="root descriptor")
+    token_source = _guard_descriptor(token_fd_value, kind="token descriptor")
+    if root_source == token_source:
+        raise NBSIntegrityError("production NBS guard descriptors are not distinct")
+    if (
+        token_value is None
+        or len(token_value) != 64
+        or re.fullmatch(r"[0-9a-f]{64}", token_value) is None
+    ):
+        raise NBSIntegrityError("production NBS guard token is malformed")
+
+    root_descriptor = -1
+    token_descriptor = -1
+    try:
+        root_descriptor = os.dup(root_source)
+        token_descriptor = os.dup(token_source)
+        token_metadata = os.fstat(token_descriptor)
+        if not stat.S_ISFIFO(token_metadata.st_mode):
+            raise NBSIntegrityError(
+                "production NBS guard token descriptor is not a pipe"
+            )
+        import fcntl
+
+        flags = fcntl.fcntl(token_descriptor, fcntl.F_GETFL)
+        fcntl.fcntl(token_descriptor, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            token_bytes = os.read(token_descriptor, 33)
+            trailing = os.read(token_descriptor, 1)
+        except BlockingIOError as exc:
+            raise NBSIntegrityError(
+                "production NBS guard token pipe was not closed"
+            ) from exc
+        if trailing != b"" or not hmac.compare_digest(
+            token_bytes, bytes.fromhex(token_value)
+        ):
+            raise NBSIntegrityError("production NBS guard token does not match")
+        _require_visible_guard_root(root_descriptor)
+        yield
+        _require_visible_guard_root(root_descriptor)
+    except OSError as exc:
+        raise NBSIntegrityError("production NBS intake guard failed") from exc
+    finally:
+        if token_descriptor >= 0:
+            os.close(token_descriptor)
+        if root_descriptor >= 0:
+            os.close(root_descriptor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1272,6 +1410,7 @@ def _stage_payload(
     payload: bytes,
     *,
     mode: int,
+    gid: int | None = None,
     operation: str,
 ) -> None:
     """Write, sync, and rename one staged file while the intake lock is held."""
@@ -1326,8 +1465,24 @@ def _stage_payload(
             descriptor = -1
             handle.write(payload)
             handle.flush()
+            staged_before = os.fstat(handle.fileno())
+            if gid is not None and staged_before.st_gid != gid:
+                if not hasattr(os, "fchown"):
+                    raise NBSIntegrityError(
+                        "NBS public group assignment is unavailable"
+                    )
+                os.fchown(handle.fileno(), -1, gid)
             os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
+            staged = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(staged.st_mode)
+                or staged.st_nlink != 1
+                or staged.st_uid != os.geteuid()
+                or stat.S_IMODE(staged.st_mode) != mode
+                or (gid is not None and staged.st_gid != gid)
+            ):
+                raise NBSIntegrityError("NBS staged publication metadata is unsafe")
         # All legitimate writers hold the same flock. A single rename avoids
         # the two-link crash window created by the former link+unlink sequence.
         if operation == "publish":
@@ -1372,6 +1527,7 @@ def _atomic_publish(
     mode: int,
     kind: str,
     staging_dir: Path,
+    gid: int | None = None,
 ) -> None:
     if path.exists() or path.is_symlink():
         try:
@@ -1380,6 +1536,7 @@ def _atomic_publish(
                 maximum_bytes=max(len(payload), 1),
                 kind=f"committed {kind}",
                 required_mode=mode,
+                required_gid=gid,
             )
         except NBSIntegrityError as exc:
             raise NBSConflictError(f"committed {kind} is unsafe") from exc
@@ -1392,6 +1549,7 @@ def _atomic_publish(
             path,
             payload,
             mode=mode,
+            gid=gid,
             operation="publish",
         )
     except FileExistsError as exc:
@@ -1401,6 +1559,7 @@ def _atomic_publish(
                 maximum_bytes=max(len(payload), 1),
                 kind=f"raced committed {kind}",
                 required_mode=mode,
+                required_gid=gid,
             )
         except NBSIntegrityError as read_exc:
             raise NBSConflictError(
@@ -1420,6 +1579,7 @@ def _atomic_replace(
     mode: int,
     kind: str,
     staging_dir: Path,
+    gid: int | None = None,
 ) -> None:
     """Crash-safely replace one operational pointer, never evidence content."""
 
@@ -1429,6 +1589,7 @@ def _atomic_replace(
             maximum_bytes=MAX_HEAD_BYTES,
             kind=f"existing {kind}",
             required_mode=mode,
+            required_gid=gid,
         )
         if hmac.compare_digest(existing, payload):
             return
@@ -1437,6 +1598,7 @@ def _atomic_replace(
         path,
         payload,
         mode=mode,
+        gid=gid,
         operation="replace",
     )
 
@@ -1569,6 +1731,8 @@ class NBSIntakeStore:
         attest_dir: str | None = None,
     ) -> None:
         self.root = Path(os.path.abspath(os.fspath(root)))
+        if self.root == PRODUCTION_NBS_ROOT and attest_dir is not None:
+            raise NBSIntegrityError("production NBS trust policy is release-pinned")
         self.owner_uid = os.geteuid()
         self.attest_dir = attest_dir
         self.restricted = self.root / "restricted"
@@ -1580,6 +1744,7 @@ class NBSIntakeStore:
         self.public_head = self.revisions / ".head.json"
         self.staging = self.root / ".staging"
         self.lock_path = self.root / ".nbs-intake.lock"
+        self.public_gid: int | None = None
 
     def _ensure_layout(self) -> None:
         _ensure_directory(self.root, 0o750, required_uid=self.owner_uid)
@@ -1589,10 +1754,32 @@ class NBSIntakeStore:
         )
         _ensure_directory(self.objects, 0o700, required_uid=self.owner_uid)
         _ensure_directory(self.exports, 0o700, required_uid=self.owner_uid)
-        _ensure_directory(self.public, 0o750, required_uid=self.owner_uid)
+        public_metadata = _ensure_directory(
+            self.public, 0o750, required_uid=self.owner_uid
+        )
         # Production provisions this as root:seiche.  Setgid makes root-run
         # atomic publications inherit the API-readable seiche group.
-        _ensure_directory(self.revisions, 0o2750, required_uid=self.owner_uid)
+        revisions_metadata = _ensure_directory(
+            self.revisions, 0o2750, required_uid=self.owner_uid
+        )
+        expected_public_gid = revisions_metadata.st_gid
+        if self.root == PRODUCTION_NBS_ROOT:
+            try:
+                import grp
+
+                expected_public_gid = grp.getgrnam("seiche").gr_gid
+            except (ImportError, KeyError) as exc:
+                raise NBSIntegrityError(
+                    "production NBS public reader group is unavailable"
+                ) from exc
+        if (
+            public_metadata.st_gid != expected_public_gid
+            or revisions_metadata.st_gid != expected_public_gid
+        ):
+            raise NBSIntegrityError(
+                "NBS public directories do not share the reviewed reader group"
+            )
+        self.public_gid = expected_public_gid
         # This root-owned directory shares the store filesystem but is outside
         # both evidence scanners, so a pre-rename crash cannot poison reads.
         _ensure_directory(self.staging, 0o700, required_uid=self.owner_uid)
@@ -2042,7 +2229,337 @@ class NBSIntakeStore:
         if context.revision_id != expected_head:
             raise NBSIntegrityError("public and restricted revision heads do not match")
 
+    @staticmethod
+    def _audit_entries(
+        path: Path, *, kind: str
+    ) -> dict[str, tuple[Path, os.stat_result]]:
+        """Inspect one directory without following any member symlink."""
+
+        entries: dict[str, tuple[Path, os.stat_result]] = {}
+        try:
+            selected = sorted(path.iterdir(), key=lambda item: item.name)
+        except OSError as exc:
+            raise NBSIntegrityError(f"{kind} cannot be enumerated safely") from exc
+        for entry in selected:
+            try:
+                metadata = entry.lstat()
+            except OSError as exc:
+                raise NBSIntegrityError(
+                    f"{kind} member cannot be inspected safely"
+                ) from exc
+            entries[entry.name] = (entry, metadata)
+        return entries
+
+    def _audit_directory(
+        self,
+        path: Path,
+        *,
+        kind: str,
+        mode: int,
+        gid: int | None = None,
+    ) -> tuple[os.stat_result, dict[str, tuple[Path, os.stat_result]]]:
+        metadata = _directory_metadata(
+            path,
+            kind=kind,
+            required_mode=mode,
+            required_uid=self.owner_uid,
+        )
+        if gid is not None and metadata.st_gid != gid:
+            raise NBSIntegrityError(f"{kind} has an unexpected group")
+        return metadata, self._audit_entries(path, kind=kind)
+
+    @staticmethod
+    def _require_audit_members(
+        entries: Mapping[str, tuple[Path, os.stat_result]],
+        expected: set[str],
+        *,
+        kind: str,
+    ) -> None:
+        if set(entries) != expected:
+            raise NBSIntegrityError(f"{kind} members are not exact")
+
+    def audit_store_strict(self) -> str:
+        """Read-only audit of the complete restricted and public evidence store.
+
+        This recovery primitive deliberately never takes the writer lock or
+        repairs storage.  A safely provisioned but never-onboarded tree returns
+        ``not_onboarded``; a complete, mutually committed history returns
+        ``verified_head``.  Every other state fails closed.
+        """
+
+        _root_metadata, root_entries = self._audit_directory(
+            self.root,
+            kind="NBS evidence root",
+            mode=0o750,
+        )
+        minimal_root = {"restricted", "public"}
+        initialized_root = {
+            ".nbs-intake.lock",
+            ".staging",
+            "restricted",
+            "public",
+        }
+        root_names = set(root_entries)
+        if root_names == minimal_root:
+            initialized = False
+        elif root_names == initialized_root:
+            initialized = True
+        else:
+            raise NBSIntegrityError("NBS evidence root members are not exact")
+
+        _restricted_metadata, restricted_entries = self._audit_directory(
+            self.restricted,
+            kind="NBS restricted store",
+            mode=0o700,
+        )
+        public_metadata, public_entries = self._audit_directory(
+            self.public,
+            kind="NBS public store",
+            mode=0o750,
+        )
+        self._require_audit_members(
+            public_entries,
+            {"revisions"},
+            kind="NBS public store",
+        )
+        _revisions_metadata, revision_entries = self._audit_directory(
+            self.revisions,
+            kind="NBS public revision store",
+            mode=0o2750,
+            gid=public_metadata.st_gid,
+        )
+
+        if not initialized:
+            self._require_audit_members(
+                restricted_entries,
+                set(),
+                kind="unonboarded NBS restricted store",
+            )
+            self._require_audit_members(
+                revision_entries,
+                set(),
+                kind="unonboarded NBS public revision store",
+            )
+            try:
+                self.load_public_context_strict()
+            except NBSNotOnboardedError:
+                return "not_onboarded"
+            raise NBSIntegrityError("unonboarded NBS store unexpectedly has a head")
+
+        _staging_metadata, staging_entries = self._audit_directory(
+            self.staging,
+            kind="NBS atomic staging store",
+            mode=0o700,
+        )
+        self._require_audit_members(
+            staging_entries,
+            set(),
+            kind="NBS atomic staging store",
+        )
+        lock_path, lock_metadata = root_entries[".nbs-intake.lock"]
+        if (
+            not stat.S_ISREG(lock_metadata.st_mode)
+            or lock_metadata.st_uid != self.owner_uid
+            or lock_metadata.st_nlink != 1
+            or lock_metadata.st_size != 0
+            or stat.S_IMODE(lock_metadata.st_mode) != 0o600
+        ):
+            raise NBSIntegrityError("NBS intake lock file is unsafe")
+        try:
+            visible_lock = lock_path.lstat()
+        except OSError as exc:
+            raise NBSIntegrityError("NBS intake lock file changed") from exc
+        if (
+            visible_lock.st_dev,
+            visible_lock.st_ino,
+            visible_lock.st_mode,
+            visible_lock.st_nlink,
+            visible_lock.st_size,
+            visible_lock.st_uid,
+        ) != (
+            lock_metadata.st_dev,
+            lock_metadata.st_ino,
+            lock_metadata.st_mode,
+            lock_metadata.st_nlink,
+            lock_metadata.st_size,
+            lock_metadata.st_uid,
+        ):
+            raise NBSIntegrityError("NBS intake lock file changed")
+
+        self._require_audit_members(
+            restricted_entries,
+            {"objects", "exports"},
+            kind="NBS restricted store",
+        )
+        _objects_metadata, object_entries = self._audit_directory(
+            self.restricted / "objects",
+            kind="NBS restricted object store",
+            mode=0o700,
+        )
+        self._require_audit_members(
+            object_entries,
+            {"sha256"},
+            kind="NBS restricted object store",
+        )
+        _sha_metadata, bucket_entries = self._audit_directory(
+            self.objects,
+            kind="NBS restricted SHA-256 store",
+            mode=0o700,
+        )
+        _exports_metadata, export_entries = self._audit_directory(
+            self.exports,
+            kind="NBS restricted export store",
+            mode=0o700,
+        )
+        for name, (path, metadata) in export_entries.items():
+            if name == self.restricted_head.name:
+                continue
+            _require_identifier(name, field="stored export_id")
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != self.owner_uid
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+            ):
+                raise NBSIntegrityError(
+                    "restricted export directory has unsafe metadata"
+                )
+            export_members = self._audit_entries(
+                path,
+                kind="restricted export",
+            )
+            self._require_audit_members(
+                export_members,
+                {"manifest.json", "signature.json"},
+                kind="restricted export",
+            )
+
+        exports, candidate_committed = self._load_restricted_exports()
+        if candidate_committed:
+            raise NBSIntegrityError("read-only NBS audit observed a candidate")
+        restricted_head = self._validate_chain(exports)
+        expected_head_receipt = self._restricted_head_receipt(
+            exports,
+            restricted_head,
+        )
+        stored_restricted_head = _read_head_receipt(
+            self.restricted_head,
+            mode=0o600,
+            kind="restricted head receipt",
+            required_uid=self.owner_uid,
+        )
+        _require_expected_head(
+            stored_restricted_head,
+            expected_head_receipt,
+            kind="restricted head receipt",
+        )
+
+        referenced_objects = {
+            manifest.raw_sha256 for manifest, _signature in exports.values()
+        }
+        expected_buckets = {sha256[:2] for sha256 in referenced_objects}
+        if set(bucket_entries) != expected_buckets:
+            raise NBSIntegrityError(
+                "restricted raw object bucket set does not match manifests"
+            )
+        observed_objects: set[str] = set()
+        for bucket, (path, metadata) in bucket_entries.items():
+            if (
+                re.fullmatch(r"[0-9a-f]{2}", bucket) is None
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != self.owner_uid
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+            ):
+                raise NBSIntegrityError(
+                    "restricted raw object bucket has unsafe metadata"
+                )
+            members = self._audit_entries(path, kind="restricted raw object bucket")
+            expected_members = {
+                sha256 for sha256 in referenced_objects if sha256.startswith(bucket)
+            }
+            if set(members) != expected_members:
+                raise NBSIntegrityError(
+                    "restricted raw object set does not match manifests"
+                )
+            for sha256, (_object_path, object_metadata) in members.items():
+                if (
+                    _SHA256_RE.fullmatch(sha256) is None
+                    or not stat.S_ISREG(object_metadata.st_mode)
+                    or object_metadata.st_uid != self.owner_uid
+                    or object_metadata.st_nlink != 1
+                    or stat.S_IMODE(object_metadata.st_mode) != 0o600
+                ):
+                    raise NBSIntegrityError("restricted raw object has unsafe metadata")
+                observed_objects.add(sha256)
+        if observed_objects != referenced_objects:
+            raise NBSIntegrityError(
+                "restricted raw object set does not match manifests"
+            )
+
+        expected_revision_names = {f"{export_id}.json" for export_id in exports}
+        if expected_head_receipt is not None:
+            expected_revision_names.add(self.public_head.name)
+        self._require_audit_members(
+            revision_entries,
+            expected_revision_names,
+            kind="NBS public revision store",
+        )
+        for export_id, (manifest, signature) in exports.items():
+            expected_projection = _canonical_json_bytes(
+                _public_record(manifest, signature)
+            )
+            observed_projection = _stable_read(
+                self._projection_path(export_id),
+                maximum_bytes=MAX_PUBLIC_BYTES,
+                kind="public projection",
+                required_mode=0o640,
+                required_uid=self.owner_uid,
+                required_gid=public_metadata.st_gid,
+            )
+            if not hmac.compare_digest(observed_projection, expected_projection):
+                raise NBSIntegrityError(
+                    "public projection does not match restricted evidence"
+                )
+
+        stored_public_head = _read_head_receipt(
+            self.public_head,
+            mode=0o640,
+            kind="public head receipt",
+            required_uid=self.owner_uid,
+            required_gid=public_metadata.st_gid,
+        )
+        _require_expected_head(
+            stored_public_head,
+            expected_head_receipt,
+            kind="public head receipt",
+        )
+        if not exports:
+            try:
+                self.load_public_context_strict()
+            except NBSNotOnboardedError:
+                return "not_onboarded"
+            raise NBSIntegrityError("empty NBS store unexpectedly has a public head")
+
+        public_context = self.load_public_context_strict()
+        if public_context.revision_id != restricted_head:
+            raise NBSIntegrityError("public and restricted revision heads do not match")
+        return "verified_head"
+
     def ingest(
+        self,
+        manifest_path: str | os.PathLike[str],
+        signature_path: str | os.PathLike[str],
+        raw_path: str | os.PathLike[str],
+    ) -> NBSMacroContext:
+        """Authorize production, then verify and append one signed export."""
+
+        with _production_ingest_authorization(self.root):
+            return self._ingest_authorized(
+                manifest_path,
+                signature_path,
+                raw_path,
+            )
+
+    def _ingest_authorized(
         self,
         manifest_path: str | os.PathLike[str],
         signature_path: str | os.PathLike[str],
@@ -2101,6 +2618,8 @@ class NBSIntakeStore:
             raise NBSIntegrityError("public projection exceeds its size bound")
 
         with _INGEST_LOCK, self._locked():
+            if self.public_gid is None:
+                raise NBSIntegrityError("NBS public reader group is unavailable")
             exports, committed = self._load_restricted_exports(
                 candidate=manifest,
                 candidate_signature=signature,
@@ -2180,6 +2699,7 @@ class NBSIntakeStore:
                 mode=0o640,
                 kind="public projection",
                 staging_dir=self.staging,
+                gid=self.public_gid,
             )
             complete, _ = self._load_restricted_exports(intake_time=intake_time)
             complete_head = self._validate_chain(complete)
@@ -2204,6 +2724,7 @@ class NBSIntakeStore:
                 mode=0o640,
                 kind="public head receipt",
                 staging_dir=self.staging,
+                gid=self.public_gid,
             )
             loaded = self.load_public_context_strict()
             if loaded.revision_id != manifest.export_id:

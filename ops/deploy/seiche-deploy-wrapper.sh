@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -p
 # Forced-command target for the GitHub Actions deploy key. The key in
 # authorized_keys can run THIS script and nothing else (no pty, no forwarding).
 # update.sh pulls main, pip-installs and runs the smoke gate with rollback;
@@ -12,6 +12,595 @@
 # deploy; a failed sync turns the run red at the end without blocking today's
 # deploy.
 set -euo pipefail
+
+# Every invocation crosses the same clean-shell boundary before parsing any
+# release logic. authorized_keys supplies the public forced-entry marker; the
+# poller/local bootstrap supplies no argument. Both become an internal mode
+# argument after isolation. Test-only inputs remain explicit so host-free
+# harnesses exercise the exact production entry path without ambient state.
+SEICHE_DEPLOY_FORCED_MARKER=--seiche-forced-entry-v1
+SEICHE_DEPLOY_ISOLATED_MARKER=--seiche-deploy-isolated-v1
+if [ "$#" -eq 2 ] \
+    && [ "$1" = "$SEICHE_DEPLOY_ISOLATED_MARKER" ] \
+    && { [ "$2" = local ] || [ "$2" = forced ]; }; then
+  SEICHE_DEPLOY_ENTRY_MODE=$2
+  shift 2
+else
+  case "$#:${1-}" in
+    0:)
+      if [ -n "${SSH_CONNECTION-}" ] || [ -n "${SSH_CLIENT-}" ]; then
+        echo "FAIL: SSH deployment entry is missing the forced-command marker" >&2
+        exit 2
+      fi
+      SEICHE_DEPLOY_ENTRY_MODE=local
+      ;;
+    1:"$SEICHE_DEPLOY_FORCED_MARKER")
+      SEICHE_DEPLOY_ENTRY_MODE=forced
+      ;;
+    *)
+      echo "FAIL: deploy wrapper entry arguments are not authorized" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$EUID" -eq 0 ]; then
+    SEICHE_DEPLOY_ENTRY_HOME=/root
+  else
+    SEICHE_DEPLOY_ENTRY_HOME=/tmp
+  fi
+  SEICHE_DEPLOY_ENTRY_BASH=/usr/bin/bash
+  if [ ! -x "$SEICHE_DEPLOY_ENTRY_BASH" ] \
+      && [ "$EUID" -ne 0 ] && [ -x /bin/bash ]; then
+    SEICHE_DEPLOY_ENTRY_BASH=/bin/bash
+  fi
+  [ -x "$SEICHE_DEPLOY_ENTRY_BASH" ] \
+    || { echo "FAIL: trusted Bash is unavailable" >&2; exit 1; }
+  exec /usr/bin/env -i \
+    HOME="$SEICHE_DEPLOY_ENTRY_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    SSH_ORIGINAL_COMMAND="${SSH_ORIGINAL_COMMAND-}" \
+    SEICHE_EXPECTED_TARGET_SHA="${SEICHE_EXPECTED_TARGET_SHA-}" \
+    SEICHE_DEPLOY_ADMISSION_ONLY="${SEICHE_DEPLOY_ADMISSION_ONLY-}" \
+    SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY="${SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY-}" \
+    SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS-}" \
+    SEICHE_DEPLOY_ASSET_TEST_ONLY="${SEICHE_DEPLOY_ASSET_TEST_ONLY-}" \
+    SEICHE_ALLOW_NON_ROOT_ASSET_TEST="${SEICHE_ALLOW_NON_ROOT_ASSET_TEST-}" \
+    SEICHE_ASSET_TEST_REPO="${SEICHE_ASSET_TEST_REPO-}" \
+    SEICHE_ASSET_TEST_TARGET="${SEICHE_ASSET_TEST_TARGET-}" \
+    SEICHE_ASSET_TEST_PARENT="${SEICHE_ASSET_TEST_PARENT-}" \
+    SEICHE_ASSET_TEST_DESTINATION="${SEICHE_ASSET_TEST_DESTINATION-}" \
+    SEICHE_ASSET_TEST_PYTHON="${SEICHE_ASSET_TEST_PYTHON-}" \
+    SEICHE_DEPLOY_BOOTSTRAP_TEST_ONLY="${SEICHE_DEPLOY_BOOTSTRAP_TEST_ONLY-}" \
+    SEICHE_ALLOW_NON_ROOT_BOOTSTRAP_TEST="${SEICHE_ALLOW_NON_ROOT_BOOTSTRAP_TEST-}" \
+    SEICHE_BOOTSTRAP_TEST_REPO="${SEICHE_BOOTSTRAP_TEST_REPO-}" \
+    SEICHE_BOOTSTRAP_TEST_RUNTIME="${SEICHE_BOOTSTRAP_TEST_RUNTIME-}" \
+    SEICHE_BOOTSTRAP_TEST_ALLOWED_SIGNERS="${SEICHE_BOOTSTRAP_TEST_ALLOWED_SIGNERS-}" \
+    SEICHE_BOOTSTRAP_TEST_GIT_HOME="${SEICHE_BOOTSTRAP_TEST_GIT_HOME-}" \
+    SEICHE_BOOTSTRAP_TEST_PYTHON="${SEICHE_BOOTSTRAP_TEST_PYTHON-}" \
+    "$SEICHE_DEPLOY_ENTRY_BASH" -p "$0" \
+      "$SEICHE_DEPLOY_ISOLATED_MARKER" "$SEICHE_DEPLOY_ENTRY_MODE"
+fi
+unset SEICHE_DEPLOY_ENTRY_BASH SEICHE_DEPLOY_ENTRY_HOME \
+  SEICHE_DEPLOY_FORCED_MARKER SEICHE_DEPLOY_ISOLATED_MARKER
+umask 077
+
+RUNUSER=/usr/sbin/runuser
+CANONICAL_DEPLOY_WRAPPER=/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh
+if [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then
+  CANONICAL_DEPLOY_PARENT=${CANONICAL_DEPLOY_WRAPPER%/*}
+  if [ "$0" != "$CANONICAL_DEPLOY_WRAPPER" ] \
+      || [ -L "$CANONICAL_DEPLOY_PARENT" ] \
+      || [ -L "$CANONICAL_DEPLOY_WRAPPER" ] \
+      || [ "$(/usr/bin/readlink -f -- "$0")" != "$CANONICAL_DEPLOY_WRAPPER" ] \
+      || [ "$(/usr/bin/stat -c '%U:%G:%a:%F' "$CANONICAL_DEPLOY_PARENT")" \
+        != root:root:700:directory ] \
+      || [ "$(/usr/bin/stat -c '%U:%G:%a:%h:%F' "$CANONICAL_DEPLOY_WRAPPER")" \
+        != 'root:root:700:1:regular file' ]; then
+    echo "FAIL: forced deployment did not enter through the canonical root-owned wrapper" >&2
+    exit 1
+  fi
+fi
+
+materialize_privileged_release_assets() {
+  local repo="$1" target="$2" parent="$3" destination="$4"
+  local expected_uid="$5" expected_gid="$6" portable_test="${7:-0}"
+  local materializer_python=/usr/bin/python3
+  if [ "$portable_test" = 1 ]; then
+    materializer_python="${8:?portable materializer Python is required}"
+  fi
+  "$materializer_python" -I -B - \
+    "$repo" "$target" "$parent" "$destination" \
+    "$expected_uid" "$expected_gid" "$portable_test" <<'PY'
+from __future__ import annotations
+
+import ctypes
+import errno
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+
+
+(
+    repo_text,
+    target,
+    parent_text,
+    destination_text,
+    expected_uid_text,
+    expected_gid_text,
+    portable_test_text,
+) = sys.argv[1:]
+
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+PATH_RE = re.compile(r"[A-Za-z0-9._/-]{1,255}")
+FINAL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+MAX_FILE_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_BYTES = 64 * 1024 * 1024
+RENAME_NOREPLACE = 1
+REQUIRED_MODES = {
+    "backend/seiche/__init__.py": "100644",
+    "backend/seiche/nbs_intake.py": "100644",
+    "backend/seiche/nbs_trust.py": "100644",
+    "ops/Caddyfile": "100644",
+    "ops/deploy/box-update.sh": "100644",
+    "ops/deploy/install-caddy.sh": "100755",
+    "ops/deploy/install-market-platform.sh": "100755",
+    "ops/deploy/install-release-poller.sh": "100755",
+    "ops/deploy/release-allowed-signers": "100644",
+    "ops/deploy/retire-legacy-update-units.sh": "100644",
+    "ops/deploy/seiche-data-readiness.service": "100644",
+    "ops/deploy/seiche-data-readiness.sh": "100755",
+    "ops/deploy/seiche-data-readiness.timer": "100644",
+    "ops/deploy/seiche-deploy-wrapper.sh": "100644",
+    "ops/deploy/seiche-market-backfill.service": "100644",
+    "ops/deploy/seiche-market-backup.service": "100644",
+    "ops/deploy/seiche-market-backup.sh": "100644",
+    "ops/deploy/seiche-market-backup.timer": "100644",
+    "ops/deploy/seiche-market-offsite-backup.service": "100644",
+    "ops/deploy/seiche-market-offsite-backup.sh": "100755",
+    "ops/deploy/seiche-market-offsite-backup.timer": "100644",
+    "ops/deploy/seiche-market-restore-check.service": "100644",
+    "ops/deploy/seiche-market-restore-check.sh": "100644",
+    "ops/deploy/seiche-market-restore-check.timer": "100644",
+    "ops/deploy/seiche-market-validation.service": "100644",
+    "ops/deploy/seiche-market-validation.timer": "100644",
+    "ops/deploy/seiche-market-worker.service": "100644",
+    "ops/deploy/seiche-nbs-intake.py": "100644",
+    "ops/deploy/seiche-pull.service": "100644",
+    "ops/deploy/seiche-release-poll.service": "100644",
+    "ops/deploy/seiche-release-poll.sh": "100755",
+    "ops/deploy/seiche-release-poll.timer": "100644",
+    "ops/deploy/seiche-snapshot-promote.service": "100644",
+    "ops/deploy/seiche-source-worker.service": "100644",
+    "ops/deploy/seiche-storage-preflight.py": "100644",
+    "ops/deploy/seiche-storage-preflight.service": "100644",
+    "ops/deploy/storage-volume.env.example": "100644",
+}
+
+
+def fail(message: str) -> None:
+    print(f"release assets: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def canonical_absolute(text: str, label: str) -> Path:
+    if (
+        not text.startswith("/")
+        or os.path.normpath(text) != text
+        or text == "/"
+    ):
+        fail(f"{label} path is not absolute and canonical")
+    return Path(text)
+
+
+def open_directory_nofollow(path: Path) -> int:
+    flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open("/", flags)
+    try:
+        for component in path.parts[1:]:
+            child = os.open(component, flags, dir_fd=descriptor)
+            visible = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            opened = os.fstat(child)
+            if not stat.S_ISDIR(visible.st_mode) or (
+                visible.st_dev,
+                visible.st_ino,
+            ) != (opened.st_dev, opened.st_ino):
+                os.close(child)
+                fail("asset parent has an unsafe path component")
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+try:
+    expected_uid = int(expected_uid_text)
+    expected_gid = int(expected_gid_text)
+except ValueError:
+    fail("expected ownership is invalid")
+if expected_uid < 0 or expected_gid < 0 or os.geteuid() != expected_uid:
+    fail("materializer process ownership is invalid")
+if portable_test_text not in {"0", "1"}:
+    fail("portable-test policy is invalid")
+if portable_test_text == "1" and expected_uid == 0:
+    fail("portable-test publication is forbidden for root")
+if SHA_RE.fullmatch(target) is None:
+    fail("target is not one canonical commit SHA")
+
+repo = canonical_absolute(repo_text, "repository")
+parent = canonical_absolute(parent_text, "asset parent")
+destination = canonical_absolute(destination_text, "asset destination")
+if destination.parent != parent or FINAL_RE.fullmatch(destination.name) is None:
+    fail("asset destination is outside its fixed parent")
+
+parent_fd = -1
+stage_name: str | None = None
+published = False
+try:
+    parent_fd = open_directory_nofollow(parent)
+    parent_metadata = os.fstat(parent_fd)
+    if (
+        parent_metadata.st_uid != expected_uid
+        or parent_metadata.st_gid != expected_gid
+        or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+    ):
+        fail("asset parent must have exact protected ownership and mode")
+    try:
+        os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        fail("asset destination already exists; replacement is forbidden")
+
+    for _ in range(32):
+        candidate = f".release-assets.{secrets.token_hex(16)}"
+        try:
+            os.mkdir(candidate, 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        stage_name = candidate
+        break
+    if stage_name is None:
+        fail("could not allocate a private asset stage")
+    stage = parent / stage_name
+    os.chmod(stage, 0o700)
+    stage_metadata = os.lstat(stage)
+    if (
+        not stat.S_ISDIR(stage_metadata.st_mode)
+        or stage_metadata.st_uid != expected_uid
+        or stage_metadata.st_gid != expected_gid
+        or stat.S_IMODE(stage_metadata.st_mode) != 0o700
+    ):
+        fail("asset stage metadata is unsafe")
+
+    git_environment = {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+    }
+    git_base = [
+        "/usr/bin/git",
+        "-c",
+        f"safe.directory={repo}",
+        "-C",
+        str(repo),
+    ]
+
+    def git(*arguments: str, input_bytes: bytes | None = None) -> bytes:
+        input_arguments: dict[str, object]
+        if input_bytes is None:
+            input_arguments = {"stdin": subprocess.DEVNULL}
+        else:
+            input_arguments = {"input": input_bytes}
+        try:
+            result = subprocess.run(
+                [*git_base, *arguments],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=git_environment,
+                cwd="/",
+                **input_arguments,
+            )
+        except OSError as exc:
+            fail(f"Git object inspection could not run: {exc}")
+        if result.returncode != 0:
+            fail("target Git object graph is missing or invalid")
+        return result.stdout
+
+    if git("rev-parse", "--show-object-format").strip() != b"sha1":
+        fail("only canonical SHA-1 release repositories are supported")
+    git("fsck", "--strict", "--no-reflogs", "--no-dangling", target)
+    resolved_commit = git("rev-parse", "--verify", f"{target}^{{commit}}").strip()
+    if resolved_commit != target.encode("ascii"):
+        fail("target does not resolve to the exact requested commit")
+
+    raw_tree = git(
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        target,
+        "--",
+        "ops/deploy",
+        "ops/Caddyfile",
+        "backend/seiche/__init__.py",
+        "backend/seiche/nbs_intake.py",
+        "backend/seiche/nbs_trust.py",
+    )
+    entries: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for record in raw_tree.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, object_type, raw_oid = metadata.split(b" ", 2)
+            path = raw_path.decode("ascii")
+            git_mode = mode.decode("ascii")
+            oid = raw_oid.decode("ascii")
+        except (UnicodeDecodeError, ValueError):
+            fail("target tree contains a malformed asset entry")
+        if (
+            object_type != b"blob"
+            or git_mode not in {"100644", "100755"}
+            or SHA_RE.fullmatch(oid) is None
+            or PATH_RE.fullmatch(path) is None
+            or path.startswith("/")
+            or "//" in path
+            or any(component in {"", ".", ".."} for component in path.split("/"))
+            or path in seen
+            or not (
+                path.startswith("ops/deploy/")
+                or path == "ops/Caddyfile"
+                or path
+                in {
+                    "backend/seiche/__init__.py",
+                    "backend/seiche/nbs_intake.py",
+                    "backend/seiche/nbs_trust.py",
+                }
+            )
+        ):
+            fail("target tree contains an unsafe asset entry")
+        seen.add(path)
+        entries.append((path, git_mode, oid))
+    if not entries:
+        fail("target contains no privileged assets")
+    for required_path, required_mode in REQUIRED_MODES.items():
+        matches = [entry for entry in entries if entry[0] == required_path]
+        if len(matches) != 1 or matches[0][1] != required_mode:
+            fail(f"required asset path or mode is invalid: {required_path}")
+
+    manifest_entries: list[dict[str, object]] = []
+    total_bytes = 0
+    for path, git_mode, oid in sorted(entries):
+        body = git("cat-file", "blob", oid)
+        total_bytes += len(body)
+        if len(body) > MAX_FILE_BYTES or total_bytes > MAX_TOTAL_BYTES:
+            fail("privileged asset tree exceeds its release bound")
+        calculated_oid = git("hash-object", "--stdin", input_bytes=body).strip().decode(
+            "ascii", errors="strict"
+        )
+        if calculated_oid != oid:
+            fail(f"asset blob content does not match its tree identity: {path}")
+
+        output = stage / path
+        output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        current = output.parent
+        while current != stage:
+            os.chmod(current, 0o700)
+            current = current.parent
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(output, flags, 0o600)
+        try:
+            offset = 0
+            while offset < len(body):
+                written = os.write(descriptor, body[offset:])
+                if written < 1:
+                    fail(f"asset write made no progress: {path}")
+                offset += written
+            os.fchmod(descriptor, 0o755 if git_mode == "100755" else 0o644)
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != expected_uid
+                or metadata.st_gid != expected_gid
+            ):
+                fail(f"materialized asset metadata is unsafe: {path}")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        manifest_entries.append(
+            {
+                "blob_oid": oid,
+                "git_mode": git_mode,
+                "path": path,
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "size": len(body),
+            }
+        )
+
+    manifest = {
+        "entries": manifest_entries,
+        "git_object_format": "sha1",
+        "schema": "seiche.signed-privileged-assets.v1",
+        "target_sha": target,
+    }
+    metadata_files = {
+        ".seiche-release-assets.json": (
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("ascii"),
+        ".target-sha": f"{target}\n".encode("ascii"),
+    }
+    for name, body in metadata_files.items():
+        descriptor = os.open(
+            stage / name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            offset = 0
+            while offset < len(body):
+                offset += os.write(descriptor, body[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    for root, directories, _files in os.walk(stage, topdown=False):
+        for directory in directories:
+            directory_path = Path(root) / directory
+            metadata = os.lstat(directory_path)
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                fail("materialized asset tree contains an unsafe directory")
+            os.chmod(directory_path, 0o700)
+            directory_fd = os.open(
+                directory_path,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0),
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    stage_fd = os.open(
+        stage,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        os.fsync(stage_fd)
+    finally:
+        os.close(stage_fd)
+
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            fail("atomic no-replace publication is unavailable")
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        if renameat2(
+            parent_fd,
+            stage_name.encode("ascii"),
+            parent_fd,
+            destination.name.encode("ascii"),
+            RENAME_NOREPLACE,
+        ) != 0:
+            error = ctypes.get_errno()
+            if error == errno.EEXIST:
+                fail("asset destination appeared concurrently; replacement refused")
+            fail(f"atomic asset publication failed with errno {error}")
+    elif portable_test_text == "1":
+        try:
+            os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            fail("asset destination appeared concurrently; replacement refused")
+        os.rename(
+            stage_name,
+            destination.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+    else:
+        fail("production asset publication requires Linux renameat2")
+    published = True
+    stage_name = None
+    os.fsync(parent_fd)
+finally:
+    if stage_name is not None:
+        stage_path = parent / stage_name
+        try:
+            shutil.rmtree(stage_path)
+        except FileNotFoundError:
+            pass
+    if parent_fd >= 0:
+        os.close(parent_fd)
+    if not published:
+        try:
+            destination_metadata = os.lstat(destination)
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISDIR(destination_metadata.st_mode):
+                fail("failed publication unexpectedly exposed an asset destination")
+PY
+}
+
+# Host-free tests exercise the exact production materializer without touching
+# /run or accepting this mode from a root/forced-command execution.
+case "${SEICHE_DEPLOY_ASSET_TEST_ONLY:-0}" in
+  0) ;;
+  1)
+    if [ "$(id -u)" -eq 0 ] \
+        || [ "${SEICHE_ALLOW_NON_ROOT_ASSET_TEST:-0}" != 1 ] \
+        || [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then
+      echo "FAIL: asset-only mode is restricted to explicit non-root tests" >&2
+      exit 1
+    fi
+    TEST_REPO=${SEICHE_ASSET_TEST_REPO:?}
+    TEST_TARGET=${SEICHE_ASSET_TEST_TARGET:?}
+    TEST_PARENT=${SEICHE_ASSET_TEST_PARENT:?}
+    TEST_DESTINATION=${SEICHE_ASSET_TEST_DESTINATION:?}
+    MATERIALIZER_PYTHON=${SEICHE_ASSET_TEST_PYTHON:?}
+    case "$MATERIALIZER_PYTHON" in
+      /*) ;;
+      *)
+        echo "FAIL: asset-test Python must be an absolute path" >&2
+        exit 1
+        ;;
+    esac
+    [ -x "$MATERIALIZER_PYTHON" ] || {
+      echo "FAIL: asset-test Python is not executable" >&2
+      exit 1
+    }
+    materialize_privileged_release_assets \
+      "$TEST_REPO" "$TEST_TARGET" "$TEST_PARENT" "$TEST_DESTINATION" \
+      "$(id -u)" "$(id -g)" 1 "$MATERIALIZER_PYTHON"
+    printf '%s\n' "$TEST_DESTINATION"
+    exit 0
+    ;;
+  *)
+    echo "FAIL: SEICHE_DEPLOY_ASSET_TEST_ONLY must be exactly 0 or 1" >&2
+    exit 1
+    ;;
+esac
+
 echo "== seiche auto-deploy $(date -u +%FT%TZ) =="
 
 APP=/home/seiche/app
@@ -23,24 +612,202 @@ PROMOTION_REQUEST=$PROMOTION_REQUEST_DIR/promotion-request.json
 PROMOTION_UNIT=seiche-snapshot-promote.service
 DEPLOY_RUNTIME_DIR=/run/seiche-deploy
 DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
+SIGNED_ASSET_ROOT=""
+MARKET_MUTATION_LOCK=/run/lock/seiche-market-backup.lock
+MARKET_MUTATION_LOCK_HELD=""
+BOOTSTRAP_ASSETS_ONLY=${SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY:-0}
+BOOTSTRAP_TEST_ONLY=${SEICHE_DEPLOY_BOOTSTRAP_TEST_ONLY:-0}
+BOOTSTRAP_EXPECTED_UID=0
+BOOTSTRAP_EXPECTED_GID=0
+BOOTSTRAP_PORTABLE=0
+BOOTSTRAP_PYTHON=/usr/bin/python3
+BOOTSTRAP_GIT_HOME=/root
+BOOTSTRAP_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers
+
+case "$BOOTSTRAP_ASSETS_ONLY" in
+  0|1) ;;
+  *)
+    echo "FAIL: SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY must be exactly 0 or 1" >&2
+    exit 1
+    ;;
+esac
+case "$BOOTSTRAP_TEST_ONLY" in
+  0|1) ;;
+  *)
+    echo "FAIL: SEICHE_DEPLOY_BOOTSTRAP_TEST_ONLY must be exactly 0 or 1" >&2
+    exit 1
+    ;;
+esac
+if [ "$BOOTSTRAP_TEST_ONLY" = 1 ]; then
+  if [ "$(/usr/bin/id -u)" -eq 0 ] \
+      || [ "${SEICHE_ALLOW_NON_ROOT_BOOTSTRAP_TEST:-0}" != 1 ] \
+      || [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ] \
+      || [ "$BOOTSTRAP_ASSETS_ONLY" != 0 ]; then
+    echo "FAIL: bootstrap test mode is restricted to explicit non-root local tests" >&2
+    exit 1
+  fi
+  APP=${SEICHE_BOOTSTRAP_TEST_REPO:?}
+  DEPLOY_RUNTIME_DIR=${SEICHE_BOOTSTRAP_TEST_RUNTIME:?}
+  DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
+  BOOTSTRAP_ALLOWED_SIGNERS=${SEICHE_BOOTSTRAP_TEST_ALLOWED_SIGNERS:?}
+  BOOTSTRAP_GIT_HOME=${SEICHE_BOOTSTRAP_TEST_GIT_HOME:?}
+  BOOTSTRAP_PYTHON=${SEICHE_BOOTSTRAP_TEST_PYTHON:?}
+  for bootstrap_path in \
+      "$APP" "$DEPLOY_RUNTIME_DIR" "$BOOTSTRAP_ALLOWED_SIGNERS" \
+      "$BOOTSTRAP_GIT_HOME" "$BOOTSTRAP_PYTHON"; do
+    case "$bootstrap_path" in
+      /*) ;;
+      *)
+        echo "FAIL: bootstrap test paths must be absolute" >&2
+        exit 1
+        ;;
+    esac
+  done
+  [ -x "$BOOTSTRAP_PYTHON" ] || {
+    echo "FAIL: bootstrap test Python is not executable" >&2
+    exit 1
+  }
+  case "$APP:$DEPLOY_RUNTIME_DIR:$BOOTSTRAP_ALLOWED_SIGNERS" in
+    /home/seiche/app:*|*:/run/seiche-deploy:*|*:/etc/seiche-release.allowed-signers)
+      echo "FAIL: bootstrap tests must isolate every production path" >&2
+      exit 1
+      ;;
+  esac
+  BOOTSTRAP_EXPECTED_UID=$(/usr/bin/id -u)
+  BOOTSTRAP_EXPECTED_GID=$(/usr/bin/id -g)
+  BOOTSTRAP_PORTABLE=1
+elif [ "$BOOTSTRAP_ASSETS_ONLY" = 1 ]; then
+  if [ "$(/usr/bin/id -u)" -ne 0 ] \
+      || [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then
+    echo "FAIL: bootstrap-assets mode is root-only and unavailable over SSH" >&2
+    exit 1
+  fi
+fi
+
+# Invoked directly and from the composed EXIT trap below.
+# shellcheck disable=SC2329
+cleanup_signed_release_assets() {
+  local asset_name
+  [ -n "$SIGNED_ASSET_ROOT" ] || return 0
+  [ "$(dirname -- "$SIGNED_ASSET_ROOT")" = "$DEPLOY_RUNTIME_DIR" ] || {
+    echo "FAIL: refusing to clean a signed-asset path outside the runtime" >&2
+    return 1
+  }
+  asset_name=$(basename -- "$SIGNED_ASSET_ROOT")
+  [[ "$asset_name" =~ ^release-assets-[0-9a-f]{40}-[0-9]+$ ]] || {
+    echo "FAIL: refusing to clean an unsafe signed-asset path" >&2
+    return 1
+  }
+  if [ -L "$SIGNED_ASSET_ROOT" ] \
+      || { [ -e "$SIGNED_ASSET_ROOT" ] && [ ! -d "$SIGNED_ASSET_ROOT" ]; }; then
+    echo "FAIL: signed-asset cleanup target is unsafe" >&2
+    return 1
+  fi
+  /usr/bin/rm -rf --one-file-system -- "$SIGNED_ASSET_ROOT" || return 1
+  SIGNED_ASSET_ROOT=""
+}
+
+release_market_mutation_lock() {
+  [ -n "$MARKET_MUTATION_LOCK_HELD" ] || return 0
+  flock --unlock 8 || return 1
+  exec 8>&-
+  MARKET_MUTATION_LOCK_HELD=""
+}
+
+acquire_market_mutation_lock() {
+  local lock_identity fd_identity lock_created=""
+  [ -z "$MARKET_MUTATION_LOCK_HELD" ] || return 0
+  if systemctl is-active --quiet seiche-market-backup.service 2>/dev/null \
+      || systemctl is-active --quiet seiche-market-offsite-backup.service \
+        2>/dev/null \
+      || systemctl is-active --quiet seiche-market-restore-check.service \
+        2>/dev/null; then
+    echo "FAIL: a backup/restore service remained active before runtime mutation"
+    return 1
+  fi
+  if [ -L /run/lock ] || [ ! -d /run/lock ] \
+      || [ "$(stat -c '%U:%G:%a' /run/lock)" != root:root:775 ]; then
+    echo "FAIL: market mutation lock parent is unsafe"
+    return 1
+  fi
+  if [ ! -e "$MARKET_MUTATION_LOCK" ] && [ ! -L "$MARKET_MUTATION_LOCK" ]; then
+    if (umask 077; set -o noclobber; : >"$MARKET_MUTATION_LOCK") 2>/dev/null; then
+      lock_created=1
+    elif [ ! -e "$MARKET_MUTATION_LOCK" ]; then
+      echo "FAIL: market mutation lock could not be created"
+      return 1
+    fi
+  fi
+  if [ "$(stat -c '%U:%G:%a:%h' "$MARKET_MUTATION_LOCK")" \
+      != root:root:600:1 ]; then
+    echo "FAIL: market mutation lock metadata is unsafe"
+    if [ -n "$lock_created" ]; then
+      rm -f -- "$MARKET_MUTATION_LOCK"
+    fi
+    return 1
+  fi
+  exec 8<>"$MARKET_MUTATION_LOCK"
+  lock_identity=$(stat -c '%d:%i' "$MARKET_MUTATION_LOCK") || {
+    exec 8>&-
+    return 1
+  }
+  fd_identity=$(stat -Lc '%d:%i' "/proc/$$/fd/8") || {
+    exec 8>&-
+    return 1
+  }
+  if [ "$lock_identity" != "$fd_identity" ] \
+      || ! flock --wait 300 8; then
+    exec 8>&-
+    echo "FAIL: market mutation lock remained busy or changed identity"
+    return 1
+  fi
+  MARKET_MUTATION_LOCK_HELD=1
+  echo "market runtime: acquired intake/backup serialization lock"
+}
 
 if [ -L "$DEPLOY_RUNTIME_DIR" ] \
     || { [ -e "$DEPLOY_RUNTIME_DIR" ] && [ ! -d "$DEPLOY_RUNTIME_DIR" ]; }; then
   echo "FAIL: deploy runtime directory is not a real directory"
   exit 1
 fi
-install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"
-if [ "$(stat -c '%U:%G:%a' "$DEPLOY_RUNTIME_DIR")" != "root:root:700" ]; then
+if [ "$BOOTSTRAP_PORTABLE" = 1 ]; then
+  [ -d "$DEPLOY_RUNTIME_DIR" ] || {
+    echo "FAIL: portable bootstrap runtime must already exist"
+    exit 1
+  }
+else
+  install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"
+fi
+if ! "$BOOTSTRAP_PYTHON" -I -B - \
+    "$DEPLOY_RUNTIME_DIR" "$BOOTSTRAP_EXPECTED_UID" \
+    "$BOOTSTRAP_EXPECTED_GID" <<'PY'
+import os
+import stat
+import sys
+
+path, uid, gid = sys.argv[1:]
+metadata = os.lstat(path)
+if (
+    not stat.S_ISDIR(metadata.st_mode)
+    or stat.S_ISLNK(metadata.st_mode)
+    or metadata.st_uid != int(uid)
+    or metadata.st_gid != int(gid)
+    or stat.S_IMODE(metadata.st_mode) != 0o700
+):
+    raise SystemExit(1)
+PY
+then
   echo "FAIL: deploy runtime directory permissions are unsafe"
   exit 1
 fi
 exec 9>"$DEPLOY_LOCK"
-chown root:root "$DEPLOY_LOCK"
+[ "$BOOTSTRAP_PORTABLE" = 1 ] || chown root:root "$DEPLOY_LOCK"
 chmod 0600 "$DEPLOY_LOCK"
-if ! flock --nonblock 9; then
+if [ "$BOOTSTRAP_PORTABLE" != 1 ] && ! flock --nonblock 9; then
   echo "FAIL: another seiche deployment is still running"
   exit 1
 fi
+trap 'release_market_mutation_lock || true; cleanup_signed_release_assets || true' EXIT
 
 valid_release_sha() {
   [[ "$1" =~ ^[0-9a-f]{40}$ ]]
@@ -49,6 +816,287 @@ valid_release_sha() {
 valid_activation_token() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
 }
+
+verify_release_target_signature() {
+  local target="$1" fetched_main="$2"
+  local allowed_signers=$BOOTSTRAP_ALLOWED_SIGNERS
+  local principal=beepboop2025@users.noreply.github.com
+  local author="" signer_line=""
+  if ! "$BOOTSTRAP_PYTHON" -I -B - \
+      "$allowed_signers" "$BOOTSTRAP_EXPECTED_UID" \
+      "$BOOTSTRAP_EXPECTED_GID" <<'PY'
+import os
+import stat
+import sys
+
+path, uid, gid = sys.argv[1:]
+descriptor = os.open(
+    path,
+    os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+)
+try:
+    metadata = os.fstat(descriptor)
+    visible = os.stat(path, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_uid != int(uid)
+        or metadata.st_gid != int(gid)
+        or stat.S_IMODE(metadata.st_mode) != 0o444
+        or (metadata.st_dev, metadata.st_ino) != (visible.st_dev, visible.st_ino)
+    ):
+        raise SystemExit(1)
+finally:
+    os.close(descriptor)
+PY
+  then
+    echo "FAIL: root release signer pin is missing or unsafe"
+    return 1
+  fi
+  if ! IFS= read -r signer_line <"$allowed_signers" \
+      || ! printf '%s\n' "$signer_line" | cmp -s - "$allowed_signers" \
+      || [[ "$signer_line" == *$'\r'* ]]; then
+    echo "FAIL: root release signer pin is not one canonical line"
+    return 1
+  fi
+  case "$signer_line" in
+    "$principal ssh-ed25519 "*|"$principal sk-ssh-ed25519@openssh.com "*) ;;
+    *)
+      echo "FAIL: root release signer pin does not name the release principal"
+      return 1
+      ;;
+  esac
+  [ -x /usr/bin/ssh-keygen ] || {
+    echo "FAIL: trusted SSH signature verifier is unavailable"
+    return 1
+  }
+  author=$(/usr/bin/env -i \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+    HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+      show -s --format=%ae "$target") || {
+    echo "FAIL: signed target author cannot be resolved"
+    return 1
+  }
+  [ "$author" = "$principal" ] || {
+    echo "FAIL: signed target author is not the pinned release principal"
+    return 1
+  }
+  if ! /usr/bin/env -i \
+      GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+      GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+      HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+      /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+        -c gpg.format=ssh \
+        -c "gpg.ssh.allowedSignersFile=$allowed_signers" \
+        -c gpg.ssh.program=/usr/bin/ssh-keygen \
+        verify-commit "$target"; then
+    echo "FAIL: target commit lacks the pinned SSH signature"
+    return 1
+  fi
+  if ! /usr/bin/env -i \
+      GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+      GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+      HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+      /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+        merge-base --is-ancestor "$target" "$fetched_main"; then
+    echo "FAIL: signed target is outside the fetched main range"
+    return 1
+  fi
+}
+
+verify_bootstrap_wrapper_blob() {
+  local target="$1" tree_line="" tree_mode="" tree_type="" tree_oid=""
+  local tree_path="" actual_oid="" self_path=""
+  if [ "$BOOTSTRAP_PORTABLE" = 1 ]; then
+    self_path=$("$BOOTSTRAP_PYTHON" -I -B - "$0" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+text = sys.argv[1]
+if not text.startswith("/") or os.path.normpath(text) != text:
+    raise SystemExit(1)
+print(Path(text))
+PY
+    )
+  else
+    self_path=$(/usr/bin/readlink -f -- "$0")
+  fi || {
+    echo "FAIL: bootstrap wrapper path cannot be resolved"
+    return 1
+  }
+  if [ "$(dirname -- "$self_path")" != "$DEPLOY_RUNTIME_DIR" ]; then
+    echo "FAIL: bootstrap wrapper is outside the fixed root runtime"
+    return 1
+  fi
+  "$BOOTSTRAP_PYTHON" -I -B - \
+      "$DEPLOY_RUNTIME_DIR" "$BOOTSTRAP_EXPECTED_UID" \
+      "$BOOTSTRAP_EXPECTED_GID" "$BOOTSTRAP_PORTABLE" <<'PY' || {
+import os
+from pathlib import Path
+import stat
+import sys
+
+path_text, uid_text, gid_text, portable_text = sys.argv[1:]
+uid, gid = int(uid_text), int(gid_text)
+path = Path(path_text)
+if not path_text.startswith("/") or os.path.normpath(path_text) != path_text:
+    raise SystemExit(1)
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+descriptor = os.open("/", flags)
+try:
+    for component in path.parts[1:]:
+        parent = os.fstat(descriptor)
+        owner_is_safe = (parent.st_uid, parent.st_gid) == (0, 0) or (
+            portable_text == "1" and (parent.st_uid, parent.st_gid) == (uid, gid)
+        )
+        if not owner_is_safe or stat.S_IMODE(parent.st_mode) & 0o022:
+            raise SystemExit(1)
+        child = os.open(component, flags, dir_fd=descriptor)
+        visible = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(visible.st_mode) or (
+            visible.st_dev,
+            visible.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            os.close(child)
+            raise SystemExit(1)
+        os.close(descriptor)
+        descriptor = child
+    final = os.fstat(descriptor)
+    if (
+        final.st_uid != uid
+        or final.st_gid != gid
+        or stat.S_IMODE(final.st_mode) != 0o700
+    ):
+        raise SystemExit(1)
+finally:
+    os.close(descriptor)
+PY
+    echo "FAIL: bootstrap wrapper parent chain is unsafe"
+    return 1
+  }
+  if [ -L "$0" ] || [ ! -f "$self_path" ] \
+      || ! "$BOOTSTRAP_PYTHON" -I -B - \
+        "$self_path" "$BOOTSTRAP_EXPECTED_UID" \
+        "$BOOTSTRAP_EXPECTED_GID" <<'PY'
+import os
+import stat
+import sys
+
+path, uid, gid = sys.argv[1:]
+metadata = os.lstat(path)
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or stat.S_ISLNK(metadata.st_mode)
+    or metadata.st_nlink != 1
+    or metadata.st_uid != int(uid)
+    or metadata.st_gid != int(gid)
+    or stat.S_IMODE(metadata.st_mode) != 0o500
+):
+    raise SystemExit(1)
+PY
+  then
+    echo "FAIL: bootstrap wrapper must be one root-owned 0500 regular file"
+    return 1
+  fi
+  tree_line=$(/usr/bin/env -i \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+    HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+      ls-tree "$target" -- ops/deploy/seiche-deploy-wrapper.sh) || {
+    echo "FAIL: bootstrap wrapper blob cannot be resolved"
+    return 1
+  }
+  IFS=$' \t' read -r tree_mode tree_type tree_oid tree_path <<<"$tree_line"
+  if [ "$tree_mode" != 100644 ] || [ "$tree_type" != blob ] \
+      || [[ ! "$tree_oid" =~ ^[0-9a-f]{40}$ ]] \
+      || [ "$tree_path" != ops/deploy/seiche-deploy-wrapper.sh ]; then
+    echo "FAIL: signed target has no exact deploy-wrapper blob"
+    return 1
+  fi
+  actual_oid=$(/usr/bin/env -i \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    /usr/bin/git hash-object --stdin <"$self_path") || {
+    echo "FAIL: bootstrap wrapper bytes cannot be hashed"
+    return 1
+  }
+  [ "$actual_oid" = "$tree_oid" ] || {
+    echo "FAIL: executing bootstrap wrapper is not the exact target blob"
+    return 1
+  }
+}
+
+verify_release_object_graph() {
+  local target="$1"
+  /usr/bin/env -i \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+    HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+      fsck --strict --no-reflogs --no-dangling "$target"
+}
+
+if [ "$BOOTSTRAP_ASSETS_ONLY" = 1 ] || [ "$BOOTSTRAP_TEST_ONLY" = 1 ]; then
+  TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}
+  BOOTSTRAP_MAIN=$(/usr/bin/env -i \
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_LAZY_FETCH=1 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 \
+    HOME="$BOOTSTRAP_GIT_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    /usr/bin/git -c "safe.directory=$APP" -C "$APP" \
+      rev-parse --verify 'refs/remotes/origin/main^{commit}') || {
+    echo "FAIL: bootstrap origin/main cannot be resolved"
+    exit 1
+  }
+  valid_release_sha "$TARGET" || {
+    echo "FAIL: bootstrap-assets mode requires one exact target SHA"
+    exit 1
+  }
+  valid_release_sha "$BOOTSTRAP_MAIN" && [ "$TARGET" = "$BOOTSTRAP_MAIN" ] || {
+    echo "FAIL: bootstrap target must equal the fetched canonical origin/main"
+    exit 1
+  }
+  verify_release_object_graph "$TARGET" || {
+    echo "FAIL: bootstrap target object graph is invalid"
+    exit 1
+  }
+  verify_bootstrap_wrapper_blob "$TARGET" || exit 1
+  verify_release_target_signature "$TARGET" "$BOOTSTRAP_MAIN" || exit 1
+  SIGNED_ASSET_ROOT="$DEPLOY_RUNTIME_DIR/release-assets-${TARGET}-$$"
+  materializer_arguments=(
+    "$APP" "$TARGET" "$DEPLOY_RUNTIME_DIR" "$SIGNED_ASSET_ROOT"
+    "$BOOTSTRAP_EXPECTED_UID" "$BOOTSTRAP_EXPECTED_GID" "$BOOTSTRAP_PORTABLE"
+  )
+  if [ "$BOOTSTRAP_PORTABLE" = 1 ]; then
+    materializer_arguments+=("$BOOTSTRAP_PYTHON")
+  fi
+  if ! materialize_privileged_release_assets "${materializer_arguments[@]}"; then
+    echo "FAIL: exact signed bootstrap assets could not be materialized"
+    exit 1
+  fi
+  [ "$SIGNED_ASSET_ROOT/ops/deploy/seiche-deploy-wrapper.sh" -ef "$0" ] \
+    || cmp -s -- \
+      "$SIGNED_ASSET_ROOT/ops/deploy/seiche-deploy-wrapper.sh" "$0" || {
+      echo "FAIL: materialized deploy wrapper does not match the bootstrap blob"
+      exit 1
+    }
+  retained_asset_root=$SIGNED_ASSET_ROOT
+  SIGNED_ASSET_ROOT=""
+  trap - EXIT
+  printf 'release assets: retained exact signed target at %s\n' \
+    "$retained_asset_root"
+  exit 0
+fi
 
 # Snapshot assembly needs several CPU cores before strict health can turn green.
 # Require a stable quiet window before any service is stopped; one low sample is
@@ -100,7 +1148,7 @@ admit_shared_host() {
 case "${SEICHE_DEPLOY_ADMISSION_ONLY:-0}" in
   0) ;;
   1)
-    [ -z "${SSH_ORIGINAL_COMMAND:-}" ] \
+    [ "$SEICHE_DEPLOY_ENTRY_MODE" != forced ] \
       || { echo "FAIL: forced deploy cannot request admission-only mode"; exit 1; }
     if admit_shared_host; then
       exit 0
@@ -218,14 +1266,14 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   fi
 fi
 
-BEFORE=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)
-if ! runuser -u seiche -- git -C "$APP" fetch -q origin main; then
+BEFORE=$("$RUNUSER" -u seiche -- git -C "$APP" rev-parse HEAD)
+if ! "$RUNUSER" -u seiche -- git -C "$APP" fetch -q origin main; then
   echo "FAIL: could not fetch the candidate release"
   exit 1
 fi
-LATEST=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)
+LATEST=$("$RUNUSER" -u seiche -- git -C "$APP" rev-parse origin/main)
 if ! valid_release_sha "$LATEST" \
-    || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+    || ! "$RUNUSER" -u seiche -- git -C "$APP" rev-parse --verify --quiet \
       "$LATEST^{commit}" >/dev/null; then
   echo "FAIL: origin/main did not resolve to a canonical local commit"
   exit 1
@@ -235,7 +1283,7 @@ fi
 # tip. A direct root invocation without either constraint retains the explicit
 # latest-main maintenance behavior.
 EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}
-if [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+if [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then
   if [[ "$SSH_ORIGINAL_COMMAND" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
     REQUESTED_TARGET=${BASH_REMATCH[1]}
   else
@@ -254,18 +1302,26 @@ if [ -n "$EXPECTED_TARGET" ]; then
     echo "FAIL: expected target is not a canonical commit SHA"
     exit 1
   fi
-  if ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+  if ! "$RUNUSER" -u seiche -- git -C "$APP" rev-parse --verify --quiet \
       "$EXPECTED_TARGET^{commit}" >/dev/null \
-      || ! runuser -u seiche -- git -C "$APP" merge-base --is-ancestor \
+      || ! "$RUNUSER" -u seiche -- git -C "$APP" merge-base --is-ancestor \
         "$EXPECTED_TARGET" "$LATEST"; then
     echo "FAIL: reviewed target is not a fetched commit on main"
     exit 1
   fi
   TARGET=$EXPECTED_TARGET
 fi
+verify_release_target_signature "$TARGET" "$LATEST" || exit 1
 if ! admit_shared_host; then
   exit 75
 fi
+SIGNED_ASSET_ROOT="$DEPLOY_RUNTIME_DIR/release-assets-${TARGET}-$$"
+if ! materialize_privileged_release_assets \
+    "$APP" "$TARGET" "$DEPLOY_RUNTIME_DIR" "$SIGNED_ASSET_ROOT" 0 0 0; then
+  echo "FAIL: exact signed privileged assets could not be materialized"
+  exit 1
+fi
+echo "release assets: materialized exact target ${TARGET:0:7}"
 MARKET_WORKER_WAS_ACTIVE=""
 MARKET_WORKER_WAS_ENABLED=""
 MARKET_BACKFILL_WAS_ACTIVE=""
@@ -333,6 +1389,8 @@ fi
 # or root-controlled helpers. The /run copy lives only for this locked deploy.
 DATA_UNIT_NAMES=(
   seiche-storage-preflight.service
+  seiche-market-worker.service
+  seiche-pull.service
   seiche-market-backfill.service
   seiche-source-worker.service
   seiche-data-readiness.service
@@ -349,23 +1407,31 @@ DATA_UNIT_NAMES=(
 )
 DATA_ARTIFACT_NAMES=(
   storage-preflight-helper
+  nbs-intake-launcher
   data-readiness-helper
   market-offsite-backup-helper
+  market-backup-helper
+  market-restore-check-helper
   api-market-platform-dropin
   release-poll-storage-dropin
   validation-state-dropin
   backup-paths-dropin
   restore-paths-dropin
+  nbs-runtime-current-sha
 )
 DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
+  /etc/seiche/libexec/seiche-nbs-intake.py
   /etc/seiche/libexec/seiche-data-readiness.sh
   /etc/seiche/libexec/seiche-market-offsite-backup.sh
+  /etc/seiche/libexec/seiche-market-backup.sh
+  /etc/seiche/libexec/seiche-market-restore-check.sh
   /etc/systemd/system/seiche-api.service.d/market-platform.conf
   /etc/systemd/system/seiche-release-poll.service.d/storage-volume.conf
   /etc/systemd/system/seiche-market-validation.service.d/state-path.conf
   /etc/systemd/system/seiche-market-backup.service.d/paths.conf
   /etc/systemd/system/seiche-market-restore-check.service.d/paths.conf
+  /opt/seiche-nbs-intake/current-sha
 )
 DATA_UNIT_ROLLBACK_DIR=""
 DATA_UNITS_MAY_HAVE_CHANGED=""
@@ -521,6 +1587,9 @@ restore_preupdate_data_units() {
   # Remove any enablement created by the candidate while its unit is still
   # visible. A missing unit can make disable return nonzero, so the final
   # is-enabled check below is the authoritative fail-closed assertion.
+  if [ -z "$MARKET_WORKER_WAS_ENABLED" ]; then
+    systemctl disable seiche-market-worker.service >/dev/null 2>&1 || true
+  fi
   if [ -z "$SOURCE_WORKER_WAS_ENABLED" ]; then
     systemctl disable seiche-source-worker.service >/dev/null 2>&1 || true
   fi
@@ -581,6 +1650,19 @@ restore_preupdate_data_units() {
   if ! systemctl daemon-reload; then
     echo "FAIL: systemd rejected restored pre-deploy data units"
     return 1
+  fi
+  if [ -n "$MARKET_WORKER_WAS_ENABLED" ]; then
+    if ! systemctl enable seiche-market-worker.service >/dev/null \
+        || ! systemctl is-enabled --quiet seiche-market-worker.service; then
+      echo "FAIL: market worker enablement could not be restored"
+      return 1
+    fi
+  else
+    systemctl disable seiche-market-worker.service >/dev/null 2>&1 || true
+    if systemctl is-enabled --quiet seiche-market-worker.service 2>/dev/null; then
+      echo "FAIL: candidate market worker remains enabled after rollback"
+      return 1
+    fi
   fi
   if [ -n "$SOURCE_WORKER_WAS_ENABLED" ]; then
     if ! systemctl enable seiche-source-worker.service >/dev/null \
@@ -668,7 +1750,7 @@ restore_preupdate_data_units() {
   echo "data collection and readiness units restored to pre-deploy state"
 }
 
-trap 'cleanup_preupdate_data_units || true' EXIT
+trap 'release_market_mutation_lock || true; cleanup_preupdate_data_units || true; cleanup_signed_release_assets || true' EXIT
 if ! capture_preupdate_data_units; then
   echo "FAIL: could not capture pre-deploy data-unit state"
   exit 1
@@ -715,15 +1797,19 @@ DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAI
 # This is a fixed, reviewed controller budget rather than caller configuration.
 API_FULL_REBUILD_WAIT_SECONDS=1800
 run_recovery_proof_preflight() {
-  SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+  /usr/bin/env -i \
+    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
     SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-    SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
-    /usr/bin/bash "$DATA_READINESS_SCRIPT"
+    SEICHE_DATA_READINESS_REQUIRED_UNITS= \
+    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
 }
 run_data_readiness_preflight() {
-  SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
+  /usr/bin/env -i \
+    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
     SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
-    /usr/bin/bash "$DATA_READINESS_SCRIPT"
+    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
 }
 ensure_candidate_fresh_for_readiness() {
   # A release-bound backup and restore can legitimately consume the API's
@@ -877,6 +1963,10 @@ ensure_source_worker_ready() {
   fi
 }
 start_market_services() {
+  if [ -n "$MARKET_MUTATION_LOCK_HELD" ]; then
+    echo "FAIL: refusing to start self-locking market services under deploy lock"
+    return 1
+  fi
   systemctl reset-failed \
     seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
     || true
@@ -904,48 +1994,10 @@ start_market_services() {
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {
-  local restore_sha="$DEPLOYED" stage candidate destination
   [ -n "$MARKET_WORKER_UNIT_MAY_HAVE_CHANGED" ] || return 0
-  if ! valid_release_sha "$restore_sha"; then
-    restore_sha="$BEFORE"
-  fi
-  if ! valid_release_sha "$restore_sha" \
-      || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
-        "$restore_sha^{commit}" >/dev/null; then
-    echo "FAIL: no verified pre-update worker unit is available"
-    return 1
-  fi
-  stage=$(mktemp -d /etc/systemd/system/.seiche-market-worker-restore.XXXXXX) \
-    || return 1
-  candidate="$stage/seiche-market-worker.service"
-  destination=/etc/systemd/system/seiche-market-worker.service
-  if ! runuser -u seiche -- git -C "$APP" show \
-      "${restore_sha}:ops/deploy/seiche-market-worker.service" >"$candidate" \
-      || ! chmod 0644 "$candidate" \
-      || ! systemd-analyze verify "$candidate" \
-      || ! mv -f "$candidate" "$destination" \
-      || ! systemctl daemon-reload; then
-    rm -f -- "$candidate"
-    rmdir "$stage" 2>/dev/null || true
-    echo "FAIL: pre-update market worker unit could not be restored"
-    return 1
-  fi
-  rmdir "$stage"
-  if [ -n "$MARKET_WORKER_WAS_ENABLED" ]; then
-    if ! systemctl enable seiche-market-worker.service >/dev/null \
-        || ! systemctl is-enabled --quiet seiche-market-worker.service; then
-      echo "FAIL: market worker enablement could not be restored"
-      return 1
-    fi
-  else
-    systemctl disable seiche-market-worker.service >/dev/null 2>&1 || true
-    if systemctl is-enabled --quiet seiche-market-worker.service 2>/dev/null; then
-      echo "FAIL: candidate market worker remains enabled after rollback"
-      return 1
-    fi
-  fi
+  # The worker is part of DATA_UNIT_NAMES. Its exact pre-deploy bytes and
+  # enablement are restored by restore_preupdate_data_units as one bundle.
   MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
-  echo "market worker unit restored from ${restore_sha:0:7}"
 }
 restore_preupdate_api() {
   local restore_sha="$DEPLOYED" deadline
@@ -953,13 +2005,13 @@ restore_preupdate_api() {
     restore_sha="$BEFORE"
   fi
   if ! valid_release_sha "$restore_sha" \
-      || ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet \
+      || ! "$RUNUSER" -u seiche -- git -C "$APP" rev-parse --verify --quiet \
         "$restore_sha^{commit}" >/dev/null; then
     echo "FAIL: no verified pre-update release is available to restart"
     return 1
   fi
-  if ! runuser -u seiche -- git -C "$APP" reset -q --hard "$restore_sha" \
-      || ! runuser -u seiche -- bash -c \
+  if ! "$RUNUSER" -u seiche -- git -C "$APP" reset -q --hard "$restore_sha" \
+      || ! "$RUNUSER" -u seiche -- bash -c \
         "cd $APP && timeout -k 30 600 backend/.venv/bin/pip install -q -e './backend[notary]'" \
       || ! write_release_env "$restore_sha" \
       || ! systemctl restart seiche-api; then
@@ -1002,6 +2054,10 @@ restore_pre_restart_services() {
     echo "FAIL: market writers remain stopped because api recovery failed"
     return 1
   fi
+  if ! release_market_mutation_lock; then
+    echo "FAIL: market mutation lock could not be released after recovery"
+    return 1
+  fi
   restore_market_services
 }
 systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
@@ -1024,7 +2080,7 @@ if [ "$BEFORE" != "$TARGET" ] || [ "$DEPLOYED" != "$TARGET" ]; then
   fi
   API_QUIESCED=1
 fi
-if ! runuser -u seiche -- env SEICHE_DEPLOYED_SHA="$DEPLOYED" \
+if ! "$RUNUSER" -u seiche -- env SEICHE_DEPLOYED_SHA="$DEPLOYED" \
     SEICHE_UPDATE_TARGET_SHA="$TARGET" \
     bash /home/seiche/update.sh; then
   restore_pre_restart_services \
@@ -1033,14 +2089,14 @@ if ! runuser -u seiche -- env SEICHE_DEPLOYED_SHA="$DEPLOYED" \
   exit 1
 fi
 AFTER=""
-if ! AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD); then
+if ! AFTER=$("$RUNUSER" -u seiche -- git -C "$APP" rev-parse HEAD); then
   restore_pre_restart_services || true
   echo "FAIL: candidate checkout identity could not be resolved"
   exit 1
 fi
 if [ "$AFTER" != "$TARGET" ] \
     || ! valid_release_sha "$AFTER" \
-    || ! runuser -u seiche -- git -C "$APP" diff-index --quiet "$AFTER" --; then
+    || ! "$RUNUSER" -u seiche -- git -C "$APP" diff-index --quiet "$AFTER" --; then
   restore_pre_restart_services || true
   echo "FAIL: candidate checkout does not exactly match its release SHA"
   exit 1
@@ -1048,9 +2104,9 @@ fi
 UNTRACKED_IMPORTS=""
 if ! UNTRACKED_IMPORTS=$(
   {
-    runuser -u seiche -- git -C "$APP" ls-files \
+    "$RUNUSER" -u seiche -- git -C "$APP" ls-files \
       --others --exclude-standard -- backend
-    runuser -u seiche -- git -C "$APP" ls-files \
+    "$RUNUSER" -u seiche -- git -C "$APP" ls-files \
       --others --ignored --exclude-standard -- backend
   } | awk '
     /\.(py|pyc|so)$/ \
@@ -1068,19 +2124,22 @@ if [ -n "$UNTRACKED_IMPORTS" ]; then
   exit 1
 fi
 
-# Self-sync the deploy chain from the POST-pull checkout. The manual root
-# deploy synced these mirrors only when someone ran it, and from the pre-pull
-# tree (one deploy behind); the auto chain never synced at all, so a repo fix
-# to either script changed nothing on the box. Installed atomically
-# (write-beside + rename) so the running copy keeps its inode and this run
-# finishes on the code it started with — no re-exec, so no loop.
+# Self-sync the deploy chain from the exact target's root-owned signed asset
+# tree. The running copy keeps its inode and this run never re-execs itself.
 SYNC_FAIL=""
 for pair in "seiche-deploy-wrapper.sh:/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh" \
             "box-update.sh:/home/seiche/update.sh"; do
-  src="$APP/ops/deploy/${pair%%:*}"
+  src="$SIGNED_ASSET_ROOT/ops/deploy/${pair%%:*}"
   dst="${pair##*:}"
+  dst_dir=$(dirname -- "$dst")
+  dst_base=$(basename -- "$dst")
+  sync_mode=0755
+  if [ "$dst" = "$CANONICAL_DEPLOY_WRAPPER" ]; then
+    sync_mode=0700
+  fi
+  sync_stage=""
   if [ ! -f "$src" ]; then
-    echo "sync: $src missing from the checkout"; SYNC_FAIL=1; continue
+    echo "sync: signed source is missing: ${pair%%:*}"; SYNC_FAIL=1; continue
   fi
   if cmp -s "$src" "$dst"; then
     continue
@@ -1089,9 +2148,16 @@ for pair in "seiche-deploy-wrapper.sh:/var/lib/seiche-deploy/bin/seiche-deploy-w
     echo "sync: $src fails a syntax check; keeping the installed copy"; SYNC_FAIL=1; continue
   fi
   cp "$dst" "$dst.bak-$(date +%s)" 2>/dev/null || true
-  if cp "$src" "$dst.new" && chmod +x "$dst.new" && mv -f "$dst.new" "$dst"; then
-    echo "sync: installed $dst from the post-pull checkout (effective next deploy)"
+  sync_stage=$(mktemp "$dst_dir/.${dst_base}.new.XXXXXX") || {
+    echo "sync: could not stage $dst"; SYNC_FAIL=1; continue
+  }
+  if install -o root -g root -m "$sync_mode" "$src" "$sync_stage" \
+      && /usr/bin/sync -f "$sync_stage" \
+      && mv -f "$sync_stage" "$dst" \
+      && /usr/bin/sync "$dst_dir"; then
+    echo "sync: installed $dst from exact target assets (effective next deploy)"
   else
+    rm -f -- "$sync_stage"
     echo "sync: could not install $dst"; SYNC_FAIL=1
   fi
 done
@@ -1104,33 +2170,44 @@ sync_verdict() {  # loud drift check at exit: a red run, never a wedged box
 }
 
 deploy_caddy() {
-  local installer="$APP/ops/deploy/install-caddy.sh"
+  local installer="$SIGNED_ASSET_ROOT/ops/deploy/install-caddy.sh"
   if [ ! -f "$installer" ]; then
-    echo "FAIL: Caddy installer missing from the post-pull checkout: $installer"
+    echo "FAIL: Caddy installer missing from exact target assets"
     return 1
   fi
-  # Invoke with bash rather than trusting the executable bit: old checkouts can
-  # carry the helper before its mode has been repaired on the box.
-  bash "$installer"
+  /usr/bin/env -i \
+    HOME=/root LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    SEICHE_APP_DIR="$APP" \
+    SEICHE_CADDY_SOURCE="$SIGNED_ASSET_ROOT/ops/Caddyfile" \
+    /usr/bin/bash "$installer"
 }
 
 deploy_market_platform() {
-  local installer="$APP/ops/deploy/install-market-platform.sh"
+  local installer="$SIGNED_ASSET_ROOT/ops/deploy/install-market-platform.sh"
   if [ ! -f "$installer" ]; then
-    echo "FAIL: market-platform installer missing: $installer"
+    echo "FAIL: market-platform installer missing from exact target assets"
     return 1
   fi
   # Historical backfill can saturate the box. Install the units now, but keep
   # ingestion stopped until the candidate API and repository pass health.
-  SEICHE_DEFER_MARKET_START=1 bash "$installer"
+  /usr/bin/env -i \
+    HOME=/root LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    SEICHE_APP_DIR="$APP" \
+    SEICHE_DEFER_MARKET_START=1 \
+    SEICHE_NBS_RUNTIME_ROOT=/opt/seiche-nbs-intake \
+    SEICHE_PRIVILEGED_ASSET_ROOT="$SIGNED_ASSET_ROOT" \
+    SEICHE_RELEASE_TARGET_SHA="$TARGET" \
+    /usr/bin/bash "$installer"
 }
 
 deploy_pull_unit() {
-  local source="$APP/ops/deploy/seiche-pull.service"
+  local source="$SIGNED_ASSET_ROOT/ops/deploy/seiche-pull.service"
   local destination=/etc/systemd/system/seiche-pull.service
   local stage candidate previous had_previous=""
   if [ ! -f "$source" ]; then
-    echo "FAIL: canonical pull unit missing: $source"
+    echo "FAIL: canonical pull unit missing from exact target assets"
     return 1
   fi
   stage=$(mktemp -d /etc/systemd/system/.seiche-pull-stage.XXXXXX) || return 1
@@ -1189,7 +2266,7 @@ deploy_pull_unit() {
 # every poll remains cache-only and cheap.
 parse_candidate_health() {
   local body="$1" expected_sha="$2" max_generated_age="${3:-0}" now_epoch="${4:-}"
-  "$APP/backend/.venv/bin/python" -c '
+  /usr/bin/python3 -I -B -c '
 from datetime import datetime, timezone
 import json
 import re
@@ -1317,7 +2394,11 @@ market_health() {
     rm -f -- "$body"
     return 1
   fi
-  if ! "$APP/backend/.venv/bin/python" -c \
+  if ! "$RUNUSER" -u seiche -- /usr/bin/env -i \
+      HOME=/home/seiche LANG=C.UTF-8 \
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+      PYTHONNOUSERSITE=1 \
+      "$APP/backend/.venv/bin/python" -I -B -c \
       'import json,sys; from seiche.markets.registry import default_registry; p=json.load(open(sys.argv[1])); assert p["schema"] == "seiche.coverage.v2"; expected={pack.market_id for pack in default_registry().list()}; actual=[market["market_id"] for market in p["markets"]]; assert len(actual) == len(expected) and set(actual) == expected' \
       "$body"; then
     echo "FAIL: v2 coverage returned an invalid market-platform contract"
@@ -1380,6 +2461,11 @@ promote_snapshot_handoff() {
 
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1
 DATA_UNITS_MAY_HAVE_CHANGED=1
+acquire_market_mutation_lock || {
+  restore_pre_restart_services || true
+  echo "FAIL: production intake/backup serialization could not be acquired"
+  exit 1
+}
 deploy_market_platform || {
   restore_pre_restart_services || true
   echo "FAIL: application checkout is intact but market-platform provisioning failed"
@@ -1414,18 +2500,25 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
     exit 1
   }
   market_health || {
+    release_market_mutation_lock || true
     restore_market_services
     echo "FAIL: running candidate cannot read the market repository"
     exit 1
   }
   deploy_pull_unit || {
+    release_market_mutation_lock || true
     restore_market_services
     echo "FAIL: canonical pull unit could not be converged"
     exit 1
   }
   promote_snapshot_handoff || {
+    release_market_mutation_lock || true
     restore_market_services
     echo "FAIL: healthy running candidate kept in place; snapshot activation needs a human"
+    exit 1
+  }
+  release_market_mutation_lock || {
+    echo "FAIL: market mutation lock could not be released"
     exit 1
   }
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
@@ -1464,6 +2557,10 @@ elif [ -n "$RESTARTED" ]; then
 fi
 
 if [ -n "$HEALTHY" ]; then
+  release_market_mutation_lock || {
+    echo "FAIL: market mutation lock could not be released"
+    exit 1
+  }
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
@@ -1473,6 +2570,7 @@ if [ -n "$HEALTHY" ]; then
 fi
 
 if [ -n "$POINT_OF_NO_RETURN" ]; then
+  release_market_mutation_lock || true
   restore_market_services
   echo "FAIL: snapshot activation failed; healthy candidate code remains running and no rollback was attempted"
   exit 1
@@ -1502,7 +2600,7 @@ if ! valid_release_sha "$DEPLOYED"; then
   echo "FAIL: recorded deployment identity is not a canonical commit SHA — cannot roll back automatically"
   exit 1
 fi
-if ! runuser -u seiche -- git -C "$APP" rev-parse --verify --quiet "$DEPLOYED^{commit}" >/dev/null; then
+if ! "$RUNUSER" -u seiche -- git -C "$APP" rev-parse --verify --quiet "$DEPLOYED^{commit}" >/dev/null; then
   echo "FAIL: recorded sha ${DEPLOYED:0:7} is not in the checkout — cannot roll back automatically"
   exit 1
 fi
@@ -1515,15 +2613,17 @@ if ! write_release_env "$DEPLOYED"; then
   exit 1
 fi
 echo "rolling the service back to ${DEPLOYED:0:7} (last sha that passed health)"
-runuser -u seiche -- git -C "$APP" reset -q --hard "$DEPLOYED"
-runuser -u seiche -- bash -c "cd $APP && timeout -k 30 600 backend/.venv/bin/pip install -q -e './backend[notary]'" \
+"$RUNUSER" -u seiche -- git -C "$APP" reset -q --hard "$DEPLOYED"
+"$RUNUSER" -u seiche -- bash -c "cd $APP && timeout -k 30 600 backend/.venv/bin/pip install -q -e './backend[notary]'" \
   || { echo "FAIL: rollback pip install failed or timed out — seiche-api needs a human NOW"; exit 1; }
-runuser -u seiche -- bash -c "cd $APP && timeout -k 30 120 backend/.venv/bin/python -c 'import seiche.api, seiche.assemble, seiche.dispatch_daily'" \
+"$RUNUSER" -u seiche -- bash -c "cd $APP && timeout -k 30 120 backend/.venv/bin/python -c 'import seiche.api, seiche.assemble, seiche.dispatch_daily'" \
   || { echo "FAIL: rollback tree does not import — seiche-api needs a human NOW"; exit 1; }
 restore_preupdate_market_worker_unit \
   || { echo "FAIL: rollback worker unit could not be restored; market writers remain stopped"; exit 1; }
 restore_preupdate_data_units \
   || { echo "FAIL: rollback data units could not be restored; data workers remain stopped"; exit 1; }
+release_market_mutation_lock \
+  || { echo "FAIL: rollback runtime lock could not be released"; exit 1; }
 systemctl restart seiche-api
 sleep 3
 if systemctl is-active --quiet seiche-api \

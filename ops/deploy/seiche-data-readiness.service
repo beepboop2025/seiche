@@ -3,7 +3,7 @@ Description=Fail closed on stale Seiche data-plane readiness
 Requires=seiche-storage-preflight.service
 After=network-online.target seiche-api.service seiche-storage-preflight.service
 Wants=network-online.target
-RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
+RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]
@@ -13,8 +13,15 @@ User=root
 # ordinary traverse/read access to the root:seiche 0750 recovery-proof tree
 # and its root:seiche 0640 receipt without granting DAC bypass.
 Group=seiche
-EnvironmentFile=-/etc/seiche/data-readiness.env
-ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh
+# Clear dynamic-loader inputs before the first userspace helper starts. The
+# subsequent env -i boundary removes every shell function, startup hook,
+# readiness override, and manager-global variable before privileged Bash.
+UnsetEnvironment=LD_AUDIT LD_DEBUG LD_DEBUG_OUTPUT LD_LIBRARY_PATH LD_PRELOAD
+UnsetEnvironment=LD_PROFILE LD_PROFILE_OUTPUT LD_SHOW_AUXV LD_TRACE_LOADED_OBJECTS
+UnsetEnvironment=LD_BIND_NOW LD_DYNAMIC_WEAK LD_HWCAP_MASK LD_ORIGIN_PATH
+UnsetEnvironment=LD_ASSUME_KERNEL LD_PREFER_MAP_32BIT_EXEC LD_USE_LOAD_BIAS
+UnsetEnvironment=GLIBC_TUNABLES GCONV_PATH LOCPATH
+ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin /usr/bin/bash -p /etc/seiche/libexec/seiche-data-readiness.sh
 TimeoutStartSec=60
 UMask=0077
 Nice=10

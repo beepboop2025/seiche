@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import dataclass
 import errno
+import grp
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,7 +19,7 @@ from typing import NoReturn
 import uuid
 
 
-SCHEMA = "seiche.storage-volume.v1"
+SCHEMA = "seiche.storage-volume.v2"
 DEFAULT_CONFIG_PATH = Path("/etc/seiche/storage-volume.env")
 FINDMNT = Path("/usr/bin/findmnt")
 _KEYS = {
@@ -27,8 +29,10 @@ _KEYS = {
     "SEICHE_STORAGE_EXPECTED_UUID",
     "SEICHE_STORAGE_EXPECTED_FSTYPE",
     "SEICHE_STORAGE_STATE_PATH",
+    "SEICHE_STORAGE_NBS_PATH",
     "SEICHE_STORAGE_BACKUP_PATH",
     "SEICHE_STORAGE_EXPECTED_STATE_FSROOT",
+    "SEICHE_STORAGE_EXPECTED_NBS_FSROOT",
     "SEICHE_STORAGE_EXPECTED_BACKUP_FSROOT",
     "SEICHE_STORAGE_MIN_FREE_BLOCKS",
     "SEICHE_STORAGE_MIN_FREE_INODES",
@@ -46,8 +50,10 @@ class StorageConfig:
     expected_uuid: str
     expected_fstype: str
     state_path: Path
+    nbs_path: Path
     backup_path: Path
     expected_state_fsroot: PurePosixPath
+    expected_nbs_fsroot: PurePosixPath
     expected_backup_fsroot: PurePosixPath
     min_free_blocks: int
     min_free_inodes: int
@@ -71,6 +77,8 @@ def _absolute_path(value: str, key: str, *, device: bool = False) -> Path:
     path = Path(value)
     if not path.is_absolute() or path == Path("/"):
         _fail(f"{key} must be an absolute non-root path")
+    if str(PurePosixPath(value)) != value:
+        _fail(f"{key} is not canonical")
     if any(character.isspace() or ord(character) < 32 for character in value):
         _fail(f"{key} contains unsafe whitespace")
     if device and Path("/dev") not in path.parents:
@@ -98,7 +106,7 @@ def _filesystem_root(value: str, key: str) -> PurePosixPath:
     return root
 
 
-def _nested_filesystem_roots(first: PurePosixPath, second: PurePosixPath) -> bool:
+def _nested_paths(first: PurePosixPath, second: PurePosixPath) -> bool:
     try:
         first.relative_to(second)
         return True
@@ -109,6 +117,18 @@ def _nested_filesystem_roots(first: PurePosixPath, second: PurePosixPath) -> boo
         return True
     except ValueError:
         return False
+
+
+def _require_distinct_non_nested_fsroots(
+    roots: tuple[PurePosixPath, ...],
+) -> None:
+    for index, first in enumerate(roots):
+        for second in roots[index + 1 :]:
+            if _nested_paths(first, second):
+                _fail(
+                    "state, NBS, and backup filesystem roots must be distinct "
+                    "and pairwise non-nested"
+                )
 
 
 def parse_config_text(content: str) -> StorageConfig:
@@ -163,12 +183,19 @@ def parse_config_text(content: str) -> StorageConfig:
         state_path=_absolute_path(
             values["SEICHE_STORAGE_STATE_PATH"], "SEICHE_STORAGE_STATE_PATH"
         ),
+        nbs_path=_absolute_path(
+            values["SEICHE_STORAGE_NBS_PATH"], "SEICHE_STORAGE_NBS_PATH"
+        ),
         backup_path=_absolute_path(
             values["SEICHE_STORAGE_BACKUP_PATH"], "SEICHE_STORAGE_BACKUP_PATH"
         ),
         expected_state_fsroot=_filesystem_root(
             values["SEICHE_STORAGE_EXPECTED_STATE_FSROOT"],
             "SEICHE_STORAGE_EXPECTED_STATE_FSROOT",
+        ),
+        expected_nbs_fsroot=_filesystem_root(
+            values["SEICHE_STORAGE_EXPECTED_NBS_FSROOT"],
+            "SEICHE_STORAGE_EXPECTED_NBS_FSROOT",
         ),
         expected_backup_fsroot=_filesystem_root(
             values["SEICHE_STORAGE_EXPECTED_BACKUP_FSROOT"],
@@ -183,12 +210,20 @@ def parse_config_text(content: str) -> StorageConfig:
             "SEICHE_STORAGE_MIN_FREE_INODES",
         ),
     )
-    if config.state_path == config.backup_path:
-        _fail("state and backup paths must be distinct")
-    if _nested_filesystem_roots(
-        config.expected_state_fsroot, config.expected_backup_fsroot
-    ):
-        _fail("state and backup filesystem roots must be distinct and non-nested")
+    if len({config.state_path, config.nbs_path, config.backup_path}) != 3:
+        _fail("state, NBS, and backup paths must be distinct")
+    guarded_paths = (config.state_path, config.nbs_path, config.backup_path)
+    for index, first in enumerate(guarded_paths):
+        for second in guarded_paths[index + 1 :]:
+            if _nested_paths(PurePosixPath(first), PurePosixPath(second)):
+                _fail("state, NBS, and backup paths must be pairwise non-nested")
+    _require_distinct_non_nested_fsroots(
+        (
+            config.expected_state_fsroot,
+            config.expected_nbs_fsroot,
+            config.expected_backup_fsroot,
+        )
+    )
     return config
 
 
@@ -271,24 +306,79 @@ def _mount_for_path(path: Path) -> MountRecord:
         _fail(f"cannot resolve mount identity for {path}: {exc}")
 
 
+def _open_directory_nofollow(path: Path, label: str) -> int:
+    """Open an absolute directory while rejecting symlinks in every component."""
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path.anchor,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        for component in path.parts[1:]:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except OSError as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        _fail(
+            f"{label} is unavailable or has a symlink/non-directory ancestor: "
+            f"{exc.strerror or exc}"
+        )
+
+
 def _canonical_directory(path: Path, label: str) -> Path:
     try:
-        metadata = path.lstat()
         resolved = path.resolve(strict=True)
     except OSError as exc:
         _fail(f"{label} is unavailable: {exc.strerror or exc}")
-    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-        _fail(f"{label} must be a real directory")
     if resolved != path:
         _fail(f"{label} or one of its parents is a symlink")
-    return resolved
+    descriptor = _open_directory_nofollow(path, label)
+    os.close(descriptor)
+    return path
 
 
-def _path_major_minor(path: Path) -> str:
+def _expected_nbs_owner(*, require_root: bool) -> tuple[int, int]:
+    if not require_root:
+        return os.geteuid(), os.getegid()
     try:
-        metadata = path.stat()
+        seiche_group = grp.getgrnam("seiche")
+    except KeyError:
+        _fail("the seiche group is unavailable")
+    if seiche_group.gr_gid <= 0:
+        _fail("the seiche group must have a non-root numeric gid")
+    return 0, seiche_group.gr_gid
+
+
+def _verify_nbs_root_metadata(descriptor: int, *, require_root: bool) -> None:
+    metadata = os.fstat(descriptor)
+    expected_uid, expected_gid = _expected_nbs_owner(require_root=require_root)
+    mode = stat.S_IMODE(metadata.st_mode)
+    if (
+        metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or mode != 0o750
+    ):
+        _fail(
+            "NBS root must be root:seiche mode 0750 "
+            f"(got uid={metadata.st_uid} gid={metadata.st_gid} mode={mode:04o})"
+        )
+
+
+def _descriptor_major_minor(descriptor: int, label: str) -> str:
+    try:
+        metadata = os.fstat(descriptor)
     except OSError as exc:
-        _fail(f"cannot stat data path {path}: {exc.strerror or exc}")
+        _fail(f"cannot stat {label}: {exc.strerror or exc}")
     return f"{os.major(metadata.st_dev)}:{os.minor(metadata.st_dev)}"
 
 
@@ -302,17 +392,17 @@ def _source_major_minor(path: Path) -> str:
     return f"{os.major(metadata.st_rdev)}:{os.minor(metadata.st_rdev)}"
 
 
-def _probe_write_and_fsync(path: Path) -> None:
-    probe = path / f".seiche-storage-preflight.{os.getpid()}.{secrets.token_hex(8)}"
+def _probe_write_and_fsync(path: Path, directory: int) -> None:
+    probe_name = f".seiche-storage-preflight.{os.getpid()}.{secrets.token_hex(8)}"
     descriptor: int | None = None
-    directory: int | None = None
     try:
         descriptor = os.open(
-            probe,
+            probe_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
             0o600,
+            dir_fd=directory,
         )
-        payload = b"seiche-storage-preflight-v1\n"
+        payload = b"seiche-storage-preflight-v2\n"
         offset = 0
         while offset < len(payload):
             written = os.write(descriptor, payload[offset:])
@@ -322,24 +412,16 @@ def _probe_write_and_fsync(path: Path) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = None
-        probe.unlink()
-        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        os.unlink(probe_name, dir_fd=directory)
         os.fsync(directory)
-        os.close(directory)
-        directory = None
     except OSError as exc:
         if descriptor is not None:
             try:
                 os.close(descriptor)
             except OSError:
                 pass
-        if directory is not None:
-            try:
-                os.close(directory)
-            except OSError:
-                pass
         try:
-            probe.unlink(missing_ok=True)
+            os.unlink(probe_name, dir_fd=directory)
         except OSError:
             pass
         _fail(f"write/fsync probe failed for {path}: {exc.strerror or exc}")
@@ -349,100 +431,142 @@ def verify_storage(
     config: StorageConfig,
     *,
     expected_state_path: Path | None = None,
+    expected_nbs_path: Path | None = None,
     expected_backup_path: Path | None = None,
     require_root: bool = True,
 ) -> tuple[int, int]:
-    """Prove mount identity, capacity, and durable writes for both data paths."""
+    """Prove mount identity, capacity, and durable writes for all data paths."""
     if require_root and os.geteuid() != 0:
         _fail("preflight must run as root")
     if expected_state_path is not None and config.state_path != expected_state_path:
         _fail("configured state path does not match the installer state path")
+    if expected_nbs_path is not None and config.nbs_path != expected_nbs_path:
+        _fail("configured NBS path does not match the installer NBS path")
     if expected_backup_path is not None and config.backup_path != expected_backup_path:
         _fail("configured backup path does not match the installer backup path")
 
-    mount_path = _canonical_directory(config.mount_path, "configured mountpoint")
-    state_path = _canonical_directory(config.state_path, "state path")
-    backup_path = _canonical_directory(config.backup_path, "backup path")
-    try:
-        if os.path.samefile(state_path, backup_path):
-            _fail("state and backup paths resolve to the same directory")
-        if os.path.samefile(mount_path, state_path) or os.path.samefile(
-            mount_path, backup_path
-        ):
-            _fail("volume root aliases a guarded data path")
-    except OSError as exc:
-        _fail(f"cannot compare guarded storage paths: {exc.strerror or exc}")
-    mount = _mount_for_path(mount_path)
-    try:
-        mount_target = mount.target.resolve(strict=True)
-    except OSError as exc:
-        _fail(f"reported mount target is unavailable: {exc.strerror or exc}")
-    if mount_target != mount_path:
-        _fail("configured mountpoint is only a directory on another filesystem")
-    if mount.fsroot != PurePosixPath("/"):
-        _fail("configured mountpoint is not the filesystem root")
-    if mount.fstype != config.expected_fstype:
-        _fail(
-            f"filesystem type mismatch: expected {config.expected_fstype}, got {mount.fstype}"
-        )
-    if mount.uuid.lower() != config.expected_uuid.lower():
-        _fail("filesystem UUID mismatch")
-    source_major_minor = _source_major_minor(config.expected_source)
-    if mount.major_minor != source_major_minor:
-        _fail("mounted source does not match the expected block device")
-    if _path_major_minor(mount_path) != source_major_minor:
-        _fail("configured mountpoint device identity is inconsistent")
+    paths = {
+        "configured mountpoint": _canonical_directory(
+            config.mount_path, "configured mountpoint"
+        ),
+        "state path": _canonical_directory(config.state_path, "state path"),
+        "NBS path": _canonical_directory(config.nbs_path, "NBS path"),
+        "backup path": _canonical_directory(config.backup_path, "backup path"),
+    }
 
-    records: list[tuple[str, Path, PurePosixPath, MountRecord]] = []
-    for label, path, expected_fsroot in (
-        ("state path", state_path, config.expected_state_fsroot),
-        ("backup path", backup_path, config.expected_backup_fsroot),
-    ):
-        record = _mount_for_path(path)
-        try:
-            record_target = record.target.resolve(strict=True)
-        except OSError as exc:
-            _fail(f"{label} mount target is unavailable: {exc.strerror or exc}")
-        if record_target != path:
-            _fail(f"{label} is not an exact mountpoint")
-        if (
-            record.major_minor != source_major_minor
-            or _path_major_minor(path) != source_major_minor
-        ):
-            _fail(f"{label} is not backed by the expected volume")
-        if record.fstype != config.expected_fstype:
-            _fail(f"{label} filesystem type is inconsistent")
-        if record.fsroot != expected_fsroot:
+    # These descriptors pin the exact directories that are authenticated
+    # below. A detach cannot redirect this process's later probes to fallback
+    # root-disk directories while the descriptors remain open.
+    with ExitStack() as descriptors_lifetime:
+        descriptors: dict[str, int] = {}
+        identities: dict[str, tuple[int, int]] = {}
+        for label, path in paths.items():
+            descriptor = _open_directory_nofollow(path, label)
+            descriptors_lifetime.callback(os.close, descriptor)
+            descriptors[label] = descriptor
+            metadata = os.fstat(descriptor)
+            identities[label] = (metadata.st_dev, metadata.st_ino)
+
+        if len(set(identities.values())) != len(identities):
+            _fail("volume root and guarded paths must resolve to distinct directories")
+        _verify_nbs_root_metadata(descriptors["NBS path"], require_root=require_root)
+
+        mount_path = paths["configured mountpoint"]
+        mount = _mount_for_path(mount_path)
+        if mount.target != mount_path:
+            _fail("configured mountpoint is only a directory on another filesystem")
+        _canonical_directory(mount.target, "reported mount target")
+        if mount.fsroot != PurePosixPath("/"):
+            _fail("configured mountpoint is not the filesystem root")
+        if mount.fstype != config.expected_fstype:
             _fail(
-                f"{label} filesystem root mismatch: expected {expected_fsroot}, "
-                f"got {record.fsroot}"
+                "filesystem type mismatch: "
+                f"expected {config.expected_fstype}, got {mount.fstype}"
             )
-        records.append((label, path, expected_fsroot, record))
-    if records[0][3].fsroot == records[1][3].fsroot or _nested_filesystem_roots(
-        records[0][3].fsroot, records[1][3].fsroot
-    ):
-        _fail("live state and backups alias or nest on the volume")
+        if mount.uuid.lower() != config.expected_uuid.lower():
+            _fail("filesystem UUID mismatch")
+        source_major_minor = _source_major_minor(config.expected_source)
+        if mount.major_minor != source_major_minor:
+            _fail("mounted source does not match the expected block device")
+        if (
+            _descriptor_major_minor(
+                descriptors["configured mountpoint"], "configured mountpoint"
+            )
+            != source_major_minor
+        ):
+            _fail("configured mountpoint device identity is inconsistent")
 
-    try:
-        capacity = os.statvfs(mount_path)
-    except OSError as exc:
-        _fail(f"cannot read filesystem capacity: {exc.strerror or exc}")
-    free_blocks = int(capacity.f_bavail)
-    free_inodes = int(capacity.f_favail)
-    if free_blocks < config.min_free_blocks:
-        _fail(f"free blocks below minimum: {free_blocks} < {config.min_free_blocks}")
-    if free_inodes < config.min_free_inodes:
-        _fail(f"free inodes below minimum: {free_inodes} < {config.min_free_inodes}")
+        records: list[tuple[str, Path, PurePosixPath, MountRecord]] = []
+        for label, expected_fsroot in (
+            ("state path", config.expected_state_fsroot),
+            ("NBS path", config.expected_nbs_fsroot),
+            ("backup path", config.expected_backup_fsroot),
+        ):
+            path = paths[label]
+            record = _mount_for_path(path)
+            if record.target != path:
+                _fail(f"{label} is not an exact mountpoint")
+            _canonical_directory(record.target, f"reported {label} mount target")
+            if (
+                record.major_minor != source_major_minor
+                or _descriptor_major_minor(descriptors[label], label)
+                != source_major_minor
+            ):
+                _fail(f"{label} is not backed by the expected volume")
+            if record.fstype != config.expected_fstype:
+                _fail(f"{label} filesystem type is inconsistent")
+            if record.fsroot != expected_fsroot:
+                _fail(
+                    f"{label} filesystem root mismatch: expected {expected_fsroot}, "
+                    f"got {record.fsroot}"
+                )
+            records.append((label, path, expected_fsroot, record))
+        _require_distinct_non_nested_fsroots(
+            tuple(record.fsroot for _label, _path, _root, record in records)
+        )
 
-    _probe_write_and_fsync(state_path)
-    _probe_write_and_fsync(backup_path)
-    return free_blocks, free_inodes
+        try:
+            capacity = os.fstatvfs(descriptors["configured mountpoint"])
+        except OSError as exc:
+            _fail(f"cannot read filesystem capacity: {exc.strerror or exc}")
+        free_blocks = int(capacity.f_bavail)
+        free_inodes = int(capacity.f_favail)
+        if free_blocks < config.min_free_blocks:
+            _fail(
+                f"free blocks below minimum: {free_blocks} < {config.min_free_blocks}"
+            )
+        if free_inodes < config.min_free_inodes:
+            _fail(
+                f"free inodes below minimum: {free_inodes} < {config.min_free_inodes}"
+            )
+
+        for label, _expected_fsroot in (
+            ("state path", config.expected_state_fsroot),
+            ("NBS path", config.expected_nbs_fsroot),
+            ("backup path", config.expected_backup_fsroot),
+        ):
+            path = paths[label]
+            _canonical_directory(path, label)
+            if label == "NBS path":
+                _verify_nbs_root_metadata(descriptors[label], require_root=require_root)
+            _probe_write_and_fsync(path, descriptors[label])
+
+        # A retained descriptor makes each probe safe, while this final live
+        # check prevents a detached/replaced visible mount from being reported
+        # healthy to the consumers that start after the preflight exits.
+        if _mount_for_path(mount_path) != mount:
+            _fail("configured mountpoint changed during preflight")
+        for label, path, _expected_fsroot, record in records:
+            if _mount_for_path(path) != record:
+                _fail(f"{label} mount identity changed during preflight")
+        return free_blocks, free_inodes
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--state-path", type=Path)
+    parser.add_argument("--nbs-path", type=Path)
     parser.add_argument("--backup-path", type=Path)
     return parser
 
@@ -454,6 +578,7 @@ def main(arguments: list[str] | None = None) -> int:
         free_blocks, free_inodes = verify_storage(
             config,
             expected_state_path=options.state_path,
+            expected_nbs_path=options.nbs_path,
             expected_backup_path=options.backup_path,
         )
     except PreflightError as exc:

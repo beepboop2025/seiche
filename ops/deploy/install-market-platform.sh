@@ -3,6 +3,17 @@
 set -euo pipefail
 
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
+ASSET_ROOT="${SEICHE_PRIVILEGED_ASSET_ROOT:?signed privileged asset root is required}"
+RELEASE_TARGET="${SEICHE_RELEASE_TARGET_SHA:?exact release target SHA is required}"
+NBS_RUNTIME_ROOT="${SEICHE_NBS_RUNTIME_ROOT:?NBS runtime root is required}"
+NBS_RUNTIME_PYTHON=/usr/bin/python3
+NBS_RUNTIME_EXPECTED_UID=0
+NBS_RUNTIME_EXPECTED_GID=0
+NBS_RUNTIME_PORTABLE=0
+NBS_EVIDENCE_PYTHON=/usr/bin/python3
+NBS_EVIDENCE_EXPECTED_UID=0
+NBS_EVIDENCE_EXPECTED_GID=0
+NBS_EVIDENCE_PORTABLE=0
 ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
@@ -10,22 +21,26 @@ BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
 NBS_RESTRICTED_DIR="$NBS_STATE_DIR/restricted"
 NBS_PUBLIC_DIR="$NBS_STATE_DIR/public"
-NBS_PUBLIC_REVISIONS_DIR="$NBS_PUBLIC_DIR/revisions"
 OFFSITE_ENV_FILE=/etc/seiche/offsite-backup.env
 OFFSITE_PASSPHRASE_FILE=/etc/seiche/offsite-backup.passphrase
 OFFSITE_CREDENTIAL_ENV_FILE=/root/.config/anchor/object-storage.env
 OFFSITE_STATUS_PATH=/var/lib/seiche-offsite-backup/status.json
-OFFSITE_SCRIPT_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.sh"
+OFFSITE_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-offsite-backup.sh"
 OFFSITE_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-market-offsite-backup.sh
-OFFSITE_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.service"
+OFFSITE_SERVICE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-offsite-backup.service"
 OFFSITE_SERVICE_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.service
-OFFSITE_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-market-offsite-backup.timer"
+OFFSITE_TIMER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-offsite-backup.timer"
 OFFSITE_TIMER_DESTINATION=/etc/systemd/system/seiche-market-offsite-backup.timer
-OFFSITE_SCRIPT_RELATIVE=ops/deploy/seiche-market-offsite-backup.sh
-STORAGE_PREFLIGHT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.py"
+STORAGE_PREFLIGHT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-storage-preflight.py"
 STORAGE_PREFLIGHT_INSTALL_DIR=/etc/seiche/libexec
 STORAGE_PREFLIGHT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-storage-preflight.py"
-STORAGE_PREFLIGHT_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-storage-preflight.service"
+MARKET_BACKUP_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-backup.sh"
+MARKET_BACKUP_SCRIPT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-market-backup.sh"
+MARKET_RESTORE_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-restore-check.sh"
+MARKET_RESTORE_SCRIPT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-market-restore-check.sh"
+NBS_INTAKE_LAUNCHER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-nbs-intake.py"
+NBS_INTAKE_LAUNCHER_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-nbs-intake.py"
+STORAGE_PREFLIGHT_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-storage-preflight.service"
 STORAGE_PREFLIGHT_UNIT_DESTINATION=/etc/systemd/system/seiche-storage-preflight.service
 RELEASE_POLL_STORAGE_DROPIN_DIR=/etc/systemd/system/seiche-release-poll.service.d
 RELEASE_POLL_STORAGE_DROPIN=$RELEASE_POLL_STORAGE_DROPIN_DIR/storage-volume.conf
@@ -52,167 +67,1092 @@ DELIVERY_PATH=/var/lib/liquilens-world-model/export/us-usd-funding-core-v2.json
 DELIVERY_READER_GROUP=liquilens-world-model-readers
 PROMOTION_REQUEST_DIR=/run/seiche-release
 DEPLOY_STATE_DIR=/var/lib/seiche-deploy
-PROMOTION_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-snapshot-promote.service"
+PROMOTION_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
-WORKER_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-market-worker.service"
+WORKER_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-worker.service"
 WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-market-worker.service
-SOURCE_WORKER_UNIT_SOURCE="$APP_DIR/ops/deploy/seiche-source-worker.service"
+SOURCE_WORKER_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-source-worker.service"
 SOURCE_WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-source-worker.service
-READINESS_SERVICE_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.service"
+READINESS_SERVICE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-data-readiness.service"
 READINESS_SERVICE_DESTINATION=/etc/systemd/system/seiche-data-readiness.service
-READINESS_TIMER_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.timer"
+READINESS_TIMER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-data-readiness.timer"
 READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
-READINESS_SCRIPT_SOURCE="$APP_DIR/ops/deploy/seiche-data-readiness.sh"
+READINESS_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-data-readiness.sh"
 READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-data-readiness.sh
-READINESS_SCRIPT_RELATIVE=ops/deploy/seiche-data-readiness.sh
-LEGACY_UPDATE_RETIRER="$APP_DIR/ops/deploy/retire-legacy-update-units.sh"
+LEGACY_UPDATE_RETIRER="$ASSET_ROOT/ops/deploy/retire-legacy-update-units.sh"
 
-# Git creates an executable as 0700 when the signed release gate's UMask=0077
-# is active. These two scripts are later read by capability-free root units, so
-# bind each source to its tracked 100755 blob and normalize the already-open
-# regular file without ever following a replacement symlink.
-normalize_root_service_script() {
-    local relative_path="$1"
-    local expected_uid="$2"
-    local expected_gid="$3"
-    case "$relative_path" in
-        "$READINESS_SCRIPT_RELATIVE"|"$OFFSITE_SCRIPT_RELATIVE") ;;
-        *)
-            echo "market platform: refusing to normalize an unknown root service script: $relative_path" >&2
-            return 1
-            ;;
-    esac
-    /usr/bin/python3 - \
-        "$APP_DIR" "$relative_path" "$expected_uid" "$expected_gid" <<'PY'
+validate_signed_asset_root() {
+    /usr/bin/python3 -I -B - "$ASSET_ROOT" "$RELEASE_TARGET" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import stat
-import subprocess
 import sys
 
-repo_text, relative_path, expected_uid_text, expected_gid_text = sys.argv[1:]
+
+root_text, expected_target = sys.argv[1:]
+sha_re = re.compile(r"[0-9a-f]{40}")
+sha256_re = re.compile(r"[0-9a-f]{64}")
+path_re = re.compile(r"[A-Za-z0-9._/-]{1,255}")
+required_paths = {
+    "backend/seiche/__init__.py",
+    "backend/seiche/nbs_intake.py",
+    "backend/seiche/nbs_trust.py",
+    "ops/deploy/retire-legacy-update-units.sh",
+    "ops/deploy/seiche-data-readiness.service",
+    "ops/deploy/seiche-data-readiness.sh",
+    "ops/deploy/seiche-data-readiness.timer",
+    "ops/deploy/seiche-market-backfill.service",
+    "ops/deploy/seiche-market-backup.service",
+    "ops/deploy/seiche-market-backup.sh",
+    "ops/deploy/seiche-market-backup.timer",
+    "ops/deploy/seiche-market-offsite-backup.service",
+    "ops/deploy/seiche-market-offsite-backup.sh",
+    "ops/deploy/seiche-market-offsite-backup.timer",
+    "ops/deploy/seiche-market-restore-check.service",
+    "ops/deploy/seiche-market-restore-check.sh",
+    "ops/deploy/seiche-market-restore-check.timer",
+    "ops/deploy/seiche-market-validation.service",
+    "ops/deploy/seiche-market-validation.timer",
+    "ops/deploy/seiche-market-worker.service",
+    "ops/deploy/seiche-nbs-intake.py",
+    "ops/deploy/seiche-snapshot-promote.service",
+    "ops/deploy/seiche-source-worker.service",
+    "ops/deploy/seiche-storage-preflight.py",
+    "ops/deploy/seiche-storage-preflight.service",
+}
 
 
-def fail(reason: str) -> None:
-    print(
-        f"market platform: root service script {reason}: {relative_path}",
-        file=sys.stderr,
-    )
+def fail(message: str) -> None:
+    print(f"market platform: signed asset root {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
-try:
-    expected_uid = int(expected_uid_text)
-    expected_gid = int(expected_gid_text)
-except ValueError:
-    fail("expected ownership is invalid")
-if expected_uid < 0 or expected_gid < 0:
-    fail("expected ownership is invalid")
-
-repo = Path(repo_text)
-source = repo / relative_path
-try:
-    repo_metadata = os.lstat(repo)
-except OSError:
-    fail("repository is missing or unsafe")
-if not stat.S_ISDIR(repo_metadata.st_mode):
-    fail("repository is missing or unsafe")
-
-git_command = [
-    "/usr/bin/git",
-    "-c",
-    f"safe.directory={repo}",
-    "-C",
-    str(repo),
-]
-try:
-    tracked = subprocess.run(
-        [*git_command, "ls-files", "--stage", "--", relative_path],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-except OSError:
-    fail("tracked identity cannot be inspected")
-lines = tracked.stdout.splitlines()
-if tracked.returncode != 0 or len(lines) != 1 or "\t" not in lines[0]:
-    fail("is not one tracked 100755 file")
-index_fields, tracked_path = lines[0].split("\t", 1)
-fields = index_fields.split()
+if os.geteuid() != 0:
+    fail("validation must run as root")
 if (
-    tracked_path != relative_path
-    or len(fields) != 3
-    or fields[0] != "100755"
-    or fields[2] != "0"
-    or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", fields[1]) is None
+    not root_text.startswith("/")
+    or os.path.normpath(root_text) != root_text
+    or root_text == "/"
+    or sha_re.fullmatch(expected_target) is None
 ):
-    fail("is not one tracked 100755 file")
-expected_object = fields[1]
-
-descriptor = -1
+    fail("path or target is invalid")
+root = Path(root_text)
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+root_fd = os.open("/", flags)
 try:
-    if not hasattr(os, "O_NOFOLLOW"):
-        fail("no-follow validation is unavailable")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
-    descriptor = os.open(source, flags)
-    before = os.fstat(descriptor)
-    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
-        fail("source is not one regular file")
-    if before.st_uid != expected_uid or before.st_gid != expected_gid:
-        fail("source ownership is unsafe")
-    source_mode = stat.S_IMODE(before.st_mode)
-    if source_mode not in (0o700, 0o755):
-        fail("source mode is unsafe")
-    with os.fdopen(os.dup(descriptor), "rb") as handle:
-        source_bytes = handle.read()
-    digest = subprocess.run(
-        [*git_command, "hash-object", "--stdin"],
-        input=source_bytes,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+    for component in root.parts[1:]:
+        child = os.open(component, flags, dir_fd=root_fd)
+        visible = os.stat(component, dir_fd=root_fd, follow_symlinks=False)
+        opened = os.fstat(child)
+        if not stat.S_ISDIR(visible.st_mode) or (
+            visible.st_dev,
+            visible.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            os.close(child)
+            fail("has an unsafe path component")
+        os.close(root_fd)
+        root_fd = child
+    root_metadata = os.fstat(root_fd)
     if (
-        digest.returncode != 0
-        or digest.stdout.decode("ascii", errors="replace").strip()
-        != expected_object
+        root_metadata.st_uid != 0
+        or root_metadata.st_gid != 0
+        or stat.S_IMODE(root_metadata.st_mode) != 0o700
     ):
-        fail("bytes do not match the tracked object")
+        fail("metadata is unsafe")
+
+    def read_root_file(name: str, maximum: int, mode: int) -> bytes:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=root_fd,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            visible = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != mode
+                or (metadata.st_dev, metadata.st_ino)
+                != (visible.st_dev, visible.st_ino)
+                or metadata.st_size > maximum
+            ):
+                fail(f"metadata file is unsafe: {name}")
+            body = bytearray()
+            while len(body) <= maximum:
+                chunk = os.read(descriptor, min(65536, maximum + 1 - len(body)))
+                if not chunk:
+                    break
+                body.extend(chunk)
+            if len(body) > maximum:
+                fail(f"metadata file exceeds its bound: {name}")
+            return bytes(body)
+        finally:
+            os.close(descriptor)
+
+    marker = read_root_file(".target-sha", 41, 0o600)
+    if marker != f"{expected_target}\n".encode("ascii"):
+        fail("target marker does not match the requested release")
     try:
-        os.fchmod(descriptor, 0o755)
-    except OSError:
-        fail("mode normalization failed")
-    after = os.fstat(descriptor)
+        manifest = json.loads(
+            read_root_file(".seiche-release-assets.json", 2 * 1024 * 1024, 0o600)
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"manifest is invalid: {exc}")
     if (
-        after.st_dev != before.st_dev
-        or after.st_ino != before.st_ino
-        or after.st_uid != expected_uid
-        or after.st_gid != expected_gid
-        or after.st_nlink != 1
-        or not stat.S_ISREG(after.st_mode)
-        or stat.S_IMODE(after.st_mode) != 0o755
+        not isinstance(manifest, dict)
+        or set(manifest) != {"entries", "git_object_format", "schema", "target_sha"}
+        or manifest.get("schema") != "seiche.signed-privileged-assets.v1"
+        or manifest.get("git_object_format") != "sha1"
+        or manifest.get("target_sha") != expected_target
+        or not isinstance(manifest.get("entries"), list)
+        or not 1 <= len(manifest["entries"]) <= 256
     ):
-        fail("mode normalization failed")
-    visible = os.lstat(source)
-    if (
-        visible.st_dev != after.st_dev
-        or visible.st_ino != after.st_ino
-        or visible.st_uid != expected_uid
-        or visible.st_gid != expected_gid
-        or visible.st_nlink != 1
-        or not stat.S_ISREG(visible.st_mode)
-        or stat.S_IMODE(visible.st_mode) != 0o755
-    ):
-        fail("path changed during mode normalization")
-except OSError:
-    fail("source is missing or unsafe")
+        fail("manifest contract is invalid")
+
+    expected_files = {".seiche-release-assets.json", ".target-sha"}
+    seen: set[str] = set()
+    for entry in manifest["entries"]:
+        if not isinstance(entry, dict) or set(entry) != {
+            "blob_oid",
+            "git_mode",
+            "path",
+            "sha256",
+            "size",
+        }:
+            fail("manifest entry shape is invalid")
+        path = entry["path"]
+        git_mode = entry["git_mode"]
+        if (
+            not isinstance(path, str)
+            or path_re.fullmatch(path) is None
+            or path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or path in seen
+            or git_mode not in {"100644", "100755"}
+            or not isinstance(entry["blob_oid"], str)
+            or sha_re.fullmatch(entry["blob_oid"]) is None
+            or not isinstance(entry["sha256"], str)
+            or sha256_re.fullmatch(entry["sha256"]) is None
+            or type(entry["size"]) is not int
+            or not 0 <= entry["size"] <= 16 * 1024 * 1024
+        ):
+            fail("manifest entry identity is invalid")
+        seen.add(path)
+        expected_files.add(path)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=root_fd,
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            mode = 0o755 if git_mode == "100755" else 0o644
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != mode
+                or metadata.st_size != entry["size"]
+            ):
+                fail(f"asset metadata does not match manifest: {path}")
+            digest = hashlib.sha256()
+            size = 0
+            while True:
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    break
+                size += len(chunk)
+                digest.update(chunk)
+            if size != entry["size"] or digest.hexdigest() != entry["sha256"]:
+                fail(f"asset bytes do not match manifest: {path}")
+        finally:
+            os.close(descriptor)
+    if not required_paths.issubset(seen):
+        fail("is missing a required privileged source")
+
+    actual_files: set[str] = set()
+    for directory, directory_names, file_names in os.walk(root):
+        relative_directory = Path(directory).relative_to(root)
+        metadata = os.lstat(directory)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            fail("contains an unsafe directory")
+        for name in directory_names:
+            candidate = Path(directory) / name
+            if candidate.is_symlink():
+                fail("contains a symlinked directory")
+        for name in file_names:
+            relative = (relative_directory / name).as_posix()
+            actual_files.add(relative)
+    if actual_files != expected_files:
+        fail("contains unmanifested or missing files")
 finally:
-    if descriptor >= 0:
-        os.close(descriptor)
+    os.close(root_fd)
 PY
 }
+
+install_nbs_runtime() {
+    "$NBS_RUNTIME_PYTHON" -I -B - "$ASSET_ROOT" "$RELEASE_TARGET" \
+        "$NBS_RUNTIME_ROOT" "$NBS_RUNTIME_EXPECTED_UID" \
+        "$NBS_RUNTIME_EXPECTED_GID" "$NBS_RUNTIME_PORTABLE" <<'PY'
+from __future__ import annotations
+
+import ctypes
+import errno
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import stat
+import sys
+
+
+(
+    asset_text,
+    target,
+    runtime_text,
+    expected_uid_text,
+    expected_gid_text,
+    portable_text,
+) = sys.argv[1:]
+expected_uid, expected_gid = int(expected_uid_text), int(expected_gid_text)
+sha_re = re.compile(r"[0-9a-f]{40}")
+rename_noreplace = 1
+source_paths = {
+    "__init__.py": Path(asset_text) / "backend/seiche/__init__.py",
+    "nbs_intake.py": Path(asset_text) / "backend/seiche/nbs_intake.py",
+    "nbs_trust.py": Path(asset_text) / "backend/seiche/nbs_trust.py",
+}
+
+
+def fail(message: str) -> None:
+    print(f"market platform: NBS runtime {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def metadata_exact(
+    metadata: os.stat_result, *, directory: bool, mode: int, links: int | None = None
+) -> bool:
+    return (
+        (stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode))
+        and metadata.st_uid == expected_uid
+        and metadata.st_gid == expected_gid
+        and stat.S_IMODE(metadata.st_mode) == mode
+        and (links is None or metadata.st_nlink == links)
+    )
+
+
+def publish_noreplace(parent_fd: int, source: str, destination: str) -> None:
+    if portable_text == "1" and not sys.platform.startswith("linux"):
+        try:
+            os.stat(destination, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            fail(f"destination appeared concurrently: {destination}")
+        os.rename(
+            source,
+            destination,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        fail("requires Linux renameat2")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    if renameat2(
+        parent_fd,
+        source.encode("ascii"),
+        parent_fd,
+        destination.encode("ascii"),
+        rename_noreplace,
+    ) != 0:
+        error = ctypes.get_errno()
+        if error == errno.EEXIST:
+            fail(f"destination appeared concurrently: {destination}")
+        fail(f"atomic publication failed with errno {error}")
+
+
+def open_dir_at(parent_fd: int, name: str) -> int:
+    return os.open(
+        name,
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=parent_fd,
+    )
+
+
+def validate_release(releases_fd: int) -> None:
+    release_fd = open_dir_at(releases_fd, target)
+    package_fd = -1
+    try:
+        if not metadata_exact(os.fstat(release_fd), directory=True, mode=0o555):
+            fail("release directory metadata is unsafe")
+        names = set(os.listdir(release_fd))
+        if names != {"seiche"}:
+            fail("release directory members are not exact")
+        package_fd = open_dir_at(release_fd, "seiche")
+        if not metadata_exact(os.fstat(package_fd), directory=True, mode=0o555):
+            fail("package directory metadata is unsafe")
+        if set(os.listdir(package_fd)) != set(source_paths):
+            fail("package members are not exact")
+        for name, source in source_paths.items():
+            source_body = source.read_bytes()
+            if len(source_body) > 512 * 1024:
+                fail(f"module exceeds its runtime bound: {name}")
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=package_fd,
+            )
+            try:
+                metadata = os.fstat(descriptor)
+                if not metadata_exact(
+                    metadata, directory=False, mode=0o444, links=1
+                ):
+                    fail(f"module metadata is unsafe: {name}")
+                body = bytearray()
+                while len(body) <= 512 * 1024:
+                    chunk = os.read(descriptor, 65536)
+                    if not chunk:
+                        break
+                    body.extend(chunk)
+                if bytes(body) != source_body:
+                    fail(f"module bytes differ from signed assets: {name}")
+            finally:
+                os.close(descriptor)
+    finally:
+        if package_fd >= 0:
+            os.close(package_fd)
+        os.close(release_fd)
+
+
+if sha_re.fullmatch(target) is None or portable_text not in {"0", "1"}:
+    fail("target or fixed root is invalid")
+if portable_text == "0":
+    if (
+        os.geteuid() != 0
+        or expected_uid != 0
+        or expected_gid != 0
+        or runtime_text != "/opt/seiche-nbs-intake"
+    ):
+        fail("production runtime policy is invalid")
+elif (
+    os.geteuid() == 0
+    or os.geteuid() != expected_uid
+    or os.getgid() != expected_gid
+    or runtime_text == "/opt/seiche-nbs-intake"
+):
+    fail("portable runtime-test policy is invalid")
+if (
+    not runtime_text.startswith("/")
+    or os.path.normpath(runtime_text) != runtime_text
+    or runtime_text == "/"
+    or not asset_text.startswith("/")
+    or os.path.normpath(asset_text) != asset_text
+    or asset_text == "/"
+):
+    fail("asset or runtime path is not canonical")
+runtime = Path(runtime_text)
+runtime_metadata = os.lstat(runtime)
+if not metadata_exact(runtime_metadata, directory=True, mode=0o755):
+    fail("anchor must be precreated root:root 0755")
+runtime_fd = os.open(
+    "/", os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+)
+root_metadata = os.fstat(runtime_fd)
+if (
+    not stat.S_ISDIR(root_metadata.st_mode)
+    or (root_metadata.st_uid, root_metadata.st_gid)
+    not in {(0, 0), (expected_uid, expected_gid)}
+    or stat.S_IMODE(root_metadata.st_mode) & 0o022
+):
+    fail("filesystem root ownership or mode is unsafe")
+for component in runtime.parts[1:]:
+    child = open_dir_at(runtime_fd, component)
+    visible = os.stat(component, dir_fd=runtime_fd, follow_symlinks=False)
+    opened = os.fstat(child)
+    if (
+        not stat.S_ISDIR(visible.st_mode)
+        or (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino)
+        or (opened.st_uid, opened.st_gid)
+        not in {(0, 0), (expected_uid, expected_gid)}
+        or stat.S_IMODE(opened.st_mode) & 0o022
+    ):
+        os.close(child)
+        fail("anchor ancestry ownership, mode, or identity is unsafe")
+    os.close(runtime_fd)
+    runtime_fd = child
+if (
+    not metadata_exact(os.fstat(runtime_fd), directory=True, mode=0o755)
+    or (runtime_metadata.st_dev, runtime_metadata.st_ino)
+    != (os.fstat(runtime_fd).st_dev, os.fstat(runtime_fd).st_ino)
+):
+    fail("final anchor descriptor does not match the validated path")
+
+release_stage: str | None = None
+releases_stage: str | None = None
+pointer_stage: str | None = None
+releases_fd = -1
+try:
+    for name in os.listdir(runtime_fd):
+        if name.startswith((".release-stage-", ".releases-stage-", ".current-sha-")):
+            fail(
+                "has an interrupted stage; inspect it and remove it only if empty "
+                "and root-owned"
+            )
+        if name not in {"current-sha", "releases"}:
+            fail("anchor contains an unexpected member")
+
+    try:
+        releases_fd = open_dir_at(runtime_fd, "releases")
+    except FileNotFoundError:
+        releases_stage = f".releases-stage-{secrets.token_hex(16)}"
+        os.mkdir(releases_stage, 0o700, dir_fd=runtime_fd)
+        stage_fd = open_dir_at(runtime_fd, releases_stage)
+        try:
+            os.fchown(stage_fd, expected_uid, expected_gid)
+            os.fchmod(stage_fd, 0o555)
+            os.fsync(stage_fd)
+        finally:
+            os.close(stage_fd)
+        os.fsync(runtime_fd)
+        publish_noreplace(runtime_fd, releases_stage, "releases")
+        releases_stage = None
+        os.fsync(runtime_fd)
+        releases_fd = open_dir_at(runtime_fd, "releases")
+    if not metadata_exact(os.fstat(releases_fd), directory=True, mode=0o555):
+        fail("releases directory metadata is unsafe")
+    for name in os.listdir(releases_fd):
+        if name.startswith(".release-stage-"):
+            fail(
+                "has an interrupted release stage; inspect it and remove it only "
+                "if empty and root-owned"
+            )
+        if sha_re.fullmatch(name) is None:
+            fail("releases directory contains an unexpected member")
+
+    try:
+        existing_fd = open_dir_at(releases_fd, target)
+    except FileNotFoundError:
+        existing_fd = -1
+    if existing_fd >= 0:
+        os.close(existing_fd)
+        validate_release(releases_fd)
+    else:
+        release_stage = f".release-stage-{secrets.token_hex(16)}"
+        if portable_text == "1":
+            os.fchmod(releases_fd, 0o755)
+        try:
+            os.mkdir(release_stage, 0o700, dir_fd=releases_fd)
+        finally:
+            if portable_text == "1":
+                os.fchmod(releases_fd, 0o555)
+        stage_fd = open_dir_at(releases_fd, release_stage)
+        package_fd = -1
+        try:
+            os.mkdir("seiche", 0o700, dir_fd=stage_fd)
+            package_fd = open_dir_at(stage_fd, "seiche")
+            for name, source in source_paths.items():
+                body = source.read_bytes()
+                if len(body) > 512 * 1024:
+                    fail(f"module exceeds its runtime bound: {name}")
+                descriptor = os.open(
+                    name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o400,
+                    dir_fd=package_fd,
+                )
+                try:
+                    offset = 0
+                    while offset < len(body):
+                        written = os.write(descriptor, body[offset:])
+                        if written < 1:
+                            fail(f"module write made no progress: {name}")
+                        offset += written
+                    os.fchown(descriptor, expected_uid, expected_gid)
+                    os.fchmod(descriptor, 0o444)
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+            os.fchown(package_fd, expected_uid, expected_gid)
+            os.fchmod(package_fd, 0o555)
+            os.fsync(package_fd)
+            os.close(package_fd)
+            package_fd = -1
+            os.fchown(stage_fd, expected_uid, expected_gid)
+            os.fchmod(stage_fd, 0o555)
+            os.fsync(stage_fd)
+        finally:
+            if package_fd >= 0:
+                os.close(package_fd)
+            os.close(stage_fd)
+        os.fsync(releases_fd)
+        if portable_text == "1":
+            os.fchmod(releases_fd, 0o755)
+        try:
+            publish_noreplace(releases_fd, release_stage, target)
+        finally:
+            if portable_text == "1":
+                os.fchmod(releases_fd, 0o555)
+        release_stage = None
+        os.fsync(releases_fd)
+        validate_release(releases_fd)
+
+    release_path = runtime / "releases" / target
+    if any(path.startswith("/home/") or path == "/home" for path in sys.path):
+        fail("isolated system interpreter unexpectedly includes /home")
+    sys.path.insert(0, str(release_path))
+    try:
+        import seiche.nbs_intake as nbs_intake
+        import seiche.nbs_trust as nbs_trust
+    except Exception as exc:
+        fail(f"candidate package import failed: {exc}")
+    expected_package = release_path / "seiche"
+    if (
+        Path(nbs_intake.__file__) != expected_package / "nbs_intake.py"
+        or Path(nbs_trust.__file__) != expected_package / "nbs_trust.py"
+        or not callable(nbs_trust.verify_trusted_ed25519_signature)
+    ):
+        fail("candidate package imported from an unexpected origin")
+
+    if "current-sha" in os.listdir(runtime_fd):
+        current_fd = os.open(
+            "current-sha",
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=runtime_fd,
+        )
+        try:
+            if not metadata_exact(
+                os.fstat(current_fd), directory=False, mode=0o444, links=1
+            ):
+                fail("current-sha metadata is unsafe")
+        finally:
+            os.close(current_fd)
+    pointer_stage = f".current-sha-{secrets.token_hex(16)}"
+    pointer_fd = os.open(
+        pointer_stage,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o400,
+        dir_fd=runtime_fd,
+    )
+    try:
+        body = f"{target}\n".encode("ascii")
+        offset = 0
+        while offset < len(body):
+            written = os.write(pointer_fd, body[offset:])
+            if written < 1:
+                fail("current-sha write made no progress")
+            offset += written
+        os.fchown(pointer_fd, expected_uid, expected_gid)
+        os.fchmod(pointer_fd, 0o444)
+        os.fsync(pointer_fd)
+    finally:
+        os.close(pointer_fd)
+    os.replace(pointer_stage, "current-sha", src_dir_fd=runtime_fd, dst_dir_fd=runtime_fd)
+    pointer_stage = None
+    os.fsync(runtime_fd)
+finally:
+    if release_stage is not None:
+        if portable_text == "1" and releases_fd >= 0:
+            os.fchmod(releases_fd, 0o755)
+        try:
+            shutil.rmtree(runtime / "releases" / release_stage)
+        except FileNotFoundError:
+            pass
+        finally:
+            if portable_text == "1" and releases_fd >= 0:
+                os.fchmod(releases_fd, 0o555)
+    if releases_stage is not None:
+        try:
+            shutil.rmtree(runtime / releases_stage)
+        except FileNotFoundError:
+            pass
+    if pointer_stage is not None:
+        try:
+            os.unlink(pointer_stage, dir_fd=runtime_fd)
+        except FileNotFoundError:
+            pass
+    if releases_fd >= 0:
+        os.close(releases_fd)
+    os.close(runtime_fd)
+PY
+}
+
+ensure_nbs_evidence_tree() {
+    "$NBS_EVIDENCE_PYTHON" -I -B - \
+        "$NBS_STATE_DIR" "$SEICHE_NBS_GID" \
+        "$NBS_EVIDENCE_EXPECTED_UID" "$NBS_EVIDENCE_EXPECTED_GID" \
+        "$NBS_EVIDENCE_PORTABLE" <<'PY'
+import ctypes
+import errno
+import os
+from pathlib import Path
+import secrets
+import shutil
+import stat
+import sys
+
+root, seiche_gid_text, expected_uid_text, expected_gid_text, portable_text = sys.argv[1:]
+seiche_gid = int(seiche_gid_text)
+expected_uid = int(expected_uid_text)
+expected_gid = int(expected_gid_text)
+stage_prefix = ".seiche-nbs-stage-"
+flags = (
+    os.O_RDONLY
+    | os.O_DIRECTORY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+RENAME_NOREPLACE = 1
+
+if portable_text not in {"0", "1"}:
+    raise SystemExit("market platform: NBS evidence portability flag is invalid")
+if portable_text == "0":
+    if (
+        os.geteuid() != 0
+        or expected_uid != 0
+        or expected_gid != 0
+        or root != "/var/lib/seiche-nbs"
+    ):
+        raise SystemExit("market platform: production NBS evidence policy is invalid")
+elif (
+    os.geteuid() == 0
+    or os.geteuid() != expected_uid
+    or os.getegid() != expected_gid
+    or root == "/var/lib/seiche-nbs"
+):
+    raise SystemExit("market platform: portable NBS evidence policy is invalid")
+
+
+def fail(message: str) -> None:
+    print(f"market platform: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def open_real_path(path: str) -> int:
+    if not path.startswith("/") or os.path.normpath(path) != path or path == "/":
+        fail("NBS evidence root path is not canonical")
+    descriptor = os.open(
+        "/", os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        for component in path.split("/")[1:]:
+            child = os.open(component, flags, dir_fd=descriptor)
+            visible = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            opened = os.fstat(child)
+            if (
+                not stat.S_ISDIR(visible.st_mode)
+                or (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino)
+            ):
+                os.close(child)
+                fail("NBS evidence root or one of its parents is unsafe")
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except OSError:
+        os.close(descriptor)
+        fail("NBS evidence root is absent or unsafe")
+
+
+def validate(descriptor: int, uid: int, gid: int, mode: int, label: str) -> None:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != uid
+        or metadata.st_gid != gid
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        fail(f"{label} metadata is unsafe")
+
+
+def publish_noreplace(parent: int, source: str, destination: str) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        if portable_text != "1":
+            fail("atomic no-replace NBS publication is unavailable")
+        try:
+            os.stat(destination, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            os.rename(
+                source,
+                destination,
+                src_dir_fd=parent,
+                dst_dir_fd=parent,
+            )
+            return
+        fail(f"{destination} appeared concurrently")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    if renameat2(
+        parent,
+        source.encode("ascii"),
+        parent,
+        destination.encode("ascii"),
+        RENAME_NOREPLACE,
+    ) != 0:
+        error = ctypes.get_errno()
+        if error == errno.EEXIST:
+            fail(f"{destination} appeared concurrently")
+        fail(f"atomic NBS publication failed with errno {error}")
+
+
+def reject_orphans(parent: int, label: str) -> None:
+    for name in os.listdir(parent):
+        if name.startswith(stage_prefix):
+            fail(
+                f"{label} contains interrupted stage {name}; inspect it and "
+                "remove it only when empty, root-owned, and not a mount"
+            )
+
+
+def existing_child(
+    parent: int, name: str, uid: int, gid: int, mode: int, label: str
+) -> int | None:
+    try:
+        child = os.open(name, flags, dir_fd=parent)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        fail(f"{label} is unsafe")
+    validate(child, uid, gid, mode, label)
+    visible = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    opened = os.fstat(child)
+    if (visible.st_dev, visible.st_ino) != (opened.st_dev, opened.st_ino):
+        os.close(child)
+        fail(f"{label} changed during validation")
+    return child
+
+
+def stage_child(
+    parent: int,
+    parent_path: Path,
+    name: str,
+    uid: int,
+    gid: int,
+    mode: int,
+    label: str,
+    *,
+    with_revisions: bool = False,
+) -> int:
+    reject_orphans(parent, label + " parent")
+    stage = f"{stage_prefix}{name}-{secrets.token_hex(16)}"
+    stage_path = parent_path / stage
+    created = False
+    stage_fd = -1
+    revisions_fd = -1
+    try:
+        os.mkdir(stage, 0o700, dir_fd=parent)
+        created = True
+        stage_fd = os.open(stage, flags, dir_fd=parent)
+        if with_revisions:
+            os.mkdir("revisions", 0o700, dir_fd=stage_fd)
+            revisions_fd = os.open("revisions", flags, dir_fd=stage_fd)
+            os.fchown(revisions_fd, expected_uid, seiche_gid)
+            os.fchmod(revisions_fd, 0o2750)
+            validate(
+                revisions_fd,
+                expected_uid,
+                seiche_gid,
+                0o2750,
+                "NBS public revisions root",
+            )
+            os.fsync(revisions_fd)
+            os.close(revisions_fd)
+            revisions_fd = -1
+        os.fchown(stage_fd, uid, gid)
+        os.fchmod(stage_fd, mode)
+        validate(stage_fd, uid, gid, mode, label + " stage")
+        os.fsync(stage_fd)
+        os.close(stage_fd)
+        stage_fd = -1
+        os.fsync(parent)
+        publish_noreplace(parent, stage, name)
+        created = False
+        os.fsync(parent)
+    except OSError:
+        fail(f"could not create {label} safely")
+    finally:
+        if revisions_fd >= 0:
+            os.close(revisions_fd)
+        if stage_fd >= 0:
+            os.close(stage_fd)
+        if created:
+            try:
+                shutil.rmtree(stage_path)
+            except FileNotFoundError:
+                pass
+    child = existing_child(parent, name, uid, gid, mode, label)
+    if child is None:
+        fail(f"{label} was not published")
+    return child
+
+
+root_descriptor = open_real_path(root)
+restricted_descriptor = -1
+public_descriptor = -1
+revisions_descriptor = -1
+try:
+    validate(
+        root_descriptor,
+        expected_uid,
+        seiche_gid,
+        0o750,
+        "NBS evidence root",
+    )
+    reject_orphans(root_descriptor, "NBS evidence root")
+    restricted_descriptor = existing_child(
+        root_descriptor,
+        "restricted",
+        expected_uid,
+        expected_gid,
+        0o700,
+        "NBS restricted root",
+    )
+    public_descriptor = existing_child(
+        root_descriptor,
+        "public",
+        expected_uid,
+        seiche_gid,
+        0o750,
+        "NBS public root",
+    )
+    if public_descriptor is not None:
+        reject_orphans(public_descriptor, "NBS public root")
+        revisions_descriptor = existing_child(
+            public_descriptor,
+            "revisions",
+            expected_uid,
+            seiche_gid,
+            0o2750,
+            "NBS public revisions root",
+        )
+
+    # Validate the complete pre-existing topology before publishing any missing
+    # child. A malformed later child must not leave an otherwise safe partial
+    # mutation behind.
+    if restricted_descriptor is None:
+        restricted_descriptor = stage_child(
+            root_descriptor,
+            Path(root),
+            "restricted",
+            expected_uid,
+            expected_gid,
+            0o700,
+            "NBS restricted root",
+        )
+    if public_descriptor is None:
+        public_descriptor = stage_child(
+            root_descriptor,
+            Path(root),
+            "public",
+            expected_uid,
+            seiche_gid,
+            0o750,
+            "NBS public root",
+            with_revisions=True,
+        )
+        revisions_descriptor = existing_child(
+            public_descriptor,
+            "revisions",
+            expected_uid,
+            seiche_gid,
+            0o2750,
+            "NBS public revisions root",
+        )
+        if revisions_descriptor is None:
+            fail("NBS public revisions root was not published")
+    if revisions_descriptor is None:
+        revisions_descriptor = stage_child(
+            public_descriptor,
+            Path(root) / "public",
+            "revisions",
+            expected_uid,
+            seiche_gid,
+            0o2750,
+            "NBS public revisions root",
+        )
+finally:
+    for descriptor in (
+        revisions_descriptor,
+        public_descriptor,
+        restricted_descriptor,
+        root_descriptor,
+    ):
+        if descriptor >= 0:
+            os.close(descriptor)
+PY
+}
+
+case "${SEICHE_NBS_EVIDENCE_TREE_TEST_ONLY:-0}" in
+0) ;;
+1)
+    if [ "$(/usr/bin/id -u)" -eq 0 ] \
+            || [ "${SEICHE_ALLOW_NON_ROOT_INSTALL_TEST:-0}" != 1 ] \
+            || [ -n "${SSH_ORIGINAL_COMMAND:-}" ] \
+            || [ "${SEICHE_NBS_RUNTIME_TEST_ONLY:-0}" != 0 ]; then
+        echo "market platform: evidence-tree-only mode is restricted to explicit non-root tests" >&2
+        exit 1
+    fi
+    case "$ASSET_ROOT:$NBS_STATE_DIR" in
+        /*:/*) ;;
+        *)
+            echo "market platform: evidence-tree-only paths must be absolute" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$NBS_STATE_DIR" = /var/lib/seiche-nbs ]; then
+        echo "market platform: evidence-tree-only mode must isolate its target" >&2
+        exit 1
+    fi
+    NBS_EVIDENCE_PYTHON=${SEICHE_NBS_EVIDENCE_TEST_PYTHON:?evidence-tree test Python is required}
+    case "$NBS_EVIDENCE_PYTHON" in
+        /*) ;;
+        *)
+            echo "market platform: evidence-tree test Python must be absolute" >&2
+            exit 1
+            ;;
+    esac
+    [ -x "$NBS_EVIDENCE_PYTHON" ] || {
+        echo "market platform: evidence-tree test Python is not executable" >&2
+        exit 1
+    }
+    SEICHE_NBS_GID=${SEICHE_NBS_EVIDENCE_TEST_GID:?evidence-tree test group is required}
+    case "$SEICHE_NBS_GID" in
+        ''|*[!0-9]*)
+            echo "market platform: evidence-tree test group must be numeric" >&2
+            exit 1
+            ;;
+    esac
+    NBS_EVIDENCE_EXPECTED_UID=$(/usr/bin/id -u)
+    NBS_EVIDENCE_EXPECTED_GID=$(/usr/bin/id -g)
+    if [ "$SEICHE_NBS_GID" -eq "$NBS_EVIDENCE_EXPECTED_GID" ]; then
+        echo "market platform: evidence-tree test group must differ from the primary group" >&2
+        exit 1
+    fi
+    case " $(/usr/bin/id -G) " in
+        *" $SEICHE_NBS_GID "*) ;;
+        *)
+            echo "market platform: evidence-tree test group is not a supplementary group" >&2
+            exit 1
+            ;;
+    esac
+    NBS_EVIDENCE_PORTABLE=1
+    ensure_nbs_evidence_tree
+    exit 0
+    ;;
+*)
+    echo "market platform: SEICHE_NBS_EVIDENCE_TREE_TEST_ONLY must be exactly 0 or 1" >&2
+    exit 1
+    ;;
+esac
+
+case "${SEICHE_NBS_RUNTIME_TEST_ONLY:-0}" in
+0) ;;
+1)
+    if [ "$(/usr/bin/id -u)" -eq 0 ] \
+            || [ "${SEICHE_ALLOW_NON_ROOT_INSTALL_TEST:-0}" != 1 ] \
+            || [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+        echo "market platform: runtime-only mode is restricted to explicit non-root tests" >&2
+        exit 1
+    fi
+    case "$ASSET_ROOT:$NBS_RUNTIME_ROOT" in
+        /*:/*) ;;
+        *)
+            echo "market platform: runtime-only paths must be absolute" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$NBS_RUNTIME_ROOT" = /opt/seiche-nbs-intake ]; then
+        echo "market platform: runtime-only mode must isolate its target" >&2
+        exit 1
+    fi
+    NBS_RUNTIME_PYTHON=${SEICHE_NBS_RUNTIME_TEST_PYTHON:?runtime test Python is required}
+    case "$NBS_RUNTIME_PYTHON" in
+        /*) ;;
+        *)
+            echo "market platform: runtime test Python must be absolute" >&2
+            exit 1
+            ;;
+    esac
+    [ -x "$NBS_RUNTIME_PYTHON" ] || {
+        echo "market platform: runtime test Python is not executable" >&2
+        exit 1
+    }
+    NBS_RUNTIME_EXPECTED_UID=$(/usr/bin/id -u)
+    NBS_RUNTIME_EXPECTED_GID=$(/usr/bin/id -g)
+    NBS_RUNTIME_PORTABLE=1
+    install_nbs_runtime
+    exit 0
+    ;;
+*)
+    echo "market platform: SEICHE_NBS_RUNTIME_TEST_ONLY must be exactly 0 or 1" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    echo "market platform: installer must run as root" >&2
+    exit 1
+fi
+if [ "$NBS_RUNTIME_ROOT" != /opt/seiche-nbs-intake ]; then
+    echo "market platform: NBS runtime root is fixed at /opt/seiche-nbs-intake" >&2
+    exit 1
+fi
+validate_signed_asset_root
 
 if [ "$STATE_DIR" != /var/lib/seiche ] \
         || [ "$BACKUP_DIR" != /var/backups/seiche-market ] \
@@ -241,20 +1181,25 @@ fi
     echo "market platform: storage preflight source is missing or unsafe" >&2
     exit 1
 }
-[ -x /usr/bin/git ] || {
-    echo "market platform: /usr/bin/git is required to verify root service scripts" >&2
+[ "$(sed -n '1p' "$NBS_INTAKE_LAUNCHER_SOURCE")" = '#!/usr/bin/python3 -I' ] || {
+    echo "market platform: NBS intake launcher has the wrong interpreter" >&2
     exit 1
 }
-if ! SEICHE_SERVICE_UID=$(/usr/bin/id -u seiche) \
-        || ! SEICHE_SERVICE_GID=$(/usr/bin/id -g seiche); then
-    echo "market platform: seiche service ownership cannot be resolved" >&2
-    exit 1
-fi
-normalize_root_service_script \
-    "$READINESS_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID" "$SEICHE_SERVICE_GID"
-normalize_root_service_script \
-    "$OFFSITE_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID" "$SEICHE_SERVICE_GID"
+SEICHE_NBS_GID=$(/usr/bin/python3 -I -B - <<'PY'
+import grp
 
+try:
+    gid = grp.getgrnam("seiche").gr_gid
+except KeyError:
+    raise SystemExit(1) from None
+if gid <= 0:
+    raise SystemExit(1)
+print(gid)
+PY
+) || {
+    echo "market platform: named seiche evidence group cannot be resolved" >&2
+    exit 1
+}
 PACKAGES=()
 if ! command -v psql >/dev/null 2>&1; then
     PACKAGES+=(postgresql)
@@ -306,7 +1251,7 @@ STORAGE_PREFLIGHT_STAGE=$(mktemp \
     "$STORAGE_PREFLIGHT_INSTALL_DIR/.seiche-storage-preflight.XXXXXX")
 install -o root -g root -m 0755 "$STORAGE_PREFLIGHT_SOURCE" \
     "$STORAGE_PREFLIGHT_STAGE"
-/usr/bin/python3 "$STORAGE_PREFLIGHT_STAGE" --help >/dev/null
+/usr/bin/python3 -I -B "$STORAGE_PREFLIGHT_STAGE" --help >/dev/null
 STORAGE_PREFLIGHT_UNIT_STAGE_DIR=$(mktemp -d \
     /etc/systemd/system/.seiche-storage-preflight-stage.XXXXXX)
 install -m 0644 "$STORAGE_PREFLIGHT_UNIT_SOURCE" \
@@ -330,6 +1275,23 @@ STORAGE_PREFLIGHT_UNIT_STAGE_DIR=""
 /usr/bin/sync /etc/systemd/system
 systemctl daemon-reload
 systemctl start seiche-storage-preflight.service
+
+# Only a proven v2 storage topology may expose a new root-owned intake runtime.
+# Test the exact system interpreter API, publish/validate an inert version, then
+# let install_nbs_runtime advance current-sha as its final atomic operation.
+/usr/bin/env -i \
+    HOME=/root LANG=C.UTF-8 PATH=/usr/bin:/bin PYTHONNOUSERSITE=1 \
+    /usr/bin/python3 -I -B - <<'PY' || {
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+private_key = Ed25519PrivateKey.generate()
+message = b"seiche-nbs-runtime-dependency-self-test"
+private_key.public_key().verify(private_key.sign(message), message)
+PY
+    echo "market platform: isolated system Ed25519 runtime is unavailable" >&2
+    exit 1
+}
+install_nbs_runtime
 
 # The release wrapper uses umask 0077 while it checks out an exact candidate.
 # Git therefore may materialize tracked executable files as seiche:seiche 0700.
@@ -356,12 +1318,40 @@ install_runtime_shell_helper() {
         return 1
     fi
 }
+install_runtime_python_helper() {
+    local source=$1 destination=$2 label=$3 stage=""
+    if [ ! -f "$source" ] || [ -L "$source" ] \
+            || [ "$(stat -c '%h' "$source")" != 1 ]; then
+        echo "market platform: $label source is missing or unsafe" >&2
+        return 1
+    fi
+    stage=$(mktemp \
+        "$STORAGE_PREFLIGHT_INSTALL_DIR/.${label}.XXXXXX") || return 1
+    if ! install -o root -g root -m 0755 "$source" "$stage" \
+            || ! /usr/bin/python3 -I "$stage" --help >/dev/null \
+            || ! /usr/bin/sync -f "$stage" \
+            || ! mv -f -- "$stage" "$destination" \
+            || ! /usr/bin/sync "$STORAGE_PREFLIGHT_INSTALL_DIR"; then
+        rm -f -- "$stage"
+        echo "market platform: $label installation failed" >&2
+        return 1
+    fi
+}
+install_runtime_python_helper \
+    "$NBS_INTAKE_LAUNCHER_SOURCE" "$NBS_INTAKE_LAUNCHER_INSTALLED" \
+    seiche-nbs-intake
 install_runtime_shell_helper \
     "$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED" \
     seiche-data-readiness
 install_runtime_shell_helper \
     "$OFFSITE_SCRIPT_SOURCE" "$OFFSITE_SCRIPT_INSTALLED" \
     seiche-market-offsite-backup
+install_runtime_shell_helper \
+    "$MARKET_BACKUP_SCRIPT_SOURCE" "$MARKET_BACKUP_SCRIPT_INSTALLED" \
+    seiche-market-backup
+install_runtime_shell_helper \
+    "$MARKET_RESTORE_SCRIPT_SOURCE" "$MARKET_RESTORE_SCRIPT_INSTALLED" \
+    seiche-market-restore-check
 
 systemctl enable --now postgresql
 
@@ -477,11 +1467,10 @@ install -d -o seiche -g seiche -m 0750 \
     "$FUNDING_EXPORT_DIR"
 # Owner-supplied NBS browser exports are evidence, not market-pack inputs. Keep
 # the signed raw envelope root-only and give the API read-only access solely to
-# the separately materialized, metadata-only public projection.
-install -d -o root -g seiche -m 0750 "$NBS_STATE_DIR"
-install -d -o root -g root -m 0700 "$NBS_RESTRICTED_DIR"
-install -d -o root -g seiche -m 0750 "$NBS_PUBLIC_DIR"
-install -d -o root -g seiche -m 2750 "$NBS_PUBLIC_REVISIONS_DIR"
+# the separately materialized, metadata-only public projection. The root is an
+# operator-provisioned, preflight-authenticated bind mount; routine releases
+# may create missing children but never normalize an existing evidence tree.
+ensure_nbs_evidence_tree
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
 install -d -o root -g seiche -m 0750 "$RECOVERY_PROOF_DIR"
@@ -762,7 +1751,7 @@ if [ -e "$OFFSITE_ENV_FILE" ] || [ -L "$OFFSITE_ENV_FILE" ] \
         echo "market platform: shared Object Storage credential is missing or unsafe" >&2
         exit 1
     }
-    OFFSITE_CANARY=$(/usr/bin/python3 - "$OFFSITE_ENV_FILE" <<'PY'
+    OFFSITE_CANARY=$(/usr/bin/python3 -I -B - "$OFFSITE_ENV_FILE" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -814,7 +1803,7 @@ PY
         echo "market platform: offsite backup environment contract is invalid" >&2
         exit 1
     }
-    /usr/bin/python3 - "$OFFSITE_PASSPHRASE_FILE" <<'PY' || {
+    /usr/bin/python3 -I -B - "$OFFSITE_PASSPHRASE_FILE" <<'PY' || {
 from pathlib import Path
 import sys
 
@@ -856,9 +1845,10 @@ fi
 # Fail before changing service units if the application user cannot reach the
 # exact socket/port written above. pg_wrapper succeeding as postgres is not a
 # substitute for validating the DSN the API and collectors will actually use.
-runuser -u seiche -- env \
+runuser -u seiche -- /usr/bin/env -i \
+    HOME=/home/seiche LANG=C.UTF-8 PATH=/usr/bin:/bin PYTHONNOUSERSITE=1 \
     SEICHE_DATABASE_URL="postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT" \
-    "$APP_DIR/backend/.venv/bin/python" -c \
+    "$APP_DIR/backend/.venv/bin/python" -I -B -c \
     'import os, psycopg; from seiche.repository import get_repository; connection = psycopg.connect(os.environ["SEICHE_DATABASE_URL"]); connection.execute("SELECT 1").fetchone(); connection.close(); get_repository().forward_record_count()'
 
 # Readiness and watchdog semantics are a release boundary. Verify the exact
@@ -888,7 +1878,7 @@ install -m 0644 "$READINESS_SERVICE_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service"
 install -m 0644 "$READINESS_TIMER_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer"
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backfill.service" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-backfill.service" \
     "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service"
 install -m 0644 "$OFFSITE_SERVICE_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.service"
@@ -919,17 +1909,17 @@ mv -f "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer" \
 rmdir "$DATA_UNIT_STAGE_DIR"
 DATA_UNIT_STAGE_DIR=""
 
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.service" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-validation.service" \
     /etc/systemd/system/seiche-market-validation.service
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-validation.timer" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-validation.timer" \
     /etc/systemd/system/seiche-market-validation.timer
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backup.service" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-backup.service" \
     /etc/systemd/system/seiche-market-backup.service
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-backup.timer" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-backup.timer" \
     /etc/systemd/system/seiche-market-backup.timer
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-restore-check.service" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-restore-check.service" \
     /etc/systemd/system/seiche-market-restore-check.service
-install -m 0644 "$APP_DIR/ops/deploy/seiche-market-restore-check.timer" \
+install -m 0644 "$ASSET_ROOT/ops/deploy/seiche-market-restore-check.timer" \
     /etc/systemd/system/seiche-market-restore-check.timer
 
 # Activation crosses a root-controller boundary. Verify the fixed unit under
@@ -1071,7 +2061,7 @@ cat >"$DROPIN" <<EOF
 [Unit]
 Requires=seiche-storage-preflight.service
 After=seiche-storage-preflight.service
-RequiresMountsFor=$STATE_DIR $BACKUP_DIR
+RequiresMountsFor=$STATE_DIR $NBS_STATE_DIR $BACKUP_DIR
 
 [Service]
 EnvironmentFile=-$ENV_DIR/market.env
@@ -1098,7 +2088,7 @@ cat >"$RELEASE_POLL_STORAGE_STAGE" <<EOF
 [Unit]
 Requires=seiche-storage-preflight.service
 After=seiche-storage-preflight.service
-RequiresMountsFor=$STATE_DIR $BACKUP_DIR
+RequiresMountsFor=$STATE_DIR $NBS_STATE_DIR $BACKUP_DIR
 EOF
 chmod 0644 "$RELEASE_POLL_STORAGE_STAGE"
 mv -f "$RELEASE_POLL_STORAGE_STAGE" "$RELEASE_POLL_STORAGE_DROPIN"
@@ -1162,7 +2152,8 @@ offsite_canary_receipt_is_valid() {
     [ -f "$OFFSITE_STATUS_PATH" ] && [ ! -L "$OFFSITE_STATUS_PATH" ] \
         && [ "$(stat -c '%U:%G:%a:%h' "$OFFSITE_STATUS_PATH")" \
             = root:root:600:1 ] || return 1
-    /usr/bin/python3 - "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" <<'PY'
+    /usr/bin/python3 -I -B - \
+        "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" <<'PY'
 import json
 import sys
 
@@ -1185,8 +2176,13 @@ resolved_status = (
     )
 )
 valid = (
-    status.get("schema") == "seiche.market-offsite-backup-status.v1"
+    status.get("schema") == "seiche.market-offsite-backup-status.v2"
     and resolved_status
+    and status.get("source_backup_schema") == "seiche.market-backup.v3"
+    and status.get("nbs_state_root") == "/var/lib/seiche-nbs"
+    and status.get("nbs_full_store_audit_contract")
+        == "seiche.nbs-full-store-audit.v1"
+    and status.get("nbs_full_store_audit_result") == "required_at_restore"
     and status.get("bucket") == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
     and status.get("prefix") == settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
     and status.get("key_id") == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
@@ -1195,6 +2191,11 @@ valid = (
     and status.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
     and isinstance(success, dict)
     and success.get("restore_verified") is True
+    and success.get("source_backup_schema") == "seiche.market-backup.v3"
+    and success.get("nbs_state_root") == "/var/lib/seiche-nbs"
+    and success.get("nbs_full_store_audit_contract")
+        == "seiche.nbs-full-store-audit.v1"
+    and success.get("nbs_full_store_audit_result") == "required_at_restore"
     and success.get("bucket") == settings["SEICHE_OFFSITE_BACKUP_BUCKET"]
     and success.get("prefix") == settings["SEICHE_OFFSITE_BACKUP_PREFIX"]
     and success.get("key_id") == settings["SEICHE_OFFSITE_BACKUP_KEY_ID"]
@@ -1223,7 +2224,7 @@ if [ "$OFFSITE_CONFIGURED" = 1 ] && [ "$OFFSITE_CANARY" = 0 ]; then
         exit 1
     }
     systemctl enable seiche-market-offsite-backup.timer
-    OFFSITE_APP_SHA=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)
+    OFFSITE_APP_SHA=$RELEASE_TARGET
     OFFSITE_DEPLOYED_SHA=$(tr -d '\n' <"$DEPLOY_STATE_DIR/deployed-sha" \
         2>/dev/null || true)
     if [ "$OFFSITE_APP_SHA" = "$OFFSITE_DEPLOYED_SHA" ] \
@@ -1250,15 +2251,19 @@ DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker
 DATA_READINESS_SCRIPT="$READINESS_SCRIPT_INSTALLED"
 DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
 run_recovery_proof_preflight() {
-    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
+    /usr/bin/env -i \
+        HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_DATA_READINESS_PROOF_ONLY=1 \
         SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-        SEICHE_DATA_READINESS_REQUIRED_UNITS='' \
-        /usr/bin/bash "$DATA_READINESS_SCRIPT"
+        SEICHE_DATA_READINESS_REQUIRED_UNITS= \
+        /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
 }
 run_data_readiness_preflight() {
-    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
+    /usr/bin/env -i \
+        HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
         SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
-        /usr/bin/bash "$DATA_READINESS_SCRIPT"
+        /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
 }
 validate_data_readiness_convergence_wait() {
     case "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" in

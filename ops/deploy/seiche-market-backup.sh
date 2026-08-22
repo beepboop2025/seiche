@@ -24,8 +24,9 @@ SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 GIT_BIN="${SEICHE_GIT_BIN:-git}"
-PYTHON_BIN="${SEICHE_PYTHON_BIN:-$APP_DIR/backend/.venv/bin/python}"
+PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+ALLOW_NON_ROOT_TEST="${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}"
 
 fail() {
     echo "seiche market backup: $*" >&2
@@ -43,9 +44,21 @@ esac
 case "$MIN_DUMP_BYTES" in
     ''|*[!0-9]*) fail "minimum dump size must be a non-negative integer" ;;
 esac
-if [ "${EUID:-$(id -u)}" -ne 0 ] \
-    && [ "${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}" != "1" ]; then
+case "$ALLOW_NON_ROOT_TEST" in
+    0|1) ;;
+    *) fail "non-root backup test flag must be exactly 0 or 1" ;;
+esac
+CURRENT_EUID="${EUID:-$(id -u)}"
+if [ "$ALLOW_NON_ROOT_TEST" = "1" ]; then
+    [ "$CURRENT_EUID" -ne 0 ] \
+        || fail "non-root backup test mode cannot run as root"
+elif [ "$CURRENT_EUID" -ne 0 ]; then
     fail "must run as root"
+else
+    [ "$PYTHON_BIN" = /usr/bin/python3 ] \
+        || fail "production Python runtime is fixed at /usr/bin/python3"
+    [ "$NBS_STATE_DIR" = /var/lib/seiche-nbs ] \
+        || fail "production NBS state root is fixed at /var/lib/seiche-nbs"
 fi
 [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] \
     || fail "state directory must be a real directory"
@@ -71,7 +84,7 @@ if find "$API_DATA_DIR" -type l -print -quit | grep -q .; then
 fi
 [ -x "$PYTHON_BIN" ] || fail "Python runtime is unavailable"
 [ ! -L "$BACKUP_DIR" ] || fail "backup directory cannot be a symlink"
-if [ "${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}" = "1" ]; then
+if [ "$ALLOW_NON_ROOT_TEST" = "1" ]; then
     mkdir -p "$BACKUP_DIR"
     chmod 0700 "$BACKUP_DIR"
 else
@@ -154,7 +167,8 @@ rm -f -- "$API_STAGE/seiche.sqlite" \
     "$API_STAGE/seiche.sqlite-wal" "$API_STAGE/seiche.sqlite-shm"
 [ -f "$API_DATA_DIR/seiche.sqlite" ] && [ ! -L "$API_DATA_DIR/seiche.sqlite" ] \
     || fail "API SQLite database is missing or unsafe"
-"$PYTHON_BIN" - "$API_DATA_DIR/seiche.sqlite" "$API_STAGE/seiche.sqlite" <<'PY'
+"$PYTHON_BIN" -I -B - \
+    "$API_DATA_DIR/seiche.sqlite" "$API_STAGE/seiche.sqlite" <<'PY'
 import sqlite3
 import sys
 
@@ -187,11 +201,14 @@ printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     || fail "cannot bind the snapshot to a deployed commit"
 printf '%s\n' "$DEPLOYED_SHA" >"$STAGE/deployed-sha.txt"
 printf '%s\n' \
-    "schema=seiche.market-backup.v2" \
+    "schema=seiche.market-backup.v3" \
     "created_at=$STAMP" \
     "database=$DATABASE_NAME" \
     "postgres_port=$POSTGRES_PORT" \
     "state_root=$STATE_DIR" \
+    "nbs_state_root=$NBS_STATE_DIR" \
+    "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" \
+    "nbs_full_store_audit_result=required_at_restore" \
     "api_data_root=$API_DATA_DIR" \
     "critical_table_count_semantics=pre_dump_lower_bound" \
     "research_only=true" \

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Fail closed when Seiche is serving stale data or its host safety rails drift.
 set -uo pipefail
 set -f
@@ -6,7 +6,7 @@ umask 0077
 export LC_ALL=C
 
 readonly DEFAULT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer seiche-data-readiness.timer"
-readonly DEFAULT_DISK_PATHS="/ /var/lib/seiche /var/backups/seiche-market"
+readonly DEFAULT_DISK_PATHS="/ /var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market"
 
 HEALTH_URL="${SEICHE_DATA_READINESS_HEALTH_URL:-http://127.0.0.1:8787/api/health}"
 BACKUP_DIR="${SEICHE_DATA_READINESS_BACKUP_DIR:-/var/backups/seiche-market}"
@@ -32,12 +32,41 @@ NOW_EPOCH="${SEICHE_DATA_READINESS_NOW_EPOCH:-}"
 REQUIRED_UNITS="${SEICHE_DATA_READINESS_REQUIRED_UNITS-$DEFAULT_REQUIRED_UNITS}"
 DISK_PATHS="${SEICHE_DATA_READINESS_DISK_PATHS-$DEFAULT_DISK_PATHS}"
 
-CURL_BIN="${SEICHE_CURL_BIN:-/usr/bin/curl}"
-PYTHON_BIN="${SEICHE_PYTHON_BIN:-/home/seiche/app/backend/.venv/bin/python}"
-SYSTEMCTL_BIN="${SEICHE_SYSTEMCTL_BIN:-/usr/bin/systemctl}"
-DF_BIN="${SEICHE_DF_BIN:-/usr/bin/df}"
-MKTEMP_BIN="${SEICHE_MKTEMP_BIN:-/usr/bin/mktemp}"
-RM_BIN="${SEICHE_RM_BIN:-/usr/bin/rm}"
+configuration_invalid() {
+    printf 'seiche data readiness: configuration invalid\n' >&2
+    exit 1
+}
+
+# The installed service is a root trust boundary. Never let inherited or
+# file-sourced environment turn its command paths into arbitrary root code.
+# Host-free tests run unprivileged and must opt into their explicit fakes.
+if [ "$EUID" -eq 0 ]; then
+    if [ "${SEICHE_ALLOW_NON_ROOT_READINESS_TEST+x}" = x ] \
+        || [ "${SEICHE_CURL_BIN+x}" = x ] \
+        || [ "${SEICHE_PYTHON_BIN+x}" = x ] \
+        || [ "${SEICHE_SYSTEMCTL_BIN+x}" = x ] \
+        || [ "${SEICHE_DF_BIN+x}" = x ] \
+        || [ "${SEICHE_MKTEMP_BIN+x}" = x ] \
+        || [ "${SEICHE_RM_BIN+x}" = x ]; then
+        configuration_invalid
+    fi
+    CURL_BIN=/usr/bin/curl
+    PYTHON_BIN=/usr/bin/python3
+    SYSTEMCTL_BIN=/usr/bin/systemctl
+    DF_BIN=/usr/bin/df
+    MKTEMP_BIN=/usr/bin/mktemp
+    RM_BIN=/usr/bin/rm
+else
+    [ "${SEICHE_ALLOW_NON_ROOT_READINESS_TEST:-}" = 1 ] \
+        || configuration_invalid
+    CURL_BIN="${SEICHE_CURL_BIN:-}"
+    PYTHON_BIN="${SEICHE_PYTHON_BIN:-}"
+    SYSTEMCTL_BIN="${SEICHE_SYSTEMCTL_BIN:-}"
+    DF_BIN="${SEICHE_DF_BIN:-}"
+    MKTEMP_BIN="${SEICHE_MKTEMP_BIN:-}"
+    RM_BIN="${SEICHE_RM_BIN:-}"
+fi
+readonly CURL_BIN PYTHON_BIN SYSTEMCTL_BIN DF_BIN MKTEMP_BIN RM_BIN
 
 FAILURES=()
 HEALTH_FILE=""
@@ -160,7 +189,7 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
     fi
 
     VALIDATION_OUTPUT=$(
-        "$PYTHON_BIN" - "$HEALTH_FILE" "$HEALTH_AVAILABLE" "$BACKUP_DIR" \
+        "$PYTHON_BIN" -I -B - "$HEALTH_FILE" "$HEALTH_AVAILABLE" "$BACKUP_DIR" \
             "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$DEPLOYED_SHA_PATH" \
             "$RECEIPT_UID" "$RECEIPT_GROUP" \
             "$MAX_GENERATED_AGE" "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" \
@@ -403,19 +432,29 @@ if secure_restore_receipt(restore_receipt):
             "deployed_sha",
             "critical_table_counts",
             "critical_table_count_floor",
+            "nbs_full_store_audit_contract",
+            "nbs_full_store_audit_result",
             "nbs_public_revision_store",
             *required_passes,
         }
         if set(fields) != required_fields:
             raise ValueError
-        if fields.get("schema") != "seiche.market-backup-restore-check.v3":
+        if fields.get("schema") != "seiche.market-backup-restore-check.v4":
             raise ValueError
         if any(fields.get(key) != value for key, value in required_passes.items()):
             raise ValueError
-        if fields.get("nbs_public_revision_store") not in {
+        if (
+            fields.get("nbs_full_store_audit_contract")
+            != "seiche.nbs-full-store-audit.v1"
+        ):
+            raise ValueError
+        nbs_audit_result = fields.get("nbs_full_store_audit_result")
+        if nbs_audit_result not in {
             "not_onboarded",
             "verified_head",
         }:
+            raise ValueError
+        if fields.get("nbs_public_revision_store") != nbs_audit_result:
             raise ValueError
         if re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", fields.get("snapshot", "")) is None:
             raise ValueError
@@ -578,10 +617,18 @@ if not skip_offsite and offsite_env_exists:
                     "checksum_etag",
                     "remote_receipt_etag",
                 )
+                source_backup_contract = {
+                    "source_backup_schema": "seiche.market-backup.v3",
+                    "nbs_state_root": "/var/lib/seiche-nbs",
+                    "nbs_full_store_audit_contract": (
+                        "seiche.nbs-full-store-audit.v1"
+                    ),
+                    "nbs_full_store_audit_result": "required_at_restore",
+                }
                 current_state = status_document.get("status")
                 valid = (
                     status_document.get("schema")
-                    == "seiche.market-offsite-backup-status.v1"
+                    == "seiche.market-offsite-backup-status.v2"
                     and current_state in {"running", "failed", "success"}
                     and status_document.get("provider")
                     == "hetzner-object-storage"
@@ -607,6 +654,10 @@ if not skip_offsite and offsite_env_exists:
                     is not None
                     and status_document.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
+                    and all(
+                        status_document.get(field) == value
+                        for field, value in source_backup_contract.items()
+                    )
                     and status_document.get("restore_verified")
                     is (current_state == "success")
                     and success.get("restore_verified") is True
@@ -627,6 +678,10 @@ if not skip_offsite and offsite_env_exists:
                     == current_destination.get("region")
                     and success.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
+                    and all(
+                        success.get(field) == value
+                        for field, value in source_backup_contract.items()
+                    )
                     and re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", snapshot_id or "")
                     is not None
                     and re.fullmatch(

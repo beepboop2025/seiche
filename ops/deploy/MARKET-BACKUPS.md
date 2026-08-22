@@ -74,28 +74,36 @@ minutes of jitter. It selects the newest committed snapshot, verifies every
 checksum, extracts the state tar archive into a temporary directory under the
 recovery-proof root, verifies the restored API SQLite database with
 `PRAGMA quick_check`, and restores the dump into a uniquely named scratch
-database. It also normalizes the intentionally stripped extraction modes on
-the isolated NBS public projection and runs the deployed strict NBS loader.
-An empty revision directory with no head is recorded as `not_onboarded`; one
-fully verified signed head is recorded as `verified_head`. Any malformed entry,
-invalid signature, missing predecessor, fork, or head mismatch fails the
-restore check. Temporary extraction happens inside that dedicated
-root-controlled directory. Every restored critical-table count must meet or
-exceed the recorded pre-dump floor before the filesystem scratch trees and
-scratch database are removed. This lets continuous ingestion proceed during
-`pg_dump` without turning ordinary appends into false backup failures.
+database. It normalizes the intentionally stripped extraction modes on the
+isolated NBS recovery tree, verifies the exact restricted object/export
+structure, and runs the deployed strict loader over the matching public signed
+revision chain. An empty restricted/public store is recorded as
+`not_onboarded`; one fully verified matching head is recorded as
+`verified_head`. Any malformed member, invalid signature, missing predecessor,
+fork, restricted/public mismatch, or head mismatch fails the restore check.
+Temporary extraction happens inside that dedicated root-controlled directory.
+Every restored critical-table count must meet or exceed the recorded pre-dump
+floor before the filesystem scratch trees and scratch database are removed.
+This lets continuous ingestion proceed during `pg_dump` without turning
+ordinary appends into false backup failures.
 
 The production `seiche` database and live state tree are never restore targets.
 A trap drops the scratch database after either success or failure. A successful
-check atomically records its v3 receipt at:
+check atomically records its v4 receipt at:
 
 ```text
 /var/lib/seiche-recovery-proof/backup-restore-check.status
 ```
 
-Both services share `/run/lock/seiche-market-backup.lock`, so a manual check
-cannot overlap an active backup. Failures enter systemd's failed-unit state and
-use the production node's existing failure-alert handler.
+Both services and the root-only NBS signed-export intake launcher share
+`/run/lock/seiche-market-backup.lock`, so a manual restore check, snapshot, or
+evidence commit cannot overlap either of the others. The launcher validates the
+existing lock as a root-owned, root-group, mode `0600`, single-link regular file
+and waits at most 300 seconds. It holds that outer lock across fixed-path storage
+preflight, the complete NBS commit, and strict postflight; the NBS store's own
+lock remains the inner revision-chain serializer. Backup/restore failures enter
+systemd's failed-unit state and use the production node's existing
+failure-alert handler.
 
 Operator checks:
 
@@ -103,6 +111,7 @@ Operator checks:
 systemctl start seiche-market-restore-check.service
 journalctl -u seiche-market-restore-check.service -n 100 --no-pager
 cat /var/lib/seiche-recovery-proof/backup-restore-check.status
+sudo /etc/seiche/libexec/seiche-nbs-intake.py --help
 ```
 
 ## Continuous collection and data readiness
@@ -120,23 +129,24 @@ no longer complete; these are deliberately different signals.
   of clock skew, or contains collector/critical faults;
 - either collector heartbeat is missing or overdue;
 - the newest backup is older than 36 hours or implausibly future-dated;
-- the exact v3 restore receipt is missing, invalid, older than eight days,
-  future-dated, or does not record a strictly verified NBS public-store state;
+- the exact v4 restore receipt is missing, invalid, older than eight days,
+  future-dated, or does not record a strictly verified NBS full-store state;
 - a required service/timer is inactive, or a required timer is disabled for
   the next boot; or
 - block or inode use reaches 90 percent on a monitored filesystem.
 
-On a fresh host or the first v3 rollout, installation does not enable the
+On a fresh host or the first v4 receipt rollout, installation does not enable the
 readiness timer immediately. It starts the source worker, runs a real backup,
 restores and checks that snapshot in isolation, executes readiness once without
 requiring its not-yet-active timer, and enables the timer only after that proof
 passes. Any failed stage leaves the timer disabled and the deployment nonzero.
 
-Restore receipt v3 is intentionally not backward compatible with v2. Version 2
-did not claim application-level validation of the NBS public revision chain.
-During the v3 rollout the installer must produce a new snapshot and successful
-isolated restore before readiness can pass; an older v2 receipt is never
-silently promoted to the stronger claim.
+Restore receipt v4 is intentionally not backward compatible with v3. Version 3
+validated the NBS public revision chain but did not claim an exact audit of the
+full restricted/public recovery store. During the v4 receipt rollout the
+installer must produce a v3 snapshot and successful isolated restore before
+readiness can pass; an older v3 receipt is never silently promoted to the
+stronger claim.
 
 Operator checks:
 
@@ -151,7 +161,11 @@ journalctl -u seiche-data-readiness.service -n 100 --no-pager
 The local snapshot and live filesystem evidence remain on one attached Volume.
 That protects the host root disk from capacity pressure, but loss or corruption
 of the Volume can still remove both. The optional off-node lane copies only a
-completed, checksum-valid v2 snapshot to private Hetzner Object Storage.
+completed, checksum-valid v3 snapshot to private Hetzner Object Storage. That
+snapshot includes the full `/var/lib/seiche-nbs` recovery tree. Restricted raw
+and numeric evidence remains inside the authenticated ciphertext; offsite
+status and receipts expose only aggregate hashes, the fixed NBS state path, and
+the audit-policy labels described below.
 
 `seiche-market-offsite-backup.service`:
 
@@ -159,7 +173,11 @@ completed, checksum-valid v2 snapshot to private Hetzner Object Storage.
    `/run/lock/seiche-market-backup.lock` with the local producer and restore
    check while it selects the newest committed UTC snapshot; hidden stages,
    extra members, links, malformed manifests, or any checksum failure are
-   rejected;
+   rejected. The closed manifest must be `seiche.market-backup.v3`, name the
+   exact production NBS root `/var/lib/seiche-nbs`, require
+   `seiche.nbs-full-store-audit.v1`, and record
+   `nbs_full_store_audit_result=required_at_restore`; legacy v2 snapshots are
+   not accepted;
 2. requires the snapshot's `deployed-sha.txt`, the application checkout, and
    `/var/lib/seiche-deploy/deployed-sha` to name the same 40-character commit,
    rejects a snapshot older than 36 hours, and does not upload a snapshot that
@@ -174,11 +192,21 @@ completed, checksum-valid v2 snapshot to private Hetzner Object Storage.
 6. captures each returned S3 VersionId and ETag, rejects anonymously readable
    objects, downloads the exact ciphertext version just uploaded, compares its
    SHA-256, authenticates and decrypts it into a private scratch directory,
-   then verifies every restored source hash and the closed v2 manifest again;
-   and
+   then verifies every restored source hash and all four closed v3/NBS contract
+   claims again; and
 7. uploads `RECEIPT.json` last, captures and downloads that exact version
    byte-for-byte, and atomically commits root-only status at
-   `/var/lib/seiche-offsite-backup/status.json`.
+   `/var/lib/seiche-offsite-backup/status.json`. Both records bind the source
+   backup schema, NBS state root, full-store audit contract, and
+   `required_at_restore` handoff. They do not claim `verified_head` and do not
+   publish NBS member inventories, head identifiers, or evidence values.
+
+The local record uses `seiche.market-offsite-backup-status.v2`; the immutable
+remote completion marker uses `seiche.market-offsite-backup-receipt.v2`.
+Version 1 success records cannot authorize recurring v3 uploads because they
+lack the mandatory source/NBS claims. A version 1 `running` record or failed
+record that reached receipt intent remains an unresolved boundary and still
+requires operator reconciliation.
 
 A remote attempt without `RECEIPT.json` is incomplete. Recovery must enumerate
 receipt versions and use the recorded ciphertext VersionId and SHA-256, never
@@ -226,7 +254,7 @@ The Seiche environment file has this exact non-secret shape:
 
 ```ini
 SEICHE_OFFSITE_BACKUP_BUCKET=REVIEWED_PRIVATE_BUCKET
-SEICHE_OFFSITE_BACKUP_PREFIX=seiche/market-backups/v1
+SEICHE_OFFSITE_BACKUP_PREFIX=seiche/market-backups/v2
 SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE=anchor
 SEICHE_OFFSITE_BACKUP_WRITE_ENABLED=1
 SEICHE_OFFSITE_BACKUP_CANARY=1
@@ -259,6 +287,150 @@ the reviewed lifecycle must expire current and noncurrent versions only after
 the 90-day COMPLIANCE window and abort stale multipart uploads; it is never
 installed or changed by this copy-only job.
 
+### Production v1-to-v2 namespace cutover
+
+A host with a successful status-v1 scheduled proof cannot satisfy the new v2
+installer from the old prefix, and its deterministic canary objects cannot be
+overwritten. Before installing this release, disable the old schedule and move
+the unchanged key material and Hetzner destination to a never-used prefix in
+canary mode. Keep `KEY_ID=market-key-2026-08-v1` while the passphrase is
+unchanged, and keep `DESTINATION_ID=hetzner-primary-v1` while the same
+account/project/endpoint/bucket is used. Relabeling either would make recovery
+provenance false.
+
+Run the following as root while the offsite-run and shared backup locks are
+held. The transformer accepts only the exact nine-line root-owned config,
+performs a same-directory fsynced atomic replacement, and preserves every
+field except the explicitly named prefix/canary transition:
+
+```bash
+atomic_offsite_config_transition() {
+  local expected_prefix=$1 new_prefix=$2 expected_canary=$3 new_canary=$4
+  /usr/bin/python3 -I -B - \
+    /etc/seiche/offsite-backup.env \
+    "$expected_prefix" "$new_prefix" "$expected_canary" "$new_canary" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+
+path_text, expected_prefix, new_prefix, expected_canary, new_canary = sys.argv[1:]
+path = Path(path_text)
+expected_fields = {
+    "SEICHE_OFFSITE_BACKUP_BUCKET",
+    "SEICHE_OFFSITE_BACKUP_PREFIX",
+    "SEICHE_OFFSITE_BACKUP_RCLONE_REMOTE",
+    "SEICHE_OFFSITE_BACKUP_WRITE_ENABLED",
+    "SEICHE_OFFSITE_BACKUP_CANARY",
+    "SEICHE_OFFSITE_BACKUP_KEY_ID",
+    "SEICHE_OFFSITE_BACKUP_DESTINATION_ID",
+    "SEICHE_OFFSITE_BACKUP_RETENTION_MODE",
+    "SEICHE_OFFSITE_BACKUP_RETENTION_DAYS",
+}
+parent_fd = os.open(
+    path.parent,
+    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+)
+stage_name = ""
+try:
+    source_fd = os.open(
+        path.name,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=parent_fd,
+    )
+    try:
+        metadata = os.fstat(source_fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not 1 <= metadata.st_size <= 8192
+        ):
+            raise SystemExit("offsite config metadata is unsafe")
+        chunks = []
+        remaining = 8193
+        while remaining:
+            chunk = os.read(source_fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        body = b"".join(chunks).decode("ascii")
+    finally:
+        os.close(source_fd)
+    if not body.endswith("\n") or "\r" in body:
+        raise SystemExit("offsite config encoding is unsafe")
+    lines = body.splitlines()
+    pairs = [line.split("=", 1) for line in lines]
+    if len(lines) != 9 or any(len(pair) != 2 for pair in pairs):
+        raise SystemExit("offsite config is not the closed nine-line contract")
+    values = dict(pairs)
+    if len(values) != 9 or set(values) != expected_fields:
+        raise SystemExit("offsite config fields are not exact")
+    if (
+        values["SEICHE_OFFSITE_BACKUP_PREFIX"] != expected_prefix
+        or values["SEICHE_OFFSITE_BACKUP_CANARY"] != expected_canary
+        or values["SEICHE_OFFSITE_BACKUP_KEY_ID"] != "market-key-2026-08-v1"
+        or values["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]
+        != "hetzner-primary-v1"
+    ):
+        raise SystemExit("offsite config is not at the expected transition state")
+    values["SEICHE_OFFSITE_BACKUP_PREFIX"] = new_prefix
+    values["SEICHE_OFFSITE_BACKUP_CANARY"] = new_canary
+    replacement = "\n".join(f"{key}={values[key]}" for key, _ in pairs) + "\n"
+    stage_fd, stage_path = tempfile.mkstemp(
+        prefix=".offsite-backup.env.transition-",
+        dir=path.parent,
+    )
+    stage_name = Path(stage_path).name
+    try:
+        os.fchown(stage_fd, 0, 0)
+        os.fchmod(stage_fd, 0o600)
+        pending = memoryview(replacement.encode("ascii"))
+        while pending:
+            written = os.write(stage_fd, pending)
+            if written <= 0:
+                raise OSError("short write while staging offsite config")
+            pending = pending[written:]
+        os.fsync(stage_fd)
+    finally:
+        os.close(stage_fd)
+    os.rename(
+        stage_name,
+        path.name,
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+    )
+    stage_name = ""
+    os.fsync(parent_fd)
+finally:
+    if stage_name:
+        try:
+            os.unlink(stage_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+    os.close(parent_fd)
+PY
+}
+
+systemctl disable --now seiche-market-offsite-backup.timer
+systemctl stop seiche-market-offsite-backup.service
+test "$(systemctl is-active seiche-market-offsite-backup.service)" = inactive
+atomic_offsite_config_transition \
+  seiche/market-backups/v1 seiche/market-backups/v2 0 1
+test "$(systemctl is-enabled seiche-market-offsite-backup.timer)" = disabled
+test "$(systemctl is-active seiche-market-offsite-backup.timer)" = inactive
+```
+
+Do not manually run the old status-v1 service after this transition. Install
+the signed candidate, require its v3 local backup and v4 restore receipt, and
+then perform the new v2 canary below. The new service independently proves that
+`seiche/market-backups/v2/canary/v1` has no versions or delete markers before
+its irreversible first write.
+
 ### Controlled first write and recurring schedule
 
 COMPLIANCE writes are intentionally irreversible during their retention
@@ -281,8 +453,24 @@ script refuses another canary write after that success. A kill or local status
 failure after any canary object is written also blocks automatic retry because
 the remote version history is no longer empty; reconcile and verify those
 versions manually, then choose a new prefix/canary rather than overwriting.
-Change only `SEICHE_OFFSITE_BACKUP_CANARY=0` using an atomic root-only file
-replacement, rerun `install-market-platform.sh`, and verify timer enablement.
+Change only `SEICHE_OFFSITE_BACKUP_CANARY=0` using the same atomic transformer
+defined above (redefine it first if this is a new root shell), rerun the exact
+signed-asset `install-market-platform.sh`, and verify timer enablement:
+
+```bash
+atomic_offsite_config_transition \
+  seiche/market-backups/v2 seiche/market-backups/v2 1 0
+/usr/bin/env -i \
+  HOME=/root LANG=C.UTF-8 PATH=/usr/bin:/bin \
+  SEICHE_PRIVILEGED_ASSET_ROOT="$ASSET_ROOT" \
+  SEICHE_RELEASE_TARGET_SHA="$TARGET" \
+  SEICHE_NBS_RUNTIME_ROOT=/opt/seiche-nbs-intake \
+  /usr/bin/bash -p \
+    "$ASSET_ROOT/ops/deploy/install-market-platform.sh"
+test "$(systemctl is-enabled seiche-market-offsite-backup.timer)" = enabled
+test "$(systemctl is-active seiche-market-offsite-backup.timer)" = active
+```
+
 The installer will reject scheduled mode if the canary receipt does not match
 the configured key ID, destination ID, bucket, prefix, and versioned-object
 contract.

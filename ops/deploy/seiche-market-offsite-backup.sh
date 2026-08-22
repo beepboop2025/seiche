@@ -335,7 +335,7 @@ required = (
 )
 entries = sorted(path.name for path in root.iterdir())
 if entries != sorted(required):
-    raise SystemExit("snapshot file set is not the closed v2 contract")
+    raise SystemExit("snapshot file set is not the closed v3 contract")
 for name in required:
     metadata = (root / name).lstat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
@@ -389,21 +389,26 @@ for line in manifest_lines:
     manifest[key] = value
 expected_keys = {
     "schema", "created_at", "database", "postgres_port", "state_root",
-    "api_data_root", "critical_table_count_semantics", "research_only",
-    "can_publish", "can_execute",
+    "nbs_state_root", "api_data_root", "critical_table_count_semantics",
+    "nbs_full_store_audit_contract", "nbs_full_store_audit_result",
+    "research_only", "can_publish", "can_execute",
 }
 if set(manifest) != expected_keys:
     raise SystemExit("snapshot manifest fields are invalid")
 if (
-    manifest["schema"] != "seiche.market-backup.v2"
+    manifest["schema"] != "seiche.market-backup.v3"
     or manifest["created_at"] != snapshot_id
     or manifest["database"] != "seiche"
     or not re.fullmatch(r"[0-9]{1,5}", manifest["postgres_port"])
     or not manifest["state_root"].startswith("/")
     or manifest["state_root"] == "/"
+    or manifest["nbs_state_root"] != "/var/lib/seiche-nbs"
     or not manifest["api_data_root"].startswith("/")
     or manifest["api_data_root"] == "/"
     or manifest["critical_table_count_semantics"] != "pre_dump_lower_bound"
+    or manifest["nbs_full_store_audit_contract"]
+    != "seiche.nbs-full-store-audit.v1"
+    or manifest["nbs_full_store_audit_result"] != "required_at_restore"
     or manifest["research_only"] != "true"
     or manifest["can_publish"] != "false"
     or manifest["can_execute"] != "false"
@@ -428,18 +433,26 @@ print(revision.strip())
 print(hashlib.sha256(inventory_bytes).hexdigest())
 print(content.hexdigest())
 print(total)
+print(manifest["schema"])
+print(manifest["nbs_state_root"])
+print(manifest["nbs_full_store_audit_contract"])
+print(manifest["nbs_full_store_audit_result"])
 PY
 }
 
 SOURCE_PROOF_TEXT=$(validate_snapshot "$SNAPSHOT_PATH") \
-    || fail "selected snapshot failed its closed v2 contract"
+    || fail "selected snapshot failed its closed v3 contract"
 mapfile -t SOURCE_PROOF <<<"$SOURCE_PROOF_TEXT"
-[ "${#SOURCE_PROOF[@]}" -eq 4 ] \
+[ "${#SOURCE_PROOF[@]}" -eq 8 ] \
     || fail "selected snapshot proof is incomplete"
 SOURCE_REVISION=${SOURCE_PROOF[0]}
 SOURCE_INVENTORY_SHA=${SOURCE_PROOF[1]}
 SOURCE_CONTENT_SHA=${SOURCE_PROOF[2]}
 SNAPSHOT_BYTES=${SOURCE_PROOF[3]}
+SOURCE_BACKUP_SCHEMA=${SOURCE_PROOF[4]}
+SOURCE_NBS_STATE_ROOT=${SOURCE_PROOF[5]}
+SOURCE_NBS_AUDIT_CONTRACT=${SOURCE_PROOF[6]}
+SOURCE_NBS_AUDIT_RESULT=${SOURCE_PROOF[7]}
 case "$SNAPSHOT_BYTES" in
     ''|*[!0-9]*) fail "snapshot byte count is invalid" ;;
 esac
@@ -489,7 +502,10 @@ destination = {
     "prefix": prefix,
 }
 same_destination = (
-    value.get("schema") == "seiche.market-offsite-backup-status.v1"
+    value.get("schema") in {
+        "seiche.market-offsite-backup-status.v1",
+        "seiche.market-offsite-backup-status.v2",
+    }
     and value.get("key_id") == key_id
     and value.get("destination") == destination
 )
@@ -511,21 +527,39 @@ PY
     if PRIOR_SUCCESS_SNAPSHOT=$("$PYTHON_BIN" - "$STATUS_PATH" "$BUCKET" \
             "$PREFIX" "$KEY_ID" "$DESTINATION_ID" \
             "$RCLONE_CONFIG_ANCHOR_ENDPOINT" \
-            "$RCLONE_CONFIG_ANCHOR_REGION" <<'PY'
+            "$RCLONE_CONFIG_ANCHOR_REGION" "$SOURCE_BACKUP_SCHEMA" \
+            "$SOURCE_NBS_STATE_ROOT" "$SOURCE_NBS_AUDIT_CONTRACT" \
+            "$SOURCE_NBS_AUDIT_RESULT" <<'PY'
 import json
 import re
 import sys
 
-path, bucket, prefix, key_id, destination_id, endpoint, region = sys.argv[1:]
+(
+    path,
+    bucket,
+    prefix,
+    key_id,
+    destination_id,
+    endpoint,
+    region,
+    backup_schema,
+    nbs_state_root,
+    nbs_audit_contract,
+    nbs_audit_result,
+) = sys.argv[1:]
 try:
     value = json.load(open(path, encoding="utf-8"))
     success = value.get("last_success")
 except (OSError, ValueError, TypeError):
     raise SystemExit(1)
 valid = (
-    value.get("schema") == "seiche.market-offsite-backup-status.v1"
+    value.get("schema") == "seiche.market-offsite-backup-status.v2"
     and isinstance(success, dict)
     and success.get("restore_verified") is True
+    and success.get("source_backup_schema") == backup_schema
+    and success.get("nbs_state_root") == nbs_state_root
+    and success.get("nbs_full_store_audit_contract") == nbs_audit_contract
+    and success.get("nbs_full_store_audit_result") == nbs_audit_result
     and success.get("bucket") == bucket
     and success.get("prefix") == prefix
     and success.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
@@ -542,6 +576,10 @@ valid = (
     and value.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
     and value.get("key_id") == key_id
     and value.get("destination") == success.get("destination")
+    and value.get("source_backup_schema") == backup_schema
+    and value.get("nbs_state_root") == nbs_state_root
+    and value.get("nbs_full_store_audit_contract") == nbs_audit_contract
+    and value.get("nbs_full_store_audit_result") == nbs_audit_result
     and isinstance(success.get("snapshot_id"), str)
     and re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", success["snapshot_id"])
     and re.fullmatch(
@@ -628,6 +666,8 @@ PY
     "$PYTHON_BIN" - "$temporary" "$state" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
         "$SOURCE_REVISION" "$BUCKET" "$PREFIX" "$ARCHIVE_SHA" \
         "$ARCHIVE_BYTES" "$SOURCE_INVENTORY_SHA" "$SOURCE_CONTENT_SHA" \
+        "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
+        "$SOURCE_NBS_AUDIT_CONTRACT" "$SOURCE_NBS_AUDIT_RESULT" \
         "$RETENTION_DAYS" "$REMOTE_RECEIPT_KEY" "$failure_class" \
         "$previous_success" "$KEY_ID" "$DESTINATION_ID" \
         "$RCLONE_CONFIG_ANCHOR_ENDPOINT" "$RCLONE_CONFIG_ANCHOR_REGION" \
@@ -640,10 +680,10 @@ from datetime import datetime, timezone
 
 (
     path, state, attempt, snapshot, revision, bucket, prefix, archive_sha,
-    archive_bytes, inventory_sha, content_sha, days, receipt_key,
-    failure_class, previous_success, key_id, destination_id, endpoint, region,
-    archive_version, archive_etag, checksum_version, checksum_etag,
-    receipt_version, receipt_etag,
+    archive_bytes, inventory_sha, content_sha, backup_schema, nbs_state_root,
+    nbs_audit_contract, nbs_audit_result, days, receipt_key, failure_class,
+    previous_success, key_id, destination_id, endpoint, region, archive_version,
+    archive_etag, checksum_version, checksum_etag, receipt_version, receipt_etag,
 ) = sys.argv[1:]
 now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 destination = {
@@ -654,7 +694,7 @@ destination = {
     "prefix": prefix,
 }
 document = {
-    "schema": "seiche.market-offsite-backup-status.v1",
+    "schema": "seiche.market-offsite-backup-status.v2",
     "status": state,
     "observed_at": now,
     "attempt_id": attempt,
@@ -673,6 +713,10 @@ document = {
     "checksum_etag": checksum_etag or None,
     "source_inventory_sha256": inventory_sha,
     "source_content_set_sha256": content_sha,
+    "source_backup_schema": backup_schema,
+    "nbs_state_root": nbs_state_root,
+    "nbs_full_store_audit_contract": nbs_audit_contract,
+    "nbs_full_store_audit_result": nbs_audit_result,
     "object_lock": {"mode": "COMPLIANCE", "days": int(days)},
     "remote_receipt_key": receipt_key or None,
     "remote_receipt_version_id": receipt_version or None,
@@ -698,6 +742,10 @@ if state == "success":
         "checksum_etag": checksum_etag,
         "source_inventory_sha256": inventory_sha,
         "source_content_set_sha256": content_sha,
+        "source_backup_schema": backup_schema,
+        "nbs_state_root": nbs_state_root,
+        "nbs_full_store_audit_contract": nbs_audit_contract,
+        "nbs_full_store_audit_result": nbs_audit_result,
         "remote_receipt_key": receipt_key,
         "remote_receipt_version_id": receipt_version,
         "remote_receipt_etag": receipt_etag,
@@ -728,20 +776,23 @@ status_commits_current_attempt() {
     [ -f "$STATUS_PATH" ] && [ ! -L "$STATUS_PATH" ] || return 1
     "$PYTHON_BIN" - "$STATUS_PATH" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
         "$SOURCE_REVISION" "$ARCHIVE_SHA" "$REMOTE_RECEIPT_KEY" \
-        "$RECEIPT_VERSION_ID" "$KEY_ID" "$DESTINATION_ID" <<'PY'
+        "$RECEIPT_VERSION_ID" "$KEY_ID" "$DESTINATION_ID" \
+        "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
+        "$SOURCE_NBS_AUDIT_CONTRACT" "$SOURCE_NBS_AUDIT_RESULT" <<'PY'
 import json
 import sys
 
 (
     path, attempt, snapshot, revision, digest, receipt_key, receipt_version,
-    key_id, destination_id,
+    key_id, destination_id, backup_schema, nbs_state_root, nbs_audit_contract,
+    nbs_audit_result,
 ) = sys.argv[1:]
 try:
     value = json.load(open(path, encoding="utf-8"))
 except (OSError, ValueError, TypeError):
     raise SystemExit(1)
 valid = (
-    value.get("schema") == "seiche.market-offsite-backup-status.v1"
+    value.get("schema") == "seiche.market-offsite-backup-status.v2"
     and value.get("status") == "success"
     and value.get("attempt_id") == attempt
     and value.get("snapshot_id") == snapshot
@@ -751,6 +802,10 @@ valid = (
     and value.get("remote_receipt_version_id") == receipt_version
     and value.get("key_id") == key_id
     and value.get("destination", {}).get("id") == destination_id
+    and value.get("source_backup_schema") == backup_schema
+    and value.get("nbs_state_root") == nbs_state_root
+    and value.get("nbs_full_store_audit_contract") == nbs_audit_contract
+    and value.get("nbs_full_store_audit_result") == nbs_audit_result
     and value.get("restore_verified") is True
 )
 raise SystemExit(0 if valid else 1)
@@ -965,17 +1020,23 @@ mkdir -m 0700 -- "$RESTORE_ROOT"
 RESTORED_PROOF_TEXT=$(validate_snapshot "$RESTORE_ROOT/$SNAPSHOT_ID") \
     || fail "downloaded snapshot failed its authenticated restore contract"
 mapfile -t RESTORED_PROOF <<<"$RESTORED_PROOF_TEXT"
-[ "${#RESTORED_PROOF[@]}" -eq 4 ] \
+[ "${#RESTORED_PROOF[@]}" -eq 8 ] \
     && [ "${RESTORED_PROOF[0]}" = "$SOURCE_REVISION" ] \
     && [ "${RESTORED_PROOF[1]}" = "$SOURCE_INVENTORY_SHA" ] \
     && [ "${RESTORED_PROOF[2]}" = "$SOURCE_CONTENT_SHA" ] \
     && [ "${RESTORED_PROOF[3]}" = "$SNAPSHOT_BYTES" ] \
+    && [ "${RESTORED_PROOF[4]}" = "$SOURCE_BACKUP_SCHEMA" ] \
+    && [ "${RESTORED_PROOF[5]}" = "$SOURCE_NBS_STATE_ROOT" ] \
+    && [ "${RESTORED_PROOF[6]}" = "$SOURCE_NBS_AUDIT_CONTRACT" ] \
+    && [ "${RESTORED_PROOF[7]}" = "$SOURCE_NBS_AUDIT_RESULT" ] \
     || fail "restored snapshot hashes differ from the completed source"
 
 REMOTE_RECEIPT_KEY="$OBJECT_BASE/RECEIPT.json"
 "$PYTHON_BIN" - "$RECEIPT" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
     "$SOURCE_REVISION" "$BUCKET" "$PREFIX" "$ARCHIVE_SHA" \
     "$ARCHIVE_BYTES" "$SOURCE_INVENTORY_SHA" "$SOURCE_CONTENT_SHA" \
+    "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
+    "$SOURCE_NBS_AUDIT_CONTRACT" "$SOURCE_NBS_AUDIT_RESULT" \
     "$RETENTION_DAYS" "$REMOTE_RECEIPT_KEY" "$KEY_ID" "$DESTINATION_ID" \
     "$RCLONE_CONFIG_ANCHOR_ENDPOINT" "$RCLONE_CONFIG_ANCHOR_REGION" \
     "$ARCHIVE_VERSION_ID" "$ARCHIVE_ETAG" "$CHECKSUM_VERSION_ID" \
@@ -987,12 +1048,13 @@ from datetime import datetime, timezone
 
 (
     path, attempt, snapshot, revision, bucket, prefix, archive_sha,
-    archive_bytes, inventory_sha, content_sha, days, receipt_key, key_id,
+    archive_bytes, inventory_sha, content_sha, backup_schema, nbs_state_root,
+    nbs_audit_contract, nbs_audit_result, days, receipt_key, key_id,
     destination_id, endpoint, region, archive_version, archive_etag,
     checksum_version, checksum_etag,
 ) = sys.argv[1:]
 document = {
-    "schema": "seiche.market-offsite-backup-receipt.v1",
+    "schema": "seiche.market-offsite-backup-receipt.v2",
     "status": "remote_restore_verified",
     "verified_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "attempt_id": attempt,
@@ -1019,8 +1081,15 @@ document = {
     "checksum": {"version_id": checksum_version, "etag": checksum_etag},
     "source_inventory_sha256": inventory_sha,
     "source_content_set_sha256": content_sha,
+    "source_backup_schema": backup_schema,
+    "nbs_state_root": nbs_state_root,
+    "nbs_full_store_audit_contract": nbs_audit_contract,
+    "nbs_full_store_audit_result": nbs_audit_result,
     "encryption": "openpgp-symmetric-aes256-ocb-aead-s2k-sha512",
-    "verification": "download-ciphertext-sha256-aead-decrypt-and-closed-v2-source-hash-comparison",
+    "verification": (
+        "download-ciphertext-sha256-aead-decrypt-and-closed-v3-source-hash-"
+        "comparison-with-nbs-full-store-audit-required-at-restore"
+    ),
     "object_lock": {"mode": "COMPLIANCE", "days": int(days)},
     "research_only": True,
     "can_publish": False,

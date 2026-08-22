@@ -5,18 +5,29 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from seiche import nbs_intake as nbs
+from seiche import nbs_trust
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-backup.sh"
 RESTORE_SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-restore-check.sh"
+TEST_NBS_RUNTIME_SHA = "b" * 40
+TEST_NBS_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+TEST_NBS_PUBLIC_KEY = TEST_NBS_PRIVATE_KEY.public_key().public_bytes_raw().hex()
+TEST_UNTRUSTED_NBS_PUBLIC_KEY = (
+    Ed25519PrivateKey.from_private_bytes(bytes(reversed(range(32))))
+    .public_key()
+    .public_bytes_raw()
+    .hex()
+)
 
 
 def _executable(path: Path, body: str) -> Path:
@@ -118,6 +129,8 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         if os.environ.get("FAKE_TAR_FAIL") == "1":
             raise SystemExit(9)
         args = sys.argv[1:]
+        with open(os.environ["FAKE_CALLS"], "a", encoding="utf-8") as handle:
+            handle.write("tar " + " ".join(args) + "\\n")
         if "--create" in args:
             target = Path(args[args.index("--file") + 1])
             prefix = b"api-data-archive" if target.name == "api-data.tgz" else b"state-archive"
@@ -145,13 +158,14 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
                 restored = target / "seiche" / "raw"
                 restored.mkdir(parents=True)
                 (restored / "capture.json").write_text("official evidence\\n")
-                fixture = os.environ.get("FAKE_NBS_PUBLIC_FIXTURE")
-                public = target / "seiche-nbs" / "public"
+                fixture = os.environ.get("FAKE_NBS_STORE_FIXTURE")
+                nbs_store = target / "seiche-nbs"
                 if fixture:
                     import shutil
-                    shutil.copytree(Path(fixture), public)
+                    shutil.copytree(Path(fixture), nbs_store, symlinks=True)
                 else:
-                    (public / "revisions").mkdir(parents=True)
+                    (nbs_store / "restricted").mkdir(parents=True)
+                    (nbs_store / "public" / "revisions").mkdir(parents=True)
         """,
     )
     sha256sum = _executable(
@@ -251,6 +265,7 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     backup = tmp_path / "backups"
     marker = tmp_path / "deployed-sha"
     marker.write_text("a" * 40 + "\n")
+    nbs_runtime = _install_test_nbs_runtime(tmp_path)
     env.update(
         {
             "SEICHE_MARKET_STATE_DIR": str(state),
@@ -258,6 +273,7 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
             "SEICHE_API_DATA_DIR": str(api_data),
             "SEICHE_MARKET_BACKUP_DIR": str(backup),
             "SEICHE_DEPLOYED_SHA_PATH": str(marker),
+            "SEICHE_NBS_RUNTIME_ROOT": str(nbs_runtime),
             "SEICHE_RESTORE_STATUS_PATH": str(
                 recovery_proof / "backup-restore-check.status"
             ),
@@ -300,22 +316,33 @@ def _canonical_json(record: object) -> bytes:
     ).encode("utf-8")
 
 
-def _python_with_release_pinned_test_key(tmp_path: Path, public_key: str) -> Path:
-    """Run stdin Python after emulating a release-pinned hosted trust key."""
+def _install_test_nbs_runtime(tmp_path: Path) -> Path:
+    """Install one user-owned analogue of the sealed production runtime."""
 
-    return _executable(
-        tmp_path / "python-with-release-pinned-test-key",
-        f"""
-        import sys
-
-        from seiche import attest
-
-        attest.PRODUCTION_TRUSTED_OPERATOR_KEYS = frozenset({{{public_key!r}}})
-        source = sys.stdin.read()
-        sys.argv = sys.argv[1:]
-        exec(compile(source, "<stdin>", "exec"), {{"__name__": "__main__"}})
-        """,
-    )
+    runtime = tmp_path / "nbs-runtime"
+    releases = runtime / "releases"
+    release = releases / TEST_NBS_RUNTIME_SHA
+    package = release / "seiche"
+    package.mkdir(parents=True)
+    sources = ROOT / "backend" / "seiche"
+    for name in ("__init__.py", "nbs_intake.py", "nbs_trust.py"):
+        body = (sources / name).read_text()
+        if name == "nbs_trust.py":
+            production_keys = sorted(nbs_trust.PRODUCTION_TRUSTED_OPERATOR_KEYS)
+            assert production_keys
+            body = body.replace(production_keys[0], TEST_NBS_PUBLIC_KEY, 1)
+            assert TEST_NBS_PUBLIC_KEY in body
+        destination = package / name
+        destination.write_text(body)
+        destination.chmod(0o444)
+    package.chmod(0o555)
+    release.chmod(0o555)
+    releases.chmod(0o555)
+    pointer = runtime / "current-sha"
+    pointer.write_text(TEST_NBS_RUNTIME_SHA + "\n")
+    pointer.chmod(0o444)
+    runtime.chmod(0o755)
+    return runtime
 
 
 def _create_valid_nbs_public_store(root: Path) -> str:
@@ -325,8 +352,8 @@ def _create_valid_nbs_public_store(root: Path) -> str:
     (root / "restricted").chmod(0o700)
     (root / "public").chmod(0o750)
     (root / "public" / "revisions").chmod(0o2750)
-    private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
-    public_key = private_key.public_key().public_bytes_raw().hex()
+    private_key = TEST_NBS_PRIVATE_KEY
+    public_key = TEST_NBS_PUBLIC_KEY
     raw = (
         b"\xef\xbb\xbfNBS browser export\r\n"
         b"Indicators\t,July 2026\t\r\n"
@@ -390,9 +417,95 @@ def _create_valid_nbs_public_store(root: Path) -> str:
     return public_key
 
 
-def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
+def _mutate_nbs_store(root: Path, mutation: str) -> None:
+    export_id = "nbs-restore-fixture-r1"
+    export = root / "restricted" / "exports" / export_id
+    manifest_path = export / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    raw_sha256 = manifest["raw_evidence"]["sha256"]
+    raw_path = root / "restricted" / "objects" / "sha256" / raw_sha256[:2] / raw_sha256
+    restricted_head = root / "restricted" / "exports" / ".head.json"
+    public_head = root / "public" / "revisions" / ".head.json"
+    projection = root / "public" / "revisions" / f"{export_id}.json"
+
+    if mutation == "missing_raw":
+        raw_path.unlink()
+    elif mutation == "corrupt_raw":
+        raw_path.write_bytes(b"corrupt restricted raw evidence")
+    elif mutation == "missing_manifest":
+        manifest_path.unlink()
+    elif mutation == "corrupt_manifest":
+        manifest_path.write_bytes(b"{}")
+    elif mutation == "missing_signature":
+        (export / "signature.json").unlink()
+    elif mutation == "corrupt_signature":
+        (export / "signature.json").write_bytes(b"{}")
+    elif mutation == "missing_restricted_head":
+        restricted_head.unlink()
+    elif mutation == "corrupt_restricted_head":
+        restricted_head.write_bytes(b"{}")
+    elif mutation == "missing_public_head":
+        public_head.unlink()
+    elif mutation == "corrupt_public_head":
+        public_head.write_bytes(b"{}")
+    elif mutation == "orphan_raw_object":
+        orphan_sha256 = "f" * 64
+        if orphan_sha256 == raw_sha256:
+            orphan_sha256 = "e" * 64
+        bucket = root / "restricted" / "objects" / "sha256" / orphan_sha256[:2]
+        bucket.mkdir(mode=0o700, exist_ok=True)
+        orphan = bucket / orphan_sha256
+        orphan.write_bytes(b"unreferenced restricted evidence")
+        orphan.chmod(0o600)
+    elif mutation == "extra_root_entry":
+        (root / "unexpected").write_text("unknown topology")
+    elif mutation == "symlink_raw_object":
+        source = root.parent / "external-raw-evidence"
+        source.write_bytes(raw_path.read_bytes())
+        raw_path.unlink()
+        raw_path.symlink_to(source)
+    elif mutation == "restricted_public_mismatch":
+        projection.write_bytes(projection.read_bytes() + b"\n")
+    else:  # pragma: no cover - test helper contract
+        raise AssertionError(f"unknown NBS mutation: {mutation}")
+
+
+def _runtime_paths(env: dict[str, str]) -> tuple[Path, Path, Path, Path]:
+    runtime = Path(env["SEICHE_NBS_RUNTIME_ROOT"])
+    release = runtime / "releases" / TEST_NBS_RUNTIME_SHA
+    package = release / "seiche"
+    return runtime, release, package, runtime / "current-sha"
+
+
+def _prepare_restore(
+    tmp_path: Path,
+) -> tuple[dict[str, str], Path, Path]:
     env, calls = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
+    backup_result = _run(BACKUP_SCRIPT, env)
+    assert backup_result.returncode == 0, backup_result.stdout + backup_result.stderr
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
+    return env, calls, backup
+
+
+def _assert_runtime_rejected(
+    env: dict[str, str], calls: Path
+) -> subprocess.CompletedProcess[str]:
+    result = _run(RESTORE_SCRIPT, env)
+    assert result.returncode != 0
+    assert "restored NBS evidence store failed strict validation" in result.stderr
+    assert "100.5" not in result.stderr
+    assert "corrupt restricted raw evidence" not in result.stderr
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
+    assert not any(
+        line.startswith("createdb ") for line in calls.read_text().splitlines()
+    )
+    return result
+
+
+def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
+    env, calls = _tools(tmp_path)
+    state, backup, _ = _layout(tmp_path, env)
 
     result = _run(BACKUP_SCRIPT, env)
 
@@ -408,7 +521,10 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
         "var-lib-seiche.tgz",
     }
     manifest = (snapshot / "manifest.env").read_text()
-    assert "schema=seiche.market-backup.v2" in manifest
+    assert "schema=seiche.market-backup.v3" in manifest
+    assert f"nbs_state_root={env['SEICHE_NBS_STATE_DIR']}" in manifest
+    assert "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" in manifest
+    assert "nbs_full_store_audit_result=required_at_restore" in manifest
     assert f"api_data_root={env['SEICHE_API_DATA_DIR']}" in manifest
     assert "postgres_port=5544" in manifest
     assert "research_only=true" in manifest
@@ -425,6 +541,36 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     assert "SHOW port" in log
     assert "--port=5544" in log
     assert "cp -R --" in log
+    nbs_state = Path(env["SEICHE_NBS_STATE_DIR"])
+    assert (
+        f"--directory {state.parent} {state.name} "
+        f"--directory {nbs_state.parent} {nbs_state.name}"
+    ) in log
+    assert (backup.stat().st_mode & 0o777) == 0o700
+    assert all(
+        (member.stat().st_mode & 0o777) == 0o600 for member in snapshot.iterdir()
+    )
+
+
+def test_backup_ignores_untrusted_pythonpath_for_sqlite_snapshot(
+    tmp_path: Path,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    poison = tmp_path / "poison"
+    poison.mkdir()
+    marker = tmp_path / "untrusted-sqlite-import-ran"
+    (poison / "sqlite3.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+        "raise RuntimeError('untrusted sqlite3 imported')\n"
+    )
+    env["PYTHONPATH"] = str(poison)
+
+    result = _run(BACKUP_SCRIPT, env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (backup / "20260810T020000Z").is_dir()
+    assert not marker.exists()
 
 
 def test_backup_accepts_append_only_writes_during_snapshot(tmp_path: Path):
@@ -463,7 +609,7 @@ def test_backup_failure_preserves_committed_snapshot_and_cleans_stage(tmp_path: 
 
 def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     env, calls = _tools(tmp_path)
-    state, backup, _ = _layout(tmp_path, env)
+    _state, backup, _ = _layout(tmp_path, env)
     assert _run(BACKUP_SCRIPT, env).returncode == 0
     snapshot = backup / "20260810T020000Z"
     env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
@@ -476,10 +622,12 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
     assert "critical_table_count_floor=11|12|13|14" in status
-    assert "schema=seiche.market-backup-restore-check.v3" in status
+    assert "schema=seiche.market-backup-restore-check.v4" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
     assert "nbs_public_revision_store=not_onboarded" in status
+    assert "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" in status
+    assert "nbs_full_store_audit_result=not_onboarded" in status
     assert "api_data_archive_restore=pass" in status
     assert not list(status_path.parent.glob(".backup-state-restore.*"))
     assert not list(status_path.parent.glob(".backup-api-data-restore.*"))
@@ -495,11 +643,8 @@ def test_restore_strictly_verifies_a_signed_nbs_public_head(tmp_path: Path) -> N
     env, _ = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
     nbs_root = Path(env["SEICHE_NBS_STATE_DIR"])
-    public_key = _create_valid_nbs_public_store(nbs_root)
-    env["SEICHE_PYTHON_BIN"] = str(
-        _python_with_release_pinned_test_key(tmp_path, public_key)
-    )
-    env["FAKE_NBS_PUBLIC_FIXTURE"] = str(nbs_root / "public")
+    _create_valid_nbs_public_store(nbs_root)
+    env["FAKE_NBS_STORE_FIXTURE"] = str(nbs_root)
     assert _run(BACKUP_SCRIPT, env).returncode == 0
     env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
 
@@ -508,39 +653,184 @@ def test_restore_strictly_verifies_a_signed_nbs_public_head(tmp_path: Path) -> N
     assert result.returncode == 0, result.stdout + result.stderr
     status = Path(env["SEICHE_RESTORE_STATUS_PATH"]).read_text()
     assert "nbs_public_revision_store=verified_head\n" in status
+    assert "nbs_full_store_audit_result=verified_head\n" in status
 
 
-def test_restore_rejects_a_corrupt_nbs_public_revision_store(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_raw",
+        "corrupt_raw",
+        "missing_manifest",
+        "corrupt_manifest",
+        "missing_signature",
+        "corrupt_signature",
+        "missing_restricted_head",
+        "corrupt_restricted_head",
+        "missing_public_head",
+        "corrupt_public_head",
+        "orphan_raw_object",
+        "extra_root_entry",
+        "symlink_raw_object",
+        "restricted_public_mismatch",
+    ],
+)
+def test_restore_rejects_incomplete_or_divergent_nbs_full_store(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
     env, calls = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
     nbs_root = Path(env["SEICHE_NBS_STATE_DIR"])
-    public_key = _create_valid_nbs_public_store(nbs_root)
-    env["SEICHE_PYTHON_BIN"] = str(
-        _python_with_release_pinned_test_key(tmp_path, public_key)
-    )
-    env["FAKE_NBS_PUBLIC_FIXTURE"] = str(nbs_root / "public")
-    revision = nbs_root / "public" / "revisions" / "nbs-restore-fixture-r1.json"
-    revision.write_text("{}")
+    _create_valid_nbs_public_store(nbs_root)
+    env["FAKE_NBS_STORE_FIXTURE"] = str(nbs_root)
+    if mutation != "symlink_raw_object":
+        _mutate_nbs_store(nbs_root, mutation)
     assert _run(BACKUP_SCRIPT, env).returncode == 0
+    if mutation == "symlink_raw_object":
+        # The live backup boundary already rejects symlinks. Mutate the fake
+        # extracted fixture after snapshot creation to exercise restore too.
+        _mutate_nbs_store(nbs_root, mutation)
     env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
 
     result = _run(RESTORE_SCRIPT, env)
 
     assert result.returncode != 0
-    assert (
-        "restored NBS public revision store failed strict validation" in result.stderr
-    )
+    assert "restored NBS evidence store failed strict validation" in result.stderr
+    assert "100.5" not in result.stderr
+    assert "corrupt restricted raw evidence" not in result.stderr
     assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
     assert not any(
         line.startswith("createdb ") for line in calls.read_text().splitlines()
     )
 
 
+@pytest.mark.parametrize("mutation", ["malformed", "symlink", "mode", "hardlink"])
+def test_restore_rejects_unsafe_sealed_runtime_pointer(
+    tmp_path: Path, mutation: str
+) -> None:
+    env, calls, _ = _prepare_restore(tmp_path)
+    runtime, _release, _package, pointer = _runtime_paths(env)
+    if mutation == "malformed":
+        pointer.chmod(0o644)
+        pointer.write_text("not-a-release\n")
+        pointer.chmod(0o444)
+    elif mutation == "symlink":
+        pointer.unlink()
+        pointer.symlink_to(runtime / "releases")
+    elif mutation == "mode":
+        pointer.chmod(0o644)
+    else:
+        os.link(pointer, tmp_path / "current-sha-hardlink")
+
+    _assert_runtime_rejected(env, calls)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "root_symlink",
+        "release_symlink",
+        "release_mode",
+        "extra_module",
+        "module_mode",
+        "module_hardlink",
+    ],
+)
+def test_restore_rejects_unsafe_sealed_runtime_tree(
+    tmp_path: Path, mutation: str
+) -> None:
+    env, calls, _ = _prepare_restore(tmp_path)
+    runtime, release, package, _pointer = _runtime_paths(env)
+    if mutation == "root_symlink":
+        alias = tmp_path / "nbs-runtime-alias"
+        alias.symlink_to(runtime, target_is_directory=True)
+        env["SEICHE_NBS_RUNTIME_ROOT"] = str(alias)
+    elif mutation == "release_symlink":
+        releases = runtime / "releases"
+        releases.chmod(0o755)
+        real_release = releases / ("c" * 40)
+        release.rename(real_release)
+        release.symlink_to(real_release, target_is_directory=True)
+        releases.chmod(0o555)
+    elif mutation == "release_mode":
+        release.chmod(0o755)
+    elif mutation == "extra_module":
+        package.chmod(0o755)
+        unexpected = package / "unexpected.py"
+        unexpected.write_text("raise RuntimeError('must not import')\n")
+        unexpected.chmod(0o444)
+        package.chmod(0o555)
+    elif mutation == "module_mode":
+        (package / "nbs_intake.py").chmod(0o644)
+    else:
+        os.link(package / "nbs_trust.py", tmp_path / "nbs-trust-hardlink.py")
+
+    _assert_runtime_rejected(env, calls)
+
+
+def test_restore_ignores_untrusted_pythonpath_for_sealed_imports(
+    tmp_path: Path,
+) -> None:
+    env, _calls, _ = _prepare_restore(tmp_path)
+    poison = tmp_path / "poison"
+    poison_package = poison / "seiche"
+    poison_package.mkdir(parents=True)
+    marker = tmp_path / "untrusted-import-ran"
+    (poison_package / "__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+    )
+    env["PYTHONPATH"] = str(poison)
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not marker.exists()
+
+
+def test_restore_uses_only_the_sealed_nbs_trust_key_policy(tmp_path: Path) -> None:
+    env, calls, _ = _prepare_restore(tmp_path)
+    nbs_root = Path(env["SEICHE_NBS_STATE_DIR"])
+    _create_valid_nbs_public_store(nbs_root)
+    env["FAKE_NBS_STORE_FIXTURE"] = str(nbs_root)
+    _runtime, _release, package, _pointer = _runtime_paths(env)
+    trust_module = package / "nbs_trust.py"
+    trust_module.chmod(0o644)
+    original = trust_module.read_text()
+    changed = original.replace(
+        TEST_NBS_PUBLIC_KEY,
+        TEST_UNTRUSTED_NBS_PUBLIC_KEY,
+        1,
+    )
+    assert changed != original
+    trust_module.write_text(changed)
+    trust_module.chmod(0o444)
+
+    _assert_runtime_rejected(env, calls)
+
+
+def test_restore_rejects_package_that_redirects_module_origins(tmp_path: Path) -> None:
+    env, calls, _ = _prepare_restore(tmp_path)
+    _runtime, _release, package, _pointer = _runtime_paths(env)
+    poison_package = tmp_path / "redirected" / "seiche"
+    poison_package.mkdir(parents=True)
+    (poison_package / "nbs_intake.py").write_text("")
+    (poison_package / "nbs_trust.py").write_text("")
+    package_init = package / "__init__.py"
+    package_init.chmod(0o644)
+    package_init.write_text(f"__path__ = [{str(poison_package)!r}]\n")
+    package_init.chmod(0o444)
+
+    result = _assert_runtime_rejected(env, calls)
+
+    assert "wrong origin" in result.stderr
+
+
 def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
     tmp_path: Path,
 ) -> None:
     env, calls = _tools(tmp_path)
-    state, backup, _ = _layout(tmp_path, env)
+    _state, backup, _ = _layout(tmp_path, env)
     assert _run(BACKUP_SCRIPT, env).returncode == 0
     snapshot = backup / "20260810T020000Z"
     env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
@@ -548,7 +838,7 @@ def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
     _rewrite_manifest_and_inventory(
         snapshot,
         lambda manifest: manifest.replace(
-            "schema=seiche.market-backup.v2\n",
+            "schema=seiche.market-backup.v3\n",
             "schema=untrusted.foreign.snapshot\n",
         ).replace(
             "research_only=true\ncan_publish=false\ncan_execute=false\n",
@@ -576,13 +866,62 @@ def test_restore_rejects_duplicate_or_unknown_manifest_fields(tmp_path: Path) ->
     env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
     _rewrite_manifest_and_inventory(
         snapshot,
-        lambda manifest: manifest + "schema=seiche.market-backup.v2\nunknown=x\n",
+        lambda manifest: manifest + "schema=seiche.market-backup.v3\nunknown=x\n",
     )
 
     result = _run(RESTORE_SCRIPT, env)
 
     assert result.returncode != 0
     assert "snapshot manifest contract is invalid" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["v2_schema", "wrong_nbs_root", "wrong_audit_contract", "claimed_audit_result"],
+)
+def test_restore_rejects_pre_nbs_or_drifted_full_store_contract(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    env, calls = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+
+    replacements = {
+        "v2_schema": (
+            "schema=seiche.market-backup.v3",
+            "schema=seiche.market-backup.v2",
+        ),
+        "wrong_nbs_root": (
+            f"nbs_state_root={env['SEICHE_NBS_STATE_DIR']}",
+            "nbs_state_root=/var/lib/foreign-nbs",
+        ),
+        "wrong_audit_contract": (
+            "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1",
+            "nbs_full_store_audit_contract=untrusted.audit.v1",
+        ),
+        "claimed_audit_result": (
+            "nbs_full_store_audit_result=required_at_restore",
+            "nbs_full_store_audit_result=verified_head",
+        ),
+    }
+    old, new = replacements[mutation]
+    _rewrite_manifest_and_inventory(
+        snapshot, lambda manifest: manifest.replace(old, new)
+    )
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert result.stderr == (
+        "seiche market restore check: snapshot manifest contract is invalid\n"
+    )
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
+    assert not any(
+        line.startswith("createdb ") for line in calls.read_text().splitlines()
+    )
 
 
 def test_restore_rejects_manifest_for_wrong_database_or_unsafe_roots(
@@ -616,7 +955,7 @@ def test_restore_rejects_manifest_for_wrong_database_or_unsafe_roots(
 
 def test_failed_restore_drops_scratch_and_preserves_last_good_status(tmp_path: Path):
     env, calls = _tools(tmp_path)
-    state, backup, _ = _layout(tmp_path, env)
+    _state, backup, _ = _layout(tmp_path, env)
     assert _run(BACKUP_SCRIPT, env).returncode == 0
     env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
     assert _run(RESTORE_SCRIPT, env).returncode == 0

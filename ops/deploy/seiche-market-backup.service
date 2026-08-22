@@ -3,7 +3,7 @@ Description=Commit a verified local Seiche market-data snapshot
 Requires=seiche-storage-preflight.service
 After=postgresql.service seiche-storage-preflight.service
 Wants=postgresql.service
-RequiresMountsFor=/var/lib/seiche /var/backups/seiche-market
+RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]
@@ -11,7 +11,7 @@ Type=oneshot
 User=root
 Group=root
 EnvironmentFile=/etc/seiche/market.env
-ExecStart=/usr/bin/flock --wait 300 /run/lock/seiche-market-backup.lock /usr/bin/bash /home/seiche/app/ops/deploy/seiche-market-backup.sh
+ExecStart=/usr/bin/flock --wait 300 /run/lock/seiche-market-backup.lock /usr/bin/bash /etc/seiche/libexec/seiche-market-backup.sh
 TimeoutStartSec=2h
 CPUQuota=50%
 CPUWeight=5

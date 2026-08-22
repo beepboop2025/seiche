@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tomllib
+import re
 
 import pytest
 
@@ -58,6 +62,584 @@ def _git(*arguments: str, cwd: Path) -> str:
         text=True,
         capture_output=True,
     ).stdout.strip()
+
+
+def _materialized_privileged_assets(tmp_path: Path) -> tuple[Path, str, Path]:
+    """Publish the current privileged source set through the real materializer."""
+
+    wrapper_text = DEPLOY_WRAPPER.read_text(encoding="utf-8")
+    match = re.search(r"REQUIRED_MODES = (\{.*?\n\})\n\n", wrapper_text, re.DOTALL)
+    assert match is not None
+    required_modes = ast.literal_eval(match.group(1))
+    assert isinstance(required_modes, dict)
+
+    repository = tmp_path / "privileged-asset-repository"
+    _git("init", "-b", "main", str(repository), cwd=tmp_path)
+    _git("config", "user.name", "Asset Fixture", cwd=repository)
+    _git("config", "user.email", "asset-fixture@example.invalid", cwd=repository)
+    for relative, git_mode in required_modes.items():
+        source = ROOT / relative
+        assert source.is_file(), relative
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o755 if git_mode == "100755" else 0o644)
+    _git("add", "--all", cwd=repository)
+    _git("commit", "-m", "fixture: privileged assets", cwd=repository)
+    target = _git("rev-parse", "HEAD", cwd=repository)
+
+    parent = tmp_path / "signed-asset-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    destination = parent / f"release-assets-{target}"
+    result = subprocess.run(
+        ["bash", str(DEPLOY_WRAPPER)],
+        env=os.environ
+        | {
+            "SEICHE_DEPLOY_ASSET_TEST_ONLY": "1",
+            "SEICHE_ALLOW_NON_ROOT_ASSET_TEST": "1",
+            "SEICHE_ASSET_TEST_REPO": str(repository),
+            "SEICHE_ASSET_TEST_TARGET": target,
+            "SEICHE_ASSET_TEST_PARENT": str(parent),
+            "SEICHE_ASSET_TEST_DESTINATION": str(destination),
+            "SEICHE_ASSET_TEST_PYTHON": sys.executable,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == str(destination)
+    return destination, target, repository
+
+
+def _nbs_runtime_test_fixture(
+    tmp_path: Path, *, target: str = "a" * 40
+) -> tuple[Path, Path, dict[str, str]]:
+    asset_root = tmp_path / "runtime-assets"
+    package_source = asset_root / "backend" / "seiche"
+    package_source.mkdir(parents=True)
+    for name in ("__init__.py", "nbs_intake.py", "nbs_trust.py"):
+        shutil.copyfile(ROOT / "backend" / "seiche" / name, package_source / name)
+    asset_root.chmod(0o700)
+    runtime_root = tmp_path / "nbs-runtime"
+    runtime_root.mkdir(mode=0o755)
+    runtime_root.chmod(0o755)
+    environment = os.environ | {
+        "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+        "SEICHE_RELEASE_TARGET_SHA": target,
+        "SEICHE_NBS_RUNTIME_ROOT": str(runtime_root),
+        "SEICHE_NBS_RUNTIME_TEST_ONLY": "1",
+        "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+        "SEICHE_NBS_RUNTIME_TEST_PYTHON": sys.executable,
+    }
+    return asset_root, runtime_root, environment
+
+
+def _run_nbs_runtime_test(
+    environment: dict[str, str], *, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(MARKET_INSTALLER)],
+        env=environment,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _nbs_evidence_tree_test_fixture(
+    tmp_path: Path,
+) -> tuple[Path, int, dict[str, str]]:
+    primary_gid = os.getgid()
+    supplementary_gid = next(
+        (group for group in os.getgroups() if group != primary_gid), None
+    )
+    if supplementary_gid is None:
+        pytest.skip("portable evidence-tree test needs a supplementary group")
+
+    asset_root = tmp_path / "evidence-assets"
+    asset_root.mkdir(mode=0o700)
+    runtime_root = tmp_path / "unused-runtime"
+    evidence_root = tmp_path / "nbs-evidence"
+    evidence_root.mkdir(mode=0o750)
+    os.chown(evidence_root, -1, supplementary_gid)
+    evidence_root.chmod(0o750)
+    environment = os.environ | {
+        "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+        "SEICHE_RELEASE_TARGET_SHA": "a" * 40,
+        "SEICHE_NBS_RUNTIME_ROOT": str(runtime_root),
+        "SEICHE_NBS_STATE_DIR": str(evidence_root),
+        "SEICHE_NBS_EVIDENCE_TREE_TEST_ONLY": "1",
+        "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+        "SEICHE_NBS_EVIDENCE_TEST_PYTHON": sys.executable,
+        "SEICHE_NBS_EVIDENCE_TEST_GID": str(supplementary_gid),
+    }
+    return evidence_root, supplementary_gid, environment
+
+
+def _run_nbs_evidence_tree_test(
+    environment: dict[str, str], *, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(MARKET_INSTALLER)],
+        env=environment,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _directory_identity(path: Path) -> tuple[int, int, int, int, int]:
+    metadata = path.lstat()
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        stat.S_IMODE(metadata.st_mode),
+    )
+
+
+def test_nbs_evidence_tree_publisher_is_fresh_idempotent_and_isolated(
+    tmp_path: Path,
+):
+    evidence_root, seiche_gid, environment = _nbs_evidence_tree_test_fixture(tmp_path)
+    assert seiche_gid != os.getgid()
+    hostile = tmp_path / "hostile-evidence-cwd"
+    hostile.mkdir()
+    sentinel = tmp_path / "evidence-shadow-imported"
+    (hostile / "secrets.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    environment |= {"PYTHONPATH": str(hostile), "PYTHONHOME": str(hostile)}
+
+    first = _run_nbs_evidence_tree_test(environment, cwd=hostile)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert not sentinel.exists()
+    restricted = evidence_root / "restricted"
+    public = evidence_root / "public"
+    revisions = public / "revisions"
+    assert set(path.name for path in evidence_root.iterdir()) == {
+        "public",
+        "restricted",
+    }
+    assert set(path.name for path in public.iterdir()) == {"revisions"}
+    assert _directory_identity(evidence_root)[2:] == (
+        os.getuid(),
+        seiche_gid,
+        0o750,
+    )
+    assert _directory_identity(restricted)[2:] == (
+        os.getuid(),
+        os.getgid(),
+        0o700,
+    )
+    assert _directory_identity(public)[2:] == (
+        os.getuid(),
+        seiche_gid,
+        0o750,
+    )
+    assert _directory_identity(revisions)[2:] == (
+        os.getuid(),
+        seiche_gid,
+        0o2750,
+    )
+    before = {
+        path: _directory_identity(path)
+        for path in (evidence_root, restricted, public, revisions)
+    }
+
+    retry = _run_nbs_evidence_tree_test(environment, cwd=hostile)
+    assert retry.returncode == 0, retry.stdout + retry.stderr
+    assert not sentinel.exists()
+    assert {
+        path: _directory_identity(path)
+        for path in (evidence_root, restricted, public, revisions)
+    } == before
+    assert not tuple(evidence_root.rglob(".seiche-nbs-stage-*"))
+
+
+@pytest.mark.parametrize(
+    "mutation, expected_fragment",
+    (
+        ("root-gid", "NBS evidence root metadata is unsafe"),
+        ("root-mode", "NBS evidence root metadata is unsafe"),
+        ("restricted-file", "NBS restricted root is unsafe"),
+        ("restricted-symlink", "NBS restricted root is unsafe"),
+        ("restricted-mode", "NBS restricted root metadata is unsafe"),
+        ("public-mode", "NBS public root metadata is unsafe"),
+        ("revisions-mode", "NBS public revisions root metadata is unsafe"),
+        ("root-orphan", "contains interrupted stage"),
+        ("public-orphan", "contains interrupted stage"),
+    ),
+)
+def test_nbs_evidence_tree_rejects_unsafe_existing_content_without_mutating_it(
+    tmp_path: Path,
+    mutation: str,
+    expected_fragment: str,
+):
+    evidence_root, seiche_gid, environment = _nbs_evidence_tree_test_fixture(tmp_path)
+    watched: Path
+    if mutation == "root-gid":
+        os.chown(evidence_root, -1, os.getgid())
+        watched = evidence_root
+    elif mutation == "root-mode":
+        evidence_root.chmod(0o700)
+        watched = evidence_root
+    elif mutation == "restricted-file":
+        watched = evidence_root / "restricted"
+        watched.write_text("unsafe\n", encoding="ascii")
+    elif mutation == "restricted-symlink":
+        target = tmp_path / "restricted-link-target"
+        target.mkdir(mode=0o700)
+        watched = evidence_root / "restricted"
+        watched.symlink_to(target, target_is_directory=True)
+    elif mutation == "restricted-mode":
+        watched = evidence_root / "restricted"
+        watched.mkdir(mode=0o755)
+        watched.chmod(0o755)
+    elif mutation == "public-mode":
+        watched = evidence_root / "public"
+        watched.mkdir(mode=0o700)
+        os.chown(watched, -1, seiche_gid)
+        watched.chmod(0o700)
+    elif mutation == "revisions-mode":
+        public = evidence_root / "public"
+        public.mkdir(mode=0o750)
+        os.chown(public, -1, seiche_gid)
+        public.chmod(0o750)
+        watched = public / "revisions"
+        watched.mkdir(mode=0o750)
+        os.chown(watched, -1, seiche_gid)
+        watched.chmod(0o750)
+    elif mutation == "root-orphan":
+        watched = evidence_root / ".seiche-nbs-stage-public-interrupted"
+        watched.mkdir(mode=0o700)
+    else:
+        public = evidence_root / "public"
+        public.mkdir(mode=0o750)
+        os.chown(public, -1, seiche_gid)
+        public.chmod(0o750)
+        watched = public / ".seiche-nbs-stage-revisions-interrupted"
+        watched.mkdir(mode=0o700)
+
+    if watched.is_symlink() or watched.is_file():
+        before = watched.lstat()
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_uid,
+            before.st_gid,
+            stat.S_IMODE(before.st_mode),
+        )
+    else:
+        before_identity = _directory_identity(watched)
+    before_members = tuple(sorted(path.name for path in evidence_root.iterdir()))
+
+    result = _run_nbs_evidence_tree_test(environment)
+
+    assert result.returncode != 0
+    assert expected_fragment in result.stderr
+    assert (
+        tuple(sorted(path.name for path in evidence_root.iterdir())) == before_members
+    )
+    assert not (evidence_root / "restricted").exists() or mutation.startswith(
+        "restricted"
+    )
+    if watched.is_symlink() or watched.is_file():
+        after = watched.lstat()
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_uid,
+            after.st_gid,
+            stat.S_IMODE(after.st_mode),
+        )
+    else:
+        after_identity = _directory_identity(watched)
+    assert after_identity == before_identity
+
+
+def test_nbs_evidence_tree_test_mode_rejects_ambient_or_wrong_group_authority(
+    tmp_path: Path,
+):
+    evidence_root, _seiche_gid, environment = _nbs_evidence_tree_test_fixture(tmp_path)
+    for mutation in (
+        {"SSH_ORIGINAL_COMMAND": "forced-command"},
+        {"SEICHE_NBS_EVIDENCE_TEST_GID": str(os.getgid())},
+        {"SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "0"},
+    ):
+        result = _run_nbs_evidence_tree_test(environment | mutation)
+        assert result.returncode != 0
+        assert not tuple(evidence_root.iterdir())
+
+
+def test_nbs_runtime_publisher_is_fresh_idempotent_and_isolated(tmp_path: Path):
+    asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
+    hostile = tmp_path / "hostile-pythonpath"
+    hostile.mkdir()
+    sentinel = tmp_path / "runtime-pythonpath-imported"
+    (hostile / "sitecustomize.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    environment |= {"PYTHONPATH": str(hostile), "PYTHONHOME": str(hostile)}
+
+    first = _run_nbs_runtime_test(environment, cwd=hostile)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert not sentinel.exists()
+    target = environment["SEICHE_RELEASE_TARGET_SHA"]
+    release = runtime_root / "releases" / target
+    package = release / "seiche"
+    assert (runtime_root / "current-sha").read_text(encoding="ascii") == f"{target}\n"
+    assert set(path.name for path in runtime_root.iterdir()) == {
+        "current-sha",
+        "releases",
+    }
+    assert set(path.name for path in release.iterdir()) == {"seiche"}
+    assert set(path.name for path in package.iterdir()) == {
+        "__init__.py",
+        "nbs_intake.py",
+        "nbs_trust.py",
+    }
+    assert runtime_root.stat().st_mode & 0o777 == 0o755
+    assert (runtime_root / "releases").stat().st_mode & 0o777 == 0o555
+    assert release.stat().st_mode & 0o777 == 0o555
+    assert package.stat().st_mode & 0o777 == 0o555
+    for module in package.iterdir():
+        assert module.stat().st_mode & 0o777 == 0o444
+        assert module.stat().st_nlink == 1
+        assert (
+            module.read_bytes()
+            == (asset_root / "backend" / "seiche" / module.name).read_bytes()
+        )
+
+    retry = _run_nbs_runtime_test(environment, cwd=hostile)
+    assert retry.returncode == 0, retry.stdout + retry.stderr
+    assert (runtime_root / "current-sha").read_text(encoding="ascii") == f"{target}\n"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "anchor-mode",
+        "anchor-symlink",
+        "extra-anchor-member",
+        "interrupted-stage",
+        "release-mode",
+        "release-extra-member",
+        "release-byte-mismatch",
+        "release-symlink",
+        "pointer-hardlink",
+    ),
+)
+def test_nbs_runtime_publisher_rejects_unsafe_existing_state(
+    tmp_path: Path, mutation: str
+):
+    _asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
+    initial = _run_nbs_runtime_test(environment)
+    assert initial.returncode == 0, initial.stdout + initial.stderr
+    target = environment["SEICHE_RELEASE_TARGET_SHA"]
+    pointer = runtime_root / "current-sha"
+    release = runtime_root / "releases" / target
+    package = release / "seiche"
+
+    if mutation == "anchor-mode":
+        runtime_root.chmod(0o775)
+    elif mutation == "anchor-symlink":
+        real_runtime = tmp_path / "real-nbs-runtime"
+        runtime_root.rename(real_runtime)
+        runtime_root.symlink_to(real_runtime, target_is_directory=True)
+    elif mutation == "extra-anchor-member":
+        (runtime_root / "unexpected").write_text("unsafe\n", encoding="utf-8")
+    elif mutation == "interrupted-stage":
+        (runtime_root / ".current-sha-interrupted").write_text(
+            "unsafe\n", encoding="utf-8"
+        )
+    elif mutation == "release-mode":
+        release.chmod(0o755)
+    elif mutation == "release-extra-member":
+        release.chmod(0o755)
+        (release / "unexpected").write_text("unsafe\n", encoding="utf-8")
+        release.chmod(0o555)
+    elif mutation == "release-byte-mismatch":
+        package.chmod(0o755)
+        module = package / "nbs_intake.py"
+        module.chmod(0o644)
+        module.write_text("raise RuntimeError('changed')\n", encoding="utf-8")
+        module.chmod(0o444)
+        package.chmod(0o555)
+    elif mutation == "release-symlink":
+        package.chmod(0o755)
+        module = package / "nbs_intake.py"
+        module.unlink()
+        module.symlink_to(package / "nbs_trust.py")
+        package.chmod(0o555)
+    else:
+        os.link(pointer, tmp_path / "current-sha-second-link")
+
+    retry = _run_nbs_runtime_test(environment)
+    assert retry.returncode != 0
+    assert pointer.read_text(encoding="ascii") == f"{target}\n"
+
+
+def test_nbs_runtime_import_failure_leaves_old_pointer_unchanged(tmp_path: Path):
+    asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
+    initial = _run_nbs_runtime_test(environment)
+    assert initial.returncode == 0, initial.stdout + initial.stderr
+    old_target = environment["SEICHE_RELEASE_TARGET_SHA"]
+    new_target = "b" * 40
+    source = asset_root / "backend" / "seiche" / "nbs_intake.py"
+    source.write_text(
+        "raise RuntimeError('candidate import failed')\n", encoding="utf-8"
+    )
+
+    candidate = _run_nbs_runtime_test(
+        environment | {"SEICHE_RELEASE_TARGET_SHA": new_target}
+    )
+
+    assert candidate.returncode != 0
+    assert "candidate package import failed" in candidate.stderr
+    assert (runtime_root / "current-sha").read_text(encoding="ascii") == (
+        f"{old_target}\n"
+    )
+    assert (runtime_root / "releases" / new_target).is_dir()
+
+
+def _run_offsite_canary_validator(
+    tmp_path: Path, status: dict[str, object]
+) -> subprocess.CompletedProcess[str]:
+    installer = MARKET_INSTALLER.read_text(encoding="utf-8")
+    function_start = installer.index("offsite_canary_receipt_is_valid() {")
+    code_start = installer.index("<<'PY'\n", function_start) + len("<<'PY'\n")
+    code_end = installer.index("\nPY", code_start)
+    validator = installer[code_start:code_end]
+    env_path = tmp_path / "offsite.env"
+    env_path.write_text(
+        "SEICHE_OFFSITE_BACKUP_BUCKET=seiche-backups\n"
+        "SEICHE_OFFSITE_BACKUP_PREFIX=production\n"
+        "SEICHE_OFFSITE_BACKUP_KEY_ID=key-v1\n"
+        "SEICHE_OFFSITE_BACKUP_DESTINATION_ID=primary\n",
+        encoding="utf-8",
+    )
+    status_path = tmp_path / "offsite-status.json"
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, "-I", "-B", "-", str(env_path), str(status_path)],
+        input=validator,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _valid_offsite_v3_canary() -> dict[str, object]:
+    source_contract = {
+        "source_backup_schema": "seiche.market-backup.v3",
+        "nbs_state_root": "/var/lib/seiche-nbs",
+        "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
+        "nbs_full_store_audit_result": "required_at_restore",
+    }
+    destination = {
+        "bucket": "seiche-backups",
+        "prefix": "production",
+        "key_id": "key-v1",
+        "destination": {"id": "primary"},
+        "object_lock": {"days": 90, "mode": "COMPLIANCE"},
+    }
+    return {
+        "schema": "seiche.market-offsite-backup-status.v2",
+        "status": "success",
+        **source_contract,
+        **destination,
+        "last_success": {
+            **source_contract,
+            **destination,
+            "restore_verified": True,
+            "remote_receipt_key": "production/canary/v1/RECEIPT.json",
+            "ciphertext_version_id": "ciphertext-version",
+            "remote_receipt_version_id": "receipt-version",
+        },
+    }
+
+
+def test_offsite_timer_accepts_only_a_fully_bound_v3_canary(tmp_path: Path):
+    result = _run_offsite_canary_validator(tmp_path, _valid_offsite_v3_canary())
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_offsite_timer_rejects_fully_populated_legacy_v1_status(tmp_path: Path):
+    status = _valid_offsite_v3_canary()
+    status["schema"] = "seiche.market-offsite-backup-status.v1"
+
+    result = _run_offsite_canary_validator(tmp_path, status)
+
+    assert result.returncode != 0
+
+
+def test_offsite_v1_to_v2_runbook_breaks_the_canary_namespace_safely():
+    runbook = (ROOT / "ops" / "deploy" / "MARKET-BACKUPS.md").read_text()
+    section = runbook[
+        runbook.index("### Production v1-to-v2 namespace cutover") : runbook.index(
+            "### Controlled first write and recurring schedule"
+        )
+    ]
+
+    timer_stop = section.index(
+        "systemctl disable --now seiche-market-offsite-backup.timer"
+    )
+    transition = section.index("seiche/market-backups/v1 seiche/market-backups/v2 0 1")
+    assert timer_stop < transition
+    assert 'values["SEICHE_OFFSITE_BACKUP_KEY_ID"] != "market-key-2026-08-v1"' in (
+        section
+    )
+    assert (
+        'values["SEICHE_OFFSITE_BACKUP_DESTINATION_ID"]\n'
+        '        != "hetzner-primary-v1"' in section
+    )
+    assert "os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC" in section
+    assert "os.fchmod(stage_fd, 0o600)" in section
+    assert "os.fsync(stage_fd)" in section
+    assert "os.rename(" in section
+    assert "os.fsync(parent_fd)" in section
+    assert "Do not manually run the old status-v1 service" in section
+
+    recurring = runbook[runbook.index("### Controlled first write") :]
+    assert "seiche/market-backups/v2 seiche/market-backups/v2 1 0" in recurring
+    assert '"$ASSET_ROOT/ops/deploy/install-market-platform.sh"' in recurring
+
+
+@pytest.mark.parametrize(
+    "scope, field",
+    tuple(
+        (scope, field)
+        for scope in ("top", "success")
+        for field in (
+            "source_backup_schema",
+            "nbs_state_root",
+            "nbs_full_store_audit_contract",
+            "nbs_full_store_audit_result",
+        )
+    ),
+)
+def test_offsite_timer_rejects_legacy_or_partially_bound_canaries(
+    tmp_path: Path, scope: str, field: str
+):
+    status = _valid_offsite_v3_canary()
+    if scope == "top":
+        status.pop(field)
+    else:
+        success = status["last_success"]
+        assert isinstance(success, dict)
+        success.pop(field)
+
+    result = _run_offsite_canary_validator(tmp_path, status)
+
+    assert result.returncode != 0
 
 
 def _release_signature_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
@@ -942,7 +1524,11 @@ def test_wrapper_runs_edge_sync_on_new_and_already_running_release():
     caddy_installer = wrapper[
         wrapper.index("deploy_caddy()") : wrapper.index("deploy_market_platform()")
     ]
-    assert "SEICHE_DEFER_MARKET_START=1 bash" in market_installer
+    assert "/usr/bin/env -i" in market_installer
+    assert "SEICHE_DEFER_MARKET_START=1" in market_installer
+    assert 'SEICHE_PRIVILEGED_ASSET_ROOT="$SIGNED_ASSET_ROOT"' in market_installer
+    assert 'SEICHE_RELEASE_TARGET_SHA="$TARGET"' in market_installer
+    assert '/usr/bin/bash "$installer"' in market_installer
     assert "SEICHE_DEFER_MARKET_START" not in caddy_installer
     healthy_release = wrapper[wrapper.index('if [ -n "$HEALTHY" ]') :]
     assert healthy_release.index("start_market_services") < healthy_release.index(
@@ -1209,17 +1795,16 @@ def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
         )
     ]
 
-    assert 'git -C "$APP" show' in helper
-    assert '"${restore_sha}:ops/deploy/seiche-market-worker.service"' in helper
-    assert 'systemd-analyze verify "$candidate"' in helper
-    assert 'mv -f "$candidate" "$destination"' in helper
-    assert helper.index('mv -f "$candidate" "$destination"') < helper.index(
-        "systemctl daemon-reload"
-    )
-    assert "MARKET_WORKER_WAS_ENABLED" in helper
-    assert "systemctl enable seiche-market-worker.service" in helper
-    assert "systemctl disable seiche-market-worker.service" in helper
-    assert "systemctl is-enabled --quiet seiche-market-worker.service" in helper
+    assert 'git -C "$APP" show' not in helper
+    assert "restored by restore_preupdate_data_units" in helper
+
+    captured = wrapper[
+        wrapper.index("DATA_UNIT_NAMES=(") : wrapper.index(
+            "cleanup_preupdate_data_units()"
+        )
+    ]
+    assert "seiche-market-worker.service" in captured
+    assert "/opt/seiche-nbs-intake/current-sha" in captured
 
     deploy = wrapper.index("MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1")
     provision = wrapper.index("deploy_market_platform ||", deploy)
@@ -1255,7 +1840,9 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     ]
     restore = wrapper[
         wrapper.index("restore_preupdate_data_units() {") : wrapper.index(
-            "trap 'cleanup_preupdate_data_units || true' EXIT"
+            "trap 'release_market_mutation_lock || true; "
+            "cleanup_preupdate_data_units || true; "
+            "cleanup_signed_release_assets || true' EXIT"
         )
     ]
     unit_names_start = wrapper.index("DATA_UNIT_NAMES=(")
@@ -1273,10 +1860,18 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     ):
         assert unit in unit_names
     for artifact in (
+        "nbs-intake-launcher",
         "data-readiness-helper",
         "market-offsite-backup-helper",
+        "market-backup-helper",
+        "market-restore-check-helper",
+        "nbs-runtime-current-sha",
+        "/etc/seiche/libexec/seiche-nbs-intake.py",
         "/etc/seiche/libexec/seiche-data-readiness.sh",
         "/etc/seiche/libexec/seiche-market-offsite-backup.sh",
+        "/etc/seiche/libexec/seiche-market-backup.sh",
+        "/etc/seiche/libexec/seiche-market-restore-check.sh",
+        "/opt/seiche-nbs-intake/current-sha",
     ):
         assert artifact in unit_names
     assert 'mktemp -d "$DEPLOY_RUNTIME_DIR/.data-units.XXXXXX"' in capture
@@ -1366,10 +1961,15 @@ def _run_readiness_activation_helper(
     assert local_bash is not None
     helper = helper.replace("/usr/bin/bash", local_bash)
 
+    def privileged_test_executable(path: Path, body: str) -> Path:
+        path.write_text(f"#!{local_bash} -p\nset -u\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
     app = tmp_path / "app"
     readiness = app / "ops" / "deploy" / "seiche-data-readiness.sh"
     readiness.parent.mkdir(parents=True)
-    _executable(
+    privileged_test_executable(
         readiness,
         """
 state=${FAKE_DATA_STATE:?}
@@ -1464,10 +2064,22 @@ esac
         'DATA_READINESS_SCRIPT="$READINESS_SCRIPT_INSTALLED"',
         runtime_readiness,
     )
+    helper = helper.replace(
+        "HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \\",
+        "HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \\\n"
+        '    FAKE_DATA_STATE="$FAKE_DATA_STATE" \\\n'
+        '    FAKE_READINESS_MODE="$FAKE_READINESS_MODE" \\',
+    )
     state = tmp_path / "state"
     state.mkdir()
-    _executable(tmp_path / "sleep", "exit 0\n")
-    fake_systemctl = _executable(
+    bash_startup_sentinel = tmp_path / "ambient-bash-startup-ran"
+    bash_env = tmp_path / "hostile-bash-env"
+    bash_env.write_text(
+        f"touch {str(bash_startup_sentinel)!r}\n",
+        encoding="utf-8",
+    )
+    privileged_test_executable(tmp_path / "sleep", "exit 0\n")
+    fake_systemctl = privileged_test_executable(
         tmp_path / "systemctl",
         """
 state=${FAKE_DATA_STATE:?}
@@ -1491,7 +2103,7 @@ if [ "$*" = "enable --now seiche-data-readiness.timer" ]; then
 fi
 """,
     )
-    fake_curl = _executable(
+    fake_curl = privileged_test_executable(
         tmp_path / "curl",
         """
 state=${FAKE_DATA_STATE:?}
@@ -1518,11 +2130,15 @@ touch "$state/refresh-triggered"
         "FAKE_CANDIDATE_HEALTH_WAIT_MODE": candidate_health_wait_mode,
         "FAKE_LOG_CANDIDATE_HEALTH": "1" if log_candidate_health else "0",
         "SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS": convergence_wait_seconds,
+        "SEICHE_DATA_READINESS_PROOF_ONLY": "1",
+        "SEICHE_DATA_READINESS_REQUIRED_UNITS": "attacker-controlled.service",
+        "BASH_ENV": str(bash_env),
         "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
     }
     result = subprocess.run(
         [
-            "bash",
+            local_bash,
+            "-p",
             "-c",
             f"""
 {helper}
@@ -1557,6 +2173,7 @@ activate_data_readiness_after_proof
     )
     calls_path = state / "calls.log"
     calls = calls_path.read_text().splitlines() if calls_path.exists() else []
+    assert not bash_startup_sentinel.exists()
     return result, calls, state
 
 
@@ -1763,9 +2380,16 @@ def test_candidate_health_wait_bounds_continuous_503_at_1800_seconds(
     )
 
     assert result.returncode != 0
-    assert calls.count("http-503") == 181
-    assert calls.count("systemctl is-active --quiet seiche-api") == 180
-    assert calls.count("sleep 10") == 180
+    failed_probes = calls.count("http-503")
+    service_checks = calls.count("systemctl is-active --quiet seiche-api")
+    sleeps = calls.count("sleep 10")
+    # Bash's special SECONDS counter includes both the synthetic ten-second
+    # sleeps and real subprocess overhead, so the exact probe count can vary
+    # by one across hosts. The final failed probe must be the only operation
+    # after the deadline; no additional service check or sleep is permitted.
+    assert 179 <= failed_probes <= 181
+    assert service_checks == failed_probes - 1
+    assert sleeps == service_checks
     assert "exact release after 30min warm-up window" in result.stdout
     elapsed = int(result.stdout.split("elapsed-seconds=", 1)[1].splitlines()[0])
     assert 1800 <= elapsed < 1820
@@ -2258,15 +2882,17 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "duplicate forward children exist outside" in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
     assert 'NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"' in installer
-    assert 'install -d -o root -g root -m 0700 "$NBS_RESTRICTED_DIR"' in installer
-    assert 'install -d -o root -g seiche -m 0750 "$NBS_PUBLIC_DIR"' in installer
-    assert (
-        'install -d -o root -g seiche -m 2750 "$NBS_PUBLIC_REVISIONS_DIR"'
-        in installer
-    )
+    assert "ensure_nbs_evidence_tree" in installer
+    assert 'grp.getgrnam("seiche").gr_gid' in installer
+    assert '"$NBS_STATE_DIR" "$SEICHE_NBS_GID"' in installer
+    assert 'install -d -o root -g seiche -m 0750 "$NBS_STATE_DIR"' not in installer
+    assert 'install -d -o root -g root -m 0700 "$NBS_RESTRICTED_DIR"' not in installer
     assert "Environment=SEICHE_NBS_PUBLIC_DIR=$NBS_PUBLIC_DIR" in installer
     assert "ReadOnlyPaths=$NBS_PUBLIC_DIR" in installer
     assert "InaccessiblePaths=$NBS_RESTRICTED_DIR" in installer
+    assert (
+        installer.count("RequiresMountsFor=$STATE_DIR $NBS_STATE_DIR $BACKUP_DIR") == 2
+    )
     assert '"$STATE_DIR/validation"' in installer
     assert "SEICHE_VALIDATION_DIR=$STATE_DIR/validation" in installer
     assert "seiche-market-validation.service" in installer
@@ -2279,9 +2905,20 @@ def test_market_platform_units_are_independent_and_postgres_backed():
         in installer
     )
     assert "install_runtime_shell_helper()" in installer
+    assert "install_runtime_python_helper()" in installer
     assert 'install -o root -g root -m 0755 "$source" "$stage"' in installer
     assert '/usr/bin/bash -n "$stage"' in installer
+    assert '/usr/bin/python3 -I "$stage" --help' in installer
     assert '/usr/bin/sync -f "$stage"' in installer
+    assert (
+        "install_runtime_python_helper \\\n"
+        '    "$NBS_INTAKE_LAUNCHER_SOURCE" "$NBS_INTAKE_LAUNCHER_INSTALLED"'
+        in installer
+    )
+    assert (
+        'NBS_INTAKE_LAUNCHER_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/'
+        'seiche-nbs-intake.py"' in installer
+    )
     assert (
         "install_runtime_shell_helper \\\n"
         '    "$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED"' in installer
@@ -2380,9 +3017,25 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in source_worker
     assert "OnFailure=undertow-failure-alert@%n.service" in readiness_service
     assert (
-        "ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh"
-        in readiness_service
+        "ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C "
+        "PATH=/usr/bin:/bin /usr/bin/bash -p "
+        "/etc/seiche/libexec/seiche-data-readiness.sh" in readiness_service
     )
+    readiness_unset = {
+        name
+        for line in readiness_service.splitlines()
+        if line.startswith("UnsetEnvironment=")
+        for name in line.removeprefix("UnsetEnvironment=").split()
+    }
+    assert {
+        "GCONV_PATH",
+        "GLIBC_TUNABLES",
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "LOCPATH",
+    } <= readiness_unset
+    assert "EnvironmentFile=" not in readiness_service
     assert (
         "After=seiche-market-worker.service seiche-source-worker.service"
         in readiness_timer
@@ -2438,8 +3091,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert (
         "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs "
-        "/var/lib/seiche-deploy"
-        in backup
+        "/var/lib/seiche-deploy" in backup
     )
     assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
@@ -3017,9 +3669,11 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert "--others --ignored --exclude-standard -- backend" in wrapper
     assert "$0 !~ /^backend\\/\\.venv\\//" in wrapper
     assert "$0 !~ /\\/__pycache__\\//" in wrapper
-    assert 'if ! AFTER=$(runuser -u seiche -- git -C "$APP" rev-parse HEAD)' in wrapper
+    assert (
+        'if ! AFTER=$("$RUNUSER" -u seiche -- git -C "$APP" rev-parse HEAD)' in wrapper
+    )
     unresolved = wrapper[
-        wrapper.index("if ! AFTER=$(runuser") : wrapper.index(
+        wrapper.index('if ! AFTER=$("$RUNUSER"') : wrapper.index(
             'if [ "$AFTER" != "$TARGET" ]'
         )
     ]
@@ -3058,7 +3712,7 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
 def test_deploy_controller_pins_a_locally_tested_target_before_quiescing():
     wrapper = DEPLOY_WRAPPER.read_text()
     resolved = wrapper.index(
-        'LATEST=$(runuser -u seiche -- git -C "$APP" rev-parse origin/main)'
+        'LATEST=$("$RUNUSER" -u seiche -- git -C "$APP" rev-parse origin/main)'
     )
     constrained = wrapper.index("EXPECTED_TARGET=${SEICHE_EXPECTED_TARGET_SHA:-}")
     stopped = wrapper.index(
@@ -3140,6 +3794,11 @@ def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
 
 def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     poller = RELEASE_POLLER.read_text()
+    wrapper_handoff = poller[
+        poller.index("run_deploy_wrapper() {") : poller.index(
+            "wait_for_post_gate_admission() {"
+        )
+    ]
     selected = poller.index(
         'TARGET=$(as_service git -C "$APP_DIR" rev-parse origin/main)'
     )
@@ -3148,7 +3807,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     )
     signature = poller.index('verify_target_signature "$TARGET"', inert_content)
     receipt_pair = poller.index("receipt_pair_status", signature)
-    admission = poller.index("SEICHE_DEPLOY_ADMISSION_ONLY=1", receipt_pair)
+    admission = poller.index("run_deploy_wrapper admission", receipt_pair)
     detached = poller.index(
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
@@ -3171,9 +3830,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     )
     deploy_status = poller.index("DEPLOY_STATUS=0", timer_activation)
     handoff_started = poller.index("DEPLOY_WRAPPER_HANDOFF_STARTED=1", deploy_status)
-    deployed = poller.index(
-        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', handoff_started
-    )
+    deployed = poller.index('run_deploy_wrapper deploy "$TARGET"', handoff_started)
 
     assert (
         selected
@@ -3202,6 +3859,11 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "ADMISSION_STATUS=0" in poller[signature:detached]
     assert 'case "$ADMISSION_STATUS"' in poller[signature:detached]
     assert "deferred with production unchanged" in poller[signature:detached]
+    assert wrapper_handoff.count("/usr/bin/env -i") == 2
+    assert wrapper_handoff.count("HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin") == 2
+    assert wrapper_handoff.count('/usr/bin/bash -p "$DEPLOY_WRAPPER"') == 2
+    assert "SEICHE_DEPLOY_ADMISSION_ONLY=1" in wrapper_handoff
+    assert 'SEICHE_EXPECTED_TARGET_SHA="$target"' in wrapper_handoff
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
     assert gate_slice.count("run_candidate_gate_stage") == 3
@@ -3358,8 +4020,16 @@ def _post_gate_admission(
     *,
     wait_seconds: int,
     sleep: Path | None = None,
+    ambient: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     wrapper = _executable(tmp_path / "admission-wrapper", wrapper_body)
+    local_bash = shutil.which("bash")
+    assert local_bash is not None
+    portable_poller = tmp_path / "portable-release-poll.sh"
+    portable_poller.write_text(
+        RELEASE_POLLER.read_text(encoding="utf-8").replace("/usr/bin/bash", local_bash),
+        encoding="utf-8",
+    )
     env = os.environ | {
         "SEICHE_CONTROL_LIBRARY_ONLY": "1",
         "SEICHE_CONTROL_DEPLOY_WRAPPER": str(wrapper),
@@ -3368,13 +4038,15 @@ def _post_gate_admission(
     }
     if sleep is not None:
         env["SEICHE_CONTROL_SLEEP"] = str(sleep)
+    if ambient is not None:
+        env |= ambient
     return subprocess.run(
         [
             "bash",
             "-c",
             'source "$1"; wait_for_post_gate_admission',
             "seiche-admission-test",
-            str(RELEASE_POLLER),
+            str(portable_poller),
         ],
         env=env,
         check=False,
@@ -3402,6 +4074,37 @@ def test_post_gate_admission_retries_a_safe_deferral(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert counter.read_text() == "2\n"
     assert "retrying admission" in result.stdout
+
+
+def test_post_gate_admission_handoff_drops_ambient_deploy_controls(tmp_path: Path):
+    observed = tmp_path / "wrapper-environment"
+    result = _post_gate_admission(
+        tmp_path,
+        (
+            f'/usr/bin/env >"{observed}"\n'
+            '[ "${SEICHE_DEPLOY_ADMISSION_ONLY:-}" = 1 ]\n'
+            '[ -z "${SEICHE_EXPECTED_TARGET_SHA:-}" ]\n'
+            '[ "$HOME:$LANG:$LC_ALL:$PATH" = '
+            '"/root:C:C:/usr/bin:/bin" ]\n'
+        ),
+        wait_seconds=0,
+        ambient={
+            "SEICHE_DEPLOY_ADMISSION_ONLY": "0",
+            "SEICHE_EXPECTED_TARGET_SHA": "b" * 40,
+            "SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY": "1",
+            "PYTHONPATH": str(tmp_path / "hostile-pythonpath"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    child_environment = observed.read_text(encoding="utf-8")
+    assert "SEICHE_DEPLOY_ADMISSION_ONLY=1\n" in child_environment
+    for name in (
+        "PYTHONPATH",
+        "SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY",
+        "SEICHE_EXPECTED_TARGET_SHA",
+    ):
+        assert f"{name}=" not in child_environment
 
 
 @pytest.mark.parametrize("wrapper_status", [1, 42])
@@ -3890,9 +4593,7 @@ def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
     poller = RELEASE_POLLER.read_text()
     writer = poller[poller.index("write_receipt()") :]
     gate = writer.index('write_receipt gate "$GATE_RECEIPT"')
-    deploy = writer.index(
-        'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', gate
-    )
+    deploy = writer.index('run_deploy_wrapper deploy "$TARGET"', gate)
     exact_health = writer.index('health_matches "$TARGET"', deploy)
     timer_ready = writer.index("release_timer_is_ready", exact_health)
     release = writer.index('write_receipt release "$RELEASE_RECEIPT"', timer_ready)
@@ -3910,20 +4611,294 @@ def test_release_receipts_are_no_clobber_and_follow_the_rollback_boundary():
     )
 
 
+def _bootstrap_asset_fixture(
+    tmp_path: Path,
+    *,
+    signed: bool = True,
+    author: str = "beepboop2025@users.noreply.github.com",
+    alter_wrapper: bool = False,
+) -> tuple[Path, Path, str, dict[str, str]]:
+    ssh_keygen = shutil.which("ssh-keygen")
+    if ssh_keygen is None:
+        pytest.skip("OpenSSH is required for the bootstrap contract")
+
+    wrapper_text = DEPLOY_WRAPPER.read_text(encoding="utf-8")
+    match = re.search(r"REQUIRED_MODES = (\{.*?\n\})\n\n", wrapper_text, re.DOTALL)
+    assert match is not None
+    required_modes = ast.literal_eval(match.group(1))
+    assert isinstance(required_modes, dict)
+
+    repository = tmp_path / "bootstrap-repository"
+    _git("init", "-b", "main", str(repository), cwd=tmp_path)
+    _git("config", "user.name", "Seiche Release", cwd=repository)
+    _git("config", "user.email", author, cwd=repository)
+    signing_key = tmp_path / "bootstrap-signing-key"
+    subprocess.run(
+        [ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", str(signing_key)],
+        check=True,
+    )
+    _git("config", "gpg.format", "ssh", cwd=repository)
+    _git("config", "user.signingkey", str(signing_key), cwd=repository)
+    _git("config", "commit.gpgsign", "true" if signed else "false", cwd=repository)
+    for relative, git_mode in required_modes.items():
+        source = ROOT / relative
+        assert source.is_file(), relative
+        destination = repository / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        destination.chmod(0o755 if git_mode == "100755" else 0o644)
+    _git("add", "--all", cwd=repository)
+    _git("commit", "-m", "release: bootstrap fixture", cwd=repository)
+    target = _git("rev-parse", "HEAD", cwd=repository)
+    _git("update-ref", "refs/remotes/origin/main", target, cwd=repository)
+
+    public_key = signing_key.with_suffix(".pub").read_text(encoding="ascii").split()
+    allowed_signers = tmp_path / "bootstrap-allowed-signers"
+    allowed_signers.write_text(
+        f"beepboop2025@users.noreply.github.com {public_key[0]} {public_key[1]}\n",
+        encoding="ascii",
+    )
+    allowed_signers.chmod(0o444)
+    git_home = tmp_path / "bootstrap-git-home"
+    git_home.mkdir(mode=0o700)
+    runtime = tmp_path / "bootstrap-runtime"
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    bootstrap_wrapper = runtime / f"bootstrap-wrapper-{target}"
+    shutil.copyfile(
+        repository / "ops/deploy/seiche-deploy-wrapper.sh", bootstrap_wrapper
+    )
+    if alter_wrapper:
+        with bootstrap_wrapper.open("a", encoding="utf-8") as handle:
+            handle.write("# altered after signed extraction\n")
+    bootstrap_wrapper.chmod(0o500)
+    environment = os.environ | {
+        "SEICHE_DEPLOY_BOOTSTRAP_TEST_ONLY": "1",
+        "SEICHE_ALLOW_NON_ROOT_BOOTSTRAP_TEST": "1",
+        "SEICHE_EXPECTED_TARGET_SHA": target,
+        "SEICHE_BOOTSTRAP_TEST_REPO": str(repository),
+        "SEICHE_BOOTSTRAP_TEST_RUNTIME": str(runtime),
+        "SEICHE_BOOTSTRAP_TEST_ALLOWED_SIGNERS": str(allowed_signers),
+        "SEICHE_BOOTSTRAP_TEST_GIT_HOME": str(git_home),
+        "SEICHE_BOOTSTRAP_TEST_PYTHON": sys.executable,
+    }
+    return bootstrap_wrapper, runtime, target, environment
+
+
+def _run_bootstrap_asset_fixture(
+    wrapper: Path, environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(wrapper)],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_bootstrap_assets_portable_harness_retains_one_exact_signed_root(
+    tmp_path: Path,
+):
+    wrapper, runtime, target, environment = _bootstrap_asset_fixture(tmp_path)
+
+    result = _run_bootstrap_asset_fixture(wrapper, environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    retained_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if "retained exact signed target" in line
+    ]
+    assert len(retained_lines) == 1
+    retained = Path(retained_lines[0].rsplit(" ", 1)[1])
+    assert retained.parent == runtime
+    assert retained.name.startswith(f"release-assets-{target}-")
+    assert retained.is_dir() and not retained.is_symlink()
+    assert stat.S_IMODE(retained.stat().st_mode) == 0o700
+    assert (retained / ".target-sha").read_text(encoding="ascii") == f"{target}\n"
+    manifest = json.loads(
+        (retained / ".seiche-release-assets.json").read_text(encoding="ascii")
+    )
+    assert manifest["target_sha"] == target
+    assert (retained / "ops/deploy/seiche-deploy-wrapper.sh").read_bytes() == (
+        wrapper.read_bytes()
+    )
+    assert tuple(runtime.glob(".release-assets-*")) == ()
+    assert tuple(runtime.glob(f"release-assets-{target}-*")) == (retained,)
+
+
+def test_deploy_wrapper_entry_drops_hostile_shell_and_import_environment(
+    tmp_path: Path,
+) -> None:
+    wrapper, _runtime, _target, environment = _bootstrap_asset_fixture(tmp_path)
+    sentinel = tmp_path / "hostile-entry-ran"
+    bash_env = tmp_path / "hostile-bash-env"
+    bash_env.write_text(
+        f"printf compromised >{shlex.quote(str(sentinel))}\n",
+        encoding="utf-8",
+    )
+    hostile_python = tmp_path / "hostile-python"
+    hostile_python.mkdir()
+    (hostile_python / "hashlib.py").write_text(
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('python')\n",
+        encoding="utf-8",
+    )
+    hostile_bin = tmp_path / "hostile-bin"
+    hostile_bin.mkdir()
+    _executable(
+        hostile_bin / "git",
+        f"printf path >{shlex.quote(str(sentinel))}\nexit 97\n",
+    )
+    environment |= {
+        "BASH_ENV": str(bash_env),
+        "ENV": str(bash_env),
+        "PYTHONPATH": str(hostile_python),
+        "PATH": f"{hostile_bin}:{environment['PATH']}",
+    }
+
+    result = _run_bootstrap_asset_fixture(wrapper, environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not sentinel.exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ("wrong-target", "altered-wrapper", "unsigned-target", "wrong-author"),
+)
+def test_bootstrap_assets_portable_failures_retain_no_asset_root(
+    tmp_path: Path, failure: str
+):
+    wrapper, runtime, target, environment = _bootstrap_asset_fixture(
+        tmp_path,
+        signed=failure != "unsigned-target",
+        author=(
+            "intruder@example.invalid"
+            if failure == "wrong-author"
+            else "beepboop2025@users.noreply.github.com"
+        ),
+        alter_wrapper=failure == "altered-wrapper",
+    )
+    if failure == "wrong-target":
+        environment["SEICHE_EXPECTED_TARGET_SHA"] = "b" * 40
+
+    result = _run_bootstrap_asset_fixture(wrapper, environment)
+
+    assert result.returncode != 0
+    assert not tuple(runtime.glob("release-assets-*"))
+    assert not tuple(runtime.glob(".release-assets-*"))
+    output = result.stdout + result.stderr
+    if failure == "wrong-target":
+        assert "must equal the fetched canonical origin/main" in output
+    elif failure == "altered-wrapper":
+        assert "executing bootstrap wrapper is not the exact target blob" in output
+    elif failure == "unsigned-target":
+        assert "target commit lacks the pinned SSH signature" in output
+    else:
+        assert "signed target author is not the pinned release principal" in output
+    assert environment["SEICHE_EXPECTED_TARGET_SHA"] in {target, "b" * 40}
+
+
+def test_bootstrap_assets_mode_rejects_nonroot_and_forced_ssh(tmp_path: Path):
+    target = "a" * 40
+    nonroot = subprocess.run(
+        ["bash", str(DEPLOY_WRAPPER)],
+        env=os.environ
+        | {
+            "SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY": "1",
+            "SEICHE_EXPECTED_TARGET_SHA": target,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert nonroot.returncode != 0
+    assert "bootstrap-assets mode is root-only and unavailable over SSH" in (
+        nonroot.stderr
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    _executable(
+        fake_bin / "id",
+        'if [ "${1:-}" = -u ]; then printf "0\\n"; else exec /usr/bin/id "$@"; fi\n',
+    )
+    forced = subprocess.run(
+        ["/bin/bash", "-p", str(DEPLOY_WRAPPER), "--seiche-forced-entry-v1"],
+        env=os.environ
+        | {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY": "1",
+            "SEICHE_EXPECTED_TARGET_SHA": target,
+            "SSH_ORIGINAL_COMMAND": f"deploy {target}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert forced.returncode != 0
+    assert "forced deployment did not enter through the canonical" in forced.stderr
+
+
+def test_bootstrap_assets_mode_proves_exact_tip_self_and_objects_before_retaining():
+    wrapper = DEPLOY_WRAPPER.read_text(encoding="utf-8")
+    start = wrapper.index(
+        'if [ "$BOOTSTRAP_ASSETS_ONLY" = 1 ] || [ "$BOOTSTRAP_TEST_ONLY" = 1 ]; then',
+        wrapper.index("verify_release_object_graph()"),
+    )
+    end = wrapper.index("# Snapshot assembly needs", start)
+    bootstrap = wrapper[start:end]
+    self_verifier = wrapper[
+        wrapper.index("verify_bootstrap_wrapper_blob()") : wrapper.index(
+            "verify_release_object_graph()"
+        )
+    ]
+
+    assert "refs/remotes/origin/main^{commit}" in bootstrap
+    assert '[ "$TARGET" = "$BOOTSTRAP_MAIN" ]' in bootstrap
+    assert (
+        bootstrap.index('verify_release_object_graph "$TARGET"')
+        < bootstrap.index('verify_bootstrap_wrapper_blob "$TARGET"')
+        < bootstrap.index('verify_release_target_signature "$TARGET" "$BOOTSTRAP_MAIN"')
+        < bootstrap.index("materialize_privileged_release_assets")
+    )
+    assert "fsck --strict --no-reflogs --no-dangling" in wrapper
+    assert "metadata.st_nlink != 1" in self_verifier
+    assert "stat.S_IMODE(metadata.st_mode) != 0o500" in self_verifier
+    assert '"$(dirname -- "$self_path")" != "$DEPLOY_RUNTIME_DIR"' in self_verifier
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in self_verifier
+    assert "stat.S_IMODE(final.st_mode) != 0o700" in self_verifier
+    assert "git hash-object --stdin" in self_verifier
+    assert "materialized deploy wrapper does not match" in bootstrap
+    assert 'SIGNED_ASSET_ROOT=""' in bootstrap
+    assert "trap - EXIT" in bootstrap
+    assert "retained exact signed target" in bootstrap
+    assert "systemctl" not in bootstrap
+    assert "runuser" not in bootstrap
+    assert " fetch " not in bootstrap
+    materializer = wrapper[
+        wrapper.index("materialize_privileged_release_assets()") : wrapper.index(
+            "# Host-free tests exercise"
+        )
+    ]
+    assert "local materializer_python=/usr/bin/python3" in materializer
+    assert "${MATERIALIZER_PYTHON:-" not in materializer
+    test_guard = wrapper[
+        wrapper.index('if [ "$BOOTSTRAP_TEST_ONLY" = 1 ]; then') : wrapper.index(
+            'elif [ "$BOOTSTRAP_ASSETS_ONLY" = 1 ]; then'
+        )
+    ]
+    assert '"$(/usr/bin/id -u)" -eq 0' in test_guard
+    assert "SEICHE_ALLOW_NON_ROOT_BOOTSTRAP_TEST" in test_guard
+    assert 'SEICHE_DEPLOY_ENTRY_MODE" = forced' in test_guard
+    assert "bootstrap tests must isolate every production path" in test_guard
+
+
 def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     tmp_path,
 ):
-    app = tmp_path / "app"
-    source = app / "ops" / "deploy"
-    source.mkdir(parents=True)
-    for path in (
-        DEPLOY_WRAPPER,
-        RELEASE_POLLER,
-        RELEASE_POLLER_SERVICE,
-        RELEASE_POLLER_TIMER,
-        RELEASE_ALLOWED_SIGNERS,
-    ):
-        shutil.copy2(path, source / path.name)
+    asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
     binary_dir = tmp_path / "sbin"
@@ -3968,13 +4943,20 @@ esac
     )
     always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
     installed_signer = tmp_path / "seiche-release.allowed-signers"
+    nbs_state = tmp_path / "nbs-state"
+    nbs_state.mkdir(mode=0o750)
+    nbs_state.chmod(0o750)
+    nbs_runtime = tmp_path / "nbs-runtime"
     env = os.environ | {
         "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
-        "SEICHE_APP_DIR": str(app),
+        "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+        "SEICHE_RELEASE_TARGET_SHA": release_target,
         "SEICHE_SYSTEMD_DIR": str(systemd),
         "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
         "SEICHE_DEPLOY_WRAPPER": str(wrapper),
         "SEICHE_CONTROL_RUNTIME_DIR": str(runtime),
+        "SEICHE_NBS_STATE_DIR": str(nbs_state),
+        "SEICHE_NBS_RUNTIME_ROOT": str(nbs_runtime),
         "SEICHE_SYSTEMCTL_BIN": str(systemctl),
         "SEICHE_SYSTEMD_ANALYZE_BIN": str(always_ok),
         "SEICHE_SYNC_BIN": str(always_ok),
@@ -3982,7 +4964,6 @@ esac
         "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
         "SEICHE_CONTROL_PYTHON": sys.executable,
     }
-
     result = subprocess.run(
         ["bash", str(RELEASE_POLLER_INSTALLER)],
         env=env,
@@ -4008,20 +4989,11 @@ esac
     )
     assert installed_signer.stat().st_mode & 0o777 == 0o444
     assert installed_signer.stat().st_nlink == 1
+    assert not nbs_runtime.exists()
 
 
 def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path):
-    app = tmp_path / "app"
-    source = app / "ops" / "deploy"
-    source.mkdir(parents=True)
-    for path in (
-        DEPLOY_WRAPPER,
-        RELEASE_POLLER,
-        RELEASE_POLLER_SERVICE,
-        RELEASE_POLLER_TIMER,
-        RELEASE_ALLOWED_SIGNERS,
-    ):
-        shutil.copy2(path, source / path.name)
+    asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
     binary_dir = tmp_path / "sbin"
@@ -4035,16 +5007,22 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     )
     installed_signer.write_text(wrong_pin, encoding="ascii")
     installed_signer.chmod(0o444)
+    nbs_state = tmp_path / "nbs-state"
+    nbs_state.mkdir(mode=0o750)
+    nbs_state.chmod(0o750)
+    nbs_runtime = tmp_path / "nbs-runtime"
     env = os.environ | {
         "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
-        "SEICHE_APP_DIR": str(app),
+        "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+        "SEICHE_RELEASE_TARGET_SHA": release_target,
         "SEICHE_SYSTEMD_DIR": str(systemd),
         "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
         "SEICHE_DEPLOY_WRAPPER": str(wrapper),
+        "SEICHE_NBS_STATE_DIR": str(nbs_state),
+        "SEICHE_NBS_RUNTIME_ROOT": str(nbs_runtime),
         "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
         "SEICHE_CONTROL_PYTHON": sys.executable,
     }
-
     result = subprocess.run(
         ["bash", str(RELEASE_POLLER_INSTALLER)],
         env=env,
@@ -4056,20 +5034,83 @@ def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path
     assert result.returncode != 0
     assert "refusing to replace the pinned Seiche release signer" in result.stderr
     assert installed_signer.read_text(encoding="ascii") == wrong_pin
+    assert not nbs_runtime.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "marker-target",
+        "manifest-target",
+        "duplicate-entry",
+        "asset-bytes",
+        "asset-mode",
+    ),
+)
+def test_release_poller_installer_rejects_tampered_assets_before_anchor_creation(
+    tmp_path: Path, mutation: str
+):
+    asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
+    marker = asset_root / ".target-sha"
+    manifest_path = asset_root / ".seiche-release-assets.json"
+    service = asset_root / "ops" / "deploy" / "seiche-release-poll.service"
+    if mutation == "marker-target":
+        marker.write_text(f"{'b' * 40}\n", encoding="ascii")
+    elif mutation == "manifest-target":
+        manifest = json.loads(manifest_path.read_text(encoding="ascii"))
+        manifest["target_sha"] = "b" * 40
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+    elif mutation == "duplicate-entry":
+        manifest = json.loads(manifest_path.read_text(encoding="ascii"))
+        manifest["entries"].append(dict(manifest["entries"][0]))
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="ascii",
+        )
+    elif mutation == "asset-bytes":
+        service.write_text(service.read_text() + "# tampered\n", encoding="utf-8")
+    else:
+        service.chmod(0o600)
+
+    systemd = tmp_path / "systemd"
+    binary_dir = tmp_path / "sbin"
+    nbs_state = tmp_path / "nbs-state"
+    nbs_runtime = tmp_path / "nbs-runtime"
+    systemd.mkdir()
+    binary_dir.mkdir()
+    nbs_state.mkdir(mode=0o750)
+    nbs_state.chmod(0o750)
+    result = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=os.environ
+        | {
+            "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
+            "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+            "SEICHE_RELEASE_TARGET_SHA": release_target,
+            "SEICHE_SYSTEMD_DIR": str(systemd),
+            "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
+            "SEICHE_DEPLOY_WRAPPER": str(
+                tmp_path / "deploy" / "bin" / "seiche-deploy-wrapper.sh"
+            ),
+            "SEICHE_NBS_STATE_DIR": str(nbs_state),
+            "SEICHE_NBS_RUNTIME_ROOT": str(nbs_runtime),
+            "SEICHE_CONTROL_PYTHON": sys.executable,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "signed privileged controller assets are invalid" in result.stderr
+    assert not nbs_runtime.exists()
 
 
 def test_release_poller_installer_bootstraps_private_control_wrapper(tmp_path):
-    app = tmp_path / "app"
-    source = app / "ops" / "deploy"
-    source.mkdir(parents=True)
-    for path in (
-        DEPLOY_WRAPPER,
-        RELEASE_POLLER,
-        RELEASE_POLLER_SERVICE,
-        RELEASE_POLLER_TIMER,
-        RELEASE_ALLOWED_SIGNERS,
-    ):
-        shutil.copy2(path, source / path.name)
+    asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
     binary_dir = tmp_path / "sbin"
@@ -4090,13 +5131,20 @@ esac
     )
     always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
     installed_signer = tmp_path / "seiche-release.allowed-signers"
+    nbs_state = tmp_path / "nbs-state"
+    nbs_state.mkdir(mode=0o750)
+    nbs_state.chmod(0o750)
+    nbs_runtime = tmp_path / "nbs-runtime"
     env = os.environ | {
         "SEICHE_ALLOW_NON_ROOT_INSTALL_TEST": "1",
-        "SEICHE_APP_DIR": str(app),
+        "SEICHE_PRIVILEGED_ASSET_ROOT": str(asset_root),
+        "SEICHE_RELEASE_TARGET_SHA": release_target,
         "SEICHE_SYSTEMD_DIR": str(systemd),
         "SEICHE_RELEASE_POLLER_DEST": str(binary_dir / "seiche-release-poll"),
         "SEICHE_DEPLOY_WRAPPER": str(wrapper),
         "SEICHE_CONTROL_RUNTIME_DIR": str(runtime),
+        "SEICHE_NBS_STATE_DIR": str(nbs_state),
+        "SEICHE_NBS_RUNTIME_ROOT": str(nbs_runtime),
         "SEICHE_SYSTEMCTL_BIN": str(systemctl),
         "SEICHE_SYSTEMD_ANALYZE_BIN": str(always_ok),
         "SEICHE_SYNC_BIN": str(always_ok),
@@ -4104,31 +5152,157 @@ esac
         "SEICHE_RELEASE_ALLOWED_SIGNERS_DEST": str(installed_signer),
         "SEICHE_CONTROL_PYTHON": sys.executable,
     }
+    hostile_cwd = tmp_path / "hostile-controller-cwd"
+    hostile_cwd.mkdir()
+    hostile_sentinel = tmp_path / "controller-shadow-imported"
+    (hostile_cwd / "json.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(hostile_sentinel)!r}).write_text('executed')\n",
+        encoding="utf-8",
+    )
+    env |= {"PYTHONPATH": str(hostile_cwd), "PYTHONHOME": str(hostile_cwd)}
 
     result = subprocess.run(
         ["bash", str(RELEASE_POLLER_INSTALLER)],
         env=env,
+        cwd=hostile_cwd,
         text=True,
         capture_output=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert not hostile_sentinel.exists()
     assert wrapper.read_bytes() == DEPLOY_WRAPPER.read_bytes()
     assert wrapper.stat().st_mode & 0o777 == 0o700
     assert wrapper.parent.stat().st_mode & 0o777 == 0o700
+    assert nbs_state.is_dir()
+    assert not nbs_state.is_symlink()
+    assert nbs_state.stat().st_mode & 0o777 == 0o750
+    assert nbs_runtime.is_dir()
+    assert not nbs_runtime.is_symlink()
+    assert nbs_runtime.stat().st_mode & 0o777 == 0o755
     assert (binary_dir / "seiche-release-poll").read_bytes() == (
         RELEASE_POLLER.read_bytes()
     )
     assert "disable --now seiche-release-poll.timer" in calls.read_text().splitlines()
+
+    valid_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        cwd=hostile_cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert valid_retry.returncode == 0, valid_retry.stdout + valid_retry.stderr
+    assert not hostile_sentinel.exists()
+    assert nbs_state.stat().st_mode & 0o777 == 0o750
+
+    for identity_flag in ("-u", "-g"):
+        fake_bin = tmp_path / f"fake-id-{identity_flag[1:]}"
+        fake_bin.mkdir()
+        identity_getter = os.getuid if identity_flag == "-u" else os.getgid
+        wrong_identity = identity_getter() + 1
+        fake_id = _executable(
+            fake_bin / "id",
+            f"""case "$1" in
+  {identity_flag}) printf '%s\n' {wrong_identity} ;;
+  *) exec /usr/bin/id "$@" ;;
+esac
+""",
+        )
+        assert fake_id.is_file()
+        identity_env = env | {"PATH": f"{fake_bin}:{env['PATH']}"}
+        identity_retry = subprocess.run(
+            ["bash", str(RELEASE_POLLER_INSTALLER)],
+            env=identity_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert identity_retry.returncode != 0
+        assert (
+            "signed privileged controller assets are invalid" in identity_retry.stderr
+        )
+
+    nbs_state.chmod(0o777)
+    unsafe_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert unsafe_retry.returncode != 0
+    assert "NBS evidence root is absent or has unsafe metadata" in unsafe_retry.stderr
+
+    nbs_state.chmod(0o750)
+    nbs_state.rmdir()
+    symlink_target = tmp_path / "nbs-symlink-target"
+    symlink_target.mkdir(mode=0o750)
+    symlink_target.chmod(0o750)
+    nbs_state.symlink_to(symlink_target, target_is_directory=True)
+    symlink_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert symlink_retry.returncode != 0
+    assert "NBS evidence root is absent or has unsafe metadata" in symlink_retry.stderr
+
+    nbs_state.unlink()
+    nbs_state.write_text("not a directory\n")
+    file_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert file_retry.returncode != 0
+    assert "NBS evidence root is absent or has unsafe metadata" in file_retry.stderr
+
+    nbs_state.unlink()
+    missing_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert missing_retry.returncode != 0
+    assert "NBS evidence root is absent or has unsafe metadata" in missing_retry.stderr
+
+    real_parent = tmp_path / "real-nbs-parent"
+    real_parent.mkdir()
+    ancestor_nbs = real_parent / "nbs"
+    ancestor_nbs.mkdir(mode=0o750)
+    ancestor_nbs.chmod(0o750)
+    linked_parent = tmp_path / "linked-nbs-parent"
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+    ancestor_env = env | {"SEICHE_NBS_STATE_DIR": str(linked_parent / "nbs")}
+    ancestor_retry = subprocess.run(
+        ["bash", str(RELEASE_POLLER_INSTALLER)],
+        env=ancestor_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert ancestor_retry.returncode != 0
+    assert "NBS evidence root is absent or has unsafe metadata" in ancestor_retry.stderr
 
 
 def test_release_poller_units_are_inert_until_an_explicit_handoff():
     installer = RELEASE_POLLER_INSTALLER.read_text()
     service = RELEASE_POLLER_SERVICE.read_text()
     timer = RELEASE_POLLER_TIMER.read_text()
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
 
     assert "expected-target-SHA safety pin" in installer
+    assert 'grp.getgrnam("seiche").gr_gid' in installer
     assert "/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh" in installer
     assert 'mv -f -- "$WRAPPER_NEW" "$DEPLOY_WRAPPER"' in installer
     assert 'exec 9>"$CONTROL_LOCK"' in installer
@@ -4140,17 +5314,116 @@ def test_release_poller_units_are_inert_until_an_explicit_handoff():
     assert '"$SYSTEMCTL" disable --now seiche-release-poll.timer' in installer
     assert 'ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"' in installer
     assert "refusing to replace the pinned Seiche release signer" in installer
+    assert (
+        "production requires the out-of-band Seiche release signer trust anchor"
+        in installer
+    )
     assert 'ln "$SIGNER_STAGE" "$ALLOWED_SIGNERS"' in installer
     assert (
         "SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers" in service
     )
     assert "SEICHE_CONTROL_SIGNING_PRINCIPAL=" in service
     assert "ReadOnlyPaths=/etc/seiche-release.allowed-signers" in service
-    assert "ExecStart=/usr/local/sbin/seiche-release-poll" in service
+    assert (
+        "ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C "
+        "PATH=/usr/bin:/bin "
+        "SEICHE_CONTROL_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers "
+        "SEICHE_CONTROL_SIGNING_PRINCIPAL="
+        "beepboop2025@users.noreply.github.com "
+        "/usr/bin/bash -p /usr/local/sbin/seiche-release-poll" in service
+    )
+    poller_unset = {
+        name
+        for line in service.splitlines()
+        if line.startswith("UnsetEnvironment=")
+        for name in line.removeprefix("UnsetEnvironment=").split()
+    }
+    assert {
+        "GCONV_PATH",
+        "GLIBC_TUNABLES",
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "LOCPATH",
+    } <= poller_unset
+    assert not any(line.startswith("Environment=") for line in service.splitlines())
     assert "ConditionPathExists" not in service
     assert "TimeoutStartSec=3h" in service
+    assert "RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs " in service
     assert "OnUnitInactiveSec=5min" in timer
     assert "WantedBy=timers.target" in timer
+    assert "bash /home/seiche/app/ops/deploy/install-release-poller.sh" not in runbook
+    assert '"$ASSET_ROOT/ops/deploy/install-release-poller.sh"' in runbook
+    assert "SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY=1" in runbook
+    assert "fsck --strict --no-reflogs --no-dangling" in runbook
+    assert "ops/deploy/storage-volume.env.example" in DEPLOY_WRAPPER.read_text()
+
+
+def test_first_controller_runbook_has_one_way_trust_and_storage_order():
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text(
+        encoding="utf-8"
+    )
+    trust_publish = runbook.index('ln "$SIGNER_STAGE" "$SIGNERS"')
+    fetch = runbook.index("fetch --no-tags origin main")
+    bootstrap = runbook.index("SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY=1")
+    retained_root = runbook.index("ASSET_ROOT=${BOOTSTRAP_OUTPUT##* }")
+    preflight_source = runbook.index(
+        '"$ASSET_ROOT/ops/deploy/seiche-storage-preflight.py"'
+    )
+    preflight_start = runbook.index("systemctl start seiche-storage-preflight.service")
+    controller_install = runbook.index(
+        '"$ASSET_ROOT/ops/deploy/install-release-poller.sh"'
+    )
+
+    assert (
+        trust_publish
+        < fetch
+        < bootstrap
+        < retained_root
+        < preflight_source
+        < preflight_start
+        < controller_install
+    )
+    assert "OWNER_PUBKEY=/root/seiche-owner-release-key.pub" in runbook
+    assert "SHA256:yhoa/PIDMM6M/ZennILp8jtRJy5pArncJRARbQssTMI" in runbook
+    assert "never\nreplaces a pin" in runbook
+    assert "Never read or copy the key or expected fingerprint from the" in runbook
+    assert '[ "$(stat -c \'%U:%G:%a:%h\' "$SIGNERS")" = root:root:444:1 ]' in runbook
+    assert "ops/deploy/storage-volume.env.example" in runbook
+    assert "ROLLBACK_ROOT=/root/seiche-storage-v1-before-$TARGET" in runbook
+    assert "restore all\nthree members as one compatible set" in runbook
+    assert "Once a v2 candidate accepts or new NBS evidence is ingested" in runbook
+    assert "/home/seiche/app/ops/deploy/seiche-storage-preflight" not in runbook
+
+    bash_blocks = re.findall(r"```bash\n(.*?)```", runbook, re.DOTALL)
+    assert bash_blocks
+    for index, block in enumerate(bash_blocks):
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=block,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert syntax.returncode == 0, f"bash block {index}: {syntax.stderr}"
+
+
+def test_official_readiness_preflights_start_with_a_clean_privileged_shell():
+    for script_path in (DEPLOY_WRAPPER, MARKET_INSTALLER):
+        script = script_path.read_text(encoding="utf-8")
+        helper_start = script.index("run_recovery_proof_preflight() {")
+        helper_end = script.index(
+            "validate_data_readiness_convergence_wait() {", helper_start
+        )
+        helpers = script[helper_start:helper_end]
+
+        assert helpers.count("/usr/bin/env -i") == 2
+        assert helpers.count("HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin") == 2
+        assert helpers.count('/usr/bin/bash -p "$DATA_READINESS_SCRIPT"') == 2
+        assert '/usr/bin/bash "$DATA_READINESS_SCRIPT"' not in helpers
+        assert "SEICHE_DATA_READINESS_PROOF_ONLY=1" in helpers
+        assert "SEICHE_DATA_READINESS_SKIP_OFFSITE=1" in helpers
+        assert "SEICHE_DATA_READINESS_REQUIRED_UNITS=" in helpers
 
 
 def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
@@ -4174,7 +5447,9 @@ def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
     assert "RestrictSUIDSGID=false" in service
     assert "CAP_FSETID" in capabilities
     assert "/var/lib/seiche" in writable_paths
+    assert "/var/lib/seiche-nbs" in writable_paths
     assert "/var/lib/seiche-deploy" in writable_paths
+    assert "/opt/seiche-nbs-intake" in writable_paths
 
     # Allowing that one setgid collaboration directory does not reopen the
     # controller's host namespace or privilege-escalation surfaces.
@@ -4216,6 +5491,265 @@ def test_release_controller_wrapper_stays_outside_protected_homes():
         assert "/root/seiche-deploy-wrapper.sh" not in source
     assert "ProtectHome=read-only" in service
     assert "ReadWritePaths=/home/seiche /root" not in service
+
+
+def test_privileged_controllers_pin_runuser_outside_the_minimal_path(tmp_path: Path):
+    poller = RELEASE_POLLER.read_text()
+    wrapper = DEPLOY_WRAPPER.read_text()
+    service = RELEASE_POLLER_SERVICE.read_text()
+
+    assert "PATH=/usr/bin:/bin" in service
+    assert "RUNUSER=/usr/sbin/runuser" in poller
+    assert "RUNUSER=/usr/sbin/runuser" in wrapper
+    assert "os.execv(runner," in poller
+    assert "os.execvp(runner," not in poller
+    bare_runuser = r"(?m)(^|[;&|()])[ \t]*(?:if[ \t]+![ \t]+)?runuser(?=[ \t])"
+    assert not re.search(bare_runuser, poller)
+    assert not re.search(bare_runuser, wrapper)
+
+    rejected = subprocess.run(
+        ["bash", "-c", 'source "$1"', "poller-override", str(RELEASE_POLLER)],
+        env=os.environ | {"SEICHE_CONTROL_RUNUSER": str(tmp_path / "runuser")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "unavailable in production" in rejected.stderr
+
+
+def test_forced_ssh_wrapper_has_a_clean_canonical_entry_contract():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    prelude = wrapper[: wrapper.index("materialize_privileged_release_assets()")]
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    workflow = DEPLOY_WORKFLOW.read_text()
+
+    assert wrapper.startswith("#!/bin/bash -p\n")
+    assert "/usr/bin/env -i" in prelude
+    assert (
+        'HOME="$SEICHE_DEPLOY_ENTRY_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin' in prelude
+    )
+    assert "SEICHE_DEPLOY_FORCED_MARKER=--seiche-forced-entry-v1" in prelude
+    assert '"$SEICHE_DEPLOY_ISOLATED_MARKER" "$SEICHE_DEPLOY_ENTRY_MODE"' in prelude
+    assert "CANONICAL_DEPLOY_WRAPPER=/var/lib/seiche-deploy/bin/" in prelude
+    assert 'if [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then' in prelude
+    assert "SSH deployment entry is missing the forced-command marker" in prelude
+    assert "root:root:700:1:regular file" in prelude
+    assert "forced deployment did not enter through the canonical" in prelude
+
+    request_gate = wrapper[wrapper.index("EXPECTED_TARGET=") :]
+    assert 'if [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ]; then' in request_gate
+    assert (
+        "forced deployment command must be deploy plus one commit SHA" in request_gate
+    )
+    assert "restrict + env -i + bash -p" in workflow
+    assert 'restrict,command="/usr/bin/env -i HOME=/root LANG=C LC_ALL=C ' in runbook
+    assert 'PATH=/usr/bin:/bin SSH_ORIGINAL_COMMAND=\\\\"' in runbook
+    assert "/usr/bin/bash -p /var/lib/seiche-deploy/bin/" in runbook
+    assert "--seiche-forced-entry-v1" in runbook
+    assert "permituserenvironment no" in runbook
+    assert '[ "$root_shell" = /bin/bash ]' in runbook
+    assert "active sshd Match blocks are forbidden" in runbook
+    assert 'acceptenv != ["LANG", "LC_*"]' in runbook
+    assert "sshd SetEnv must remain empty" in runbook
+    assert "authorized_keys.seiche-forced-v1-before-$TARGET" in runbook
+    assert "trigger-forced-deploy.sh" in runbook
+    assert "seiche-deploy-wrapper.retired-$TARGET" in runbook
+
+
+def test_empty_or_unmarked_ssh_request_never_becomes_local_maintenance():
+    empty_forced = subprocess.run(
+        ["/bin/bash", "-p", str(DEPLOY_WRAPPER), "--seiche-forced-entry-v1"],
+        env=os.environ | {"SSH_ORIGINAL_COMMAND": ""},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert empty_forced.returncode != 0
+    assert "canonical root-owned wrapper" in empty_forced.stderr
+
+    unmarked = subprocess.run(
+        ["/bin/bash", "-p", str(DEPLOY_WRAPPER)],
+        env=os.environ
+        | {
+            "SSH_CONNECTION": "192.0.2.10 4242 192.0.2.20 22",
+            "SSH_ORIGINAL_COMMAND": "",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert unmarked.returncode != 0
+    assert "missing the forced-command marker" in unmarked.stderr
+
+
+@pytest.mark.parametrize(
+    ("directive", "message"),
+    [
+        ("Match\tAddress 192.0.2.1", "active sshd Match blocks are forbidden"),
+        ("Include\t/tmp/unreviewed/*.conf", "unreviewed sshd Include path"),
+    ],
+)
+def test_forced_ssh_config_audit_rejects_tab_separated_policy_bypasses(
+    tmp_path: Path,
+    directive: str,
+    message: str,
+) -> None:
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    marker = (
+        "/usr/bin/python3 -I -B - \\\n"
+        "  /etc/ssh/sshd_config /etc/ssh/sshd_config.d 0 0 \\\n"
+        "  '/etc/ssh/sshd_config.d/*.conf' <<'PY'\n"
+    )
+    script_start = runbook.index(marker) + len(marker)
+    script = runbook[script_start : runbook.index("\nPY", script_start)]
+
+    fragments = tmp_path / "sshd_config.d"
+    fragments.mkdir(mode=0o755)
+    config = tmp_path / "sshd_config"
+    expected_include = f"{fragments}/*.conf"
+    config.write_text(f"Include {expected_include}\n{directive}\n", encoding="utf-8")
+    config.chmod(0o644)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-",
+            str(config),
+            str(fragments),
+            str(os.getuid()),
+            str(os.getgid()),
+            expected_include,
+        ],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+def test_forced_ssh_migration_reloads_the_audited_live_daemon_before_key_rewrite():
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    migration = runbook[runbook.index("### Migrate the forced SSH fallback") :]
+
+    assert "SSHD_UNIT=/usr/lib/systemd/system/ssh.service" in migration
+    assert "SSHD_DEFAULTS=/etc/default/ssh" in migration
+    assert "--property=DropInPaths --value" in migration
+    assert '"$SSHD_DEFAULTS (ignore_errors=yes)"' in migration
+    assert '[ "$SSHD_ACTIVE_DEFAULTS" = SSHD_OPTS= ]' in migration
+    assert "ssh.service ExecStart is not the reviewed default" in migration
+    assert "ssh.service ExecReload is not the reviewed reload path" in migration
+    assert "main process was launched with custom SSHD_OPTS" in migration
+    assert '[ "$SSHD_MAIN_PID_AFTER" = "$SSHD_MAIN_PID_BEFORE" ]' in migration
+
+    source_audit = migration.index("active sshd Match blocks are forbidden")
+    service_audit = migration.index("--property=FragmentPath --value")
+    launch_environment = migration.index("/proc/$SSHD_MAIN_PID_BEFORE/environ")
+    syntax_check = migration.index("\n/usr/sbin/sshd -t\n")
+    reload_service = migration.index('/usr/bin/systemctl reload "$SSHD_SERVICE"')
+    active_after_reload = migration.index(
+        '/usr/bin/systemctl is-active --quiet "$SSHD_SERVICE"', reload_service
+    )
+    same_pid = migration.index('[ "$SSHD_MAIN_PID_AFTER" = "$SSHD_MAIN_PID_BEFORE" ]')
+    effective_policy = migration.index("/usr/sbin/sshd -T", same_pid)
+    key_rewrite = migration.index("Then atomically transform")
+
+    assert (
+        source_audit
+        < service_audit
+        < launch_environment
+        < syntax_check
+        < reload_service
+        < active_after_reload
+        < same_pid
+        < effective_policy
+        < key_rewrite
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"PATH=/usr/bin\0SSHD_OPTS=-f /tmp/unreviewed-sshd_config\0",
+        b"SSHD_OPTS=\0SSHD_OPTS=\0",
+    ],
+)
+def test_forced_ssh_launch_environment_audit_rejects_custom_or_duplicate_opts(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    marker = "/usr/bin/python3 -I -B - \"/proc/$SSHD_MAIN_PID_BEFORE/environ\" <<'PY'\n"
+    script_start = runbook.index(marker) + len(marker)
+    script = runbook[script_start : runbook.index("\nPY", script_start)]
+    environment = tmp_path / "environ"
+    environment.write_bytes(payload)
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-", str(environment)],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "SSHD_OPTS" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b"PATH=/usr/bin\0", b"PATH=/usr/bin\0SSHD_OPTS=\0"],
+)
+def test_forced_ssh_launch_environment_audit_accepts_absent_or_empty_opts(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    runbook = (ROOT / "ops" / "deploy" / "RELEASE-POLLER.md").read_text()
+    marker = "/usr/bin/python3 -I -B - \"/proc/$SSHD_MAIN_PID_BEFORE/environ\" <<'PY'\n"
+    script_start = runbook.index(marker) + len(marker)
+    script = runbook[script_start : runbook.index("\nPY", script_start)]
+    environment = tmp_path / "environ"
+    environment.write_bytes(payload)
+
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-", str(environment)],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_signed_storage_template_matches_the_existing_production_namespace():
+    template = (ROOT / "ops" / "deploy" / "storage-volume.env.example").read_text()
+    runbook = (ROOT / "ops" / "deploy" / "HETZNER-VOLUME.md").read_text()
+    expected_roots = {
+        "SEICHE_STORAGE_EXPECTED_STATE_FSROOT": "/seiche/runtime/var-lib-seiche",
+        "SEICHE_STORAGE_EXPECTED_NBS_FSROOT": "/seiche/evidence/seiche-nbs",
+        "SEICHE_STORAGE_EXPECTED_BACKUP_FSROOT": "/seiche/backups/seiche-market",
+    }
+
+    for key, root in expected_roots.items():
+        assert f"{key}={root}\n" in template
+        assert root in runbook
+
+
+def test_wrapper_installer_and_self_sync_preserve_canonical_mode_0700():
+    wrapper = DEPLOY_WRAPPER.read_text()
+    installer = RELEASE_POLLER_INSTALLER.read_text()
+    sync = wrapper[wrapper.index("# Self-sync the deploy chain") :]
+
+    assert 'install -m 0700 "$STAGE_DIR/seiche-deploy-wrapper.sh"' in installer
+    assert 'if [ "$dst" = "$CANONICAL_DEPLOY_WRAPPER" ]; then' in sync
+    assert "sync_mode=0700" in sync
+    assert 'install -o root -g root -m "$sync_mode"' in sync
 
 
 def test_promotion_is_point_of_no_return_and_rollback_stops_before_reset():

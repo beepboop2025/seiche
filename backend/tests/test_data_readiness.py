@@ -7,6 +7,7 @@ import grp
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -27,56 +28,6 @@ def _executable(path: Path, body: str) -> Path:
     path.write_text("#!/usr/bin/env python3\n" + textwrap.dedent(body))
     path.chmod(0o755)
     return path
-
-
-def _installer_script_normalizer() -> str:
-    installer = INSTALLER.read_text()
-    start = installer.index("normalize_root_service_script() {")
-    end = installer.index("\nPY\n}\n", start) + len("\nPY\n}\n")
-    return installer[start:end]
-
-
-def _tracked_script_fixture(tmp_path: Path) -> tuple[Path, str, Path]:
-    repo = tmp_path / "app"
-    relative_path = "ops/deploy/seiche-data-readiness.sh"
-    source = repo / relative_path
-    source.parent.mkdir(parents=True)
-    shutil.copyfile(SCRIPT, source)
-    source.chmod(0o755)
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "--", relative_path], check=True)
-    source.chmod(0o700)
-    return repo, relative_path, source
-
-
-def _run_script_normalizer(
-    repo: Path, relative_path: str, expected_uid: int, expected_gid: int
-) -> subprocess.CompletedProcess[str]:
-    harness = (
-        "set -euo pipefail\n"
-        "APP_DIR=$1\n"
-        "READINESS_SCRIPT_RELATIVE=$2\n"
-        "OFFSITE_SCRIPT_RELATIVE=$3\n"
-        "shift 3\n"
-        f"{_installer_script_normalizer()}\n"
-        'normalize_root_service_script "$@"\n'
-    )
-    return subprocess.run(
-        [
-            "bash",
-            "-c",
-            harness,
-            "normalizer",
-            str(repo),
-            "ops/deploy/seiche-data-readiness.sh",
-            "ops/deploy/seiche-market-offsite-backup.sh",
-            relative_path,
-            str(expected_uid),
-            str(expected_gid),
-        ],
-        text=True,
-        capture_output=True,
-    )
 
 
 def _health(
@@ -113,7 +64,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     recovery_proof_dir.chmod(0o750)
     restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
-        "schema=seiche.market-backup-restore-check.v3\n"
+        "schema=seiche.market-backup-restore-check.v4\n"
         f"checked_at={(NOW - timedelta(hours=1)).isoformat()}\n"
         "snapshot=20260822T020000Z\n"
         f"deployed_sha={'a' * 40}\n"
@@ -121,6 +72,8 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "critical_table_count_floor=11|12|13|14\n"
         "database_restore=pass\n"
         "state_archive_restore=pass\n"
+        "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1\n"
+        "nbs_full_store_audit_result=not_onboarded\n"
         "nbs_public_revision_store=not_onboarded\n"
         "api_data_archive_restore=pass\n"
         "research_only=true\n"
@@ -184,6 +137,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     env = {
         **os.environ,
         "TMPDIR": str(tmp_dir),
+        "SEICHE_ALLOW_NON_ROOT_READINESS_TEST": "1",
         "SEICHE_CURL_BIN": str(curl),
         "SEICHE_PYTHON_BIN": sys.executable,
         "SEICHE_SYSTEMCTL_BIN": str(systemctl),
@@ -284,12 +238,16 @@ def _write_offsite_status(
     path.write_text(
         json.dumps(
             {
-                "schema": "seiche.market-offsite-backup-status.v1",
+                "schema": "seiche.market-offsite-backup-status.v2",
                 "status": current_status,
                 "observed_at": (NOW - timedelta(minutes=30)).isoformat(),
                 "attempt_id": attempt_id,
                 "snapshot_id": snapshot_id,
                 "source_revision": "b" * 40,
+                "source_backup_schema": "seiche.market-backup.v3",
+                "nbs_state_root": "/var/lib/seiche-nbs",
+                "nbs_full_store_audit_contract": ("seiche.nbs-full-store-audit.v1"),
+                "nbs_full_store_audit_result": "required_at_restore",
                 "provider": "hetzner-object-storage",
                 "bucket": bucket,
                 "prefix": prefix,
@@ -315,6 +273,10 @@ def _write_offsite_status(
                     "attempt_id": attempt_id,
                     "snapshot_id": snapshot_id,
                     "source_revision": "b" * 40,
+                    "source_backup_schema": "seiche.market-backup.v3",
+                    "nbs_state_root": "/var/lib/seiche-nbs",
+                    "nbs_full_store_audit_contract": ("seiche.nbs-full-store-audit.v1"),
+                    "nbs_full_store_audit_result": "required_at_restore",
                     "bucket": bucket,
                     "prefix": prefix,
                     "key_id": "market-key-2026-08-v1",
@@ -357,9 +319,14 @@ def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
 def test_readiness_accepts_a_verified_nbs_head_receipt(tmp_path: Path) -> None:
     env, _, restore_receipt = _layout(tmp_path)
     restore_receipt.write_text(
-        restore_receipt.read_text().replace(
+        restore_receipt.read_text()
+        .replace(
             "nbs_public_revision_store=not_onboarded",
             "nbs_public_revision_store=verified_head",
+        )
+        .replace(
+            "nbs_full_store_audit_result=not_onboarded",
+            "nbs_full_store_audit_result=verified_head",
         )
     )
 
@@ -444,6 +411,15 @@ def test_scheduled_mode_accepts_fresh_restore_verified_last_success(
         "top_bucket",
         "top_lock",
         "status",
+        "status_schema",
+        "top_backup_schema",
+        "last_backup_schema",
+        "top_nbs_root",
+        "last_nbs_root",
+        "top_audit_contract",
+        "last_audit_contract",
+        "top_audit_result",
+        "last_audit_result",
     ],
 )
 def test_scheduled_mode_rejects_impossible_producer_status_shape(
@@ -465,8 +441,46 @@ def test_scheduled_mode_rejects_impossible_producer_status_shape(
         document["bucket"] = "wrong-recovery"
     elif drift == "top_lock":
         document["object_lock"] = {"mode": "GOVERNANCE", "days": 90}
-    else:
+    elif drift == "status":
         document["status"] = "complete"
+    elif drift == "status_schema":
+        document["schema"] = "seiche.market-offsite-backup-status.v1"
+    else:
+        scope, field, value = {
+            "top_backup_schema": (document, "source_backup_schema", "v2"),
+            "last_backup_schema": (
+                document["last_success"],
+                "source_backup_schema",
+                "v2",
+            ),
+            "top_nbs_root": (document, "nbs_state_root", "/var/lib/seiche"),
+            "last_nbs_root": (
+                document["last_success"],
+                "nbs_state_root",
+                "/var/lib/seiche",
+            ),
+            "top_audit_contract": (
+                document,
+                "nbs_full_store_audit_contract",
+                "unknown",
+            ),
+            "last_audit_contract": (
+                document["last_success"],
+                "nbs_full_store_audit_contract",
+                "unknown",
+            ),
+            "top_audit_result": (
+                document,
+                "nbs_full_store_audit_result",
+                "not_onboarded",
+            ),
+            "last_audit_result": (
+                document["last_success"],
+                "nbs_full_store_audit_result",
+                "not_onboarded",
+            ),
+        }[drift]
+        scope[field] = value
     status_path.write_text(json.dumps(document) + "\n")
 
     result = subprocess.run(
@@ -811,11 +825,23 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
     ("old", "new"),
     [
         (
+            "schema=seiche.market-backup-restore-check.v4",
             "schema=seiche.market-backup-restore-check.v3",
-            "schema=seiche.market-backup-restore-check.v2",
         ),
         ("database_restore=pass", "database_restore=failed"),
         ("state_archive_restore=pass", "state_archive_restore=failed"),
+        (
+            "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1",
+            "nbs_full_store_audit_contract=unknown",
+        ),
+        (
+            "nbs_full_store_audit_result=not_onboarded",
+            "nbs_full_store_audit_result=unverified",
+        ),
+        (
+            "nbs_full_store_audit_result=not_onboarded",
+            "nbs_full_store_audit_result=verified_head",
+        ),
         (
             "nbs_public_revision_store=not_onboarded",
             "nbs_public_revision_store=unverified",
@@ -828,7 +854,7 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
         ("critical_table_counts=11|12|13|14", "critical_table_counts=11|12"),
     ],
 )
-def test_restore_receipt_requires_the_complete_v3_pass_contract(
+def test_restore_receipt_requires_the_complete_v4_pass_contract(
     tmp_path: Path,
     old: str,
     new: str,
@@ -988,17 +1014,37 @@ def test_systemd_units_are_alerting_hardened_and_five_minutely() -> None:
     required_defaults = next(
         line for line in script.splitlines() if "DEFAULT_REQUIRED_UNITS=" in line
     )
+    disk_defaults = next(
+        line for line in script.splitlines() if "DEFAULT_DISK_PATHS=" in line
+    )
 
     assert "seiche-source-worker.service" in required_defaults
+    assert "/var/lib/seiche-nbs" in disk_defaults
     assert "OnFailure=undertow-failure-alert@%n.service" in service
     assert "Type=oneshot" in service
     assert "ProtectSystem=strict" in service
     assert "ProtectHome=read-only" in service
     assert "CapabilityBoundingSet=\n" in service
+    assert "EnvironmentFile=" not in service
     assert (
-        "ExecStart=/usr/bin/bash /etc/seiche/libexec/seiche-data-readiness.sh"
-        in service
+        "ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C "
+        "PATH=/usr/bin:/bin /usr/bin/bash -p "
+        "/etc/seiche/libexec/seiche-data-readiness.sh" in service
     )
+    assert script.startswith("#!/bin/bash -p\n")
+    unset_environment = " ".join(
+        line.removeprefix("UnsetEnvironment=")
+        for line in service.splitlines()
+        if line.startswith("UnsetEnvironment=")
+    ).split()
+    assert {
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "GLIBC_TUNABLES",
+        "GCONV_PATH",
+        "LOCPATH",
+    } <= set(unset_environment)
     assert "/home/seiche/app/ops/deploy/seiche-data-readiness.sh" not in service
     assert "ReadOnlyPaths=/home/seiche/app" in service
     assert "-/var/lib/seiche-offsite-backup" in service
@@ -1010,105 +1056,139 @@ def test_systemd_units_are_alerting_hardened_and_five_minutely() -> None:
     assert "Unit=seiche-data-readiness.service" in timer
 
 
-def test_installer_normalizes_tracked_readiness_script_from_0700_to_0755(
+def test_scheduled_unit_cleans_startup_hooks_and_semantic_overrides(
     tmp_path: Path,
 ) -> None:
-    repo, relative_path, source = _tracked_script_fixture(tmp_path)
-    metadata = source.stat()
+    service = SERVICE.read_text()
+    exec_start = next(
+        line.removeprefix("ExecStart=")
+        for line in service.splitlines()
+        if line.startswith("ExecStart=")
+    )
+    command = shlex.split(exec_start)
+    command[0] = shutil.which("env") or "/usr/bin/env"
+    command[command.index("/usr/bin/bash")] = shutil.which("bash") or "/bin/bash"
+    probe = tmp_path / "probe.sh"
+    probe.write_text(
+        "printf '%s\\n' "
+        '"${SEICHE_DATA_READINESS_PROOF_ONLY-unset}|'
+        "${SEICHE_DATA_READINESS_SKIP_OFFSITE-unset}|"
+        "${SEICHE_DATA_READINESS_NOW_EPOCH-unset}|"
+        "${SEICHE_PYTHON_BIN-unset}|"
+        '${SEICHE_ALLOW_NON_ROOT_READINESS_TEST-unset}"\n'
+    )
+    command[-1] = str(probe)
 
-    result = _run_script_normalizer(
-        repo, relative_path, metadata.st_uid, metadata.st_gid
+    marker = tmp_path / "bash-env-executed"
+    startup = tmp_path / "bash-env"
+    startup.write_text(f"printf executed >{shlex.quote(str(marker))}\nexit 99\n")
+    env = {
+        **os.environ,
+        "BASH_ENV": str(startup),
+        "SEICHE_DATA_READINESS_PROOF_ONLY": "1",
+        "SEICHE_DATA_READINESS_SKIP_OFFSITE": "1",
+        "SEICHE_DATA_READINESS_NOW_EPOCH": "1",
+        "SEICHE_PYTHON_BIN": "/attacker/python",
+        "SEICHE_ALLOW_NON_ROOT_READINESS_TEST": "1",
+    }
+
+    result = subprocess.run(
+        command,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
     )
 
     assert result.returncode == 0, result.stderr
-    assert source.stat().st_mode & 0o7777 == 0o755
+    assert result.stdout == "unset|unset|unset|unset|unset\n"
+    assert result.stderr == ""
+    assert not marker.exists()
+
+
+def test_root_readiness_commands_are_pinned_and_test_overrides_fail_closed() -> None:
+    script = SCRIPT.read_text()
+    root_branch = script[
+        script.index('if [ "$EUID" -eq 0 ]; then') : script.index(
+            "else\n", script.index('if [ "$EUID" -eq 0 ]; then')
+        )
+    ]
+
+    for variable, command in {
+        "CURL_BIN": "/usr/bin/curl",
+        "PYTHON_BIN": "/usr/bin/python3",
+        "SYSTEMCTL_BIN": "/usr/bin/systemctl",
+        "DF_BIN": "/usr/bin/df",
+        "MKTEMP_BIN": "/usr/bin/mktemp",
+        "RM_BIN": "/usr/bin/rm",
+    }.items():
+        assert f"{variable}={command}" in root_branch
+        assert f"${{SEICHE_{variable}+x}}" in root_branch
+    assert "SEICHE_ALLOW_NON_ROOT_READINESS_TEST+x" in root_branch
+    assert "readonly CURL_BIN PYTHON_BIN SYSTEMCTL_BIN" in script
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="requires an unprivileged caller")
+def test_nonroot_readiness_requires_an_explicit_test_capability(tmp_path: Path) -> None:
+    env, _, _ = _layout(tmp_path)
+    env.pop("SEICHE_ALLOW_NON_ROOT_READINESS_TEST")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "seiche data readiness: configuration invalid\n"
+
+
+def test_installer_authenticates_and_root_installs_the_readiness_helper() -> None:
     installer = INSTALLER.read_text()
-    normalize_call = installer.index(
-        '"$READINESS_SCRIPT_RELATIVE" "$SEICHE_SERVICE_UID"'
-    )
-    assert normalize_call < installer.index("systemctl daemon-reload")
-
-
-def test_installer_preserves_an_already_0755_tracked_readiness_script(
-    tmp_path: Path,
-) -> None:
-    repo, relative_path, source = _tracked_script_fixture(tmp_path)
-    source.chmod(0o755)
-    metadata = source.stat()
-
-    result = _run_script_normalizer(
-        repo, relative_path, metadata.st_uid, metadata.st_gid
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert source.stat().st_mode & 0o7777 == 0o755
-
-
-@pytest.mark.parametrize(
-    "unsafe_kind",
-    (
-        "symlink",
-        "nonregular",
-        "wrong_owner",
-        "hardlink",
-        "mode",
-        "bytes",
-        "index_mode",
-        "untracked",
-    ),
-)
-def test_installer_rejects_unsafe_readiness_script_source(
-    tmp_path: Path, unsafe_kind: str
-) -> None:
-    repo, relative_path, source = _tracked_script_fixture(tmp_path)
-    expected_uid = source.stat().st_uid
-    expected_gid = source.stat().st_gid
-    if unsafe_kind == "symlink":
-        replacement = tmp_path / "replacement.sh"
-        shutil.copyfile(SCRIPT, replacement)
-        replacement.chmod(0o700)
-        source.unlink()
-        source.symlink_to(replacement)
-    elif unsafe_kind == "nonregular":
-        source.unlink()
-        source.mkdir()
-    elif unsafe_kind == "wrong_owner":
-        expected_uid += 1
-    elif unsafe_kind == "hardlink":
-        replacement = tmp_path / "replacement.sh"
-        shutil.copyfile(SCRIPT, replacement)
-        replacement.chmod(0o700)
-        source.unlink()
-        os.link(replacement, source)
-    elif unsafe_kind == "mode":
-        source.chmod(0o744)
-    elif unsafe_kind == "bytes":
-        source.write_text("#!/usr/bin/env bash\nexit 0\n")
-        source.chmod(0o700)
-    elif unsafe_kind == "index_mode":
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "update-index",
-                "--chmod=-x",
-                "--",
-                relative_path,
-            ],
-            check=True,
+    validator = installer[
+        installer.index("validate_signed_asset_root() {") : installer.index(
+            "install_nbs_runtime() {"
         )
-    else:
-        subprocess.run(
-            ["git", "-C", str(repo), "rm", "--cached", "--", relative_path],
-            check=True,
-            capture_output=True,
+    ]
+    helper_installer = installer[
+        installer.index("install_runtime_shell_helper() {") : installer.index(
+            "systemctl enable --now postgresql"
         )
+    ]
 
-    result = _run_script_normalizer(repo, relative_path, expected_uid, expected_gid)
+    assert (
+        'ASSET_ROOT="${SEICHE_PRIVILEGED_ASSET_ROOT:'
+        '?signed privileged asset root is required}"' in installer
+    )
+    assert (
+        'READINESS_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/'
+        'seiche-data-readiness.sh"' in installer
+    )
+    assert '"ops/deploy/seiche-data-readiness.sh"' in validator
+    assert 'install -o root -g root -m 0755 "$source" "$stage"' in helper_installer
+    assert '/usr/bin/bash -n "$stage"' in helper_installer
+    assert 'mv -f -- "$stage" "$destination"' in helper_installer
+    assert (
+        '"$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED" \\\n'
+        "    seiche-data-readiness" in helper_installer
+    )
 
-    assert result.returncode != 0
-    assert "market platform: root service script" in result.stderr
+
+def test_installer_never_repairs_or_executes_a_checkout_readiness_helper() -> None:
+    installer = INSTALLER.read_text()
+
+    assert "normalize_root_service_script" not in installer
+    assert "$APP_DIR/ops/deploy/seiche-data-readiness.sh" not in installer
+    assert "READINESS_SCRIPT_RELATIVE" not in installer
+    assert "READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/" in installer
+    assert installer.index("install_runtime_shell_helper \\\n") < installer.index(
+        "DATA_UNIT_STAGE_DIR=$(mktemp -d"
+    )
 
 
 def test_capability_free_readiness_service_can_traverse_restore_receipt_tree() -> None:
