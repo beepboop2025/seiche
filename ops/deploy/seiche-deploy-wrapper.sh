@@ -721,6 +721,32 @@ run_data_readiness_preflight() {
     SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
     /usr/bin/bash "$DATA_READINESS_SCRIPT"
 }
+ensure_candidate_fresh_for_readiness() {
+  # A release-bound backup and restore can legitimately consume the API's
+  # entire 15-minute freshness budget. Nudge the cache owner without taking
+  # readers offline, then require a fresh exact-SHA handoff before acceptance.
+  if ! curl -sf -m 20 http://127.0.0.1:8787/api/gauge >/dev/null; then
+    echo "data readiness: cache refresh nudge failed; restarting the exact candidate"
+    if ! systemctl restart seiche-api; then
+      echo "FAIL: API refresh restart failed after recovery proof"
+      return 1
+    fi
+    sleep 3
+  fi
+  if candidate_health_wait 900 "$AFTER" 900; then
+    return 0
+  fi
+  echo "data readiness: background refresh missed its deadline; restarting the exact candidate"
+  if ! systemctl restart seiche-api; then
+    echo "FAIL: API fallback restart failed after recovery proof"
+    return 1
+  fi
+  sleep 3
+  if ! candidate_health_wait 900 "$AFTER" 900; then
+    echo "FAIL: API did not produce a fresh exact candidate after recovery proof"
+    return 1
+  fi
+}
 activate_data_readiness_after_proof() {
   # An already-current v2 backup and restore receipt avoid a redundant drill.
   # A first v2/fresh host fails this preflight and must create and restore one
@@ -739,6 +765,10 @@ activate_data_readiness_after_proof() {
       echo "FAIL: v2 data-readiness bootstrap did not pass; readiness timer remains stopped"
       return 1
     fi
+  fi
+  if ! ensure_candidate_fresh_for_readiness; then
+    echo "FAIL: exact candidate freshness could not be restored before readiness"
+    return 1
   fi
   if ! run_data_readiness_preflight; then
     echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
@@ -1068,14 +1098,20 @@ deploy_pull_unit() {
 # keeps the release gate waiting for a build completed by the current process;
 # every poll remains cache-only and cheap.
 parse_candidate_health() {
-  local body="$1" expected_sha="$2"
+  local body="$1" expected_sha="$2" max_generated_age="${3:-0}" now_epoch="${4:-}"
   "$APP/backend/.venv/bin/python" -c '
+from datetime import datetime, timezone
 import json
 import re
 import sys
+import time
 
 try:
     expected_sha = sys.argv[2]
+    max_generated_age = int(sys.argv[3])
+    now_epoch = int(sys.argv[4]) if sys.argv[4] else int(time.time())
+    if max_generated_age < 0 or now_epoch < 0:
+        raise ValueError
     payload = json.load(open(sys.argv[1], encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError
@@ -1089,22 +1125,45 @@ try:
         or re.fullmatch(r"[0-9a-f]{64}", candidate["activation_token"]) is None
     ):
         raise ValueError
+    if max_generated_age:
+        generated_at = payload.get("generated_at")
+        if not isinstance(generated_at, str) or len(generated_at) > 64:
+            raise ValueError
+        candidate_time = datetime.fromisoformat(
+            generated_at[:-1] + "+00:00"
+            if generated_at.endswith(("Z", "z"))
+            else generated_at
+        )
+        if candidate_time.tzinfo is None or candidate_time.utcoffset() is None:
+            raise ValueError
+        generated_epoch = candidate_time.astimezone(timezone.utc).timestamp()
+        if generated_epoch > now_epoch + 300:
+            raise ValueError
+        if now_epoch - generated_epoch > max_generated_age:
+            raise ValueError
 except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
     raise SystemExit(1)
 sys.stdout.write(candidate["activation_token"])
-' "$body" "$expected_sha"
+' "$body" "$expected_sha" "$max_generated_age" "$now_epoch"
 }
 
 ACTIVATION_TOKEN=""
 candidate_health_once() {
-  local expected_sha="$1" body token
+  local expected_sha="$1" max_generated_age="${2:-0}" body token now_epoch
   body=$(mktemp) || return 1
   if ! curl -sf -m 10 \
       'http://127.0.0.1:8787/api/internal/v1/release-health' >"$body"; then
     rm -f -- "$body"
     return 1
   fi
-  if ! token=$(parse_candidate_health "$body" "$expected_sha"); then
+  now_epoch=$(date +%s) || {
+    rm -f -- "$body"
+    return 1
+  }
+  if ! token=$(
+      parse_candidate_health \
+        "$body" "$expected_sha" "$max_generated_age" "$now_epoch"
+  ); then
     rm -f -- "$body"
     return 1
   fi
@@ -1112,9 +1171,9 @@ candidate_health_once() {
   ACTIVATION_TOKEN="$token"
 }
 
-candidate_health_wait() {  # candidate_health_wait SECONDS SHA -> exact candidate
-  local window="$1" expected_sha="$2" deadline=$((SECONDS + $1))
-  until candidate_health_once "$expected_sha"; do
+candidate_health_wait() {  # candidate_health_wait SECONDS SHA [MAX_AGE] -> exact candidate
+  local window="$1" expected_sha="$2" max_generated_age="${3:-0}" deadline=$((SECONDS + $1))
+  until candidate_health_once "$expected_sha" "$max_generated_age"; do
     if [ "$SECONDS" -ge "$deadline" ]; then
       echo "FAIL: api did not rebuild the exact release after $((window / 60))min warm-up window"
       return 1

@@ -248,6 +248,8 @@ def clean_cache(monkeypatch):
     monkeypatch.setitem(assemble._cache, "producer_sha", None)
     monkeypatch.setattr(assemble, "_process_release_sha", None)
     monkeypatch.setattr(assemble, "_refreshing", False)
+    monkeypatch.setattr(assemble, "_build_generation", 0)
+    monkeypatch.setattr(assemble, "_lock", asyncio.Lock())
 
 
 def test_fresh_cache_served_without_building(clean_cache, monkeypatch):
@@ -818,3 +820,118 @@ def test_cold_cache_builds_inline(clean_cache, monkeypatch):
 
     monkeypatch.setattr(assemble, "_build_snapshot", fake_build)
     assert asyncio.run(assemble.snapshot())["generated_at"] == "cold-built"
+
+
+@pytest.mark.asyncio
+async def test_scheduled_refresh_coalesces_with_build_published_while_waiting(
+    clean_cache, monkeypatch
+):
+    first_published = asyncio.Event()
+    release_first = asyncio.Event()
+    builds: list[int] = []
+
+    async def fake_build():
+        build_number = len(builds) + 1
+        builds.append(build_number)
+        payload = {"generated_at": f"build-{build_number}"}
+        assemble._cache.update(payload=payload, at=time.time())
+        if build_number == 1:
+            # Model the real post-publication handoff-persistence await: the
+            # scheduler begins after memory changes but before the build epoch
+            # is complete and the lock is released.
+            first_published.set()
+            await release_first.wait()
+        assemble._build_generation += 1
+        return payload
+
+    monkeypatch.setattr(assemble, "_build_snapshot", fake_build)
+
+    forced = asyncio.create_task(assemble.snapshot(force=True))
+    await first_published.wait()
+    scheduled = asyncio.create_task(assemble.refresh_snapshot())
+    await asyncio.sleep(0)
+    release_first.set()
+
+    forced_payload, scheduled_payload = await asyncio.gather(forced, scheduled)
+    assert builds == [1]
+    assert scheduled_payload is forced_payload
+
+
+@pytest.mark.asyncio
+async def test_scheduled_refresh_rebuilds_after_competing_build_fails(
+    clean_cache, monkeypatch
+):
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    builds: list[int] = []
+
+    async def fake_build():
+        build_number = len(builds) + 1
+        builds.append(build_number)
+        if build_number == 1:
+            first_started.set()
+            await release_first.wait()
+            raise RuntimeError("synthetic competing build failure")
+        payload = {"generated_at": f"build-{build_number}"}
+        assemble._cache.update(payload=payload, at=time.time())
+        assemble._build_generation += 1
+        return payload
+
+    monkeypatch.setattr(assemble, "_build_snapshot", fake_build)
+
+    forced = asyncio.create_task(assemble.snapshot(force=True))
+    await first_started.wait()
+    scheduled = asyncio.create_task(assemble.refresh_snapshot())
+    await asyncio.sleep(0)
+    release_first.set()
+
+    forced_result, scheduled_result = await asyncio.gather(
+        forced, scheduled, return_exceptions=True
+    )
+    assert isinstance(forced_result, RuntimeError)
+    assert builds == [1, 2]
+    assert scheduled_result == {"generated_at": "build-2"}
+
+
+@pytest.mark.asyncio
+async def test_scheduled_refresh_does_not_coalesce_with_stale_restore(
+    clean_cache, monkeypatch
+):
+    builds: list[int] = []
+
+    async def fake_build():
+        builds.append(1)
+        payload = {"generated_at": "rebuilt"}
+        assemble._cache.update(payload=payload, at=time.time())
+        assemble._build_generation += 1
+        return payload
+
+    monkeypatch.setattr(assemble, "_build_snapshot", fake_build)
+
+    async with assemble._lock:
+        scheduled = asyncio.create_task(assemble.refresh_snapshot())
+        await asyncio.sleep(0)
+        assemble._cache.update(payload={"generated_at": "restored"}, at=0.0)
+
+    assert await scheduled == {"generated_at": "rebuilt"}
+    assert builds == [1]
+
+
+@pytest.mark.asyncio
+async def test_sequential_forced_refreshes_still_rebuild(clean_cache, monkeypatch):
+    builds: list[int] = []
+
+    async def fake_build():
+        build_number = len(builds) + 1
+        builds.append(build_number)
+        payload = {"generated_at": f"build-{build_number}"}
+        assemble._cache.update(payload=payload, at=time.time())
+        assemble._build_generation += 1
+        return payload
+
+    monkeypatch.setattr(assemble, "_build_snapshot", fake_build)
+
+    first = await assemble.snapshot(force=True)
+    second = await assemble.snapshot(force=True)
+    assert builds == [1, 2]
+    assert second is not first

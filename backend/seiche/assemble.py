@@ -372,6 +372,7 @@ _cache: dict = {
 _process_release_sha: str | None = None
 _lock = asyncio.Lock()
 _refreshing = False  # one background rebuild at a time; readers never wait on it
+_build_generation = 0  # completed build/lock epochs; restores do not advance it
 
 # Two audiences, two strings. VERSION is the machine-facing contract and must
 # stay bare semver matching server.json and the MCP registry listing — it is
@@ -2936,6 +2937,24 @@ async def snapshot(force: bool = False) -> dict:
         return await _build_snapshot()
 
 
+async def refresh_snapshot() -> dict:
+    """Rebuild for a scheduler, coalescing with work already in flight.
+
+    Unlike ``snapshot(force=True)``, a scheduled refresh does not owe its
+    caller a second build when another owner publishes after this request
+    starts.  A publication generation avoids wall-clock ordering assumptions
+    and, unlike payload identity, cannot mistake startup restoration of a stale
+    durable/static payload for a completed rebuild.
+    """
+    requested_generation = _build_generation
+    async with _lock:
+        if _build_generation > requested_generation:
+            published_payload = _safe_memory_snapshot()
+            if published_payload is not None:
+                return published_payload
+        return await _build_snapshot()
+
+
 async def _refresh_stale() -> None:
     global _refreshing
     try:
@@ -2950,6 +2969,7 @@ async def _refresh_stale() -> None:
 
 async def _build_snapshot() -> dict:
     """Assemble the full payload. Caller holds `_lock`."""
+    global _build_generation
     src, faults = await _gather_sources()
     src = _rights_eligible_sources(src)
     drv = _derived(src)
@@ -3037,6 +3057,10 @@ async def _build_snapshot() -> dict:
     # an already-completed reading wait. Stage only after the evidence seal;
     # the root deploy controller activates it after every remaining gate.
     await _publish_rebuilt_snapshot(payload, release_receipt)
+    # This is the final, non-awaiting operation in the build's lock epoch. A
+    # scheduler that queued during memory publication or handoff persistence
+    # can now coalesce with the fully completed build.
+    _build_generation += 1
     return payload
 
 

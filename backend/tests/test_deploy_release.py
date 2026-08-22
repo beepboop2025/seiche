@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 import shutil
 import subprocess
@@ -1293,6 +1294,8 @@ def _run_readiness_activation_helper(
     *,
     readiness_mode: str,
     fail_command: str = "",
+    candidate_health_fail: bool = False,
+    curl_fail: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str], Path]:
     script = script_path.read_text()
     helper_start = script.index("DATA_READINESS_PREFLIGHT_REQUIRED_UNITS=")
@@ -1342,6 +1345,15 @@ esac
     )
     state = tmp_path / "state"
     state.mkdir()
+    _executable(
+        tmp_path / "curl",
+        """
+state=${FAKE_DATA_STATE:?}
+printf 'curl %s\n' "$*" >>"$state/calls.log"
+[ "${FAKE_CURL_FAIL:-0}" != "1" ]
+""",
+    )
+    _executable(tmp_path / "sleep", "exit 0\n")
     fake_systemctl = _executable(
         tmp_path / "systemctl",
         """
@@ -1361,10 +1373,25 @@ fi
         "FAKE_DATA_STATE": str(state),
         "FAKE_READINESS_MODE": readiness_mode,
         "FAKE_FAIL_COMMAND": fail_command,
+        "FAKE_CANDIDATE_HEALTH_FAIL": "1" if candidate_health_fail else "0",
+        "FAKE_CURL_FAIL": "1" if curl_fail else "0",
         "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
     }
+    runtime_support = ""
+    if script_path == DEPLOY_WRAPPER:
+        runtime_support = """
+AFTER=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+candidate_health_wait() {
+  printf 'candidate-health %s\n' "$*" >>"$FAKE_DATA_STATE/calls.log"
+  [ "${FAKE_CANDIDATE_HEALTH_FAIL:-0}" != "1" ]
+}
+"""
     result = subprocess.run(
-        ["bash", "-c", f"{helper}\nactivate_data_readiness_after_proof"],
+        [
+            "bash",
+            "-c",
+            f"{runtime_support}\n{helper}\nactivate_data_readiness_after_proof",
+        ],
         env=environment,
         text=True,
         capture_output=True,
@@ -1401,25 +1428,35 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
     )
 
     assert result.returncode == 0, result.stderr
-    assert [call.split()[0] for call in calls] == [
+    expected_kinds = [
         "readiness",
         "systemctl",
         "systemctl",
         "readiness",
-        "readiness",
-        "systemctl",
     ]
-    assert calls[1:] == [
+    expected_calls = [
+        calls[0],
         "systemctl start seiche-market-backup.service",
         "systemctl start seiche-market-restore-check.service",
         calls[3],
-        calls[4],
+    ]
+    if script_path == DEPLOY_WRAPPER:
+        expected_kinds += ["curl", "candidate-health"]
+        expected_calls += [
+            "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
+            "candidate-health 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+        ]
+    expected_kinds += ["readiness", "systemctl"]
+    expected_calls += [
+        calls[-2],
         "systemctl enable --now seiche-data-readiness.timer",
     ]
+    assert [call.split()[0] for call in calls] == expected_kinds
+    assert calls == expected_calls
     assert calls[0].startswith("readiness proof ")
     assert calls[0] == calls[3]
-    assert calls[4].startswith("readiness full ")
-    assert "seiche-data-readiness.timer" not in calls[4]
+    assert calls[-2].startswith("readiness full ")
+    assert "seiche-data-readiness.timer" not in calls[-2]
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1432,10 +1469,20 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     )
 
     assert result.returncode == 0, result.stderr
-    assert len(calls) == 3
+    expected_calls = [calls[0]]
+    if script_path == DEPLOY_WRAPPER:
+        expected_calls += [
+            "curl -sf -m 20 http://127.0.0.1:8787/api/gauge",
+            "candidate-health 900 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 900",
+        ]
+    expected_calls += [
+        calls[-2],
+        "systemctl enable --now seiche-data-readiness.timer",
+    ]
+    assert calls == expected_calls
     assert calls[0].startswith("readiness proof ")
-    assert calls[1].startswith("readiness full ")
-    assert calls[2] == "systemctl enable --now seiche-data-readiness.timer"
+    assert calls[-2].startswith("readiness full ")
+    assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
 
 
@@ -1467,13 +1514,57 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
     assert calls[0].startswith("readiness proof ")
     assert not (state / "readiness-timer.enabled").exists()
     if readiness_mode == "operational-fail":
-        assert len(calls) == 2
-        assert calls[1].startswith("readiness full ")
+        if script_path == DEPLOY_WRAPPER:
+            assert len(calls) == 4
+            assert calls[1].startswith("curl ")
+            assert calls[2].startswith("candidate-health ")
+        else:
+            assert len(calls) == 2
+        assert calls[-1].startswith("readiness full ")
         assert not any(
             call.startswith("systemctl start seiche-market-backup") for call in calls
         )
     if fail_command != "enable --now seiche-data-readiness.timer":
         assert "systemctl enable --now seiche-data-readiness.timer" not in calls
+
+
+@pytest.mark.parametrize(
+    ("candidate_health_fail", "curl_fail"),
+    [(True, False), (True, True)],
+)
+def test_wrapper_refresh_failure_after_recovery_proof_stays_fail_closed(
+    tmp_path: Path,
+    candidate_health_fail: bool,
+    curl_fail: bool,
+) -> None:
+    result, calls, state = _run_readiness_activation_helper(
+        DEPLOY_WRAPPER,
+        tmp_path,
+        readiness_mode="fresh",
+        candidate_health_fail=candidate_health_fail,
+        curl_fail=curl_fail,
+    )
+
+    assert result.returncode != 0
+    assert not (state / "readiness-timer.enabled").exists()
+    assert "systemctl restart seiche-api" in calls
+    assert sum(call.startswith("candidate-health 900 ") for call in calls) in {1, 2}
+    assert not any(call.startswith("readiness full ") for call in calls)
+
+
+def test_recovery_refresh_does_not_rewrite_or_repromote_the_release() -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    refresh = wrapper[
+        wrapper.index("ensure_candidate_fresh_for_readiness() {") : wrapper.index(
+            "activate_data_readiness_after_proof() {"
+        )
+    ]
+
+    assert "/api/gauge" in refresh
+    assert 'candidate_health_wait 900 "$AFTER" 900' in refresh
+    assert "write_deployed_state" not in refresh
+    assert "write_release_env" not in refresh
+    assert "promote_snapshot_handoff" not in refresh
 
 
 def test_market_platform_units_are_independent_and_postgres_backed():
@@ -2116,6 +2207,63 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     assert "restore_market_services" in promotion_failure
     assert "healthy running candidate kept in place" in promotion_failure
     assert "accepted release did not recover strict health" in already
+
+
+@pytest.mark.parametrize(
+    ("generated_at", "max_age", "accepted"),
+    [
+        ("2026-08-22T07:45:00+00:00", 900, True),
+        ("2026-08-22T07:44:59+00:00", 900, False),
+        ("2026-08-22T08:05:00+00:00", 900, True),
+        ("2026-08-22T08:05:01+00:00", 900, False),
+        ("2026-08-22T08:00:00", 900, False),
+        ("not-a-timestamp", 900, False),
+        (None, 0, True),
+    ],
+)
+def test_candidate_health_parser_enforces_fresh_aware_generation_time(
+    tmp_path: Path,
+    generated_at: str | None,
+    max_age: int,
+    accepted: bool,
+) -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    parser_start = wrapper.index("parse_candidate_health() {")
+    parser = wrapper[
+        parser_start : wrapper.index("ACTIVATION_TOKEN=", parser_start)
+    ].replace('"$APP/backend/.venv/bin/python"', f'"{sys.executable}"')
+    expected_sha = "a" * 40
+    token = "b" * 64
+    payload: dict[str, object] = {
+        "release_candidate": {
+            "producer_sha": expected_sha,
+            "activation_token": token,
+        }
+    }
+    if generated_at is not None:
+        payload["generated_at"] = generated_at
+    body = tmp_path / "health.json"
+    body.write_text(json.dumps(payload))
+    now = int(datetime(2026, 8, 22, 8, 0, tzinfo=UTC).timestamp())
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'{parser}\nparse_candidate_health "$1" "$2" "$3" "$4"',
+            "candidate-health-parser",
+            str(body),
+            expected_sha,
+            str(max_age),
+            str(now),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert (result.returncode == 0) is accepted, result.stderr
+    assert result.stdout == (token if accepted else "")
 
 
 def test_market_health_matches_the_candidate_registry_without_a_count_literal():

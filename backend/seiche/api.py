@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
@@ -99,17 +100,32 @@ _PROD = os.getenv("SEICHE_ENV", "").lower() == "production"
 # zero visitors. Off in dev/tests (SEICHE_ENV!=production) unless forced with
 # SEICHE_BG_REFRESH=1.
 
-_REFRESH_EVERY_S = max(60, int(assemble.CACHE_MIN * 60 * 0.9))
+_REFRESH_INTERVAL_S = 60
+_REFRESH_BUILD_BUDGET_S = assemble.CACHE_MIN * 60 - _REFRESH_INTERVAL_S
 
 
 async def _keep_warm() -> None:
     log = logging.getLogger("seiche.api")
     while True:
+        started = monotonic()
         try:
-            await assemble.snapshot()
+            # Schedule a real build, but accept one that another owner finishes
+            # after this request begins.  Starting the next cycle one minute
+            # after completion leaves the rest of the 15-minute freshness
+            # window for the heavy analytics build.
+            await assemble.refresh_snapshot()
         except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
             log.exception("background board refresh failed; retrying next cycle")
-        await asyncio.sleep(_REFRESH_EVERY_S)
+        elapsed = max(0.0, monotonic() - started)
+        if elapsed > _REFRESH_BUILD_BUDGET_S:
+            log.warning(
+                "board refresh took %.1fs, exceeding the %.1fs build budget "
+                "for the %ss freshness target",
+                elapsed,
+                _REFRESH_BUILD_BUDGET_S,
+                assemble.CACHE_MIN * 60,
+            )
+        await asyncio.sleep(_REFRESH_INTERVAL_S)
 
 
 @asynccontextmanager
