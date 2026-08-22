@@ -40,7 +40,9 @@ ProtectHostname=true
 ProtectProc=invisible
 ProcSubset=pid
 LockPersonality=true
-RestrictSUIDSGID=true
+# The restore checker must reapply mode 02750 to its private revision tree.
+# ProtectSystem and the bounded ReadWritePaths below keep that exception local.
+RestrictSUIDSGID=false
 RestrictRealtime=true
 RestrictNamespaces=true
 RemoveIPC=true

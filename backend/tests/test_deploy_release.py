@@ -3196,7 +3196,7 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
     assert "NoNewPrivileges=true" in restore
-    assert "RestrictSUIDSGID=true" in restore
+    assert "RestrictSUIDSGID=false" in restore
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in restore
     assert "OnCalendar=Sun *-*-* 07:30:00 UTC" in restore_timer
     assert "RandomizedDelaySec=15m" in restore_timer
@@ -3212,6 +3212,26 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "BOK ECOS env ownership/mode is unsafe" in installer
     assert "SEICHE_BOK_ECOS_API_KEY=[A-Za-z0-9]{8,128}" in installer
     assert 'wc -l <"$BOK_ECOS_ENV_FILE"' in installer
+
+
+def test_restore_check_limits_setgid_recovery_to_its_private_write_boundary():
+    service = (
+        ROOT / "ops" / "deploy" / "seiche-market-restore-check.service"
+    ).read_text()
+    script = (ROOT / "ops" / "deploy" / "seiche-market-restore-check.sh").read_text()
+    writable_directives = [
+        line for line in service.splitlines() if line.startswith("ReadWritePaths=")
+    ]
+
+    assert script.count("0o2750") == 1
+    assert "directories.append((revisions, 0o2750))" in script
+    assert "RestrictSUIDSGID=false" in service
+    assert "RestrictSUIDSGID=true" not in service
+    assert "NoNewPrivileges=true" in service
+    assert "ProtectSystem=strict" in service
+    assert writable_directives == [
+        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock"
+    ]
 
 
 def test_cfets_approval_artifact_is_validated_and_wired_to_both_collectors():
