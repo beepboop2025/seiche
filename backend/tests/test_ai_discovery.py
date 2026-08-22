@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.testclient import TestClient
+import pytest
+
 from seiche import dispatch_pages
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,14 +20,22 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
     assert card["access"]["mcp"] == "https://api.seiche.info/mcp"
     assert card["access"]["api_catalog"] == "https://api.seiche.info/api"
     assert card["access"]["openapi"] == "https://api.seiche.info/api/openapi.json"
+    assert card["access"]["direct_ofr_dataset"] == (
+        "https://seiche.info/datasets/direct-ofr/"
+    )
+    assert card["access"]["direct_ofr_dcat"] == (
+        "https://seiche.info/datasets/direct-ofr/catalog.jsonld"
+    )
     assert card["access"]["ai_catalog"] == (
-        "https://seiche.info/.well-known/ai-catalog.json")
+        "https://seiche.info/.well-known/ai-catalog.json"
+    )
     assert card["access"]["mcp_discovery"] == (
-        "https://api.seiche.info/.well-known/mcp.json")
-    assert card["evidence"]["status_source"] == (
-        "https://api.seiche.info/api/health")
+        "https://api.seiche.info/.well-known/mcp.json"
+    )
+    assert card["evidence"]["status_source"] == ("https://api.seiche.info/api/health")
     assert card["evidence"]["public_scoreboard"] == (
-        "https://api.seiche.info/api/public")
+        "https://api.seiche.info/api/public"
+    )
     assert card["evidence"]["status"] == "FINAL_VINTAGE_CONSTRUCTION_PIT"
     assert card["evidence"]["validated_backtest_eligible"] is False
     assert card["evidence"]["real_money_eligible"] is False
@@ -36,11 +43,10 @@ def test_product_card_has_stable_identity_and_public_entrypoints():
 
 
 def test_ard_catalog_matches_the_registered_mcp_card():
-    catalog = json.loads(
-        (PUBLIC / ".well-known" / "ai-catalog.json").read_text())
+    catalog = json.loads((PUBLIC / ".well-known" / "ai-catalog.json").read_text())
     assert catalog["specVersion"] == "1.0"
     assert catalog["host"]["displayName"] == "Seiche"
-    assert len(catalog["entries"]) == 4
+    assert len(catalog["entries"]) == 5
 
     identifiers = set()
     for entry in catalog["entries"]:
@@ -52,11 +58,17 @@ def test_ard_catalog_matches_the_registered_mcp_card():
             parsed = urlparse(entry["url"])
             assert parsed.scheme == "https" and parsed.netloc
         assert 2 <= len(entry["representativeQueries"]) <= 5
-        assert all(isinstance(value, (str, int, float, bool)) or value is None
-                   for value in entry.get("metadata", {}).values())
+        assert all(
+            isinstance(value, (str, int, float, bool)) or value is None
+            for value in entry.get("metadata", {}).values()
+        )
 
-    mcp = next(entry for entry in catalog["entries"]
-               if entry["type"] == "application/mcp-server-card+json")
+    mcp = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"] == "urn:air:seiche.info:mcp:funding-stress"
+    )
+    assert mcp["type"] == "application/json"
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
@@ -68,20 +80,41 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]
-    world = next(entry for entry in catalog["entries"]
-                 if entry["identifier"].endswith(":world-markets-context"))
+    world = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"].endswith(":world-markets-context")
+    )
     assert world["url"] == "https://api.seiche.info/api/v2/world-markets"
     assert world["metadata"]["humanPage"] == "https://seiche.info/markets/"
     assert world["metadata"]["forexReferenceSeries"] == 22
-    assert catalog["host"]["documentationUrl"] == (
-        "https://seiche.info/developers")
-    assert all(".html" not in json.dumps(entry)
-               for entry in catalog["entries"])
+    dataset = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"] == "urn:air:seiche.info:dataset:direct-ofr"
+    )
+    assert dataset["type"] == "application/ld+json"
+    assert dataset["url"] == ("https://seiche.info/datasets/direct-ofr/catalog.jsonld")
+    assert dataset["metadata"] == {
+        "authentication": "none",
+        "access": "public-read-only",
+        "humanPage": "https://seiche.info/datasets/direct-ofr/",
+        "publicationStatus": "draft_not_submitted",
+        "doiAssigned": False,
+        "seriesCount": 10,
+        "recordCount": 11163,
+        "distributionCount": 2,
+    }
+    assert catalog["host"]["documentationUrl"] == ("https://seiche.info/developers")
+    assert all(".html" not in json.dumps(entry) for entry in catalog["entries"])
 
 
 def test_security_txt_is_present_and_not_stale():
     text = (PUBLIC / ".well-known" / "security.txt").read_text()
-    assert "Contact: https://github.com/beepboop2025/seiche/security/advisories/new" in text
+    assert (
+        "Contact: https://github.com/beepboop2025/seiche/security/advisories/new"
+        in text
+    )
     assert "Canonical: https://seiche.info/.well-known/security.txt" in text
     assert "Expires: 2027-08-19T00:00:00.000Z" in text
     assert "—" not in text
@@ -92,6 +125,11 @@ def test_security_txt_is_present_and_not_stale():
 
 
 def test_security_txt_is_served_on_the_well_known_route():
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.testclient import TestClient
+
     static_site = FastAPI()
     static_site.mount("/", StaticFiles(directory=PUBLIC), name="public")
 
@@ -107,7 +145,11 @@ def test_security_txt_is_served_on_the_well_known_route():
 def test_ard_catalog_is_advertised_on_every_discovery_surface():
     canonical = "https://seiche.info/.well-known/ai-catalog.json"
     assert f"Agentmap: {canonical}" in (PUBLIC / "robots.txt").read_text()
-    assert 'rel="ai-catalog"' in (ROOT / "frontend" / "index.html").read_text()
+    index = (ROOT / "frontend" / "index.html").read_text()
+    assert (
+        '<link rel="ai-catalog" type="application/json" '
+        'href="/.well-known/ai-catalog.json" />'
+    ) in index
     assert canonical in dispatch_pages._LLMS_PREAMBLE
     headers = (PUBLIC / "_headers").read_text()
     assert "/.well-known/ai-catalog.json" in headers
@@ -117,8 +159,13 @@ def test_ard_catalog_is_advertised_on_every_discovery_surface():
 def test_selection_page_is_canonical_and_links_its_evidence():
     page = (PUBLIC / "use-cases.html").read_text()
     assert '<link rel="canonical" href="https://seiche.info/use-cases">' in page
-    for required in ("/methodology", "/skeptic", "/developers",
-                     "/product-card.json", "https://api.seiche.info/mcp"):
+    for required in (
+        "/methodology",
+        "/skeptic",
+        "/developers",
+        "/product-card.json",
+        "https://api.seiche.info/mcp",
+    ):
         assert required in page
     assert "Do not use Seiche for" in page
     assert "not investment advice" in page.lower()
@@ -141,10 +188,15 @@ def test_developer_activation_converts_to_attributed_ongoing_delivery():
 def test_generated_discovery_indexes_include_the_selection_surface():
     assert ("/use-cases", "monthly", "0.9") in dispatch_pages.BASE_URLS
     assert ("/money-markets/", "weekly", "0.9") in dispatch_pages.BASE_URLS
-    for url in ("https://seiche.info/use-cases",
-                "https://seiche.info/product-card.json",
-                "https://seiche.info/money-markets/",
-                "https://seiche.info/money-markets/catalog.json"):
+    assert ("/datasets/direct-ofr/", "monthly", "0.8") in dispatch_pages.BASE_URLS
+    for url in (
+        "https://seiche.info/use-cases",
+        "https://seiche.info/product-card.json",
+        "https://seiche.info/money-markets/",
+        "https://seiche.info/money-markets/catalog.json",
+        "https://seiche.info/datasets/direct-ofr/",
+        "https://seiche.info/datasets/direct-ofr/catalog.jsonld",
+    ):
         assert url in dispatch_pages._LLMS_PREAMBLE
     assert "https://seiche.info/articles/feed.json" in dispatch_pages._LLMS_PREAMBLE
 
@@ -170,12 +222,18 @@ def test_clean_public_urls_match_cloudflare_redirect_targets():
         ("terms.html", "https://seiche.info/terms"),
         ("use-cases.html", "https://seiche.info/use-cases"),
     ):
-        assert f'<link rel="canonical" href="{canonical}">' in (PUBLIC / name).read_text()
+        assert (
+            f'<link rel="canonical" href="{canonical}">' in (PUBLIC / name).read_text()
+        )
 
 
 def test_terminal_navigation_exposes_the_selection_surface():
     app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
-    nav = app[app.index('<nav className="tabs">'):app.index("</nav>", app.index('<nav className="tabs">'))]
+    nav = app[
+        app.index('<nav className="tabs">') : app.index(
+            "</nav>", app.index('<nav className="tabs">')
+        )
+    ]
     assert 'href="/use-cases"' in nav
     assert "USE CASES" in nav
     commands = (ROOT / "frontend" / "src" / "commands.ts").read_text()
@@ -194,9 +252,16 @@ def test_contextual_product_network_is_visible_and_machine_readable():
 
 def test_search_and_answer_crawlers_are_explicitly_welcome():
     robots = (PUBLIC / "robots.txt").read_text()
-    for agent in ("OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot",
-                  "Claude-User", "PerplexityBot", "Perplexity-User",
-                  "Googlebot", "Bingbot"):
+    for agent in (
+        "OAI-SearchBot",
+        "ChatGPT-User",
+        "Claude-SearchBot",
+        "Claude-User",
+        "PerplexityBot",
+        "Perplexity-User",
+        "Googlebot",
+        "Bingbot",
+    ):
         assert f"User-agent: {agent}\nAllow: /" in robots
 
 
@@ -217,10 +282,12 @@ def test_public_historical_copy_keeps_the_vintage_boundary_attached():
         ROOT / "frontend" / "src" / "tabs" / "Proof.tsx",
         ROOT / "frontend" / "src" / "Wrecks.tsx",
     ]
-    text = "\n".join([
-        *(path.read_text() for path in paths),
-        dispatch_pages._LLMS_PREAMBLE,
-    ])
+    text = "\n".join(
+        [
+            *(path.read_text() for path in paths),
+            dispatch_pages._LLMS_PREAMBLE,
+        ]
+    )
     lowered = text.lower()
     for stale_claim in (
         "replay the board as it stood",
@@ -237,6 +304,10 @@ def test_public_historical_copy_keeps_the_vintage_boundary_attached():
 
 def test_proof_failure_is_labeled_as_withheld_evidence_not_engine_failure():
     proof = (ROOT / "frontend" / "src" / "tabs" / "Proof.tsx").read_text()
-    failure_branch = proof[proof.index("if (!bt.ok)"):proof.index("const cap", proof.index("if (!bt.ok)"))]
+    failure_branch = proof[
+        proof.index("if (!bt.ok)") : proof.index(
+            "const cap", proof.index("if (!bt.ok)")
+        )
+    ]
     assert "historical diagnostic withheld" in failure_branch
     assert "ENGINE DOWN" not in failure_branch

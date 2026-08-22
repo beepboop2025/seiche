@@ -34,15 +34,23 @@ def test_only_seiche_pins_a_version_owned_by_this_repository():
     ]
     assert versions["liquilens"] is None
     assert versions["undertow"] is None
+    media_types = {product.slug: product.mcp_media_type for product in ard.PRODUCTS}
+    assert media_types["seiche"] == "application/json"
+    assert media_types["liquilens"] == "application/mcp-server-card+json"
+    assert media_types["undertow"] == "application/mcp-server-card+json"
 
 
 def test_sibling_catalog_accepts_a_new_release_but_requires_internal_agreement():
     sibling = next(product for product in ard.PRODUCTS
                    if product.slug == "liquilens")
     catalog = _seiche_catalog()
-    mcp = next(entry for entry in catalog["entries"]
-               if entry["type"] == "application/mcp-server-card+json")
+    mcp = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"] == "urn:air:seiche.info:mcp:funding-stress"
+    )
     mcp["identifier"] = sibling.mcp_identifier
+    mcp["type"] = sibling.mcp_media_type
     mcp["version"] = "9.9.9"
     mcp["data"]["name"] = sibling.mcp_name
     mcp["data"]["version"] = "9.9.9"

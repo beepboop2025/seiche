@@ -43,6 +43,7 @@ def _strip_markers(md: str) -> str:
         md = md.replace(m, "")
     return md
 
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Base site URLs that always belong in the sitemap, with their cadence.
@@ -61,6 +62,7 @@ BASE_URLS = [
     ("/markets/forex/", "daily", "0.9"),
     ("/markets/capital-markets/", "daily", "0.9"),
     ("/money-markets/", "weekly", "0.9"),
+    ("/datasets/direct-ofr/", "monthly", "0.8"),
     ("/articles/", "daily", "0.9"),
     ("/dispatches/", "daily", "0.8"),
     ("/support", "monthly", "0.5"),
@@ -75,6 +77,7 @@ BASE_LASTMODS = {
     "/markets/forex/": "2026-08-21",
     "/markets/capital-markets/": "2026-08-21",
     "/money-markets/": "2026-08-21",
+    "/datasets/direct-ofr/": "2026-08-22",
 }
 
 
@@ -147,7 +150,11 @@ def md_to_html(src: str) -> str:
             i += 1
             continue
         # a table: a |...| line whose next line is the |---| separator
-        if line.lstrip().startswith("|") and i + 1 < len(lines) and _is_table_sep(lines[i + 1]):
+        if (
+            line.lstrip().startswith("|")
+            and i + 1 < len(lines)
+            and _is_table_sep(lines[i + 1])
+        ):
             close_list()
             head = _cells(line)
             i += 2
@@ -155,9 +162,15 @@ def md_to_html(src: str) -> str:
             while i < len(lines) and lines[i].lstrip().startswith("|"):
                 rows.append(_cells(lines[i]))
                 i += 1
-            out.append("<table><thead><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in head) + "</tr></thead><tbody>")
+            out.append(
+                "<table><thead><tr>"
+                + "".join(f"<th>{_inline(c)}</th>" for c in head)
+                + "</tr></thead><tbody>"
+            )
             for r in rows:
-                out.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>")
+                out.append(
+                    "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>"
+                )
             out.append("</tbody></table>")
             continue
         if re.match(r"^###\s+", line):
@@ -177,7 +190,9 @@ def md_to_html(src: str) -> str:
             continue
         if re.match(r"^>\s?", line):
             close_list()
-            out.append("<blockquote>" + _inline(re.sub(r"^>\s?", "", line)) + "</blockquote>")
+            out.append(
+                "<blockquote>" + _inline(re.sub(r"^>\s?", "", line)) + "</blockquote>"
+            )
             i += 1
             continue
         if re.match(r"^[-*]\s+", line):
@@ -265,21 +280,28 @@ _HEADER = (
 _BEACON = (
     "<!-- Cloudflare Web Analytics -->"
     "<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' "
-    "data-cf-beacon='{\"token\": \"534f08f7270a4f4f9a9a10f90d723ca7\"}'></script>"
+    'data-cf-beacon=\'{"token": "534f08f7270a4f4f9a9a10f90d723ca7"}\'></script>'
     "<!-- End Cloudflare Web Analytics -->"
 )
 
 _FOOTER = (
     '<div class="foot">Reported from the point-in-time live board; every number is '
     'checked against the article dossier and remains inspectable on the <a href="/">free board</a>. '
-    'Seiche is free open source software (<a href="https://github.com/beepboop2025/seiche">AGPL-3.0, source</a>). '
+    'Seiche is free open source software (<a href="https://github.com/beepboop2025/seiche">AGPL-3.0-or-later, source</a>). '
     '<a href="/guide">Plain English guide</a> &middot; <a href="/support">Support</a> &middot; '
-    'Not investment advice.</div>'
+    "Not investment advice.</div>"
 )
 
 
-def _page(title: str, description: str, canonical_path: str, jsonld: dict, body: str,
-          og_type: str = "article", extra_head: str = "") -> str:
+def _page(
+    title: str,
+    description: str,
+    canonical_path: str,
+    jsonld: dict,
+    body: str,
+    og_type: str = "article",
+    extra_head: str = "",
+) -> str:
     t, d = _esc(title), _esc(description)
     url = SITE + canonical_path
     return f"""<!doctype html>
@@ -343,7 +365,9 @@ def render_letter_page(meta: dict, free_md: str, desk_md: str | None) -> str:
         "image": f"{SITE}/og.png",
     }
     # The archive carries two series now; the byline says which one.
-    kind = "the Monday letter" if str(slug).endswith("-week-ahead") else "the daily letter"
+    kind = (
+        "the Monday letter" if str(slug).endswith("-week-ahead") else "the daily letter"
+    )
     inner = (
         f'<div class="date">{_esc(date)}{" &middot; " + _esc(tag) if tag else ""} &middot; {kind}</div>'
         f"<h1>{_esc(meta['title'])}</h1>"
@@ -370,7 +394,7 @@ def render_archive(entries: list[dict]) -> str:
         cards.append(
             f'<a class="card" href="{dispatch_path(_esc(e["slug"]))}">'
             f'<div class="date" style="margin-top:0">{_esc(e["date"])}'
-            f'{" &middot; " + _esc(e["tag"]) if e.get("tag") else ""}</div>'
+            f"{' &middot; ' + _esc(e['tag']) if e.get('tag') else ''}</div>"
             f'<div class="card-title">{_esc(e["title"])}</div>'
             f'<div class="card-sum">{_esc(e["summary"])}</div>'
             f'<div class="read">read the letter</div></a>'
@@ -445,7 +469,7 @@ def render_article_page(meta: dict, article_md: str) -> str:
     }
     inner = (
         f'<div class="date">{_esc(date)} &middot; {_esc(mode)} &middot; '
-        f'{_esc(str(meta.get("word_count") or "?"))} words</div>'
+        f"{_esc(str(meta.get('word_count') or '?'))} words</div>"
         f"<h1>{_esc(meta['headline'])}</h1>"
         f'<p class="lede">{_esc(meta["dek"])}</p>'
         f'<div class="body">{body_html}</div>'
@@ -522,7 +546,10 @@ def render_article_archive(entries: list[dict]) -> str:
 
 
 def render_article_feed(entries: list[dict], bodies: dict[str, str]) -> str:
-    newest = max((row.get("published_at") or f"{row.get('date')}T00:00:00Z" for row in entries), default="")
+    newest = max(
+        (row.get("published_at") or f"{row.get('date')}T00:00:00Z" for row in entries),
+        default="",
+    )
     items = []
     for row in entries[:50]:
         url = f"{SITE}{article_path(row['slug'])}"
@@ -554,8 +581,9 @@ def render_article_feed(entries: list[dict], bodies: dict[str, str]) -> str:
     )
 
 
-def render_article_json_feed(entries: list[dict], texts: dict[str, str],
-                             metadata: dict[str, dict]) -> str:
+def render_article_json_feed(
+    entries: list[dict], texts: dict[str, str], metadata: dict[str, dict]
+) -> str:
     """JSON Feed 1.1 view of the exact published article revisions.
 
     Atom remains the broad syndication surface. JSON Feed is the canonical
@@ -570,32 +598,39 @@ def render_article_json_feed(entries: list[dict], texts: dict[str, str],
         generation = meta.get("generation") or {}
         quality = meta.get("quality_gate") or {}
         url = f"{SITE}{article_path(slug)}"
-        items.append({
-            "id": str(meta.get("id") or f"seiche:article:{slug}"),
-            "url": url,
-            "title": row["headline"],
-            "summary": row["dek"],
-            "content_text": texts.get(slug, ""),
-            "date_published": str(row.get("published_at") or f"{row['date']}T11:00:00Z"),
-            "tags": [str(row.get("article_type") or "analysis"), "funding liquidity"],
-            "_liquidity_lab": {
-                "schema": "liquidity-lab.editorial-item.v1",
-                "product": "seiche",
-                "article_type": row.get("article_type"),
-                "evidence_as_of": row.get("evidence_as_of"),
-                "word_count": row.get("word_count"),
-                "evidence_fingerprint": generation.get("dossier_sha256"),
-                "generation_mode": generation.get("mode"),
-                "quality_gate": {
-                    "status": quality.get("status"),
-                    "checks": list(quality.get("checks") or []),
+        items.append(
+            {
+                "id": str(meta.get("id") or f"seiche:article:{slug}"),
+                "url": url,
+                "title": row["headline"],
+                "summary": row["dek"],
+                "content_text": texts.get(slug, ""),
+                "date_published": str(
+                    row.get("published_at") or f"{row['date']}T11:00:00Z"
+                ),
+                "tags": [
+                    str(row.get("article_type") or "analysis"),
+                    "funding liquidity",
+                ],
+                "_liquidity_lab": {
+                    "schema": "liquidity-lab.editorial-item.v1",
+                    "product": "seiche",
+                    "article_type": row.get("article_type"),
+                    "evidence_as_of": row.get("evidence_as_of"),
+                    "word_count": row.get("word_count"),
+                    "evidence_fingerprint": generation.get("dossier_sha256"),
+                    "generation_mode": generation.get("mode"),
+                    "quality_gate": {
+                        "status": quality.get("status"),
+                        "checks": list(quality.get("checks") or []),
+                    },
+                    "authority": {
+                        "factual_authority": "published_article_only",
+                        "training_allowed": False,
+                    },
                 },
-                "authority": {
-                    "factual_authority": "published_article_only",
-                    "training_allowed": False,
-                },
-            },
-        })
+            }
+        )
     feed = {
         "version": "https://jsonfeed.org/version/1.1",
         "title": "Seiche daily funding analysis",
@@ -647,7 +682,7 @@ def render_feed(entries: list[dict], bodies: dict[str, str]) -> str:
 
 _LLMS_PREAMBLE = f"""# Seiche
 
-> Seiche is free open source software (AGPL-3.0): a financial-market evidence
+> Seiche is free open source software (AGPL-3.0-or-later): a financial-market evidence
 > terminal connecting US dollar funding, an 11-pack global money-market atlas,
 > 22 registered public FX reference series, three dollar indexes, and capital-market
 > transmission through Treasury, credit, volatility, dealer, positioning and
@@ -754,6 +789,8 @@ same product; the callable contract remains the MCP server above.
 - [World-markets JSON context](https://api.seiche.info/api/v2/world-markets): cache-only schema v1 projection with summary, money, forex, capital, source and methodology sections
 - [Global money-market evidence map]({SITE}/money-markets/): a crawlable coverage and rights receipt for 11 registered packs and the 52-market discovery ledger, with no universal score
 - [Money-market evidence catalog]({SITE}/money-markets/catalog.json): stable market IDs, availability states, official sources, data-rights boundaries, API links and citation guidance
+- [Audited direct-OFR research dataset]({SITE}/datasets/direct-ofr/): 11,163 source-pinned observations across ten repo and money-market-fund series, with explicit exclusions and no DOI claim
+- [Direct-OFR DCAT 3 catalog]({SITE}/datasets/direct-ofr/catalog.jsonld): machine-readable distributions, hashes, native clocks, source revision, publication status and upstream rights
 - [Machine-readable product card]({SITE}/product-card.json): stable identity, use cases, limitations, evidence and public endpoints for retrieval systems and agents
 - [Agentic Resource Discovery catalog]({SITE}/.well-known/ai-catalog.json): runtime-discoverable MCP and OpenAPI contracts, indexed with representative intent queries
 - [Methodology]({SITE}/methodology): versioned methods page with citations, changelog and cite-as block
@@ -787,11 +824,16 @@ def render_llms_txt(entries: list[dict], articles: list[dict] | None = None) -> 
     return "\n".join(lines) + "\n"
 
 
-def render_llms_full(entries: list[dict], texts: dict[str, str],
-                     articles: list[dict] | None = None,
-                     article_texts: dict[str, str] | None = None) -> str:
+def render_llms_full(
+    entries: list[dict],
+    texts: dict[str, str],
+    articles: list[dict] | None = None,
+    article_texts: dict[str, str] | None = None,
+) -> str:
     parts = [_LLMS_PREAMBLE.split("## Docs")[0].strip(), ""]
-    parts.append("Below is the complete text of every daily article, then every fixed-order letter, newest first.")
+    parts.append(
+        "Below is the complete text of every daily article, then every fixed-order letter, newest first."
+    )
     for row in articles or []:
         parts += [
             "",
@@ -861,13 +903,15 @@ def build_all(repo_root: Path | None = None) -> list[str]:
     paid_dir = root / "backend" / "seiche" / "dispatches"
     index = free_dir / "index.json"
     if not index.exists():
-        raise SystemExit(f"no dispatch index at {index} (nothing to render is an error, not a no-op)")
+        raise SystemExit(
+            f"no dispatch index at {index} (nothing to render is an error, not a no-op)"
+        )
     entries = json.loads(index.read_text())
     entries.sort(key=lambda e: e.get("date", ""), reverse=True)
 
     written: list[str] = []
-    bodies: dict[str, str] = {}   # slug -> rendered letter HTML (for the feed)
-    texts: dict[str, str] = {}    # slug -> full letter markdown (for llms-full)
+    bodies: dict[str, str] = {}  # slug -> rendered letter HTML (for the feed)
+    texts: dict[str, str] = {}  # slug -> full letter markdown (for llms-full)
     for e in entries:
         slug = e["slug"]
         md_path = free_dir / f"{slug}.md"
@@ -885,7 +929,9 @@ def build_all(repo_root: Path | None = None) -> list[str]:
         out.write_text(render_letter_page(e, free_md, desk_md))
         written.append(str(out))
         clean = _strip_markers(free_md).strip()
-        bodies[slug] = md_to_html(clean) + ("\n" + md_to_html(desk_md.strip()) if desk_md else "")
+        bodies[slug] = md_to_html(clean) + (
+            "\n" + md_to_html(desk_md.strip()) if desk_md else ""
+        )
         texts[slug] = clean + (("\n\n" + desk_md.strip()) if desk_md else "")
 
     archive = free_dir / "index.html"
@@ -908,28 +954,37 @@ def build_all(repo_root: Path | None = None) -> list[str]:
                 raise SystemExit(f"story sidecar slug mismatch at {story_path}")
             stories.append(story)
         else:
-            stories.append({
-                "schema": "seiche.legacy-dispatch-pointer.v1",
-                "id": f"seiche:{e['slug']}",
-                "product": "seiche",
-                "slug": e["slug"],
-                "canonical_url": f"{SITE}{dispatch_path(e['slug'])}",
-                "headline": e.get("title"),
-                "dek": e.get("summary"),
-                "editorial_class": "legacy_dispatch",
-                "publication_status": "PUBLISHED",
-                "published_at": f"{e.get('date')}T00:00:00Z",
-                "limitations": [
-                    "Published before the structured analytical-story contract."
-                ],
-            })
+            stories.append(
+                {
+                    "schema": "seiche.legacy-dispatch-pointer.v1",
+                    "id": f"seiche:{e['slug']}",
+                    "product": "seiche",
+                    "slug": e["slug"],
+                    "canonical_url": f"{SITE}{dispatch_path(e['slug'])}",
+                    "headline": e.get("title"),
+                    "dek": e.get("summary"),
+                    "editorial_class": "legacy_dispatch",
+                    "publication_status": "PUBLISHED",
+                    "published_at": f"{e.get('date')}T00:00:00Z",
+                    "limitations": [
+                        "Published before the structured analytical-story contract."
+                    ],
+                }
+            )
     news = free_dir / "news.json"
-    news.write_text(json.dumps({
-        "schema": "seiche.analytical-feed.v1",
-        "product": "seiche",
-        "generated_from": "/dispatches/index.json",
-        "entries": stories,
-    }, indent=2, ensure_ascii=False) + "\n")
+    news.write_text(
+        json.dumps(
+            {
+                "schema": "seiche.analytical-feed.v1",
+                "product": "seiche",
+                "generated_from": "/dispatches/index.json",
+                "entries": stories,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
     written.append(str(news))
 
     # Articles are generated by the daily editorial job from the exact same
@@ -951,10 +1006,17 @@ def build_all(repo_root: Path | None = None) -> list[str]:
             md_path = article_dir / f"{slug}.md"
             sidecar = article_dir / f"{slug}.json"
             if not md_path.exists() or not sidecar.exists():
-                raise SystemExit(f"article index lists {slug} but its markdown or sidecar is missing")
+                raise SystemExit(
+                    f"article index lists {slug} but its markdown or sidecar is missing"
+                )
             meta = json.loads(sidecar.read_text())
-            if meta.get("slug") != slug or meta.get("quality_gate", {}).get("status") != "PASS":
-                raise SystemExit(f"article sidecar failed identity/quality verification at {sidecar}")
+            if (
+                meta.get("slug") != slug
+                or meta.get("quality_gate", {}).get("status") != "PASS"
+            ):
+                raise SystemExit(
+                    f"article sidecar failed identity/quality verification at {sidecar}"
+                )
             article_md = md_path.read_text()
             out_dir = article_dir / slug
             out_dir.mkdir(parents=True, exist_ok=True)

@@ -177,9 +177,9 @@
     "investment_advice": false
   },
   "rights_boundary": {
-    "code_license": "AGPL-3.0",
+    "code_license": "AGPL-3.0-or-later",
     "upstream_data_license_inherited": false,
-    "policy": "AGPL-3.0 covers Seiche code, not upstream data. Allowed observations may be public. Derived-only inputs may produce bounded non-reversible context. Metadata-only inputs cannot enter public calculations. Prohibited values and restricted source data remain withheld."
+    "policy": "AGPL-3.0-or-later covers Seiche code, not upstream data. Allowed observations may be public. Derived-only inputs may produce bounded non-reversible context. Metadata-only inputs cannot enter public calculations. Prohibited values and restricted source data remain withheld."
   },
   "access": {
     "human_page": "https://seiche.info/money-markets/",

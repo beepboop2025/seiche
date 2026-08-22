@@ -20,6 +20,8 @@ they change a public contract, methodology, or release artifact.
   configuration for Python, npm, and GitHub Actions dependencies.
 - OpenBB provider/router packaging; hosted MCP client configurations; and
   copy-paste Python, R, and JavaScript world-markets clients.
+- A signed-release/OIDC OpenBB publication workflow, exact provider artifact
+  verifier, clean wheel/sdist smoke gates, and official listing packet.
 - A commit-pinned research notebook and rights-reviewed direct-OFR distribution
   kit with Hugging Face, Kaggle, Croissant, Frictionless, DCAT 3, RO-Crate 1.3,
   and DOI-free DataCite metadata.
@@ -39,6 +41,20 @@ they change a public contract, methodology, or release artifact.
   external OpenBB, dataset, catalog, OpenAI, and DOI claims receipt-gated.
 - Bound Python, MCP, AI-catalog, citation, container, and scientific metadata to
   one `0.11.0` release identity.
+- Moved Python packaging to a pinned, reproducible Hatchling backend and made
+  CI compare independently timestamp-perturbed wheel and source builds before
+  PyPI publication; exact artifact allowlists, wheel RECORD validation, and
+  PEP 639 AGPL-file verification run again on immutable PyPI bytes.
+- Migrated `openbb-seiche` to standardized PEP 621/639 metadata with a pinned
+  Poetry Core backend, reproducible independent-tree builds, and exact PyPI
+  inventory reconciliation under per-version publication concurrency.
+- Required every signed-tag publisher to prove the release commit is on `main`,
+  carried build-once multi-platform OCI bytes through source-free scan and GHCR
+  publication jobs, and added pinned native Kaggle metadata/inventory validation
+  alongside the Hugging Face schema gate.
+- Made the canonical direct-OFR DCAT URLs deployable, added pinned native
+  research-metadata and Zenodo-schema gates, and normalized machine-readable
+  media and license identifiers.
 - Kept scheduled dispatches on the static-publish path and taught the production
   poller to treat only exact desk-authored, content-only commits as non-release
   updates; mixed or code changes still require the signed release path.
@@ -56,6 +72,13 @@ they change a public contract, methodology, or release artifact.
   atomic, non-overwriting, mode-`0600` credential handoff files.
 - Required the pinned release author plus SSH-signed commit and annotated tag
   before PyPI, GHCR, or MCP publication receives authority.
+- Replaced self-asserted attestation keys with a release-pinned trust set,
+  rejected orphan/duplicate/mismatched evidence, published both OTS proof
+  fragments, and reserved "Bitcoin confirmed" for canonical Core-header checks.
+- Split package build, pristine-source verification, executable smoke, and OIDC
+  publication across isolated runners; bound every publisher to an external SSH
+  fingerprint, removed persisted checkout credentials, and kept source checkouts
+  out of MCP/container attestation authority domains.
 
 ## [0.10.1] - 2026-08-22
 

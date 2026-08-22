@@ -2,7 +2,7 @@
 name: seiche-harbors-watch
 description: Compose the world money-markets watch from the Seiche Harbors panel (India, China, euro area, Japan, Korea), the palimpsest china-econ benchmarks, and the daily page archive. Use for "world money markets", "harbors brief", any per-country money-market question, or when the scheduled harbors job fires.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, finance, money-markets, world, harbors]

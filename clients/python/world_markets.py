@@ -50,7 +50,9 @@ def fetch_world_markets(
     """
 
     if section not in ALLOWED_SECTIONS:
-        raise ValueError("section must be one of: " + ", ".join(sorted(ALLOWED_SECTIONS)))
+        raise ValueError(
+            "section must be one of: " + ", ".join(sorted(ALLOWED_SECTIONS))
+        )
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     if max_response_bytes <= 0:
@@ -106,8 +108,18 @@ def _validate_contract(payload: Any, section: str) -> None:
         raise SeicheClientError("partial-coverage boundary is missing")
 
 
-def contract_receipt(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return only citation, clocks, coverage boundary, and local limits."""
+def contract_receipt(
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+) -> dict[str, Any]:
+    """Return citation, clocks, coverage boundary, and effective client limits."""
+
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    if max_response_bytes <= 0:
+        raise ValueError("max_response_bytes must be positive")
 
     return {
         "schema": payload["schema"],
@@ -117,8 +129,8 @@ def contract_receipt(payload: dict[str, Any]) -> dict[str, Any]:
         "citation": payload["citation"],
         "scope": payload["scope"],
         "client_limits": {
-            "timeout_seconds": DEFAULT_TIMEOUT_SECONDS,
-            "max_response_bytes": DEFAULT_MAX_RESPONSE_BYTES,
+            "timeout_seconds": timeout_seconds,
+            "max_response_bytes": max_response_bytes,
             "automatic_retries": 0,
         },
     }

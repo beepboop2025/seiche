@@ -1,0 +1,650 @@
+name: publish-openbb
+
+# Manually publish one independently versioned OpenBB provider from an exact
+# signed Seiche release commit. Four separate runners keep build backend and
+# package execution away from the OIDC-capable publisher: build an untrusted
+# candidate, independently authenticate and verify it, smoke the verified
+# bytes without permissions, then publish those same hash-bound bytes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable SSH-signed Seiche release tag, for example v0.11.0"
+        required: true
+        type: string
+      openbb_version:
+        description: "Exact openbb-seiche version declared by that release, for example 0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-openbb-${{ inputs.release_tag }}-${{ inputs.openbb_version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      candidate_artifact_name: ${{ steps.candidate_identity.outputs.artifact_name }}
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      OPENBB_VERSION: ${{ inputs.openbb_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Bind the candidate to the requested release and package versions
+        run: |
+          release_version="$(python -I -S - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          package_version="$(python -I -S - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("integrations/openbb/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          test "$RELEASE_TAG" = "v$release_version"
+          test "$OPENBB_VERSION" = "$package_version"
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          release_sha="$(git rev-parse HEAD)"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
+
+      - name: Build a reproducible OpenBB wheel and sdist candidate
+        run: |
+          python -m pip install --disable-pip-version-check --quiet \
+            "build==1.5.0" \
+            "packaging==26.3" \
+            "poetry-core==2.4.1" \
+            "pyproject-hooks==1.2.0" \
+            "twine==7.0.0"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_TAG^{commit}")"
+          export SOURCE_DATE_EPOCH
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
+          mkdir -p \
+            "${RUNNER_TEMP}/openbb-source-first" \
+            "${RUNNER_TEMP}/openbb-source-second" \
+            "${RUNNER_TEMP}/openbb-dist-first" \
+            "${RUNNER_TEMP}/openbb-dist-second" \
+            openbb-candidate
+          git archive "$RELEASE_TAG^{commit}" | tar -x -C "${RUNNER_TEMP}/openbb-source-first"
+          git archive "$RELEASE_TAG^{commit}" | tar -x -C "${RUNNER_TEMP}/openbb-source-second"
+          find "${RUNNER_TEMP}/openbb-source-first/integrations/openbb" \
+            -type f -exec touch -t 202001010000 {} +
+          find "${RUNNER_TEMP}/openbb-source-second/integrations/openbb" \
+            -type f -exec touch -t 202401010000 {} +
+          python -m build --no-isolation \
+            --outdir "${RUNNER_TEMP}/openbb-dist-first" \
+            "${RUNNER_TEMP}/openbb-source-first/integrations/openbb"
+          python -m build --no-isolation \
+            --outdir "${RUNNER_TEMP}/openbb-dist-second" \
+            "${RUNNER_TEMP}/openbb-source-second/integrations/openbb"
+          first=("${RUNNER_TEMP}/openbb-dist-first"/*)
+          second=("${RUNNER_TEMP}/openbb-dist-second"/*)
+          test "${#first[@]}" -eq 2
+          test "${#second[@]}" -eq 2
+          for artifact in "${first[@]}"; do
+            name="${artifact##*/}"
+            cmp --silent "$artifact" "${RUNNER_TEMP}/openbb-dist-second/$name"
+            cp "$artifact" "openbb-candidate/$name"
+          done
+          python -m twine check openbb-candidate/*
+          sha256sum openbb-candidate/*
+
+      - name: Record the candidate artifact transfer identity
+        id: candidate_identity
+        run: |
+          echo "artifact_name=openbb-seiche-candidate-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the reproducible candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.candidate_identity.outputs.artifact_name }}
+          path: openbb-candidate/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      package_version: ${{ steps.artifact_identity.outputs.package_version }}
+      wheel_name: ${{ steps.artifact_identity.outputs.wheel_name }}
+      wheel_sha256: ${{ steps.artifact_identity.outputs.wheel_sha256 }}
+      sdist_name: ${{ steps.artifact_identity.outputs.sdist_name }}
+      sdist_sha256: ${{ steps.artifact_identity.outputs.sdist_sha256 }}
+      verified_artifact_name: ${{ steps.artifact_identity.outputs.verified_artifact_name }}
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      OPENBB_VERSION: ${{ inputs.openbb_version }}
+      RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Independently authenticate the release and pinned signer
+        run: |
+          test -f ops/deploy/release-allowed-signers
+          test ! -L ops/deploy/release-allowed-signers
+          [[ "$RELEASE_SIGNING_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]
+          mapfile -t signer_fingerprints \
+            < <(ssh-keygen -lf ops/deploy/release-allowed-signers -E sha256 | awk '{print $2}')
+          test "${#signer_fingerprints[@]}" -eq 1
+          test "${signer_fingerprints[0]}" = "$RELEASE_SIGNING_KEY_FINGERPRINT"
+
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          release_sha="$(git rev-parse HEAD)"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
+
+          release_version="$(python -I -S - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          package_version="$(python -I -S - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          print(tomllib.loads(Path("integrations/openbb/pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+          test "$RELEASE_TAG" = "v$release_version"
+          test "$OPENBB_VERSION" = "$package_version"
+
+      - name: Download the untrusted build candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build.outputs.candidate_artifact_name }}
+          path: openbb-candidate
+
+      - name: Verify candidate against a third pristine signed source archive
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_TAG^{commit}")"
+          export SOURCE_DATE_EPOCH
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
+          mkdir -p "${RUNNER_TEMP}/openbb-pristine-source" openbb-verified
+          git archive "$RELEASE_TAG^{commit}" \
+            | tar -x -C "${RUNNER_TEMP}/openbb-pristine-source"
+
+          candidate=(openbb-candidate/*)
+          test "${#candidate[@]}" -eq 2
+          for artifact in "${candidate[@]}"; do
+            test -f "$artifact"
+            test ! -L "$artifact"
+            cp "$artifact" "openbb-verified/${artifact##*/}"
+          done
+
+          python -I -S \
+            "${RUNNER_TEMP}/openbb-pristine-source/integrations/openbb/verify_artifacts.py" \
+            --dist openbb-verified \
+            --source "${RUNNER_TEMP}/openbb-pristine-source/integrations/openbb" \
+            --epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Record exact verified distribution identity and digests
+        id: artifact_identity
+        env:
+          PRISTINE_SOURCE: ${{ runner.temp }}/openbb-pristine-source/integrations/openbb
+        run: |
+          python -I -S - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import stat
+          import tomllib
+
+          dist = Path("openbb-verified")
+          source = Path(os.environ["PRISTINE_SOURCE"])
+          version = tomllib.loads((source / "pyproject.toml").read_text())["project"]["version"]
+          if version != os.environ["OPENBB_VERSION"]:
+              raise SystemExit("verified source version differs from requested version")
+          expected = {
+              "wheel": dist / f"openbb_seiche-{version}-py3-none-any.whl",
+              "sdist": dist / f"openbb_seiche-{version}.tar.gz",
+          }
+          entries = list(dist.iterdir())
+          if {entry.name for entry in entries} != {path.name for path in expected.values()}:
+              raise SystemExit(
+                  f"unexpected verified OpenBB inventory: {[entry.name for entry in entries]}"
+              )
+          values = {
+              "package_version": version,
+              "verified_artifact_name": (
+                  f"openbb-seiche-verified-{os.environ['GITHUB_RUN_ATTEMPT']}"
+              ),
+          }
+          for kind, path in expected.items():
+              if not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit(f"{path} is not a regular file")
+              values[f"{kind}_name"] = path.name
+              values[f"{kind}_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for key, value in values.items():
+                  output.write(f"{key}={value}\n")
+          PY
+          sha256sum openbb-verified/*
+
+      - name: Upload the immutable verified OpenBB distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact_identity.outputs.verified_artifact_name }}
+          path: openbb-verified/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false
+
+  smoke:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    env:
+      EXPECTED_VERSION: ${{ needs.verify.outputs.package_version }}
+      EXPECTED_WHEEL_NAME: ${{ needs.verify.outputs.wheel_name }}
+      EXPECTED_WHEEL_SHA256: ${{ needs.verify.outputs.wheel_sha256 }}
+      EXPECTED_SDIST_NAME: ${{ needs.verify.outputs.sdist_name }}
+      EXPECTED_SDIST_SHA256: ${{ needs.verify.outputs.sdist_sha256 }}
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Download the immutable verified distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.verified_artifact_name }}
+          path: openbb-verified
+
+      - name: Rebind downloaded bytes before package execution
+        run: |
+          python -I -S - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import stat
+
+          version = os.environ["EXPECTED_VERSION"]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+              raise SystemExit(f"invalid OpenBB package version: {version!r}")
+          expected = {
+              os.environ["EXPECTED_WHEEL_NAME"]: os.environ["EXPECTED_WHEEL_SHA256"],
+              os.environ["EXPECTED_SDIST_NAME"]: os.environ["EXPECTED_SDIST_SHA256"],
+          }
+          canonical = {
+              f"openbb_seiche-{version}-py3-none-any.whl",
+              f"openbb_seiche-{version}.tar.gz",
+          }
+          if set(expected) != canonical:
+              raise SystemExit(f"non-canonical OpenBB artifact identity: {sorted(expected)}")
+          if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in expected.values()):
+              raise SystemExit("invalid verified SHA-256 identity")
+          entries = list(Path("openbb-verified").iterdir())
+          if {entry.name for entry in entries} != set(expected):
+              raise SystemExit(f"verified OpenBB inventory differs: {[entry.name for entry in entries]}")
+          for path in entries:
+              if not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit(f"{path} is not a regular file")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != expected[path.name]:
+                  raise SystemExit(f"SHA-256 mismatch for {path.name}")
+          PY
+
+      - name: Smoke both verified OpenBB artifact formats
+        run: |
+          for artifact_kind in wheel sdist; do
+            smoke="${RUNNER_TEMP}/openbb-${artifact_kind}-smoke"
+            python -m venv "$smoke"
+            "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+              "httpx==0.28.1" \
+              "openbb-core==1.6.13" \
+              "poetry-core==2.4.1"
+            if test "$artifact_kind" = wheel; then
+              artifact=(openbb-verified/*.whl)
+              install_flags=(--no-deps)
+            else
+              artifact=(openbb-verified/*.tar.gz)
+              install_flags=(--no-build-isolation --no-deps)
+            fi
+            test "${#artifact[@]}" -eq 1
+            "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+              "${install_flags[@]}" "${artifact[0]}"
+            "$smoke/bin/openbb-build"
+            "$smoke/bin/python" - <<'PY'
+          import os
+          from importlib.metadata import entry_points, version
+
+          assert version("openbb-seiche") == os.environ["EXPECTED_VERSION"]
+          for group in ("openbb_provider_extension", "openbb_core_extension"):
+              matches = [entry for entry in entry_points(group=group) if entry.name == "seiche"]
+              assert len(matches) == 1, (group, matches)
+              assert matches[0].load() is not None
+          PY
+          done
+
+  publish:
+    needs: [verify, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pypi-openbb
+    permissions:
+      id-token: write
+    env:
+      EXPECTED_VERSION: ${{ needs.verify.outputs.package_version }}
+      EXPECTED_WHEEL_NAME: ${{ needs.verify.outputs.wheel_name }}
+      EXPECTED_WHEEL_SHA256: ${{ needs.verify.outputs.wheel_sha256 }}
+      EXPECTED_SDIST_NAME: ${{ needs.verify.outputs.sdist_name }}
+      EXPECTED_SDIST_SHA256: ${{ needs.verify.outputs.sdist_sha256 }}
+    steps:
+      - name: Download the immutable verified distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.verified_artifact_name }}
+          path: openbb-verified
+
+      - name: Rehash bytes and reconcile any existing immutable PyPI subset
+        id: pypi_state
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          version = os.environ["EXPECTED_VERSION"]
+          if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+              raise SystemExit(f"invalid OpenBB package version: {version!r}")
+          expected = {
+              os.environ["EXPECTED_WHEEL_NAME"]: os.environ["EXPECTED_WHEEL_SHA256"],
+              os.environ["EXPECTED_SDIST_NAME"]: os.environ["EXPECTED_SDIST_SHA256"],
+          }
+          canonical = {
+              f"openbb_seiche-{version}-py3-none-any.whl",
+              f"openbb_seiche-{version}.tar.gz",
+          }
+          if set(expected) != canonical:
+              raise SystemExit(f"non-canonical OpenBB artifact identity: {sorted(expected)}")
+          for digest in expected.values():
+              if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                  raise SystemExit(f"invalid SHA-256 identity: {digest!r}")
+
+          dist = Path("openbb-verified")
+          entries = list(dist.iterdir())
+          if {entry.name for entry in entries} != set(expected):
+              raise SystemExit(f"downloaded OpenBB inventory differs: {[entry.name for entry in entries]}")
+          for path in entries:
+              if not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit(f"{path} is not a regular file")
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != expected[path.name]:
+                  raise SystemExit(f"SHA-256 mismatch for {path.name}")
+              print(f"verified transfer {path.name} sha256:{actual}")
+
+          project_name = "openbb-seiche"
+          release_url = (
+              "https://pypi.org/pypi/"
+              f"{urllib.parse.quote(project_name, safe='')}/"
+              f"{urllib.parse.quote(version, safe='')}/json"
+          )
+          request = urllib.request.Request(
+              release_url,
+              headers={
+                  "Accept": "application/json",
+                  "Cache-Control": "no-cache",
+                  "User-Agent": "seiche-openbb-idempotent-publisher/1",
+              },
+          )
+          try:
+              response = urllib.request.urlopen(request, timeout=30)
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+                      output.write("needs_upload=true\n")
+                  print(f"{project_name} {version} is absent; both files require upload")
+                  raise SystemExit(0)
+              raise
+
+          with response:
+              body = response.read(2 * 1024 * 1024 + 1)
+          if len(body) > 2 * 1024 * 1024:
+              raise SystemExit("PyPI release metadata exceeds 2 MiB")
+          release = json.loads(body)
+          info = release.get("info")
+          if not isinstance(info, dict):
+              raise SystemExit("PyPI release metadata has no info object")
+          normalized_name = re.sub(r"[-_.]+", "-", str(info.get("name", ""))).lower()
+          if normalized_name != project_name or info.get("version") != version:
+              raise SystemExit("PyPI release identity differs from verified artifacts")
+          remote_files = release.get("urls")
+          if not isinstance(remote_files, list):
+              raise SystemExit("PyPI release metadata has no file inventory")
+          expected_types = {
+              f"openbb_seiche-{version}-py3-none-any.whl": "bdist_wheel",
+              f"openbb_seiche-{version}.tar.gz": "sdist",
+          }
+          seen = set()
+          for entry in remote_files:
+              if not isinstance(entry, dict):
+                  raise SystemExit("PyPI release contains a malformed file entry")
+              filename = entry.get("filename")
+              if filename not in expected or filename in seen:
+                  raise SystemExit(f"foreign or duplicate PyPI file: {filename!r}")
+              seen.add(filename)
+              if entry.get("packagetype") != expected_types[filename]:
+                  raise SystemExit(f"wrong PyPI package type for {filename}")
+              if entry.get("yanked") is not False:
+                  raise SystemExit(f"existing PyPI file is yanked: {filename}")
+              if entry.get("digests", {}).get("sha256") != expected[filename]:
+                  raise SystemExit(f"existing PyPI SHA-256 differs for {filename}")
+              size = entry.get("size")
+              local_size = (dist / filename).stat().st_size
+              if not isinstance(size, int) or size != local_size:
+                  raise SystemExit(f"existing PyPI size differs for {filename}")
+              artifact_url = entry.get("url")
+              if not isinstance(artifact_url, str) or not artifact_url.startswith(
+                  "https://files.pythonhosted.org/"
+              ):
+                  raise SystemExit(f"unexpected PyPI artifact URL for {filename}")
+              artifact_request = urllib.request.Request(
+                  artifact_url,
+                  headers={"User-Agent": "seiche-openbb-idempotent-publisher/1"},
+              )
+              with urllib.request.urlopen(artifact_request, timeout=60) as artifact_response:
+                  remote_body = artifact_response.read(local_size + 1)
+              if len(remote_body) != local_size:
+                  raise SystemExit(f"existing PyPI body size differs for {filename}")
+              if hashlib.sha256(remote_body).hexdigest() != expected[filename]:
+                  raise SystemExit(f"existing PyPI body hash differs for {filename}")
+          print(
+              f"reconciled exact existing PyPI subset: {sorted(seen)}; "
+              f"missing: {sorted(set(expected) - seen)}"
+          )
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"needs_upload={str(seen != set(expected)).lower()}\n")
+          PY
+
+      - name: Publish OpenBB extension to PyPI (trusted publishing)
+        if: steps.pypi_state.outputs.needs_upload == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1
+        with:
+          packages-dir: openbb-verified
+          skip-existing: true
+
+      - name: Poll PyPI for the exact complete immutable OpenBB inventory
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          version = os.environ["EXPECTED_VERSION"]
+          expected = {
+              os.environ["EXPECTED_WHEEL_NAME"]: os.environ["EXPECTED_WHEEL_SHA256"],
+              os.environ["EXPECTED_SDIST_NAME"]: os.environ["EXPECTED_SDIST_SHA256"],
+          }
+          canonical = {
+              f"openbb_seiche-{version}-py3-none-any.whl": "bdist_wheel",
+              f"openbb_seiche-{version}.tar.gz": "sdist",
+          }
+          if set(expected) != set(canonical):
+              raise SystemExit("non-canonical expected OpenBB PyPI inventory")
+          dist = Path("openbb-verified")
+          local_entries = list(dist.iterdir())
+          if {path.name for path in local_entries} != set(expected):
+              raise SystemExit("local OpenBB inventory changed after upload")
+          for path in local_entries:
+              if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit(f"unsafe local OpenBB distribution entry: {path}")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != expected[path.name]:
+                  raise SystemExit(f"local OpenBB distribution changed: {path.name}")
+
+          project_name = "openbb-seiche"
+          release_url = (
+              "https://pypi.org/pypi/"
+              f"{urllib.parse.quote(project_name, safe='')}/"
+              f"{urllib.parse.quote(version, safe='')}/json"
+          )
+
+          def fetch_release():
+              request = urllib.request.Request(
+                  f"{release_url}?receipt={time.time_ns()}",
+                  headers={
+                      "Accept": "application/json",
+                      "Cache-Control": "no-cache",
+                      "User-Agent": "seiche-openbb-publication-receipt/1",
+                  },
+              )
+              try:
+                  response = urllib.request.urlopen(request, timeout=30)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      return None
+                  raise
+              with response:
+                  body = response.read(2 * 1024 * 1024 + 1)
+              if len(body) > 2 * 1024 * 1024:
+                  raise SystemExit("PyPI release metadata exceeds 2 MiB")
+              return json.loads(body)
+
+          complete_entries = None
+          for attempt in range(24):
+              release = fetch_release()
+              if release is None:
+                  seen = set()
+              else:
+                  info = release.get("info")
+                  if not isinstance(info, dict):
+                      raise SystemExit("PyPI release metadata has no info object")
+                  normalized = re.sub(
+                      r"[-_.]+", "-", str(info.get("name", ""))
+                  ).lower()
+                  if normalized != project_name or info.get("version") != version:
+                      raise SystemExit("PyPI release identity differs from verified artifacts")
+                  remote_files = release.get("urls")
+                  if not isinstance(remote_files, list):
+                      raise SystemExit("PyPI release metadata has no file inventory")
+                  entries = {}
+                  for entry in remote_files:
+                      if not isinstance(entry, dict):
+                          raise SystemExit("PyPI release contains a malformed file entry")
+                      filename = entry.get("filename")
+                      if filename not in expected or filename in entries:
+                          raise SystemExit(f"foreign or duplicate PyPI file: {filename!r}")
+                      if entry.get("packagetype") != canonical[filename]:
+                          raise SystemExit(f"wrong PyPI package type for {filename}")
+                      if entry.get("yanked") is not False:
+                          raise SystemExit(f"published PyPI file is yanked: {filename}")
+                      if entry.get("digests", {}).get("sha256") != expected[filename]:
+                          raise SystemExit(f"published PyPI SHA-256 differs for {filename}")
+                      if entry.get("size") != (dist / filename).stat().st_size:
+                          raise SystemExit(f"published PyPI size differs for {filename}")
+                      artifact_url = entry.get("url")
+                      if not isinstance(artifact_url, str) or not artifact_url.startswith(
+                          "https://files.pythonhosted.org/"
+                      ):
+                          raise SystemExit(f"unexpected PyPI artifact URL for {filename}")
+                      entries[filename] = entry
+                  seen = set(entries)
+                  if seen == set(expected):
+                      complete_entries = entries
+                      break
+              print(f"PyPI receipt attempt {attempt + 1}: waiting for {sorted(set(expected) - seen)}")
+              time.sleep(5)
+          if complete_entries is None:
+              raise SystemExit(
+                  "PyPI did not expose the complete exact OpenBB inventory within 120 seconds"
+              )
+
+          for filename, entry in complete_entries.items():
+              local_size = (dist / filename).stat().st_size
+              request = urllib.request.Request(
+                  entry["url"],
+                  headers={"User-Agent": "seiche-openbb-publication-receipt/1"},
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  body = response.read(local_size + 1)
+              if len(body) != local_size:
+                  raise SystemExit(f"published PyPI body size differs for {filename}")
+              digest = hashlib.sha256(body).hexdigest()
+              if digest != expected[filename]:
+                  raise SystemExit(f"published PyPI body hash differs for {filename}")
+              print(f"public receipt {filename} sha256:{digest}")
+          PY

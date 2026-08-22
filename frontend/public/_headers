@@ -7,7 +7,7 @@
 /.well-known/ai-catalog.json
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, s-maxage=3600
-  Content-Type: application/ai-catalog+json; charset=utf-8
+  Content-Type: application/json; charset=utf-8
 
 /.well-known/security.txt
   Access-Control-Allow-Origin: *
@@ -18,6 +18,11 @@
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=300, s-maxage=3600
   Content-Type: application/json; charset=utf-8
+
+/datasets/direct-ofr/catalog.jsonld
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, s-maxage=3600
+  Content-Type: application/ld+json; charset=utf-8
 
 /*
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload

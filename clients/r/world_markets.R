@@ -61,7 +61,14 @@ validate_world_markets_contract <- function(payload, section) {
   invisible(TRUE)
 }
 
-contract_receipt <- function(payload) {
+contract_receipt <- function(
+  payload,
+  timeout_seconds = SEICHE_TIMEOUT_SECONDS,
+  max_response_bytes = SEICHE_MAX_RESPONSE_BYTES
+) {
+  if (timeout_seconds <= 0 || max_response_bytes <= 0) {
+    stop("timeout_seconds and max_response_bytes must be positive")
+  }
   list(
     schema = payload$schema,
     selection = payload$selection,
@@ -70,8 +77,8 @@ contract_receipt <- function(payload) {
     citation = payload$citation,
     scope = payload$scope,
     client_limits = list(
-      timeout_seconds = SEICHE_TIMEOUT_SECONDS,
-      max_response_bytes = SEICHE_MAX_RESPONSE_BYTES,
+      timeout_seconds = timeout_seconds,
+      max_response_bytes = max_response_bytes,
       automatic_retries = 0L
     )
   )

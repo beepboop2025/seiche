@@ -4,6 +4,7 @@ version = "0.11.0"
 description = "Funding-stress and leveraged-positioning research terminal with public, credentialed-official, licensed, and fail-closed market-data boundaries."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 authors = [
     { name = "Mrinal", email = "beepboop2025@users.noreply.github.com" },
 ]
@@ -88,11 +89,27 @@ Changelog = "https://github.com/beepboop2025/seiche/blob/main/CHANGELOG.md"
 "MCP server" = "https://api.seiche.info/mcp"
 
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = [
+    "hatchling==1.32.0",
+    "packaging==26.3",
+    "pathspec==1.1.1",
+    "pluggy==1.6.0",
+    "tomlkit==0.15.1",
+    "trove-classifiers==2026.6.1.19",
+]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-include = ["seiche*"]
+[tool.hatch.build]
+reproducible = true
 
-[tool.setuptools.package-data]
-seiche = ["bootstrap_snapshot.json"]
+[tool.hatch.build.targets.wheel]
+packages = ["seiche"]
+exclude = ["/seiche/dispatches/**"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["seiche"]
+exclude = [
+    "/seiche/dispatches/**",
+]
+core-metadata-version = "2.4"

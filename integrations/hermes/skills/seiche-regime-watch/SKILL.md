@@ -2,7 +2,7 @@
 name: seiche-regime-watch
 description: Alerting policy for the Seiche funding-stress board. Use inside scheduled watch jobs, or when asked "should I be worried", "alert me if", or to decide whether a change on the board deserves a notification. Encodes when to speak and, just as important, when to stay silent.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, finance, alerting, monitoring]

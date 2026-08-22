@@ -212,22 +212,26 @@ jobs:
         continue-on-error: true
         run: python backend/scripts/ping_indexnow.py
 
-      # Secondary: Cloudflare Pages — works the day CLOUDFLARE_API_TOKEN is
-      # minted; until then this step fails without failing the publish.
-      # Loud preflight first: without the token, seiche.info's _headers (HSTS,
-      # CSP, …) never go live — GitHub Pages sends no custom headers.
+      # Canonical: Cloudflare Pages serves seiche.info and its reviewed _headers.
+      # The GitHub mirror remains durable, but it is not the public receipt.
       - name: Cloudflare token preflight
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::warning title=Cloudflare Pages deploy skipped::CLOUDFLARE_API_TOKEN is not set — seiche.info security headers (frontend/public/_headers) only go live via the Cloudflare Pages deployment; the GitHub Pages mirror sends none. One-time setup: ops/cloudflare/README.md."
+            echo "::error title=Cloudflare Pages deploy blocked::CLOUDFLARE_API_TOKEN is required because seiche.info and its reviewed response headers are the canonical public surface. Setup: ops/cloudflare/README.md."
+            exit 1
           fi
-      - name: Deploy to Cloudflare Pages (optional)
-        continue-on-error: true
+      - name: Deploy to canonical Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "3.90.0"
           command: pages deploy frontend/dist --project-name=seiche --branch=main
+
+      - name: Prove the canonical dataset landing and DCAT catalog are live
+        run: >-
+          python ops/release/verify_public_dataset.py
+          --expected-root frontend/dist
+          --cache-key "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"

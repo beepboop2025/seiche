@@ -90,9 +90,7 @@ def test_catalog_rows_derive_the_published_coverage_receipt():
     assert snapshot["raw_live_benchmarks"] == states["LIVE_REFERENCE"]
     assert snapshot["derived_context_benchmarks"] == states["DERIVED_CONTEXT"]
     assert snapshot["policy_only_markets"] == states["POLICY_ONLY"]
-    assert snapshot["declared_unavailable_markets"] == states[
-        "DECLARED_UNAVAILABLE"
-    ]
+    assert snapshot["declared_unavailable_markets"] == states["DECLARED_UNAVAILABLE"]
     assert snapshot["discovery_candidates"] == 52
     assert snapshot["discovery_regions"] == 9
     assert snapshot["global_discovery_universe"] == 63
@@ -107,18 +105,25 @@ def test_catalog_keeps_source_rights_and_missingness_attached():
     catalog = _catalog()
     markets = catalog["markets"]
     assert len({market["market_id"] for market in markets}) == len(markets)
-    assert all(re.fullmatch(r"[A-Z]+-[A-Z]+", market["market_id"])
-               for market in markets)
-    assert all(urlparse(market["source_url"]).scheme == "https"
-               for market in markets)
+    assert all(
+        re.fullmatch(r"[A-Z]+-[A-Z]+", market["market_id"]) for market in markets
+    )
+    assert all(urlparse(market["source_url"]).scheme == "https" for market in markets)
 
     live = [market for market in markets if market["status"] == "LIVE_REFERENCE"]
     assert {market["benchmark"] for market in live} == {
-        "AONIA", "ESTR", "CALL WAR", "TONA", "SORA", "SOFR"
+        "AONIA",
+        "ESTR",
+        "CALL WAR",
+        "TONA",
+        "SORA",
+        "SOFR",
     }
     assert all(market["raw_value_public"] and market["as_of"] for market in live)
 
-    derived = next(market for market in markets if market["status"] == "DERIVED_CONTEXT")
+    derived = next(
+        market for market in markets if market["status"] == "DERIVED_CONTEXT"
+    )
     assert derived["benchmark"] == "SONIA"
     assert derived["rights_status"] == "derived_only"
     assert derived["raw_value_public"] is False
@@ -128,13 +133,16 @@ def test_catalog_keeps_source_rights_and_missingness_attached():
     assert policy["benchmark"] == "HKMA BASE RATE"
     assert "policy_anchor" in policy["rights_status"]
 
-    missing = [market for market in markets
-               if market["status"] == "DECLARED_UNAVAILABLE"]
-    assert {market["market_id"] for market in missing} == {
-        "CN-CNY", "KR-KRW", "NZ-NZD"
-    }
-    assert all(market["benchmark"] is None and market["as_of"] is None
-               and not market["raw_value_public"] for market in missing)
+    missing = [
+        market for market in markets if market["status"] == "DECLARED_UNAVAILABLE"
+    ]
+    assert {market["market_id"] for market in missing} == {"CN-CNY", "KR-KRW", "NZ-NZD"}
+    assert all(
+        market["benchmark"] is None
+        and market["as_of"] is None
+        and not market["raw_value_public"]
+        for market in missing
+    )
 
 
 def test_no_js_page_is_canonical_answer_first_and_matches_the_catalog():
@@ -142,11 +150,17 @@ def test_no_js_page_is_canonical_answer_first_and_matches_the_catalog():
     snapshot = _catalog()["snapshot"]
 
     assert '<link rel="canonical" href="https://seiche.info/money-markets/">' in page
-    assert 'type="application/json" href="https://seiche.info/money-markets/catalog.json"' in page
+    assert (
+        'type="application/json" href="https://seiche.info/money-markets/catalog.json"'
+        in page
+    )
     assert page.count("<script") == 1
     assert page.count('type="application/ld+json"') == 1
     assert "Seiche does not publish a universal world-economy score." in visible
-    assert "Registration, availability, validation, and evidence eligibility remain separate claims." in visible
+    assert (
+        "Registration, availability, validation, and evidence eligibility remain separate claims."
+        in visible
+    )
     for label, value in (
         ("Registered packs", snapshot["registered_markets"]),
         ("Raw live benchmarks", snapshot["raw_live_benchmarks"]),
@@ -182,11 +196,13 @@ def test_dataset_jsonld_matches_visible_and_machine_receipts():
         "Discovery candidates": snapshot["discovery_candidates"],
         "Global discovery universe": snapshot["global_discovery_universe"],
     }
-    assert all(item["contentUrl"].startswith("https://")
-               for item in dataset["distribution"])
-    assert "AGPL-3.0 covers Seiche code, not upstream data" in dataset[
-        "conditionsOfAccess"
-    ]
+    assert all(
+        item["contentUrl"].startswith("https://") for item in dataset["distribution"]
+    )
+    assert (
+        "Seiche code uses AGPL-3.0-or-later; upstream data retain their own terms"
+        in dataset["conditionsOfAccess"]
+    )
     assert "Zero of 11 packs" in visible
     assert "Global Tide is unavailable" in visible
 
@@ -221,30 +237,33 @@ def test_product_and_agent_catalogs_route_to_the_evidence_pair():
         "https://seiche.info/money-markets/catalog.json"
     )
 
-    agent_catalog = json.loads(
-        (PUBLIC / ".well-known" / "ai-catalog.json").read_text()
+    agent_catalog = json.loads((PUBLIC / ".well-known" / "ai-catalog.json").read_text())
+    entry = next(
+        item
+        for item in agent_catalog["entries"]
+        if item["identifier"] == "urn:air:seiche.info:dataset:money-market-evidence"
     )
-    entry = next(item for item in agent_catalog["entries"]
-                 if item["identifier"] ==
-                 "urn:air:seiche.info:dataset:money-market-evidence")
     assert entry["url"] == "https://seiche.info/money-markets/catalog.json"
     assert entry["type"] == "application/json"
     assert entry["metadata"]["registeredMarketPacks"] == 11
     assert entry["metadata"]["rawLiveBenchmarks"] == 6
     assert entry["metadata"]["universalScore"] is False
     assert 2 <= len(entry["representativeQueries"]) <= 5
-    mcp = next(item for item in agent_catalog["entries"]
-               if item["type"] == "application/mcp-server-card+json")
+    mcp = next(
+        item
+        for item in agent_catalog["entries"]
+        if item["identifier"] == "urn:air:seiche.info:mcp:funding-stress"
+    )
+    assert mcp["type"] == "application/json"
     assert mcp["metadata"]["publicToolCount"] == 11
     assert "world_markets_context" in mcp["capabilities"]
-    assert card["access"]["public_world_markets_mcp_tool"] == (
-        "world_markets_context")
+    assert card["access"]["public_world_markets_mcp_tool"] == ("world_markets_context")
 
 
 def test_catalog_json_has_cross_origin_type_and_cache_headers():
     headers = (PUBLIC / "_headers").read_text()
-    block = headers[headers.index("/money-markets/catalog.json"):]
-    block = block[:block.index("\n\n")]
+    block = headers[headers.index("/money-markets/catalog.json") :]
+    block = block[: block.index("\n\n")]
     assert "Access-Control-Allow-Origin: *" in block
     assert "Content-Type: application/json; charset=utf-8" in block
     assert "Cache-Control: public" in block
@@ -256,18 +275,35 @@ def test_robots_separates_retrieval_from_model_training():
     assert "Content-Signal: search=yes, ai-input=yes, ai-train=no" in robots
     assert "cannot override Cloudflare AI Crawl Control or WAF" in robots
     assert "used for search or user-directed AI retrieval with attribution" in terms
-    assert "Permission to use published pages for model training is not granted" in terms
+    assert (
+        "Permission to use published pages for model training is not granted" in terms
+    )
     assert "AI input or training material" not in terms
     assert "does not grant model training" in dispatch_pages._LLMS_PREAMBLE
     for agent in (
-        "OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User",
-        "Googlebot", "GoogleOther", "Bingbot", "PerplexityBot",
-        "Perplexity-User", "DuckAssistBot", "MistralAI-User",
+        "OAI-SearchBot",
+        "ChatGPT-User",
+        "Claude-SearchBot",
+        "Claude-User",
+        "Googlebot",
+        "GoogleOther",
+        "Bingbot",
+        "PerplexityBot",
+        "Perplexity-User",
+        "DuckAssistBot",
+        "MistralAI-User",
     ):
         assert f"User-agent: {agent}\nAllow: /" in robots
     for agent in (
-        "GPTBot", "ClaudeBot", "anthropic-ai", "Google-Extended", "CCBot",
-        "meta-externalagent", "Applebot-Extended", "Amazonbot", "Bytespider",
+        "GPTBot",
+        "ClaudeBot",
+        "anthropic-ai",
+        "Google-Extended",
+        "CCBot",
+        "meta-externalagent",
+        "Applebot-Extended",
+        "Amazonbot",
+        "Bytespider",
         "cohere-ai",
     ):
         assert f"User-agent: {agent}\nDisallow: /" in robots
@@ -280,29 +316,39 @@ def test_indexnow_urls_are_deterministic_deduplicated_and_same_host(tmp_path):
     article_dir = tmp_path / "frontend" / "public" / "articles"
     dispatch_dir.mkdir(parents=True)
     article_dir.mkdir(parents=True)
-    (dispatch_dir / "index.json").write_text(json.dumps([
-        {"slug": "2026-08-21-daily"},
-        {"slug": "2026-08-20-daily"},
-        {"slug": "2026-08-21-daily"},
-    ]))
-    (article_dir / "index.json").write_text(json.dumps([
-        {"slug": "why-native-clocks-matter"},
-        {"slug": "why-native-clocks-matter"},
-    ]))
+    (dispatch_dir / "index.json").write_text(
+        json.dumps(
+            [
+                {"slug": "2026-08-21-daily"},
+                {"slug": "2026-08-20-daily"},
+                {"slug": "2026-08-21-daily"},
+            ]
+        )
+    )
+    (article_dir / "index.json").write_text(
+        json.dumps(
+            [
+                {"slug": "why-native-clocks-matter"},
+                {"slug": "why-native-clocks-matter"},
+            ]
+        )
+    )
 
     first = module.build_urls(tmp_path)
     second = module.build_urls(tmp_path)
     assert first == second
     assert len(first) == len(set(first))
-    assert first[:len(module.STATIC_PATHS)] == [
+    assert first[: len(module.STATIC_PATHS)] == [
         f"https://seiche.info{path}" for path in module.STATIC_PATHS
     ]
     assert "https://seiche.info/money-markets/" in first
     assert "https://seiche.info/money-markets/catalog.json" in first
     assert "https://seiche.info/articles/why-native-clocks-matter/" in first
     assert "https://seiche.info/dispatches/2026-08-21-daily" in first
-    assert all(urlparse(url).scheme == "https" and
-               urlparse(url).netloc == "seiche.info" for url in first)
+    assert all(
+        urlparse(url).scheme == "https" and urlparse(url).netloc == "seiche.info"
+        for url in first
+    )
     assert not any("api.seiche.info" in url for url in first)
 
 

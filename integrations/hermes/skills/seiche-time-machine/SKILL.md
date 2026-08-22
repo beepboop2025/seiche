@@ -2,7 +2,7 @@
 name: seiche-time-machine
 description: Point-in-time replay of the Seiche board for historical study. Use when asked "what did Seiche say before X", to walk a past stress episode day by day, to compare today with a named event, or to sanity-check the signal against history. Enforces no-lookahead discipline.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, finance, backtest, history, point-in-time]

@@ -46,10 +46,20 @@ private key, and a rewrite made with a leaked key is attributable.
 intermediate encoding) is submitted to the public OpenTimestamps calendar
 servers. The calendars aggregate digests into a Merkle tree that is committed
 to the Bitcoin blockchain. Once anchored, nobody can backdate the record: the
-proof verifies against Bitcoin block headers with the standard `ots` tooling
-and requires no trust in Seiche or its operator. Until the calendar's
-aggregation lands in a block (usually a few hours) the stored proof is
-honestly marked `pending`; the `upgrade` command completes it later.
+two stored fragments link the record hash to the calendar commitment and that
+commitment to a Bitcoin attestation. A proof is called **Bitcoin attested**
+when those fragments parse and link exactly. It is called **Bitcoin confirmed**
+only after the final commitment matches the Merkle root in the canonical block
+header returned by a configured Bitcoin Core node. Until the calendar's
+aggregation lands in a block (usually a few hours), the proof is honestly
+marked `pending`; the `upgrade` command stores the continuation later.
+Seiche deliberately accepts the calendar-proof subset it emits and can replay:
+forks, append/prepend, SHA-1, RIPEMD-160 and SHA-256 operations, plus pending
+and Bitcoin attestations whose continuation commitments are 32 bytes. The
+parser applies the reference operation/result, payload, URI and recursion
+bounds; other official OTS operations fail closed instead of being guessed at.
+Live calendar responses are streamed and capped at 10,000 bytes before they
+can enter attestation storage.
 
 **Run receipts.** Each attestation run also signs a small manifest (day,
 regime, value, ledger commit result) stored under
@@ -77,7 +87,9 @@ python -m seiche.attest status                # what is committed / signed / anc
 python -m seiche.attest sign                  # catch up signing of committed records
 python -m seiche.attest anchor                # submit unanchored days to the calendars
 python -m seiche.attest upgrade               # complete pending proofs to Bitcoin
-python -m seiche.attest verify                # full independent verification
+python -m seiche.attest verify                # chain/signatures/linked OTS evidence
+python -m seiche.attest verify \
+  --bitcoin-node http://USER:PASS@127.0.0.1:8332  # also confirm canonical headers
 python -m seiche.attest prove-scoreboard      # commit, sign and anchor the PROOF scoreboard
 python -m seiche.attest pubkey                # operator public key (hex)
 ```
@@ -87,37 +99,59 @@ hours later.
 
 The operator keypair is generated on first use in the attest directory. The
 private key is written with permissions 0600 and must never leave the server.
-Rotation is safe: move the old pair aside and a new one is generated; old
-signatures still verify against the public key recorded inside each signature
-line, and verification flags signatures made by a non current key as a
-warning so a rotation is visible but does not invalidate history.
+The mutable `operator_key.pub` file and the key embedded in a signature are
+identifiers, not trust roots. Production keys are pinned in the signed Seiche
+release; a custom installation bootstraps a separate `trusted_operator_keys`
+file once. A rotation is deliberately fail closed: approve the new public key
+in that authenticated policy first (for production, through a reviewed signed
+release), retain old approved keys for historical verification, then rotate
+the private key. An unapproved signer makes the whole verdict invalid.
 
 ## Verifying it yourself
 
-The whole point is that you do not have to trust this server. Everything
-needed is public and read only:
+The commitment-verification surface is public and read only:
 
-* `GET /api/attest/pubkey`: the operator's Ed25519 public key, the signing
-  domain, and the message format.
+* `GET /api/attest/pubkey`: the current Ed25519 key, approved key set, signing
+  domain, and message format. The signed release remains the trust root; do not
+  learn a signing key from the same server whose history you are checking.
 * `GET /api/attest/stream/stress_readings`: per day commitments (day, record
-  hash, signature, anchor status) plus the server's own verification verdict.
-* `GET /api/attest/verify/stress_readings`: the verdict alone.
+  hash and signature), the complete pending and continuation fragments as
+  canonical base64, their parsed attestations, and a server-side verdict.
+* `GET /api/attest/verify/stress_readings`: the server-side structural verdict
+  alone. It intentionally reports zero Bitcoin confirmations unless a verifier
+  explicitly supplies a Bitcoin Core trust boundary through the CLI.
 
 To verify independently:
 
-1. **The chain** needs only a JSON parser and SHA-256: each ledger record's
-   hash is SHA-256 over the canonical JSON of `{day, payload, prev_hash}`
-   (sorted keys, no whitespace), and each `prev_hash` must equal the previous
-   record's hash, back to a genesis of 64 zeros.
+1. **The chain** needs only a JSON parser and SHA-256 when you have the ledger
+   records: each record's hash is SHA-256 over the canonical JSON of
+   `{day, payload, prev_hash}` (sorted keys, no whitespace), and each
+   `prev_hash` must equal the previous record's hash, back to 64 zeroes. The
+   generic public endpoint intentionally omits `payload`; it lets you verify
+   links between signed commitments, while payload-to-hash verification needs
+   the corresponding published aggregate or ledger export.
 2. **The signatures** verify with any Ed25519 implementation: the message is
-   `seiche-pit-v1:{stream}:{day}:{record_hash}` and the key is the one
-   published at `/api/attest/pubkey` (or recorded inside the signature line).
-3. **The anchors** verify with the standard OpenTimestamps tooling: the
-   submitted digest is the record hash itself, so `ots verify` against the
-   stored proof and a Bitcoin block header settles when that hash existed.
+   `seiche-pit-v1:{stream}:{day}:{record_hash}`. Accept the signature only if
+   its key is in the authenticated allowlist in the signed release (or the
+   installation's separately authenticated trust file).
+3. **The OTS path** begins at the record hash. Parse the pending fragment and
+   require its calendar and parsed attestations to match the stored fields;
+   then begin the continuation at that exact pending commitment and require
+   its Bitcoin height and parsed attestations to match. The API publishes both
+   fragments because neither one alone proves this path.
+4. **The Bitcoin confirmation** asks a trusted Bitcoin Core node for
+   `getblockhash(height)` and the raw 80-byte `getblockheader`. Recompute the
+   header hash and require its Merkle-root field to equal the OTS final
+   commitment. A Bitcoin attestation tag or plausible height alone is not a
+   confirmation.
 
-Or run `python -m seiche.attest verify`, which does all three and reports
-problems instead of crashing on bad input.
+Or run `python -m seiche.attest verify` against the ledger and sidecars. It
+checks the chain, exact record/signature identity sets, the authenticated key
+policy, and both OTS fragments. Add `--bitcoin-node URL` (or set
+`SEICHE_BITCOIN_RPC_URL`) to perform step 4. Without a node the report says
+`bitcoin_confirmation_check: not_requested`, counts structurally valid proofs
+under `n_anchors_bitcoin_attested`, and reports zero under
+`n_anchors_bitcoin_confirmed`.
 
 ## Honest limits
 
@@ -134,6 +168,11 @@ problems instead of crashing on bad input.
 * **A stolen key can sign a lie.** Signatures make rewrites attributable, not
   impossible. The Bitcoin anchor is the backstop: even the key holder cannot
   backdate an anchored record.
+* **The generic endpoint is commitment-only.** It never returns stream
+  payloads. Independent signature and timestamp checks therefore prove the
+  identity and publication time of a record hash; proving that a particular
+  payload produced that hash additionally requires the corresponding
+  published aggregate or ledger record.
 * **One record per day.** The ledger commits the first published reading of
   each data day. Intraday revisions remain visible in the notary chain, which
   appends a link for every distinct state the record held.

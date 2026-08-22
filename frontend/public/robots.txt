@@ -81,6 +81,8 @@ Disallow: /
 # Capital-markets transmission ledger:           https://seiche.info/markets/capital-markets/
 # Global money-market evidence map:              https://seiche.info/money-markets/
 # Machine-readable money-market catalog:         https://seiche.info/money-markets/catalog.json
+# Audited direct-OFR research dataset:            https://seiche.info/datasets/direct-ofr/
+# Machine-readable direct-OFR DCAT 3 catalog:     https://seiche.info/datasets/direct-ofr/catalog.jsonld
 # Agents can query the live board over MCP:     https://api.seiche.info/mcp
 
 Agentmap: https://seiche.info/.well-known/ai-catalog.json

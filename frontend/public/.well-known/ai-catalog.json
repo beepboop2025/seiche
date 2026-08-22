@@ -9,7 +9,7 @@
     {
       "identifier": "urn:air:seiche.info:mcp:funding-stress",
       "displayName": "Seiche World Markets MCP Server",
-      "type": "application/mcp-server-card+json",
+      "type": "application/json",
       "data": {
         "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
         "name": "io.github.beepboop2025/seiche",
@@ -224,6 +224,46 @@
         "forexReferenceSeries": 22,
         "requestTimeCollection": false,
         "exhaustiveCoverage": false
+      }
+    },
+    {
+      "identifier": "urn:air:seiche.info:dataset:direct-ofr",
+      "displayName": "Seiche Audited Direct-OFR Research Dataset",
+      "type": "application/ld+json",
+      "url": "https://seiche.info/datasets/direct-ofr/catalog.jsonld",
+      "description": "A rights-reviewed, source-pinned research snapshot containing 11,163 observations from ten direct Office of Financial Research series. Runtime caches, FRED-fetched values, restricted rows and Seiche-derived outputs are excluded; the draft has no DOI.",
+      "tags": [
+        "Office of Financial Research",
+        "repo markets",
+        "money market funds",
+        "financial time series",
+        "DCAT 3",
+        "Dataset"
+      ],
+      "capabilities": [
+        "source-pinned CSV distributions",
+        "native daily and monthly clocks",
+        "SHA-256 file receipts",
+        "upstream rights boundary",
+        "DCAT 3 metadata"
+      ],
+      "representativeQueries": [
+        "Where can I find Seiche's audited direct-OFR repo and money-market-fund dataset?",
+        "Which OFR series and observation clocks are included in the Seiche research snapshot?",
+        "How do I verify the hashes, source revision and rights boundary for Seiche's academic dataset?",
+        "Has the direct-OFR Seiche dataset been assigned a DOI?"
+      ],
+      "version": "0.1.0-draft",
+      "updatedAt": "2026-08-22T00:00:00Z",
+      "metadata": {
+        "authentication": "none",
+        "access": "public-read-only",
+        "humanPage": "https://seiche.info/datasets/direct-ofr/",
+        "publicationStatus": "draft_not_submitted",
+        "doiAssigned": false,
+        "seriesCount": 10,
+        "recordCount": 11163,
+        "distributionCount": 2
       }
     }
   ]

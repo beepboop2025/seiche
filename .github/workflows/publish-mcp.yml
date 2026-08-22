@@ -9,15 +9,12 @@ name: publish-mcp
 # granted to that job only) against the io.github.beepboop2025/* namespace. No
 # long-lived publishing secret is involved.
 #
-# The publisher binary is version-pinned and sha256-verified, same pattern as
-# registry-publish.yml: the registry job holds an OIDC id-token, so executing
-# an unpinned "latest" download would hand namespace publish rights to whoever
-# controls the next release. Bump the version and hash together, from
-# registry_<ver>_checksums.txt on the release.
-#
-# The registry job stays here rather than deferring to registry-publish.yml:
-# that one is workflow_dispatch only, so deleting this job would mean a
-# release no longer lands in the registry unless someone remembers to run it.
+# The publisher binary is version-pinned and sha256-verified: the registry job
+# holds an OIDC id-token, so executing an unpinned "latest" download would hand
+# namespace publish rights to whoever controls the next release. Bump the
+# version and hash together from registry_<ver>_checksums.txt on the release.
+# This is the sole MCP publication workflow; both release and manual recovery
+# paths must first pass its immutable-PyPI-byte gate.
 #
 # See docs/PUBLISHING.md for the manual equivalent and the aggregator submissions.
 
@@ -34,27 +31,38 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-mcp-${{ github.event.release.tag_name || inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   verify-pypi:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
     outputs:
       release_sha: ${{ steps.release.outputs.release_sha }}
+      package_version: ${{ steps.release.outputs.package_version }}
+      server_json_sha256: ${{ steps.registry_manifest.outputs.server_json_sha256 }}
+      manifest_artifact_name: ${{ steps.registry_manifest.outputs.manifest_artifact_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.12"
 
       - name: Bind and verify the annotated SSH-signed release
         id: release
         run: |
-          version="$(python - <<'PY'
+          version="$(python -I -S - <<'PY'
           import tomllib
           from pathlib import Path
 
@@ -67,34 +75,47 @@ jobs:
           [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
           test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          [[ "$RELEASE_SIGNING_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]
+          test "$(ssh-keygen -lf ops/deploy/release-allowed-signers -E sha256 | wc -l)" -eq 1
+          actual_signer_fingerprint="$(
+            ssh-keygen -lf ops/deploy/release-allowed-signers -E sha256 | awk '{print $2}'
+          )"
+          test "$actual_signer_fingerprint" = "$RELEASE_SIGNING_KEY_FINGERPRINT"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
           git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
             verify-commit HEAD
           git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
             verify-tag "$RELEASE_TAG"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "package_version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Verify immutable PyPI artifacts against this checkout
         env:
           EXPECTED_RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          python - <<'PY'
+          PYPI_DIST_DIR="${RUNNER_TEMP}/pypi-dist"
+          export PYPI_DIST_DIR
+          mkdir -p "$PYPI_DIST_DIR"
+          SOURCE_AUTHORITY="${RUNNER_TEMP}/source-authority"
+          export SOURCE_AUTHORITY
+          mkdir -p "$SOURCE_AUTHORITY"
+          git archive "$RELEASE_TAG^{commit}" | tar -x -C "$SOURCE_AUTHORITY"
+          echo "SOURCE_AUTHORITY=$SOURCE_AUTHORITY" >> "$GITHUB_ENV"
+          python -I -S - <<'PY'
           from __future__ import annotations
 
           import hashlib
-          import io
           import json
           import os
           import re
-          import tarfile
           import tomllib
           import urllib.parse
           import urllib.request
-          import zipfile
-          from email.parser import BytesParser
-          from email.policy import default
           from pathlib import Path, PurePosixPath
 
-          root = Path.cwd()
+          root = Path(os.environ["SOURCE_AUTHORITY"])
           project = tomllib.loads((root / "backend/pyproject.toml").read_text())["project"]
           name = project["name"]
           version = project["version"]
@@ -136,7 +157,6 @@ jobs:
           if set(by_type) != {"bdist_wheel", "sdist"}:
               raise SystemExit("PyPI release does not contain the required wheel and sdist")
 
-          payloads: dict[str, tuple[str, bytes]] = {}
           maximum_artifact_bytes = 50 * 1024 * 1024
           for package_type, entry in sorted(by_type.items()):
               if entry.get("yanked") is not False:
@@ -171,156 +191,288 @@ jobs:
                   raise SystemExit(
                       f"SHA-256 mismatch for {filename}: got {actual_digest}, expected {digest}"
                   )
-              payloads[package_type] = (filename, body)
-              print(f"verified {filename} sha256:{digest}")
-
-          local_package_files = {
-              path.relative_to(root / "backend").as_posix(): path
-              for path in (root / "backend/seiche").rglob("*")
-              if path.is_file()
-              and (path.suffix == ".py" or path.name == "bootstrap_snapshot.json")
-          }
-
-          wheel_name, wheel_body = payloads["bdist_wheel"]
-          with zipfile.ZipFile(io.BytesIO(wheel_body)) as wheel:
-              members = wheel.namelist()
-              if len(members) != len(set(members)):
-                  raise SystemExit(f"duplicate member in {wheel_name}")
-              if any(
-                  PurePosixPath(member).is_absolute() or ".." in PurePosixPath(member).parts
-                  for member in members
-              ):
-                  raise SystemExit(f"unsafe member in {wheel_name}")
-              metadata_members = [
-                  member for member in members if member.endswith(".dist-info/METADATA")
-              ]
-              if len(metadata_members) != 1:
-                  raise SystemExit(f"expected exactly one METADATA file in {wheel_name}")
-              metadata = BytesParser(policy=default).parsebytes(
-                  wheel.read(metadata_members[0])
-              )
-              expected_metadata = {
-                  "Name": name,
-                  "Version": version,
-                  "License-Expression": license_expression,
-                  "Requires-Python": requires_python,
-              }
-              for field, expected in expected_metadata.items():
-                  if metadata.get(field) != expected:
-                      raise SystemExit(
-                          f"wheel {field} is {metadata.get(field)!r}, expected {expected!r}"
-                      )
-              wheel_package_files = {
-                  member
-                  for member in members
-                  if member.startswith("seiche/")
-                  and (member.endswith(".py") or member == "seiche/bootstrap_snapshot.json")
-              }
-              if wheel_package_files != set(local_package_files):
-                  missing = sorted(set(local_package_files) - wheel_package_files)
-                  extra = sorted(wheel_package_files - set(local_package_files))
-                  raise SystemExit(
-                      f"wheel source inventory mismatch; missing={missing}, extra={extra}"
-                  )
-              for member, local_path in local_package_files.items():
-                  if wheel.read(member) != local_path.read_bytes():
-                      raise SystemExit(f"wheel source differs from checkout: {member}")
-
-          sdist_name, sdist_body = payloads["sdist"]
-          sdist_prefix = f"{normalized_name}-{version}"
-          with tarfile.open(fileobj=io.BytesIO(sdist_body), mode="r:gz") as source:
-              members = source.getmembers()
-              names = [member.name for member in members]
-              if len(names) != len(set(names)):
-                  raise SystemExit(f"duplicate member in {sdist_name}")
-              if any(
-                  PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
-                  for name in names
-              ):
-                  raise SystemExit(f"unsafe member in {sdist_name}")
-              regular_files = {member.name: member for member in members if member.isfile()}
-              expected_source_files = {
-                  f"{sdist_prefix}/{relative}": local_path
-                  for relative, local_path in local_package_files.items()
-              }
-              expected_source_files.update(
-                  {
-                      f"{sdist_prefix}/pyproject.toml": root / "backend/pyproject.toml",
-                      f"{sdist_prefix}/README.md": root / "backend/README.md",
-                  }
-              )
-              missing = sorted(set(expected_source_files) - set(regular_files))
-              if missing:
-                  raise SystemExit(f"sdist is missing checkout files: {missing}")
-              for member, local_path in expected_source_files.items():
-                  extracted = source.extractfile(regular_files[member])
-                  if extracted is None or extracted.read() != local_path.read_bytes():
-                      raise SystemExit(f"sdist source differs from checkout: {member}")
-
-          print(
-              f"PyPI {name} {version} is immutable, metadata-consistent, "
-              "and source-identical to this checkout"
-          )
+              destination = Path(os.environ["PYPI_DIST_DIR"], filename)
+              destination.write_bytes(body)
+              print(f"downloaded and hash-verified {filename} sha256:{digest}")
           PY
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          python -I -S "$SOURCE_AUTHORITY/ops/release/verify_python_artifacts.py" \
+            --dist "$PYPI_DIST_DIR" \
+            --source "$SOURCE_AUTHORITY/backend" \
+            --repository-license "$SOURCE_AUTHORITY/LICENSE" \
+            --epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Stage the exact MCP Registry manifest
+        id: registry_manifest
+        env:
+          EXPECTED_VERSION: ${{ steps.release.outputs.package_version }}
+        run: |
+          publication_dir="${RUNNER_TEMP}/mcp-registry-publication"
+          mkdir -p "$publication_dir"
+          cp "$SOURCE_AUTHORITY/server.json" "$publication_dir/server.json"
+          SERVER_JSON="$publication_dir/server.json" python -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["SERVER_JSON"])
+          document = json.loads(path.read_text(encoding="utf-8"))
+          version = os.environ["EXPECTED_VERSION"]
+          if document.get("version") != version:
+              raise SystemExit("server.json version differs from the signed release")
+          packages = document.get("packages")
+          if not isinstance(packages, list) or len(packages) != 1:
+              raise SystemExit("server.json must have one exact package")
+          if packages[0].get("version") != version:
+              raise SystemExit("server.json package version differs from the signed release")
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"server_json_sha256={digest}\n")
+              output.write(
+                  "manifest_artifact_name="
+                  f"seiche-mcp-registry-manifest-{os.environ['GITHUB_RUN_ATTEMPT']}\n"
+              )
+          PY
+
+      - name: Upload the verified MCP Registry manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.registry_manifest.outputs.manifest_artifact_name }}
+          path: ${{ runner.temp }}/mcp-registry-publication/server.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false
 
   registry:
     needs: verify-pypi
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    environment: mcp-registry
     permissions:
       id-token: write        # lets mcp-publisher prove the namespace via OIDC
-      contents: read
     env:
       MCP_PUBLISHER_VERSION: "1.8.1"
       MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      EXPECTED_RELEASE_SHA: ${{ needs.verify-pypi.outputs.release_sha }}
+      EXPECTED_VERSION: ${{ needs.verify-pypi.outputs.package_version }}
+      EXPECTED_SERVER_JSON_SHA256: ${{ needs.verify-pypi.outputs.server_json_sha256 }}
+      MANIFEST_ARTIFACT_NAME: ${{ needs.verify-pypi.outputs.manifest_artifact_name }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Download the verified MCP Registry manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          ref: ${{ needs.verify-pypi.outputs.release_sha }}
-          fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
+          name: ${{ env.MANIFEST_ARTIFACT_NAME }}
+          path: publication
 
-      - name: Re-verify the exact signed release before OIDC publication
-        env:
-          EXPECTED_RELEASE_SHA: ${{ needs.verify-pypi.outputs.release_sha }}
+      - name: Verify the transferred manifest without executing candidate code
         run: |
-          python - <<'PY'
+          python3 -I -S - <<'PY'
+          import hashlib
           import json
           import os
-          import tomllib
           from pathlib import Path
+          import re
+          import stat
 
-          version = tomllib.loads(Path("backend/pyproject.toml").read_text())["project"]["version"]
-          server = json.loads(Path("server.json").read_text())
-          if os.environ["RELEASE_TAG"] != f"v{version}":
-              raise SystemExit("release tag does not match the package version")
-          if server.get("version") != version:
-              raise SystemExit("server.json does not match the package version")
-          if server.get("packages", [{}])[0].get("version") != version:
-              raise SystemExit("server.json package does not match the package version")
+          if re.fullmatch(r"[0-9a-f]{40}", os.environ["EXPECTED_RELEASE_SHA"]) is None:
+              raise SystemExit("release SHA output is malformed")
+          if os.environ["RELEASE_TAG"] != f"v{os.environ['EXPECTED_VERSION']}":
+              raise SystemExit("release tag does not match the verified package version")
+          expected_digest = os.environ["EXPECTED_SERVER_JSON_SHA256"]
+          if re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+              raise SystemExit("server.json SHA-256 output is malformed")
+          directory = Path("publication")
+          entries = list(directory.iterdir())
+          if [entry.name for entry in entries] != ["server.json"]:
+              raise SystemExit(f"unexpected registry publication inventory: {entries}")
+          path = entries[0]
+          if not stat.S_ISREG(path.lstat().st_mode):
+              raise SystemExit("server.json is not a regular file")
+          if hashlib.sha256(path.read_bytes()).hexdigest() != expected_digest:
+              raise SystemExit("server.json changed across the artifact boundary")
+          document = json.loads(path.read_text(encoding="utf-8"))
+          version = os.environ["EXPECTED_VERSION"]
+          if document.get("version") != version:
+              raise SystemExit("server.json version changed across the artifact boundary")
+          packages = document.get("packages")
+          if not isinstance(packages, list) or len(packages) != 1:
+              raise SystemExit("server.json package inventory changed")
+          if packages[0].get("version") != version:
+              raise SystemExit("server.json package version changed")
           PY
-          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_SHA"
-          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$EXPECTED_RELEASE_SHA"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
-          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
-            verify-commit HEAD
-          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
-            verify-tag "$RELEASE_TAG"
+
+      - name: Reconcile the exact MCP Registry version before publication
+        id: registry_state
+        run: |
+          python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          # mcp-publisher re-marshals Go `omitempty` booleans, so an explicit
+          # false in server.json and an omitted registry field are equivalent.
+          false_defaults = {"isRequired", "isSecret", "isRepeated"}
+
+          def normalize(value):
+              if isinstance(value, dict):
+                  normalized = {}
+                  for key, child in value.items():
+                      child = normalize(child)
+                      if key in false_defaults and child is False:
+                          continue
+                      normalized[key] = child
+                  return normalized
+              if isinstance(value, list):
+                  return [normalize(child) for child in value]
+              return value
+
+          local = json.loads(Path("publication/server.json").read_text(encoding="utf-8"))
+          name = local.get("name")
+          version = local.get("version")
+          if name != "io.github.beepboop2025/seiche":
+              raise SystemExit("unexpected MCP server name in transferred manifest")
+          if version != os.environ["EXPECTED_VERSION"]:
+              raise SystemExit("transferred MCP version differs from verified release")
+          detail_url = (
+              "https://registry.modelcontextprotocol.io/v0.1/servers/"
+              f"{urllib.parse.quote(name, safe='')}/versions/"
+              f"{urllib.parse.quote(version, safe='')}?include_deleted=true"
+          )
+          request = urllib.request.Request(
+              detail_url,
+              headers={
+                  "Accept": "application/json",
+                  "Cache-Control": "no-cache",
+                  "User-Agent": "seiche-mcp-idempotent-publisher/1",
+              },
+          )
+          try:
+              response = urllib.request.urlopen(request, timeout=30)
+          except urllib.error.HTTPError as exc:
+              if exc.code == 404:
+                  with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+                      output.write("needs_publish=true\n")
+                  print(f"MCP Registry has no {name} {version}; publication is required")
+                  raise SystemExit(0)
+              raise
+          with response:
+              body = response.read(2 * 1024 * 1024 + 1)
+          if len(body) > 2 * 1024 * 1024:
+              raise SystemExit("MCP Registry response exceeds 2 MiB")
+          record = json.loads(body)
+          remote = record.get("server")
+          if not isinstance(remote, dict) or normalize(remote) != normalize(local):
+              raise SystemExit("existing MCP Registry server differs from signed server.json")
+          metadata = record.get("_meta")
+          if not isinstance(metadata, dict):
+              raise SystemExit("existing MCP Registry record has no official metadata")
+          official = metadata.get("io.modelcontextprotocol.registry/official")
+          if not isinstance(official, dict) or official.get("status") != "active":
+              raise SystemExit("existing MCP Registry version is not active")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write("needs_publish=false\n")
+          print(f"exact active MCP Registry record already exists for {name} {version}")
+          PY
 
       - name: Install mcp-publisher (pinned + checksum-verified)
+        if: steps.registry_state.outputs.needs_publish == 'true'
+        env:
+          PUBLISHER_DIR: ${{ runner.temp }}/mcp-publisher
         run: |
-          curl -sSLo mcp-publisher.tar.gz \
+          mkdir -p "$PUBLISHER_DIR"
+          curl -sSLo "$PUBLISHER_DIR/mcp-publisher.tar.gz" \
             "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
-          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
-          tar xzf mcp-publisher.tar.gz mcp-publisher
-          chmod +x mcp-publisher
-      - name: Validate and publish server.json
+          echo "${MCP_PUBLISHER_SHA256}  $PUBLISHER_DIR/mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf "$PUBLISHER_DIR/mcp-publisher.tar.gz" \
+            -C "$PUBLISHER_DIR" mcp-publisher
+          chmod +x "$PUBLISHER_DIR/mcp-publisher"
+          echo "PUBLISHER_BIN=$PUBLISHER_DIR/mcp-publisher" >> "$GITHUB_ENV"
+
+      - name: Publish the verified server.json
+        if: steps.registry_state.outputs.needs_publish == 'true'
+        working-directory: publication
         run: |
-          ./mcp-publisher login github-oidc
+          "$PUBLISHER_BIN" login github-oidc
           # NOTE: current mcp-publisher treats --dry-run as a real publish;
           # a single publish is the whole job.
-          ./mcp-publisher publish
+          "$PUBLISHER_BIN" publish
+
+      - name: Poll and verify the exact public MCP Registry record
+        run: |
+          python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          # Keep this identical to the preflight comparison above.
+          false_defaults = {"isRequired", "isSecret", "isRepeated"}
+
+          def normalize(value):
+              if isinstance(value, dict):
+                  normalized = {}
+                  for key, child in value.items():
+                      child = normalize(child)
+                      if key in false_defaults and child is False:
+                          continue
+                      normalized[key] = child
+                  return normalized
+              if isinstance(value, list):
+                  return [normalize(child) for child in value]
+              return value
+
+          local = json.loads(Path("publication/server.json").read_text(encoding="utf-8"))
+          name = local.get("name")
+          version = local.get("version")
+          detail_url = (
+              "https://registry.modelcontextprotocol.io/v0.1/servers/"
+              f"{urllib.parse.quote(name, safe='')}/versions/"
+              f"{urllib.parse.quote(version, safe='')}?include_deleted=true"
+          )
+          record = None
+          for attempt in range(24):
+              request = urllib.request.Request(
+                  detail_url,
+                  headers={
+                      "Accept": "application/json",
+                      "Cache-Control": "no-cache",
+                      "User-Agent": "seiche-mcp-publication-receipt/1",
+                  },
+              )
+              try:
+                  response = urllib.request.urlopen(request, timeout=30)
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404:
+                      raise
+                  print(f"MCP Registry receipt attempt {attempt + 1}: not visible yet")
+                  time.sleep(5)
+                  continue
+              with response:
+                  body = response.read(2 * 1024 * 1024 + 1)
+              if len(body) > 2 * 1024 * 1024:
+                  raise SystemExit("MCP Registry response exceeds 2 MiB")
+              record = json.loads(body)
+              remote = record.get("server")
+              if not isinstance(remote, dict) or normalize(remote) != normalize(local):
+                  raise SystemExit("public MCP Registry server differs from signed server.json")
+              metadata = record.get("_meta")
+              if not isinstance(metadata, dict):
+                  raise SystemExit("public MCP Registry record has no official metadata")
+              official = metadata.get("io.modelcontextprotocol.registry/official")
+              if not isinstance(official, dict) or official.get("status") != "active":
+                  raise SystemExit("public MCP Registry version is not active")
+              break
+          if record is None:
+              raise SystemExit("MCP Registry did not expose the exact record within 120 seconds")
+          print(f"public MCP Registry receipt verified for {name} {version}")
+          PY

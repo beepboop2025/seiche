@@ -189,6 +189,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
         ],
     }
 
+
 # Authentication is header-only. Some external MCP cataloguers append their
 # own credential to every URL they probe; FastAPI otherwise ignores that extra
 # query field while access logs retain it. During the compatibility window the
@@ -1018,9 +1019,7 @@ def _public_openapi_document() -> dict[str, Any]:
                                     ],
                                     "properties": {
                                         "ok": {"const": False},
-                                        "schema": {
-                                            "const": "seiche.world-markets.v1"
-                                        },
+                                        "schema": {"const": "seiche.world-markets.v1"},
                                         "status": {"const": "unavailable"},
                                         "reason": {"type": "string"},
                                     },
@@ -1517,8 +1516,7 @@ def market_series_v2(
             else "UNAVAILABLE"
             if observation is None
             or not _observation_value_is_public(pack, observation)
-            or observation.quality
-            in {QualityState.REJECTED, QualityState.UNAVAILABLE}
+            or observation.quality in {QualityState.REJECTED, QualityState.UNAVAILABLE}
             or state is StalenessState.UNAVAILABLE
             else "STALE"
             if state
@@ -1771,12 +1769,10 @@ def world_markets_v2(response: Response, section: str = "all"):
                 reason=(
                     "no completed cached or persisted snapshot is available; "
                     "this request never starts collection or model fitting"
-                )
+                ),
             ),
         )
-    response.headers["Cache-Control"] = (
-        "public, max-age=60, stale-while-revalidate=240"
-    )
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=240"
     return context_views.world_markets(
         snapshot,
         selector=section,
@@ -2618,19 +2614,24 @@ async def notary_proof(sha256: str):
 
 @app.get("/api/attest/pubkey")
 async def attest_pubkey():
-    """Public: the operator's Ed25519 public key and the signing domain, so a
-    reader can verify every signature with no trust in this server."""
+    """Public: the current Ed25519 identity and release-pinned trust policy."""
     from seiche import attest
 
+    public_key = attest._current_operator_public_key()
+    trusted_public_keys = sorted(attest._trusted_operator_keys())
     return {
-        "public_key": attest.public_key_hex(),
+        "public_key": public_key,
+        "trusted_public_keys": trusted_public_keys,
+        "operator_key_trusted": public_key in trusted_public_keys,
+        "trust_policy": "release_pinned_or_installation_approved",
         "algo": attest.ALGO,
         "domain": attest.DOMAIN,
         "message_format": "{domain}:{stream}:{day}:{record_hash}",
         "how_to_verify": (
             "recompute each record hash from the ledger line, build the message "
-            "above, and check the Ed25519 signature against this key; OTS proofs "
-            "settle in Bitcoin (verify with the `ots` tool)."
+            "above, and check the Ed25519 signature against a key approved in "
+            "the signed release; parse and link both OTS fragments, then compare "
+            "the final commitment with the canonical block header from Bitcoin Core."
         ),
     }
 
@@ -2638,7 +2639,7 @@ async def attest_pubkey():
 @app.get("/api/attest/stream/{stream}")
 async def attest_stream(stream: str, n: int = 400):
     """Public: per-day commitments of a ledger stream — record hash, signature,
-    anchor status. Never payloads."""
+    and complete validated anchor evidence. Never payloads."""
     from seiche import attest
 
     if attest._STREAM_RE.fullmatch(stream) is None:
@@ -2650,13 +2651,41 @@ async def attest_stream(stream: str, n: int = 400):
         if not records:
             raise HTTPException(404, f"no committed records on stream '{stream}'")
         sigs = {s["record_hash"]: s for s in attest.read_signatures(stream)}
-        anchors: dict[str, dict] = {}
-        for anchor in attest.read_anchors(stream):  # later lines (upgrades) win
-            anchors[anchor["day"]] = anchor
+        raw_anchors = attest.read_anchors(stream)
+        record_identities = {(record["day"], record["hash"]) for record in records}
+        anchor_problems: list[str] = []
+        attest._verify_anchor_evidence(
+            raw_anchors,
+            record_identities,
+            anchor_problems,
+        )
+        if anchor_problems:
+            raise ValueError("stored anchor evidence failed validation")
+        anchors: dict[tuple[str, str], list[dict]] = {}
+        for stored_anchor in raw_anchors:
+            public_anchor = {
+                "status": stored_anchor["status"],
+                "record_hash": stored_anchor["record_hash"],
+                "digest": stored_anchor["digest"],
+                "calendar": stored_anchor["calendar"],
+                "fragment_b64": stored_anchor["fragment_b64"],
+                "attestations": stored_anchor["attestations"],
+                "submitted_at": stored_anchor["submitted_at"],
+            }
+            if stored_anchor["status"] == "anchored":
+                public_anchor.update(
+                    {
+                        "bitcoin_height": stored_anchor["bitcoin_height"],
+                        "upgraded_at": stored_anchor["upgraded_at"],
+                    }
+                )
+            identity = (stored_anchor["day"], stored_anchor["record_hash"])
+            anchors.setdefault(identity, []).append(public_anchor)
         days = []
         for record in records[-n:]:
             signature = sigs.get(record["hash"])
-            anchor = anchors.get(record["day"])
+            anchor_evidence = anchors.get((record["day"], record["hash"]), [])
+            latest_anchor = anchor_evidence[-1] if anchor_evidence else None
             days.append(
                 {
                     "day": record["day"],
@@ -2671,13 +2700,17 @@ async def attest_stream(stream: str, n: int = 400):
                     if signature
                     else None,
                     "anchor": {
-                        "status": anchor["status"],
-                        "calendar": anchor.get("calendar"),
-                        "bitcoin_height": anchor.get("bitcoin_height"),
-                        "submitted_at": anchor.get("submitted_at"),
+                        "status": latest_anchor["status"],
+                        "calendar": latest_anchor["calendar"],
+                        "bitcoin_height": latest_anchor.get("bitcoin_height"),
+                        "submitted_at": latest_anchor["submitted_at"],
                     }
-                    if anchor
+                    if latest_anchor
                     else None,
+                    # Both the calendar submission and Bitcoin continuation are
+                    # required to reproduce the commitment path. Keep the
+                    # compact `anchor` object above for existing API clients.
+                    "anchor_evidence": anchor_evidence,
                 }
             )
         return {
@@ -2692,13 +2725,18 @@ async def attest_stream(stream: str, n: int = 400):
         logging.getLogger("seiche.api").exception(
             "attestation stream read failed for %s", stream
         )
-        raise HTTPException(503, "attestation record is temporarily unavailable") from None
+        raise HTTPException(
+            503, "attestation record is temporarily unavailable"
+        ) from None
 
 
 @app.get("/api/attest/verify/{stream}")
 async def attest_verify(stream: str):
-    """Public: the full independent verification verdict for a stream (chain,
-    hashes, signatures, anchors)."""
+    """Public: local chain/signature and structural OTS verification verdict.
+
+    Bitcoin confirmation is intentionally not inferred from an OTS tag. The
+    owner-side CLI accepts ``--bitcoin-node`` for a canonical Core-header check.
+    """
     from seiche import attest
 
     if attest._STREAM_RE.fullmatch(stream) is None:
@@ -2713,7 +2751,9 @@ async def attest_verify(stream: str):
         logging.getLogger("seiche.api").exception(
             "attestation verification failed for %s", stream
         )
-        raise HTTPException(503, "attestation record is temporarily unavailable") from None
+        raise HTTPException(
+            503, "attestation record is temporarily unavailable"
+        ) from None
 
 
 # ---- MCP over HTTP ----------------------------------------------------------

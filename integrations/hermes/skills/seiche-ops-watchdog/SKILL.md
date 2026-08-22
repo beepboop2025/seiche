@@ -2,7 +2,7 @@
 name: seiche-ops-watchdog
 description: Health monitoring for a Seiche deployment. Use in scheduled ops checks or when asked "is seiche healthy", "is the data fresh", or when another skill hits a fault, a stale series, or an API error. Reports and escalates; does not repair without an explicit ask.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, ops, monitoring, data-quality]

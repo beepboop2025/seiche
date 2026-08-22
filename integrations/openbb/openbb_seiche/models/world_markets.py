@@ -28,6 +28,7 @@ EVIDENCE_STATUSES = frozenset(
     {"observed", "derived", "structural", "restricted", "unavailable"}
 )
 DOMAIN_SELECTORS = ("money_markets", "forex", "capital_markets")
+COVERAGE_CLAIM = "curated_partial_non_exhaustive"
 
 
 class SeicheWorldMarketsQueryParams(QueryParams):
@@ -196,9 +197,12 @@ class SeicheWorldMarketsFetcher(
             raise OpenBBError(
                 "Seiche world-markets response is missing its citation block."
             )
-        if not isinstance(scope, dict) or not scope.get("coverage_claim"):
+        if (
+            not isinstance(scope, dict)
+            or scope.get("coverage_claim") != COVERAGE_CLAIM
+        ):
             raise OpenBBError(
-                "Seiche world-markets response is missing its coverage claim."
+                "Seiche world-markets response has an unsupported coverage claim."
             )
         generated_at = clocks.get("snapshot_generated_at") or payload.get(
             "generated_at"

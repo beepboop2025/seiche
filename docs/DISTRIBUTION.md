@@ -7,7 +7,7 @@ release when those surfaces drift.
 The repository front door lists every supported surface in
 [`README.md`](../README.md#use-seiche-everywhere). Public publication state is
 tracked separately in [`distribution/submissions.csv`](../distribution/submissions.csv):
-only rows with a durable public receipt may be marked `verified`. Local clients,
+only rows with a durable public receipt may be marked `listed`. Local clients,
 notebooks, catalog projections, and submission metadata can be complete and
 tested while their external status honestly remains `prepared`.
 
@@ -40,21 +40,61 @@ Published images use these tags:
 
 - the release version, such as `0.11.0`;
 - the Git tag, such as `v0.11.0`;
-- the source commit, prefixed with `sha-`;
+- the first 12 hexadecimal characters of the source commit, prefixed with
+  `sha-`;
 - `latest` for a non-prerelease GitHub Release.
 
 Each GHCR publication is multi-platform for `linux/amd64` and `linux/arm64`.
-BuildKit attaches an SBOM and maximum-mode provenance, and GitHub publishes a
-separate build-provenance attestation bound to the pushed manifest digest.
+BuildKit exports each platform exactly once as an OCI archive. A source-free job
+validates and scans those exact child manifests, and another source-free job
+imports the same archive hashes, constructs the two-child OCI index locally, and
+copies only that graph to GHCR. Trivy emits one CycloneDX SBOM per platform;
+GitHub attests each SBOM to its child-manifest digest and attests provenance to
+the final index digest. `publish-container.yml` is the sole authorized writer
+for the package's fixed tags; external writers would defeat its best-effort
+no-clobber preflight because GHCR does not offer a compare-and-swap tag update.
+
+GitHub creates a newly published container package as private, so the owner must
+change the package visibility to **Public** after the first push. Only the final
+`prove-public` job performs anonymous reads from an empty Docker configuration.
+After changing visibility, rerun the failed job for the same workflow run; do
+not dispatch a new build or repeat publication and attestations.
 
 ```bash
-gh attestation verify \
-  oci://ghcr.io/beepboop2025/seiche:0.11.0 \
+ANONYMOUS_DOCKER_CONFIG="$(mktemp -d)"
+IMAGE=ghcr.io/beepboop2025/seiche
+ROOT_DIGEST=sha256:<index-digest>
+AMD64_DIGEST=sha256:<amd64-child-digest>
+ARM64_DIGEST=sha256:<arm64-child-digest>
+RELEASE_TAG=v0.11.0
+SOURCE_SHA=<40-hex-signed-commit>
+for platform in linux/amd64 linux/arm64; do
+  DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" docker pull \
+    --platform "$platform" "$IMAGE@$ROOT_DIGEST"
+done
+COMMON_ATTESTATION_POLICY=(
+  --bundle-from-oci
   --repo beepboop2025/seiche
+  --signer-workflow beepboop2025/seiche/.github/workflows/publish-container.yml
+  --source-ref "refs/tags/$RELEASE_TAG"
+  --source-digest "$SOURCE_SHA"
+)
+env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" \
+  gh attestation verify "oci://$IMAGE@$ROOT_DIGEST" \
+    "${COMMON_ATTESTATION_POLICY[@]}"
+for child in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+  env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" \
+    gh attestation verify "oci://$IMAGE@$child" \
+      "${COMMON_ATTESTATION_POLICY[@]}" \
+      --predicate-type https://cyclonedx.org/bom
+done
+gh run rerun <workflow-run-id> --repo beepboop2025/seiche --failed
 ```
 
-Use a digest, not a mutable tag, when promoting an image into a controlled
-environment.
+Record both anonymous platform pulls, the index and child-manifest digests, and
+all three attestation results before changing the GHCR ledger row from
+`prepared`. Use the index digest, not a mutable tag, when promoting an image into
+a controlled environment.
 
 ## Release invariants
 
@@ -67,9 +107,17 @@ The distribution contract checks all of the following before publication:
   embed a self-referential commit SHA, so a release PR can pass before its tag
   exists;
 - every external GitHub Action is pinned to a full commit;
+- PyPI candidates are built without OIDC authority, independently verified
+  against a third pristine signed-source archive, and executed only on a
+  separate permissionless smoke runner; the environment-gated publishing jobs
+  download a fresh immutable verified artifact, recheck canonical filenames
+  and SHA-256 identities without executing package code, and invoke trusted
+  publishing;
 - every publishing path requires an annotated SSH-signed version tag, an
   SSH-signed commit by the pinned release author, and the repository's reviewed
-  allowed-signers policy before it receives publication authority;
+  allowed-signers policy whose sole fingerprint matches the out-of-repository
+  `RELEASE_SIGNING_KEY_FINGERPRINT` variable, and proof that the tagged commit
+  is an ancestor of current `origin/main` before it receives authority;
 - base container images are pinned to multi-platform manifest digests;
 - the image stays non-root, has a healthcheck, and carries OCI source,
   revision, license, and version labels;
@@ -79,14 +127,32 @@ The distribution contract checks all of the following before publication:
 - the Docker context is an allowlist containing only build inputs;
 - listing claims, rights-reviewed dataset metadata and hashes, research notebook
   code cells, and the offline Python, JavaScript, and R client contracts pass
-  independently; the OpenBB provider has its own isolated package gate;
+  independently; the OpenBB provider uses standardized PEP 621/639 metadata,
+  an exact Poetry Core backend pin, independent reproducibility builds, an
+  allowlisted artifact verifier, and clean wheel and sdist install gates;
 - the PyPI wheel and source archive are present, not yanked, hash-correct, and
+  exact-member allowlisted, PEP 639 license-complete, RECORD-valid, and
   byte-for-byte identical to the release checkout for every shipped Python
-  source file.
+  source file and the one included VCS ignore file;
+- two independently timestamp-perturbed source trees produce byte-identical
+  wheels and source archives under the pinned Python/build-backend closure,
+  with the signed commit time carried as `SOURCE_DATE_EPOCH` and verified in
+  the ZIP, gzip, and tar metadata before PyPI publication; the same reusable
+  verifier runs again over immutable PyPI bytes before MCP publication.
 
 PyPI is immutable. Creating a GitHub Release therefore verifies the existing
 PyPI artifacts and then publishes the MCP Registry record. It never attempts to
 upload the same package version a second time.
+
+The independently versioned `openbb-seiche` package has a separate, manually
+invoked `publish-openbb.yml` trusted-publishing path. Its explicit OpenBB-version
+input binds 0.1.0 artifacts to the selected signed Seiche commit without
+pretending the two packages share a version number. A per-version concurrency
+lock and exact PyPI existence preflight reject attempts to retry 0.1.0 on future
+Seiche releases. Its build, independent exact verifier, permissionless smoke,
+and OIDC-only publisher are separate runners. The OpenBB listing remains
+receipt-gated until the PyPI version is public and OpenBB accepts the prepared
+documentation pull request.
 
 Seiche is research software and not investment advice. Publications should cite
 the primary data providers for any underlying observations as well as the

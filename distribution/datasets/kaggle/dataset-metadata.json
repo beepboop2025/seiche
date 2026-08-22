@@ -1,8 +1,8 @@
 {
   "title": "Seiche Audited Direct-OFR Time Series",
   "id": "seiche-info/seiche-audited-direct-ofr-time-series",
-  "subtitle": "Draft repo and money-fund observations sourced directly from OFR",
-  "description": "DRAFT - NOT SUBMITTED. NO DOI ASSIGNED. A rights-reviewed snapshot of 11,163 observations from ten Office of Financial Research series: six repo-market series and four money-market-fund series. The staged files reference only the audited direct-OFR Data Commons candidate CSVs. FRED-fetched values, runtime caches, New York Fed reference-rate rows, the mismatched primary-dealer row, licensed series, and Seiche-derived outputs are excluded. Observation dates retain the publishers' native daily or monthly clocks. Research data, not investment advice. Source credit: United States Office of Financial Research.",
+  "subtitle": "Audited repo and money-fund observations sourced directly from OFR",
+  "description": "NO DOI ASSIGNED. A rights-reviewed snapshot of 11,163 observations from ten Office of Financial Research series: six repo-market series and four money-market-fund series. The files contain only the audited direct-OFR Data Commons candidate CSVs. FRED-fetched values, runtime caches, New York Fed reference-rate rows, the mismatched primary-dealer row, licensed series, and Seiche-derived outputs are excluded. Observation dates retain the publishers' native daily or monthly clocks. Research data, not investment advice. Source credit: United States Office of Financial Research. Public listing status is receipt-tracked in the Seiche distribution ledger.",
   "licenses": [
     {
       "name": "other"

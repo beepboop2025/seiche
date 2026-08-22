@@ -1,32 +1,51 @@
-[tool.poetry]
+[project]
 name = "openbb-seiche"
 version = "0.1.0"
 description = "Seiche funding-liquidity and world-markets evidence provider for OpenBB"
-authors = ["Mrinal <beepboop2025@users.noreply.github.com>"]
-maintainers = ["Seiche maintainers <beepboop2025@users.noreply.github.com>"]
-license = "AGPL-3.0-or-later"
 readme = "README.md"
-packages = [{ include = "openbb_seiche" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Mrinal", email = "beepboop2025@users.noreply.github.com" },
+]
+maintainers = [
+    { name = "Seiche maintainers", email = "beepboop2025@users.noreply.github.com" },
+]
 keywords = ["openbb", "funding-liquidity", "money-markets", "financial-data"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Office/Business :: Financial",
     "Typing :: Typed",
 ]
+requires-python = ">=3.10,<4"
+dependencies = [
+    "httpx>=0.27,<1",
+    "openbb-core>=1.6.10,<2.0.0",
+]
 
-[tool.poetry.urls]
+[project.urls]
 Homepage = "https://seiche.info"
 Documentation = "https://seiche.info/developers"
 Repository = "https://github.com/beepboop2025/seiche"
 Issues = "https://github.com/beepboop2025/seiche/issues"
 
-[tool.poetry.dependencies]
-python = ">=3.10,<4"
-httpx = ">=0.27,<1"
-openbb-core = "^1.6.10"
+[project.entry-points."openbb_provider_extension"]
+seiche = "openbb_seiche:seiche_provider"
+
+[project.entry-points."openbb_core_extension"]
+seiche = "openbb_seiche.router.seiche_router:router"
+
+[tool.poetry]
+packages = [{ include = "openbb_seiche" }]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8"
@@ -35,14 +54,8 @@ build = ">=1.2,<2"
 ruff = ">=0.15,<0.16"
 
 [build-system]
-requires = ["poetry-core>=1.8.0"]
+requires = ["poetry-core==2.4.1"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.plugins."openbb_provider_extension"]
-seiche = "openbb_seiche:seiche_provider"
-
-[tool.poetry.plugins."openbb_core_extension"]
-seiche = "openbb_seiche.router.seiche_router:router"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

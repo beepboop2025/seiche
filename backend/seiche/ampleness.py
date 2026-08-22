@@ -1385,7 +1385,7 @@ reserves/GDP percentile from the turn engine, the crossing dates from the
 runway engine, and the rate and balance prints from the board headline. The
 method behind each of those lives on the versioned
 <a href="{METHODOLOGY_URL}">methodology page</a>, and the code is at
-<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0. The two questions a
+<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0-or-later. The two questions a
 skeptic asks before any of this are answered in the
 <a href="{SKEPTIC_URL}">skeptic pack</a>.</p>
 
@@ -1395,7 +1395,7 @@ skeptic asks before any of this are answered in the
 </ul>
 
 <p class="faint">Free public data with native lags. Not investment advice.
-Seiche is free open source software (AGPL-3.0) and a public good.</p>
+Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
 </body>
 </html>
 """

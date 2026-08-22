@@ -73,7 +73,7 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           if [ -z "$HOST" ] || [ -z "$KEY" ]; then
-            echo "::error::HETZNER_HOST / HETZNER_SSH_KEY secrets not set — auto-deploy cannot run."
+            echo "::error::HETZNER_HOST / HETZNER_SSH_KEY secrets not set — manual recovery deploy cannot run."
             exit 1
           fi
           if ! printf '%s' "$TARGET_SHA" | grep -Eq '^[0-9a-f]{40}$'; then

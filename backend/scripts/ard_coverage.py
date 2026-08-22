@@ -66,6 +66,7 @@ class Product:
     catalog_url: str
     mcp_identifier: str
     mcp_name: str
+    mcp_media_type: str
     # Seiche pins its local release. Sibling versions deliberately float: this
     # repository owns the agreement between their live catalog and registry,
     # not their release cadence.
@@ -84,6 +85,7 @@ PRODUCTS = (
         catalog_url="https://liquilens.in/.well-known/ai-catalog.json",
         mcp_identifier="urn:air:liquilens.in:mcp:failure-radar",
         mcp_name="io.github.beepboop2025/liquilens",
+        mcp_media_type="application/mcp-server-card+json",
         mcp_version=None,
         mcp_endpoint="https://api.liquilens.in/mcp",
         openapi_identifier="urn:air:liquilens.in:openapi:failure-radar",
@@ -97,6 +99,7 @@ PRODUCTS = (
         catalog_url="https://seiche.info/.well-known/ai-catalog.json",
         mcp_identifier="urn:air:seiche.info:mcp:funding-stress",
         mcp_name="io.github.beepboop2025/seiche",
+        mcp_media_type="application/json",
         mcp_version=_local_seiche_version(),
         mcp_endpoint="https://api.seiche.info/mcp",
         openapi_identifier="urn:air:seiche.info:openapi:funding-stress",
@@ -112,6 +115,7 @@ PRODUCTS = (
         mcp_identifier=(
             "urn:air:liquilens-undertow.com:mcp:market-liquidity"),
         mcp_name="io.github.beepboop2025/undertow",
+        mcp_media_type="application/mcp-server-card+json",
         mcp_version=None,
         mcp_endpoint="https://api.seiche.info/undertow/mcp",
         openapi_identifier=(
@@ -250,8 +254,11 @@ def validate_catalog(catalog: dict[str, Any], product: Product) -> list[str]:
             f"expected one MCP entry {product.mcp_identifier}, found {len(matches)}")
         return errors
     mcp = matches[0]
-    if mcp.get("type") != "application/mcp-server-card+json":
-        errors.append("product MCP entry has the wrong media type")
+    if mcp.get("type") != product.mcp_media_type:
+        errors.append(
+            f"product MCP entry media type is {mcp.get('type')!r}, "
+            f"expected {product.mcp_media_type!r}"
+        )
     catalog_version = mcp.get("version")
     if product.mcp_version is not None and catalog_version != product.mcp_version:
         errors.append(
@@ -424,7 +431,7 @@ def probe_ard_search(
     request = {
         "query": {
             "text": product.intent_query,
-            "filter": {"type": ["application/mcp-server-card+json"]},
+            "filter": {"type": [product.mcp_media_type]},
         },
         "pageSize": 10,
     }

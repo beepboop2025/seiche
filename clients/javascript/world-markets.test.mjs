@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fetchWorldMarkets, SeicheClientError } from "./world-markets.mjs";
+import {
+  contractReceipt,
+  fetchWorldMarkets,
+  SeicheClientError,
+} from "./world-markets.mjs";
 
 const payload = {
   schema: "seiche.world-markets.v1",
@@ -18,6 +22,18 @@ test("accepts a bounded JSON response", async () => {
     headers: { "content-type": "application/json" },
   });
   assert.deepEqual(await fetchWorldMarkets({ section: "sources" }), payload);
+});
+
+test("receipt records the effective caller-supplied limits", () => {
+  const receipt = contractReceipt(payload, {
+    timeoutMs: 1234,
+    maxResponseBytes: 5678,
+  });
+  assert.deepEqual(receipt.client_limits, {
+    timeout_ms: 1234,
+    max_response_bytes: 5678,
+    automatic_retries: 0,
+  });
 });
 
 test("rejects an oversized chunked body while streaming", async () => {

@@ -155,7 +155,7 @@ read as calm. Changes and statistical windows follow the source's native cadence
 without upsampling; comparisons are against each market's own history, not raw
 rate levels across currencies.
 
-The AGPL-3.0 license applies to Seiche's code, not upstream data rights. Public
+The AGPL-3.0-or-later license applies to Seiche's code, not upstream data rights. Public
 projections admit `allowed` values and bounded `derived_only` calculations;
 `metadata_only` values cannot enter a public calculation, while `prohibited`
 values and their source metadata are omitted.

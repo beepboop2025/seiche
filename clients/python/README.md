@@ -16,3 +16,7 @@ or calm result. `generated_at`, `clocks.evaluation_at`, and the domain/source
 as-of values have different meanings; do not replace them with the local wall
 clock. The response is bounded research context, not exhaustive market data or
 investment advice. No API key is used.
+
+If you override either safety limit, pass the same values to
+`contract_receipt(payload, timeout_seconds=..., max_response_bytes=...)`. The
+receipt records the effective settings rather than silently reporting defaults.

@@ -26,6 +26,9 @@ GET|/api/v2/world-markets|200|application/json|"coverage_claim":"curated_partial
 GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"
 GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"
 GET|/api/subscribe|200|application/json|"gates_nothing":true
+GET|/.well-known/mcp.json|200|application/json|"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json"
+GET|/.well-known/mcp.json|200|application/json|"name":"io.github.beepboop2025/seiche"
+GET|/.well-known/mcp.json|200|application/json|"url":"https://api.seiche.info/mcp"
 GET|/mcp|200|text/event-stream|stateless
 GET|/riptide/|200|application/json|"name": "riptide"
 GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"

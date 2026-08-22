@@ -5,7 +5,7 @@
 > A **seiche** is a standing wave in an enclosed body of water — invisible from the
 > shore, until it sloshes over the edge. Funding stress behaves the same way.
 
-**Seiche is a free, open source (AGPL-3.0) money-, foreign-exchange and
+**Seiche is a free, open source (AGPL-3.0-or-later) money-, foreign-exchange and
 capital-market evidence terminal** organized around the dollar funding system —
 US money markets, 22 public H.10 currency reference series, the Treasury
 capital-market complex, the global basins connected through swap lines, and the
@@ -40,15 +40,16 @@ composite engine called "undertow" (critical slowing down,
 ## Use Seiche everywhere
 
 Seiche is distributed as software, an MCP service, a research dataset, and
-machine-readable catalog metadata. Status is receipt-based: **verified** means
-a public record exists, **usable in repo** means the artifact runs from this
-checkout, and **prepared** means an owner-controlled submission or publication
-still remains. The auditable source of truth is
+machine-readable catalog metadata. Status is receipt-based: **listed** means a
+durable public record and receipt exist, **prepared** means an owner-controlled
+submission or publication remains, and **blocked** means a named prerequisite
+must clear first. “Usable in repo” describes local artifact readiness, not a
+ledger status. The auditable source of truth is
 [`distribution/submissions.csv`](distribution/submissions.csv).
 
 | Surface | What is available | Status |
 |---|---|---|
-| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable in repo; external publication prepared |
+| **OpenBB** | Typed provider and `obb.seiche` router for funding stress, world markets, and data health ([extension](integrations/openbb/)) | Usable/tested in repo; signed 0.1.0 PyPI publication and official-list submission packet prepared |
 | **Zenodo** | Release deposition metadata, citation identity, and related-source records ([metadata](.zenodo.json)) | Prepared; no deposit or DOI claimed |
 | **Hugging Face** | Rights-reviewed direct-OFR dataset card and staging layout ([dataset card](distribution/datasets/huggingface/README.md)) | Validated draft; upload prepared |
 | **Kaggle** | Dataset metadata and reference-only staging layout ([metadata](distribution/datasets/kaggle/dataset-metadata.json)) | Validated draft; upload prepared |
@@ -233,7 +234,7 @@ history windows follow each adapter's **native cadence**—weekly or monthly ser
 are never padded into daily data—and cross-market comparison uses own-history
 normalization rather than unlike rate levels.
 
-Seiche's AGPL-3.0 license covers the code. It does not override upstream terms:
+Seiche's AGPL-3.0-or-later license covers the code. It does not override upstream terms:
 `allowed` inputs may expose values, `derived_only` inputs expose bounded derived
 context, `metadata_only` inputs can describe availability but cannot enter public
 calculations, and `prohibited` values and source metadata are omitted.
@@ -347,18 +348,19 @@ Alerts dedupe per state in SQLite, notify via macOS notification and optional
 webhook (`SEICHE_WEBHOOK_URL` — Slack/Telegram/ntfy style `{"text": ...}`).
 A launchd template lives in `ops/com.seiche.watch.plist`.
 
-## Deploying on a VPS (Hetzner etc.)
+## Production deployment
 
 ```bash
-# first time, as root — clones to /opt/seiche, runs the test gate, builds,
-# installs systemd units (API on 127.0.0.1:8787 + a 30-min alert timer)
-bash ops/deploy/install.sh
-
-# every release after that: push to main — the deploy-hetzner workflow
-# runs the box's forced-command chain (test gate, rollback, restart,
-# cache-only readiness check). Manual equivalent, as root on the box:
-bash /home/seiche/app/ops/deploy/update.sh   # engine deploy + Caddyfile
+# Existing canonical host: install or refresh the signed release controller
+# without activating it, then run its gate-only acceptance cycle.
+bash /home/seiche/app/ops/deploy/install-release-poller.sh
+SEICHE_CONTROL_GATE_ONLY=1 /usr/local/sbin/seiche-release-poll
 ```
+
+Production uses the operator-provisioned `/home/seiche/app` layout documented
+in `ops/deploy/RELEASE-POLLER.md`; this repository intentionally has no
+unattended first-VPS bootstrap. The old `/opt` installer is retired because its
+service and state layout never matched production.
 
 `GET /api/health` never starts or waits for the full board build. It returns
 the last completed snapshot's health fields with HTTP 200, or an immediate
@@ -377,15 +379,39 @@ server {
 }
 ```
 
-**Auto-deploy on every merge to main**: add two repo secrets —
-`HETZNER_HOST` (the server IP) and `HETZNER_SSH_KEY` (a private key whose
-public half is in root's `authorized_keys`) — and
-`.github/workflows/deploy-hetzner.yml` runs the test-gated `update.sh` on the
-box after each push to main. Without the secrets it skips cleanly.
-The SQLite cache AND the PIT/Navigator as-published record live in
-`/opt/seiche/backend/data` — back that directory up; it is the track record.
-LLM keys for the desk assistant/Navigator and Telegram alert credentials go
-in the `[Service]` environment of `ops/deploy/seiche.service`.
+**Signed releases**: the on-host release poller is the sole automatic
+controller. It accepts only the reviewed SSH-signed `main` tip, tests that exact
+SHA in isolation, and hands it to the rollback-owning deploy wrapper. The
+`deploy-hetzner` workflow is `workflow_dispatch`-only break-glass recovery and
+must not run while the poller is active. The API cache lives under
+`/home/seiche/app/backend/data`; canonical market state and backup receipts live
+under `/var/lib/seiche` and `/var/backups/seiche-market`. Follow the poller and
+market backup runbooks rather than copying one directory as if it were the
+whole track record.
+LLM keys for the desk assistant/Navigator and Telegram alert credentials belong
+in a root-owned production environment file, not the retired
+`ops/deploy/seiche.service` template. On the host, create
+`/etc/seiche/operator.env` with mode `0600`, then attach it to the actual
+`seiche-api.service` through a non-secret systemd drop-in:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/seiche
+sudo test -e /etc/seiche/operator.env || \
+  sudo install -o root -g root -m 0600 /dev/null /etc/seiche/operator.env
+sudoedit /etc/seiche/operator.env
+sudo install -d -o root -g root -m 0755 \
+  /etc/systemd/system/seiche-api.service.d
+printf '%s\n' '[Service]' \
+  'EnvironmentFile=/etc/seiche/operator.env' | \
+  sudo tee /etc/systemd/system/seiche-api.service.d/operator-env.conf >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl restart seiche-api.service
+```
+
+Use systemd `KEY=value` syntax in the environment file for only the required
+`SEICHE_LLM_*`, `SEICHE_TELEGRAM_*`, or webhook settings. Never commit their
+values. Confirm permissions with `stat`, then check `systemctl status
+seiche-api.service` and the API health route after restart.
 
 ## Tuning the editorial voice
 

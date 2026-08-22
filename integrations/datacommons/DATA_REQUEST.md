@@ -64,7 +64,7 @@ ingestion.
 No FRED-fetched values are included because current FRED terms prohibit AI use
 and database incorporation. No New York Fed reference-rate values are included
 because their required downstream notices and conditions need a separate
-compatibility review. No Seiche composite values are included because AGPL-3.0
+compatibility review. No Seiche composite values are included because AGPL-3.0-or-later
 licenses code, not the output dataset.
 
 ## Refresh and quality contract

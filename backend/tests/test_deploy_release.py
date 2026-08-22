@@ -18,6 +18,7 @@ CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
 CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
+LEGACY_INSTALLER = ROOT / "ops" / "deploy" / "install.sh"
 WORLD_MODEL_DELIVERY_INSTALLER = (
     ROOT / "ops" / "deploy" / "install-world-model-delivery-relay.sh"
 )
@@ -433,6 +434,47 @@ def test_caddy_access_log_redacts_credential_query_values():
     assert "format json" not in access_log
 
 
+def test_openai_domain_challenge_is_runtime_gated_and_fail_closed():
+    caddy = CADDYFILE.read_text(encoding="utf-8")
+    marker = "# OpenAI plugin domain verification is deliberately dark"
+    block = caddy[
+        caddy.index(marker) : caddy.index("    @public {", caddy.index(marker))
+    ]
+    challenge_path = "/.well-known/openai-apps-challenge"
+    token_placeholder = "{env.OPENAI_APPS_CHALLENGE_TOKEN}"
+    token_pattern = r"^[A-Za-z0-9][A-Za-z0-9._~=-]{15,511}$"
+
+    enabled = block.index("@openai_apps_challenge_enabled {")
+    enabled_handler = block.index("handle @openai_apps_challenge_enabled {")
+    fallback = block.index("@openai_apps_challenge_unavailable path")
+    fallback_handler = block.index("handle @openai_apps_challenge_unavailable {")
+
+    assert enabled < enabled_handler < fallback < fallback_handler
+    assert block.count(f"path {challenge_path}") == 2
+    assert "method GET HEAD" in block
+    assert f"vars_regexp openai_apps_token {token_placeholder} {token_pattern}" in block
+    assert f'respond "{token_placeholder}" 200' in block
+    assert 'header Cache-Control "no-store, no-transform"' in block
+    assert 'header Content-Type "text/plain; charset=utf-8"' in block
+    assert 'respond "not here" 404' in block[fallback_handler:]
+
+    # Runtime placeholders cannot change Caddyfile syntax. Parse-time
+    # substitution, file serving, and proxying would all weaken that boundary.
+    assert "{$OPENAI_APPS_CHALLENGE_TOKEN" not in block
+    assert "file_server" not in block
+    assert "reverse_proxy" not in block
+    assert "handle_path" not in block
+
+    runbook = (ROOT / "integrations" / "openai" / "SUBMISSION.md").read_text(
+        encoding="utf-8"
+    )
+    assert token_pattern in runbook
+    assert "systemctl restart caddy" in runbook
+    assert "cmp -s" in runbook
+    assert 'test "$status" = 404' in runbook
+    assert "Never reuse an old value" in runbook
+
+
 def test_caddy_exposes_only_the_sanitized_editorial_memory_projection():
     caddy = CADDYFILE.read_text(encoding="utf-8")
     marker = "@editorial_memory path /editorial/memory.json"
@@ -503,6 +545,10 @@ case "$url" in
     */api/v2/global/tide)
         type=application/json; body='{{"schema":"seiche.global-tide.v2"}}' ;;
     */api/subscribe) type=application/json; body='{{"gates_nothing":true}}' ;;
+    */.well-known/mcp.json)
+        type=application/json
+        body='{{"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json","servers":[{{"name":"io.github.beepboop2025/seiche","url":"https://api.seiche.info/mcp"}}]}}'
+        ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
     */riptide/openapi.json)
@@ -580,16 +626,14 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         '"read_faults":[]',
     ):
         assert (
-            f"GET|/api/v2/money-markets|200|application/json|{identity}"
-            in definitions
+            f"GET|/api/v2/money-markets|200|application/json|{identity}" in definitions
         )
     for identity in (
         '"schema":"seiche.world-markets.v1"',
         '"coverage_claim":"curated_partial_non_exhaustive"',
     ):
         assert (
-            f"GET|/api/v2/world-markets|200|application/json|{identity}"
-            in definitions
+            f"GET|/api/v2/world-markets|200|application/json|{identity}" in definitions
         )
     assert (
         'GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"'
@@ -598,6 +642,14 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         'GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"'
     ) in definitions
     assert 'GET|/api/subscribe|200|application/json|"gates_nothing":true' in definitions
+    for identity in (
+        '"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json"',
+        '"name":"io.github.beepboop2025/seiche"',
+        '"url":"https://api.seiche.info/mcp"',
+    ):
+        assert (
+            f"GET|/.well-known/mcp.json|200|application/json|{identity}" in definitions
+        )
     assert ('GET|/riptide/|200|application/json|"name": "riptide"') in definitions
     assert (
         'GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"'
@@ -612,13 +664,28 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
+    assert "https://edge.invalid/.well-known/mcp.json" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
 
 
+def test_public_deploy_docs_retire_the_incompatible_legacy_installer():
+    readme = (ROOT / "README.md").read_text()
+    assert "/opt/seiche" not in readme
+    assert "host release poller" in readme
+    assert "Auto-deploy on every merge to main" not in readme
+    workflow = DEPLOY_WORKFLOW.read_text()
+    assert "workflow_dispatch:" in workflow
+    assert "\n  push:" not in workflow
+    result = subprocess.run(
+        ["bash", str(LEGACY_INSTALLER)], text=True, capture_output=True
+    )
+    assert result.returncode != 0
+    assert "retired" in result.stderr
+    assert "RELEASE-POLLER.md" in result.stderr
+
+
 @pytest.mark.parametrize("scenario", ("usd_partial", "atlas_read_fault"))
-def test_external_smoke_rejects_incomplete_money_market_contracts(
-    tmp_path, scenario
-):
+def test_external_smoke_rejects_incomplete_money_market_contracts(tmp_path, scenario):
     env, _ = _smoke_env(tmp_path, scenario)
 
     result = subprocess.run(
@@ -1282,9 +1349,12 @@ def test_market_platform_units_are_independent_and_postgres_backed():
             "DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="
         )
     ]
-    assert "seiche-data-readiness.timer" not in early_enable.split(
-        "systemctl enable --now seiche-market-validation.timer", 1
-    )[0]
+    assert (
+        "seiche-data-readiness.timer"
+        not in early_enable.split(
+            "systemctl enable --now seiche-market-validation.timer", 1
+        )[0]
+    )
     assert "SEICHE_DEFER_MARKET_START:-0}" in installer
     worker_verify = installer.index("worker unit failed verification")
     worker_install = installer.index(
@@ -1399,13 +1469,13 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
-    assert (
-        "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
-    )
+    assert "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
     assert "CAP_CHOWN" not in backup
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     backup_capabilities = next(
-        line for line in backup.splitlines() if line.startswith("CapabilityBoundingSet=")
+        line
+        for line in backup.splitlines()
+        if line.startswith("CapabilityBoundingSet=")
     )
     assert "CAP_CHOWN" not in backup_capabilities
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup

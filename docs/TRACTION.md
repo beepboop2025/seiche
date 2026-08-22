@@ -113,9 +113,9 @@ request logs into a marketing tool.
    - `https://liquilens.in/.well-known/ai-catalog.json`
    - `https://seiche.info/.well-known/ai-catalog.json`
    - `https://liquilens-undertow.com/.well-known/ai-catalog.json`
-4. Publish the new `server.json` versions through each repository's
-   `registry-publish.yml` workflow only after its live server reports that
-   version.
+4. Publish each new `server.json` through its signed-release, exact-package-gated
+   registry workflow only after the live server reports that version. For
+   Seiche, the sole authority-bearing path is `publish-mcp.yml`.
 5. Check the official MCP Registry record, then the downstream directory
    listings that ingest it.
 

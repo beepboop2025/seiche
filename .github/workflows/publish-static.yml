@@ -11,8 +11,10 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/publish-static.yml"
       - "frontend/public/**"
       - "!frontend/public/data/**"
+      - "ops/release/verify_public_dataset.py"
 
 permissions:
   contents: read
@@ -58,10 +60,15 @@ jobs:
       # are excluded above, so this fast path cannot replace them with stale
       # repository fixtures.
       - name: Deploy static fast path to Cloudflare Pages
-        continue-on-error: true
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "3.90.0"
           command: pages deploy /tmp/cloudflare-site --project-name=seiche --branch=main
+
+      - name: Prove the canonical dataset landing and DCAT catalog are live
+        run: >-
+          python ops/release/verify_public_dataset.py
+          --expected-root /tmp/cloudflare-site
+          --cache-key "$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"

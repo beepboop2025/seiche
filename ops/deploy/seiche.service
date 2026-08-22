@@ -1,5 +1,6 @@
-# Seiche — production API + UI (single process; uvicorn serves frontend/dist)
-# Install: see ops/deploy/install.sh   Update: ops/deploy/update.sh
+# RETIRED / HISTORICAL ONLY: this /opt/seiche unit is not the production unit.
+# Production uses seiche-api.service under /home/seiche/app with root-owned
+# EnvironmentFile drop-ins. Do not install or add credentials to this template.
 [Unit]
 Description=Seiche funding-stress terminal
 After=network-online.target

@@ -475,7 +475,7 @@ England balance sheet feed exists, and the gap is stated rather than
 interpolated over. The engine behind this page is
 <code>engines/refereegli.py</code>; its method paragraph is on the
 <a href="{METHODOLOGY_URL}">methodology page</a> and the code is at
-<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0. The two questions a
+<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0-or-later. The two questions a
 skeptic asks first are answered in the
 <a href="{SKEPTIC_URL}">skeptic pack</a>.</p>
 
@@ -485,7 +485,7 @@ skeptic asks first are answered in the
 </ul>
 
 <p class="faint">Free public data with native lags. Not investment advice.
-Seiche is free open source software (AGPL-3.0) and a public good.</p>
+Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
 """
     page = _shell("The Referee", body)
     issues = lint_letter(page)

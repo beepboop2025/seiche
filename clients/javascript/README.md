@@ -14,3 +14,7 @@ retry. It does not use a token. A service 503 remains unavailable evidence.
 Keep `clocks.snapshot_generated_at`, `clocks.evaluation_at`, and every evidence
 as-of field distinct. The response is bounded research context, not exhaustive
 market data or investment advice.
+
+When using custom limits, pass the same `timeoutMs` and `maxResponseBytes` to
+`contractReceipt(payload, {...})`; its `client_limits` block is an effective
+request receipt, not a claim about library defaults.

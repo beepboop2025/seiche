@@ -4,63 +4,87 @@ on:
   pull_request:
     paths:
       - ".dockerignore"
+      - ".gitignore"
       - ".github/workflows/distribution-contracts.yml"
       - ".github/workflows/publish-container.yml"
       - ".github/workflows/publish-mcp.yml"
+      - ".github/workflows/publish-openbb.yml"
       - ".github/workflows/publish-pypi.yml"
-      - ".github/workflows/registry-publish.yml"
+      - ".github/workflows/publish-static.yml"
       - ".zenodo.json"
       - "CITATION.cff"
       - "Dockerfile"
       - "LICENSE"
       - "README.md"
       - "backend/README.md"
+      - "backend/LICENSE"
       - "backend/pyproject.toml"
+      - "backend/scripts/ard_coverage.py"
       - "backend/seiche/**"
+      - "backend/tests/test_ai_discovery.py"
+      - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
       - "backend/tests/test_distribution_listings.py"
+      - "backend/tests/test_public_money_market_discovery.py"
+      - "backend/tests/test_public_dataset_deploy.py"
+      - "backend/tests/test_python_artifact_verifier.py"
       - "clients/**"
       - "codemeta.json"
       - "compose.yaml"
       - "distribution/**"
       - "docs/DISTRIBUTION.md"
+      - "docs/PUBLISHING.md"
       - "frontend/**"
       - "integrations/datacommons/**"
       - "integrations/mcp-clients/**"
       - "integrations/openbb/**"
       - "notebooks/**"
       - "ops/deploy/release-allowed-signers"
+      - "ops/release/verify_python_artifacts.py"
+      - "ops/release/verify_public_dataset.py"
       - "server.json"
   push:
     branches: [main]
     paths:
       - ".dockerignore"
+      - ".gitignore"
       - ".github/workflows/distribution-contracts.yml"
       - ".github/workflows/publish-container.yml"
       - ".github/workflows/publish-mcp.yml"
+      - ".github/workflows/publish-openbb.yml"
       - ".github/workflows/publish-pypi.yml"
-      - ".github/workflows/registry-publish.yml"
+      - ".github/workflows/publish-static.yml"
       - ".zenodo.json"
       - "CITATION.cff"
       - "Dockerfile"
       - "LICENSE"
       - "README.md"
       - "backend/README.md"
+      - "backend/LICENSE"
       - "backend/pyproject.toml"
+      - "backend/scripts/ard_coverage.py"
       - "backend/seiche/**"
+      - "backend/tests/test_ai_discovery.py"
+      - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
       - "backend/tests/test_distribution_listings.py"
+      - "backend/tests/test_public_money_market_discovery.py"
+      - "backend/tests/test_public_dataset_deploy.py"
+      - "backend/tests/test_python_artifact_verifier.py"
       - "clients/**"
       - "codemeta.json"
       - "compose.yaml"
       - "distribution/**"
       - "docs/DISTRIBUTION.md"
+      - "docs/PUBLISHING.md"
       - "frontend/**"
       - "integrations/datacommons/**"
       - "integrations/mcp-clients/**"
       - "integrations/openbb/**"
       - "notebooks/**"
       - "ops/deploy/release-allowed-signers"
+      - "ops/release/verify_python_artifacts.py"
+      - "ops/release/verify_public_dataset.py"
       - "server.json"
   workflow_dispatch:
 
@@ -77,6 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      PYTHONPATH: ${{ github.workspace }}/backend
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -84,7 +109,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.12"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "22"
@@ -98,8 +123,13 @@ jobs:
       - name: Check metadata, listings, and the rights-reviewed dataset kit
         run: |
           python -m pytest -q \
+            backend/tests/test_ai_discovery.py \
+            backend/tests/test_ard_coverage.py \
             backend/tests/test_distribution_artifacts.py \
             backend/tests/test_distribution_listings.py \
+            backend/tests/test_public_money_market_discovery.py \
+            backend/tests/test_public_dataset_deploy.py \
+            backend/tests/test_python_artifact_verifier.py \
             distribution/datasets/test_distribution_kit.py
           python distribution/datasets/stage.py --validate-only
 
@@ -108,7 +138,19 @@ jobs:
           ruff check --no-cache \
             clients/python/world_markets.py \
             distribution/datasets/stage.py \
-            distribution/datasets/test_distribution_kit.py
+            distribution/datasets/test_distribution_kit.py \
+            backend/tests/test_python_artifact_verifier.py \
+            backend/tests/test_public_dataset_deploy.py \
+            ops/release/verify_python_artifacts.py \
+            ops/release/verify_public_dataset.py
+          ruff format --check --no-cache \
+            clients/python/world_markets.py \
+            distribution/datasets/stage.py \
+            distribution/datasets/test_distribution_kit.py \
+            backend/tests/test_python_artifact_verifier.py \
+            backend/tests/test_public_dataset_deploy.py \
+            ops/release/verify_python_artifacts.py \
+            ops/release/verify_public_dataset.py
 
       - name: Exercise the dependency-free Python client offline
         run: |
@@ -125,8 +167,12 @@ jobs:
               "scope": {"coverage_claim": "curated_partial_non_exhaustive"},
           }
           client["_validate_contract"](payload, "sources")
-          receipt = client["contract_receipt"](payload)
+          receipt = client["contract_receipt"](
+              payload, timeout_seconds=1.25, max_response_bytes=12345
+          )
           assert receipt["selection"] == "sources"
+          assert receipt["client_limits"]["timeout_seconds"] == 1.25
+          assert receipt["client_limits"]["max_response_bytes"] == 12345
           assert receipt["client_limits"]["automatic_retries"] == 0
           try:
               client["_validate_contract"]({**payload, "schema": "invalid"}, "sources")
@@ -162,8 +208,13 @@ jobs:
           };
 
           const payload = await fetchWorldMarkets({ section: "sources", timeoutMs: 1000 });
-          const receipt = contractReceipt(payload);
+          const receipt = contractReceipt(payload, {
+            timeoutMs: 1000,
+            maxResponseBytes: 12345,
+          });
           assert.equal(receipt.selection, "sources");
+          assert.equal(receipt.client_limits.timeout_ms, 1000);
+          assert.equal(receipt.client_limits.max_response_bytes, 12345);
           assert.equal(receipt.client_limits.automatic_retries, 0);
 
           globalThis.fetch = async () => new Response(JSON.stringify({
@@ -201,8 +252,12 @@ jobs:
             scope = list(coverage_claim = "curated_partial_non_exhaustive")
           )
           stopifnot(isTRUE(client$validate_world_markets_contract(payload, "sources")))
-          receipt <- client$contract_receipt(payload)
+          receipt <- client$contract_receipt(
+            payload, timeout_seconds = 2, max_response_bytes = 12345L
+          )
           stopifnot(identical(receipt$selection, "sources"))
+          stopifnot(identical(receipt$client_limits$timeout_seconds, 2))
+          stopifnot(identical(receipt$client_limits$max_response_bytes, 12345L))
           stopifnot(identical(receipt$client_limits$automatic_retries, 0L))
           bad <- payload
           bad$schema <- "invalid"
@@ -212,10 +267,294 @@ jobs:
           ))
           RS
 
-  openbb-provider:
-    name: Isolated OpenBB provider package
+  native-dataset-metadata:
+    name: Native dataset metadata schemas
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Install pinned native metadata clients
+        run: |
+          python -m pip install --disable-pip-version-check --quiet \
+            "frictionless==5.18.1" \
+            "huggingface_hub==1.28.0" \
+            "kaggle==2.2.4" \
+            "mlcroissant==1.0.22" \
+            "rdflib==7.5.0"
+
+      - name: Validate Hugging Face and Kaggle against pinned native clients
+        env:
+          KAGGLE_CONFIG_DIR: ${{ runner.temp }}/kaggle-empty-config
+        run: |
+          python - <<'PY'
+          from huggingface_hub import DatasetCard
+
+          card = DatasetCard.load("distribution/datasets/huggingface/README.md")
+          card.validate()
+          print("Hugging Face dataset card native schema: valid")
+          PY
+          mkdir -p "$KAGGLE_CONFIG_DIR"
+          native_stage="${RUNNER_TEMP}/native-dataset-stage"
+          export native_stage
+          python distribution/datasets/stage.py --stage "$native_stage" >/dev/null
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from kaggle.api.kaggle_api_extended import KaggleApi
+
+          folder = Path(os.environ["native_stage"], "kaggle")
+          metadata_path = folder / "dataset-metadata.json"
+          metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+          api = KaggleApi.__new__(KaggleApi)
+          assert api.get_dataset_metadata_file(str(folder)) == str(metadata_path)
+          dataset_id = api.get_or_fail(metadata, "id")
+          title = api.get_or_fail(metadata, "title")
+          licenses = api.get_or_fail(metadata, "licenses")
+          api.validate_dataset_string(dataset_id)
+          api.validate_resources(str(folder), metadata["resources"])
+          dataset_slug = dataset_id.split("/", maxsplit=1)[1]
+          assert len(licenses) == 1
+          assert 6 <= len(dataset_slug) <= 50
+          assert 6 <= len(title) <= 50
+          assert 20 <= len(metadata["subtitle"]) <= 80
+          assert {path.name for path in folder.iterdir()} == {
+              "dataset-metadata.json",
+              "ofr_money_market_funds.csv",
+              "ofr_repo_markets.csv",
+          }
+          print("Kaggle 2.2.4 native ID/resource and upload inventory: valid")
+          PY
+
+      - name: Validate Zenodo, Croissant, Frictionless, DCAT, and RO-Crate
+        env:
+          ZENODO_RDM_SHA: 63864033c870734cea9cfae07b6968945e412ba3
+        run: |
+          zenodo_metadata="${RUNNER_TEMP}/zenodo-rdm-metadata.py"
+          zenodo_release="${RUNNER_TEMP}/zenodo-rdm-release.py"
+          curl --fail --show-error --silent \
+            "https://raw.githubusercontent.com/zenodo/zenodo-rdm/${ZENODO_RDM_SHA}/site/zenodo_rdm/legacy/deserializers/metadata.py" \
+            --output "$zenodo_metadata"
+          curl --fail --show-error --silent \
+            "https://raw.githubusercontent.com/zenodo/zenodo-rdm/${ZENODO_RDM_SHA}/site/zenodo_rdm/github/release.py" \
+            --output "$zenodo_release"
+          echo "8d31bb2c9422fbda37f3dc05f1cb26f43cffccbfa3c1fa6f8cca31b73d38ac7a  $zenodo_metadata" |
+            sha256sum --check --strict
+          echo "054947a28ed9fcd6b23d96204420f5c4c4ed5bb2ac19102dbbe2bb23775e2aa3  $zenodo_release" |
+            sha256sum --check --strict
+          export zenodo_metadata zenodo_release
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          import mlcroissant as mlc
+          from frictionless import Package
+          from rdflib import Graph, Namespace, URIRef
+          from rdflib.compare import isomorphic
+          from rdflib.namespace import DCTERMS, RDF
+
+          root = Path.cwd()
+          metadata_dir = root / "distribution/datasets"
+          observations = root / "integrations/datacommons/input/observations"
+          canonical = URIRef("https://seiche.info/datasets/direct-ofr/")
+
+          zenodo = json.loads((root / ".zenodo.json").read_text())
+          project = __import__("tomllib").loads(
+              (root / "backend/pyproject.toml").read_text()
+          )["project"]
+          expected_zenodo_fields = {
+              "title", "description", "creators", "publication_date", "version",
+              "upload_type", "language", "access_right", "license", "keywords",
+              "related_identifiers", "notes",
+          }
+          assert set(zenodo) == expected_zenodo_fields
+          assert zenodo["version"] == project["version"]
+          assert zenodo["language"] == "eng"
+          assert zenodo["upload_type"] == "software"
+          assert zenodo["access_right"] == "open"
+          assert zenodo["license"] == "AGPL-3.0-or-later"
+          assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", zenodo["publication_date"])
+          assert zenodo["creators"] == [{"name": "Mrinal"}]
+          assert len(zenodo["keywords"]) == len(set(zenodo["keywords"]))
+          assert all(
+              item.get("identifier", "").startswith("https://")
+              and item.get("relation") == "isSupplementTo"
+              and item.get("scheme") == "url"
+              for item in zenodo["related_identifiers"]
+          )
+          adapter = Path(os.environ["zenodo_metadata"]).read_text()
+          release_adapter = Path(os.environ["zenodo_release"]).read_text()
+          assert "version = SanitizedUnicode()" in adapter
+          assert 'language = fields.Method(deserialize="load_language")' in adapter
+          assert 'zenodo_json_file_name = ".zenodo.json"' in release_adapter
+          assert "output.update(extra_metadata)" in release_adapter
+          print("Zenodo documented authoring metadata and pinned adapter: valid")
+
+          croissant = mlc.Dataset(
+              metadata_dir / "croissant.json",
+              mapping={
+                  "repo_csv": observations / "ofr_repo_markets.csv",
+                  "mmf_csv": observations / "ofr_money_market_funds.csv",
+              },
+          )
+          croissant_counts = {
+              record_set.uuid: sum(1 for _ in croissant.records(record_set.uuid))
+              for record_set in croissant.metadata.record_sets
+          }
+          assert croissant_counts == {
+              "repo_observations": 10_489,
+              "mmf_observations": 674,
+          }
+          print("MLCommons Croissant 1.0 native records: valid")
+
+          package_descriptor = json.loads(
+              (metadata_dir / "datapackage.json").read_text()
+          )
+          for resource in package_descriptor["resources"]:
+              resource["path"] = (
+                  "integrations/datacommons/input/observations/"
+                  + Path(resource["path"]).name
+              )
+          package = Package(package_descriptor, basepath=str(root))
+          frictionless_report = package.validate()
+          assert frictionless_report.valid, frictionless_report.flatten(
+              ["type", "message"]
+          )
+          assert {resource.name for resource in package.resources} == {
+              "ofr-repo-markets",
+              "ofr-money-market-funds",
+          }
+          print("Frictionless Data Package and all 11,163 rows: valid")
+
+          dcat = Namespace("http://www.w3.org/ns/dcat#")
+          source_dcat = Graph().parse(metadata_dir / "dcat.jsonld", format="json-ld")
+          served_dcat = Graph().parse(
+              root / "frontend/public/datasets/direct-ofr/catalog.jsonld",
+              format="json-ld",
+          )
+          assert isomorphic(source_dcat, served_dcat)
+          catalog = URIRef(f"{canonical}#catalog")
+          assert (catalog, RDF.type, dcat.Catalog) in source_dcat
+          assert (canonical, RDF.type, dcat.Dataset) in source_dcat
+          assert (catalog, dcat.landingPage, canonical) in source_dcat
+          assert len(set(source_dcat.objects(canonical, dcat.distribution))) == 2
+          print("DCAT 3 canonical and deployed graphs: valid")
+
+          schema_org = Namespace("http://schema.org/")
+          crate = Graph().parse(
+              metadata_dir / "ro-crate-metadata.json",
+              format="json-ld",
+              publicID=str(canonical),
+          )
+          crate_metadata = URIRef(f"{canonical}ro-crate-metadata.json")
+          assert (crate_metadata, schema_org.about, canonical) in crate
+          assert (
+              crate_metadata,
+              DCTERMS.conformsTo,
+              URIRef("https://w3id.org/ro/crate/1.3"),
+          ) in crate
+          assert (canonical, RDF.type, schema_org.Dataset) in crate
+          assert len(set(crate.objects(canonical, schema_org.hasPart))) >= 2
+          print("RO-Crate 1.3 JSON-LD graph: valid")
+          PY
+
+  seiche-package:
+    name: Reproducible Seiche package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Install the pinned build and validation frontends
+        run: |
+          python -m pip install --disable-pip-version-check --quiet \
+            "build==1.5.0" \
+            "packaging==26.3" \
+            "pyproject-hooks==1.2.0" \
+            "twine==7.0.0"
+
+      - name: Prove reproducibility across independent source trees
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          mkdir -p \
+            "${RUNNER_TEMP}/source-first" \
+            "${RUNNER_TEMP}/source-second" \
+            "${RUNNER_TEMP}/dist-first" \
+            "${RUNNER_TEMP}/dist-second"
+          git archive HEAD | tar -x -C "${RUNNER_TEMP}/source-first"
+          git archive HEAD | tar -x -C "${RUNNER_TEMP}/source-second"
+          find "${RUNNER_TEMP}/source-first/backend" -type f -exec touch -t 202001010000 {} +
+          find "${RUNNER_TEMP}/source-second/backend" -type f -exec touch -t 202401010000 {} +
+          python -m build \
+            --outdir "${RUNNER_TEMP}/dist-first" \
+            "${RUNNER_TEMP}/source-first/backend"
+          python -m build \
+            --outdir "${RUNNER_TEMP}/dist-second" \
+            "${RUNNER_TEMP}/source-second/backend"
+          first=("${RUNNER_TEMP}/dist-first"/*)
+          second=("${RUNNER_TEMP}/dist-second"/*)
+          test "${#first[@]}" -eq 2
+          test "${#second[@]}" -eq 2
+          for artifact in "${first[@]}"; do
+            name="${artifact##*/}"
+            cmp --silent "$artifact" "${RUNNER_TEMP}/dist-second/$name"
+          done
+          python -m twine check "${RUNNER_TEMP}/dist-first"/*
+          sha256sum "${RUNNER_TEMP}/dist-first"/*
+
+      - name: Verify exact artifacts and smoke wheel and sdist separately
+        run: |
+          python ops/release/verify_python_artifacts.py \
+            --dist "${RUNNER_TEMP}/dist-first" \
+            --source "${RUNNER_TEMP}/source-first/backend" \
+            --repository-license "${RUNNER_TEMP}/source-first/LICENSE" \
+            --epoch "$SOURCE_DATE_EPOCH"
+          for artifact_kind in wheel sdist; do
+            smoke="${RUNNER_TEMP}/package-${artifact_kind}-smoke"
+            python -m venv "$smoke"
+            if test "$artifact_kind" = wheel; then
+              artifact=("${RUNNER_TEMP}/dist-first"/*.whl)
+              install_flags=(--no-deps)
+            else
+              artifact=("${RUNNER_TEMP}/dist-first"/*.tar.gz)
+              "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+                "hatchling==1.32.0" \
+                "packaging==26.3" \
+                "pathspec==1.1.1" \
+                "pluggy==1.6.0" \
+                "tomlkit==0.15.1" \
+                "trove-classifiers==2026.6.1.19"
+              install_flags=(--no-build-isolation --no-deps)
+            fi
+            test "${#artifact[@]}" -eq 1
+            "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+              "${install_flags[@]}" "${artifact[0]}"
+            "$smoke/bin/seiche" --help >/dev/null
+          done
+
+  openbb-runtime-compatibility:
+    name: OpenBB runtime Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     defaults:
       run:
         working-directory: integrations/openbb
@@ -223,7 +562,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
+      - name: Exercise provider behavior on every advertised Python minor
+        run: |
+          python -m pip install --disable-pip-version-check --quiet \
+            "httpx==0.28.1" \
+            "openbb-core==1.6.13" \
+            "poetry-core==2.4.1" \
+            "pytest==9.1.1" \
+            "pytest-asyncio==1.4.0"
+          python -m pip install --disable-pip-version-check --quiet \
+            --no-build-isolation --no-deps .
+          python -m pytest -q --ignore=tests/test_artifacts.py
+
+  openbb-provider:
+    name: Isolated OpenBB provider package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: integrations/openbb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.12"
 
       - name: Install only the OpenBB provider and its build tools
         run: |
@@ -245,8 +610,75 @@ jobs:
           ruff check --no-cache .
           ruff format --check --no-cache .
           openbb-build
-          python -m build --no-isolation --outdir "${RUNNER_TEMP}/openbb-dist"
-          python -m twine check "${RUNNER_TEMP}"/openbb-dist/*
+
+      - name: Prove reproducible provider artifacts
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
+          printf 'OPENBB_SOURCE_DATE_EPOCH=%s\n' "$SOURCE_DATE_EPOCH" >> "$GITHUB_ENV"
+          mkdir -p \
+            "${RUNNER_TEMP}/openbb-source-first" \
+            "${RUNNER_TEMP}/openbb-source-second" \
+            "${RUNNER_TEMP}/openbb-dist-first" \
+            "${RUNNER_TEMP}/openbb-dist-second"
+          git archive HEAD | tar -x -C "${RUNNER_TEMP}/openbb-source-first"
+          git archive HEAD | tar -x -C "${RUNNER_TEMP}/openbb-source-second"
+          find "${RUNNER_TEMP}/openbb-source-first/integrations/openbb" \
+            -type f -exec touch -t 202001010000 {} +
+          find "${RUNNER_TEMP}/openbb-source-second/integrations/openbb" \
+            -type f -exec touch -t 202401010000 {} +
+          python -m build --no-isolation \
+            --outdir "${RUNNER_TEMP}/openbb-dist-first" \
+            "${RUNNER_TEMP}/openbb-source-first/integrations/openbb"
+          python -m build --no-isolation \
+            --outdir "${RUNNER_TEMP}/openbb-dist-second" \
+            "${RUNNER_TEMP}/openbb-source-second/integrations/openbb"
+          first=("${RUNNER_TEMP}/openbb-dist-first"/*)
+          second=("${RUNNER_TEMP}/openbb-dist-second"/*)
+          test "${#first[@]}" -eq 2
+          test "${#second[@]}" -eq 2
+          for artifact in "${first[@]}"; do
+            name="${artifact##*/}"
+            cmp --silent "$artifact" "${RUNNER_TEMP}/openbb-dist-second/$name"
+          done
+          python verify_artifacts.py \
+            --dist "${RUNNER_TEMP}/openbb-dist-first" \
+            --source "${RUNNER_TEMP}/openbb-source-first/integrations/openbb" \
+            --epoch "$SOURCE_DATE_EPOCH"
+          python -m twine check "${RUNNER_TEMP}/openbb-dist-first"/*
+          sha256sum "${RUNNER_TEMP}/openbb-dist-first"/*
+
+      - name: Smoke wheel and sdist in separate clean environments
+        run: |
+          for artifact_kind in wheel sdist; do
+            smoke="${RUNNER_TEMP}/openbb-${artifact_kind}-smoke"
+            python -m venv "$smoke"
+            "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+              "httpx==0.28.1" \
+              "openbb-core==1.6.13" \
+              "poetry-core==2.4.1"
+            if test "$artifact_kind" = wheel; then
+              artifact=("${RUNNER_TEMP}/openbb-dist-first"/*.whl)
+              install_flags=(--no-deps)
+            else
+              artifact=("${RUNNER_TEMP}/openbb-dist-first"/*.tar.gz)
+              install_flags=(--no-build-isolation --no-deps)
+            fi
+            test "${#artifact[@]}" -eq 1
+            "$smoke/bin/python" -m pip install --disable-pip-version-check --quiet \
+              "${install_flags[@]}" "${artifact[0]}"
+            "$smoke/bin/openbb-build"
+            "$smoke/bin/python" - <<'PY'
+          from importlib.metadata import entry_points, version
+
+          assert version("openbb-seiche") == "0.1.0"
+          for group in ("openbb_provider_extension", "openbb_core_extension"):
+              matches = [entry for entry in entry_points(group=group) if entry.name == "seiche"]
+              assert len(matches) == 1, (group, matches)
+              assert matches[0].load() is not None
+          PY
+          done
 
   contracts-and-container:
     runs-on: ubuntu-latest
@@ -257,7 +689,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.12"
 
       - name: Check distribution contracts
         run: python backend/tests/test_distribution_artifacts.py
@@ -319,7 +751,7 @@ jobs:
           ignore-unfixed: false
           exit-code: "1"
           format: table
-          version: v0.70.0
+          version: v0.74.0
 
       - name: Inspect and smoke-test the non-root image
         env:

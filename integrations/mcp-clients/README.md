@@ -79,7 +79,7 @@ As checked at 2026-08-21T21:52:40Z:
 - [Smithery](https://smithery.ai/servers/mrinallovesbhature/seiche) has an
   owner-published entry, but its 2026-07-27 scan is stale at ten tools and needs
   an authenticated republish/rescan;
-- eight additional live indexes and every claim/freshness gap are recorded in
+- seven additional live indexes and every claim/freshness gap are recorded in
   the [dated directory inventory](../../distribution/MCP_DIRECTORIES.md).
 
 OpenAI, Docker/GHCR, OpenBB, Hugging Face, Kaggle, and Zenodo remain prepared

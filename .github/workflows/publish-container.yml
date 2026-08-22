@@ -3,36 +3,69 @@ name: publish-container
 on:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: "Immutable release tag to publish, for example v0.11.0"
-        required: true
-        type: string
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 concurrency:
-  group: publish-container-${{ github.event.release.tag_name || inputs.release_tag }}
+  group: publish-container-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     if: github.repository == 'beepboop2025/seiche'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     env:
+      BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
       IMAGE_NAME: ghcr.io/${{ github.repository }}
-      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
+    outputs:
+      candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      candidate_artifact_digest: ${{ steps.candidate.outputs.artifact-digest }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      revision: ${{ steps.release.outputs.revision }}
+      short_revision: ${{ steps.release.outputs.short_revision }}
+      created: ${{ steps.release.outputs.created }}
+      publish_latest: ${{ steps.release.outputs.publish_latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate the release and external signer trust root
+        run: |
+          release_sha="$(git rev-parse HEAD)"
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_EVENT_NAME" = "release"
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test "$GITHUB_SHA" = "$release_sha"
+          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$release_sha"
+          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main
+          test -f ops/deploy/release-allowed-signers
+          test ! -L ops/deploy/release-allowed-signers
+          [[ "$RELEASE_SIGNING_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]
+          mapfile -t signer_fingerprints < <(
+            ssh-keygen -E sha256 -lf ops/deploy/release-allowed-signers |
+              awk '{print $2}'
+          )
+          test "${#signer_fingerprints[@]}" -eq 1
+          test "${signer_fingerprints[0]}" = "$RELEASE_SIGNING_KEY_FINGERPRINT"
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-commit HEAD
+          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+            verify-tag "$RELEASE_TAG"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -40,8 +73,10 @@ jobs:
 
       - name: Bind the image to the immutable release tag
         id: release
+        env:
+          PUBLISH_LATEST: ${{ github.event_name == 'release' && github.event.release.prerelease == false }}
         run: |
-          python - <<'PY'
+          python -I -S - <<'PY'
           import os
           import re
           import subprocess
@@ -69,37 +104,45 @@ jobs:
           created = subprocess.check_output(
               ["git", "show", "-s", "--format=%cI", "HEAD"], text=True
           ).strip()
+          publish_latest = os.environ["PUBLISH_LATEST"].lower() == "true"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               print(f"version={version}", file=output)
               print(f"tag={release_tag}", file=output)
               print(f"revision={revision}", file=output)
               print(f"short_revision={revision[:12]}", file=output)
               print(f"created={created}", file=output)
+              print(f"publish_latest={str(publish_latest).lower()}", file=output)
           PY
 
-      - name: Enforce the annotated SSH-signed release policy
-        run: |
-          test "$(git cat-file -t "$RELEASE_TAG")" = "tag"
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          test "$(git show -s --format=%ae HEAD)" = "beepboop2025@users.noreply.github.com"
-          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
-            verify-commit HEAD
-          git -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
-            verify-tag "$RELEASE_TAG"
-
       - name: Check distribution contracts at the release tag
-        run: python backend/tests/test_distribution_artifacts.py
+        run: python -I -S backend/tests/test_distribution_artifacts.py
 
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4.2.0
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
 
-      - name: Build the release candidate for its security gate
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          version: v0.36.1
+          driver-opts: image=moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+
+      - name: Prepare the immutable candidate directory
+        run: mkdir -p "${RUNNER_TEMP}/candidate"
+
+      - name: Build the amd64 OCI candidate exactly once
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
-          load: true
           platforms: linux/amd64
-          tags: seiche:release-scan
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}
+          outputs: type=oci,dest=${{ runner.temp }}/candidate/seiche-linux-amd64.oci.tar,oci-mediatypes=true
+          labels: |
+            org.opencontainers.image.created=${{ steps.release.outputs.created }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             VERSION=${{ steps.release.outputs.version }}
             REVISION=${{ steps.release.outputs.revision }}
@@ -107,66 +150,903 @@ jobs:
             SOURCE=https://github.com/${{ github.repository }}
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=seiche-release-container
-          cache-to: type=gha,mode=max,scope=seiche-release-container
+          cache-from: type=gha,scope=seiche-release-container-amd64
+          cache-to: type=gha,mode=max,scope=seiche-release-container-amd64
 
-      - name: Reject high and critical package vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+      - name: Build the arm64 OCI candidate exactly once
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
-          image-ref: seiche:release-scan
-          scanners: vuln
-          vuln-type: os,library
-          severity: CRITICAL,HIGH
-          ignore-unfixed: false
-          exit-code: "1"
-          format: table
-          version: v0.70.0
+          context: .
+          platforms: linux/arm64
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.version }}
+          outputs: type=oci,dest=${{ runner.temp }}/candidate/seiche-linux-arm64.oci.tar,oci-mediatypes=true
+          labels: |
+            org.opencontainers.image.created=${{ steps.release.outputs.created }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ steps.release.outputs.revision }}
+            CREATED=${{ steps.release.outputs.created }}
+            SOURCE=https://github.com/${{ github.repository }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=seiche-release-container-arm64
+          cache-to: type=gha,mode=max,scope=seiche-release-container-arm64
 
-      - name: Log in to GitHub Container Registry
+      - name: Upload the immutable OCI candidates
+        id: candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: seiche-container-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate/*.oci.tar
+          compression-level: 0
+          overwrite: false
+          retention-days: 30
+          if-no-files-found: error
+
+  scan:
+    needs: build
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions: {}
+    env:
+      CREATED: ${{ needs.build.outputs.created }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+      REVISION: ${{ needs.build.outputs.revision }}
+      VERSION: ${{ needs.build.outputs.version }}
+    outputs:
+      amd_digest: ${{ steps.inspect.outputs.amd_digest }}
+      arm_digest: ${{ steps.inspect.outputs.arm_digest }}
+      amd_archive_sha256: ${{ steps.inspect.outputs.amd_archive_sha256 }}
+      arm_archive_sha256: ${{ steps.inspect.outputs.arm_archive_sha256 }}
+      amd_sbom_sha256: ${{ steps.receipt.outputs.amd_sbom_sha256 }}
+      arm_sbom_sha256: ${{ steps.receipt.outputs.arm_sbom_sha256 }}
+      evidence_artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+      evidence_artifact_digest: ${{ steps.evidence.outputs.artifact-digest }}
+    steps:
+      - name: Download the exact candidate artifact by immutable ID
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/candidate
+          digest-mismatch: error
+
+      - name: Install checksum-pinned Trivy
+        run: |
+          tool_dir="${RUNNER_TEMP}/seiche-tools"
+          trivy_archive="${RUNNER_TEMP}/trivy_0.74.0_Linux-64bit.tar.gz"
+          mkdir -p "$tool_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz' \
+            --output "$trivy_archive"
+          echo "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a  $trivy_archive" |
+            sha256sum --check --strict
+          tar --extract --gzip --file "$trivy_archive" --directory "$tool_dir" trivy
+          chmod 0755 "$tool_dir/trivy"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/trivy" --version
+
+      - name: Validate and materialize the exact OCI layouts
+        id: inspect
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          LAYOUT_ROOT: ${{ runner.temp }}/scan-layouts
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          import shutil
+          import tarfile
+          from pathlib import Path, PurePosixPath
+
+          candidate_dir = Path(os.environ["CANDIDATE_DIR"])
+          layout_root = Path(os.environ["LAYOUT_ROOT"])
+          expected_files = {
+              "seiche-linux-amd64.oci.tar",
+              "seiche-linux-arm64.oci.tar",
+          }
+          actual_files = {path.name for path in candidate_dir.iterdir() if path.is_file()}
+          if actual_files != expected_files:
+              raise SystemExit(
+                  f"candidate inventory differs: {sorted(actual_files)!r} != "
+                  f"{sorted(expected_files)!r}"
+              )
+          if any(path.is_dir() or path.is_symlink() for path in candidate_dir.iterdir()):
+              raise SystemExit("candidate artifact contains an unexpected directory or symlink")
+
+          digest_pattern = re.compile(r"sha256:([0-9a-f]{64})\Z")
+          blob_pattern = re.compile(r"blobs/sha256/([0-9a-f]{64})\Z")
+          max_small_blob = 4 * 1024 * 1024
+
+          def file_sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          def inspect(archive: Path, platform: str, destination: Path) -> str:
+              expected_os, expected_arch = platform.split("/", 1)
+              with tarfile.open(archive, "r:*") as bundle:
+                  members: dict[str, tarfile.TarInfo] = {}
+                  for member in bundle.getmembers():
+                      name = member.name
+                      while name.startswith("./"):
+                          name = name[2:]
+                      pure = PurePosixPath(name)
+                      if not name or pure.is_absolute() or ".." in pure.parts:
+                          raise SystemExit(f"unsafe OCI archive member: {member.name!r}")
+                      if member.isdir():
+                          continue
+                      if not member.isfile():
+                          raise SystemExit(f"non-regular OCI archive member: {member.name!r}")
+                      if name in members:
+                          raise SystemExit(f"duplicate OCI archive member: {name!r}")
+                      if name not in {"index.json", "oci-layout"} and not blob_pattern.fullmatch(name):
+                          raise SystemExit(f"unexpected OCI archive member: {name!r}")
+                      members[name] = member
+
+                  def read_small(name: str) -> bytes:
+                      member = members.get(name)
+                      if member is None:
+                          raise SystemExit(f"missing OCI archive member: {name}")
+                      if member.size > max_small_blob:
+                          raise SystemExit(f"oversized OCI metadata member: {name}")
+                      stream = bundle.extractfile(member)
+                      if stream is None:
+                          raise SystemExit(f"unreadable OCI archive member: {name}")
+                      body = stream.read(max_small_blob + 1)
+                      if len(body) != member.size:
+                          raise SystemExit(f"truncated OCI archive member: {name}")
+                      return body
+
+                  layout = json.loads(read_small("oci-layout"))
+                  if layout != {"imageLayoutVersion": "1.0.0"}:
+                      raise SystemExit(f"unexpected OCI layout marker: {layout!r}")
+                  index = json.loads(read_small("index.json"))
+                  descriptors = index.get("manifests", [])
+                  if index.get("schemaVersion") != 2 or len(descriptors) != 1:
+                      raise SystemExit("OCI candidate must have exactly one root descriptor")
+                  descriptor = descriptors[0]
+                  if descriptor.get("mediaType") != "application/vnd.oci.image.manifest.v1+json":
+                      raise SystemExit("OCI candidate root is not an image manifest")
+                  digest_match = digest_pattern.fullmatch(descriptor.get("digest", ""))
+                  if digest_match is None:
+                      raise SystemExit("OCI candidate has a malformed manifest digest")
+                  manifest_hex = digest_match.group(1)
+                  manifest_name = f"blobs/sha256/{manifest_hex}"
+                  manifest_body = read_small(manifest_name)
+                  if len(manifest_body) != descriptor.get("size"):
+                      raise SystemExit("OCI manifest descriptor size mismatch")
+                  if hashlib.sha256(manifest_body).hexdigest() != manifest_hex:
+                      raise SystemExit("OCI manifest descriptor digest mismatch")
+                  manifest = json.loads(manifest_body)
+                  if (
+                      manifest.get("schemaVersion") != 2
+                      or manifest.get("mediaType")
+                      != "application/vnd.oci.image.manifest.v1+json"
+                  ):
+                      raise SystemExit("unexpected OCI image manifest")
+
+                  referenced = {manifest_name}
+                  child_descriptors = [manifest.get("config", {})] + manifest.get("layers", [])
+                  if len(child_descriptors) < 2:
+                      raise SystemExit("OCI image has no filesystem layers")
+                  config_body = None
+                  for position, child in enumerate(child_descriptors):
+                      child_match = digest_pattern.fullmatch(child.get("digest", ""))
+                      if child_match is None:
+                          raise SystemExit("OCI child has a malformed digest")
+                      child_hex = child_match.group(1)
+                      child_name = f"blobs/sha256/{child_hex}"
+                      member = members.get(child_name)
+                      if member is None or member.size != child.get("size"):
+                          raise SystemExit(f"OCI child size mismatch: {child_name}")
+                      stream = bundle.extractfile(member)
+                      if stream is None:
+                          raise SystemExit(f"unreadable OCI child: {child_name}")
+                      digest = hashlib.sha256()
+                      chunks = [] if position == 0 else None
+                      for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                          digest.update(chunk)
+                          if chunks is not None:
+                              chunks.append(chunk)
+                      if digest.hexdigest() != child_hex:
+                          raise SystemExit(f"OCI child digest mismatch: {child_name}")
+                      if chunks is not None:
+                          config_body = b"".join(chunks)
+                      referenced.add(child_name)
+
+                  blob_members = {name for name in members if name.startswith("blobs/")}
+                  if blob_members != referenced:
+                      raise SystemExit("OCI archive contains unreferenced or missing blobs")
+                  if config_body is None or len(config_body) > max_small_blob:
+                      raise SystemExit("OCI config is missing or oversized")
+                  config = json.loads(config_body)
+                  if (config.get("os"), config.get("architecture")) != (
+                      expected_os,
+                      expected_arch,
+                  ):
+                      raise SystemExit(
+                          f"OCI platform mismatch for {archive.name}: "
+                          f"{config.get('os')}/{config.get('architecture')}"
+                      )
+                  labels = config.get("config", {}).get("Labels", {})
+                  expected_labels = {
+                      "org.opencontainers.image.created": os.environ["CREATED"],
+                      "org.opencontainers.image.revision": os.environ["REVISION"],
+                      "org.opencontainers.image.source":
+                          f"https://github.com/{os.environ['GITHUB_REPOSITORY']}",
+                      "org.opencontainers.image.version": os.environ["VERSION"],
+                  }
+                  for key, value in expected_labels.items():
+                      if labels.get(key) != value:
+                          raise SystemExit(
+                              f"OCI label {key!r} is {labels.get(key)!r}, expected {value!r}"
+                          )
+
+                  if destination.exists():
+                      shutil.rmtree(destination)
+                  destination.mkdir(parents=True)
+                  for name, member in members.items():
+                      target = destination.joinpath(*PurePosixPath(name).parts)
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      source = bundle.extractfile(member)
+                      if source is None:
+                          raise SystemExit(f"unreadable OCI archive member: {name}")
+                      with target.open("xb") as output:
+                          shutil.copyfileobj(source, output, length=1024 * 1024)
+              return f"sha256:{manifest_hex}"
+
+          layout_root.mkdir(parents=True, exist_ok=True)
+          amd_archive = candidate_dir / "seiche-linux-amd64.oci.tar"
+          arm_archive = candidate_dir / "seiche-linux-arm64.oci.tar"
+          values = {
+              "amd_archive_sha256": file_sha256(amd_archive),
+              "arm_archive_sha256": file_sha256(arm_archive),
+              "amd_digest": inspect(amd_archive, "linux/amd64", layout_root / "amd64"),
+              "arm_digest": inspect(arm_archive, "linux/arm64", layout_root / "arm64"),
+          }
+          if values["amd_digest"] == values["arm_digest"]:
+              raise SystemExit("amd64 and arm64 candidates unexpectedly share one manifest")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for key, value in values.items():
+                  print(f"{key}={value}", file=output)
+          PY
+
+      - name: Reject high and critical vulnerabilities in both exact candidates
+        env:
+          AMD_DIGEST: ${{ steps.inspect.outputs.amd_digest }}
+          AMD_LAYOUT: ${{ runner.temp }}/scan-layouts/amd64
+          ARM_DIGEST: ${{ steps.inspect.outputs.arm_digest }}
+          ARM_LAYOUT: ${{ runner.temp }}/scan-layouts/arm64
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: |
+          trivy image \
+            --input "${AMD_LAYOUT}@${AMD_DIGEST}" \
+            --platform linux/amd64 \
+            --scanners vuln \
+            --pkg-types os,library \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed=false \
+            --exit-code 1 \
+            --format table
+          trivy image \
+            --input "${ARM_LAYOUT}@${ARM_DIGEST}" \
+            --platform linux/arm64 \
+            --scanners vuln \
+            --pkg-types os,library \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed=false \
+            --exit-code 1 \
+            --format table
+
+      - name: Generate platform-specific CycloneDX SBOMs from the scanned bytes
+        env:
+          AMD_DIGEST: ${{ steps.inspect.outputs.amd_digest }}
+          AMD_LAYOUT: ${{ runner.temp }}/scan-layouts/amd64
+          ARM_DIGEST: ${{ steps.inspect.outputs.arm_digest }}
+          ARM_LAYOUT: ${{ runner.temp }}/scan-layouts/arm64
+          EVIDENCE_DIR: ${{ runner.temp }}/evidence
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          trivy image \
+            --input "${AMD_LAYOUT}@${AMD_DIGEST}" \
+            --platform linux/amd64 \
+            --scanners vuln \
+            --format cyclonedx \
+            --output "${EVIDENCE_DIR}/sbom-linux-amd64.cdx.json"
+          trivy image \
+            --input "${ARM_LAYOUT}@${ARM_DIGEST}" \
+            --platform linux/arm64 \
+            --scanners vuln \
+            --format cyclonedx \
+            --output "${EVIDENCE_DIR}/sbom-linux-arm64.cdx.json"
+
+      - name: Bind scan evidence to archive, manifest, and SBOM digests
+        id: receipt
+        env:
+          AMD_ARCHIVE_SHA256: ${{ steps.inspect.outputs.amd_archive_sha256 }}
+          AMD_DIGEST: ${{ steps.inspect.outputs.amd_digest }}
+          ARM_ARCHIVE_SHA256: ${{ steps.inspect.outputs.arm_archive_sha256 }}
+          ARM_DIGEST: ${{ steps.inspect.outputs.arm_digest }}
+          EVIDENCE_DIR: ${{ runner.temp }}/evidence
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          amd_sbom = evidence_dir / "sbom-linux-amd64.cdx.json"
+          arm_sbom = evidence_dir / "sbom-linux-arm64.cdx.json"
+          receipt = {
+              "schema": "https://seiche.info/schemas/container-scan-receipt/v1",
+              "image": f"ghcr.io/{os.environ['GITHUB_REPOSITORY']}",
+              "version": os.environ["VERSION"],
+              "revision": os.environ["REVISION"],
+              "trivy_version": "0.74.0",
+              "platforms": {
+                  "linux/amd64": {
+                      "archive_sha256": os.environ["AMD_ARCHIVE_SHA256"],
+                      "manifest_digest": os.environ["AMD_DIGEST"],
+                      "sbom_sha256": sha256(amd_sbom),
+                  },
+                  "linux/arm64": {
+                      "archive_sha256": os.environ["ARM_ARCHIVE_SHA256"],
+                      "manifest_digest": os.environ["ARM_DIGEST"],
+                      "sbom_sha256": sha256(arm_sbom),
+                  },
+              },
+          }
+          (evidence_dir / "scan-receipt.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(
+                  f"amd_sbom_sha256={receipt['platforms']['linux/amd64']['sbom_sha256']}",
+                  file=output,
+              )
+              print(
+                  f"arm_sbom_sha256={receipt['platforms']['linux/arm64']['sbom_sha256']}",
+                  file=output,
+              )
+          PY
+
+      - name: Upload immutable scan evidence
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: seiche-container-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/*
+          compression-level: 0
+          overwrite: false
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    needs: [build, scan]
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ghcr-release
+    concurrency:
+      group: seiche-ghcr-publication
+      cancel-in-progress: false
+    permissions:
+      packages: write
+    env:
+      AMD_ARCHIVE_SHA256: ${{ needs.scan.outputs.amd_archive_sha256 }}
+      AMD_DIGEST: ${{ needs.scan.outputs.amd_digest }}
+      AMD_SBOM_SHA256: ${{ needs.scan.outputs.amd_sbom_sha256 }}
+      ARM_ARCHIVE_SHA256: ${{ needs.scan.outputs.arm_archive_sha256 }}
+      ARM_DIGEST: ${{ needs.scan.outputs.arm_digest }}
+      ARM_SBOM_SHA256: ${{ needs.scan.outputs.arm_sbom_sha256 }}
+      CREATED: ${{ needs.build.outputs.created }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+      PUBLISH_LATEST: ${{ needs.build.outputs.publish_latest }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+      REVISION: ${{ needs.build.outputs.revision }}
+      VERSION: ${{ needs.build.outputs.version }}
+    outputs:
+      root_digest: ${{ steps.publish.outputs.root_digest }}
+    steps:
+      - name: Recheck the release event before granting registry authority
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_EVENT_NAME" = "release"
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test "$GITHUB_SHA" = "$REVISION"
+
+      - name: Download the exact candidate artifact without a source checkout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/candidate
+          digest-mismatch: error
+
+      - name: Download the exact scan evidence without a source checkout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.scan.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}/evidence
+          digest-mismatch: error
+
+      - name: Reconcile the candidate and evidence digests
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          EVIDENCE_DIR: ${{ runner.temp }}/evidence
+        run: |
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          candidate = Path(os.environ["CANDIDATE_DIR"])
+          evidence = Path(os.environ["EVIDENCE_DIR"])
+          expected_candidate = {
+              "seiche-linux-amd64.oci.tar",
+              "seiche-linux-arm64.oci.tar",
+          }
+          expected_evidence = {
+              "sbom-linux-amd64.cdx.json",
+              "sbom-linux-arm64.cdx.json",
+              "scan-receipt.json",
+          }
+          if {path.name for path in candidate.iterdir()} != expected_candidate:
+              raise SystemExit("candidate inventory changed after scanning")
+          if {path.name for path in evidence.iterdir()} != expected_evidence:
+              raise SystemExit("scan-evidence inventory changed before publication")
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          expected = {
+              "image": os.environ["IMAGE_NAME"],
+              "version": os.environ["VERSION"],
+              "revision": os.environ["REVISION"],
+              "trivy_version": "0.74.0",
+              "platforms": {
+                  "linux/amd64": {
+                      "archive_sha256": os.environ["AMD_ARCHIVE_SHA256"],
+                      "manifest_digest": os.environ["AMD_DIGEST"],
+                      "sbom_sha256": os.environ["AMD_SBOM_SHA256"],
+                  },
+                  "linux/arm64": {
+                      "archive_sha256": os.environ["ARM_ARCHIVE_SHA256"],
+                      "manifest_digest": os.environ["ARM_DIGEST"],
+                      "sbom_sha256": os.environ["ARM_SBOM_SHA256"],
+                  },
+              },
+          }
+          receipt = json.loads((evidence / "scan-receipt.json").read_text())
+          if receipt.get("schema") != "https://seiche.info/schemas/container-scan-receipt/v1":
+              raise SystemExit("unexpected container scan-receipt schema")
+          for key, value in expected.items():
+              if receipt.get(key) != value:
+                  raise SystemExit(f"scan receipt field {key!r} changed")
+          checks = {
+              candidate / "seiche-linux-amd64.oci.tar": os.environ["AMD_ARCHIVE_SHA256"],
+              candidate / "seiche-linux-arm64.oci.tar": os.environ["ARM_ARCHIVE_SHA256"],
+              evidence / "sbom-linux-amd64.cdx.json": os.environ["AMD_SBOM_SHA256"],
+              evidence / "sbom-linux-arm64.cdx.json": os.environ["ARM_SBOM_SHA256"],
+          }
+          for path, expected_digest in checks.items():
+              actual = sha256(path)
+              if actual != expected_digest:
+                  raise SystemExit(
+                      f"{path.name} digest {actual} differs from {expected_digest}"
+                  )
+          PY
+
+      - name: Install checksum-pinned regctl
+        run: |
+          tool_dir="${RUNNER_TEMP}/seiche-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64' \
+            --output "$tool_dir/regctl"
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  $tool_dir/regctl" |
+            sha256sum --check --strict
+          chmod 0755 "$tool_dir/regctl"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/regctl" version
+
+      - name: Publish only the scanned OCI graph and enforce immutable tags
+        id: publish
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOCAL_LAYOUT_DIR: ${{ runner.temp }}/publish-layout
+          ROOT_INDEX_PATH: ${{ runner.temp }}/root-index.json
+        run: |
+          local_ref="ocidir://${LOCAL_LAYOUT_DIR}"
+          mkdir -p "$LOCAL_LAYOUT_DIR"
+          regctl image import \
+            "$local_ref:amd64" \
+            "${CANDIDATE_DIR}/seiche-linux-amd64.oci.tar"
+          regctl image import \
+            "$local_ref:arm64" \
+            "${CANDIDATE_DIR}/seiche-linux-arm64.oci.tar"
+          test "$(regctl image digest "$local_ref:amd64")" = "$AMD_DIGEST"
+          test "$(regctl image digest "$local_ref:arm64")" = "$ARM_DIGEST"
+
+          regctl image inspect "$local_ref:amd64" > "${RUNNER_TEMP}/amd64-config.json"
+          regctl image inspect "$local_ref:arm64" > "${RUNNER_TEMP}/arm64-config.json"
+          python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected_labels = {
+              "org.opencontainers.image.created": os.environ["CREATED"],
+              "org.opencontainers.image.revision": os.environ["REVISION"],
+              "org.opencontainers.image.source":
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}",
+              "org.opencontainers.image.version": os.environ["VERSION"],
+          }
+          for filename, architecture in (
+              ("amd64-config.json", "amd64"),
+              ("arm64-config.json", "arm64"),
+          ):
+              config = json.loads((Path(os.environ["RUNNER_TEMP"]) / filename).read_text())
+              if (config.get("os"), config.get("architecture")) != ("linux", architecture):
+                  raise SystemExit(f"imported {architecture} config has the wrong platform")
+              labels = config.get("config", {}).get("Labels", {})
+              for key, value in expected_labels.items():
+                  if labels.get(key) != value:
+                      raise SystemExit(f"imported {architecture} config changed label {key}")
+          PY
+
+          regctl index create "$local_ref:release" \
+            --digest "$AMD_DIGEST" \
+            --digest "$ARM_DIGEST" \
+            --annotation "org.opencontainers.image.created=${CREATED}" \
+            --annotation "org.opencontainers.image.revision=${REVISION}" \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.version=${VERSION}"
+          root_digest="$(regctl image digest "$local_ref:release")"
+          [[ "$root_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          regctl manifest get "$local_ref:release" --format raw-body > "$ROOT_INDEX_PATH"
+
+          ROOT_DIGEST="$root_digest" python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["ROOT_INDEX_PATH"])
+          body = path.read_bytes()
+          if f"sha256:{hashlib.sha256(body).hexdigest()}" != os.environ["ROOT_DIGEST"]:
+              raise SystemExit("local OCI index bytes do not match its digest")
+          index = json.loads(body)
+          if (
+              index.get("schemaVersion") != 2
+              or index.get("mediaType") != "application/vnd.oci.image.index.v1+json"
+          ):
+              raise SystemExit("published root is not an OCI image index")
+          manifests = index.get("manifests", [])
+          if len(manifests) != 2:
+              raise SystemExit(f"expected exactly two OCI children, got {len(manifests)}")
+          actual = {
+              (
+                  descriptor.get("platform", {}).get("os"),
+                  descriptor.get("platform", {}).get("architecture"),
+              ): descriptor.get("digest")
+              for descriptor in manifests
+          }
+          expected = {
+              ("linux", "amd64"): os.environ["AMD_DIGEST"],
+              ("linux", "arm64"): os.environ["ARM_DIGEST"],
+          }
+          if actual != expected:
+              raise SystemExit(f"OCI index children differ: {actual!r} != {expected!r}")
+          annotations = index.get("annotations", {})
+          expected_annotations = {
+              "org.opencontainers.image.created": os.environ["CREATED"],
+              "org.opencontainers.image.revision": os.environ["REVISION"],
+              "org.opencontainers.image.source":
+                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}",
+              "org.opencontainers.image.version": os.environ["VERSION"],
+          }
+          if annotations != expected_annotations:
+              raise SystemExit("OCI index annotations differ from the signed release")
+          PY
+          test "$(regctl manifest head "$local_ref:release" --platform linux/amd64)" = "$AMD_DIGEST"
+          test "$(regctl manifest head "$local_ref:release" --platform linux/arm64)" = "$ARM_DIGEST"
+
+          printf '%s' "$GITHUB_TOKEN" |
+            regctl registry login ghcr.io --user "$GITHUB_ACTOR" --pass-stdin
+
+          # A digest-addressed copy cannot clobber a fixed release tag. It creates
+          # the repository when needed and repairs only missing blobs on a retry.
+          regctl image copy --force-recursive \
+            "$local_ref:release" \
+            "$IMAGE_NAME@$root_digest"
+          test "$(regctl image digest "$IMAGE_NAME@$root_digest")" = "$root_digest"
+          test "$(regctl manifest head "$IMAGE_NAME@$root_digest" --platform linux/amd64)" = "$AMD_DIGEST"
+          test "$(regctl manifest head "$IMAGE_NAME@$root_digest" --platform linux/arm64)" = "$ARM_DIGEST"
+
+          regctl tag ls "$IMAGE_NAME" \
+            --format '{{range .Tags}}{{println .}}{{end}}' \
+            > "${RUNNER_TEMP}/remote-tags.txt"
+          fixed_tags=("$VERSION" "$RELEASE_TAG" "sha-${REVISION:0:12}")
+          missing_tags=()
+          for tag in "${fixed_tags[@]}"; do
+            if grep -Fqx -- "$tag" "${RUNNER_TEMP}/remote-tags.txt"; then
+              existing="$(regctl image digest "$IMAGE_NAME:$tag")"
+              if [[ "$existing" != "$root_digest" ]]; then
+                echo "::error::immutable GHCR tag $tag is $existing, expected $root_digest"
+                exit 1
+              fi
+            else
+              missing_tags+=("$tag")
+            fi
+          done
+          for tag in "${missing_tags[@]}"; do
+            regctl image copy "$IMAGE_NAME@$root_digest" "$IMAGE_NAME:$tag"
+            test "$(regctl image digest "$IMAGE_NAME:$tag")" = "$root_digest"
+          done
+          for tag in "${fixed_tags[@]}"; do
+            test "$(regctl image digest "$IMAGE_NAME:$tag")" = "$root_digest"
+          done
+          if [[ "$PUBLISH_LATEST" == "true" ]]; then
+            move_latest=true
+            if grep -Fqx -- latest "${RUNNER_TEMP}/remote-tags.txt"; then
+              current_latest_digest="$(regctl image digest "$IMAGE_NAME:latest")"
+              regctl manifest get "$IMAGE_NAME:latest" --format raw-body \
+                > "${RUNNER_TEMP}/current-latest-index.json"
+              CURRENT_LATEST_DIGEST="$current_latest_digest" \
+                NEW_ROOT_DIGEST="$root_digest" \
+                python3 -I -S - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def release_tuple(value: object) -> tuple[int, int, int]:
+              if not isinstance(value, str):
+                  raise SystemExit("GHCR latest has no release version label")
+              match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", value)
+              if match is None:
+                  raise SystemExit(f"GHCR latest has a non-release version: {value!r}")
+              return tuple(int(part) for part in match.groups())
+
+          index = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "current-latest-index.json")
+              .read_text(encoding="utf-8")
+          )
+          if index.get("mediaType") != "application/vnd.oci.image.index.v1+json":
+              raise SystemExit("GHCR latest is not the expected OCI image index")
+          current = index.get("annotations", {}).get(
+              "org.opencontainers.image.version"
+          )
+          candidate = os.environ["VERSION"]
+          decision = (
+              "keep"
+              if release_tuple(current) > release_tuple(candidate)
+              else "move"
+          )
+          (Path(os.environ["RUNNER_TEMP"]) / "latest-decision.txt").write_text(
+              f"{decision}\n", encoding="utf-8"
+          )
+          print(
+              f"latest decision={decision}: current={current} "
+              f"({os.environ['CURRENT_LATEST_DIGEST']}), "
+              f"candidate={candidate} ({os.environ['NEW_ROOT_DIGEST']})"
+          )
+          PY
+              if [[ "$(<"${RUNNER_TEMP}/latest-decision.txt")" == "keep" ]]; then
+                move_latest=false
+              fi
+            fi
+            if [[ "$move_latest" == "true" ]]; then
+              regctl image copy "$IMAGE_NAME@$root_digest" "$IMAGE_NAME:latest"
+              test "$(regctl image digest "$IMAGE_NAME:latest")" = "$root_digest"
+            fi
+          fi
+          echo "root_digest=$root_digest" >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: [build, scan, publish]
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ghcr-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    env:
+      AMD_DIGEST: ${{ needs.scan.outputs.amd_digest }}
+      AMD_SBOM_SHA256: ${{ needs.scan.outputs.amd_sbom_sha256 }}
+      ARM_DIGEST: ${{ needs.scan.outputs.arm_digest }}
+      ARM_SBOM_SHA256: ${{ needs.scan.outputs.arm_sbom_sha256 }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+      ROOT_DIGEST: ${{ needs.publish.outputs.root_digest }}
+    steps:
+      - name: Recheck the release event before granting attestation authority
+        env:
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          REVISION: ${{ needs.build.outputs.revision }}
+        run: |
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_EVENT_NAME" = "release"
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test "$GITHUB_SHA" = "$REVISION"
+
+      - name: Download the exact platform SBOMs without a source checkout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          artifact-ids: ${{ needs.scan.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}/evidence
+          digest-mismatch: error
+
+      - name: Recheck both SBOM digests before granting attestation authority
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/evidence
+        run: |
+          echo "${AMD_SBOM_SHA256}  ${EVIDENCE_DIR}/sbom-linux-amd64.cdx.json" |
+            sha256sum --check --strict
+          echo "${ARM_SBOM_SHA256}  ${EVIDENCE_DIR}/sbom-linux-arm64.cdx.json" |
+            sha256sum --check --strict
+
+      - name: Log in only after the source-free evidence checks pass
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive release tags and OCI labels
-        id: metadata
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+      - name: Attest the amd64 CycloneDX SBOM to its child manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=${{ steps.release.outputs.version }}
-            type=raw,value=${{ steps.release.outputs.tag }}
-            type=raw,value=sha-${{ steps.release.outputs.short_revision }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
-          labels: |
-            org.opencontainers.image.created=${{ steps.release.outputs.created }}
-            org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
-            org.opencontainers.image.version=${{ steps.release.outputs.version }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ env.AMD_DIGEST }}
+          sbom-path: ${{ runner.temp }}/evidence/sbom-linux-amd64.cdx.json
+          push-to-registry: true
+          create-storage-record: false
 
-      - name: Build and publish with SBOM and provenance
-        id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+      - name: Attest the arm64 CycloneDX SBOM to its child manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.release.outputs.version }}
-            REVISION=${{ steps.release.outputs.revision }}
-            CREATED=${{ steps.release.outputs.created }}
-            SOURCE=https://github.com/${{ github.repository }}
-          sbom: true
-          provenance: mode=max
-          cache-from: type=gha,scope=seiche-release-container
-          cache-to: type=gha,mode=max,scope=seiche-release-container
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ env.ARM_DIGEST }}
+          sbom-path: ${{ runner.temp }}/evidence/sbom-linux-arm64.cdx.json
+          push-to-registry: true
+          create-storage-record: false
 
-      - name: Attest the published manifest digest
+      - name: Attest provenance to the final multi-platform index
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ env.ROOT_DIGEST }}
           push-to-registry: true
+          create-storage-record: false
+
+  prove-public:
+    needs: [build, scan, publish, attest]
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    env:
+      AMD_DIGEST: ${{ needs.scan.outputs.amd_digest }}
+      ARM_DIGEST: ${{ needs.scan.outputs.arm_digest }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+      REVISION: ${{ needs.build.outputs.revision }}
+      ROOT_DIGEST: ${{ needs.publish.outputs.root_digest }}
+    steps:
+      - name: Install checksum-pinned public-verification tools
+        run: |
+          tool_dir="${RUNNER_TEMP}/seiche-tools"
+          regctl_path="$tool_dir/regctl"
+          gh_archive="${RUNNER_TEMP}/gh_2.86.0_linux_amd64.tar.gz"
+          mkdir -p "$tool_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64' \
+            --output "$regctl_path"
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  $regctl_path" |
+            sha256sum --check --strict
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/cli/cli/releases/download/v2.86.0/gh_2.86.0_linux_amd64.tar.gz' \
+            --output "$gh_archive"
+          echo "f3b08bd6a28420cc2229b0a1a687fa25f2b838d3f04b297414c1041ca68103c7  $gh_archive" |
+            sha256sum --check --strict
+          tar --extract --gzip --file "$gh_archive" \
+            --strip-components=2 --directory "$tool_dir" gh_2.86.0_linux_amd64/bin/gh
+          chmod 0755 "$regctl_path" "$tool_dir/gh"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          "$regctl_path" version
+          "$tool_dir/gh" version
+
+      - name: Prove the index, both platforms, and attestations are public
+        run: |
+          anonymous_docker_config="${RUNNER_TEMP}/anonymous-docker-config"
+          mkdir -p "$anonymous_docker_config"
+          printf '{"auths":{}}\n' > "$anonymous_docker_config/config.json"
+          DOCKER_CONFIG="$anonymous_docker_config" \
+            regctl manifest get "$IMAGE_NAME@$ROOT_DIGEST" --format raw-body \
+              > "${RUNNER_TEMP}/anonymous-index.json"
+          python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          body = (Path(os.environ["RUNNER_TEMP"]) / "anonymous-index.json").read_bytes()
+          actual_root = f"sha256:{hashlib.sha256(body).hexdigest()}"
+          if actual_root != os.environ["ROOT_DIGEST"]:
+              raise SystemExit(
+                  f"anonymous root digest {actual_root} differs from {os.environ['ROOT_DIGEST']}"
+              )
+          index = json.loads(body)
+          manifests = index.get("manifests", [])
+          actual = {
+              (
+                  descriptor.get("platform", {}).get("os"),
+                  descriptor.get("platform", {}).get("architecture"),
+              ): descriptor.get("digest")
+              for descriptor in manifests
+          }
+          expected = {
+              ("linux", "amd64"): os.environ["AMD_DIGEST"],
+              ("linux", "arm64"): os.environ["ARM_DIGEST"],
+          }
+          if actual != expected:
+              raise SystemExit(f"anonymous OCI children differ: {actual!r} != {expected!r}")
+          PY
+          DOCKER_CONFIG="$anonymous_docker_config" \
+            docker pull --platform linux/amd64 "$IMAGE_NAME@$ROOT_DIGEST"
+          DOCKER_CONFIG="$anonymous_docker_config" \
+            docker pull --platform linux/arm64 "$IMAGE_NAME@$ROOT_DIGEST"
+
+          verify_common=(
+            --bundle-from-oci
+            --repo "$GITHUB_REPOSITORY"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish-container.yml"
+            --source-ref "refs/tags/$RELEASE_TAG"
+            --source-digest "$REVISION"
+            --format json
+          )
+          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+            gh attestation verify "oci://$IMAGE_NAME@$ROOT_DIGEST" \
+              "${verify_common[@]}" \
+              > "${RUNNER_TEMP}/anonymous-root-provenance.json"
+          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+            gh attestation verify "oci://$IMAGE_NAME@$AMD_DIGEST" \
+              "${verify_common[@]}" \
+              --predicate-type https://cyclonedx.org/bom \
+              > "${RUNNER_TEMP}/anonymous-amd64-sbom.json"
+          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+            gh attestation verify "oci://$IMAGE_NAME@$ARM_DIGEST" \
+              "${verify_common[@]}" \
+              --predicate-type https://cyclonedx.org/bom \
+              > "${RUNNER_TEMP}/anonymous-arm64-sbom.json"
+          test -s "${RUNNER_TEMP}/anonymous-root-provenance.json"
+          test -s "${RUNNER_TEMP}/anonymous-amd64-sbom.json"
+          test -s "${RUNNER_TEMP}/anonymous-arm64-sbom.json"

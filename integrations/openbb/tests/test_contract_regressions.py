@@ -138,6 +138,20 @@ async def test_world_markets_rejects_mismatched_selection_and_missing_clock_boun
     finally:
         await client.aclose()
 
+
+@pytest.mark.asyncio
+async def test_world_markets_rejects_an_exhaustive_coverage_claim():
+    payload = _world_payload("summary")
+    payload["scope"]["coverage_claim"] = "exhaustive"
+    client = _mock_client(payload)
+    try:
+        with pytest.raises(OpenBBError, match="unsupported coverage claim"):
+            await SeicheWorldMarketsFetcher.fetch_data(
+                {"selector": "summary"}, {}, client=client
+            )
+    finally:
+        await client.aclose()
+
     payload = _world_payload("summary")
     payload["clocks"].pop("boundary")
     client = _mock_client(payload)

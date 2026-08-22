@@ -160,7 +160,7 @@ def self_grade() -> dict:
              "Registry tests pin fetch starts so a retune cannot silently "
              "starve an engine."),
         _row("artifact_release", PASS,
-             "The whole pipeline is public AGPL-3.0 code; the board snapshot "
+             "The whole pipeline is public AGPL-3.0-or-later code; the board snapshot "
              "is baked to frontend/public/data/overview.json on every "
              "publish; the Time Machine endpoint (/api/asof/{date}) replays "
              "the full light board as of any historical date; and the PROOF "

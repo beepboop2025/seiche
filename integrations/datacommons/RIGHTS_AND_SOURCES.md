@@ -86,7 +86,7 @@ corrected and independently reviewed.
 
 ### Seiche-derived and global outputs
 
-AGPL-3.0 covers Seiche code, not its upstream data. There is no explicit output
+AGPL-3.0-or-later covers Seiche code, not its upstream data. There is no explicit output
 data license that grants Data Commons redistribution rights for the Seiche
 composite or engine outputs, and principal derived products combine multiple
 source contracts. The global money-market catalog dated 2026-08-21 also reports

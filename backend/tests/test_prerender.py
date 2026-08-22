@@ -108,7 +108,7 @@ def test_prerender_carries_the_board_and_the_letter(site):
 
     # the masthead and what Seiche is
     assert "SEI" in page and "funding-stress" in text
-    assert "free open source software (AGPL-3.0)" in text
+    assert "free open source software (AGPL-3.0-or-later)" in text
 
     # the composite reading with its plain-English gloss
     assert "The composite reads 41 out of 100, EROSION" in text
@@ -288,7 +288,7 @@ def test_home_page_carries_the_llms_txt_description(site):
     prerender.build(out)
     text = prerender.body_text((out / "index.html").read_text())
     llms = (out.parent / "repo" / "frontend" / "public" / "llms.txt").read_text()
-    for phrase in ("free open source software (AGPL-3.0)",
+    for phrase in ("free open source software (AGPL-3.0-or-later)",
                    "Liquidity intelligence sits on two shelves",
                    "may be read, quoted, indexed and used as AI input"):
         assert phrase in llms and phrase in text

@@ -729,7 +729,7 @@ filling the space with confident prose.</p>
 <p>The method behind every number is on the versioned
 <a href="{METHODOLOGY_URL}">methodology page</a>, with citations and a
 changelog. The code that produced all of it is at
-<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0, including the leak audit
+<a href="{REPO_URL}">{e(REPO_URL)}</a> under AGPL-3.0-or-later, including the leak audit
 and the orthogonal run, so the fastest way to disprove this page is to read
 the two engines behind it.</p>
 
@@ -739,7 +739,7 @@ the two engines behind it.</p>
 </ul>
 
 <p class="faint">Free public data with native lags. Not investment advice.
-Seiche is free open source software (AGPL-3.0) and a public good.</p>
+Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
 </body>
 </html>
 """

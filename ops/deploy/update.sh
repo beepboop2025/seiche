@@ -4,7 +4,8 @@
 # seiche.service — a layout that never existed on the box (/home/seiche/app,
 # seiche-api.service) — and could never have worked there.
 #
-# The engine deploy is exactly what GitHub Actions (deploy-hetzner) triggers:
+# The engine deploy is the same rollback-owning chain used by the host release
+# poller and by the disabled/manual deploy-hetzner recovery workflow:
 #
 #   /root/seiche-deploy-wrapper.sh          (mirror: seiche-deploy-wrapper.sh)
 #     └─ /home/seiche/update.sh             (mirror: box-update.sh)
@@ -12,8 +13,8 @@
 #     └─ systemctl restart seiche-api + poll cache-only /api/health
 #
 # The wrapper also deploys ops/Caddyfile to the edge, test-gated with backup
-# and rollback. Keeping that operation in the forced-command path means manual
-# and automatic deploys exercise exactly the same release boundary.
+# and rollback. Keeping that operation in the forced-command path means manual,
+# recovery, and poller-driven deploys exercise the same release boundary.
 # Frontend is NOT built here — seiche.info ships via the publish workflow
 # (Cloudflare Pages), the box serves only api.seiche.info.
 set -uo pipefail

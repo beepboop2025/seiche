@@ -71,7 +71,7 @@ before becoming a canonical pack.
 The Atlas keeps local units, calendars and publication frequency. Weekly and
 monthly observations stay weekly and monthly; own-history windows use the
 adapter's native observation count, and unlike cross-currency rate levels are
-never averaged into a global score. AGPL-3.0 covers the implementation, not the
+never averaged into a global score. AGPL-3.0-or-later covers the implementation, not the
 upstream data: `allowed` observations may be shown, `derived_only` inputs may
 produce non-reversible context, `metadata_only` inputs cannot enter public
 calculations, and `prohibited` values and source metadata stay out of the public
@@ -113,4 +113,4 @@ in the code:
 
 ## License
 
-AGPL-3.0, like everything else in this repository. Read it, run it, attack it.
+AGPL-3.0-or-later, like everything else in this repository. Read it, run it, attack it.

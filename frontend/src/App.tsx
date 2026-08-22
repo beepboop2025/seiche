@@ -531,6 +531,7 @@ function AppInner() {
         <a href="/skeptic" style={{ color: "var(--dim)" }}>skeptic pack</a> ·{" "}
         <a href="/developers" style={{ color: "var(--dim)" }}>API + MCP</a> ·{" "}
         <a href="/markets/" style={{ color: "var(--dim)" }}>world markets atlas</a> ·{" "}
+        <a href="/datasets/direct-ofr/" style={{ color: "var(--dim)" }}>academic dataset + DCAT</a> ·{" "}
         <a href="/use-cases" style={{ color: "var(--dim)" }}>when to use Seiche</a> ·{" "}
         <a href="/support" style={{ color: "var(--dim)" }}>support</a> ·{" "}
         <a href="https://t.me/seiche_desk_bot" style={{ color: "var(--dim)" }}>@seiche_desk_bot on Telegram</a> ·{" "}

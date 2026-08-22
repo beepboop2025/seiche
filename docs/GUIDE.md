@@ -135,7 +135,7 @@ Seiche names its parts after the sea. Here is what each one really does.
 - **It fails loud.** If a data feed goes stale or dies, the board says so on the
   SYSTEM tab and reduces its own confidence, rather than pretending everything is
   fine.
-- **It respects data rights.** AGPL-3.0 makes Seiche's code open; it does not
+- **It respects data rights.** AGPL-3.0-or-later makes Seiche's code open; it does not
   erase an upstream publisher's terms. `AVAILABLE` means a raw public value can
   be shown. `DERIVED_CONTEXT` means only a non-reversible own-history statistic
   can be shown while the level stays hidden. `POLICY_ONLY` means there is an

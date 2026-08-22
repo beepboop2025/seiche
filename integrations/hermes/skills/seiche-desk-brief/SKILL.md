@@ -2,7 +2,7 @@
 name: seiche-desk-brief
 description: Compose a funding-stress desk brief from the live Seiche board. Use when asked for a morning note, an evening check, "what's the funding picture", or when a scheduled brief job fires. Produces a short, grounded note sized for a chat message.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, finance, funding, brief]

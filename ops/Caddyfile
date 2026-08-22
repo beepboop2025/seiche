@@ -306,6 +306,29 @@ api.seiche.info {
         header Cache-Control "no-store"
         respond "not here" 404
     }
+
+    # OpenAI plugin domain verification is deliberately dark unless an operator
+    # installs the portal-issued token in Caddy's process environment. Use the
+    # runtime {env.*} placeholder, never the parse-time {$ENV} substitution: an
+    # untrusted token therefore remains response data and cannot alter config.
+    # The allowlist excludes whitespace/control characters and caps the value;
+    # missing or malformed values fall through to the exact-path 404 below.
+    @openai_apps_challenge_enabled {
+        method GET HEAD
+        path /.well-known/openai-apps-challenge
+        vars_regexp openai_apps_token {env.OPENAI_APPS_CHALLENGE_TOKEN} ^[A-Za-z0-9][A-Za-z0-9._~=-]{15,511}$
+    }
+    handle @openai_apps_challenge_enabled {
+        header Cache-Control "no-store, no-transform"
+        header Content-Type "text/plain; charset=utf-8"
+        respond "{env.OPENAI_APPS_CHALLENGE_TOKEN}" 200
+    }
+    @openai_apps_challenge_unavailable path /.well-known/openai-apps-challenge
+    handle @openai_apps_challenge_unavailable {
+        header Cache-Control "no-store"
+        respond "not here" 404
+    }
+
     @public {
         method GET HEAD
         path /.well-known/mcp.json /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/money-markets /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe

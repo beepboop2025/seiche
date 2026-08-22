@@ -2,7 +2,7 @@
 name: seiche-crypto-scout
 description: Scheduled reconnaissance of the crypto x money-market frontier for Seiche. Use in a weekly cron job, or when asked about stablecoins, tokenized Treasuries, DeFi rates, crypto revenue opportunities, or "what's happening in crypto that matters to the board". Maintains a running gaps-and-opportunities ledger.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, crypto, stablecoins, research, revenue]

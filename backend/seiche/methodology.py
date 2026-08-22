@@ -324,7 +324,7 @@ def render_methodology_html(board_version: str | None = None) -> str:
     cite_block = (
         f"Seiche funding-stress terminal ({version_line}).\n"
         f"{METHODOLOGY_URL}\n"
-        f"Source code: {REPO_URL} (AGPL-3.0).\n"
+        f"Source code: {REPO_URL} (AGPL-3.0-or-later).\n"
         f"Data: free public sources with native lags; per-series provenance "
         f"in each CSV header."
     )
@@ -454,7 +454,7 @@ bulk export; the catalog marks them.</p>
 </ul>
 
 <p class="faint">Free public data with native lags. Not investment advice.
-Seiche is free open source software (AGPL-3.0) and a public good.</p>
+Seiche is free open source software (AGPL-3.0-or-later) and a public good.</p>
 </body>
 </html>
 """

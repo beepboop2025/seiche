@@ -3,7 +3,7 @@ pretty_name: Seiche Audited Direct-OFR Research Snapshot
 language:
 - en
 license: other
-license_name: United States Government work; OFR credit requested
+license_name: us-government-work-ofr-credit-requested
 license_link: https://www.financialresearch.gov/legal-notices/
 tags:
 - finance
@@ -42,9 +42,11 @@ dataset_info:
 
 # Seiche audited direct-OFR research snapshot
 
-> **Publication status: draft, not submitted. No DOI has been assigned.**
+> **Dataset identity: rights-reviewed direct-OFR snapshot. No DOI has been
+> assigned. Public listing status is receipt-tracked in Seiche's
+> [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.11.0/distribution/submissions.csv).**
 
-This proposed dataset contains 11,163 observations from ten series obtained
+This dataset contains 11,163 observations from ten series obtained
 directly from the United States Office of Financial Research Short-term Funding
 Monitor API: six repo-market series and four money-market-fund series. It is a
 rights-reviewed direct-OFR research snapshot, not a mirror of Seiche's live runtime database.
@@ -53,11 +55,11 @@ The package deliberately excludes every value fetched through FRED, New York
 Fed reference-rate rows with additional terms, the semantically mismatched
 primary-dealer row, licensed/restricted series, and all Seiche-derived outputs.
 The exact inclusion and exclusion review is recorded in
-[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](../../../integrations/datacommons/RIGHTS_AND_SOURCES.md).
+[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](https://github.com/beepboop2025/seiche/blob/v0.11.0/integrations/datacommons/RIGHTS_AND_SOURCES.md).
 
 ## Data contract
 
-The `full` split has two CSV resources staged by reference rather than copied:
+The `full` split contains two CSV resources:
 
 | Resource | Series | Rows | SHA-256 |
 |---|---:|---:|---|

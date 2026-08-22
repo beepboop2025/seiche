@@ -128,7 +128,13 @@ function validateContract(payload, section) {
   }
 }
 
-export function contractReceipt(payload) {
+export function contractReceipt(payload, {
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+} = {}) {
+  if (!(timeoutMs > 0) || !(maxResponseBytes > 0)) {
+    throw new TypeError("timeoutMs and maxResponseBytes must be positive");
+  }
   return {
     schema: payload.schema,
     selection: payload.selection,
@@ -137,8 +143,8 @@ export function contractReceipt(payload) {
     citation: payload.citation,
     scope: payload.scope,
     client_limits: {
-      timeout_ms: DEFAULT_TIMEOUT_MS,
-      max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+      timeout_ms: timeoutMs,
+      max_response_bytes: maxResponseBytes,
       automatic_retries: 0,
     },
   };

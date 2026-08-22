@@ -13,7 +13,7 @@ import httpx
 from openbb_core.app.model.abstract.error import OpenBBError
 
 DEFAULT_BASE_URL = "https://api.seiche.info"
-USER_AGENT = "openbb-seiche/0.1 (+https://seiche.info)"
+USER_AGENT = "openbb-seiche/0.1.0 (+https://seiche.info)"
 MAX_RESPONSE_BYTES = 2_000_000
 HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 

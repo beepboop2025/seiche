@@ -2,7 +2,7 @@
 name: seiche-proof-audit
 description: Answer "can I trust Seiche" with the honest scoreboard. Use when asked about track record, accuracy, reliability, backtest, whether the signal is real, or before anyone acts on a reading. Also the template for periodic credibility reports.
 version: 1.0.0
-license: AGPL-3.0
+license: AGPL-3.0-or-later
 metadata:
   hermes:
     tags: [seiche, finance, backtest, credibility, proof]
