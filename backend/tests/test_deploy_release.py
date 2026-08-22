@@ -538,6 +538,10 @@ case "$url" in
         type=application/json
         body='{{"ok":true,"schema":"seiche.global-money-markets.v1","coverage":{{"declared_markets":11,"expansion_markets":52,"global_discovery_universe":63}},"expansion_ledger":[],"read_faults":[]}}'
         ;;
+    */api/v2/world-markets[?]section=china_macro)
+        type=application/json
+        body='{{"ok":true,"schema":"seiche.world-markets.v1","status":"structural","selection":"china_macro","as_of":null,"context_only":true,"generated_at":null,"china_macro":{{"values_published":false,"raw_evidence_included":false,"history_included":false,"scoring_eligible":false,"cn_cny_gauge_eligible":false}},"citation":{{"topic_url":"https://seiche.info/markets/china-macro/"}}}}'
+        ;;
     */api/v2/world-markets)
         type=application/json
         body='{{"ok":true,"schema":"seiche.world-markets.v1","scope":{{"coverage_claim":"curated_partial_non_exhaustive"}}}}'
@@ -2253,6 +2257,16 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "must be inactive before the forward-chain migration" in installer
     assert "duplicate forward children exist outside" in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
+    assert 'NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"' in installer
+    assert 'install -d -o root -g root -m 0700 "$NBS_RESTRICTED_DIR"' in installer
+    assert 'install -d -o root -g seiche -m 0750 "$NBS_PUBLIC_DIR"' in installer
+    assert (
+        'install -d -o root -g seiche -m 2750 "$NBS_PUBLIC_REVISIONS_DIR"'
+        in installer
+    )
+    assert "Environment=SEICHE_NBS_PUBLIC_DIR=$NBS_PUBLIC_DIR" in installer
+    assert "ReadOnlyPaths=$NBS_PUBLIC_DIR" in installer
+    assert "InaccessiblePaths=$NBS_RESTRICTED_DIR" in installer
     assert '"$STATE_DIR/validation"' in installer
     assert "SEICHE_VALIDATION_DIR=$STATE_DIR/validation" in installer
     assert "seiche-market-validation.service" in installer
@@ -2423,7 +2437,8 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "CAP_CHOWN" not in backup_capabilities
     assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
     assert (
-        "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-deploy"
+        "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs "
+        "/var/lib/seiche-deploy"
         in backup
     )
     assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
@@ -3189,10 +3204,23 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "deferred with production unchanged" in poller[signature:detached]
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
-    assert 'as_service "$TIMEOUT"' in gate_slice
+    assert gate_slice.count("run_candidate_gate_stage") == 3
     assert "-o faulthandler_timeout=300" in gate_slice
     assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
+    monitor = poller[
+        poller.index("resolve_advertised_main() {") : poller.index(
+            "is_inert_automation_content_commit() {"
+        )
+    ]
+    assert "ls-remote --exit-code --refs" in monitor
+    assert "refs/heads/main" in monitor
+    assert "os.setsid()" in monitor
+    assert 'gate_process_group_is_ready "$GATE_PROCESS_PID"' in monitor
+    assert '"$KILL" -TERM -- "-$pid"' in monitor
+    assert '"$KILL" -KILL -- "-$pid"' in monitor
+    assert "pkill" not in monitor
+    assert "killall" not in monitor
     assert "production unchanged" in poller[superseded:gate_receipt]
     assert "gate-only success" in poller[gate_only:deployed]
     post_gate_slice = poller[post_gate_admission:deploy_status]
@@ -3225,6 +3253,103 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert '[ "$DEPLOY_WRAPPER_HANDOFF_STARTED" = 1 ]' in cleanup
     assert '[ "${DEPLOYED:-}" != "${TARGET:-}" ]' in cleanup
     assert 'DEPLOYED_STATE_VALUE" = "$TARGET' in cleanup
+
+
+def _release_gate_monitor_environment(tmp_path: Path) -> dict[str, str]:
+    runuser = _executable(
+        tmp_path / "runuser",
+        'if [ "$1" = -u ]; then shift 2; fi\n'
+        'if [ "${1:-}" = -- ]; then shift; fi\n'
+        'exec "$@"\n',
+    )
+    return os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_RUNUSER": str(runuser),
+        "SEICHE_CONTROL_USER": "release-test",
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+        "SEICHE_CONTROL_SLEEP": "/bin/sleep",
+        "SEICHE_CONTROL_PS": "/bin/ps",
+        "SEICHE_CONTROL_KILL": "/bin/kill",
+        "SEICHE_CONTROL_SUPERSESSION_POLL_SECONDS": "1",
+    }
+
+
+def test_release_gate_aborts_only_its_process_group_when_main_advances(tmp_path):
+    target = "a" * 40
+    successor = "b" * 40
+    pid_file = tmp_path / "gate.pids"
+    completed = tmp_path / "gate.completed"
+    gate = _executable(
+        tmp_path / "slow-gate",
+        "trap 'exit 143' TERM\n"
+        "/bin/sleep 30 &\n"
+        "child=$!\n"
+        'printf \'%s %s\\n\' "$$" "$child" >"$GATE_PID_FILE"\n'
+        'wait "$child"\n'
+        'printf complete >"$GATE_COMPLETED_FILE"\n',
+    )
+    command = r"""
+source "$1"
+checks=0
+resolve_advertised_main() {
+  checks=$((checks + 1))
+  if [ "$checks" -eq 1 ]; then
+    REMOTE_MAIN_SHA=$TARGET
+  else
+    REMOTE_MAIN_SHA=$SUCCESSOR
+  fi
+}
+status=0
+run_monitored_candidate_step "$2" || status=$?
+printf '%s\n' "$GATE_SUPERSEDED_SHA"
+exit "$status"
+"""
+    result = subprocess.run(
+        ["bash", "-c", command, "seiche-gate-monitor", str(RELEASE_POLLER), str(gate)],
+        env=_release_gate_monitor_environment(tmp_path)
+        | {
+            "TARGET": target,
+            "SUCCESSOR": successor,
+            "GATE_PID_FILE": str(pid_file),
+            "GATE_COMPLETED_FILE": str(completed),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=8,
+    )
+
+    assert result.returncode == 75, result.stdout + result.stderr
+    assert result.stdout.strip() == successor
+    assert pid_file.is_file()
+    assert not completed.exists()
+    for pid in pid_file.read_text(encoding="ascii").split():
+        observed = subprocess.run(
+            ["/bin/ps", "-p", pid, "-o", "stat="],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert not observed.stdout.strip() or observed.stdout.lstrip().startswith("Z")
+
+
+def test_release_gate_completes_when_advertised_main_stays_exact(tmp_path):
+    target = "c" * 40
+    command = r"""
+source "$1"
+resolve_advertised_main() { REMOTE_MAIN_SHA=$TARGET; }
+run_monitored_candidate_step /bin/bash -c 'exit 0'
+"""
+    result = subprocess.run(
+        ["bash", "-c", command, "seiche-gate-monitor", str(RELEASE_POLLER)],
+        env=_release_gate_monitor_environment(tmp_path) | {"TARGET": target},
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=8,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _post_gate_admission(

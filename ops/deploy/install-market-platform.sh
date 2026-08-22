@@ -7,6 +7,10 @@ ENV_DIR="${SEICHE_ENV_DIR:-/etc/seiche}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
+NBS_RESTRICTED_DIR="$NBS_STATE_DIR/restricted"
+NBS_PUBLIC_DIR="$NBS_STATE_DIR/public"
+NBS_PUBLIC_REVISIONS_DIR="$NBS_PUBLIC_DIR/revisions"
 OFFSITE_ENV_FILE=/etc/seiche/offsite-backup.env
 OFFSITE_PASSPHRASE_FILE=/etc/seiche/offsite-backup.passphrase
 OFFSITE_CREDENTIAL_ENV_FILE=/root/.config/anchor/object-storage.env
@@ -211,8 +215,9 @@ PY
 }
 
 if [ "$STATE_DIR" != /var/lib/seiche ] \
-        || [ "$BACKUP_DIR" != /var/backups/seiche-market ]; then
-    echo "market platform: guarded storage paths are fixed at /var/lib/seiche and /var/backups/seiche-market" >&2
+        || [ "$BACKUP_DIR" != /var/backups/seiche-market ] \
+        || [ "$NBS_STATE_DIR" != /var/lib/seiche-nbs ]; then
+    echo "market platform: guarded storage paths are fixed at /var/lib/seiche, /var/lib/seiche-nbs, and /var/backups/seiche-market" >&2
     exit 1
 fi
 
@@ -470,6 +475,13 @@ install -d -o seiche -g seiche -m 0750 \
     "$STATE_DIR" "$STATE_DIR/raw" "$STATE_DIR/normalized" "$STATE_DIR/backfill" \
     "$STATE_DIR/validation" "$STATE_DIR/exports" \
     "$FUNDING_EXPORT_DIR"
+# Owner-supplied NBS browser exports are evidence, not market-pack inputs. Keep
+# the signed raw envelope root-only and give the API read-only access solely to
+# the separately materialized, metadata-only public projection.
+install -d -o root -g seiche -m 0750 "$NBS_STATE_DIR"
+install -d -o root -g root -m 0700 "$NBS_RESTRICTED_DIR"
+install -d -o root -g seiche -m 0750 "$NBS_PUBLIC_DIR"
+install -d -o root -g seiche -m 2750 "$NBS_PUBLIC_REVISIONS_DIR"
 install -d -o root -g seiche -m 0750 "$ENV_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
 install -d -o root -g seiche -m 0750 "$RECOVERY_PROOF_DIR"
@@ -962,10 +974,11 @@ cat >"$BACKUP_STAGE" <<EOF
 [Service]
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
+Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
 Environment=SEICHE_API_DATA_DIR=$API_DATA_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 ReadOnlyPaths=
-ReadOnlyPaths=$APP_DIR $STATE_DIR $API_DATA_DIR
+ReadOnlyPaths=$APP_DIR $STATE_DIR $NBS_STATE_DIR $API_DATA_DIR
 ReadWritePaths=
 ReadWritePaths=$BACKUP_DIR /run/lock
 EOF
@@ -981,6 +994,7 @@ cat >"$RESTORE_STAGE" <<EOF
 [Service]
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
+Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 Environment=SEICHE_RESTORE_STATUS_PATH=$RESTORE_STATUS_PATH
 ReadOnlyPaths=
@@ -1063,10 +1077,13 @@ RequiresMountsFor=$STATE_DIR $BACKUP_DIR
 EnvironmentFile=-$ENV_DIR/market.env
 EnvironmentFile=-$ENV_DIR/release.env
 EnvironmentFile=-$DELIVERY_ENV_FILE
+Environment=SEICHE_NBS_PUBLIC_DIR=$NBS_PUBLIC_DIR
 # Caddy owns privacy-filtered edge request telemetry; Uvicorn's raw path logger
 # includes the query string and would create a second, unredacted copy.
 Environment=UVICORN_ACCESS_LOG=false
 ReadWritePaths=$STATE_DIR
+ReadOnlyPaths=$NBS_PUBLIC_DIR
+InaccessiblePaths=$NBS_RESTRICTED_DIR
 EOF
 chmod 0644 "$DROPIN"
 mv -f "$DROPIN" /etc/systemd/system/seiche-api.service.d/market-platform.conf

@@ -74,16 +74,20 @@ minutes of jitter. It selects the newest committed snapshot, verifies every
 checksum, extracts the state tar archive into a temporary directory under the
 recovery-proof root, verifies the restored API SQLite database with
 `PRAGMA quick_check`, and restores the dump into a uniquely named scratch
-database. Temporary extraction happens inside that dedicated root-controlled
-directory. Every restored critical-table count must meet or exceed the
-recorded
-pre-dump floor before the filesystem scratch trees and scratch database are
-removed. This lets continuous ingestion proceed during `pg_dump` without
-turning ordinary appends into false backup failures.
+database. It also normalizes the intentionally stripped extraction modes on
+the isolated NBS public projection and runs the deployed strict NBS loader.
+An empty revision directory with no head is recorded as `not_onboarded`; one
+fully verified signed head is recorded as `verified_head`. Any malformed entry,
+invalid signature, missing predecessor, fork, or head mismatch fails the
+restore check. Temporary extraction happens inside that dedicated
+root-controlled directory. Every restored critical-table count must meet or
+exceed the recorded pre-dump floor before the filesystem scratch trees and
+scratch database are removed. This lets continuous ingestion proceed during
+`pg_dump` without turning ordinary appends into false backup failures.
 
 The production `seiche` database and live state tree are never restore targets.
 A trap drops the scratch database after either success or failure. A successful
-check atomically records its receipt at:
+check atomically records its v3 receipt at:
 
 ```text
 /var/lib/seiche-recovery-proof/backup-restore-check.status
@@ -116,17 +120,23 @@ no longer complete; these are deliberately different signals.
   of clock skew, or contains collector/critical faults;
 - either collector heartbeat is missing or overdue;
 - the newest backup is older than 36 hours or implausibly future-dated;
-- the exact v2 restore receipt is missing, invalid, older than eight days, or
-  future-dated;
+- the exact v3 restore receipt is missing, invalid, older than eight days,
+  future-dated, or does not record a strictly verified NBS public-store state;
 - a required service/timer is inactive, or a required timer is disabled for
   the next boot; or
 - block or inode use reaches 90 percent on a monitored filesystem.
 
-On a fresh host or the first v2 rollout, installation does not enable the
+On a fresh host or the first v3 rollout, installation does not enable the
 readiness timer immediately. It starts the source worker, runs a real backup,
 restores and checks that snapshot in isolation, executes readiness once without
 requiring its not-yet-active timer, and enables the timer only after that proof
 passes. Any failed stage leaves the timer disabled and the deployment nonzero.
+
+Restore receipt v3 is intentionally not backward compatible with v2. Version 2
+did not claim application-level validation of the NBS public revision chain.
+During the v3 rollout the installer must produce a new snapshot and successful
+isolated restore before readiness can pass; an older v2 receipt is never
+silently promoted to the stronger claim.
 
 Operator checks:
 

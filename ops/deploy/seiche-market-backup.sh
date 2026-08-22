@@ -5,6 +5,7 @@ umask 0077
 
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
+NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
@@ -48,6 +49,16 @@ if [ "${EUID:-$(id -u)}" -ne 0 ] \
 fi
 [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] \
     || fail "state directory must be a real directory"
+case "$NBS_STATE_DIR" in
+    /*) ;;
+    *) fail "NBS state directory must be absolute" ;;
+esac
+[ "$NBS_STATE_DIR" != "/" ] || fail "refusing a filesystem-root NBS state directory"
+[ -d "$NBS_STATE_DIR" ] && [ ! -L "$NBS_STATE_DIR" ] \
+    || fail "NBS state directory must be a real directory"
+if find "$NBS_STATE_DIR" -type l -print -quit | grep -q .; then
+    fail "NBS state directory cannot contain symlinks"
+fi
 case "$API_DATA_DIR" in
     /*) ;;
     *) fail "API data directory must be absolute" ;;
@@ -119,9 +130,14 @@ DUMP_BYTES=$(wc -c <"$STAGE/seiche.dump" | tr -d '[:space:]')
 
 STATE_PARENT=$(dirname "$STATE_DIR")
 STATE_NAME=$(basename "$STATE_DIR")
+NBS_STATE_PARENT=$(dirname "$NBS_STATE_DIR")
+NBS_STATE_NAME=$(basename "$NBS_STATE_DIR")
+[ "$STATE_NAME" != "$NBS_STATE_NAME" ] \
+    || fail "market and NBS state roots must have distinct names"
 "$TAR_BIN" --create --gzip --file "$STAGE/var-lib-seiche.tgz" \
     --acls --xattrs --numeric-owner --one-file-system \
-    --directory "$STATE_PARENT" "$STATE_NAME"
+    --directory "$STATE_PARENT" "$STATE_NAME" \
+    --directory "$NBS_STATE_PARENT" "$NBS_STATE_NAME"
 "$TAR_BIN" --list --gzip --file "$STAGE/var-lib-seiche.tgz" >/dev/null
 
 # Copy the compatibility data directory, then replace the live SQLite files

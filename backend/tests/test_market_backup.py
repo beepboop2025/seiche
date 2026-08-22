@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import textwrap
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from seiche import nbs_intake as nbs
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-backup.sh"
@@ -123,7 +127,11 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
             payload = target.read_bytes()
             if not payload.startswith((b"state-archive", b"api-data-archive")):
                 raise SystemExit(10)
-            print("api-data/" if payload.startswith(b"api-data-archive") else "seiche/")
+            if payload.startswith(b"api-data-archive"):
+                print("api-data/")
+            else:
+                print("seiche/")
+                print("seiche-nbs/")
         elif "--extract" in args:
             archive = Path(args[args.index("--file") + 1])
             target = Path(args[args.index("--directory") + 1])
@@ -137,6 +145,13 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
                 restored = target / "seiche" / "raw"
                 restored.mkdir(parents=True)
                 (restored / "capture.json").write_text("official evidence\\n")
+                fixture = os.environ.get("FAKE_NBS_PUBLIC_FIXTURE")
+                public = target / "seiche-nbs" / "public"
+                if fixture:
+                    import shutil
+                    shutil.copytree(Path(fixture), public)
+                else:
+                    (public / "revisions").mkdir(parents=True)
         """,
     )
     sha256sum = _executable(
@@ -224,6 +239,9 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     recovery_proof = tmp_path / "recovery-proof"
     recovery_proof.mkdir(mode=0o750)
     (state / "raw" / "capture.json").write_text("official evidence\n")
+    nbs_state = state.parent / "seiche-nbs"
+    (nbs_state / "restricted").mkdir(parents=True)
+    (nbs_state / "public" / "revisions").mkdir(parents=True)
     api_data = tmp_path / "app" / "backend" / "data"
     api_data.mkdir(parents=True)
     with sqlite3.connect(api_data / "seiche.sqlite") as database:
@@ -236,6 +254,7 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     env.update(
         {
             "SEICHE_MARKET_STATE_DIR": str(state),
+            "SEICHE_NBS_STATE_DIR": str(nbs_state),
             "SEICHE_API_DATA_DIR": str(api_data),
             "SEICHE_MARKET_BACKUP_DIR": str(backup),
             "SEICHE_DEPLOYED_SHA_PATH": str(marker),
@@ -269,6 +288,106 @@ def _rewrite_manifest_and_inventory(
         digest = hashlib.sha256((snapshot / name).read_bytes()).hexdigest()
         inventory.append(f"{digest}  {name}")
     (snapshot / "SHA256SUMS").write_text("\n".join(inventory) + "\n")
+
+
+def _canonical_json(record: object) -> bytes:
+    return json.dumps(
+        record,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _python_with_release_pinned_test_key(tmp_path: Path, public_key: str) -> Path:
+    """Run stdin Python after emulating a release-pinned hosted trust key."""
+
+    return _executable(
+        tmp_path / "python-with-release-pinned-test-key",
+        f"""
+        import sys
+
+        from seiche import attest
+
+        attest.PRODUCTION_TRUSTED_OPERATOR_KEYS = frozenset({{{public_key!r}}})
+        source = sys.stdin.read()
+        sys.argv = sys.argv[1:]
+        exec(compile(source, "<stdin>", "exec"), {{"__name__": "__main__"}})
+        """,
+    )
+
+
+def _create_valid_nbs_public_store(root: Path) -> str:
+    """Create one deterministic signed head for the restore-check fixture."""
+
+    root.chmod(0o750)
+    (root / "restricted").chmod(0o700)
+    (root / "public").chmod(0o750)
+    (root / "public" / "revisions").chmod(0o2750)
+    private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    public_key = private_key.public_key().public_bytes_raw().hex()
+    raw = (
+        b"\xef\xbb\xbfNBS browser export\r\n"
+        b"Indicators\t,July 2026\t\r\n"
+        b"Consumer Price Index (The same month last year=100)\t,100.5\t\r\n"
+        b"Data Sources: National Bureau of Statistics\t,\r\n"
+    )
+    binding = nbs.NBS_SERIES_BINDINGS["CN.NBS.CPI_INDEX"]
+    manifest = {
+        "schema": nbs.NBS_EXPORT_SCHEMA,
+        "dataset": nbs.NBS_DATASET,
+        "export_id": "nbs-restore-fixture-r1",
+        "predecessor_export_id": None,
+        "predecessor_manifest_sha256": None,
+        "commitment_nonce": "01" * 32,
+        "publisher": nbs.NBS_PUBLISHER,
+        "knowledge_time": "2026-08-22T10:00:00Z",
+        "source_url": nbs.NBS_BROWSER_SOURCE_URL,
+        "sources": [binding.manifest_dict()],
+        "records": [
+            {
+                "series_id": binding.series_id,
+                "period": "2026-07",
+                "value": "100.5",
+            }
+        ],
+        "raw_evidence": {
+            "filename": "nbs-restore-fixture.csv",
+            "format": nbs.NBS_RAW_FORMAT,
+            "media_type": "text/csv",
+            "month_headers": [{"period": "2026-07", "raw_header": "July 2026"}],
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "size_bytes": len(raw),
+        },
+        "publication_policy": dict(nbs.NBS_PUBLICATION_POLICY),
+    }
+    claim = nbs.build_signature_claim(
+        manifest,
+        signed_at="2026-08-22T10:05:00Z",
+        signer_key_id=public_key,
+    )
+    signature = {
+        **claim,
+        "signature": private_key.sign(nbs.encode_signature_claim(claim)).hex(),
+    }
+    inputs = root.parent / "nbs-restore-input"
+    inputs.mkdir()
+    manifest_path = inputs / "manifest.json"
+    signature_path = inputs / "signature.json"
+    raw_path = inputs / "nbs-restore-fixture.csv"
+    manifest_path.write_bytes(_canonical_json(manifest))
+    signature_path.write_bytes(_canonical_json(signature))
+    raw_path.write_bytes(raw)
+    trust = root.parent / "nbs-restore-trust"
+    trust.mkdir()
+    (trust / "trusted_operator_keys").write_text(public_key + "\n")
+    nbs.NBSIntakeStore(root, attest_dir=str(trust)).ingest(
+        manifest_path,
+        signature_path,
+        raw_path,
+    )
+    return public_key
 
 
 def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
@@ -357,8 +476,10 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
     assert "critical_table_count_floor=11|12|13|14" in status
+    assert "schema=seiche.market-backup-restore-check.v3" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
+    assert "nbs_public_revision_store=not_onboarded" in status
     assert "api_data_archive_restore=pass" in status
     assert not list(status_path.parent.glob(".backup-state-restore.*"))
     assert not list(status_path.parent.glob(".backup-api-data-restore.*"))
@@ -368,6 +489,51 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "createdb --template=template0" in log
     assert sum(line.startswith("dropdb ") for line in log.splitlines()) == 1
     assert "--port=5544" in log
+
+
+def test_restore_strictly_verifies_a_signed_nbs_public_head(tmp_path: Path) -> None:
+    env, _ = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    nbs_root = Path(env["SEICHE_NBS_STATE_DIR"])
+    public_key = _create_valid_nbs_public_store(nbs_root)
+    env["SEICHE_PYTHON_BIN"] = str(
+        _python_with_release_pinned_test_key(tmp_path, public_key)
+    )
+    env["FAKE_NBS_PUBLIC_FIXTURE"] = str(nbs_root / "public")
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    status = Path(env["SEICHE_RESTORE_STATUS_PATH"]).read_text()
+    assert "nbs_public_revision_store=verified_head\n" in status
+
+
+def test_restore_rejects_a_corrupt_nbs_public_revision_store(tmp_path: Path) -> None:
+    env, calls = _tools(tmp_path)
+    _, backup, _ = _layout(tmp_path, env)
+    nbs_root = Path(env["SEICHE_NBS_STATE_DIR"])
+    public_key = _create_valid_nbs_public_store(nbs_root)
+    env["SEICHE_PYTHON_BIN"] = str(
+        _python_with_release_pinned_test_key(tmp_path, public_key)
+    )
+    env["FAKE_NBS_PUBLIC_FIXTURE"] = str(nbs_root / "public")
+    revision = nbs_root / "public" / "revisions" / "nbs-restore-fixture-r1.json"
+    revision.write_text("{}")
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert (
+        "restored NBS public revision store failed strict validation" in result.stderr
+    )
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
+    assert not any(
+        line.startswith("createdb ") for line in calls.read_text().splitlines()
+    )
 
 
 def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
@@ -397,7 +563,9 @@ def test_restore_rejects_rechecksummed_manifest_that_breaks_v2_contract(
         "seiche market restore check: snapshot manifest contract is invalid\n"
     )
     assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
-    assert not any(line.startswith("createdb ") for line in calls.read_text().splitlines())
+    assert not any(
+        line.startswith("createdb ") for line in calls.read_text().splitlines()
+    )
 
 
 def test_restore_rejects_duplicate_or_unknown_manifest_fields(tmp_path: Path) -> None:
@@ -427,12 +595,16 @@ def test_restore_rejects_manifest_for_wrong_database_or_unsafe_roots(
     env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
     _rewrite_manifest_and_inventory(
         snapshot,
-        lambda manifest: manifest.replace("database=seiche", "database=foreign").replace(
-            f"state_root={env['SEICHE_MARKET_STATE_DIR']}",
-            "state_root=/",
-        ).replace(
-            f"api_data_root={env['SEICHE_API_DATA_DIR']}",
-            "api_data_root=relative/data",
+        lambda manifest: (
+            manifest.replace("database=seiche", "database=foreign")
+            .replace(
+                f"state_root={env['SEICHE_MARKET_STATE_DIR']}",
+                "state_root=/",
+            )
+            .replace(
+                f"api_data_root={env['SEICHE_API_DATA_DIR']}",
+                "api_data_root=relative/data",
+            )
         ),
     )
 

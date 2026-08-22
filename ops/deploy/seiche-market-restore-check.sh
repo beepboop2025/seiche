@@ -4,6 +4,7 @@ set -euo pipefail
 umask 0077
 
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
+NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
 STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-/var/lib/seiche-recovery-proof/backup-restore-check.status}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
@@ -36,6 +37,12 @@ if [ "${EUID:-$(id -u)}" -ne 0 ] \
 fi
 [ -d "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] \
     || fail "backup directory must be a real directory"
+case "$NBS_STATE_DIR" in
+    /*) ;;
+    *) fail "NBS state directory must be absolute" ;;
+esac
+[ "$NBS_STATE_DIR" != "/" ] || fail "refusing a filesystem-root NBS state directory"
+NBS_STATE_NAME=$(basename "$NBS_STATE_DIR")
 
 run_as_postgres() {
     local postgres_group="$POSTGRES_GROUP"
@@ -167,6 +174,100 @@ STATE_STAGE=$(mktemp -d "$STATUS_DIR/.backup-state-restore.XXXXXX")
     --directory "$STATE_STAGE" --no-same-owner --no-same-permissions
 find "$STATE_STAGE" -mindepth 1 -print -quit | grep -q . \
     || fail "restored state archive is empty"
+[ -d "$STATE_STAGE/$NBS_STATE_NAME" ] && [ ! -L "$STATE_STAGE/$NBS_STATE_NAME" ] \
+    || fail "restored state archive has no safe NBS evidence root"
+NBS_PUBLIC_DIR="$STATE_STAGE/$NBS_STATE_NAME/public"
+[ -d "$NBS_PUBLIC_DIR" ] && [ ! -L "$NBS_PUBLIC_DIR" ] \
+    || fail "restored state archive has no safe NBS public store"
+if ! NBS_PUBLIC_REVISION_STORE=$(
+    "$PYTHON_BIN" - "$NBS_PUBLIC_DIR" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import stat
+import sys
+
+from seiche.nbs_intake import (
+    NBSIntakeError,
+    NBSNotOnboardedError,
+    load_public_context_strict_from_public_dir,
+)
+
+
+public = Path(sys.argv[1])
+revisions = public / "revisions"
+
+
+def normalize_directory(path: Path, mode: int) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError("public store path is not a directory")
+        os.fchmod(descriptor, mode)
+    finally:
+        os.close(descriptor)
+
+
+def normalize_regular_file(path: Path, metadata: os.stat_result) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+        ):
+            raise ValueError("public revision changed during normalization")
+        os.fchmod(descriptor, 0o640)
+    finally:
+        os.close(descriptor)
+
+
+try:
+    public_metadata = public.lstat()
+    revisions_metadata = revisions.lstat()
+    if not stat.S_ISDIR(public_metadata.st_mode) or not stat.S_ISDIR(
+        revisions_metadata.st_mode
+    ):
+        raise ValueError("public store paths are not directories")
+
+    # Extraction intentionally discards archived ownership and permissions.
+    # Restore only the code-owned public-store modes before asking the strict
+    # loader to validate entry types, link counts, signatures, and the chain.
+    normalize_directory(public, 0o750)
+    normalize_directory(revisions, 0o2750)
+    for entry in revisions.iterdir():
+        metadata = entry.lstat()
+        if stat.S_ISREG(metadata.st_mode):
+            normalize_regular_file(entry, metadata)
+
+    try:
+        context = load_public_context_strict_from_public_dir(public)
+    except NBSNotOnboardedError:
+        print("not_onboarded")
+    else:
+        if not context.available:
+            raise ValueError("strict loader returned an unavailable context")
+        print("verified_head")
+except (NBSIntakeError, OSError, TypeError, ValueError) as exc:
+    raise SystemExit(f"restored NBS public revision store is invalid: {exc}") from exc
+PY
+); then
+    fail "restored NBS public revision store failed strict validation"
+fi
+case "$NBS_PUBLIC_REVISION_STORE" in
+    not_onboarded|verified_head) ;;
+    *) fail "restored NBS public revision store returned an invalid state" ;;
+esac
 rm -rf -- "$STATE_STAGE"
 STATE_STAGE=""
 
@@ -219,7 +320,7 @@ CREATED=""
 
 STATUS_STAGE=$(mktemp "$STATUS_DIR/.backup-restore-check.XXXXXX")
 printf '%s\n' \
-    "schema=seiche.market-backup-restore-check.v2" \
+    "schema=seiche.market-backup-restore-check.v3" \
     "checked_at=$($DATE_BIN -u +%Y-%m-%dT%H:%M:%SZ)" \
     "snapshot=$SNAPSHOT_NAME" \
     "deployed_sha=$(tr -d '[:space:]' <"$SNAPSHOT/deployed-sha.txt")" \
@@ -227,6 +328,7 @@ printf '%s\n' \
     "critical_table_count_floor=$EXPECTED_COUNTS" \
     "database_restore=pass" \
     "state_archive_restore=pass" \
+    "nbs_public_revision_store=$NBS_PUBLIC_REVISION_STORE" \
     "api_data_archive_restore=pass" \
     "research_only=true" \
     "can_publish=false" \

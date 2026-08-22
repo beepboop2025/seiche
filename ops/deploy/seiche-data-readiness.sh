@@ -396,9 +396,26 @@ if secure_restore_receipt(restore_receipt):
             "can_publish": "false",
             "can_execute": "false",
         }
-        if fields.get("schema") != "seiche.market-backup-restore-check.v2":
+        required_fields = {
+            "schema",
+            "checked_at",
+            "snapshot",
+            "deployed_sha",
+            "critical_table_counts",
+            "critical_table_count_floor",
+            "nbs_public_revision_store",
+            *required_passes,
+        }
+        if set(fields) != required_fields:
+            raise ValueError
+        if fields.get("schema") != "seiche.market-backup-restore-check.v3":
             raise ValueError
         if any(fields.get(key) != value for key, value in required_passes.items()):
+            raise ValueError
+        if fields.get("nbs_public_revision_store") not in {
+            "not_onboarded",
+            "verified_head",
+        }:
             raise ValueError
         if re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", fields.get("snapshot", "")) is None:
             raise ValueError

@@ -25,6 +25,8 @@ TIMEOUT="${SEICHE_CONTROL_TIMEOUT:-timeout}"
 SLEEP="${SEICHE_CONTROL_SLEEP:-sleep}"
 SYNC="${SEICHE_CONTROL_SYNC:-/usr/bin/sync}"
 SHA256SUM="${SEICHE_CONTROL_SHA256SUM:-sha256sum}"
+PS="${SEICHE_CONTROL_PS:-/bin/ps}"
+KILL="${SEICHE_CONTROL_KILL:-/bin/kill}"
 RECEIPT_UID="${SEICHE_CONTROL_RECEIPT_UID:-0}"
 RECEIPT_GID="${SEICHE_CONTROL_RECEIPT_GID:-0}"
 RECEIPT_MODE="${SEICHE_CONTROL_RECEIPT_MODE:-400}"
@@ -38,6 +40,8 @@ SSH_KEYGEN="${SEICHE_CONTROL_SSH_KEYGEN:-/usr/bin/ssh-keygen}"
 GATE_ONLY="${SEICHE_CONTROL_GATE_ONLY:-0}"
 ADMISSION_WAIT_SECONDS="${SEICHE_CONTROL_ADMISSION_WAIT_SECONDS:-900}"
 ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
+SUPERSESSION_POLL_SECONDS="${SEICHE_CONTROL_SUPERSESSION_POLL_SECONDS:-15}"
+SUPERSESSION_CHECK_TIMEOUT_SECONDS="${SEICHE_CONTROL_SUPERSESSION_CHECK_TIMEOUT_SECONDS:-30}"
 RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.timer}"
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
@@ -50,6 +54,10 @@ RELEASE_TIMER_WAS_ACTIVE=0
 RELEASE_TIMER_RESTORE_REQUIRED=0
 TARGET_DURABLY_DEPLOYED=0
 DEPLOY_WRAPPER_HANDOFF_STARTED=0
+GATE_PROCESS_PID=""
+GATE_PROCESS_GROUP_READY=0
+GATE_TICK_PID=""
+GATE_SUPERSEDED_SHA=""
 
 fail() {
   echo "FAIL: $*" >&2
@@ -62,6 +70,180 @@ valid_sha() {
 
 as_service() {
   "$RUNUSER" -u "$SERVICE_USER" -- "$@"
+}
+
+resolve_advertised_main() {
+  local advertised="" sha="" reference=""
+  REMOTE_MAIN_SHA=""
+  advertised=$(as_service "$TIMEOUT" -k 5 \
+    "$SUPERSESSION_CHECK_TIMEOUT_SECONDS" \
+    git -C "$APP_DIR" ls-remote --exit-code --refs \
+    origin refs/heads/main) || return 1
+  [[ "$advertised" != *$'\n'* ]] || return 1
+  sha=${advertised%%$'\t'*}
+  reference=${advertised#*$'\t'}
+  valid_sha "$sha" || return 1
+  [ "$reference" = refs/heads/main ] || return 1
+  REMOTE_MAIN_SHA="$sha"
+}
+
+gate_process_group_is_ready() {
+  local pid="$1" pgid=""
+  pgid=$("$PS" -o pgid= -p "$pid" 2>/dev/null) || return 1
+  pgid=${pgid//[[:space:]]/}
+  [[ "$pgid" =~ ^[0-9]+$ ]] && [ "$pgid" = "$pid" ]
+}
+
+gate_process_is_running() {
+  local pid="$1" state=""
+  state=$("$PS" -o stat= -p "$pid" 2>/dev/null) || return 1
+  state=${state//[[:space:]]/}
+  [ -n "$state" ] && [[ "$state" != Z* ]]
+}
+
+start_candidate_gate_process() {
+  local attempt=0
+  GATE_PROCESS_PID=""
+  GATE_PROCESS_GROUP_READY=0
+  "$SYSTEM_PYTHON" -c '
+import os
+import sys
+
+runner, service_user, *command = sys.argv[1:]
+os.setsid()
+os.execvp(runner, [runner, "-u", service_user, "--", *command])
+' "$RUNUSER" "$SERVICE_USER" "$@" &
+  GATE_PROCESS_PID=$!
+
+  # Never use a negative-PID signal until the controller has observed that the
+  # exact child it started is the leader of its own process group.
+  while (( attempt < 50 )); do
+    if gate_process_group_is_ready "$GATE_PROCESS_PID"; then
+      GATE_PROCESS_GROUP_READY=1
+      return 0
+    fi
+    if ! "$KILL" -0 "$GATE_PROCESS_PID" 2>/dev/null; then
+      return 0
+    fi
+    "$SLEEP" 0.1 || break
+    attempt=$((attempt + 1))
+  done
+  "$KILL" -TERM "$GATE_PROCESS_PID" 2>/dev/null || true
+  wait "$GATE_PROCESS_PID" 2>/dev/null || true
+  GATE_PROCESS_PID=""
+  return 1
+}
+
+stop_gate_tick() {
+  [ -n "$GATE_TICK_PID" ] || return 0
+  "$KILL" -TERM "$GATE_TICK_PID" 2>/dev/null || true
+  wait "$GATE_TICK_PID" 2>/dev/null || true
+  GATE_TICK_PID=""
+}
+
+terminate_candidate_gate_group() {
+  local pid="$1" attempt=0
+  "$KILL" -0 "$pid" 2>/dev/null || return 0
+  if [ "$GATE_PROCESS_GROUP_READY" != 1 ] \
+      || ! gate_process_group_is_ready "$pid"; then
+    # A group identity mismatch must never widen the signal target. Signal only
+    # the controller-owned leader and report failure instead.
+    "$KILL" -TERM "$pid" 2>/dev/null || true
+    return 1
+  fi
+  "$KILL" -TERM -- "-$pid" 2>/dev/null || {
+    "$KILL" -0 "$pid" 2>/dev/null || return 0
+    return 1
+  }
+  while (( attempt < 10 )); do
+    gate_process_is_running "$pid" || break
+    "$SLEEP" 1 || return 1
+    attempt=$((attempt + 1))
+  done
+  if gate_process_is_running "$pid"; then
+    "$KILL" -KILL -- "-$pid" 2>/dev/null || return 1
+  fi
+  # Kill any TERM-resistant child before reaping the leader, while its zombie
+  # (or live PID) still anchors this exact controller-created process group.
+  if "$KILL" -0 -- "-$pid" 2>/dev/null; then
+    "$KILL" -KILL -- "-$pid" 2>/dev/null || return 1
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
+clear_candidate_gate_process() {
+  GATE_PROCESS_PID=""
+  GATE_PROCESS_GROUP_READY=0
+}
+
+run_monitored_candidate_step() {
+  local gate_status=0 tick_status=0 monitor_status=0
+  GATE_SUPERSEDED_SHA=""
+  if ! resolve_advertised_main; then
+    return 76
+  fi
+  if [ "$REMOTE_MAIN_SHA" != "$TARGET" ]; then
+    GATE_SUPERSEDED_SHA="$REMOTE_MAIN_SHA"
+    return 75
+  fi
+  if ! start_candidate_gate_process "$@"; then
+    return 76
+  fi
+  if [ "$GATE_PROCESS_GROUP_READY" != 1 ]; then
+    wait "$GATE_PROCESS_PID" || gate_status=$?
+    clear_candidate_gate_process
+    return "$gate_status"
+  fi
+
+  while "$KILL" -0 "$GATE_PROCESS_PID" 2>/dev/null; do
+    "$SLEEP" "$SUPERSESSION_POLL_SECONDS" &
+    GATE_TICK_PID=$!
+    wait -n "$GATE_PROCESS_PID" "$GATE_TICK_PID" 2>/dev/null || true
+    if ! "$KILL" -0 "$GATE_PROCESS_PID" 2>/dev/null; then
+      stop_gate_tick
+      break
+    fi
+    wait "$GATE_TICK_PID" 2>/dev/null || tick_status=$?
+    GATE_TICK_PID=""
+    if [ "$tick_status" -ne 0 ]; then
+      monitor_status=76
+      break
+    fi
+    if ! resolve_advertised_main; then
+      monitor_status=76
+      break
+    fi
+    if [ "$REMOTE_MAIN_SHA" != "$TARGET" ]; then
+      GATE_SUPERSEDED_SHA="$REMOTE_MAIN_SHA"
+      monitor_status=75
+      break
+    fi
+  done
+
+  if [ "$monitor_status" -ne 0 ]; then
+    if ! terminate_candidate_gate_group "$GATE_PROCESS_PID"; then
+      monitor_status=76
+    fi
+  fi
+  wait "$GATE_PROCESS_PID" 2>/dev/null || gate_status=$?
+  clear_candidate_gate_process
+  [ "$monitor_status" -eq 0 ] || return "$monitor_status"
+  return "$gate_status"
+}
+
+run_candidate_gate_stage() {
+  local stage="$1" failure="$2" status=0
+  shift 2
+  run_monitored_candidate_step "$@" || status=$?
+  case "$status" in
+    0) return 0 ;;
+    75)
+      echo "release poll: ${TARGET:0:7} was superseded by ${GATE_SUPERSEDED_SHA:0:7} during $stage; production unchanged"
+      exit 0
+      ;;
+    76) fail "origin/main supersession monitoring failed during $stage; production unchanged" ;;
+    *) fail "$failure" ;;
+  esac
 }
 
 is_inert_automation_content_commit() {
@@ -388,6 +570,15 @@ load_deployed_state() {
 cleanup() {
   local status=$? cleanup_deploy_state_status=0
   trap - EXIT INT TERM
+  stop_gate_tick
+  if [ -n "$GATE_PROCESS_PID" ]; then
+    if ! terminate_candidate_gate_group "$GATE_PROCESS_PID"; then
+      echo "FAIL: candidate gate process group cleanup failed" >&2
+      [ "$status" -ne 0 ] || status=1
+    fi
+    wait "$GATE_PROCESS_PID" 2>/dev/null || true
+    clear_candidate_gate_process
+  fi
   if [ -n "$HEALTH_BODY" ]; then
     rm -f -- "$HEALTH_BODY" || true
   fi
@@ -446,11 +637,22 @@ if [[ ! "$ADMISSION_RETRY_SECONDS" =~ ^[0-9]+$ ]] \
     || (( ADMISSION_RETRY_SECONDS < 1 || ADMISSION_RETRY_SECONDS > 300 )); then
   fail "SEICHE_CONTROL_ADMISSION_RETRY_SECONDS must be an integer from 1 to 300"
 fi
+if [[ ! "$SUPERSESSION_POLL_SECONDS" =~ ^[0-9]+$ ]] \
+    || (( SUPERSESSION_POLL_SECONDS < 1 || SUPERSESSION_POLL_SECONDS > 300 )); then
+  fail "SEICHE_CONTROL_SUPERSESSION_POLL_SECONDS must be an integer from 1 to 300"
+fi
+if [[ ! "$SUPERSESSION_CHECK_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] \
+    || (( SUPERSESSION_CHECK_TIMEOUT_SECONDS < 1 \
+      || SUPERSESSION_CHECK_TIMEOUT_SECONDS > 120 )); then
+  fail "SEICHE_CONTROL_SUPERSESSION_CHECK_TIMEOUT_SECONDS must be an integer from 1 to 120"
+fi
 if [[ ! "$RECEIPT_UID" =~ ^[0-9]+$ ]] \
     || [[ ! "$RECEIPT_GID" =~ ^[0-9]+$ ]] \
     || [[ ! "$RECEIPT_MODE" =~ ^[0-7]{3,4}$ ]]; then
   fail "release receipt ownership policy is invalid"
 fi
+[ -x "$PS" ] || fail "trusted process-group inspector is missing: $PS"
+[ -x "$KILL" ] || fail "trusted process-group signaler is missing: $KILL"
 for path in "$STATE_DIR" "$RECEIPT_DIR" "$CANDIDATE_PARENT" "$RUNTIME_DIR"; do
   if [ -L "$path" ] || { [ -e "$path" ] && [ ! -d "$path" ]; }; then
     fail "$path is not a real directory"
@@ -596,18 +798,31 @@ as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
   || fail "candidate worktree is dirty before the gate"
 
 VENV="$CANDIDATE_DIR/.gate-venv"
-as_service "$TIMEOUT" -k 30 300 "$SYSTEM_PYTHON" -m venv "$VENV" \
-  || fail "candidate virtualenv creation failed or timed out"
-as_service "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
-  "$CANDIDATE_DIR/backend[dev,collectors]" \
-  || fail "candidate dependency install failed or timed out"
-(
-  cd "$CANDIDATE_DIR"
-  as_service env \
-    PATH="$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-    "$TIMEOUT" -k 30 3600 "$VENV/bin/python" -m pytest backend/tests -q \
-      --memray -o faulthandler_timeout=300
-) || fail "candidate full test gate failed or timed out"
+run_candidate_gate_stage \
+  "candidate virtualenv creation" \
+  "candidate virtualenv creation failed or timed out" \
+  "$TIMEOUT" -k 30 300 "$SYSTEM_PYTHON" -m venv "$VENV"
+run_candidate_gate_stage \
+  "candidate dependency installation" \
+  "candidate dependency install failed or timed out" \
+  "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
+  "$CANDIDATE_DIR/backend[dev,collectors]"
+# The candidate shell receives its values only through positional arguments.
+# shellcheck disable=SC2016
+run_candidate_gate_stage \
+  "candidate full test gate" \
+  "candidate full test gate failed or timed out" \
+  /bin/bash -c '
+candidate=$1
+gate_path=$2
+shift 2
+cd "$candidate" || exit 125
+PATH=$gate_path exec "$@"
+' seiche-candidate-gate \
+  "$CANDIDATE_DIR" \
+  "$VENV/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  "$TIMEOUT" -k 30 3600 "$VENV/bin/python" -m pytest backend/tests -q \
+  --memray -o faulthandler_timeout=300
 as_service git -C "$CANDIDATE_DIR" diff-index --quiet "$TARGET" -- \
   || fail "candidate tests modified tracked release files"
 

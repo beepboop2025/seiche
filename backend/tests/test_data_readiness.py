@@ -113,7 +113,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     recovery_proof_dir.chmod(0o750)
     restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
-        "schema=seiche.market-backup-restore-check.v2\n"
+        "schema=seiche.market-backup-restore-check.v3\n"
         f"checked_at={(NOW - timedelta(hours=1)).isoformat()}\n"
         "snapshot=20260822T020000Z\n"
         f"deployed_sha={'a' * 40}\n"
@@ -121,6 +121,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "critical_table_count_floor=11|12|13|14\n"
         "database_restore=pass\n"
         "state_archive_restore=pass\n"
+        "nbs_public_revision_store=not_onboarded\n"
         "api_data_archive_restore=pass\n"
         "research_only=true\n"
         "can_publish=false\n"
@@ -351,6 +352,27 @@ def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "seiche data readiness: ready\n"
     assert result.stderr == ""
+
+
+def test_readiness_accepts_a_verified_nbs_head_receipt(tmp_path: Path) -> None:
+    env, _, restore_receipt = _layout(tmp_path)
+    restore_receipt.write_text(
+        restore_receipt.read_text().replace(
+            "nbs_public_revision_store=not_onboarded",
+            "nbs_public_revision_store=verified_head",
+        )
+    )
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_unconfigured_offsite_does_not_gate_readiness(tmp_path: Path) -> None:
@@ -789,11 +811,16 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
     ("old", "new"),
     [
         (
+            "schema=seiche.market-backup-restore-check.v3",
             "schema=seiche.market-backup-restore-check.v2",
-            "schema=seiche.market-backup-restore-check.v1",
         ),
         ("database_restore=pass", "database_restore=failed"),
         ("state_archive_restore=pass", "state_archive_restore=failed"),
+        (
+            "nbs_public_revision_store=not_onboarded",
+            "nbs_public_revision_store=unverified",
+        ),
+        ("nbs_public_revision_store=not_onboarded", ""),
         ("api_data_archive_restore=pass", "api_data_archive_restore=failed"),
         ("research_only=true", "research_only=false"),
         ("can_publish=false", "can_publish=true"),
@@ -801,7 +828,7 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
         ("critical_table_counts=11|12|13|14", "critical_table_counts=11|12"),
     ],
 )
-def test_restore_receipt_requires_the_complete_v2_pass_contract(
+def test_restore_receipt_requires_the_complete_v3_pass_contract(
     tmp_path: Path,
     old: str,
     new: str,

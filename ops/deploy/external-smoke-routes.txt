@@ -23,6 +23,14 @@ GET|/api/v2/money-markets|200|application/json|"expansion_ledger":[
 GET|/api/v2/money-markets|200|application/json|"read_faults":[]
 GET|/api/v2/world-markets|200|application/json|"schema":"seiche.world-markets.v1"
 GET|/api/v2/world-markets|200|application/json|"coverage_claim":"curated_partial_non_exhaustive"
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"selection":"china_macro"
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"values_published":false
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"raw_evidence_included":false
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"history_included":false
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"scoring_eligible":false
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"cn_cny_gauge_eligible":false
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"as_of":null
+GET|/api/v2/world-markets?section=china_macro|200|application/json|"topic_url":"https://seiche.info/markets/china-macro/"
 GET|/api/v2/coverage|200|application/json|"schema":"seiche.coverage.v2"
 GET|/api/v2/global/tide|200|application/json|"schema":"seiche.global-tide.v2"
 GET|/api/subscribe|200|application/json|"gates_nothing":true
