@@ -280,9 +280,7 @@ class PublicCatalogContracts(unittest.TestCase):
         self.assertIn("--ref v0.11.0", openbb_command)
         self.assertIn("release_tag=v0.11.0", openbb_command)
         self.assertIn("openbb_version=0.1.0", openbb_command)
-        self.assertIn(
-            "python3 -m venv /tmp/openbb-seiche-public", openbb_submission
-        )
+        self.assertIn("python3 -m venv /tmp/openbb-seiche-public", openbb_submission)
         self.assertNotIn("\npython -m venv ", openbb_submission)
         distribution = _read("docs/DISTRIBUTION.md")
         self.assertIn("OpenBB-finance/awesome-openbb", publishing)

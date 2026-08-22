@@ -1509,6 +1509,7 @@ activate_data_readiness_after_proof
     calls = calls_path.read_text().splitlines() if calls_path.exists() else []
     return result, calls, state
 
+
 def _run_candidate_health_wait_helper(
     tmp_path: Path,
     *,
@@ -1520,13 +1521,9 @@ def _run_candidate_health_wait_helper(
     wrapper = DEPLOY_WRAPPER.read_text()
     helper_start = wrapper.index("parse_candidate_health()")
     helper = wrapper[
-        helper_start : wrapper.index(
-            "# A rollback target can predate", helper_start
-        )
+        helper_start : wrapper.index("# A rollback target can predate", helper_start)
     ]
-    helper = helper.replace(
-        '"$APP/backend/.venv/bin/python"', f'"{sys.executable}"'
-    )
+    helper = helper.replace('"$APP/backend/.venv/bin/python"', f'"{sys.executable}"')
     state = tmp_path / "candidate-health-state"
     state.mkdir()
     fake_curl = _executable(
@@ -1655,7 +1652,6 @@ def test_candidate_health_wait_fails_immediately_if_api_dies_during_reseal(
     assert "seiche-api died during warm-up" in result.stdout
 
 
-
 @pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
 def test_release_readiness_preflights_have_scoped_offsite_repair_bypass(
     script_path: Path,
@@ -1706,9 +1702,7 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
     expected_calls.append(final_readiness)
     if script_path == DEPLOY_WRAPPER:
         expected_kinds.append("candidate-health-wait")
-        expected_calls.append(
-            f"candidate-health-wait 120 {'a' * 40} 900"
-        )
+        expected_calls.append(f"candidate-health-wait 120 {'a' * 40} 900")
     expected_kinds.append("systemctl")
     expected_calls.append("systemctl enable --now seiche-data-readiness.timer")
     assert [call.split()[0] for call in calls] == expected_kinds
@@ -1776,9 +1770,7 @@ def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
     assert calls[readiness_index + 2].startswith(
         "curl --fail --silent --show-error --proto =http "
     )
-    assert calls[readiness_index + 2].endswith(
-        "http://127.0.0.1:8787/api/gauge"
-    )
+    assert calls[readiness_index + 2].endswith("http://127.0.0.1:8787/api/gauge")
     assert calls[readiness_index + 3] == (
         "systemctl is-active --quiet seiche-api.service"
     )
@@ -2051,9 +2043,10 @@ def test_wrapper_refresh_restart_fallback_can_recover(
     assert result.returncode == 0, result.stderr
     assert calls.count("systemctl restart seiche-api") == 1
     expected_waits = 2 if candidate_health_wait_mode == "fail-once" else 1
-    assert sum(
-        call.startswith("candidate-health-wait 900 ") for call in calls
-    ) == expected_waits
+    assert (
+        sum(call.startswith("candidate-health-wait 900 ") for call in calls)
+        == expected_waits
+    )
     assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
     assert (state / "readiness-timer.enabled").is_file()
 
@@ -3011,9 +3004,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         "activate_release_timer_for_deploy", post_gate_superseded
     )
     deploy_status = poller.index("DEPLOY_STATUS=0", timer_activation)
-    handoff_started = poller.index(
-        "DEPLOY_WRAPPER_HANDOFF_STARTED=1", deploy_status
-    )
+    handoff_started = poller.index("DEPLOY_WRAPPER_HANDOFF_STARTED=1", deploy_status)
     deployed = poller.index(
         'SEICHE_EXPECTED_TARGET_SHA="$TARGET" "$DEPLOY_WRAPPER"', handoff_started
     )
@@ -3063,7 +3054,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "DEPLOY_STATUS=0" in after_deploy
     assert 'case "$DEPLOY_STATUS"' in after_deploy
     assert "shared host became busy" in after_deploy
-    assert 'TARGET_DURABLY_DEPLOYED=1' in after_deploy
+    assert "TARGET_DURABLY_DEPLOYED=1" in after_deploy
     assert "release_timer_is_ready" in after_deploy
     early_exit = poller[
         poller.index('if [ "$GATE_ONLY" != 1 ]') : poller.index(
@@ -3073,7 +3064,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit
     assert "fully receipted" in early_exit
     receipt_decision = poller[receipt_pair:admission]
-    assert '0|1) ;;' in receipt_decision
+    assert "0|1) ;;" in receipt_decision
     assert "existing release receipt evidence is invalid" in receipt_decision
     cleanup = poller[poller.index("cleanup() {") : poller.index("# Regression tests")]
     assert "restore_release_timer_state" in cleanup
@@ -3177,8 +3168,7 @@ def _release_receipt_pair(
         "conclusion": "success",
         "install_command": "python -m pip install -q -e ./backend[dev,collectors]",
         "test_command": (
-            "python -m pytest backend/tests -q --memray "
-            "-o faulthandler_timeout=300"
+            "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
         ),
     }
     if tamper == "commit":
@@ -3302,36 +3292,36 @@ def _fake_release_timer_systemctl(tmp_path: Path, *, enabled: bool, active: bool
     (state / "active").write_text(f"{int(active)}\n", encoding="ascii")
     systemctl = _executable(
         tmp_path / "systemctl",
-        'state=${FAKE_TIMER_STATE:?}\n'
-        'command=${1:?}\n'
-        'shift\n'
+        "state=${FAKE_TIMER_STATE:?}\n"
+        "command=${1:?}\n"
+        "shift\n"
         'printf "%s %s\\n" "$command" "$*" >>"$state/calls"\n'
         'if [ "${FAKE_TIMER_QUERY_ERROR:-0}" = 1 ] && [ "$command" = show ]; then\n'
-        '  exit 69\n'
-        'fi\n'
+        "  exit 69\n"
+        "fi\n"
         'if [ -n "${FAKE_TIMER_FAIL_COMMAND:-}" ] '
         '&& [ "$command" = "$FAKE_TIMER_FAIL_COMMAND" ]; then\n'
-        '  exit 70\n'
-        'fi\n'
+        "  exit 70\n"
+        "fi\n"
         'case "$command" in\n'
-        '  show)\n'
+        "  show)\n"
         '    case "$*" in\n'
         '      "--property=UnitFileState --value "*)\n'
         '        if [ "$(cat "$state/enabled")" = 1 ]; then '
-        'echo enabled; else echo disabled; fi ;;\n'
+        "echo enabled; else echo disabled; fi ;;\n"
         '      "--property=ActiveState --value "*)\n'
         '        if [ "$(cat "$state/active")" = 1 ]; then '
-        'echo active; else echo inactive; fi ;;\n'
-        '      *) exit 65 ;;\n'
-        '    esac ;;\n'
+        "echo active; else echo inactive; fi ;;\n"
+        "      *) exit 65 ;;\n"
+        "    esac ;;\n"
         '  is-enabled) [ "$(cat "$state/enabled")" = 1 ] ;;\n'
         '  is-active) [ "$(cat "$state/active")" = 1 ] ;;\n'
         '  enable) printf "1\\n" >"$state/enabled" ;;\n'
         '  disable) printf "0\\n" >"$state/enabled" ;;\n'
         '  start) printf "1\\n" >"$state/active" ;;\n'
         '  stop) printf "0\\n" >"$state/active" ;;\n'
-        '  *) exit 64 ;;\n'
-        'esac\n',
+        "  *) exit 64 ;;\n"
+        "esac\n",
     )
     return state, systemctl
 
@@ -3357,7 +3347,7 @@ def test_release_timer_activation_and_restoration_preserve_prior_state(
             "bash",
             "-c",
             'source "$1"; activate_release_timer_for_deploy; '
-            'release_timer_is_ready; restore_release_timer_state',
+            "release_timer_is_ready; restore_release_timer_state",
             "seiche-timer-test",
             str(RELEASE_POLLER),
         ],
@@ -3399,7 +3389,7 @@ def test_durable_deployment_keeps_release_timer_active_for_recovery(tmp_path):
             'source "$1"; activate_release_timer_for_deploy; '
             'printf "0\\n" >"$FAKE_TIMER_STATE/enabled"; '
             'printf "0\\n" >"$FAKE_TIMER_STATE/active"; '
-            'TARGET_DURABLY_DEPLOYED=1; restore_release_timer_state',
+            "TARGET_DURABLY_DEPLOYED=1; restore_release_timer_state",
             "seiche-timer-test",
             str(RELEASE_POLLER),
         ],
@@ -3466,7 +3456,7 @@ def test_partial_release_timer_activation_restores_prior_state(
             "bash",
             "-c",
             'source "$1"; status=0; '
-            'activate_release_timer_for_deploy || status=$?; '
+            "activate_release_timer_for_deploy || status=$?; "
             'restore_release_timer_state; exit "$status"',
             "seiche-timer-test",
             str(RELEASE_POLLER),
@@ -3498,10 +3488,10 @@ def test_preexisting_target_marker_cannot_fake_a_handoff_transition(tmp_path):
             "bash",
             "-c",
             'source "$1"; '
-            'TARGET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; '
+            "TARGET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; "
             'DEPLOYED="$TARGET"; DEPLOY_WRAPPER_HANDOFF_STARTED=1; '
             'load_deployed_state() { DEPLOYED_STATE_VALUE="$TARGET"; return 0; }; '
-            'activate_release_timer_for_deploy || true; cleanup',
+            "activate_release_timer_for_deploy || true; cleanup",
             "seiche-timer-test",
             str(RELEASE_POLLER),
         ],
