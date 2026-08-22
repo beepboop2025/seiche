@@ -600,6 +600,9 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
             "term": "SHIBOR",
             "history": {"n_obs": [{"value": "1.52"}]},
         },
+        {"term": "SHIBOR", "mention_count": {"value": 1.31}},
+        {"term": "SHIBOR", "n_obs": [{"value": "1.52"}]},
+        {"term": "SHIBOR", "count": ["1.31"]},
         {"China FDR007 official fixing (CFETS)": 1.52},
     ),
     ids=(
@@ -637,6 +640,9 @@ def test_snapshot_gate_rejects_raw_and_derived_cfets_poison(fake_snap, poison) -
         "numeric-string-first-row",
         "qualitative-counter-mapping-drift",
         "qualitative-counter-list-drift",
+        "top-level-qualitative-mapping-drift",
+        "top-level-qualitative-list-drift",
+        "top-level-count-list-drift",
         "decorated-restricted-key",
     ),
 )

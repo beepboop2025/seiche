@@ -2243,6 +2243,11 @@ def _snapshot_contains_restricted_cfets(payload: object) -> bool:
     def quantitative_subtree(field: str, value: object) -> bool:
         if quantitative_scalar(value):
             return field not in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+        if (
+            field in RESTRICTED_SNAPSHOT_QUALITATIVE_NUMERIC_FIELDS
+            and isinstance(value, (dict, list, tuple))
+        ):
+            return observed_series_has_data(value, field=field)
         if quantitative_field(field, value):
             return True
         return False
