@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import os
+import pwd
 from datetime import UTC, datetime
 from pathlib import Path
 import shlex
@@ -13,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
 import re
 
@@ -46,6 +48,62 @@ PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
 LEGACY_UPDATE_RETIRER = ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
+
+
+def _safe_privileged_fixture_ancestry(path: Path) -> bool:
+    expected_owners = {(0, 0), (os.getuid(), os.getgid())}
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            metadata = os.lstat(current)
+        except OSError:
+            return False
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or (metadata.st_uid, metadata.st_gid) not in expected_owners
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            return False
+    return os.access(path, os.W_OK | os.X_OK)
+
+
+def _make_privileged_fixture_tree_removable(root: Path) -> None:
+    """Restore directory write access without following adversarial symlinks."""
+
+    for current, directories, _files in os.walk(root, topdown=False, followlinks=False):
+        for directory in directories:
+            child = Path(current) / directory
+            if not child.is_symlink():
+                child.chmod(0o700)
+        Path(current).chmod(0o700)
+
+
+@pytest.fixture
+def secure_privileged_tmp_path():
+    candidates = (
+        Path(tempfile.gettempdir()).resolve(strict=True),
+        Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=True),
+    )
+    base = next(
+        (
+            candidate
+            for candidate in candidates
+            if _safe_privileged_fixture_ancestry(candidate)
+        ),
+        None,
+    )
+    if base is None:
+        pytest.fail("no safe owned ancestry is available for privileged-path tests")
+    root = Path(tempfile.mkdtemp(prefix=".seiche-privileged-test-", dir=base))
+    root.chmod(0o700)
+    assert _safe_privileged_fixture_ancestry(root)
+    try:
+        yield root
+    finally:
+        _make_privileged_fixture_tree_removable(root)
+        shutil.rmtree(root)
 
 
 def _executable(path: Path, body: str) -> Path:
@@ -378,7 +436,10 @@ def test_nbs_evidence_tree_test_mode_rejects_ambient_or_wrong_group_authority(
         assert not tuple(evidence_root.iterdir())
 
 
-def test_nbs_runtime_publisher_is_fresh_idempotent_and_isolated(tmp_path: Path):
+def test_nbs_runtime_publisher_is_fresh_idempotent_and_isolated(
+    secure_privileged_tmp_path: Path,
+):
+    tmp_path = secure_privileged_tmp_path
     asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
     hostile = tmp_path / "hostile-pythonpath"
     hostile.mkdir()
@@ -438,8 +499,9 @@ def test_nbs_runtime_publisher_is_fresh_idempotent_and_isolated(tmp_path: Path):
     ),
 )
 def test_nbs_runtime_publisher_rejects_unsafe_existing_state(
-    tmp_path: Path, mutation: str
+    secure_privileged_tmp_path: Path, mutation: str
 ):
+    tmp_path = secure_privileged_tmp_path
     _asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
     initial = _run_nbs_runtime_test(environment)
     assert initial.returncode == 0, initial.stdout + initial.stderr
@@ -487,7 +549,10 @@ def test_nbs_runtime_publisher_rejects_unsafe_existing_state(
     assert pointer.read_text(encoding="ascii") == f"{target}\n"
 
 
-def test_nbs_runtime_import_failure_leaves_old_pointer_unchanged(tmp_path: Path):
+def test_nbs_runtime_import_failure_leaves_old_pointer_unchanged(
+    secure_privileged_tmp_path: Path,
+):
+    tmp_path = secure_privileged_tmp_path
     asset_root, runtime_root, environment = _nbs_runtime_test_fixture(tmp_path)
     initial = _run_nbs_runtime_test(environment)
     assert initial.returncode == 0, initial.stdout + initial.stderr
@@ -4698,8 +4763,9 @@ def _run_bootstrap_asset_fixture(
 
 
 def test_bootstrap_assets_portable_harness_retains_one_exact_signed_root(
-    tmp_path: Path,
+    secure_privileged_tmp_path: Path,
 ):
+    tmp_path = secure_privileged_tmp_path
     wrapper, runtime, target, environment = _bootstrap_asset_fixture(tmp_path)
 
     result = _run_bootstrap_asset_fixture(wrapper, environment)
@@ -4729,8 +4795,9 @@ def test_bootstrap_assets_portable_harness_retains_one_exact_signed_root(
 
 
 def test_deploy_wrapper_entry_drops_hostile_shell_and_import_environment(
-    tmp_path: Path,
+    secure_privileged_tmp_path: Path,
 ) -> None:
+    tmp_path = secure_privileged_tmp_path
     wrapper, _runtime, _target, environment = _bootstrap_asset_fixture(tmp_path)
     sentinel = tmp_path / "hostile-entry-ran"
     bash_env = tmp_path / "hostile-bash-env"
@@ -4768,8 +4835,9 @@ def test_deploy_wrapper_entry_drops_hostile_shell_and_import_environment(
     ("wrong-target", "altered-wrapper", "unsigned-target", "wrong-author"),
 )
 def test_bootstrap_assets_portable_failures_retain_no_asset_root(
-    tmp_path: Path, failure: str
+    secure_privileged_tmp_path: Path, failure: str
 ):
+    tmp_path = secure_privileged_tmp_path
     wrapper, runtime, target, environment = _bootstrap_asset_fixture(
         tmp_path,
         signed=failure != "unsigned-target",
@@ -4896,8 +4964,9 @@ def test_bootstrap_assets_mode_proves_exact_tip_self_and_objects_before_retainin
 
 
 def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
-    tmp_path,
+    secure_privileged_tmp_path: Path,
 ):
+    tmp_path = secure_privileged_tmp_path
     asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
@@ -4992,7 +5061,10 @@ esac
     assert not nbs_runtime.exists()
 
 
-def test_release_poller_installer_never_replaces_an_existing_signer_pin(tmp_path):
+def test_release_poller_installer_never_replaces_an_existing_signer_pin(
+    secure_privileged_tmp_path: Path,
+):
+    tmp_path = secure_privileged_tmp_path
     asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
@@ -5109,7 +5181,10 @@ def test_release_poller_installer_rejects_tampered_assets_before_anchor_creation
     assert not nbs_runtime.exists()
 
 
-def test_release_poller_installer_bootstraps_private_control_wrapper(tmp_path):
+def test_release_poller_installer_bootstraps_private_control_wrapper(
+    secure_privileged_tmp_path: Path,
+):
+    tmp_path = secure_privileged_tmp_path
     asset_root, release_target, _repository = _materialized_privileged_assets(tmp_path)
 
     systemd = tmp_path / "systemd"
