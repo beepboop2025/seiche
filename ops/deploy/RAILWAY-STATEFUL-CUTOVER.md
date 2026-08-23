@@ -21,10 +21,10 @@ The files implementing that contract are:
 - `.github/workflows/railway-stateful-cutover.yml`: separately
   protected candidate and activation dispatches.
 
-This phase does not migrate `/var/lib/seiche-bot` or its Telegram
-timers. Those are a separate state and delivery authority domain and require a
-separate snapshot, restore, idempotency, and offset proof before anyone may
-claim the entire bot workload has moved.
+This phase does not migrate `/var/lib/seiche-bot` or its Telegram timers.
+Phase 7 implements that separate state and delivery-authority transfer in
+`RAILWAY-TELEGRAM.md`; it must be activated and receipted independently before
+anyone may claim the Seiche bot workload has moved.
 
 ## Mandatory entry gates
 
