@@ -11,6 +11,7 @@ SCRIPT_DEST="${SEICHE_RELEASE_POLLER_DEST:-/usr/local/sbin/seiche-release-poll}"
 DEPLOY_WRAPPER="${SEICHE_DEPLOY_WRAPPER:-/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh}"
 WRAPPER_DIR=$(dirname -- "$DEPLOY_WRAPPER")
 REMOTE_GATE_VERIFIER="${SEICHE_REMOTE_GATE_VERIFIER_DEST:-$WRAPPER_DIR/seiche-remote-gate-verify.py}"
+REMOTE_SNAPSHOT_VERIFIER="${SEICHE_REMOTE_SNAPSHOT_VERIFIER_DEST:-$WRAPPER_DIR/seiche-remote-snapshot-verify.py}"
 RUNTIME_DIR="${SEICHE_CONTROL_RUNTIME_DIR:-/run/seiche-control}"
 NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
 NBS_RUNTIME_ROOT="${SEICHE_NBS_RUNTIME_ROOT:-/opt/seiche-nbs-intake}"
@@ -24,6 +25,7 @@ ENABLE="${SEICHE_ENABLE_RELEASE_POLLER:-0}"
 SOURCE_DIR="$ASSET_ROOT/ops/deploy"
 SOURCE_WRAPPER="$SOURCE_DIR/seiche-deploy-wrapper.sh"
 SOURCE_REMOTE_GATE_VERIFIER="$SOURCE_DIR/seiche-remote-gate-verify.py"
+SOURCE_REMOTE_SNAPSHOT_VERIFIER="$SOURCE_DIR/seiche-remote-snapshot-verify.py"
 SOURCE_SIGNER="$SOURCE_DIR/release-allowed-signers"
 ALLOWED_SIGNERS="${SEICHE_RELEASE_ALLOWED_SIGNERS_DEST:-/etc/seiche-release.allowed-signers}"
 SIGNING_PRINCIPAL=beepboop2025@users.noreply.github.com
@@ -32,6 +34,7 @@ STAGE_DIR=""
 SCRIPT_NEW=""
 WRAPPER_NEW=""
 REMOTE_GATE_VERIFIER_NEW=""
+REMOTE_SNAPSHOT_VERIFIER_NEW=""
 SIGNER_STAGE=""
 INSTALL_STARTED=""
 INSTALL_COMMITTED=""
@@ -42,6 +45,7 @@ WAS_ACTIVE=""
 HAD_SCRIPT=""
 HAD_WRAPPER=""
 HAD_REMOTE_GATE_VERIFIER=""
+HAD_REMOTE_SNAPSHOT_VERIFIER=""
 HAD_SERVICE=""
 HAD_TIMER=""
 
@@ -71,6 +75,7 @@ required = {
     "ops/deploy/seiche-release-poll.sh": "100755",
     "ops/deploy/seiche-release-poll.timer": "100644",
     "ops/deploy/seiche-remote-gate-verify.py": "100755",
+    "ops/deploy/seiche-remote-snapshot-verify.py": "100755",
 }
 
 
@@ -447,6 +452,7 @@ remove_staging() {
   [ -z "$SCRIPT_NEW" ] || rm -f -- "$SCRIPT_NEW"
   [ -z "$WRAPPER_NEW" ] || rm -f -- "$WRAPPER_NEW"
   [ -z "$REMOTE_GATE_VERIFIER_NEW" ] || rm -f -- "$REMOTE_GATE_VERIFIER_NEW"
+  [ -z "$REMOTE_SNAPSHOT_VERIFIER_NEW" ] || rm -f -- "$REMOTE_SNAPSHOT_VERIFIER_NEW"
   [ -z "$SIGNER_STAGE" ] || rm -f -- "$SIGNER_STAGE"
   if [ -n "$STAGE_DIR" ]; then
     rm -f -- \
@@ -455,9 +461,11 @@ remove_staging() {
       "$STAGE_DIR/seiche-release-poll.service" \
       "$STAGE_DIR/seiche-release-poll.timer" \
       "$STAGE_DIR/seiche-remote-gate-verify.py" \
+      "$STAGE_DIR/seiche-remote-snapshot-verify.py" \
       "$STAGE_DIR/previous-script" \
       "$STAGE_DIR/previous-wrapper" \
       "$STAGE_DIR/previous-remote-gate-verifier" \
+      "$STAGE_DIR/previous-remote-snapshot-verifier" \
       "$STAGE_DIR/previous-service" \
       "$STAGE_DIR/previous-timer"
     rmdir "$STAGE_DIR" 2>/dev/null || true
@@ -490,6 +498,9 @@ rollback_install() {
   restore_file "$REMOTE_GATE_VERIFIER" \
     "$STAGE_DIR/previous-remote-gate-verifier" "$HAD_REMOTE_GATE_VERIFIER" \
     || failed=1
+  restore_file "$REMOTE_SNAPSHOT_VERIFIER" \
+    "$STAGE_DIR/previous-remote-snapshot-verifier" \
+    "$HAD_REMOTE_SNAPSHOT_VERIFIER" || failed=1
   restore_file "$DEPLOY_WRAPPER" "$STAGE_DIR/previous-wrapper" "$HAD_WRAPPER" \
     || failed=1
   "$SYSTEMCTL" daemon-reload || failed=1
@@ -504,7 +515,7 @@ rollback_install() {
     "$SYSTEMCTL" stop seiche-release-poll.timer 2>/dev/null || true
   fi
   [ -z "$failed" ] || {
-    echo "FAIL: release-controller install rollback was incomplete; inspect the five installed files and timer state" >&2
+    echo "FAIL: release-controller install rollback was incomplete; inspect the six installed files and timer state" >&2
     return 1
   }
 }
@@ -633,6 +644,7 @@ for source in \
     seiche-release-poll.service \
     seiche-release-poll.timer \
     seiche-remote-gate-verify.py \
+    seiche-remote-snapshot-verify.py \
     release-allowed-signers; do
   [ -f "$SOURCE_DIR/$source" ] && [ ! -L "$SOURCE_DIR/$source" ] \
     || fail "missing or unsafe release-poller source: $SOURCE_DIR/$source"
@@ -640,6 +652,7 @@ done
 for destination in \
     "$DEPLOY_WRAPPER" \
     "$REMOTE_GATE_VERIFIER" \
+    "$REMOTE_SNAPSHOT_VERIFIER" \
     "$SCRIPT_DEST" \
     "$SYSTEMD_DIR/seiche-release-poll.service" \
     "$SYSTEMD_DIR/seiche-release-poll.timer"; do
@@ -651,6 +664,13 @@ done
 bash -n "$SOURCE_WRAPPER"
 bash -n "$SOURCE_DIR/seiche-release-poll.sh"
 "$SYSTEM_PYTHON" -I -B - "$SOURCE_REMOTE_GATE_VERIFIER" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+compile(source, sys.argv[1], "exec")
+PY
+"$SYSTEM_PYTHON" -I -B - "$SOURCE_REMOTE_SNAPSHOT_VERIFIER" <<'PY'
 import pathlib
 import sys
 
@@ -825,6 +845,8 @@ install -m 0755 "$SOURCE_DIR/seiche-release-poll.sh" \
   "$STAGE_DIR/seiche-release-poll"
 install -m 0700 "$SOURCE_REMOTE_GATE_VERIFIER" \
   "$STAGE_DIR/seiche-remote-gate-verify.py"
+install -m 0700 "$SOURCE_REMOTE_SNAPSHOT_VERIFIER" \
+  "$STAGE_DIR/seiche-remote-snapshot-verify.py"
 install -m 0644 "$SOURCE_DIR/seiche-release-poll.service" \
   "$STAGE_DIR/seiche-release-poll.service"
 install -m 0644 "$SOURCE_DIR/seiche-release-poll.timer" \
@@ -840,6 +862,11 @@ if [ -e "$REMOTE_GATE_VERIFIER" ]; then
   cp -p -- "$REMOTE_GATE_VERIFIER" \
     "$STAGE_DIR/previous-remote-gate-verifier"
   HAD_REMOTE_GATE_VERIFIER=1
+fi
+if [ -e "$REMOTE_SNAPSHOT_VERIFIER" ]; then
+  cp -p -- "$REMOTE_SNAPSHOT_VERIFIER" \
+    "$STAGE_DIR/previous-remote-snapshot-verifier"
+  HAD_REMOTE_SNAPSHOT_VERIFIER=1
 fi
 if [ -e "$SCRIPT_DEST" ]; then
   cp -p -- "$SCRIPT_DEST" "$STAGE_DIR/previous-script"
@@ -857,7 +884,7 @@ if [ -e "$SYSTEMD_DIR/seiche-release-poll.timer" ]; then
 fi
 
 # Keep every rename on its destination filesystem.  From the first rename
-# onward the EXIT trap restores all five prior files and the prior timer state
+# onward the EXIT trap restores all six prior files and the prior timer state
 # on syntax, daemon-reload, activation, signal, or other failure.
 WRAPPER_NEW=$(mktemp "$WRAPPER_DIR/.seiche-deploy-wrapper.XXXXXX")
 install -m 0700 "$STAGE_DIR/seiche-deploy-wrapper.sh" "$WRAPPER_NEW"
@@ -872,6 +899,13 @@ install -m 0700 "$STAGE_DIR/seiche-remote-gate-verify.py" \
 "$SYNC" -f "$REMOTE_GATE_VERIFIER_NEW"
 mv -f -- "$REMOTE_GATE_VERIFIER_NEW" "$REMOTE_GATE_VERIFIER"
 REMOTE_GATE_VERIFIER_NEW=""
+
+REMOTE_SNAPSHOT_VERIFIER_NEW=$(mktemp "$WRAPPER_DIR/.seiche-remote-snapshot-verify.XXXXXX")
+install -m 0700 "$STAGE_DIR/seiche-remote-snapshot-verify.py" \
+  "$REMOTE_SNAPSHOT_VERIFIER_NEW"
+"$SYNC" -f "$REMOTE_SNAPSHOT_VERIFIER_NEW"
+mv -f -- "$REMOTE_SNAPSHOT_VERIFIER_NEW" "$REMOTE_SNAPSHOT_VERIFIER"
+REMOTE_SNAPSHOT_VERIFIER_NEW=""
 
 SCRIPT_NEW=$(mktemp "$SCRIPT_DIR/.seiche-release-poll.XXXXXX")
 install -m 0755 "$STAGE_DIR/seiche-release-poll" "$SCRIPT_NEW"

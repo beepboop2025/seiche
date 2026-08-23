@@ -2508,7 +2508,38 @@ def restore_cached_snapshot() -> str | None:
     try:
         from seiche.repository import get_repository
 
-        active = get_repository().load_active_release_handoff()
+        repository = get_repository()
+        requested_handoff = os.getenv("SEICHE_PREBUILT_HANDOFF_ID", "").strip()
+        if requested_handoff:
+            if re.fullmatch(r"[0-9a-f]{64}", requested_handoff) is None:
+                raise ValueError("SEICHE_PREBUILT_HANDOFF_ID is invalid")
+            expected_payload_sha256 = os.getenv(
+                "SEICHE_PREBUILT_PAYLOAD_SHA256", ""
+            ).strip()
+            if re.fullmatch(r"[0-9a-f]{64}", expected_payload_sha256) is None:
+                raise ValueError("SEICHE_PREBUILT_PAYLOAD_SHA256 is invalid")
+            expected_release_sha = capture_process_release_sha()
+            envelope = repository.load_release_handoff(requested_handoff)
+            payload, receipt, producer_sha, handoff_id = _validated_handoff(
+                envelope,
+                expected_release_sha=expected_release_sha,
+                expected_handoff_id=requested_handoff,
+            )
+            if not hmac.compare_digest(
+                _snapshot_digest(payload), expected_payload_sha256
+            ):
+                raise ValueError("selected prebuilt handoff payload digest changed")
+            _cache.update(
+                at=time.time(),
+                payload=payload,
+                source="prebuilt",
+                release_receipt=receipt,
+                release_handoff_id=handoff_id,
+                producer_sha=producer_sha,
+            )
+            return "prebuilt"
+
+        active = repository.load_active_release_handoff()
         if active is not None:
             durable, _, _, _ = _validated_handoff(active)
     except Exception:  # noqa: BLE001 - a broken handoff must fall through
@@ -2819,17 +2850,25 @@ def cached_snapshot() -> dict | None:
 
 
 def cached_snapshot_was_rebuilt() -> bool:
-    """True only after this process completed the full assembly pipeline."""
-    return _safe_memory_snapshot() is not None and _cache.get("source") == "rebuilt"
+    """True when this release owns a fully built and locally sealed handoff.
+
+    ``prebuilt`` is computed off-host but revalidated, sealed, and staged by
+    this release on the canonical host before process startup.  The legacy
+    function name remains part of the API health seam.
+    """
+    return _safe_memory_snapshot() is not None and _cache.get("source") in {
+        "rebuilt",
+        "prebuilt",
+    }
 
 
 def cached_snapshot_release_receipt() -> dict | None:
-    """Return proof that this process rebuilt and sealed its market products.
+    """Return proof that this release owns locally sealed market products.
 
     A completed v1 board remains readable when v2 sealing fails, but that
     degraded state must not satisfy a deployment gate.  The receipt is kept
-    in process memory so a restored handoff can never impersonate work done by
-    the candidate process.
+    in process memory so a generic restored handoff can never impersonate an
+    exact candidate; prebuilt hydration requires the root-selected token.
     """
     if not cached_snapshot_was_rebuilt():
         return None
@@ -2967,8 +3006,27 @@ async def _refresh_stale() -> None:
         _refreshing = False
 
 
-async def _build_snapshot() -> dict:
-    """Assemble the full payload. Caller holds `_lock`."""
+async def prebuild_snapshot_payload() -> dict:
+    """Build a release payload without publishing or sealing local state.
+
+    Railway uses this entry point for the compute-only Phase-2 artifact.  It
+    deliberately skips PIT/notary writes, canonical market materialization,
+    the in-process cache, and release-handoff staging.  The production host
+    repeats the rights checks and performs those stateful steps only after it
+    has verified the exact-SHA artifact and GitHub provenance.
+    """
+
+    async with _lock:
+        return await _build_snapshot(publish=False)
+
+
+async def _build_snapshot(*, publish: bool = True) -> dict:
+    """Assemble the full payload. Caller holds `_lock`.
+
+    ``publish=False`` is reserved for the off-host prebuild boundary.  It
+    performs the same source, engine, deep-layer, Navigator, sanitization and
+    rights work, but none of the local evidence or handoff mutations.
+    """
     global _build_generation
     src, faults = await _gather_sources()
     src = _rights_eligible_sources(src)
@@ -3046,21 +3104,22 @@ async def _build_snapshot() -> dict:
                 store.load_pit_records(), drv["spread_bp"])}
     payload["navigator"] = nav
     _assert_snapshot_rights(payload)
-    _record_pit(engines, deep, nav)
-    # v2 never collects at request time. The existing US cycle is the first
-    # producer during migration: once its payload is complete, a pack-local
-    # adapter seals independent market products for read-only v2 routes.
-    # Failure is isolated from ordinary v1 reads but makes the candidate
-    # ineligible for promotion through the strict deployment health gate.
-    release_receipt = await asyncio.to_thread(_seal_release_evidence, payload)
-    # Publish to memory first: a slow or locked SQLite handoff must never make
-    # an already-completed reading wait. Stage only after the evidence seal;
-    # the root deploy controller activates it after every remaining gate.
-    await _publish_rebuilt_snapshot(payload, release_receipt)
-    # This is the final, non-awaiting operation in the build's lock epoch. A
-    # scheduler that queued during memory publication or handoff persistence
-    # can now coalesce with the fully completed build.
-    _build_generation += 1
+    if publish:
+        _record_pit(engines, deep, nav)
+        # v2 never collects at request time. The existing US cycle is the first
+        # producer during migration: once its payload is complete, a pack-local
+        # adapter seals independent market products for read-only v2 routes.
+        # Failure is isolated from ordinary v1 reads but makes the candidate
+        # ineligible for promotion through the strict deployment health gate.
+        release_receipt = await asyncio.to_thread(_seal_release_evidence, payload)
+        # Publish to memory first: a slow or locked SQLite handoff must never make
+        # an already-completed reading wait. Stage only after the evidence seal;
+        # the root deploy controller activates it after every remaining gate.
+        await _publish_rebuilt_snapshot(payload, release_receipt)
+        # This is the final, non-awaiting operation in the build's lock epoch. A
+        # scheduler that queued during memory publication or handoff persistence
+        # can now coalesce with the fully completed build.
+        _build_generation += 1
     return payload
 
 

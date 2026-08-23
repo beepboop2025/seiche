@@ -11,12 +11,26 @@ hydrophone network, turn barometer, playbook, backtest lab, alert rules.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from seiche.markets.base import SourceSeriesSpec as SeriesSpec
 from seiche.markets.us_usd.legacy import FRED_SERIES, MARKET_SERIES
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+_PACKAGED_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def _runtime_data_dir() -> Path:
+    configured = os.getenv("SEICHE_RUNTIME_DATA_DIR", "").strip()
+    if configured:
+        selected = Path(configured)
+        if not selected.is_absolute():
+            raise ValueError("SEICHE_RUNTIME_DATA_DIR must be an absolute path")
+        return selected
+    return _PACKAGED_DATA_DIR
+
+
+DATA_DIR = _runtime_data_dir()
 DB_PATH = DATA_DIR / "seiche.sqlite"
 BRIEF_DIR = DATA_DIR / "briefs"
 

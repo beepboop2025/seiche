@@ -271,6 +271,55 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def _railway_cutover_edge_guard(request: Request, call_next):
+    """Keep the Railway candidate private and read-only until authority moves."""
+    mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
+    if mode not in {"cutover_candidate", "production"}:
+        return await call_next(request)
+    if request.url.path == "/healthz":
+        return await call_next(request)
+    from seiche.stateful_cutover import EDGE_HEADER, edge_request_allowed
+
+    expected = os.getenv("SEICHE_RAILWAY_EDGE_TOKEN", "")
+    if not edge_request_allowed(request.headers.get(EDGE_HEADER), expected):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found"},
+            headers={"Cache-Control": "no-store"},
+        )
+    if mode == "cutover_candidate" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "cutover_candidate_read_only"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    response = await call_next(request)
+    deployment_id = os.getenv("RAILWAY_DEPLOYMENT_ID", "")
+    release_sha = os.getenv("SEICHE_RELEASE_SHA", "")
+    if (
+        re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            deployment_id,
+        )
+        is None
+        or re.fullmatch(r"[0-9a-f]{40}", release_sha) is None
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "cutover_identity_unavailable"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    response.headers["X-Seiche-Railway-Authority"] = (
+        "candidate" if mode == "cutover_candidate" else "production"
+    )
+    response.headers["X-Seiche-Railway-Deployment"] = deployment_id
+    response.headers["X-Seiche-Release-SHA"] = release_sha
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # Uvicorn's default config gives only its own logger tree an INFO sink. Give
 # this one bounded event stream its own stderr sink instead of raising the root
 # logger (and every application dependency) to INFO. The guard keeps module
@@ -2675,6 +2724,79 @@ async def health(response: Response, require_rebuilt: bool = False):
         require_rebuilt=require_rebuilt,
         include_release_candidate=False,
     )
+
+
+@app.get("/healthz", include_in_schema=False)
+async def railway_stateful_health(response: Response):
+    """Admit only a receipted Railway shadow, candidate, or production runtime."""
+    mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
+    if mode not in {"shadow", "cutover_candidate", "production"}:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found"},
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        if mode == "shadow":
+            from seiche.stateful_migration import validate_runtime_receipt
+
+            receipt = validate_runtime_receipt(os.environ)
+        elif mode == "cutover_candidate":
+            from seiche.stateful_cutover import validate_candidate_runtime
+
+            receipt = validate_candidate_runtime(os.environ)
+        else:
+            from seiche.stateful_cutover import validate_activation_runtime
+
+            receipt = validate_activation_runtime(os.environ)
+    except Exception as exc:  # noqa: BLE001 - never expose storage diagnostics
+        logging.getLogger("seiche.api").error(
+            "Railway shadow receipt validation failed fault_type=%s",
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "shadow_receipt_unavailable"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    candidate = _health_response(
+        response,
+        require_rebuilt=True,
+        include_release_candidate=False,
+    )
+    if isinstance(candidate, Response):
+        return candidate
+    authority = receipt.get("authority", {})
+    valid_authority = (
+        mode == "shadow"
+        and authority.get("source") == "hetzner"
+        and authority.get("public_traffic_enabled") is False
+        and authority.get("workers_started") is False
+    ) or (
+        mode == "cutover_candidate"
+        and authority.get("source") == "none"
+        and authority.get("hetzner_writers_frozen") is True
+        and authority.get("railway_writers_started") is False
+    ) or (
+        mode == "production"
+        and authority.get("source") == "railway"
+        and authority.get("hetzner_writers_frozen") is True
+        and authority.get("railway_writers_started") is True
+        and authority.get("public_traffic_enabled") is True
+    )
+    if not valid_authority:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "shadow_authority_invalid"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ready",
+        "mode": mode,
+        "version": candidate.get("version"),
+        "generated_at": candidate.get("generated_at"),
+    }
 
 
 @app.get("/api/internal/v1/release-health", include_in_schema=False)

@@ -1,0 +1,42 @@
+[Unit]
+Description=Import an exact controller-verified Seiche snapshot prebuild
+After=postgresql.service
+Wants=postgresql.service
+OnFailure=undertow-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+User=seiche
+Group=seiche
+WorkingDirectory=/home/seiche/app/backend
+EnvironmentFile=/etc/seiche/market.env
+EnvironmentFile=/etc/seiche/release.env
+ExecStart=/home/seiche/app/backend/.venv/bin/python -m seiche.remote_snapshot_import --systemd
+ExecStopPost=+/usr/bin/rm -f /run/seiche-release/prebuilt-snapshot.json
+TimeoutStartSec=300
+UMask=0027
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+MemoryMax=2G
+TasksMax=64
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+ReadWritePaths=/home/seiche/app/backend/data /run/seiche-release/prebuilt-result.json

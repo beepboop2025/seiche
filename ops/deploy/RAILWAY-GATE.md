@@ -1,9 +1,29 @@
-# Attested Railway release gate (phase 1)
+# Attested Railway gate and stateful migration (phases 1-7)
 
-This phase moves only the memory-instrumented backend admission suite off the
-shared Hetzner host. It does not move Seiche's API, PostgreSQL, SQLite state,
-NBS evidence store, workers, Caddy routes, backups, snapshot activation, or
-rollback authority.
+Phase 1 moves the memory-instrumented backend admission suite off the shared
+Hetzner host. Phase 2 also moves the pure snapshot computation, while retaining
+all durable state, evidence sealing, activation, health checks, Caddy routing,
+backups, and rollback authority on Hetzner. Phase 3 ends the synchronous
+cutover after exact-SHA snapshot, API, and edge health, then seals backup,
+isolated restore, worker startup, and recurring-readiness evidence through a
+retrying host-local service. None of these phases gives Railway a production
+credential or a stateful production role.
+
+Phase 4 adds an isolated stateful shadow on one Railway volume plus Railway
+PostgreSQL. It restores exact backup-v3 bytes and serves private compatibility
+health only. Hetzner remains the sole writer, public origin, and rollback
+authority; Phase 4 contains no cutover path. See
+[RAILWAY-STATEFUL-MIGRATION.md](RAILWAY-STATEFUL-MIGRATION.md).
+
+Phase 5 supplies the separately protected writer and edge cutover. Phase 6
+adds native backups, PostgreSQL PITR, recurring monitoring, and portable
+off-site recovery. Phase 7 supplies an independent authority transfer for the
+Seiche Telegram bot's state, long poll, and delivery schedules. These phases
+remain inert until their exact runbook gates are completed; merging them is not
+an activation. See
+[RAILWAY-STATEFUL-CUTOVER.md](RAILWAY-STATEFUL-CUTOVER.md),
+[RAILWAY-STATEFUL-RECOVERY.md](RAILWAY-STATEFUL-RECOVERY.md), and
+[RAILWAY-TELEGRAM.md](RAILWAY-TELEGRAM.md).
 
 ```text
 exact main SHA + tree
@@ -25,6 +45,48 @@ Hetzner independently verifies repo/workflow/ref/SHA/tree/archive/digests
         |
         v
 root-owned gate receipt v2 -> existing deploy/health/rollback transaction
+
+exact main SHA + tree
+        |
+        v
+separate Railway service computes a source-only snapshot
+        |
+        v
+GitHub independently validates, packages, and OIDC-attests canonical bytes
+        |
+        v
+Hetzner verifies provenance, rechecks rights, and reseals local evidence
+        |
+        v
+root-selected handoff token -> candidate hydration -> existing promotion
+
+strict exact-SHA health + edge convergence
+        |
+        v
+immutable release receipt -> live cutover returns
+        |
+        v
+host-local recovery service waits for durable workers
+        |
+        v
+release-bound backup + isolated restore + readiness
+        |
+        v
+immutable recovery receipt -> fully recovery sealed
+
+committed exact-SHA backup-v3 + live/recovery receipt digests
+        |
+        v
+operator stages a closed seven-file snapshot on an isolated Railway volume
+        |
+        v
+Railway restores filesystem generations + generation-specific PostgreSQL
+        |
+        v
+strict SQLite/NBS/count proof -> immutable shadow receipt + private health
+        |
+        v
+GitHub independently verifies and OIDC-attests the exact private receipt
 ```
 
 ## Tracked contract
@@ -54,18 +116,125 @@ root-owned gate receipt v2 -> existing deploy/health/rollback transaction
   release receipt continues to hash the root-owned gate receipt, preserving the
   gate-to-release evidence chain.
 
-Railway never receives a production database URL, API credential, deploy key,
-Telegram token, NBS signing key, GitHub package token, or Hetzner credential.
-The only Railway secret involved is Railway's own project-scoped control token,
-and it stays in the protected GitHub `railway-gate` environment.
+## Phase-2 snapshot contract
+
+- `.github/workflows/railway-snapshot-prebuild.yml` serializes a second,
+  dedicated Railway service. It builds an exact source archive and canonical
+  request, waits for the selected deployment, extracts
+  `/result/snapshot-result.json` over the Railway control plane, independently
+  validates it, publishes it to
+  `ghcr.io/beepboop2025/seiche-release-snapshots`, OIDC-attests the immutable
+  manifest, and proves anonymous retrieval.
+- `ops/railway/Dockerfile.snapshot` and `ops/railway/run-snapshot.py` run as
+  uid/gid 65532 with a root-owned read-only source tree and an isolated runtime
+  data directory. The child receives no Railway token, database URL, production
+  secret, deploy credential, or writable source path. It can only emit the
+  bounded canonical result into `/result` and expose `/healthz` after success.
+- `seiche.remote_snapshot_build` calls the normal assembly pipeline with
+  `publish=False`. Collection, engines, deep layers, Navigator, sanitization,
+  and rights checks still run, but PIT records, notary evidence, SQLite state,
+  in-process cache, and release handoffs are not mutated remotely.
+- `ops/deploy/seiche-remote-snapshot-verify.py` resolves the exact SHA tag to an
+  immutable OCI digest, validates its single canonical layer and OIDC identity,
+  binds every source/Railway/dependency/payload digest, and writes the verified
+  artifact mode 0600 beneath `/run/seiche-control`.
+- `seiche-snapshot-import.service` is the only bridge into state. The
+  unprivileged, sandboxed importer repeats schema, freshness, rights, and
+  servability checks, creates a host-local evidence seal, and returns only a
+  handoff token plus payload digest. The API starts with both values in its
+  root-controlled release environment and refuses a changed or generic handoff.
+- The root release receipt is v3 on this path and hashes both the Railway gate
+  receipt and the Railway snapshot receipt. A missing exact-SHA artifact only
+  defers during the bounded publication window; malformed, stale, private,
+  mismatched, or unattested content fails closed. No remote error silently
+  selects the on-host rebuild.
+
+## Phase-3 fast-cutover contract
+
+- `ops/deploy/seiche-deploy-wrapper.sh` remains the only authority allowed to
+  mutate the checkout, activate the imported snapshot, restart the API, deploy
+  Caddy, accept strict exact-SHA health, or roll back. Once snapshot, API, and
+  market health pass it queues the market and source workers without waiting
+  for their initial sweep; edge convergence must still pass before the wrapper
+  returns. Backup and restore no longer extend the live-cutover transaction.
+- `ops/deploy/seiche-release-poll.sh` durably writes the v3 release receipt
+  before queuing `seiche-release-recovery-seal.service`. A valid release receipt
+  plus strict health means the SHA is live. It does not mean recovery is sealed
+  until the corresponding `*.recovery.json` exists and validates.
+- `ops/deploy/seiche-release-recovery-seal.sh` revalidates the root-selected
+  release environment and deployed marker before and after every long-running
+  stage, then binds the exact v2/v3 release receipt and digest before sealing.
+  It waits for both durable workers, reuses a still-valid release-bound recovery proof or creates a new
+  backup and isolated restore, converges data readiness without restarting the
+  live API, restores the recurring timers, and writes
+  `seiche.release-recovery-receipt.v1` atomically with no replacement path.
+- The recovery receipt binds the exact commit, tree, release-receipt digest,
+  backup snapshot and inventory digest, isolated-restore receipt digest,
+  readiness states, off-site schedule state, and completion time. The poller
+  independently revalidates canonical bytes, owner/group/mode, link count,
+  digest binding, and timestamp order. Missing evidence is pending and retryable;
+  existing invalid evidence fails closed.
+- The hardened oneshot retries after ten minutes on failure. A later poll also
+  queues it when a release is live but recovery evidence is absent. Neither
+  retry path restarts the API or rewrites an accepted receipt, so delayed
+  recovery work cannot undo a successful cutover.
+- A direct SSH fallback can restore workers, backup/restore proof, readiness,
+  and recurring timers while its controller receipt is still unavailable. It
+  retries only the immutable seal until that receipt arrives; missing evidence
+  never weakens the final receipt contract.
+
+## Phase-4 stateful-shadow contract
+
+- `.github/workflows/railway-stateful-shadow.yml` is manual-only and protected
+  by `railway-stateful-migration`. It requires an exact committed snapshot and
+  explicit `HETZNER_REMAINS_SOLE_WRITER` confirmation.
+- `ops/railway/Dockerfile.stateful` carries both a canonical Git archive and Git
+  bundle, proves their exact commit/tree/byte identity, and keeps the source
+  worktree read-only. The root supervisor alone can restore the mounted volume;
+  it starts only the API child as uid/gid 10001.
+- `seiche.stateful_migration` accepts only the seven-file backup-v3 contract,
+  rejects links, traversal, archive aliases, device members, oversized content,
+  and unstable files, then performs SQLite, full NBS, PostgreSQL, and count-floor
+  verification before writing a receipt.
+- Every accepted filesystem and database has a content-derived generation
+  name. Restart reuse re-hashes all three trees, repeats SQLite/NBS checks, and
+  requires unchanged PostgreSQL counts. A receipt cannot authorize drift.
+- The service has no public domain, worker, publisher, collector, bot, Hetzner
+  credential, or production control plane. Its `/healthz` is deployment
+  admission and private compatibility evidence, not a public availability SLO.
+
+Railway never receives a Hetzner production database URL, API credential,
+deploy key, Telegram token, NBS signing key, GitHub package token, or Hetzner
+credential. Phases 1-3 receive no database URL. Phase 4 receives only its
+Railway-private PostgreSQL reference; the protected workflows use Railway's own
+project-scoped control token.
+
+## Phase-7 Telegram contract
+
+- `.github/workflows/railway-telegram.yml` prepares a dedicated one-volume
+  service, freezes and snapshots Hetzner through a bounded forced command,
+  restores a non-authoritative candidate, and seals the cutover snapshot under
+  external COMPLIANCE Object Lock.
+- A separately protected grant starts one unprivileged sequential worker. A
+  successful `getUpdates`, non-decreasing offset, completed schedule pass, and
+  current heartbeat must all precede the immutable activation receipt.
+- Pre-grant rollback first proves no grant exists. After grant, Hetzner remains
+  masked and any repair is a forward Railway recovery incident.
+- Six-hour monitoring validates the full authority chain, current worker,
+  volume identity/headroom, daily/weekly/monthly native backup schedules, fresh
+  backup, locked canary, and frozen source host.
+
+Follow `RAILWAY-TELEGRAM.md`. The workflow being present does not mean the bot
+has moved or that `RAILWAY_TELEGRAM_PHASE7_ENABLED` may be set.
 
 ## One-time Railway bootstrap
 
-1. Create a dedicated project (or isolated service) named `seiche-release-gate`
-   in the paid workspace. Do not attach a volume, database, public domain, or
-   GitHub autodeploy source. The workflow uploads each exact source bundle with
+1. Create a dedicated project with isolated services named
+   `seiche-release-gate` and `seiche-snapshot-prebuild` in the paid workspace.
+   Do not attach a volume, database, public domain, or GitHub autodeploy source
+   to either service. Each workflow uploads its exact source bundle with
    `railway up`; a connected source would create an untracked competing deploy.
-2. Give the service one replica in the desired region and enough CPU/RAM for the
+2. Give each service one replica in the desired region and enough CPU/RAM for its
    memray suite. Start with 8 vCPU and 16 GiB RAM, then use the first three gate
    receipts and Railway metrics to right-size it. Pro billing removes account
    limits; resource sizing still must be set on the service. Do not define
@@ -79,16 +248,25 @@ and it stays in the protected GitHub `railway-gate` environment.
    - `RAILWAY_PROJECT_ID`
    - `RAILWAY_ENVIRONMENT_ID`
    - `RAILWAY_SERVICE_ID`
+   - `RAILWAY_SNAPSHOT_SERVICE_ID`
 
    The IDs are treated as secrets so the workflow never relies on mutable names.
    Do not add them to repository files or Railway service variables.
-4. Ensure the existing `ghcr-release` GitHub environment permits this workflow's
-   source-free publication job. Make the
-   `ghcr.io/beepboop2025/seiche-release-gates` package public after its first
+4. Ensure the existing `ghcr-release` GitHub environment permits both workflows'
+   source-free publication jobs. Make both
+   `ghcr.io/beepboop2025/seiche-release-gates` and
+   `ghcr.io/beepboop2025/seiche-release-snapshots` public after their first
    successful publish; the production host deliberately verifies anonymously.
-5. Manually dispatch `railway-release-gate` on `main`. Bootstrap is complete only
-   after all three jobs are green and anonymous OCI plus attestation verification
-   passes. A queued Railway build or a green test log alone is not proof.
+5. Manually dispatch `railway-release-gate` and then
+   `railway-snapshot-prebuild` on `main`. Bootstrap is complete only after both
+   workflows are green and anonymous OCI plus attestation verification passes.
+   A queued Railway build, green test log, or Railway `SUCCESS` alone is not
+   proof.
+
+Bootstrap for the stateful shadow is separate because it creates billable,
+durable resources and a different protected authority boundary. Follow
+`RAILWAY-STATEFUL-MIGRATION.md`; do not attach a volume or PostgreSQL reference
+to either stateless Phase 1/2 service.
 
 The tracked Railway config uses a one-hour health-check window and
 `restartPolicyType=NEVER`. A red test never emits a receipt, never serves
@@ -173,7 +351,7 @@ That path still performs signature, supersession, full memray suite, admission,
 health, receipt, and rollback checks. Its v2 receipt is visibly marked
 `local-break-glass`; it cannot be confused with attested Railway evidence.
 
-## Phase-1 limitations
+## Phase-1 through Phase-7 limitations
 
 - Railway transports its result through the exact deployment's retained logs.
   GitHub requires exactly one base64 canonical marker and binds it to the
@@ -196,10 +374,39 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   container image digest. Exact source archive, tree, runner base image, tool
   bootstrap, deployment IDs, and dependency snapshot are bound separately by
   the reviewed contract.
-- This phase removes the duplicate on-host gate and its load cooldown. Snapshot
-  assembly still runs on Hetzner and remains the largest post-gate release step.
-  Remote snapshot construction/import is a separate phase with a separate
-  evidence and state-authority review.
+- Phase 2 removes the full on-host snapshot build from the normal path, but the
+  production host still performs evidence sealing, database persistence, API
+  hydration, strict health, snapshot activation, recovery proof, and edge
+  convergence. Phase 3 moves worker startup and recovery sealing after the live
+  receipt; it does not move production state or rollback authority to Railway.
+- Phase 4 proves restore and private read compatibility only. Railway volumes
+  constrain the stateful service to a single replica and do not provide
+  overlapping deployment semantics. Phase 4 cannot be promoted merely by
+  adding a domain.
+- Phase 5 implements the explicit maintenance freeze, final delta-free
+  snapshot, closed authority fence, authenticated read-only edge transition,
+  protected writer grant, immutable activation receipt, and one-way host
+  acknowledgement. Follow `RAILWAY-STATEFUL-CUTOVER.md`; do not
+  activate it until three Phase 4 canaries and Phase 6 recovery controls
+  are green.
+- Phase 6 adds separately protected native-backup administration, six-hour
+  production/PITR/volume monitoring, and a daily activation-bound backup-v3
+  export. Each export pauses only Railway writers, keeps reads online, restores
+  the portable bytes in isolation, and seals them outside Railway under
+  COMPLIANCE Object Lock. Native-backup bootstrap and a non-production external
+  storage preflight happen before Phase 5 activation; the first real export is
+  an immediate post-activation seal because it must bind the activation
+  receipt. Follow `RAILWAY-STATEFUL-RECOVERY.md`; merging the workflow does not
+  enable schedules, move authority, or prove a canary.
+- Phase 7 implements the separate `/var/lib/seiche-bot` snapshot, restore,
+  delivery-idempotency, Telegram-offset, authority, native-backup, and monitor
+  contracts. It remains non-live until the candidate and activation receipts
+  in `RAILWAY-TELEGRAM.md` exist. Its immutable external snapshot is a cutover
+  canary, not a recurring portable export of future bot-state changes.
+- Phase 7 pins the Telegram service to its activation SHA. It does not yet
+  implement an authority-preserving in-place bot-code upgrade.
+- Rissaga/Hermes and `/var/lib/rissaga` remain an adjacent state and publishing
+  authority domain outside Phase 7.
 - Do not promise a Railway duration before benchmarking the configured service.
   Record queue, image-build, pytest, packaging, host-verification, and deployment
   times for at least three exact SHAs; then set an operational SLO from observed

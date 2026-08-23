@@ -1,0 +1,58 @@
+[Unit]
+Description=Seal release-specific Seiche recovery evidence after live cutover
+Requires=seiche-storage-preflight.service
+After=network-online.target postgresql.service seiche-api.service seiche-storage-preflight.service
+Wants=network-online.target postgresql.service
+RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
+AssertPathExists=/etc/seiche/release.env
+AssertPathExists=/var/lib/seiche-deploy/deployed-sha
+AssertFileIsExecutable=/etc/seiche/libexec/seiche-release-recovery-seal.sh
+OnFailure=undertow-failure-alert@%n.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/env -i HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin /usr/bin/bash -p /etc/seiche/libexec/seiche-release-recovery-seal.sh
+TimeoutStartSec=4h
+TimeoutStopSec=15m
+Restart=on-failure
+RestartSec=10m
+OOMPolicy=stop
+UMask=0077
+Nice=15
+CPUWeight=5
+IOWeight=5
+MemoryHigh=256M
+MemoryMax=512M
+MemorySwapMax=0
+TasksMax=64
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RemoveIPC=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+SystemCallArchitectures=native
+ReadOnlyPaths=/home/seiche/app /etc/seiche /var/lib/seiche-deploy /var/lib/seiche-recovery-proof /var/backups/seiche-market
+ReadWritePaths=/var/lib/seiche-control/receipts

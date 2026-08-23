@@ -1,0 +1,1852 @@
+name: railway-telegram
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Prepare, migrate, roll back before grant, or monitor Telegram"
+        required: true
+        type: choice
+        options:
+          - prepare-service
+          - candidate
+          - activate
+          - rollback
+          - monitor
+      request_id:
+        description: "Activate/rollback: exact 64-hex transfer request ID"
+        required: false
+        type: string
+      snapshot_id:
+        description: "Activate: exact candidate snapshot ID"
+        required: false
+        type: string
+      deployment_id:
+        description: "Activate: exact Railway candidate deployment UUID"
+        required: false
+        type: string
+      candidate_receipt_sha256:
+        description: "Activate: accepted canonical candidate receipt digest"
+        required: false
+        type: string
+      confirmation:
+        description: "Exact operation-specific confirmation"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-telegram
+  cancel-in-progress: false
+
+jobs:
+  prepare-service:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'prepare-service'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: railway-telegram-admin
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Prove the isolated service and deploy the exact candidate image
+        id: prepare
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          RAILWAY_VOLUME_NAME: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_NAME }}
+          RAILWAY_REPLICA_REGION: ${{ secrets.RAILWAY_TELEGRAM_REGION }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_TELEGRAM_ORIGIN }}
+          SEICHE_BOT_TOKEN: ${{ secrets.SEICHE_BOT_TOKEN }}
+          LAB_CHANNEL_ID: ${{ secrets.SEICHE_LAB_CHANNEL_ID }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-telegram-prepare
+          UPLOAD_ROOT: ${{ runner.temp }}/railway-telegram-upload
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = PREPARE_NON_AUTHORITATIVE_TELEGRAM_SERVICE
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --short --untracked-files=no)"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" \
+            "$RAILWAY_SERVICE_ID" "$RAILWAY_VOLUME_ID" "$RAILWAY_VOLUME_NAME" \
+            "$RAILWAY_REPLICA_REGION" "$SEICHE_BOT_TOKEN" "$LAB_CHANNEL_ID"; do
+            test -n "$value"
+          done
+          [[ "$LAB_CHANNEL_ID" =~ ^-100[0-9]{6,16}$ ]]
+          mkdir -p "$EVIDENCE_ROOT/link" "$UPLOAD_ROOT"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link" "$UPLOAD_ROOT"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          railway volume list --json >volumes.json
+          railway domain list --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >domains.json
+          EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            EXPECTED_VOLUME_NAME="$RAILWAY_VOLUME_NAME" ORIGIN="$RAILWAY_ORIGIN" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          from urllib.parse import urlsplit
+
+          volumes = json.loads(Path("volumes.json").read_text())
+          compact = json.dumps(volumes, sort_keys=True, separators=(",", ":"))
+          if compact.count(os.environ["EXPECTED_VOLUME_ID"]) != 1:
+              raise SystemExit("the exact Telegram volume is not unique")
+          if compact.count(os.environ["EXPECTED_VOLUME_NAME"]) < 1:
+              raise SystemExit("the Telegram volume name is absent")
+          if "/var/lib/seiche-telegram" not in compact:
+              raise SystemExit("the Telegram volume mount is not exact")
+          domains = json.loads(Path("domains.json").read_text())
+          domain_text = json.dumps(domains, sort_keys=True, separators=(",", ":"))
+          observed = set(
+              re.findall(r"[a-z0-9][a-z0-9.-]+\.up\.railway\.app", domain_text)
+          )
+          if observed != {urlsplit(os.environ["ORIGIN"]).hostname}:
+              raise SystemExit("the Telegram origin is not uniquely configured")
+          PY
+          railway deployment list --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" --json \
+            >"$EVIDENCE_ROOT/deployments-before.json"
+          has_success=$(INPUT="$EVIDENCE_ROOT/deployments-before.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path(os.environ["INPUT"]).read_text())
+          print(int(any(str(row.get("status", "")).upper() == "SUCCESS" for row in rows)))
+          PY
+          )
+          pre_status=000
+          if observed_status=$(curl --silent --show-error \
+              --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 10 \
+              --output "$EVIDENCE_ROOT/pre-health.json" --write-out '%{http_code}' \
+              "$RAILWAY_ORIGIN/healthz"); then
+            pre_status=$observed_status
+          fi
+          if [ "$has_success" = 1 ]; then
+            test "$pre_status" = 200 || test "$pre_status" = 503
+          fi
+          if [ "$pre_status" = 200 ] || [ "$pre_status" = 503 ]; then
+            HEALTH="$EVIDENCE_ROOT/pre-health.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["HEALTH"]).read_text())
+          if (
+              value.get("schema") != "seiche.railway-telegram-health.v1"
+              or value.get("mode") != "candidate"
+              or value.get("request_id") is not None
+          ):
+              raise SystemExit(
+                  "an authoritative Telegram service cannot be prepared in place"
+              )
+          PY
+          fi
+          railway variable set \
+            "SEICHE_RELEASE_SHA=$GITHUB_SHA" \
+            "SEICHE_RAILWAY_TELEGRAM_VOLUME_ID=$RAILWAY_VOLUME_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
+          printf '%s' "$SEICHE_BOT_TOKEN" |
+            railway variable set SEICHE_BOT_TOKEN --stdin \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --skip-deploys >/dev/null
+          printf '%s' "$LAB_CHANNEL_ID" |
+            railway variable set LAB_CHANNEL_ID --stdin \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --skip-deploys >/dev/null
+          railway variable list --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" --json >variables.json
+          python3 -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          value = json.loads(Path("variables.json").read_text())
+          names = set(value) if isinstance(value, dict) else {
+              row.get("name") for row in value if isinstance(row, dict)
+          }
+          required = {
+              "SEICHE_RELEASE_SHA",
+              "SEICHE_RAILWAY_TELEGRAM_VOLUME_ID",
+              "SEICHE_BOT_TOKEN",
+              "LAB_CHANNEL_ID",
+          }
+          forbidden = {
+              "HETZNER_SSH_KEY",
+              "HETZNER_TELEGRAM_MIGRATION_SSH_KEY",
+              "RAILWAY_TOKEN",
+              "GITHUB_TOKEN",
+              "SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY",
+              "DATABASE_URL",
+              "HETZNER_DATABASE_URL",
+              "NBS_SIGNING_KEY",
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+          }
+          if (
+              not required.issubset(names)
+              or names & forbidden
+              or any(
+                  isinstance(name, str) and name.endswith("_SSH_KEY")
+                  for name in names
+              )
+          ):
+              raise SystemExit("Telegram service secret boundary is invalid")
+          PY
+          rm -f variables.json
+          cd "$GITHUB_WORKSPACE"
+          git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"
+          git bundle verify "$UPLOAD_ROOT/source.bundle"
+          source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
+          source_bundle_sha256=$(sha256sum "$UPLOAD_ROOT/source.bundle" | awk '{print $1}')
+          tree=$(git rev-parse 'HEAD^{tree}')
+          requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          image_request_id=$(printf '%s\n' \
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA:telegram-image" |
+            sha256sum | awk '{print $1}')
+          cp ops/railway/Dockerfile.telegram "$UPLOAD_ROOT/Dockerfile"
+          cp ops/railway/railway.telegram.json "$UPLOAD_ROOT/railway.json"
+          TARGET="$GITHUB_SHA" TREE="$tree" \
+            SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+            SOURCE_BUNDLE_SHA256="$source_bundle_sha256" \
+            REQUEST_ID="$image_request_id" REQUESTED_AT="$requested_at" \
+            REQUEST_PATH="$UPLOAD_ROOT/request.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = {
+              "schema": "seiche.railway-telegram-image-request.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "beepboop2025/seiche/.github/workflows/railway-telegram.yml",
+              "source_ref": os.environ["GITHUB_REF"],
+              "commit": os.environ["TARGET"],
+              "tree": os.environ["TREE"],
+              "source_archive_sha256": os.environ["SOURCE_ARCHIVE_SHA256"],
+              "source_bundle_sha256": os.environ["SOURCE_BUNDLE_SHA256"],
+              "request_id": os.environ["REQUEST_ID"],
+              "requested_at": os.environ["REQUESTED_AT"],
+              "confirmation": "PREPARE_NON_AUTHORITATIVE_TELEGRAM_SERVICE",
+          }
+          Path(os.environ["REQUEST_PATH"]).write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          REQUEST="$UPLOAD_ROOT/request.json" PYTHONPATH=backend python3 -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from seiche.telegram_migration import validate_image_request
+
+          validate_image_request(json.loads(Path(os.environ["REQUEST"]).read_bytes()))
+          PY
+          deployment_json=$(railway up "$UPLOAD_ROOT" --path-as-root --detach --json \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID")
+          printf '%s\n' "$deployment_json" >"$EVIDENCE_ROOT/deployment.json"
+          deployment_id=$(DEPLOYMENT_JSON="$deployment_json" python3 -I -S - <<'PY'
+          import json
+          import os
+          import re
+
+          value = json.loads(os.environ["DEPLOYMENT_JSON"])
+          matches = re.findall(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              json.dumps(value),
+          )
+          if len(set(matches)) != 1:
+              raise SystemExit("Telegram deployment identity is ambiguous")
+          print(matches[0])
+          PY
+          )
+          ready=0
+          for _attempt in $(seq 1 90); do
+            railway deployment list --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" --json \
+              >"$EVIDENCE_ROOT/deployments.json"
+            status=$(DEPLOYMENT_ID="$deployment_id" \
+              INPUT="$EVIDENCE_ROOT/deployments.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path(os.environ["INPUT"]).read_text())
+          matches = [row for row in rows if row.get("id") == os.environ["DEPLOYMENT_ID"]]
+          if len(matches) != 1:
+              raise SystemExit("Telegram deployment is not unique")
+          print(str(matches[0].get("status", "")).upper())
+          PY
+            )
+            if [ "$status" = SUCCESS ]; then ready=1; break; fi
+            case "$status" in FAILED|CRASHED|REMOVED) exit 1 ;; esac
+            sleep 10
+          done
+          test "$ready" = 1
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 "$RAILWAY_ORIGIN/healthz" \
+            >"$EVIDENCE_ROOT/health.json"
+          DEPLOYMENT_ID="$deployment_id" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["EVIDENCE_ROOT"] + "/health.json").read_text())
+          if (
+              value.get("schema") != "seiche.railway-telegram-health.v1"
+              or value.get("status") != "ready"
+              or value.get("mode") != "candidate"
+              or value.get("commit") != os.environ["GITHUB_SHA"]
+              or value.get("deployment_id") != os.environ["DEPLOYMENT_ID"]
+              or value.get("request_id") is not None
+              or value.get("faults") != []
+          ):
+              raise SystemExit("Telegram candidate health is invalid")
+          PY
+          cp "$UPLOAD_ROOT/request.json" "$EVIDENCE_ROOT/image-request.json"
+          {
+            echo "deployment_id=$deployment_id"
+            echo "image_request=$EVIDENCE_ROOT/image-request.json"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Configure and lock recurring native volume recovery
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-telegram-prepare
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT/link"
+          cat >volume-instances.graphql <<'GRAPHQL'
+          query TelegramVolume($volumeId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath deletedAt isPendingDeletion
+            }
+          }
+          GRAPHQL
+          railway api --file volume-instances.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            >volume-instances.json
+          volume_instance_id=$(VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("volume-instances.json").read_text()).get(
+              "data", {}
+          ).get("adminVolumeInstancesForVolume", [])
+          matches = [
+              row for row in rows
+              if row.get("volumeId") == os.environ["VOLUME_ID"]
+              and row.get("environmentId") == os.environ["ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-telegram"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ]
+          if len(matches) != 1:
+              raise SystemExit("the exact Telegram volume instance is not unique")
+          print(matches[0]["id"])
+          PY
+          )
+          cat >schedules.graphql <<'GRAPHQL'
+          mutation TelegramSchedules(
+            $volumeInstanceId: String!,
+            $kinds: [VolumeInstanceBackupScheduleKind!]!
+          ) {
+            volumeInstanceBackupScheduleUpdate(
+              volumeInstanceId: $volumeInstanceId,
+              kinds: $kinds
+            )
+          }
+          GRAPHQL
+          railway api --file schedules.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" \
+            --var 'kinds=["DAILY","WEEKLY","MONTHLY"]' --compact \
+            >schedule-update.json
+          test "$(python3 -c 'import json; print(json.load(open("schedule-update.json"))["data"]["volumeInstanceBackupScheduleUpdate"])')" = True
+          canary="seiche-phase7-bootstrap-${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}"
+          cat >create.graphql <<'GRAPHQL'
+          mutation TelegramBackup($volumeInstanceId: String!, $name: String) {
+            volumeInstanceBackupCreate(volumeInstanceId: $volumeInstanceId, name: $name) {
+              workflowId
+            }
+          }
+          GRAPHQL
+          cat >list.graphql <<'GRAPHQL'
+          query TelegramBackups($volumeInstanceId: String!) {
+            volumeInstanceBackupList(volumeInstanceId: $volumeInstanceId) {
+              id name createdAt expiresAt
+            }
+          }
+          GRAPHQL
+          backup_id=""
+          for _attempt in $(seq 1 60); do
+            railway api --file list.graphql \
+              --raw-var "volumeInstanceId=$volume_instance_id" --compact >backups.json
+            backup_id=$(CANARY="$canary" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("backups.json").read_text()).get("data", {}).get(
+              "volumeInstanceBackupList", []
+          )
+          matches = [row for row in rows if row.get("name") == os.environ["CANARY"]]
+          if len(matches) > 1:
+              raise SystemExit("Telegram backup canary is ambiguous")
+          print(matches[0]["id"] if matches else "")
+          PY
+            )
+            test -z "$backup_id" || break
+            if [ "$_attempt" -eq 1 ]; then
+              railway api --file create.graphql \
+                --raw-var "volumeInstanceId=$volume_instance_id" \
+                --raw-var "name=$canary" --compact >create.json
+            fi
+            sleep 10
+          done
+          test -n "$backup_id"
+          cat >lock.graphql <<'GRAPHQL'
+          mutation LockTelegramBackup(
+            $volumeInstanceId: String!,
+            $volumeInstanceBackupId: String!
+          ) {
+            volumeInstanceBackupLock(
+              volumeInstanceId: $volumeInstanceId,
+              volumeInstanceBackupId: $volumeInstanceBackupId
+            )
+          }
+          GRAPHQL
+          railway api --file lock.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" \
+            --raw-var "volumeInstanceBackupId=$backup_id" --compact >lock.json
+          test "$(python3 -c 'import json; print(json.load(open("lock.json"))["data"]["volumeInstanceBackupLock"])')" = True
+          railway api --file list.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact >backups-after.json
+          CANARY="$canary" python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          rows = json.loads(Path("backups-after.json").read_text()).get("data", {}).get(
+              "volumeInstanceBackupList", []
+          )
+          matches = [row for row in rows if row.get("name") == os.environ["CANARY"]]
+          if len(matches) != 1 or matches[0].get("expiresAt") is not None:
+              raise SystemExit("Telegram backup canary is not locked")
+          created = datetime.fromisoformat(matches[0]["createdAt"].replace("Z", "+00:00"))
+          if not timedelta(0) <= datetime.now(UTC) - created <= timedelta(hours=2):
+              raise SystemExit("Telegram backup canary is stale")
+          PY
+          printf '%s\n' "$backup_id" >"$EVIDENCE_ROOT/native-canary-id.txt"
+
+      - name: Retain private preparation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-telegram-prepare-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/railway-telegram-prepare
+          retention-days: 90
+
+      - name: Attest the exact Telegram image request
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.prepare.outputs.image_request }}
+
+  restore-candidate:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'candidate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: railway-telegram-cutover
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Freeze Hetzner and retrieve the exact state
+        id: freeze
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_USER }}
+          HETZNER_KEY: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_SSH_KEY }}
+          LAB_CHANNEL_ID: ${{ secrets.SEICHE_LAB_CHANNEL_ID }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-telegram-candidate
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = FREEZE_HETZNER_TELEGRAM_FOR_CANDIDATE
+          for value in \
+            "$HETZNER_HOST" "$HETZNER_USER" "$HETZNER_KEY" "$LAB_CHANNEL_ID"; do
+            test -n "$value"
+          done
+          [[ "$LAB_CHANNEL_ID" =~ ^-100[0-9]{6,16}$ ]]
+          mkdir -p "$HOME/.ssh" "$EVIDENCE_ROOT"
+          chmod 0700 "$HOME/.ssh" "$EVIDENCE_ROOT"
+          printf '%s\n' "$HETZNER_KEY" >"$HOME/.ssh/telegram_key"
+          chmod 0600 "$HOME/.ssh/telegram_key"
+          printf '%s\n' \
+            "$HETZNER_HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" \
+            >"$HOME/.ssh/known_hosts"
+          request_id=$(printf '%s\n' \
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA:telegram-transfer" |
+            sha256sum | awk '{print $1}')
+          echo "request_id=$request_id" >>"$GITHUB_OUTPUT"
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "freeze $GITHUB_SHA $request_id" >"$EVIDENCE_ROOT/metadata.json"
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "fetch $request_id fence" >"$EVIDENCE_ROOT/fence.json"
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "fetch $request_id archive" >"$EVIDENCE_ROOT/seiche-bot.tgz"
+          REQUEST_ID="$request_id" EVIDENCE_ROOT="$EVIDENCE_ROOT" \
+            PYTHONPATH=backend python3 -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from seiche.telegram_migration import canonical, validate_archive
+
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          metadata_body = root.joinpath("metadata.json").read_bytes()
+          metadata = json.loads(metadata_body)
+          fence_body = root.joinpath("fence.json").read_bytes()
+          fence = json.loads(fence_body)
+          archive = root / "seiche-bot.tgz"
+          if (
+              metadata_body != canonical(metadata)
+              or fence_body != canonical(fence)
+              or metadata.get("schema")
+              != "seiche.hetzner-telegram-freeze-metadata.v1"
+              or metadata.get("commit") != os.environ["GITHUB_SHA"]
+              or metadata.get("request_id") != os.environ["REQUEST_ID"]
+              or hashlib.sha256(archive.read_bytes()).hexdigest()
+              != metadata.get("archive_sha256")
+              or hashlib.sha256(fence_body).hexdigest()
+              != metadata.get("fence_sha256")
+              or fence.get("lab_channel_id") != os.environ["LAB_CHANNEL_ID"]
+          ):
+              raise SystemExit("Hetzner Telegram freeze evidence is invalid")
+          validate_archive(archive)
+          PY
+          PYTHONPATH=backend python3 -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from seiche.telegram_migration import canonical, extract_archive, inspect_state
+
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          state = extract_archive(root / "seiche-bot.tgz", root / "restore")
+          root.joinpath("state.json").write_bytes(canonical(inspect_state(state)))
+          PY
+          rm -rf "$EVIDENCE_ROOT/restore"
+          snapshot_id=$(python3 -c 'import json,os; print(json.load(open(os.environ["EVIDENCE_ROOT"]+"/metadata.json"))["snapshot_id"])')
+          {
+            echo "snapshot_id=$snapshot_id"
+            echo "evidence_root=$EVIDENCE_ROOT"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Restore and independently validate the Railway candidate
+        id: candidate
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          RAILWAY_VOLUME_NAME: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_NAME }}
+          RAILWAY_REPLICA_REGION: ${{ secrets.RAILWAY_TELEGRAM_REGION }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_TELEGRAM_ORIGIN }}
+          SEICHE_BOT_TOKEN: ${{ secrets.SEICHE_BOT_TOKEN }}
+          LAB_CHANNEL_ID: ${{ secrets.SEICHE_LAB_CHANNEL_ID }}
+          REQUEST_ID: ${{ steps.freeze.outputs.request_id }}
+          SNAPSHOT_ID: ${{ steps.freeze.outputs.snapshot_id }}
+          EVIDENCE_ROOT: ${{ steps.freeze.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" \
+            "$RAILWAY_SERVICE_ID" "$RAILWAY_VOLUME_ID" "$RAILWAY_VOLUME_NAME" \
+            "$RAILWAY_REPLICA_REGION" "$SEICHE_BOT_TOKEN" "$LAB_CHANNEL_ID"; do
+            test -n "$value"
+          done
+          [[ "$LAB_CHANNEL_ID" =~ ^-100[0-9]{6,16}$ ]]
+          mkdir "$EVIDENCE_ROOT/link"
+          chmod 0700 "$EVIDENCE_ROOT/link"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 "$RAILWAY_ORIGIN/healthz" \
+            >"$EVIDENCE_ROOT/health-before.json"
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" -- \
+            cat /migration/request.json >"$EVIDENCE_ROOT/image-request.json"
+          requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          archive_sha=$(sha256sum "$EVIDENCE_ROOT/seiche-bot.tgz" | awk '{print $1}')
+          bot_token_sha=$(printf '%s' "$SEICHE_BOT_TOKEN" | sha256sum | awk '{print $1}')
+          DEPLOYMENT_ID=$(HEALTH="$EVIDENCE_ROOT/health-before.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["HEALTH"]).read_text())
+          if (
+              value.get("schema") != "seiche.railway-telegram-health.v1"
+              or value.get("status") != "ready"
+              or value.get("mode") != "candidate"
+              or value.get("commit") != os.environ["GITHUB_SHA"]
+              or (
+                  value.get("request_id") is not None
+                  and (
+                      not isinstance(value.get("request_id"), str)
+                      or len(value["request_id"]) != 64
+                      or any(
+                          character not in "0123456789abcdef"
+                          for character in value["request_id"]
+                      )
+                  )
+              )
+              or value.get("faults") != []
+          ):
+              raise SystemExit("Railway Telegram service is not a clean candidate")
+          print(value["deployment_id"])
+          PY
+          )
+          export DEPLOYMENT_ID
+          REQUESTED_AT="$requested_at" ARCHIVE_SHA="$archive_sha" \
+            BOT_TOKEN_SHA="$bot_token_sha" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          image = json.loads(root.joinpath("image-request.json").read_bytes())
+          value = {
+              "schema": "seiche.railway-telegram-transfer-request.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "beepboop2025/seiche/.github/workflows/railway-telegram.yml",
+              "commit": os.environ["GITHUB_SHA"],
+              "image_request_id": image["request_id"],
+              "request_id": os.environ["REQUEST_ID"],
+              "snapshot_id": os.environ["SNAPSHOT_ID"],
+              "requested_at": os.environ["REQUESTED_AT"],
+              "archive_sha256": os.environ["ARCHIVE_SHA"],
+              "bot_token_sha256": os.environ["BOT_TOKEN_SHA"],
+              "state": json.loads(root.joinpath("state.json").read_bytes()),
+              "railway": {
+                  "deployment_id": os.environ["DEPLOYMENT_ID"],
+                  "project_id": os.environ["RAILWAY_PROJECT_ID"],
+                  "environment_id": os.environ["RAILWAY_ENVIRONMENT_ID"],
+                  "service_id": os.environ["RAILWAY_SERVICE_ID"],
+                  "volume_id": os.environ["RAILWAY_VOLUME_ID"],
+                  "volume_name": os.environ["RAILWAY_VOLUME_NAME"],
+                  "volume_mount_path": "/var/lib/seiche-telegram",
+                  "region": os.environ["RAILWAY_REPLICA_REGION"],
+              },
+              "fence": json.loads(root.joinpath("fence.json").read_bytes()),
+              "confirmation": "RESTORE_FROZEN_TELEGRAM_STATE",
+          }
+          root.joinpath("transfer.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          IMAGE="$EVIDENCE_ROOT/image-request.json" \
+            REQUEST="$EVIDENCE_ROOT/transfer.json" PYTHONPATH="$GITHUB_WORKSPACE/backend" \
+            python3 -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from seiche.telegram_migration import validate_image_request, validate_transfer
+
+          image = validate_image_request(json.loads(Path(os.environ["IMAGE"]).read_bytes()))
+          request = json.loads(Path(os.environ["REQUEST"]).read_bytes())
+          validate_transfer(
+              request,
+              image_request=image,
+              railway=request["railway"],
+          )
+          PY
+          railway volume files upload --volume "$RAILWAY_VOLUME_ID" \
+            "$EVIDENCE_ROOT/seiche-bot.tgz" "/incoming/$REQUEST_ID.tgz"
+          request_b64=$(base64 -w0 "$EVIDENCE_ROOT/transfer.json")
+          published=$(railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" -- \
+            python -I -B /workspace/ops/railway/run-telegram-migration.py \
+              publish-transfer "$request_b64")
+          test "$published" = "$REQUEST_ID"
+          candidate_remote="/candidates/$SNAPSHOT_ID-$REQUEST_ID.json"
+          ready=0
+          for _attempt in $(seq 1 90); do
+            attempt="$EVIDENCE_ROOT/candidate-attempt-${_attempt}.json"
+            if railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+                "$candidate_remote" "$attempt" 2>/dev/null; then
+              mv "$attempt" "$EVIDENCE_ROOT/candidate.json"
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
+          candidate_sha=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+            -m seiche.telegram_migration validate-candidate \
+            "$EVIDENCE_ROOT/candidate.json" \
+            --request "$EVIDENCE_ROOT/transfer.json")
+          [[ "$candidate_sha" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "candidate_sha256=$candidate_sha"
+            echo "deployment_id=$DEPLOYMENT_ID"
+            echo "candidate_path=$EVIDENCE_ROOT/candidate.json"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Lock the exact restored candidate in Railway native recovery
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          REQUEST_ID: ${{ steps.freeze.outputs.request_id }}
+          SNAPSHOT_ID: ${{ steps.freeze.outputs.snapshot_id }}
+          EVIDENCE_ROOT: ${{ steps.freeze.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT/link"
+          cat >candidate-volume.graphql <<'GRAPHQL'
+          query TelegramCandidateVolume($volumeId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath deletedAt isPendingDeletion
+            }
+          }
+          GRAPHQL
+          railway api --file candidate-volume.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            >candidate-volume.json
+          volume_instance_id=$(VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("candidate-volume.json").read_text()).get(
+              "data", {}
+          ).get("adminVolumeInstancesForVolume", [])
+          matches = [
+              row for row in rows
+              if row.get("volumeId") == os.environ["VOLUME_ID"]
+              and row.get("environmentId") == os.environ["ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-telegram"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ]
+          if len(matches) != 1:
+              raise SystemExit("the Telegram candidate volume instance is not unique")
+          print(matches[0]["id"])
+          PY
+          )
+          candidate_backup="seiche-phase7-candidate-${SNAPSHOT_ID}-${REQUEST_ID:0:12}"
+          cat >candidate-create.graphql <<'GRAPHQL'
+          mutation TelegramCandidateBackup($volumeInstanceId: String!, $name: String) {
+            volumeInstanceBackupCreate(volumeInstanceId: $volumeInstanceId, name: $name) {
+              workflowId
+            }
+          }
+          GRAPHQL
+          cat >candidate-list.graphql <<'GRAPHQL'
+          query TelegramCandidateBackups($volumeInstanceId: String!) {
+            volumeInstanceBackupList(volumeInstanceId: $volumeInstanceId) {
+              id name createdAt expiresAt
+            }
+          }
+          GRAPHQL
+          backup_id=""
+          for _attempt in $(seq 1 60); do
+            railway api --file candidate-list.graphql \
+              --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+              >candidate-backups.json
+            backup_id=$(NAME="$candidate_backup" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("candidate-backups.json").read_text()).get(
+              "data", {}
+          ).get("volumeInstanceBackupList", [])
+          matches = [row for row in rows if row.get("name") == os.environ["NAME"]]
+          if len(matches) > 1:
+              raise SystemExit("Telegram candidate backup is ambiguous")
+          print(matches[0]["id"] if matches else "")
+          PY
+            )
+            test -z "$backup_id" || break
+            if [ "$_attempt" -eq 1 ]; then
+              railway api --file candidate-create.graphql \
+                --raw-var "volumeInstanceId=$volume_instance_id" \
+                --raw-var "name=$candidate_backup" --compact \
+                >candidate-create.json
+            fi
+            sleep 10
+          done
+          test -n "$backup_id"
+          cat >candidate-lock.graphql <<'GRAPHQL'
+          mutation LockTelegramCandidateBackup(
+            $volumeInstanceId: String!,
+            $volumeInstanceBackupId: String!
+          ) {
+            volumeInstanceBackupLock(
+              volumeInstanceId: $volumeInstanceId,
+              volumeInstanceBackupId: $volumeInstanceBackupId
+            )
+          }
+          GRAPHQL
+          railway api --file candidate-lock.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" \
+            --raw-var "volumeInstanceBackupId=$backup_id" --compact \
+            >candidate-lock.json
+          test "$(python3 -c 'import json; print(json.load(open("candidate-lock.json"))["data"]["volumeInstanceBackupLock"])')" = True
+          railway api --file candidate-list.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+            >candidate-backups-after.json
+          NAME="$candidate_backup" \
+            OUTPUT="$EVIDENCE_ROOT/native-candidate-backup.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          rows = json.loads(Path("candidate-backups-after.json").read_text()).get(
+              "data", {}
+          ).get("volumeInstanceBackupList", [])
+          matches = [row for row in rows if row.get("name") == os.environ["NAME"]]
+          if len(matches) != 1 or matches[0].get("expiresAt") is not None:
+              raise SystemExit("Telegram candidate backup is not locked")
+          created = datetime.fromisoformat(
+              matches[0]["createdAt"].replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if not timedelta(0) <= datetime.now(UTC) - created <= timedelta(hours=2):
+              raise SystemExit("Telegram candidate backup is stale")
+          Path(os.environ["OUTPUT"]).write_text(
+              json.dumps(matches[0], sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+
+      - name: Seal the frozen migration canary outside Railway
+        id: offsite
+        env:
+          S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          REQUEST_ID: ${{ steps.freeze.outputs.request_id }}
+          SNAPSHOT_ID: ${{ steps.freeze.outputs.snapshot_id }}
+          EVIDENCE_ROOT: ${{ steps.freeze.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT"
+          S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            python3 -I -S - <<'PY'
+          import os
+          import re
+          from urllib.parse import urlsplit
+
+          endpoint = urlsplit(os.environ["S3_ENDPOINT"])
+          if (
+              endpoint.scheme != "https"
+              or not endpoint.hostname
+              or endpoint.username is not None
+              or endpoint.password is not None
+              or endpoint.query
+              or endpoint.fragment
+              or endpoint.hostname.endswith(".railway.app")
+          ):
+              raise SystemExit("Telegram off-site endpoint is invalid")
+          if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,62}", os.environ["S3_BUCKET"]) is None:
+              raise SystemExit("Telegram off-site bucket is invalid")
+          prefix = os.environ["S3_PREFIX"]
+          if (
+              re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,200}", prefix) is None
+              or prefix.startswith("/")
+              or prefix.endswith("/")
+              or ".." in prefix.split("/")
+          ):
+              raise SystemExit("Telegram off-site prefix is invalid")
+          PY
+          retain_until=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
+          key_root="$S3_PREFIX/telegram/$SNAPSHOT_ID/$REQUEST_ID"
+          mkdir offsite-heads
+          printf '%s\n' metadata.json fence.json state.json transfer.json \
+            candidate.json native-candidate-backup.json seiche-bot.tgz \
+            >offsite-members.txt
+          while IFS= read -r name; do
+            digest=$(sha256sum "$name" | awk '{print $1}')
+            size=$(stat -c %s "$name")
+            test "$size" -le 5368709120
+            checksum=$(printf '%s' "$digest" | xxd -r -p | base64 -w0)
+            key="$key_root/$name"
+            aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
+              --bucket "$S3_BUCKET" --key "$key" --body "$name" \
+              --server-side-encryption AES256 --metadata "sha256=$digest" \
+              --checksum-algorithm SHA256 --checksum-sha256 "$checksum" \
+              --object-lock-mode COMPLIANCE \
+              --object-lock-retain-until-date "$retain_until" \
+              >"offsite-heads/$name.put.json"
+            aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+              --bucket "$S3_BUCKET" --key "$key" --checksum-mode ENABLED \
+              >"offsite-heads/$name.json"
+            NAME="$name" DIGEST="$digest" CHECKSUM="$checksum" SIZE="$size" \
+              python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          value = json.loads(Path("offsite-heads", os.environ["NAME"] + ".json").read_text())
+          retained = datetime.fromisoformat(
+              str(value.get("ObjectLockRetainUntilDate", "")).replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if (
+              value.get("ContentLength") != int(os.environ["SIZE"])
+              or value.get("Metadata", {}).get("sha256") != os.environ["DIGEST"]
+              or value.get("ChecksumSHA256") != os.environ["CHECKSUM"]
+              or not isinstance(value.get("VersionId"), str)
+              or not value["VersionId"]
+              or value.get("ObjectLockMode") != "COMPLIANCE"
+              or value.get("ServerSideEncryption") != "AES256"
+              or retained < datetime.now(UTC) + timedelta(days=29)
+          ):
+              raise SystemExit("Telegram off-site object proof failed")
+          PY
+          done <offsite-members.txt
+          S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            RETAIN_UNTIL="$retain_until" python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          objects = {}
+          for name in Path("offsite-members.txt").read_text().splitlines():
+              head = json.loads(Path("offsite-heads", name + ".json").read_text())
+              path = Path(name)
+              objects[name] = {
+                  "key": (
+                      f"{os.environ['S3_PREFIX']}/telegram/{os.environ['SNAPSHOT_ID']}/"
+                      f"{os.environ['REQUEST_ID']}/{name}"
+                  ),
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  "size": path.stat().st_size,
+                  "version_id": head["VersionId"],
+              }
+          value = {
+              "schema": "seiche.railway-telegram-offsite-receipt.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commit": os.environ["GITHUB_SHA"],
+              "request_id": os.environ["REQUEST_ID"],
+              "snapshot_id": os.environ["SNAPSHOT_ID"],
+              "bucket": os.environ["S3_BUCKET"],
+              "prefix": os.environ["S3_PREFIX"],
+              "object_lock_mode": "COMPLIANCE",
+              "retain_until": os.environ["RETAIN_UNTIL"],
+              "objects": objects,
+              "sealed_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                  "+00:00", "Z"
+              ),
+              "authority_changed": False,
+          }
+          Path("offsite-receipt.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          echo "receipt_path=$EVIDENCE_ROOT/offsite-receipt.json" >>"$GITHUB_OUTPUT"
+
+      - name: Remove subscriber-bearing bytes from the Actions workspace
+        if: always()
+        env:
+          EVIDENCE_ROOT: ${{ steps.freeze.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          if [ -n "${EVIDENCE_ROOT:-}" ] && [ -d "$EVIDENCE_ROOT" ]; then
+            find "$EVIDENCE_ROOT" -maxdepth 1 -type f -name 'seiche-bot.tgz' -delete
+          fi
+
+      - name: Roll back Hetzner automatically if candidate sealing failed
+        if: failure() && steps.freeze.outputs.request_id != ''
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_USER }}
+          REQUEST_ID: ${{ steps.freeze.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "rollback $REQUEST_ID RESTORE_HETZNER_TELEGRAM_BEFORE_GRANT" || true
+
+      - name: Retain private candidate evidence
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-telegram-candidate-${{ steps.freeze.outputs.request_id }}
+          path: |
+            ${{ steps.freeze.outputs.evidence_root }}/metadata.json
+            ${{ steps.freeze.outputs.evidence_root }}/fence.json
+            ${{ steps.freeze.outputs.evidence_root }}/state.json
+            ${{ steps.freeze.outputs.evidence_root }}/image-request.json
+            ${{ steps.freeze.outputs.evidence_root }}/transfer.json
+            ${{ steps.freeze.outputs.evidence_root }}/candidate.json
+            ${{ steps.freeze.outputs.evidence_root }}/native-candidate-backup.json
+            ${{ steps.freeze.outputs.evidence_root }}/offsite-receipt.json
+            ${{ steps.freeze.outputs.evidence_root }}/offsite-heads
+          retention-days: 90
+
+      - name: Attest the candidate receipt
+        if: success()
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.candidate.outputs.candidate_path }}
+
+      - name: Attest the immutable off-site receipt
+        if: success()
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.offsite.outputs.receipt_path }}
+
+      - name: Publish the exact activation inputs
+        if: success()
+        env:
+          REQUEST_ID: ${{ steps.freeze.outputs.request_id }}
+          SNAPSHOT_ID: ${{ steps.freeze.outputs.snapshot_id }}
+          DEPLOYMENT_ID: ${{ steps.candidate.outputs.deployment_id }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.candidate_sha256 }}
+        run: |
+          {
+            echo "### Railway Telegram candidate ready"
+            echo
+            echo "- Request: \`$REQUEST_ID\`"
+            echo "- Snapshot: \`$SNAPSHOT_ID\`"
+            echo "- Deployment: \`$DEPLOYMENT_ID\`"
+            echo "- Candidate receipt SHA-256: \`$CANDIDATE_SHA\`"
+            echo "- Hetzner remains frozen; Railway has not received authority."
+            echo "- Activate or roll back before the four-hour fence expires."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  activate:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'activate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: railway-telegram-activation
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Reconstruct the frozen candidate and publish one authority grant
+        id: activate
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_TELEGRAM_ORIGIN }}
+          SEICHE_BOT_TOKEN: ${{ secrets.SEICHE_BOT_TOKEN }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_USER }}
+          HETZNER_KEY: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_SSH_KEY }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          CANDIDATE_SHA: ${{ inputs.candidate_receipt_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-telegram-activation
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = RAILWAY_BECOMES_SOLE_TELEGRAM_CONSUMER
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$SNAPSHOT_ID" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]]
+          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f-]{36}$ ]]
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" \
+            "$RAILWAY_SERVICE_ID" "$RAILWAY_VOLUME_ID" "$SEICHE_BOT_TOKEN" \
+            "$HETZNER_HOST" "$HETZNER_USER" "$HETZNER_KEY"; do
+            test -n "$value"
+          done
+          mkdir -p "$EVIDENCE_ROOT/link" "$HOME/.ssh"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link" "$HOME/.ssh"
+          printf '%s\n' "$HETZNER_KEY" >"$HOME/.ssh/telegram_key"
+          chmod 0600 "$HOME/.ssh/telegram_key"
+          printf '%s\n' \
+            "$HETZNER_HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" \
+            >"$HOME/.ssh/known_hosts"
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" "status $REQUEST_ID" \
+            >"$EVIDENCE_ROOT/hetzner-status.json"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 "$RAILWAY_ORIGIN/healthz" \
+            >"$EVIDENCE_ROOT/health-before.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/transfers/$REQUEST_ID.json" "$EVIDENCE_ROOT/transfer.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/candidates/$SNAPSHOT_ID-$REQUEST_ID.json" \
+            "$EVIDENCE_ROOT/candidate.json"
+          observed_candidate=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+            -m seiche.telegram_migration validate-candidate \
+            "$EVIDENCE_ROOT/candidate.json" \
+            --request "$EVIDENCE_ROOT/transfer.json")
+          test "$observed_candidate" = "$CANDIDATE_SHA"
+          EXPECTED_DEPLOYMENT="$DEPLOYMENT_ID" \
+            HEALTH="$EVIDENCE_ROOT/health-before.json" \
+            REQUEST="$EVIDENCE_ROOT/transfer.json" \
+            STATUS="$EVIDENCE_ROOT/hetzner-status.json" python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          health = json.loads(Path(os.environ["HEALTH"]).read_text())
+          request = json.loads(Path(os.environ["REQUEST"]).read_text())
+          status_body = Path(os.environ["STATUS"]).read_bytes()
+          status = json.loads(status_body)
+          canonical_status = (
+              json.dumps(status, sort_keys=True, separators=(",", ":")) + "\n"
+          ).encode()
+          fence_body = (
+              json.dumps(request["fence"], sort_keys=True, separators=(",", ":"))
+              + "\n"
+          ).encode()
+          expected_status_keys = {
+              "schema", "request_id", "commit", "snapshot_id",
+              "archive_sha256", "fence_sha256", "metadata_sha256",
+              "activation_sha256", "source_frozen", "authority",
+          }
+          activation_sha = status.get("activation_sha256")
+          if (
+              health.get("status") != "ready"
+              or health.get("mode") not in {"candidate", "granted", "production"}
+              or health.get("commit") != os.environ["GITHUB_SHA"]
+              or health.get("deployment_id") != os.environ["EXPECTED_DEPLOYMENT"]
+              or health.get("request_id") != os.environ["REQUEST_ID"]
+              or request.get("commit") != os.environ["GITHUB_SHA"]
+              or request.get("railway", {}).get("deployment_id")
+              != os.environ["EXPECTED_DEPLOYMENT"]
+              or status_body != canonical_status
+              or set(status) != expected_status_keys
+              or status.get("schema") != "seiche.hetzner-telegram-status.v1"
+              or status.get("request_id") != os.environ["REQUEST_ID"]
+              or status.get("request_id") != request.get("request_id")
+              or status.get("commit") != os.environ["GITHUB_SHA"]
+              or status.get("snapshot_id") != os.environ["SNAPSHOT_ID"]
+              or status.get("snapshot_id") != request.get("snapshot_id")
+              or status.get("archive_sha256") != request.get("archive_sha256")
+              or status.get("fence_sha256")
+              != hashlib.sha256(fence_body).hexdigest()
+              or not isinstance(status.get("metadata_sha256"), str)
+              or len(status["metadata_sha256"]) != 64
+              or any(
+                  character not in "0123456789abcdef"
+                  for character in status["metadata_sha256"]
+              )
+              or status.get("source_frozen") is not True
+              or status.get("authority") not in {"hetzner-frozen", "railway"}
+              or (
+                  status.get("authority") == "hetzner-frozen"
+                  and activation_sha is not None
+              )
+              or (
+                  status.get("authority") == "railway"
+                  and (
+                      not isinstance(activation_sha, str)
+                      or len(activation_sha) != 64
+                      or any(
+                          character not in "0123456789abcdef"
+                          for character in activation_sha
+                      )
+                  )
+              )
+          ):
+              raise SystemExit("Telegram activation target identity differs")
+          PY
+          if railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/grants/$REQUEST_ID.json" "$EVIDENCE_ROOT/grant.json" 2>/dev/null; then
+            test -s "$EVIDENCE_ROOT/grant.json"
+          else
+            activated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            bot_token_sha=$(printf '%s' "$SEICHE_BOT_TOKEN" | sha256sum | awk '{print $1}')
+            ACTIVATED_AT="$activated_at" BOT_TOKEN_SHA="$bot_token_sha" \
+              python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["EVIDENCE_ROOT"])
+          candidate_body = root.joinpath("candidate.json").read_bytes()
+          request = json.loads(root.joinpath("transfer.json").read_bytes())
+          value = {
+              "schema": "seiche.railway-telegram-authority-grant.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": "beepboop2025/seiche/.github/workflows/railway-telegram.yml",
+              "commit": os.environ["GITHUB_SHA"],
+              "request_id": os.environ["REQUEST_ID"],
+              "candidate_receipt_sha256": hashlib.sha256(candidate_body).hexdigest(),
+              "bot_token_sha256": os.environ["BOT_TOKEN_SHA"],
+              "activated_at": os.environ["ACTIVATED_AT"],
+              "confirmation": "RAILWAY_BECOMES_SOLE_TELEGRAM_CONSUMER",
+          }
+          if value["bot_token_sha256"] != request["bot_token_sha256"]:
+              raise SystemExit("Telegram token changed since candidate restore")
+          root.joinpath("grant.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+            grant_b64=$(base64 -w0 "$EVIDENCE_ROOT/grant.json")
+            published=$(railway ssh --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" -- \
+              python -I -B /workspace/ops/railway/run-telegram-migration.py \
+                publish-grant "$grant_b64")
+            test "$published" = "$REQUEST_ID"
+          fi
+          proof_remote="/worker-proofs/$REQUEST_ID.json"
+          activation_remote="/activations/$SNAPSHOT_ID-$REQUEST_ID.json"
+          ready=0
+          for _attempt in $(seq 1 120); do
+            proof_attempt="$EVIDENCE_ROOT/proof-attempt-${_attempt}.json"
+            activation_attempt="$EVIDENCE_ROOT/activation-attempt-${_attempt}.json"
+            if railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+                "$proof_remote" "$proof_attempt" 2>/dev/null && \
+               railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+                "$activation_remote" "$activation_attempt" 2>/dev/null; then
+              mv "$proof_attempt" "$EVIDENCE_ROOT/worker-proof.json"
+              mv "$activation_attempt" "$EVIDENCE_ROOT/activation.json"
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
+          activation_sha=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+            -m seiche.telegram_migration validate-activation \
+            "$EVIDENCE_ROOT/activation.json" \
+            --request "$EVIDENCE_ROOT/transfer.json" \
+            --candidate "$EVIDENCE_ROOT/candidate.json" \
+            --grant "$EVIDENCE_ROOT/grant.json" \
+            --proof "$EVIDENCE_ROOT/worker-proof.json")
+          [[ "$activation_sha" =~ ^[0-9a-f]{64}$ ]]
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 "$RAILWAY_ORIGIN/healthz" \
+            >"$EVIDENCE_ROOT/health-after.json"
+          EXPECTED_DEPLOYMENT="$DEPLOYMENT_ID" REQUEST_ID="$REQUEST_ID" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["EVIDENCE_ROOT"] + "/health-after.json").read_text())
+          if (
+              value.get("status") != "ready"
+              or value.get("mode") != "production"
+              or value.get("commit") != os.environ["GITHUB_SHA"]
+              or value.get("deployment_id") != os.environ["EXPECTED_DEPLOYMENT"]
+              or value.get("request_id") != os.environ["REQUEST_ID"]
+              or value.get("faults") != []
+          ):
+              raise SystemExit("Railway Telegram production health is invalid")
+          PY
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "acknowledge $REQUEST_ID $activation_sha" \
+            <"$EVIDENCE_ROOT/activation.json" \
+            >"$EVIDENCE_ROOT/hetzner-acknowledgement.json"
+          echo "activation_path=$EVIDENCE_ROOT/activation.json" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Railway Telegram activated"
+            echo
+            echo "- Request: \`$REQUEST_ID\`"
+            echo "- Deployment: \`$DEPLOYMENT_ID\`"
+            echo "- Activation SHA-256: \`$activation_sha\`"
+            echo "- Hetzner acknowledged and remains persistently masked."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain private activation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-telegram-activation-${{ inputs.request_id }}
+          path: ${{ runner.temp }}/railway-telegram-activation
+          retention-days: 90
+
+      - name: Attest the Telegram activation receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.activate.outputs.activation_path }}
+
+  rollback:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'rollback'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: railway-telegram-rollback
+    steps:
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Prove no grant exists and restore Hetzner
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_USER }}
+          HETZNER_KEY: ${{ secrets.HETZNER_TELEGRAM_MIGRATION_SSH_KEY }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = RESTORE_HETZNER_TELEGRAM_BEFORE_GRANT
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p "$HOME/.ssh" "$RUNNER_TEMP/railway-telegram-rollback"
+          chmod 0700 "$HOME/.ssh" "$RUNNER_TEMP/railway-telegram-rollback"
+          printf '%s\n' "$HETZNER_KEY" >"$HOME/.ssh/telegram_key"
+          chmod 0600 "$HOME/.ssh/telegram_key"
+          printf '%s\n' \
+            "$HETZNER_HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" \
+            >"$HOME/.ssh/known_hosts"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json \
+            >"$RUNNER_TEMP/railway-telegram-rollback/link.json"
+          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+            /grants --json \
+            >"$RUNNER_TEMP/railway-telegram-rollback/grants.json"
+          GRANTS="$RUNNER_TEMP/railway-telegram-rollback/grants.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          listing = json.loads(Path(os.environ["GRANTS"]).read_text())
+          if isinstance(listing, list):
+              rows = listing
+          elif listing in ({}, None):
+              rows = []
+          elif isinstance(listing, dict):
+              containers = [
+                  listing[key]
+                  for key in ("files", "entries", "items")
+                  if key in listing
+              ]
+              rows = containers[0] if len(containers) == 1 else None
+          else:
+              rows = None
+          if rows != []:
+              raise SystemExit(
+                  "A Railway Telegram grant exists; rollback is forbidden."
+              )
+          PY
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" \
+            "rollback $REQUEST_ID RESTORE_HETZNER_TELEGRAM_BEFORE_GRANT" \
+            >"$RUNNER_TEMP/railway-telegram-rollback/result.json"
+
+  monitor:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      ((github.event_name == 'schedule' &&
+        vars.RAILWAY_TELEGRAM_PHASE7_ENABLED == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.operation == 'monitor'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: railway-telegram-monitor
+    steps:
+      - name: Check out the exact default-branch identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Prove one active poller, current receipts, and native recovery
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_TELEGRAM_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_TELEGRAM_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_TELEGRAM_ORIGIN }}
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_USER: ${{ secrets.HETZNER_TELEGRAM_MONITOR_USER }}
+          HETZNER_KEY: ${{ secrets.HETZNER_TELEGRAM_MONITOR_SSH_KEY }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-telegram-monitor
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          mkdir -p "$EVIDENCE_ROOT/link" "$HOME/.ssh"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link" "$HOME/.ssh"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 "$RAILWAY_ORIGIN/healthz" \
+            >"$EVIDENCE_ROOT/health.json"
+          REQUEST_ID=$(HEALTH="$EVIDENCE_ROOT/health.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["HEALTH"]).read_text())
+          if (
+              value.get("schema") != "seiche.railway-telegram-health.v1"
+              or value.get("status") != "ready"
+              or value.get("mode") != "production"
+              or not isinstance(value.get("commit"), str)
+              or len(value["commit"]) != 40
+              or any(character not in "0123456789abcdef" for character in value["commit"])
+              or value.get("faults") != []
+          ):
+              raise SystemExit("Telegram production health is invalid")
+          print(value["request_id"])
+          PY
+          )
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]
+          export REQUEST_ID
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/transfers/$REQUEST_ID.json" "$EVIDENCE_ROOT/transfer.json"
+          SNAPSHOT_ID=$(REQUEST="$EVIDENCE_ROOT/transfer.json" \
+            HEALTH="$EVIDENCE_ROOT/health.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          request = json.loads(Path(os.environ["REQUEST"]).read_text())
+          health = json.loads(Path(os.environ["HEALTH"]).read_text())
+          if (
+              request.get("commit") != health.get("commit")
+              or request.get("request_id") != health.get("request_id")
+              or request.get("railway", {}).get("deployment_id")
+              != health.get("deployment_id")
+          ):
+              raise SystemExit("Telegram health differs from its transfer")
+          print(request["snapshot_id"])
+          PY
+          )
+          TELEGRAM_RELEASE_SHA=$(REQUEST="$EVIDENCE_ROOT/transfer.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          print(json.loads(Path(os.environ["REQUEST"]).read_text())["commit"])
+          PY
+          )
+          [[ "$TELEGRAM_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          export TELEGRAM_RELEASE_SHA
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/candidates/$SNAPSHOT_ID-$REQUEST_ID.json" "$EVIDENCE_ROOT/candidate.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/grants/$REQUEST_ID.json" "$EVIDENCE_ROOT/grant.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/worker-proofs/$REQUEST_ID.json" "$EVIDENCE_ROOT/worker-proof.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/activations/$SNAPSHOT_ID-$REQUEST_ID.json" "$EVIDENCE_ROOT/activation.json"
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/runtime/$REQUEST_ID.heartbeat.json" "$EVIDENCE_ROOT/heartbeat.json"
+          PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+            -m seiche.telegram_migration validate-activation \
+            "$EVIDENCE_ROOT/activation.json" \
+            --request "$EVIDENCE_ROOT/transfer.json" \
+            --candidate "$EVIDENCE_ROOT/candidate.json" \
+            --grant "$EVIDENCE_ROOT/grant.json" \
+            --proof "$EVIDENCE_ROOT/worker-proof.json" \
+            >"$EVIDENCE_ROOT/activation.sha256"
+          REQUEST_ID="$REQUEST_ID" \
+            REQUEST="$EVIDENCE_ROOT/transfer.json" \
+            ACTIVATION="$EVIDENCE_ROOT/activation.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          heartbeat_path = Path(os.environ["EVIDENCE_ROOT"] + "/heartbeat.json")
+          heartbeat_body = heartbeat_path.read_bytes()
+          heartbeat = json.loads(heartbeat_body)
+          request = json.loads(Path(os.environ["REQUEST"]).read_bytes())
+          activation = json.loads(Path(os.environ["ACTIVATION"]).read_bytes())
+          canonical = (
+              json.dumps(heartbeat, sort_keys=True, separators=(",", ":")) + "\n"
+          ).encode()
+          observed = datetime.fromisoformat(
+              heartbeat.get("observed_at", "").replace("Z", "+00:00")
+          ).astimezone(UTC)
+          minimum_offset = max(
+              request["state"]["offset"], activation["state"]["observed_offset"]
+          )
+          if (
+              heartbeat_body != canonical
+              or set(heartbeat)
+              != {
+                  "schema", "commit", "deployment_id", "request_id",
+                  "observed_at", "offset", "mode", "faults",
+              }
+              or heartbeat.get("schema") != "seiche.railway-telegram-heartbeat.v1"
+              or heartbeat.get("commit") != os.environ["TELEGRAM_RELEASE_SHA"]
+              or heartbeat.get("deployment_id")
+              != request.get("railway", {}).get("deployment_id")
+              or heartbeat.get("request_id") != os.environ["REQUEST_ID"]
+              or heartbeat.get("mode") != "production"
+              or heartbeat.get("faults") != []
+              or not isinstance(heartbeat.get("offset"), int)
+              or isinstance(heartbeat.get("offset"), bool)
+              or heartbeat["offset"] < minimum_offset
+              or not timedelta(0) <= datetime.now(UTC) - observed <= timedelta(minutes=2)
+          ):
+              raise SystemExit("Telegram worker heartbeat is stale or invalid")
+          PY
+          cat >native.graphql <<'GRAPHQL'
+          query TelegramRecovery($volumeId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath sizeMB currentSizeMB
+              deletedAt isPendingDeletion
+            }
+          }
+          GRAPHQL
+          railway api --file native.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact >native.json
+          volume_instance_id=$(VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("native.json").read_text()).get("data", {}).get(
+              "adminVolumeInstancesForVolume", []
+          )
+          matches = [
+              row for row in rows
+              if row.get("volumeId") == os.environ["VOLUME_ID"]
+              and row.get("environmentId") == os.environ["ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-telegram"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Telegram volume identity changed")
+          size = matches[0].get("sizeMB")
+          used = matches[0].get("currentSizeMB")
+          if not isinstance(size, int) or size <= 0 or not isinstance(used, (int, float)):
+              raise SystemExit("Telegram volume usage is unavailable")
+          if used / size >= 0.80:
+              raise SystemExit("Telegram volume has less than twenty percent headroom")
+          print(matches[0]["id"])
+          PY
+          )
+          cat >native-recovery.graphql <<'GRAPHQL'
+          query TelegramNativeRecovery($volumeInstanceId: String!) {
+            volumeInstanceBackupScheduleList(volumeInstanceId: $volumeInstanceId) {
+              id kind cron name retentionSeconds createdAt
+            }
+            volumeInstanceBackupList(volumeInstanceId: $volumeInstanceId) {
+              id name createdAt expiresAt scheduleId volumeInstanceSizeMB
+            }
+          }
+          GRAPHQL
+          railway api --file native-recovery.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+            >native-recovery.json
+          NATIVE_CANDIDATE_BACKUP="seiche-phase7-candidate-${SNAPSHOT_ID}-${REQUEST_ID:0:12}" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          def fresh(value: object) -> bool:
+              try:
+                  created = datetime.fromisoformat(
+                      str(value).replace("Z", "+00:00")
+                  ).astimezone(UTC)
+              except (TypeError, ValueError):
+                  return False
+              age = datetime.now(UTC) - created
+              return timedelta(0) <= age <= timedelta(hours=26)
+
+          native = json.loads(Path("native-recovery.json").read_text()).get("data", {})
+          schedules = native.get("volumeInstanceBackupScheduleList")
+          if (
+              not isinstance(schedules, list)
+              or len(schedules) != 3
+              or any(not isinstance(row, dict) for row in schedules)
+              or {row.get("kind") for row in schedules}
+              != {"DAILY", "WEEKLY", "MONTHLY"}
+          ):
+              raise SystemExit("Telegram native backup schedules are not exact")
+          backups = native.get("volumeInstanceBackupList")
+          if not isinstance(backups, list) or not backups:
+              raise SystemExit("Telegram volume has no native backups")
+          if not any(
+              fresh(row.get("createdAt"))
+              for row in backups
+              if isinstance(row, dict)
+          ):
+              raise SystemExit("latest Telegram native backup is stale")
+          if not any(
+              isinstance(row, dict)
+              and str(row.get("name", "")).startswith("seiche-phase7-bootstrap-")
+              and row.get("expiresAt") is None
+              for row in backups
+          ):
+              raise SystemExit("Telegram volume has no locked Phase 7 canary")
+          if not any(
+              isinstance(row, dict)
+              and row.get("name") == os.environ["NATIVE_CANDIDATE_BACKUP"]
+              and row.get("expiresAt") is None
+              for row in backups
+          ):
+              raise SystemExit("Telegram restored candidate backup is not locked")
+          PY
+          printf '%s\n' "$HETZNER_KEY" >"$HOME/.ssh/telegram_key"
+          chmod 0600 "$HOME/.ssh/telegram_key"
+          printf '%s\n' \
+            "$HETZNER_HOST ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKAeD2Er1pFiZR4FPkgY5FeoNhXHy36kDDRCZMUVzABL" \
+            >"$HOME/.ssh/known_hosts"
+          ssh -i "$HOME/.ssh/telegram_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$HETZNER_USER@$HETZNER_HOST" "status $REQUEST_ID" \
+            >"$EVIDENCE_ROOT/hetzner-status.json"
+          STATUS="$EVIDENCE_ROOT/hetzner-status.json" \
+            REQUEST="$EVIDENCE_ROOT/transfer.json" \
+            ACTIVATION="$EVIDENCE_ROOT/activation.json" python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          status_body = Path(os.environ["STATUS"]).read_bytes()
+          status = json.loads(status_body)
+          request = json.loads(Path(os.environ["REQUEST"]).read_bytes())
+          activation_body = Path(os.environ["ACTIVATION"]).read_bytes()
+          fence_body = (
+              json.dumps(request["fence"], sort_keys=True, separators=(",", ":"))
+              + "\n"
+          ).encode()
+          canonical = (
+              json.dumps(status, sort_keys=True, separators=(",", ":")) + "\n"
+          ).encode()
+          expected_keys = {
+              "schema", "request_id", "commit", "snapshot_id",
+              "archive_sha256", "fence_sha256", "metadata_sha256",
+              "activation_sha256", "source_frozen", "authority",
+          }
+          if (
+              status_body != canonical
+              or set(status) != expected_keys
+              or status.get("schema") != "seiche.hetzner-telegram-status.v1"
+              or status.get("request_id") != request.get("request_id")
+              or status.get("commit") != request.get("commit")
+              or status.get("snapshot_id") != request.get("snapshot_id")
+              or status.get("archive_sha256") != request.get("archive_sha256")
+              or status.get("fence_sha256")
+              != hashlib.sha256(fence_body).hexdigest()
+              or not isinstance(status.get("metadata_sha256"), str)
+              or len(status["metadata_sha256"]) != 64
+              or any(
+                  character not in "0123456789abcdef"
+                  for character in status["metadata_sha256"]
+              )
+              or status.get("activation_sha256")
+              != hashlib.sha256(activation_body).hexdigest()
+              or status.get("source_frozen") is not True
+              or status.get("authority") != "railway"
+          ):
+              raise SystemExit("Hetzner Telegram acknowledgement differs")
+          PY
+          {
+            echo "### Railway Telegram monitor"
+            echo
+            echo "- Telegram release: \`$TELEGRAM_RELEASE_SHA\`"
+            echo "- Monitor workflow release: \`$GITHUB_SHA\`"
+            echo "- Request: \`$REQUEST_ID\`"
+            echo "- Poll heartbeat, authority chain, native backups, and Hetzner fence: passed"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain private monitor evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-telegram-monitor-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/railway-telegram-monitor
+          retention-days: 30
