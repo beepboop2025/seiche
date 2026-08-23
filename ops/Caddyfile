@@ -45,6 +45,16 @@
     }
 }
 
+# Seiche's REST and MCP origin is local until the reviewed Railway edge file
+# supplies both an HTTPS upstream and its unguessable ingress token. Parse-time
+# defaults keep ordinary installs and pre-cutover releases on loopback.
+(seiche_stateful_upstream) {
+    reverse_proxy {$SEICHE_API_UPSTREAM:127.0.0.1:8787} {
+        header_up Host {upstream_hostport}
+        header_up X-Seiche-Edge-Token {$SEICHE_RAILWAY_EDGE_TOKEN:local-edge-token-unused}
+    }
+}
+
 api.seiche.info {
     import accesslog
     import security_headers
@@ -402,7 +412,7 @@ api.seiche.info {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
         header X-Content-Type-Options "nosniff"
-        reverse_proxy 127.0.0.1:8787
+        import seiche_stateful_upstream
     }
     # Remaining public POST routes share the normal uncapped application
     # contract; the event-specific ceiling must not affect their payloads.
@@ -414,12 +424,12 @@ api.seiche.info {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
         header X-Content-Type-Options "nosniff"
-        reverse_proxy 127.0.0.1:8787
+        import seiche_stateful_upstream
     }
     handle @login {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Headers "Authorization, Content-Type"
-        reverse_proxy 127.0.0.1:8787
+        import seiche_stateful_upstream
     }
     @preflight method OPTIONS
     handle @preflight {
@@ -436,7 +446,7 @@ api.seiche.info {
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
         header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE, Warning, Deprecation, Sunset"
         header X-Content-Type-Options "nosniff"
-        reverse_proxy 127.0.0.1:8787
+        import seiche_stateful_upstream
     }
     # Glama MCP-directory ownership proof — the connector claim for
     # io.github.beepboop2025/seiche checks this exact path on the
