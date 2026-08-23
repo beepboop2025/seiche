@@ -69,6 +69,8 @@ PROMOTION_REQUEST_DIR=/run/seiche-release
 DEPLOY_STATE_DIR=/var/lib/seiche-deploy
 PROMOTION_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-snapshot-promote.service"
 PROMOTION_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-promote.service
+IMPORT_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-snapshot-import.service"
+IMPORT_UNIT_DESTINATION=/etc/systemd/system/seiche-snapshot-import.service
 WORKER_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-worker.service"
 WORKER_UNIT_DESTINATION=/etc/systemd/system/seiche-market-worker.service
 SOURCE_WORKER_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-source-worker.service"
@@ -121,6 +123,7 @@ required_paths = {
     "ops/deploy/seiche-market-worker.service",
     "ops/deploy/seiche-nbs-intake.py",
     "ops/deploy/seiche-snapshot-promote.service",
+    "ops/deploy/seiche-snapshot-import.service",
     "ops/deploy/seiche-source-worker.service",
     "ops/deploy/seiche-storage-preflight.py",
     "ops/deploy/seiche-storage-preflight.service",
@@ -1532,7 +1535,9 @@ cleanup() {
         rmdir "$WORKER_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
     if [ -n "$PROMOTION_UNIT_STAGE_DIR" ]; then
-        rm -f -- "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"
+        rm -f -- \
+            "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service" \
+            "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-import.service"
         rmdir "$PROMOTION_UNIT_STAGE_DIR" 2>/dev/null || true
     fi
     if [ -n "$STORAGE_PREFLIGHT_UNIT_STAGE_DIR" ]; then
@@ -1929,13 +1934,18 @@ PROMOTION_UNIT_STAGE_DIR=$(mktemp -d \
     /etc/systemd/system/.seiche-snapshot-promote-stage.XXXXXX)
 install -m 0644 "$PROMOTION_UNIT_SOURCE" \
     "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"
+install -m 0644 "$IMPORT_UNIT_SOURCE" \
+    "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-import.service"
 if ! systemd-analyze verify \
-        "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service"; then
-    echo "market platform: snapshot promotion unit failed verification" >&2
+        "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service" \
+        "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-import.service"; then
+    echo "market platform: snapshot handoff units failed verification" >&2
     exit 1
 fi
 mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-promote.service" \
     "$PROMOTION_UNIT_DESTINATION"
+mv -f "$PROMOTION_UNIT_STAGE_DIR/seiche-snapshot-import.service" \
+    "$IMPORT_UNIT_DESTINATION"
 rmdir "$PROMOTION_UNIT_STAGE_DIR"
 PROMOTION_UNIT_STAGE_DIR=""
 
@@ -2114,6 +2124,7 @@ SYSTEMD_VERIFY_UNITS=(
     /etc/systemd/system/seiche-data-readiness.service
     /etc/systemd/system/seiche-data-readiness.timer
     /etc/systemd/system/seiche-snapshot-promote.service
+    /etc/systemd/system/seiche-snapshot-import.service
     /etc/systemd/system/seiche-api.service
     /etc/systemd/system/seiche-release-poll.service
     /etc/systemd/system/seiche-release-poll.timer

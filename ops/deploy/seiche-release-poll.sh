@@ -18,6 +18,7 @@ CONTROL_LOCK="$RUNTIME_DIR/release.lock"
 DEPLOY_STATE="${SEICHE_CONTROL_DEPLOY_STATE:-/var/lib/seiche-deploy/deployed-sha}"
 DEPLOY_WRAPPER="${SEICHE_CONTROL_DEPLOY_WRAPPER:-/var/lib/seiche-deploy/bin/seiche-deploy-wrapper.sh}"
 REMOTE_GATE_VERIFIER="${SEICHE_CONTROL_REMOTE_GATE_VERIFIER:-/var/lib/seiche-deploy/bin/seiche-remote-gate-verify.py}"
+REMOTE_SNAPSHOT_VERIFIER="${SEICHE_CONTROL_REMOTE_SNAPSHOT_VERIFIER:-/var/lib/seiche-deploy/bin/seiche-remote-snapshot-verify.py}"
 RUNUSER=/usr/sbin/runuser
 SYSTEMCTL="${SEICHE_CONTROL_SYSTEMCTL:-systemctl}"
 CURL="${SEICHE_CONTROL_CURL:-curl}"
@@ -53,6 +54,10 @@ REMOTE_GATE_REPOSITORY="beepboop2025/seiche"
 REMOTE_GATE_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 REMOTE_GATE_ARTIFACT_REPOSITORY="ghcr.io/beepboop2025/seiche-release-gates"
 REMOTE_GATE_RUNNER_IMAGE="docker.io/library/python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
+REMOTE_SNAPSHOT_REPOSITORY="beepboop2025/seiche"
+REMOTE_SNAPSHOT_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-snapshot-prebuild.yml"
+REMOTE_SNAPSHOT_ARTIFACT_REPOSITORY="ghcr.io/beepboop2025/seiche-release-snapshots"
+REMOTE_SNAPSHOT_RUNNER_IMAGE="docker.io/library/python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
 STARTED_AT=$(date -u +%FT%TZ)
 CANDIDATE_ADDED=""
 HEALTH_BODY=""
@@ -66,6 +71,7 @@ GATE_PROCESS_PID=""
 GATE_PROCESS_GROUP_READY=0
 GATE_TICK_PID=""
 GATE_SUPERSEDED_SHA=""
+SNAPSHOT_ARTIFACT=""
 
 fail() {
   echo "FAIL: $*" >&2
@@ -391,6 +397,7 @@ run_deploy_wrapper() {
       /usr/bin/env -i \
         HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
         SEICHE_EXPECTED_TARGET_SHA="$target" \
+        SEICHE_PREBUILT_SNAPSHOT_ARTIFACT="$SNAPSHOT_ARTIFACT" \
         /usr/bin/bash -p "$DEPLOY_WRAPPER"
       ;;
     *) fail "deploy-wrapper handoff mode is invalid" ;;
@@ -423,8 +430,10 @@ receipt_path_exists() {
 
 validate_receipt() {
   local path="$1" kind="$2" commit="$3" tree="$4" gate_digest="${5:-}"
+  local snapshot_digest="${6:-}"
   "$SYSTEM_PYTHON" - "$path" "$kind" "$commit" "$tree" \
-    "$INSTALL_COMMAND" "$REMOTE_GATE_INSTALL_COMMAND" "$TEST_COMMAND" "$gate_digest" \
+    "$INSTALL_COMMAND" "$REMOTE_GATE_INSTALL_COMMAND" "$TEST_COMMAND" \
+    "$gate_digest" "$snapshot_digest" \
     "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" \
     "$REMOTE_GATE_REPOSITORY" "$REMOTE_GATE_WORKFLOW" \
     "$REMOTE_GATE_ARTIFACT_REPOSITORY" "$REMOTE_GATE_RUNNER_IMAGE" <<'PY'
@@ -443,6 +452,7 @@ import sys
     remote_install_command,
     test_command,
     gate_digest,
+    snapshot_digest,
     expected_uid,
     expected_gid,
     expected_mode,
@@ -512,6 +522,7 @@ try:
             }
             assert re.fullmatch(r"[0-9a-f]{64}", gate_digest)
             assert payload["gate_receipt_sha256"] == gate_digest
+            assert not snapshot_digest
     elif schema == "seiche.release-receipt.v2" and kind == "release":
         assert set(payload) == {
             "schema",
@@ -525,6 +536,23 @@ try:
         }
         assert re.fullmatch(r"[0-9a-f]{64}", gate_digest)
         assert payload["gate_receipt_sha256"] == gate_digest
+        assert not snapshot_digest
+    elif schema == "seiche.release-receipt.v3" and kind == "release":
+        assert set(payload) == {
+            "schema",
+            "kind",
+            "commit",
+            "tree",
+            "started_at",
+            "completed_at",
+            "conclusion",
+            "gate_receipt_sha256",
+            "snapshot_receipt_sha256",
+        }
+        assert re.fullmatch(r"[0-9a-f]{64}", gate_digest)
+        assert re.fullmatch(r"[0-9a-f]{64}", snapshot_digest)
+        assert payload["gate_receipt_sha256"] == gate_digest
+        assert payload["snapshot_receipt_sha256"] == snapshot_digest
     elif schema == "seiche.release-receipt.v2" and kind == "gate":
         provider = payload.get("gate_provider")
         assert provider in {"railway", "local-break-glass"}
@@ -648,25 +676,156 @@ except (AssertionError, OSError, UnicodeError, ValueError, TypeError, json.JSOND
 PY
 }
 
-# Return 0 only for a complete, exact gate+release evidence chain. A missing
+validate_snapshot_receipt() {
+  local path="$1" commit="$2" tree="$3"
+  "$SYSTEM_PYTHON" -I -B - "$path" "$commit" "$tree" \
+    "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" \
+    "$REMOTE_SNAPSHOT_REPOSITORY" "$REMOTE_SNAPSHOT_WORKFLOW" \
+    "$REMOTE_SNAPSHOT_ARTIFACT_REPOSITORY" "$REMOTE_SNAPSHOT_RUNNER_IMAGE" <<'PY'
+from datetime import datetime
+import json
+import os
+import re
+import stat
+import sys
+
+(
+    path,
+    commit,
+    tree,
+    expected_uid,
+    expected_gid,
+    expected_mode,
+    repository,
+    workflow,
+    artifact_repository,
+    runner_image,
+) = sys.argv[1:]
+descriptor = -1
+try:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+    )
+    info = os.fstat(descriptor)
+    assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    assert info.st_uid == int(expected_uid) and info.st_gid == int(expected_gid)
+    assert stat.S_IMODE(info.st_mode) == int(expected_mode, 8)
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        descriptor = -1
+        payload = json.load(handle)
+    assert set(payload) == {
+        "schema", "kind", "commit", "tree", "generated_at", "started_at",
+        "completed_at", "conclusion", "snapshot_provider", "payload_sha256",
+        "payload_size_bytes", "remote",
+    }
+    assert payload["schema"] == "seiche.remote-snapshot-receipt.v1"
+    assert payload["kind"] == "snapshot-prebuild"
+    assert payload["commit"] == commit and payload["tree"] == tree
+    assert payload["conclusion"] == "success"
+    assert payload["snapshot_provider"] == "railway"
+    assert re.fullmatch(r"[0-9a-f]{64}", payload["payload_sha256"])
+    assert type(payload["payload_size_bytes"]) is int
+    assert 1 <= payload["payload_size_bytes"] <= 64 * 1024 * 1024
+    generated = datetime.fromisoformat(payload["generated_at"].replace("Z", "+00:00"))
+    started = datetime.fromisoformat(payload["started_at"].replace("Z", "+00:00"))
+    completed = datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
+    assert generated.tzinfo and started.tzinfo and completed.tzinfo
+    assert started <= generated <= completed
+    remote = payload["remote"]
+    assert set(remote) == {
+        "repository", "workflow", "source_ref", "artifact_repository",
+        "artifact_digest", "artifact_snapshot_sha256",
+        "source_archive_sha256", "request_id", "runner_image",
+        "python_version", "dependency_snapshot_sha256",
+        "railway_deployment_id", "railway_project_id",
+        "railway_environment_id", "railway_service_id",
+        "railway_replica_region", "provenance_sha256", "provenance_count",
+        "faults_sha256", "fault_count",
+    }
+    assert remote["repository"] == repository
+    assert remote["workflow"] == workflow
+    assert remote["source_ref"] == "refs/heads/main"
+    assert remote["artifact_repository"] == artifact_repository
+    assert remote["runner_image"] == runner_image
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", remote["artifact_digest"])
+    for key in (
+        "artifact_snapshot_sha256", "source_archive_sha256", "request_id",
+        "dependency_snapshot_sha256", "provenance_sha256", "faults_sha256",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{64}", remote[key])
+    assert re.fullmatch(r"3\.12\.[0-9]+", remote["python_version"])
+    uuid = re.compile(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+        r"[0-9a-f]{4}-[0-9a-f]{12}"
+    )
+    for key in (
+        "railway_deployment_id", "railway_project_id",
+        "railway_environment_id", "railway_service_id",
+    ):
+        assert uuid.fullmatch(remote[key])
+    assert re.fullmatch(
+        r"[a-z0-9][a-z0-9-]{0,63}", remote["railway_replica_region"]
+    )
+    assert type(remote["provenance_count"]) is int and remote["provenance_count"] >= 0
+    assert type(remote["fault_count"]) is int and remote["fault_count"] >= 0
+except (
+    AssertionError, KeyError, OSError, UnicodeError, ValueError, TypeError,
+    json.JSONDecodeError,
+):
+    raise SystemExit(1) from None
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+PY
+}
+
+# Return 0 only for a complete, exact gate+snapshot+release evidence chain. A missing
 # member returns 1 so the caller converges by running the full gate. Any
 # existing but invalid member returns 2 and must fail closed.
 receipt_pair_status() {
-  local commit="$1" tree="$2" gate_receipt="$3" release_receipt="$4"
-  local gate_present=0 release_present=0 gate_digest=""
+  local commit="$1" tree="$2" gate_receipt="$3" snapshot_receipt=""
+  local release_receipt="" legacy_pair=0 gate_present=0 snapshot_present=0
+  local release_present=0
+  local gate_digest="" snapshot_digest=""
+  if [ "$#" -eq 4 ]; then
+    release_receipt="$4"
+    legacy_pair=1
+  else
+    snapshot_receipt="$4"
+    release_receipt="$5"
+  fi
   receipt_path_exists "$gate_receipt" && gate_present=1
+  if [ -n "$snapshot_receipt" ] && receipt_path_exists "$snapshot_receipt"; then
+    snapshot_present=1
+  fi
   receipt_path_exists "$release_receipt" && release_present=1
 
   if [ "$gate_present" = 0 ]; then
-    [ "$release_present" = 0 ] && return 1
+    [ "$snapshot_present" = 0 ] && [ "$release_present" = 0 ] && return 1
     return 2
   fi
   validate_receipt "$gate_receipt" gate "$commit" "$tree" || return 2
+  if [ "$snapshot_present" = 0 ]; then
+    [ "$release_present" = 0 ] && return 1
+    if [ "$legacy_pair" != 1 ]; then
+      validate_gate_provider "$gate_receipt" local-break-glass || return 2
+    fi
+    gate_digest=$("$SHA256SUM" "$gate_receipt" | awk '{print $1}') || return 2
+    [[ "$gate_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
+    validate_receipt \
+      "$release_receipt" release "$commit" "$tree" "$gate_digest" || return 2
+    return 0
+  fi
+  validate_snapshot_receipt "$snapshot_receipt" "$commit" "$tree" || return 2
   [ "$release_present" = 1 ] || return 1
   gate_digest=$("$SHA256SUM" "$gate_receipt" | awk '{print $1}') || return 2
+  snapshot_digest=$("$SHA256SUM" "$snapshot_receipt" | awk '{print $1}') || return 2
   [[ "$gate_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
+  [[ "$snapshot_digest" =~ ^[0-9a-f]{64}$ ]] || return 2
   validate_receipt \
-    "$release_receipt" release "$commit" "$tree" "$gate_digest" || return 2
+    "$release_receipt" release "$commit" "$tree" \
+    "$gate_digest" "$snapshot_digest" || return 2
   return 0
 }
 
@@ -701,6 +860,77 @@ install_remote_gate_receipt() {
       || ! "$SYNC" "$RECEIPT_DIR"; then
     rm -f -- "$stage"
     fail "could not atomically install the verified Railway gate receipt"
+  fi
+}
+
+snapshot_artifact_matches_receipt() {
+  local artifact="$1" receipt="$2"
+  [ -f "$artifact" ] && [ ! -L "$artifact" ] \
+    && [ "$(stat -c '%U:%G:%a:%h' "$artifact")" = root:root:600:1 ] \
+    || return 1
+  "$SYSTEM_PYTHON" -I -B - "$artifact" "$receipt" <<'PY'
+import hashlib
+import json
+import os
+import sys
+
+artifact, receipt = sys.argv[1:]
+digest = hashlib.sha256()
+with open(artifact, "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+with open(receipt, encoding="utf-8") as handle:
+    expected = json.load(handle)["remote"]["artifact_snapshot_sha256"]
+if digest.hexdigest() != expected:
+    raise SystemExit(1)
+PY
+}
+
+install_remote_snapshot_receipt() {
+  local path="$1" artifact="$2" stage="" verifier_status=0
+  if receipt_path_exists "$artifact"; then
+    if [ -L "$artifact" ] || [ ! -f "$artifact" ] \
+        || [ "$(stat -c '%U:%G:%a:%h' "$artifact")" != root:root:600:1 ]; then
+      fail "stale snapshot artifact path is unsafe"
+    fi
+    rm -f -- "$artifact" || fail "stale snapshot artifact could not be cleared"
+  fi
+  stage=$(mktemp "$RECEIPT_DIR/.${TARGET}.remote-snapshot.XXXXXX") \
+    || fail "could not stage the remote snapshot receipt"
+  "$SYSTEM_PYTHON" -I -B "$REMOTE_SNAPSHOT_VERIFIER" \
+      --app "$APP_DIR" \
+      --service-user "$SERVICE_USER" \
+      --target "$TARGET" \
+      --tree "$CANDIDATE_TREE" \
+      --artifact-output "$artifact" >"$stage" || verifier_status=$?
+  if [ "$verifier_status" = 75 ]; then
+    rm -f -- "$stage" "$artifact"
+    return 75
+  elif [ "$verifier_status" != 0 ]; then
+    rm -f -- "$stage" "$artifact"
+    fail "attested Railway snapshot verification failed; slow rebuild was not selected automatically"
+  fi
+  if ! chown root:root "$stage" || ! chmod 0400 "$stage" \
+      || ! validate_snapshot_receipt "$stage" "$TARGET" "$CANDIDATE_TREE" \
+      || ! snapshot_artifact_matches_receipt "$artifact" "$stage"; then
+    rm -f -- "$stage" "$artifact"
+    fail "verified Railway snapshot evidence is unsafe"
+  fi
+  if receipt_path_exists "$path"; then
+    if ! validate_snapshot_receipt "$path" "$TARGET" "$CANDIDATE_TREE" \
+        || ! cmp -s "$stage" "$path" \
+        || ! snapshot_artifact_matches_receipt "$artifact" "$path"; then
+      rm -f -- "$stage" "$artifact"
+      fail "existing snapshot receipt differs from the current exact-SHA artifact"
+    fi
+    rm -f -- "$stage"
+    return 0
+  fi
+  if ! "$SYNC" -f "$stage" || ! ln "$stage" "$path" \
+      || ! "$SYNC" "$RECEIPT_DIR" || ! rm -f -- "$stage" \
+      || ! "$SYNC" "$RECEIPT_DIR"; then
+    rm -f -- "$stage" "$artifact"
+    fail "could not atomically install the verified Railway snapshot receipt"
   fi
 }
 
@@ -759,6 +989,57 @@ PY
     fail "attested Railway gate remained unpublished for ${age}s; local gate was not run automatically"
   fi
   printf 'release poll: Railway evidence pending for %ss (hard failure after %ss)\n' \
+    "$age" "$REMOTE_GATE_PENDING_MAX_SECONDS"
+}
+
+record_remote_snapshot_pending() {
+  local path="$RECEIPT_DIR/$TARGET.snapshot-pending" stage="" now="" started="" age=""
+  now=$(date -u +%s) || fail "could not read the remote snapshot pending clock"
+  [[ "$now" =~ ^[0-9]+$ ]] || fail "remote snapshot pending clock is invalid"
+  if receipt_path_exists "$path"; then
+    started=$("$SYSTEM_PYTHON" -I -B - "$path" <<'PY'
+import os
+import re
+import stat
+import sys
+
+descriptor = os.open(
+    sys.argv[1], os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+)
+try:
+    info = os.fstat(descriptor)
+    assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+    assert info.st_uid == 0 and info.st_gid == 0
+    assert stat.S_IMODE(info.st_mode) == 0o400
+    value = os.read(descriptor, 64).decode("ascii")
+    assert re.fullmatch(r"[0-9]+\n", value)
+    print(value.strip())
+except (AssertionError, OSError, UnicodeError, ValueError):
+    raise SystemExit(1) from None
+finally:
+    os.close(descriptor)
+PY
+    ) || fail "remote snapshot pending evidence is unsafe"
+  else
+    stage=$(mktemp "$RECEIPT_DIR/.${TARGET}.snapshot-pending.XXXXXX") \
+      || fail "could not stage remote snapshot pending evidence"
+    if ! printf '%s\n' "$now" >"$stage" \
+        || ! chown root:root "$stage" || ! chmod 0400 "$stage" \
+        || ! "$SYNC" -f "$stage" || ! ln "$stage" "$path" \
+        || ! "$SYNC" "$RECEIPT_DIR" || ! rm -f -- "$stage" \
+        || ! "$SYNC" "$RECEIPT_DIR"; then
+      rm -f -- "$stage"
+      fail "could not atomically record remote snapshot pending evidence"
+    fi
+    started="$now"
+  fi
+  [[ "$started" =~ ^[0-9]+$ ]] || fail "remote snapshot pending start is invalid"
+  (( started <= now )) || fail "remote snapshot pending start is in the future"
+  age=$((now - started))
+  if (( age >= REMOTE_GATE_PENDING_MAX_SECONDS )); then
+    fail "attested Railway snapshot remained unpublished for ${age}s; slow rebuild was not selected automatically"
+  fi
+  printf 'release poll: Railway snapshot pending for %ss (hard failure after %ss)\n' \
     "$age" "$REMOTE_GATE_PENDING_MAX_SECONDS"
 }
 
@@ -852,6 +1133,10 @@ cleanup() {
   if [ -n "$HEALTH_BODY" ]; then
     rm -f -- "$HEALTH_BODY" || true
   fi
+  if [ -n "$SNAPSHOT_ARTIFACT" ]; then
+    rm -f -- "$SNAPSHOT_ARTIFACT" || true
+    SNAPSHOT_ARTIFACT=""
+  fi
   if [ -n "$CANDIDATE_ADDED" ]; then
     if ! as_service git -C "$APP_DIR" worktree remove --force "$CANDIDATE_DIR"; then
       echo "FAIL: candidate worktree cleanup failed: $CANDIDATE_DIR" >&2
@@ -906,6 +1191,8 @@ esac
 if [ "$LOCAL_GATE_BREAK_GLASS" = 0 ]; then
   [ -x "$REMOTE_GATE_VERIFIER" ] \
     || fail "remote Railway gate verifier is missing or not executable: $REMOTE_GATE_VERIFIER"
+  [ -x "$REMOTE_SNAPSHOT_VERIFIER" ] \
+    || fail "remote Railway snapshot verifier is missing or not executable: $REMOTE_SNAPSHOT_VERIFIER"
 fi
 if [[ ! "$ADMISSION_WAIT_SECONDS" =~ ^[0-9]+$ ]] \
     || (( ADMISSION_WAIT_SECONDS > 3600 )); then
@@ -980,10 +1267,12 @@ TARGET_TREE=$(as_service git -C "$APP_DIR" rev-parse "$TARGET^{tree}") \
   || fail "target tree identity could not be resolved"
 valid_sha "$TARGET_TREE" || fail "target tree identity is invalid"
 GATE_RECEIPT="$RECEIPT_DIR/$TARGET.gate.json"
+SNAPSHOT_RECEIPT="$RECEIPT_DIR/$TARGET.snapshot.json"
 RELEASE_RECEIPT="$RECEIPT_DIR/$TARGET.release.json"
 RECEIPT_PAIR_STATUS=0
 receipt_pair_status \
-  "$TARGET" "$TARGET_TREE" "$GATE_RECEIPT" "$RELEASE_RECEIPT" \
+  "$TARGET" "$TARGET_TREE" "$GATE_RECEIPT" "$SNAPSHOT_RECEIPT" \
+  "$RELEASE_RECEIPT" \
   || RECEIPT_PAIR_STATUS=$?
 case "$RECEIPT_PAIR_STATUS" in
   0|1) ;;
@@ -1144,10 +1433,10 @@ if [ "$LATEST" != "$TARGET" ]; then
 fi
 
 write_receipt() {
-  local kind="$1" path="$2" gate_digest="${3:-}" stage=""
+  local kind="$1" path="$2" gate_digest="${3:-}" snapshot_digest="${4:-}" stage=""
   if receipt_path_exists "$path"; then
     validate_receipt "$path" "$kind" "$TARGET" "$CANDIDATE_TREE" \
-      "$gate_digest" \
+      "$gate_digest" "$snapshot_digest" \
       || fail "existing $kind receipt does not bind this exact candidate safely"
     if [ "$kind" = gate ]; then
       validate_gate_provider "$path" local-break-glass \
@@ -1159,7 +1448,7 @@ write_receipt() {
     || fail "could not stage the $kind receipt"
   if ! "$SYSTEM_PYTHON" - "$kind" "$TARGET" "$CANDIDATE_TREE" \
       "$STARTED_AT" "$(date -u +%FT%TZ)" "$INSTALL_COMMAND" \
-      "$TEST_COMMAND" "$gate_digest" \
+      "$TEST_COMMAND" "$gate_digest" "$snapshot_digest" \
       >"$stage" <<'PY'
 import json
 import sys
@@ -1173,9 +1462,14 @@ import sys
     install_command,
     test_command,
     gate_digest,
+    snapshot_digest,
 ) = sys.argv[1:]
 payload = {
-    "schema": "seiche.release-receipt.v2",
+    "schema": (
+        "seiche.release-receipt.v3"
+        if kind == "release" and snapshot_digest
+        else "seiche.release-receipt.v2"
+    ),
     "kind": kind,
     "commit": commit,
     "tree": tree,
@@ -1192,6 +1486,8 @@ if kind == "gate":
     }
 else:
     payload["gate_receipt_sha256"] = gate_digest
+    if snapshot_digest:
+        payload["snapshot_receipt_sha256"] = snapshot_digest
 print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 PY
   then
@@ -1203,7 +1499,7 @@ PY
   # unexpectedly instead of silently reporting success without installing it.
   if ! chown root:root "$stage" || ! chmod 0400 "$stage" \
       || ! validate_receipt "$stage" "$kind" "$TARGET" "$CANDIDATE_TREE" \
-        "$gate_digest" \
+        "$gate_digest" "$snapshot_digest" \
       || ! "$SYNC" -f "$stage" || ! ln "$stage" "$path" \
       || ! "$SYNC" "$RECEIPT_DIR" || ! rm -f -- "$stage" \
       || ! "$SYNC" "$RECEIPT_DIR"; then
@@ -1230,6 +1526,34 @@ if [ "$GATE_ONLY" = 1 ]; then
     echo "release poll: attested Railway gate-only success for ${TARGET:0:7}; production unchanged"
   fi
   exit 0
+fi
+
+SNAPSHOT_DIGEST=""
+if [ "$LOCAL_GATE_BREAK_GLASS" = 0 ]; then
+  SNAPSHOT_ARTIFACT="$RUNTIME_DIR/$TARGET.snapshot.json"
+  REMOTE_SNAPSHOT_STATUS=0
+  install_remote_snapshot_receipt \
+    "$SNAPSHOT_RECEIPT" "$SNAPSHOT_ARTIFACT" || REMOTE_SNAPSHOT_STATUS=$?
+  if [ "$REMOTE_SNAPSHOT_STATUS" = 75 ]; then
+    record_remote_snapshot_pending
+    echo "release poll: attested Railway snapshot for ${TARGET:0:7} is still pending; production unchanged"
+    exit 0
+  elif [ "$REMOTE_SNAPSHOT_STATUS" != 0 ]; then
+    fail "unexpected remote snapshot verifier status: $REMOTE_SNAPSHOT_STATUS"
+  fi
+  validate_snapshot_receipt \
+    "$SNAPSHOT_RECEIPT" "$TARGET" "$CANDIDATE_TREE" \
+    || fail "verified Railway snapshot receipt changed before deployment"
+  snapshot_artifact_matches_receipt \
+    "$SNAPSHOT_ARTIFACT" "$SNAPSHOT_RECEIPT" \
+    || fail "verified Railway snapshot artifact changed before deployment"
+  SNAPSHOT_DIGEST=$("$SHA256SUM" "$SNAPSHOT_RECEIPT" | awk '{print $1}') \
+    || fail "could not digest the candidate snapshot receipt"
+  [[ "$SNAPSHOT_DIGEST" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "candidate snapshot receipt digest is invalid"
+  echo "release poll: verified attested Railway prebuild for ${TARGET:0:7}"
+else
+  echo "release poll: local break-glass will use the bounded on-host rebuild path"
 fi
 
 # The deploy wrapper still requires a quiet host before checkout mutation and
@@ -1297,6 +1621,10 @@ fi
 release_timer_is_ready \
   || fail "release timer is not enabled and active after deployment"
 
-write_receipt release "$RELEASE_RECEIPT" "$GATE_DIGEST"
+write_receipt release "$RELEASE_RECEIPT" "$GATE_DIGEST" "$SNAPSHOT_DIGEST"
 RELEASE_TIMER_RESTORE_REQUIRED=0
-echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, $RELEASE_RECEIPT)"
+if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then
+  echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, break-glass, $RELEASE_RECEIPT)"
+else
+  echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, $SNAPSHOT_RECEIPT, $RELEASE_RECEIPT)"
+fi

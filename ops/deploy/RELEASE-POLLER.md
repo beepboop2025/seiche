@@ -10,7 +10,7 @@ receipt. Railway supplies CPU only; GitHub packages and attests the evidence;
 Hetzner remains the only production authority. The existing root deploy wrapper
 remains the sole owner of service quiescence, snapshot activation, Caddy
 deployment, health gates, and rollback. See `RAILWAY-GATE.md` for bootstrap and
-the complete phase-1 contract.
+the complete Phase 1/Phase 2 contract.
 
 ## Safety boundary
 
@@ -43,16 +43,17 @@ the complete phase-1 contract.
   remote outcome ever selects the local path automatically.
 - `/run/seiche-control/release.lock` coalesces polls. The existing independent
   `/run/seiche-deploy/deploy.lock` still serializes checkout/service mutation.
-- Immutable `*.gate.json` and `*.release.json` receipts live under
-  `/var/lib/seiche-control/receipts`. A wrapper failure never writes a release
-  receipt; its established rollback path remains authoritative. Root-owned
-  `*.remote-pending` markers retain the first missing-artifact observation so a
-  broken producer becomes an alert after the bounded publication SLO instead of
+- Immutable `*.gate.json`, `*.snapshot.json`, and `*.release.json` receipts live
+  under `/var/lib/seiche-control/receipts`. The normal v3 release receipt hashes
+  both attested inputs. A wrapper failure never writes a release receipt; its
+  established rollback path remains authoritative. Root-owned gate and snapshot
+  pending markers retain the first missing-artifact observation so a broken
+  producer becomes an alert after the bounded publication SLO instead of
   silently deferring forever.
 - The installer shares the poller's lock. It atomically replaces the poller,
-  deploy wrapper, verifier, service, and timer, and restores all five files plus
-  the previous timer state if verification, `daemon-reload`, activation, or the
-  installer itself fails.
+  deploy wrapper, both remote verifiers, service, and timer, and restores all six
+  files plus the previous timer state if verification, `daemon-reload`,
+  activation, or the installer itself fails.
 - If `main` advances during remote verification or a local break-glass gate,
   the tested candidate is discarded.
   The wrapper also checks `SEICHE_EXPECTED_TARGET_SHA` before stopping a unit,

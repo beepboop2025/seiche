@@ -1,9 +1,10 @@
-# Attested Railway release gate (phase 1)
+# Attested Railway release gate and snapshot prebuild (phases 1-2)
 
-This phase moves only the memory-instrumented backend admission suite off the
-shared Hetzner host. It does not move Seiche's API, PostgreSQL, SQLite state,
-NBS evidence store, workers, Caddy routes, backups, snapshot activation, or
-rollback authority.
+Phase 1 moves the memory-instrumented backend admission suite off the shared
+Hetzner host. Phase 2 also moves the pure snapshot computation, while retaining
+all durable state, evidence sealing, activation, health checks, Caddy routing,
+backups, and rollback authority on Hetzner. Neither phase gives Railway a
+production credential or a stateful production role.
 
 ```text
 exact main SHA + tree
@@ -25,6 +26,20 @@ Hetzner independently verifies repo/workflow/ref/SHA/tree/archive/digests
         |
         v
 root-owned gate receipt v2 -> existing deploy/health/rollback transaction
+
+exact main SHA + tree
+        |
+        v
+separate Railway service computes a source-only snapshot
+        |
+        v
+GitHub independently validates, packages, and OIDC-attests canonical bytes
+        |
+        v
+Hetzner verifies provenance, rechecks rights, and reseals local evidence
+        |
+        v
+root-selected handoff token -> candidate hydration -> existing promotion
 ```
 
 ## Tracked contract
@@ -54,6 +69,39 @@ root-owned gate receipt v2 -> existing deploy/health/rollback transaction
   release receipt continues to hash the root-owned gate receipt, preserving the
   gate-to-release evidence chain.
 
+## Phase-2 snapshot contract
+
+- `.github/workflows/railway-snapshot-prebuild.yml` serializes a second,
+  dedicated Railway service. It builds an exact source archive and canonical
+  request, waits for the selected deployment, extracts
+  `/result/snapshot-result.json` over the Railway control plane, independently
+  validates it, publishes it to
+  `ghcr.io/beepboop2025/seiche-release-snapshots`, OIDC-attests the immutable
+  manifest, and proves anonymous retrieval.
+- `ops/railway/Dockerfile.snapshot` and `ops/railway/run-snapshot.py` run as
+  uid/gid 65532 with a root-owned read-only source tree and an isolated runtime
+  data directory. The child receives no Railway token, database URL, production
+  secret, deploy credential, or writable source path. It can only emit the
+  bounded canonical result into `/result` and expose `/healthz` after success.
+- `seiche.remote_snapshot_build` calls the normal assembly pipeline with
+  `publish=False`. Collection, engines, deep layers, Navigator, sanitization,
+  and rights checks still run, but PIT records, notary evidence, SQLite state,
+  in-process cache, and release handoffs are not mutated remotely.
+- `ops/deploy/seiche-remote-snapshot-verify.py` resolves the exact SHA tag to an
+  immutable OCI digest, validates its single canonical layer and OIDC identity,
+  binds every source/Railway/dependency/payload digest, and writes the verified
+  artifact mode 0600 beneath `/run/seiche-control`.
+- `seiche-snapshot-import.service` is the only bridge into state. The
+  unprivileged, sandboxed importer repeats schema, freshness, rights, and
+  servability checks, creates a host-local evidence seal, and returns only a
+  handoff token plus payload digest. The API starts with both values in its
+  root-controlled release environment and refuses a changed or generic handoff.
+- The root release receipt is v3 on this path and hashes both the Railway gate
+  receipt and the Railway snapshot receipt. A missing exact-SHA artifact only
+  defers during the bounded publication window; malformed, stale, private,
+  mismatched, or unattested content fails closed. No remote error silently
+  selects the on-host rebuild.
+
 Railway never receives a production database URL, API credential, deploy key,
 Telegram token, NBS signing key, GitHub package token, or Hetzner credential.
 The only Railway secret involved is Railway's own project-scoped control token,
@@ -61,11 +109,12 @@ and it stays in the protected GitHub `railway-gate` environment.
 
 ## One-time Railway bootstrap
 
-1. Create a dedicated project (or isolated service) named `seiche-release-gate`
-   in the paid workspace. Do not attach a volume, database, public domain, or
-   GitHub autodeploy source. The workflow uploads each exact source bundle with
+1. Create a dedicated project with isolated services named
+   `seiche-release-gate` and `seiche-snapshot-prebuild` in the paid workspace.
+   Do not attach a volume, database, public domain, or GitHub autodeploy source
+   to either service. Each workflow uploads its exact source bundle with
    `railway up`; a connected source would create an untracked competing deploy.
-2. Give the service one replica in the desired region and enough CPU/RAM for the
+2. Give each service one replica in the desired region and enough CPU/RAM for its
    memray suite. Start with 8 vCPU and 16 GiB RAM, then use the first three gate
    receipts and Railway metrics to right-size it. Pro billing removes account
    limits; resource sizing still must be set on the service. Do not define
@@ -79,16 +128,20 @@ and it stays in the protected GitHub `railway-gate` environment.
    - `RAILWAY_PROJECT_ID`
    - `RAILWAY_ENVIRONMENT_ID`
    - `RAILWAY_SERVICE_ID`
+   - `RAILWAY_SNAPSHOT_SERVICE_ID`
 
    The IDs are treated as secrets so the workflow never relies on mutable names.
    Do not add them to repository files or Railway service variables.
-4. Ensure the existing `ghcr-release` GitHub environment permits this workflow's
-   source-free publication job. Make the
-   `ghcr.io/beepboop2025/seiche-release-gates` package public after its first
+4. Ensure the existing `ghcr-release` GitHub environment permits both workflows'
+   source-free publication jobs. Make both
+   `ghcr.io/beepboop2025/seiche-release-gates` and
+   `ghcr.io/beepboop2025/seiche-release-snapshots` public after their first
    successful publish; the production host deliberately verifies anonymously.
-5. Manually dispatch `railway-release-gate` on `main`. Bootstrap is complete only
-   after all three jobs are green and anonymous OCI plus attestation verification
-   passes. A queued Railway build or a green test log alone is not proof.
+5. Manually dispatch `railway-release-gate` and then
+   `railway-snapshot-prebuild` on `main`. Bootstrap is complete only after both
+   workflows are green and anonymous OCI plus attestation verification passes.
+   A queued Railway build, green test log, or Railway `SUCCESS` alone is not
+   proof.
 
 The tracked Railway config uses a one-hour health-check window and
 `restartPolicyType=NEVER`. A red test never emits a receipt, never serves
@@ -173,7 +226,7 @@ That path still performs signature, supersession, full memray suite, admission,
 health, receipt, and rollback checks. Its v2 receipt is visibly marked
 `local-break-glass`; it cannot be confused with attested Railway evidence.
 
-## Phase-1 limitations
+## Phase-1 and Phase-2 limitations
 
 - Railway transports its result through the exact deployment's retained logs.
   GitHub requires exactly one base64 canonical marker and binds it to the
@@ -196,10 +249,11 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   container image digest. Exact source archive, tree, runner base image, tool
   bootstrap, deployment IDs, and dependency snapshot are bound separately by
   the reviewed contract.
-- This phase removes the duplicate on-host gate and its load cooldown. Snapshot
-  assembly still runs on Hetzner and remains the largest post-gate release step.
-  Remote snapshot construction/import is a separate phase with a separate
-  evidence and state-authority review.
+- Phase 2 removes the full on-host snapshot build from the normal path, but the
+  production host still performs evidence sealing, database persistence, API
+  hydration, strict health, snapshot activation, recovery proof, and edge
+  convergence. Recovery sealing remains synchronous until Phase 3 explicitly
+  splits live cutover evidence from later recovery-complete evidence.
 - Do not promise a Railway duration before benchmarking the configured service.
   Record queue, image-build, pytest, packaging, host-verification, and deployment
   times for at least three exact SHAs; then set an operational SLO from observed

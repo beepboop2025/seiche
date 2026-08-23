@@ -58,6 +58,7 @@ else
     HOME="$SEICHE_DEPLOY_ENTRY_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
     SSH_ORIGINAL_COMMAND="${SSH_ORIGINAL_COMMAND-}" \
     SEICHE_EXPECTED_TARGET_SHA="${SEICHE_EXPECTED_TARGET_SHA-}" \
+    SEICHE_PREBUILT_SNAPSHOT_ARTIFACT="${SEICHE_PREBUILT_SNAPSHOT_ARTIFACT-}" \
     SEICHE_DEPLOY_ADMISSION_ONLY="${SEICHE_DEPLOY_ADMISSION_ONLY-}" \
     SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY="${SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY-}" \
     SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS-}" \
@@ -175,7 +176,9 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-release-poll.sh": "100755",
     "ops/deploy/seiche-release-poll.timer": "100644",
     "ops/deploy/seiche-remote-gate-verify.py": "100755",
+    "ops/deploy/seiche-remote-snapshot-verify.py": "100755",
     "ops/deploy/seiche-snapshot-promote.service": "100644",
+    "ops/deploy/seiche-snapshot-import.service": "100644",
     "ops/deploy/seiche-source-worker.service": "100644",
     "ops/deploy/seiche-storage-preflight.py": "100644",
     "ops/deploy/seiche-storage-preflight.service": "100644",
@@ -611,6 +614,9 @@ RELEASE_ENV=/etc/seiche/release.env
 PROMOTION_REQUEST_DIR=/run/seiche-release
 PROMOTION_REQUEST=$PROMOTION_REQUEST_DIR/promotion-request.json
 PROMOTION_UNIT=seiche-snapshot-promote.service
+PREBUILT_IMPORT_REQUEST=$PROMOTION_REQUEST_DIR/prebuilt-snapshot.json
+PREBUILT_IMPORT_RESULT=$PROMOTION_REQUEST_DIR/prebuilt-result.json
+PREBUILT_IMPORT_UNIT=seiche-snapshot-import.service
 DEPLOY_RUNTIME_DIR=/run/seiche-deploy
 DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
 SIGNED_ASSET_ROOT=""
@@ -624,6 +630,9 @@ BOOTSTRAP_PORTABLE=0
 BOOTSTRAP_PYTHON=/usr/bin/python3
 BOOTSTRAP_GIT_HOME=/root
 BOOTSTRAP_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers
+PREBUILT_SNAPSHOT_ARTIFACT=${SEICHE_PREBUILT_SNAPSHOT_ARTIFACT:-}
+PREBUILT_HANDOFF_ID=""
+PREBUILT_PAYLOAD_SHA256=""
 
 case "$BOOTSTRAP_ASSETS_ONLY" in
   0|1) ;;
@@ -1194,9 +1203,21 @@ write_deployed_state() {
 }
 
 write_release_env() {
-  local release_sha="$1" stage=""
+  local release_sha="$1" prebuilt_handoff_id="${2:-}"
+  local prebuilt_payload_sha256="${3:-}" stage=""
   if ! valid_release_sha "$release_sha"; then
     echo "FAIL: refusing to install a non-canonical release SHA"
+    return 1
+  fi
+  if [ -n "$prebuilt_handoff_id" ] \
+      && ! valid_activation_token "$prebuilt_handoff_id"; then
+    echo "FAIL: refusing to install an invalid prebuilt handoff ID"
+    return 1
+  fi
+  if { [ -n "$prebuilt_handoff_id" ] || [ -n "$prebuilt_payload_sha256" ]; } \
+      && { ! valid_activation_token "$prebuilt_handoff_id" \
+        || ! valid_activation_token "$prebuilt_payload_sha256"; }; then
+    echo "FAIL: refusing to install an incomplete prebuilt snapshot binding"
     return 1
   fi
   if [ ! -d /etc/seiche ] || [ -L /etc/seiche ]; then
@@ -1204,7 +1225,14 @@ write_release_env() {
     return 1
   fi
   stage=$(mktemp /etc/seiche/.release.env.XXXXXX) || return 1
-  if ! printf 'SEICHE_RELEASE_SHA=%s\n' "$release_sha" >"$stage" \
+  if ! {
+        printf 'SEICHE_RELEASE_SHA=%s\n' "$release_sha"
+        if [ -n "$prebuilt_handoff_id" ]; then
+          printf 'SEICHE_PREBUILT_HANDOFF_ID=%s\n' "$prebuilt_handoff_id"
+          printf 'SEICHE_PREBUILT_PAYLOAD_SHA256=%s\n' \
+            "$prebuilt_payload_sha256"
+        fi
+      } >"$stage" \
       || ! chown root:seiche "$stage" \
       || ! chmod 0640 "$stage" \
       || ! mv -f "$stage" "$RELEASE_ENV"; then
@@ -1212,6 +1240,145 @@ write_release_env() {
     echo "FAIL: could not atomically install the release environment"
     return 1
   fi
+}
+
+import_prebuilt_snapshot() {
+  local artifact="$1" expected_sha="$2" path_identity="" fd_identity=""
+  local request_stage="" result_values="" token="" payload_sha256=""
+  local stale_metadata="" expected_stale_metadata=""
+  if [ -z "$artifact" ]; then
+    PREBUILT_HANDOFF_ID=""
+    PREBUILT_PAYLOAD_SHA256=""
+    return 0
+  fi
+  if [[ ! "$artifact" =~ ^/run/seiche-control/([0-9a-f]{40})\.snapshot\.json$ ]] \
+      || [ "${BASH_REMATCH[1]}" != "$expected_sha" ]; then
+    echo "FAIL: prebuilt snapshot path does not bind the exact target"
+    return 1
+  fi
+  if [ -L "$artifact" ] || [ ! -f "$artifact" ] \
+      || [ "$(stat -c '%U:%G:%a:%h' "$artifact")" != root:root:600:1 ]; then
+    echo "FAIL: prebuilt snapshot artifact metadata is unsafe"
+    return 1
+  fi
+  exec 7<"$artifact" || return 1
+  path_identity=$(stat -c '%d:%i' "$artifact") || {
+    exec 7<&-
+    return 1
+  }
+  fd_identity=$(stat -Lc '%d:%i' "/proc/$$/fd/7") || {
+    exec 7<&-
+    return 1
+  }
+  if [ "$path_identity" != "$fd_identity" ]; then
+    exec 7<&-
+    echo "FAIL: prebuilt snapshot artifact changed while opening"
+    return 1
+  fi
+  if [ ! -d "$PROMOTION_REQUEST_DIR" ] \
+      || [ -L "$PROMOTION_REQUEST_DIR" ] \
+      || [ "$(stat -c '%U:%G:%a' "$PROMOTION_REQUEST_DIR")" != root:seiche:750 ]; then
+    exec 7<&-
+    echo "FAIL: snapshot import request directory metadata is unsafe"
+    return 1
+  fi
+  for stale in "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then
+      if [ "$stale" = "$PREBUILT_IMPORT_REQUEST" ]; then
+        expected_stale_metadata=root:seiche:640:1
+      else
+        expected_stale_metadata=seiche:seiche:600:1
+      fi
+      stale_metadata=$(stat -c '%U:%G:%a:%h' "$stale" 2>/dev/null) || {
+        exec 7<&-
+        echo "FAIL: stale snapshot import capability metadata is unreadable"
+        return 1
+      }
+      if [ -L "$stale" ] || [ ! -f "$stale" ] \
+          || [ "$stale_metadata" != "$expected_stale_metadata" ]; then
+        exec 7<&-
+        echo "FAIL: stale snapshot import capability is unsafe"
+        return 1
+      fi
+      rm -f -- "$stale" || {
+        exec 7<&-
+        return 1
+      }
+    fi
+  done
+  request_stage=$(mktemp "$PROMOTION_REQUEST_DIR/.prebuilt-snapshot.XXXXXX") || {
+    exec 7<&-
+    return 1
+  }
+  if ! cp -- "/proc/$$/fd/7" "$request_stage" \
+      || ! chown root:seiche "$request_stage" \
+      || ! chmod 0640 "$request_stage" \
+      || ! /usr/bin/sync -f "$request_stage" \
+      || ! mv -f "$request_stage" "$PREBUILT_IMPORT_REQUEST" \
+      || ! install -o seiche -g seiche -m 0600 /dev/null \
+        "$PREBUILT_IMPORT_RESULT"; then
+    rm -f -- "$request_stage" "$PREBUILT_IMPORT_REQUEST" \
+      "$PREBUILT_IMPORT_RESULT"
+    exec 7<&-
+    echo "FAIL: prebuilt snapshot import capabilities could not be installed"
+    return 1
+  fi
+  exec 7<&-
+  systemctl reset-failed "$PREBUILT_IMPORT_UNIT" 2>/dev/null || true
+  if ! systemctl start "$PREBUILT_IMPORT_UNIT"; then
+    rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"
+    echo "FAIL: prebuilt snapshot could not be resealed by its isolated unit"
+    return 1
+  fi
+  result_values=$(/usr/bin/python3 -I -B - "$PREBUILT_IMPORT_RESULT" <<'PY'
+import json
+import os
+import grp
+import pwd
+import re
+import stat
+import sys
+
+path = sys.argv[1]
+descriptor = os.open(
+    path, os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+)
+try:
+    info = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != pwd.getpwnam("seiche").pw_uid
+        or info.st_gid != grp.getgrnam("seiche").gr_gid
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_size > 1024
+    ):
+        raise ValueError("unsafe result metadata")
+    payload = json.loads(os.read(descriptor, 1025))
+    if set(payload) != {"handoff_id", "payload_sha256"}:
+        raise ValueError("invalid result shape")
+    for value in payload.values():
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("invalid result binding")
+    print(payload["handoff_id"], payload["payload_sha256"])
+finally:
+    os.close(descriptor)
+PY
+  ) || {
+    rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"
+    echo "FAIL: isolated snapshot importer returned unsafe evidence"
+    return 1
+  }
+  rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT" || return 1
+  if [[ ! "$result_values" =~ ^([0-9a-f]{64})\ ([0-9a-f]{64})$ ]]; then
+    echo "FAIL: isolated snapshot importer returned malformed evidence"
+    return 1
+  fi
+  token=${BASH_REMATCH[1]}
+  payload_sha256=${BASH_REMATCH[2]}
+  PREBUILT_HANDOFF_ID="$token"
+  PREBUILT_PAYLOAD_SHA256="$payload_sha256"
+  echo "snapshot prebuild: locally sealed and staged exact release handoff"
 }
 
 write_promotion_request() {
@@ -1405,6 +1572,7 @@ DATA_UNIT_NAMES=(
   seiche-market-restore-check.service
   seiche-market-restore-check.timer
   seiche-snapshot-promote.service
+  seiche-snapshot-import.service
 )
 DATA_ARTIFACT_NAMES=(
   storage-preflight-helper
@@ -2483,10 +2651,25 @@ deploy_market_platform || {
   exit 1
 }
 
+# The isolated importer consumes the same root-owned release identity as the
+# API and promotion unit, but receives the database environment only from
+# systemd's reviewed EnvironmentFile boundary.
+if ! write_release_env "$AFTER"; then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate release identity could not be installed"
+  exit 1
+fi
+if ! import_prebuilt_snapshot "$PREBUILT_SNAPSHOT_ARTIFACT" "$AFTER"; then
+  restore_pre_restart_services || true
+  echo "FAIL: verified snapshot prebuild could not enter the candidate handoff"
+  exit 1
+fi
+
 # The API captures this root-controlled identity at process start. The same
 # file is required by the unprivileged promotion unit on both a normal deploy
 # and the second pass of the first controller rollout.
-if ! write_release_env "$AFTER"; then
+if ! write_release_env \
+    "$AFTER" "$PREBUILT_HANDOFF_ID" "$PREBUILT_PAYLOAD_SHA256"; then
   restore_pre_restart_services || true
   echo "FAIL: candidate release identity could not be installed"
   exit 1
