@@ -81,6 +81,10 @@ READINESS_TIMER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-data-readiness.timer"
 READINESS_TIMER_DESTINATION=/etc/systemd/system/seiche-data-readiness.timer
 READINESS_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-data-readiness.sh"
 READINESS_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-data-readiness.sh
+RECOVERY_SEAL_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-release-recovery-seal.sh"
+RECOVERY_SEAL_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-release-recovery-seal.sh
+RECOVERY_SEAL_SERVICE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-release-recovery-seal.service"
+RECOVERY_SEAL_SERVICE_DESTINATION=/etc/systemd/system/seiche-release-recovery-seal.service
 LEGACY_UPDATE_RETIRER="$ASSET_ROOT/ops/deploy/retire-legacy-update-units.sh"
 
 validate_signed_asset_root() {
@@ -122,6 +126,8 @@ required_paths = {
     "ops/deploy/seiche-market-validation.timer",
     "ops/deploy/seiche-market-worker.service",
     "ops/deploy/seiche-nbs-intake.py",
+    "ops/deploy/seiche-release-recovery-seal.service",
+    "ops/deploy/seiche-release-recovery-seal.sh",
     "ops/deploy/seiche-snapshot-promote.service",
     "ops/deploy/seiche-snapshot-import.service",
     "ops/deploy/seiche-source-worker.service",
@@ -1347,6 +1353,9 @@ install_runtime_shell_helper \
     "$READINESS_SCRIPT_SOURCE" "$READINESS_SCRIPT_INSTALLED" \
     seiche-data-readiness
 install_runtime_shell_helper \
+    "$RECOVERY_SEAL_SCRIPT_SOURCE" "$RECOVERY_SEAL_SCRIPT_INSTALLED" \
+    seiche-release-recovery-seal
+install_runtime_shell_helper \
     "$OFFSITE_SCRIPT_SOURCE" "$OFFSITE_SCRIPT_INSTALLED" \
     seiche-market-offsite-backup
 install_runtime_shell_helper \
@@ -1523,6 +1532,7 @@ cleanup() {
     if [ -n "$DATA_UNIT_STAGE_DIR" ]; then
         rm -f -- \
             "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
+            "$DATA_UNIT_STAGE_DIR/seiche-release-recovery-seal.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
             "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
             "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
@@ -1846,6 +1856,11 @@ if systemctl is-active --quiet seiche-market-offsite-backup.service \
     echo "market platform: offsite backup service must finish before unit installation" >&2
     exit 1
 fi
+if systemctl is-active --quiet seiche-release-recovery-seal.service \
+        2>/dev/null; then
+    echo "market platform: release recovery sealing must stop before unit installation" >&2
+    exit 1
+fi
 
 # Fail before changing service units if the application user cannot reach the
 # exact socket/port written above. pg_wrapper succeeding as postgres is not a
@@ -1879,6 +1894,8 @@ DATA_UNIT_STAGE_DIR=$(mktemp -d \
     /etc/systemd/system/.seiche-data-units-stage.XXXXXX)
 install -m 0644 "$SOURCE_WORKER_UNIT_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service"
+install -m 0644 "$RECOVERY_SEAL_SERVICE_SOURCE" \
+    "$DATA_UNIT_STAGE_DIR/seiche-release-recovery-seal.service"
 install -m 0644 "$READINESS_SERVICE_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service"
 install -m 0644 "$READINESS_TIMER_SOURCE" \
@@ -1891,6 +1908,7 @@ install -m 0644 "$OFFSITE_TIMER_SOURCE" \
     "$DATA_UNIT_STAGE_DIR/seiche-market-offsite-backup.timer"
 if ! systemd-analyze verify \
         "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
+        "$DATA_UNIT_STAGE_DIR/seiche-release-recovery-seal.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
         "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
         "$DATA_UNIT_STAGE_DIR/seiche-market-backfill.service" \
@@ -1901,6 +1919,8 @@ if ! systemd-analyze verify \
 fi
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-source-worker.service" \
     "$SOURCE_WORKER_UNIT_DESTINATION"
+mv -f "$DATA_UNIT_STAGE_DIR/seiche-release-recovery-seal.service" \
+    "$RECOVERY_SEAL_SERVICE_DESTINATION"
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.service" \
     "$READINESS_SERVICE_DESTINATION"
 mv -f "$DATA_UNIT_STAGE_DIR/seiche-data-readiness.timer" \
@@ -2112,6 +2132,7 @@ SYSTEMD_VERIFY_UNITS=(
     /etc/systemd/system/seiche-storage-preflight.service
     /etc/systemd/system/seiche-market-worker.service
     /etc/systemd/system/seiche-source-worker.service
+    /etc/systemd/system/seiche-release-recovery-seal.service
     /etc/systemd/system/seiche-market-backfill.service
     /etc/systemd/system/seiche-market-validation.service
     /etc/systemd/system/seiche-market-validation.timer

@@ -829,6 +829,176 @@ receipt_pair_status() {
   return 0
 }
 
+validate_recovery_receipt() {
+  local path="$1" release_receipt="$2" commit="$3" tree="$4"
+  "$SYSTEM_PYTHON" -I -B - \
+    "$path" "$release_receipt" "$commit" "$tree" \
+    "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" <<'PY'
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+
+(
+    path,
+    release_path,
+    commit,
+    tree,
+    expected_uid_raw,
+    expected_gid_raw,
+    expected_mode_raw,
+) = sys.argv[1:]
+expected_uid = int(expected_uid_raw)
+expected_gid = int(expected_gid_raw)
+expected_mode = int(expected_mode_raw, 8)
+sha_re = re.compile(r"[0-9a-f]{40}")
+digest_re = re.compile(r"[0-9a-f]{64}")
+timestamp_re = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def read_exact(candidate: str, maximum: int) -> bytes:
+    descriptor = os.open(
+        candidate,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        before = os.fstat(descriptor)
+        visible = os.stat(candidate, follow_symlinks=False)
+        assert stat.S_ISREG(before.st_mode)
+        assert before.st_nlink == 1
+        assert before.st_uid == expected_uid
+        assert before.st_gid == expected_gid
+        assert stat.S_IMODE(before.st_mode) == expected_mode
+        assert 0 < before.st_size <= maximum
+        assert stat.S_ISREG(visible.st_mode)
+        assert (before.st_dev, before.st_ino) == (visible.st_dev, visible.st_ino)
+        body = os.read(descriptor, maximum + 1)
+        after = os.fstat(descriptor)
+        assert len(body) <= maximum
+        assert (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        return body
+    finally:
+        os.close(descriptor)
+
+
+try:
+    assert sha_re.fullmatch(commit)
+    assert sha_re.fullmatch(tree)
+    release_body = read_exact(release_path, 64 * 1024)
+    release = json.loads(release_body)
+    assert release_body == (
+        json.dumps(release, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    assert release.get("kind") == "release"
+    assert release.get("commit") == commit
+    assert release.get("tree") == tree
+    assert release.get("conclusion") == "success"
+    assert release.get("schema") in {
+        "seiche.release-receipt.v2",
+        "seiche.release-receipt.v3",
+    }
+    release_digest = hashlib.sha256(release_body).hexdigest()
+
+    body = read_exact(path, 64 * 1024)
+    payload = json.loads(body)
+    assert body == (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    assert set(payload) == {
+        "schema",
+        "kind",
+        "commit",
+        "tree",
+        "release_receipt_sha256",
+        "backup_snapshot",
+        "backup_inventory_sha256",
+        "restore_checked_at",
+        "restore_receipt_sha256",
+        "worker_startup",
+        "data_readiness",
+        "offsite_schedule",
+        "completed_at",
+        "conclusion",
+    }
+    assert payload["schema"] == "seiche.release-recovery-receipt.v1"
+    assert payload["kind"] == "recovery"
+    assert payload["commit"] == commit
+    assert payload["tree"] == tree
+    assert payload["release_receipt_sha256"] == release_digest
+    assert re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", payload["backup_snapshot"])
+    assert digest_re.fullmatch(payload["backup_inventory_sha256"])
+    assert digest_re.fullmatch(payload["restore_receipt_sha256"])
+    assert timestamp_re.fullmatch(payload["restore_checked_at"])
+    assert timestamp_re.fullmatch(payload["completed_at"])
+    assert payload["worker_startup"] == "ready"
+    assert payload["data_readiness"] == "ready"
+    assert payload["offsite_schedule"] in {"active", "disabled"}
+    assert payload["conclusion"] == "success"
+    release_completed = datetime.fromisoformat(
+        release["completed_at"].replace("Z", "+00:00")
+    ).astimezone(UTC)
+    backup_created = datetime.strptime(
+        payload["backup_snapshot"], "%Y%m%dT%H%M%SZ"
+    ).replace(tzinfo=UTC)
+    restore_checked = datetime.fromisoformat(
+        payload["restore_checked_at"].replace("Z", "+00:00")
+    ).astimezone(UTC)
+    recovery_completed = datetime.fromisoformat(
+        payload["completed_at"].replace("Z", "+00:00")
+    ).astimezone(UTC)
+    assert release_completed <= recovery_completed
+    assert backup_created <= restore_checked <= recovery_completed
+except (
+    AssertionError,
+    KeyError,
+    OSError,
+    TypeError,
+    ValueError,
+    UnicodeError,
+    json.JSONDecodeError,
+):
+    raise SystemExit(1) from None
+PY
+}
+
+recovery_receipt_status() {
+  local path="$1" release_receipt="$2" commit="$3" tree="$4"
+  if ! receipt_path_exists "$path"; then
+    return 1
+  fi
+  validate_recovery_receipt "$path" "$release_receipt" "$commit" "$tree" \
+    || return 2
+  return 0
+}
+
+queue_recovery_seal() {
+  "$SYSTEMCTL" reset-failed seiche-release-recovery-seal.service \
+    2>/dev/null || true
+  "$SYSTEMCTL" start --no-block seiche-release-recovery-seal.service
+}
+
 install_remote_gate_receipt() {
   local path="$1" stage="" verifier_status=0
   if receipt_path_exists "$path"; then
@@ -1269,6 +1439,7 @@ valid_sha "$TARGET_TREE" || fail "target tree identity is invalid"
 GATE_RECEIPT="$RECEIPT_DIR/$TARGET.gate.json"
 SNAPSHOT_RECEIPT="$RECEIPT_DIR/$TARGET.snapshot.json"
 RELEASE_RECEIPT="$RECEIPT_DIR/$TARGET.release.json"
+RECOVERY_RECEIPT="$RECEIPT_DIR/$TARGET.recovery.json"
 RECEIPT_PAIR_STATUS=0
 receipt_pair_status \
   "$TARGET" "$TARGET_TREE" "$GATE_RECEIPT" "$SNAPSHOT_RECEIPT" \
@@ -1342,7 +1513,21 @@ if [ "$GATE_ONLY" != 1 ] \
     && [ "$RECEIPT_PAIR_STATUS" = 0 ] \
     && [ "$DEPLOYED" = "$TARGET" ] \
     && health_matches "$TARGET"; then
-  echo "release poll: ${TARGET:0:7} is already deployed, strictly healthy, and fully receipted"
+  RECOVERY_RECEIPT_STATUS=0
+  recovery_receipt_status \
+    "$RECOVERY_RECEIPT" "$RELEASE_RECEIPT" "$TARGET" "$TARGET_TREE" \
+    || RECOVERY_RECEIPT_STATUS=$?
+  case "$RECOVERY_RECEIPT_STATUS" in
+    0)
+      echo "release poll: ${TARGET:0:7} is live, strictly healthy, and recovery sealed"
+      ;;
+    1)
+      queue_recovery_seal \
+        || fail "live release recovery sealing could not be queued"
+      echo "release poll: ${TARGET:0:7} live cutover is complete; recovery sealing continues asynchronously"
+      ;;
+    *) fail "existing recovery receipt evidence is invalid for $TARGET" ;;
+  esac
   exit 0
 fi
 
@@ -1623,8 +1808,10 @@ release_timer_is_ready \
 
 write_receipt release "$RELEASE_RECEIPT" "$GATE_DIGEST" "$SNAPSHOT_DIGEST"
 RELEASE_TIMER_RESTORE_REQUIRED=0
+queue_recovery_seal \
+  || fail "live release recovery sealing could not be queued"
 if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then
-  echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, break-glass, $RELEASE_RECEIPT)"
+  echo "release poll: live cutover ${TARGET:0:7} complete; recovery sealing queued (receipts: $GATE_RECEIPT, break-glass, $RELEASE_RECEIPT)"
 else
-  echo "release poll: gated and deployed ${TARGET:0:7} (receipts: $GATE_RECEIPT, $SNAPSHOT_RECEIPT, $RELEASE_RECEIPT)"
+  echo "release poll: live cutover ${TARGET:0:7} complete; recovery sealing queued (receipts: $GATE_RECEIPT, $SNAPSHOT_RECEIPT, $RELEASE_RECEIPT)"
 fi

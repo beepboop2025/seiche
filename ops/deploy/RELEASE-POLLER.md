@@ -9,8 +9,9 @@ tree, source-archive bytes, and artifact digest, and stores a root-owned local
 receipt. Railway supplies CPU only; GitHub packages and attests the evidence;
 Hetzner remains the only production authority. The existing root deploy wrapper
 remains the sole owner of service quiescence, snapshot activation, Caddy
-deployment, health gates, and rollback. See `RAILWAY-GATE.md` for bootstrap and
-the complete Phase 1/Phase 2 contract.
+deployment, live health gates, and rollback. A separate host-local service owns
+the post-cutover recovery proof. See `RAILWAY-GATE.md` for bootstrap and the
+complete Phase 1 through Phase 3 contract.
 
 ## Safety boundary
 
@@ -43,9 +44,12 @@ the complete Phase 1/Phase 2 contract.
   remote outcome ever selects the local path automatically.
 - `/run/seiche-control/release.lock` coalesces polls. The existing independent
   `/run/seiche-deploy/deploy.lock` still serializes checkout/service mutation.
-- Immutable `*.gate.json`, `*.snapshot.json`, and `*.release.json` receipts live
-  under `/var/lib/seiche-control/receipts`. The normal v3 release receipt hashes
-  both attested inputs. A wrapper failure never writes a release receipt; its
+- Immutable `*.gate.json`, `*.snapshot.json`, `*.release.json`, and
+  `*.recovery.json` receipts live under `/var/lib/seiche-control/receipts`. The
+  normal v3 release receipt hashes both attested inputs and marks a completed
+  live cutover. The recovery receipt hashes that release receipt and proves the
+  exact release's worker startup, backup, isolated restore, readiness, and
+  off-site schedule. A wrapper failure never writes a release receipt; its
   established rollback path remains authoritative. Root-owned gate and snapshot
   pending markers retain the first missing-artifact observation so a broken
   producer becomes an alert after the bounded publication SLO instead of
@@ -54,6 +58,10 @@ the complete Phase 1/Phase 2 contract.
   deploy wrapper, both remote verifiers, service, and timer, and restores all six
   files plus the previous timer state if verification, `daemon-reload`,
   activation, or the installer itself fails.
+- The signed market-platform installer installs the recovery helper and unit as
+  part of the same rollback-aware data-plane transaction. A running recovery
+  seal is stopped before any helper or unit replacement; rollback restores its
+  prior bytes and active state.
 - If `main` advances during remote verification or a local break-glass gate,
   the tested candidate is discarded.
   The wrapper also checks `SEICHE_EXPECTED_TARGET_SHA` before stopping a unit,
@@ -70,6 +78,26 @@ the complete Phase 1/Phase 2 contract.
   handoff so a superseded candidate remains inert. A still-busy host records no
   release receipt and defers without paging; admission probe errors remain
   failures.
+
+## Live completion versus recovery completion
+
+The controller has two explicit success boundaries:
+
+1. **Live cutover:** the wrapper has accepted exact-SHA snapshot, API, market,
+   and edge health; the poller has fsynced an immutable release receipt; and the
+   release timer is ready. Production may serve this release even while the
+   recovery service is still running.
+2. **Recovery sealed:** `seiche-release-recovery-seal.service` has waited for
+   the durable workers, proven a release-bound backup and isolated restore,
+   converged operational readiness without restarting the API, restored the
+   recurring schedules, and fsynced the immutable recovery receipt.
+
+On a same-SHA poll, valid recovery evidence logs that the release is live,
+strictly healthy, and recovery sealed. Missing evidence queues the service and
+logs that live cutover is complete while recovery continues asynchronously.
+An existing malformed, relinked, mis-owned, non-canonical, mismatched, or
+time-inconsistent recovery receipt stops the poller; it is never treated as
+pending and never overwritten.
 
 ## Install without activating
 
@@ -768,8 +796,12 @@ Use this handoff order; do not skip directly to timer activation:
 4. Confirm the immutable gate receipt and that production's deployed SHA did
    not move.
 5. Enable the host timer, run one release cycle, and confirm the deployed SHA,
-   strict release health, release receipt, and timer state.
-6. Atomically migrate the dedicated forced key, run the two-pass same-SHA
+   strict release health, immutable release receipt, and timer state. This is
+   the live-cutover boundary.
+6. Confirm `seiche-release-recovery-seal.service` completes and independently
+   validate the exact SHA's immutable recovery receipt. This is the
+   recovery-complete boundary.
+7. Atomically migrate the dedicated forced key, run the two-pass same-SHA
    fallback smoke, reject an empty request, and retire the legacy `/root` copy.
 
 After completing steps 1–5, activate polling:
@@ -785,10 +817,10 @@ After completing steps 1–5, activate polling:
 systemctl status seiche-release-poll.timer --no-pager
 ```
 
-After exact-SHA health, release receipt, timer, and rollback-bundle inspection
-are green, remove only the two resolved bootstrap paths shown above. Preserve
-the signed asset root on any failure so root can inspect it; never substitute a
-checkout path for a retry.
+After exact-SHA health, release receipt, recovery receipt, timer, and
+rollback-bundle inspection are green, remove only the two resolved bootstrap
+paths shown above. Preserve the signed asset root on any failure so root can
+inspect it; never substitute a checkout path for a retry.
 
 Do not enable both controllers. Two triggers cannot corrupt the checkout—the
 deploy wrapper has its own lock—but duplicate release attempts obscure which

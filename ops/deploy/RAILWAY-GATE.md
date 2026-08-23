@@ -1,10 +1,13 @@
-# Attested Railway release gate and snapshot prebuild (phases 1-2)
+# Attested Railway gate, snapshot prebuild, and fast cutover (phases 1-3)
 
 Phase 1 moves the memory-instrumented backend admission suite off the shared
 Hetzner host. Phase 2 also moves the pure snapshot computation, while retaining
 all durable state, evidence sealing, activation, health checks, Caddy routing,
-backups, and rollback authority on Hetzner. Neither phase gives Railway a
-production credential or a stateful production role.
+backups, and rollback authority on Hetzner. Phase 3 ends the synchronous
+cutover after exact-SHA snapshot, API, and edge health, then seals backup,
+isolated restore, worker startup, and recurring-readiness evidence through a
+retrying host-local service. None of these phases gives Railway a production
+credential or a stateful production role.
 
 ```text
 exact main SHA + tree
@@ -40,6 +43,20 @@ Hetzner verifies provenance, rechecks rights, and reseals local evidence
         |
         v
 root-selected handoff token -> candidate hydration -> existing promotion
+
+strict exact-SHA health + edge convergence
+        |
+        v
+immutable release receipt -> live cutover returns
+        |
+        v
+host-local recovery service waits for durable workers
+        |
+        v
+release-bound backup + isolated restore + readiness
+        |
+        v
+immutable recovery receipt -> fully recovery sealed
 ```
 
 ## Tracked contract
@@ -101,6 +118,40 @@ root-selected handoff token -> candidate hydration -> existing promotion
   defers during the bounded publication window; malformed, stale, private,
   mismatched, or unattested content fails closed. No remote error silently
   selects the on-host rebuild.
+
+## Phase-3 fast-cutover contract
+
+- `ops/deploy/seiche-deploy-wrapper.sh` remains the only authority allowed to
+  mutate the checkout, activate the imported snapshot, restart the API, deploy
+  Caddy, accept strict exact-SHA health, or roll back. Once snapshot, API, and
+  market health pass it queues the market and source workers without waiting
+  for their initial sweep; edge convergence must still pass before the wrapper
+  returns. Backup and restore no longer extend the live-cutover transaction.
+- `ops/deploy/seiche-release-poll.sh` durably writes the v3 release receipt
+  before queuing `seiche-release-recovery-seal.service`. A valid release receipt
+  plus strict health means the SHA is live. It does not mean recovery is sealed
+  until the corresponding `*.recovery.json` exists and validates.
+- `ops/deploy/seiche-release-recovery-seal.sh` revalidates the root-selected
+  release environment and deployed marker before and after every long-running
+  stage, then binds the exact v2/v3 release receipt and digest before sealing.
+  It waits for both durable workers, reuses a still-valid release-bound recovery proof or creates a new
+  backup and isolated restore, converges data readiness without restarting the
+  live API, restores the recurring timers, and writes
+  `seiche.release-recovery-receipt.v1` atomically with no replacement path.
+- The recovery receipt binds the exact commit, tree, release-receipt digest,
+  backup snapshot and inventory digest, isolated-restore receipt digest,
+  readiness states, off-site schedule state, and completion time. The poller
+  independently revalidates canonical bytes, owner/group/mode, link count,
+  digest binding, and timestamp order. Missing evidence is pending and retryable;
+  existing invalid evidence fails closed.
+- The hardened oneshot retries after ten minutes on failure. A later poll also
+  queues it when a release is live but recovery evidence is absent. Neither
+  retry path restarts the API or rewrites an accepted receipt, so delayed
+  recovery work cannot undo a successful cutover.
+- A direct SSH fallback can restore workers, backup/restore proof, readiness,
+  and recurring timers while its controller receipt is still unavailable. It
+  retries only the immutable seal until that receipt arrives; missing evidence
+  never weakens the final receipt contract.
 
 Railway never receives a production database URL, API credential, deploy key,
 Telegram token, NBS signing key, GitHub package token, or Hetzner credential.
@@ -226,7 +277,7 @@ That path still performs signature, supersession, full memray suite, admission,
 health, receipt, and rollback checks. Its v2 receipt is visibly marked
 `local-break-glass`; it cannot be confused with attested Railway evidence.
 
-## Phase-1 and Phase-2 limitations
+## Phase-1 through Phase-3 limitations
 
 - Railway transports its result through the exact deployment's retained logs.
   GitHub requires exactly one base64 canonical marker and binds it to the
@@ -252,8 +303,8 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
 - Phase 2 removes the full on-host snapshot build from the normal path, but the
   production host still performs evidence sealing, database persistence, API
   hydration, strict health, snapshot activation, recovery proof, and edge
-  convergence. Recovery sealing remains synchronous until Phase 3 explicitly
-  splits live cutover evidence from later recovery-complete evidence.
+  convergence. Phase 3 moves worker startup and recovery sealing after the live
+  receipt; it does not move production state or rollback authority to Railway.
 - Do not promise a Railway duration before benchmarking the configured service.
   Record queue, image-build, pytest, packaging, host-verification, and deployment
   times for at least three exact SHAs; then set an operational SLO from observed

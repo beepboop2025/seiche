@@ -175,6 +175,8 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-release-poll.service": "100644",
     "ops/deploy/seiche-release-poll.sh": "100755",
     "ops/deploy/seiche-release-poll.timer": "100644",
+    "ops/deploy/seiche-release-recovery-seal.service": "100644",
+    "ops/deploy/seiche-release-recovery-seal.sh": "100755",
     "ops/deploy/seiche-remote-gate-verify.py": "100755",
     "ops/deploy/seiche-remote-snapshot-verify.py": "100755",
     "ops/deploy/seiche-snapshot-promote.service": "100644",
@@ -1495,6 +1497,7 @@ MARKET_WORKER_WAS_ENABLED=""
 MARKET_BACKFILL_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ENABLED=""
+RECOVERY_SEAL_WAS_ACTIVE=""
 READINESS_TIMER_WAS_ACTIVE=""
 READINESS_TIMER_WAS_ENABLED=""
 VALIDATION_TIMER_WAS_ACTIVE=""
@@ -1519,6 +1522,10 @@ if systemctl is-active --quiet seiche-source-worker.service 2>/dev/null; then
 fi
 if systemctl is-enabled --quiet seiche-source-worker.service 2>/dev/null; then
   SOURCE_WORKER_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet seiche-release-recovery-seal.service \
+    2>/dev/null; then
+  RECOVERY_SEAL_WAS_ACTIVE=1
 fi
 if systemctl is-active --quiet seiche-data-readiness.timer 2>/dev/null; then
   READINESS_TIMER_WAS_ACTIVE=1
@@ -1561,6 +1568,7 @@ DATA_UNIT_NAMES=(
   seiche-pull.service
   seiche-market-backfill.service
   seiche-source-worker.service
+  seiche-release-recovery-seal.service
   seiche-data-readiness.service
   seiche-data-readiness.timer
   seiche-market-validation.service
@@ -1578,6 +1586,7 @@ DATA_ARTIFACT_NAMES=(
   storage-preflight-helper
   nbs-intake-launcher
   data-readiness-helper
+  release-recovery-helper
   market-offsite-backup-helper
   market-backup-helper
   market-restore-check-helper
@@ -1592,6 +1601,7 @@ DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
   /etc/seiche/libexec/seiche-nbs-intake.py
   /etc/seiche/libexec/seiche-data-readiness.sh
+  /etc/seiche/libexec/seiche-release-recovery-seal.sh
   /etc/seiche/libexec/seiche-market-offsite-backup.sh
   /etc/seiche/libexec/seiche-market-backup.sh
   /etc/seiche/libexec/seiche-market-restore-check.sh
@@ -1699,6 +1709,7 @@ restore_preupdate_data_units() {
   # A failed installer may already have enabled persistent candidate timers.
   # Quiesce every reader/writer before restoring files or generated drop-ins.
   systemctl stop \
+    seiche-release-recovery-seal.service \
     seiche-data-readiness.timer seiche-data-readiness.service \
     seiche-market-validation.timer seiche-market-validation.service \
     seiche-market-backup.timer seiche-market-backup.service \
@@ -1944,6 +1955,9 @@ restore_market_services() {
       systemctl start --no-block seiche-data-readiness.timer 2>/dev/null || true
     fi
   fi
+  [ -z "$RECOVERY_SEAL_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-release-recovery-seal.service \
+      2>/dev/null || true
   [ -z "$VALIDATION_TIMER_WAS_ACTIVE" ] \
     || systemctl start --no-block seiche-market-validation.timer 2>/dev/null \
     || true
@@ -1959,178 +1973,9 @@ restore_market_services() {
     || systemctl start --no-block seiche-market-offsite-backup.timer \
       2>/dev/null || true
 }
-DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
-DATA_READINESS_SCRIPT=/etc/seiche/libexec/seiche-data-readiness.sh
-DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
 # Full board assembly can exceed the freshness horizon on the shared host.
 # This is a fixed, reviewed controller budget rather than caller configuration.
 API_FULL_REBUILD_WAIT_SECONDS=1800
-run_recovery_proof_preflight() {
-  /usr/bin/env -i \
-    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
-    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
-    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-    SEICHE_DATA_READINESS_REQUIRED_UNITS= \
-    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
-}
-run_data_readiness_preflight() {
-  /usr/bin/env -i \
-    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
-    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-    SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
-    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
-}
-ensure_candidate_fresh_for_readiness() {
-  # A release-bound backup and restore can legitimately consume the API's
-  # entire 15-minute freshness budget. Nudge the cache owner without taking
-  # readers offline, then require a fresh exact-SHA handoff before acceptance.
-  if ! curl -sf -m 20 http://127.0.0.1:8787/api/gauge >/dev/null; then
-    echo "data readiness: cache refresh nudge failed; restarting the exact candidate"
-    if ! systemctl restart seiche-api; then
-      echo "FAIL: API refresh restart failed after recovery proof"
-      return 1
-    fi
-    sleep 3
-  fi
-  if candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
-    return 0
-  fi
-  echo "data readiness: background refresh missed its deadline; restarting the exact candidate"
-  if ! systemctl restart seiche-api; then
-    echo "FAIL: API fallback restart failed after recovery proof"
-    return 1
-  fi
-  sleep 3
-  if ! candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
-    echo "FAIL: API did not produce a fresh exact candidate after recovery proof"
-    return 1
-  fi
-}
-validate_data_readiness_convergence_wait() {
-  case "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" in
-    0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;;
-    *)
-      echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
-      return 1
-      ;;
-  esac
-  if [ "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" -gt 900 ]; then
-    echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
-    return 1
-  fi
-}
-converge_operational_data_readiness() {
-  local readiness_output readiness_status deadline
-
-  if readiness_output=$(run_data_readiness_preflight 2>&1); then
-    readiness_status=0
-  else
-    readiness_status=$?
-  fi
-  if [ "$readiness_status" -eq 0 ]; then
-    if [ "$readiness_output" != "seiche data readiness: ready" ]; then
-      printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
-        "$readiness_output"
-      return 1
-    fi
-    return 0
-  fi
-  if [ "$readiness_status" -ne 1 ] \
-      || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
-    [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
-    return 1
-  fi
-
-  if ! systemctl is-active --quiet seiche-api.service; then
-    echo "FAIL: seiche-api is not active before stale snapshot refresh"
-    return 1
-  fi
-  if ! /usr/bin/curl --fail --silent --show-error --proto '=http' \
-      --connect-timeout 10 --max-time 10 --output /dev/null \
-      'http://127.0.0.1:8787/api/gauge'; then
-    echo "FAIL: stale API snapshot refresh trigger failed"
-    return 1
-  fi
-
-  deadline=$((SECONDS + DATA_READINESS_CONVERGENCE_WAIT_SECONDS))
-  while true; do
-    if ! systemctl is-active --quiet seiche-api.service; then
-      echo "FAIL: seiche-api died during stale snapshot convergence"
-      return 1
-    fi
-    if readiness_output=$(run_data_readiness_preflight 2>&1); then
-      readiness_status=0
-    else
-      readiness_status=$?
-    fi
-    if [ "$readiness_status" -eq 0 ]; then
-      if [ "$readiness_output" != "seiche data readiness: ready" ]; then
-        printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
-          "$readiness_output"
-        return 1
-      fi
-      return 0
-    fi
-    if [ "$readiness_status" -ne 1 ] \
-        || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
-      [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
-      return 1
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "FAIL: API snapshot remained stale after ${DATA_READINESS_CONVERGENCE_WAIT_SECONDS}s"
-      return 1
-    fi
-    sleep 10
-  done
-}
-activate_data_readiness_after_proof() {
-  validate_data_readiness_convergence_wait || return 1
-  # An already-current v2 backup and restore receipt avoid a redundant drill.
-  # A first v2/fresh host fails this preflight and must create and restore one
-  # real snapshot before the persistent timer is allowed to become active.
-  if ! run_recovery_proof_preflight; then
-    echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
-    if ! systemctl start seiche-market-backup.service; then
-      echo "FAIL: v2 data-readiness bootstrap backup failed; readiness timer remains stopped"
-      return 1
-    fi
-    if ! systemctl start seiche-market-restore-check.service; then
-      echo "FAIL: v2 data-readiness bootstrap restore check failed; readiness timer remains stopped"
-      return 1
-    fi
-    if ! run_recovery_proof_preflight; then
-      echo "FAIL: v2 data-readiness bootstrap did not pass; readiness timer remains stopped"
-      return 1
-    fi
-  fi
-  if ! ensure_candidate_fresh_for_readiness; then
-    echo "FAIL: exact candidate freshness could not be restored before readiness"
-    return 1
-  fi
-  if ! converge_operational_data_readiness; then
-    echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
-    return 1
-  fi
-  # A background snapshot refresh publishes its in-memory board before the
-  # exact release handoff finishes sealing. Readiness can therefore turn green
-  # during that short interval; wait for the strict SHA-bound capability
-  # instead of accepting ordinary API health without current release evidence.
-  if ! candidate_health_wait 120 "$AFTER" 900; then
-    echo "FAIL: exact candidate evidence did not reseal after data-readiness convergence"
-    return 1
-  fi
-  if ! systemctl enable --now seiche-data-readiness.timer; then
-    echo "FAIL: proven readiness timer could not be activated"
-    return 1
-  fi
-}
-ensure_source_worker_ready() {
-  systemctl reset-failed seiche-source-worker.service 2>/dev/null || true
-  if ! systemctl start seiche-source-worker.service; then
-    echo "FAIL: source worker did not produce its initial durable heartbeat"
-    return 1
-  fi
-}
 start_market_services() {
   if [ -n "$MARKET_MUTATION_LOCK_HELD" ]; then
     echo "FAIL: refusing to start self-locking market services under deploy lock"
@@ -2139,27 +1984,30 @@ start_market_services() {
   systemctl reset-failed \
     seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
     || true
-  # The worker is Type=notify and ordered after the one-shot backfill.  Wait
-  # for both jobs here: a --no-block start races the readiness preflight, which
-  # can mistake an activating worker for a stale recovery proof and repeat the
-  # full backup/restore drill on the controller's same-SHA convergence pass.
-  if ! systemctl start \
-      seiche-market-backfill.service seiche-market-worker.service; then
-    echo "FAIL: market backfill/worker did not become ready"
+  # Phase 3 ends the live-cutover transaction after exact API, snapshot, and
+  # edge health. The isolated recovery service waits for these Type=notify
+  # workers, then owns backup, restore, readiness, and its second receipt.
+  if ! systemctl start --no-block \
+      seiche-market-backfill.service seiche-market-worker.service \
+      seiche-source-worker.service; then
+    echo "FAIL: market/source recovery workers could not be queued"
     return 1
   fi
-  # Type=notify makes this block until the initial durable sweep has completed.
-  # Only then submit the persistent readiness timer; its After= on the market
-  # worker keeps a missed run queued until every collector startup is complete.
-  ensure_source_worker_ready || return 1
-  activate_data_readiness_after_proof || return 1
-  if [ -n "$OFFSITE_TIMER_WAS_ACTIVE" ] \
-      && systemctl is-enabled --quiet seiche-market-offsite-backup.timer; then
-    systemctl start seiche-market-offsite-backup.timer || {
-      echo "FAIL: offsite backup timer could not be restored after exact-SHA promotion"
-      return 1
-    }
+  echo "recovery sealing: market/source workers queued after live cutover"
+}
+queue_forced_recovery_seal() {
+  # The normal controller queues recovery only after its immutable release
+  # receipt exists. The independent SSH fallback has no such receipt yet, so
+  # queue the same retrying service after edge convergence: it restores the
+  # recovery rails immediately and seals once controller evidence arrives.
+  [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ] || return 0
+  systemctl reset-failed seiche-release-recovery-seal.service \
+    2>/dev/null || true
+  if ! systemctl start --no-block seiche-release-recovery-seal.service; then
+    echo "FAIL: forced deployment recovery sealing could not be queued"
+    return 1
   fi
+  echo "recovery sealing: queued for independent forced deployment"
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {
@@ -2229,7 +2077,8 @@ restore_pre_restart_services() {
   fi
   restore_market_services
 }
-systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+systemctl stop seiche-release-recovery-seal.service \
+  seiche-data-readiness.timer seiche-data-readiness.service \
   2>/dev/null || true
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \
@@ -2685,10 +2534,6 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
     fi
     sleep 3
   fi
-  ensure_source_worker_ready || {
-    echo "FAIL: accepted release source worker did not become ready"
-    exit 1
-  }
   candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" || {
     echo "FAIL: accepted release did not recover strict health; market writers remain stopped"
     exit 1
@@ -2718,6 +2563,7 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  queue_forced_recovery_seal || exit 1
   echo "already deployed ${AFTER:0:7} — application and edge match the repo"
   exit 0
 fi
@@ -2736,8 +2582,7 @@ else
   echo "FAIL: seiche-api could not be restarted onto the candidate"
 fi
 if [ -n "$RESTARTED" ] && systemctl is-active --quiet seiche-api; then
-  if ensure_source_worker_ready \
-      && candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"; then
+  if candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"; then
     if market_health; then
       if deploy_pull_unit; then
         if promote_snapshot_handoff; then
@@ -2759,6 +2604,7 @@ if [ -n "$HEALTHY" ]; then
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  queue_forced_recovery_seal || exit 1
   echo "deployed ${AFTER:0:7} — service active, api healthy, edge config current"
   exit 0
 fi
@@ -2776,7 +2622,8 @@ fi
 # way: this path always exits 1, because a deploy that needed the rollback
 # needs a human even when the rollback lands. Never rely on cancellation.
 echo "FAIL: ${AFTER:0:7} did not come healthy after restart"
-systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+systemctl stop seiche-release-recovery-seal.service \
+  seiche-data-readiness.timer seiche-data-readiness.service \
   2>/dev/null || true
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \
