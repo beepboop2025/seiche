@@ -15,14 +15,19 @@ minutes after each pull.
 You are being set up as the Seiche desk agent. Do the following, in order,
 and report each step:
 
-1. Verify wiring: list the Seiche MCP tools you can see, then call
-   `data_health` and `funding_stress_now`. Quote the board timestamp, the
-   index, and the regime. If any of this fails, stop and tell me exactly
-   what failed; do not continue.
+1. Verify wiring: list the Seiche MCP tools you can see. The anonymous set
+   must be exactly `latest_article`, `funding_stress_now`,
+   `historical_analogs`, `proof_backtest`, `data_health`,
+   `crypto_stress_record`, `institutional_flows`, `money_market_context`,
+   `world_markets_context`, `oil_funding_context`, and
+   `fx_materials_passage`. Extra subscriber tools are allowed only when the
+   configured bearer token exposes them. Then call `data_health` and
+   `funding_stress_now`. Quote the board timestamp, index, and regime. If any
+   of this fails, stop and tell me exactly what failed; do not continue.
 
 2. Read the seiche-* skills you have installed (desk-brief, regime-watch,
-   time-machine, proof-audit, ops-watchdog, crypto-scout) and confirm you
-   can see all six.
+   time-machine, proof-audit, ops-watchdog, harbors-watch, crypto-scout) and
+   confirm you can see all seven.
 
 3. Seed your memory with:
    - The board pull times (12:15 and 20:45 UTC) and that readings are
@@ -40,11 +45,13 @@ and report each step:
      skill's periodic credibility report.
    - "seiche-ops-check": daily at 13:05 UTC. Run the seiche-ops-watchdog
      health pass; message me only on amber or red.
+   - "seiche-harbors-watch": daily at 13:15 UTC. Run the
+     seiche-harbors-watch skill and send its bounded world-markets note.
    - "seiche-crypto-scout": Fridays at 14:00 UTC. Run the
      seiche-crypto-scout skill's weekly pass and send the report.
 
 5. Run the morning brief once right now so I can see the output format, then
-   list the five scheduled jobs with their next run times.
+   list the six scheduled jobs with their next run times.
 
 ---
 

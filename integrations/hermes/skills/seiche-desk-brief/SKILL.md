@@ -24,13 +24,21 @@ Never quote a reading from memory.
 2. `funding_stress_now` for the index (0-100), the regime word
    (CALM / EROSION / STRAIN / STRESS), the component decomposition, and the
    Tell.
-3. `funding_stress_forecast` (subscriber) for P(event) at 5/10/21 business
+3. `money_market_context` with `section="summary"` for the bounded USD desk
+   countercase, evidence coverage, and freshness clocks. This context is
+   descriptive; never turn a percentile or section regime into a forecast or
+   a second composite.
+4. `funding_stress_forecast` (subscriber) for P(event) at 5/10/21 business
    days across the model fleet. Agreement between independent models is the
    signal; one model alone is noise.
-4. `historical_analogs` for the nearest past days and how often they led to a
+5. `historical_analogs` for the nearest past days and how often they led to a
    stress event. Note the novelty flag: if today has no close precedent, say
    so instead of forcing an analogy.
-5. `desk_brief` (subscriber) for the full prose note. When available, use it
+6. `latest_article` when the reader asks for today's editorial or the note
+   needs a link to the published evidence-led interpretation. Accept it only
+   with its publication receipt and evidence clock; it cannot override the
+   current board or `data_health`.
+7. `desk_brief` (subscriber) for the full prose note. When available, use it
    as the backbone and compress; do not re-derive what it already states.
 
 If a subscriber tool returns an authorization or quota error, write the brief
@@ -42,6 +50,7 @@ from the public tools and say plainly which sections are missing and why.
 SEICHE {date} — {REGIME} {index}/100 ({+/-delta} d/d)
 
 Driving it: {top 2-3 components, one line each}
+USD desk: {strongest descriptive signal and countercase, with its as-of clock}
 Forward odds: {5bd}% / {10bd}% / {21bd}% — models {agree|split}
 History says: {analog outcome rate, or "no close precedent (novel)"}
 Data: {all fresh | name the stale/faulted series}

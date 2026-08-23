@@ -60,6 +60,8 @@ that does not answer is said out loud; absence is not calm.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import json
 import os
@@ -143,6 +145,11 @@ MAX_JSON_RESPONSE_BYTES = 8 * 1024 * 1024
 # gates who may ask: the desk stays free, only one chat's rate is bounded.
 ASK_PER_CHAT_LIMIT = 6
 ASK_PER_CHAT_WINDOW_S = 60
+REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+ACTIVATION_COMMANDS = frozenset({
+    "/now", "/snap", "/ask", "/letter", "/tandem",
+})
+RETENTION_TRACK_DAYS = 30
 
 ASK_BUSY = object()
 
@@ -415,6 +422,49 @@ def save_state(name: str, value) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(value, fh)
     os.replace(tmp, _state_path(name))
+
+
+def append_event(name: str, value: dict) -> None:
+    """Append one private state event without loosening its file mode."""
+    path = _state_path(name)
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    fd = os.open(path, flags, 0o600)
+    try:
+        line = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+        os.write(fd, line.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(value: datetime | None = None) -> str:
+    return (value or utcnow()).isoformat(timespec="microseconds").replace(
+        "+00:00", "Z"
+    )
+
+
+def _actor_hash(chat_id: int | str) -> str:
+    """Pseudonymise actors in analytics while subscriptions remain usable."""
+    key = (TOKEN or "seiche-bot-unconfigured").encode("utf-8")
+    return hmac.new(
+        key, str(chat_id).encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:16]
+
+
+def growth_event(event: str, chat_id: int, **fields: object) -> None:
+    clean = {
+        key: str(value)[:80]
+        for key, value in fields.items()
+        if value not in (None, "")
+    }
+    append_event(
+        "events.jsonl",
+        {"ts": _iso(), "event": event, "actor": _actor_hash(chat_id), **clean},
+    )
 
 
 def _persist_ask_rate(kept) -> None:
@@ -1966,9 +2016,117 @@ def fmt_welcome(index: list | None) -> str:
 def record_lead(chat_id: int, ref: str) -> None:
     path = _state_path("leads.jsonl")
     with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        fh.write(json.dumps({"ts": utcnow().isoformat(timespec="seconds"),
                              "chat_id": chat_id, "ref": ref},
                             sort_keys=True) + "\n")
+
+
+def _record_first_open(chat_id: int, ref: str = "") -> bool:
+    """Persist first-touch attribution without duplicating acquisition rows."""
+    opens = load_state("start_attribution.json", {})
+    if not isinstance(opens, dict):
+        opens = {}
+    actor = _actor_hash(chat_id)
+    record = opens.get(actor)
+    first = not isinstance(record, dict)
+    if first:
+        opens[actor] = {"since": _iso(), "ref": ref or None}
+        save_state("start_attribution.json", opens)
+        if ref:
+            record_lead(chat_id, ref)
+        growth_event("start", chat_id, ref=ref or "direct")
+    elif ref and not record.get("ref"):
+        record["ref"] = ref
+        save_state("start_attribution.json", opens)
+        record_lead(chat_id, ref)
+        growth_event("attribution", chat_id, ref=ref)
+    return first
+
+
+def _record_activation(chat_id: int, command: str) -> bool:
+    """Record the first useful action and exact elapsed return-day buckets."""
+    opens = load_state("start_attribution.json", {})
+    if not isinstance(opens, dict):
+        return False
+    actor = _actor_hash(chat_id)
+    record = opens.get(actor)
+    if not isinstance(record, dict):
+        return False
+
+    current = utcnow()
+    action = command.lstrip("/")
+    activated = not record.get("activated_at")
+    if activated:
+        record["activated_at"] = _iso(current)
+        record["activation"] = action
+
+    day_index: int | None = None
+    try:
+        opened_at = datetime.fromisoformat(
+            str(record.get("since") or "").replace("Z", "+00:00")
+        )
+        if opened_at.tzinfo is None:
+            raise ValueError("first-open timestamp has no timezone")
+        elapsed_seconds = max(0.0, (current - opened_at).total_seconds())
+        candidate = int(elapsed_seconds // (24 * 60 * 60))
+        if candidate <= RETENTION_TRACK_DAYS:
+            day_index = candidate
+    except (TypeError, ValueError):
+        pass
+
+    stored_days = record.get("active_days")
+    active_days = (
+        {
+            raw for raw in stored_days
+            if isinstance(raw, int) and not isinstance(raw, bool)
+            and 0 <= raw <= RETENTION_TRACK_DAYS
+        }
+        if isinstance(stored_days, list)
+        else set()
+    )
+    day_recorded = day_index is not None and day_index not in active_days
+    if day_recorded:
+        active_days.add(day_index)
+        record["active_days"] = sorted(active_days)
+
+    if activated or day_recorded:
+        # This state is authoritative for retention. Persist before the event
+        # append so a retry cannot inflate a return-day cohort.
+        save_state("start_attribution.json", opens)
+    if activated:
+        growth_event(
+            "activation",
+            chat_id,
+            ref=record.get("ref") or "direct",
+            action=action,
+        )
+    if day_recorded:
+        growth_event(
+            "active_day",
+            chat_id,
+            ref=record.get("ref") or "direct",
+            action=action,
+            day_index=day_index,
+        )
+    return activated
+
+
+def _safe_record_first_open(chat_id: int, ref: str = "") -> bool:
+    """Keep optional growth storage failures out of the delivery path."""
+    try:
+        return _record_first_open(chat_id, ref)
+    except OSError as exc:
+        print(f"growth: cannot record first open ({exc})", file=sys.stderr)
+        return False
+
+
+def _safe_record_activation(chat_id: int, command: str) -> bool:
+    """Keep optional activation storage failures out of the reply path."""
+    try:
+        return _record_activation(chat_id, command)
+    except OSError as exc:
+        print(f"growth: cannot record activation ({exc})", file=sys.stderr)
+        return False
 
 
 def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
@@ -1992,15 +2150,21 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         send(chat_id, PRIVATE_SUBSCRIPTION_PROMPT,
              PRIVATE_SUBSCRIPTION_KEYBOARD)
         return
+    if (
+        cmd in ACTIVATION_COMMANDS
+        and chat_type == "private"
+        and (cmd != "/ask" or bool(arg.strip()))
+    ):
+        _safe_record_activation(chat_id, cmd)
     if cmd == "/start":
+        ref = arg.strip() if REF_RE.fullmatch(arg.strip()) else ""
+        _safe_record_first_open(chat_id, ref)
         subs = load_state("subscribers.json", {})
-        subs[str(chat_id)] = {"since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        subs[str(chat_id)] = {"since": utcnow().isoformat(timespec="seconds")}
         save_state("subscribers.json", subs)
         # t.me/seiche_desk_bot?start=ref_x arrives as "/start ref_x".
         # The private-chat guard above makes both the subscription and its
         # acquisition ref attributable to one person rather than a room.
-        if arg.strip():
-            record_lead(chat_id, arg.strip()[:64])
         send(chat_id,
              fmt_welcome(board_get(f"{SITE}/dispatches/index.json")),
              keyboard_for("/start"))
