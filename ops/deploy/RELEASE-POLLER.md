@@ -1,15 +1,16 @@
 # Direct Hetzner release controller
 
 `seiche-release-poll.timer` replaces the hosted `deploy-hetzner` runner for
-SSH-signed `main` commits. It does not make the production checkout its test
-workspace. Before executing any candidate code, the controller requires the
+SSH-signed `main` commits. Before trusting any gate, the controller requires the
 exact tip's author email and SSH signature to match the host-pinned release
-identity. It then creates a detached candidate, installs an isolated virtual
-environment, runs the same full suite as `publish.yml`, re-checks that
-`origin/main` did not move, waits for the test-induced host load to cool,
-re-checks `origin/main`, and hands the exact tested SHA to the existing root
-deploy wrapper. That wrapper remains the sole owner of service quiescence,
-snapshot activation, Caddy deployment, health gates, and rollback.
+identity. Its default path then fetches the public OCI gate artifact, verifies
+GitHub's OIDC attestation against the exact repository, workflow, ref, commit,
+tree, source-archive bytes, and artifact digest, and stores a root-owned local
+receipt. Railway supplies CPU only; GitHub packages and attests the evidence;
+Hetzner remains the only production authority. The existing root deploy wrapper
+remains the sole owner of service quiescence, snapshot activation, Caddy
+deployment, health gates, and rollback. See `RAILWAY-GATE.md` for bootstrap and
+the complete phase-1 contract.
 
 ## Safety boundary
 
@@ -34,36 +35,40 @@ snapshot activation, Caddy deployment, health gates, and rollback.
 - Never put a source write credential on this box. A read-only deploy key keeps
   a host compromise from becoming a push-to-root loop even though only signed
   commits are eligible for release.
-- Candidate code runs as `seiche`, from
-  `/var/lib/seiche-control/candidates/main`, without any production
-  `EnvironmentFile`. Its isolated gate installs the same `dev,collectors`
-  dependency surface and runs the same full backend suite as static publish.
-  The shared Unix identity is needed for the box's read-only Git key, so this is
-  protection against accidental live-tree writes, not a hostile-code sandbox;
-  only protected, trusted `main` may feed it.
+- The normal path executes no candidate tests on Hetzner. The local detached
+  worktree and isolated `dev,collectors` venv exist only when an operator runs
+  the controller with `SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1`. A 404 for an
+  exact-SHA artifact defers inside a bounded one-hour publication window;
+  unsafe, unavailable, malformed, red, late, or unattested evidence fails. No
+  remote outcome ever selects the local path automatically.
 - `/run/seiche-control/release.lock` coalesces polls. The existing independent
   `/run/seiche-deploy/deploy.lock` still serializes checkout/service mutation.
 - Immutable `*.gate.json` and `*.release.json` receipts live under
   `/var/lib/seiche-control/receipts`. A wrapper failure never writes a release
-  receipt; its established rollback path remains authoritative.
+  receipt; its established rollback path remains authoritative. Root-owned
+  `*.remote-pending` markers retain the first missing-artifact observation so a
+  broken producer becomes an alert after the bounded publication SLO instead of
+  silently deferring forever.
 - The installer shares the poller's lock. It atomically replaces the poller,
-  deploy wrapper, service, and timer, and restores all four files plus the previous timer state if
-  verification, `daemon-reload`, activation, or the installer itself fails.
-- If `main` advances during the full gate, the tested candidate is discarded.
+  deploy wrapper, verifier, service, and timer, and restores all five files plus
+  the previous timer state if verification, `daemon-reload`, activation, or the
+  installer itself fails.
+- If `main` advances during remote verification or a local break-glass gate,
+  the tested candidate is discarded.
   The wrapper also checks `SEICHE_EXPECTED_TARGET_SHA` before stopping a unit,
   closing the smaller race between the gate and wrapper hand-off.
 - Before stopping any service, the wrapper requires three one- and five-minute
   load samples, ten seconds apart, at or below 75 percent of online CPU count.
   The longer average prevents a brief dip from admitting immediately after a
   sustained sibling workload. A poller first invokes the same check in
-  admission-only mode, before candidate installation or tests, and the wrapper
-  repeats it before quiescence. After a successful full gate, the poller waits
-  up to 15 minutes for the gate's own load window to cool, then re-fetches
-  `origin/main` so a candidate superseded during that wait remains inert. A
-  still-busy host records no release receipt and defers without paging; the
-  timer retries the same signed tip on a later five-minute cycle. Admission
-  probe errors remain failures. Do not raise the load ceiling or lengthen
-  snapshot health deadlines to compensate for unrelated workload pressure.
+  admission-only mode before an explicit local gate, and the wrapper repeats it
+  before quiescence. Remote verification can proceed while the host is busy,
+  then waits up to 15 minutes for deployment admission without rerunning tests.
+  A local break-glass run may use the same bounded wait for its test load to
+  cool. The poller re-fetches `origin/main` after verification and again before
+  handoff so a superseded candidate remains inert. A still-busy host records no
+  release receipt and defers without paging; admission probe errors remain
+  failures.
 
 ## Install without activating
 
@@ -364,13 +369,14 @@ retain the v2 mount, sealed runtime, and all newly committed evidence.
 The signed-tree installer creates `/opt/seiche-nbs-intake` only after the v2
 three-mount and isolated Ed25519 proofs, installs the updated rollback-aware
 wrapper and release-poll unit, and leaves the timer disabled and inactive. On a
-failed controller transaction it restores all four controller files and timer
+failed controller transaction it restores all five controller files and timer
 state, and removes the anchor only when this run created it and it remains the
 same empty directory. The gate-only service start reruns the v2 preflight before
 candidate admission. `SEICHE_CONTROL_GATE_ONLY=1` deliberately bypasses the
-already-deployed fast path, verifies the tip signature, runs the isolated full
-gate, records only its gate receipt, and exits before invoking the deploy
-wrapper. Confirm that receipt and the unchanged deployed SHA before handoff.
+already-deployed fast path, verifies the tip signature and attested Railway
+artifact, records only its gate receipt, and exits before invoking the deploy
+wrapper. Confirm that the receipt says `gate_provider=railway` and that the
+deployed SHA stayed unchanged before handoff.
 
 The release which first introduces shared-host admission still enters through
 the previously installed wrapper. Bootstrap it only during a manually verified

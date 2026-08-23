@@ -174,6 +174,7 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-release-poll.service": "100644",
     "ops/deploy/seiche-release-poll.sh": "100755",
     "ops/deploy/seiche-release-poll.timer": "100644",
+    "ops/deploy/seiche-remote-gate-verify.py": "100755",
     "ops/deploy/seiche-snapshot-promote.service": "100644",
     "ops/deploy/seiche-source-worker.service": "100644",
     "ops/deploy/seiche-storage-preflight.py": "100644",

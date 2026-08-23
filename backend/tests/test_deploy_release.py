@@ -3957,7 +3957,7 @@ def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
         assert result.returncode == expected
 
 
-def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
+def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     poller = RELEASE_POLLER.read_text()
     wrapper_handoff = poller[
         poller.index("run_deploy_wrapper() {") : poller.index(
@@ -3977,12 +3977,16 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
     full_gate = poller.index('"$VENV/bin/python" -m pytest backend/tests -q', detached)
+    remote_gate = poller.index(
+        'install_remote_gate_receipt "$GATE_RECEIPT"', full_gate
+    )
     refetched = poller.index(
-        'as_service git -C "$APP_DIR" fetch -q origin main', full_gate
+        'as_service git -C "$APP_DIR" fetch -q origin main', remote_gate
     )
     superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
     gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
-    gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
+    gate_digest = poller.index('GATE_DIGEST=$("$SHA256SUM"', superseded)
+    gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_digest)
     post_gate_admission = poller.index("wait_for_post_gate_admission", gate_only)
     post_gate_refetch = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', post_gate_admission
@@ -4005,9 +4009,11 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < admission
         < detached
         < full_gate
+        < remote_gate
         < refetched
         < superseded
         < gate_receipt
+        < gate_digest
         < gate_only
         < post_gate_admission
         < post_gate_refetch
@@ -4017,6 +4023,15 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < handoff_started
         < deployed
     )
+    assert (
+        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"'
+        in poller
+    )
+    assert 'if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then' in poller
+    assert "local gate was not run automatically" in poller
+    assert 'validate_gate_provider "$GATE_RECEIPT" railway' in poller
+    assert "seiche.release-receipt.v2" in poller
+    assert "gate_provider" in poller
     assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
     assert 'install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700' in poller
     assert 'exec 8>"$CONTROL_LOCK"' in poller
@@ -4035,6 +4050,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "-o faulthandler_timeout=300" in gate_slice
     assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
+    assert "EnvironmentFile" not in poller[remote_gate:refetched]
     monitor = poller[
         poller.index("resolve_advertised_main() {") : poller.index(
             "is_inert_automation_content_commit() {"
@@ -4064,7 +4080,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "release_timer_is_ready" in after_deploy
     early_exit = poller[
         poller.index('if [ "$GATE_ONLY" != 1 ]') : poller.index(
-            "# The candidate uses a detached worktree"
+            'CANDIDATE_TREE="$TARGET_TREE"'
         )
     ]
     assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit

@@ -1,5 +1,5 @@
 [Unit]
-Description=Gate and deploy the exact trusted Seiche main commit
+Description=Verify the attested gate and deploy the exact trusted Seiche main commit
 Requires=seiche-storage-preflight.service
 After=network-online.target seiche-storage-preflight.service
 Wants=network-online.target
