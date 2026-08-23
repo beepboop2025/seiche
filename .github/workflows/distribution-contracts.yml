@@ -6,6 +6,7 @@ on:
       - ".dockerignore"
       - ".gitignore"
       - ".github/workflows/distribution-contracts.yml"
+      - ".github/workflows/audit-distribution-receipts.yml"
       - ".github/workflows/publish-container.yml"
       - ".github/workflows/publish-mcp.yml"
       - ".github/workflows/publish-openbb.yml"
@@ -24,6 +25,7 @@ on:
       - "backend/tests/test_ai_discovery.py"
       - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
+      - "backend/tests/test_distribution_receipt_auditor.py"
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
       - "backend/tests/test_public_dataset_deploy.py"
@@ -42,6 +44,7 @@ on:
       - "ops/deploy/release-allowed-signers"
       - "ops/release/verify_python_artifacts.py"
       - "ops/release/verify_public_dataset.py"
+      - "ops/release/audit_distribution_receipts.py"
       - "server.json"
   push:
     branches: [main]
@@ -49,6 +52,7 @@ on:
       - ".dockerignore"
       - ".gitignore"
       - ".github/workflows/distribution-contracts.yml"
+      - ".github/workflows/audit-distribution-receipts.yml"
       - ".github/workflows/publish-container.yml"
       - ".github/workflows/publish-mcp.yml"
       - ".github/workflows/publish-openbb.yml"
@@ -67,6 +71,7 @@ on:
       - "backend/tests/test_ai_discovery.py"
       - "backend/tests/test_ard_coverage.py"
       - "backend/tests/test_distribution_artifacts.py"
+      - "backend/tests/test_distribution_receipt_auditor.py"
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
       - "backend/tests/test_public_dataset_deploy.py"
@@ -85,6 +90,7 @@ on:
       - "ops/deploy/release-allowed-signers"
       - "ops/release/verify_python_artifacts.py"
       - "ops/release/verify_public_dataset.py"
+      - "ops/release/audit_distribution_receipts.py"
       - "server.json"
   workflow_dispatch:
 
@@ -126,6 +132,7 @@ jobs:
             backend/tests/test_ai_discovery.py \
             backend/tests/test_ard_coverage.py \
             backend/tests/test_distribution_artifacts.py \
+            backend/tests/test_distribution_receipt_auditor.py \
             backend/tests/test_distribution_listings.py \
             backend/tests/test_public_money_market_discovery.py \
             backend/tests/test_public_dataset_deploy.py \
@@ -142,7 +149,9 @@ jobs:
             distribution/datasets/stage.py \
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
+            backend/tests/test_distribution_receipt_auditor.py \
             backend/tests/test_public_dataset_deploy.py \
+            ops/release/audit_distribution_receipts.py \
             ops/release/verify_python_artifacts.py \
             ops/release/verify_public_dataset.py
           ruff format --check --no-cache \
@@ -151,7 +160,9 @@ jobs:
             distribution/datasets/stage.py \
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
+            backend/tests/test_distribution_receipt_auditor.py \
             backend/tests/test_public_dataset_deploy.py \
+            ops/release/audit_distribution_receipts.py \
             ops/release/verify_python_artifacts.py \
             ops/release/verify_public_dataset.py
 

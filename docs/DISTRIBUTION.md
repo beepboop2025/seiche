@@ -134,7 +134,9 @@ The distribution contract checks all of the following before publication:
   an exact Poetry Core backend pin, independent reproducibility builds, an
   allowlisted artifact verifier, and clean wheel and sdist install gates;
 - the PyPI wheel and source archive are present, not yanked, hash-correct, and
-  exact-member allowlisted, PEP 639 license-complete, RECORD-valid, and
+  exact-member allowlisted; each public URL's Warehouse `packages/` path is
+  bound to its `blake2b_256` digest while SHA-256 remains the artifact receipt;
+  artifacts are PEP 639 license-complete, RECORD-valid, and
   byte-for-byte identical to the release checkout for every shipped Python
   source file and the one included VCS ignore file;
 - two independently timestamp-perturbed source trees produce byte-identical
@@ -161,3 +163,40 @@ receipt, not an OpenBB endorsement of Seiche or its financial claims.
 Seiche is research software and not investment advice. Publications should cite
 the primary data providers for any underlying observations as well as the
 Seiche software release.
+
+## Audit mandatory public receipts
+
+Run the dependency-free, anonymous auditor after publication or whenever the
+distribution board needs a current answer:
+
+```bash
+python3 -I -S ops/release/audit_distribution_receipts.py
+```
+
+The auditor compares the repository's bare semantic version and exact
+`server.json` identity with the latest PyPI project record and latest active
+official MCP Registry record. The Registry receipt must explicitly be active
+and latest, include valid timezone-aware RFC 3339 `statusChangedAt` and
+`publishedAt` clocks, and carry a valid `updatedAt` clock when that optional
+field is present. Server-card comparison permits the Registry to omit false
+defaults only at the MCP schema's exact input and argument paths; identically
+named false fields elsewhere remain part of the exact identity. Both surfaces
+are mandatory, and a missing, stale, yanked, malformed, or divergent receipt
+fails the command.
+
+The network reader is anonymous and GET-only. It ignores process proxy
+configuration, accepts only the two literal HTTPS receipt endpoints, refuses
+all redirects, and requires both HTTP 200 and exact final-URL equality. Responses
+must be identity-encoded JSON and are read through a 2 MiB cap. The command's
+timeout is the standard-library timeout for each blocking socket operation, not
+a total-transfer deadline. Bounded HTTP error excerpts containing Markdown code
+fences are omitted before the JSON report can be embedded in an Actions summary.
+The scheduled
+[`audit-distribution-receipts.yml`](../.github/workflows/audit-distribution-receipts.yml)
+job supplies the independent five-minute overall wall-clock bound and reports
+the same JSON contract in the Actions summary.
+
+Optional third-party directories are deliberately excluded because their
+independent indexing lag must not make a Seiche release unhealthy. This audit
+also never reads or changes `distribution/submissions.csv`; that evidence ledger
+remains an explicit operator-reviewed record of durable public receipts.
