@@ -206,7 +206,8 @@ grant, and receipt is an unsafe dual-writer attempt.
 ## Remaining state domain
 
 Phase 6 covers the API, market collectors, source worker, market/NBS files,
-SQLite, and PostgreSQL state moved by Phase 5. `/var/lib/seiche-bot`, Telegram
-timers, delivery idempotency, and update offsets remain Phase 7. Until their own
-snapshot/restore and offset proof is implemented, do not claim the entire
-stateful product has moved to Railway.
+SQLite, and PostgreSQL state moved by Phase 5. Phase 7 implements a separate
+snapshot/restore, authority, delivery-idempotency, update-offset, native-backup,
+and monitoring contract for `/var/lib/seiche-bot`; follow
+`RAILWAY-TELEGRAM.md`. Until its activation receipt and first production
+monitor exist, do not claim the Seiche bot workload has moved to Railway.
