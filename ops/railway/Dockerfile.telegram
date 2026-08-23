@@ -1,0 +1,94 @@
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS telegram-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250814T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250814T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -type f -delete \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git tini \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete \
+    && groupadd --system --gid 10001 seiche \
+    && useradd --system --uid 10001 --gid 10001 \
+      --home-dir /nonexistent --shell /usr/sbin/nologin seiche
+
+WORKDIR /migration
+COPY source.tar source.bundle request.json /migration/
+
+RUN git clone --quiet /migration/source.bundle /workspace \
+    && python -I -S - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+
+request_body = Path("/migration/request.json").read_bytes()
+request = json.loads(request_body)
+canonical = (
+    json.dumps(request, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    + "\n"
+).encode()
+expected = {
+    "schema",
+    "repository",
+    "workflow",
+    "source_ref",
+    "commit",
+    "tree",
+    "source_archive_sha256",
+    "source_bundle_sha256",
+    "request_id",
+    "requested_at",
+    "confirmation",
+}
+if (
+    request_body != canonical
+    or set(request) != expected
+    or request.get("schema") != "seiche.railway-telegram-image-request.v1"
+    or request.get("repository") != "beepboop2025/seiche"
+    or request.get("workflow")
+    != "beepboop2025/seiche/.github/workflows/railway-telegram.yml"
+    or request.get("source_ref") != "refs/heads/main"
+    or request.get("confirmation")
+    != "PREPARE_NON_AUTHORITATIVE_TELEGRAM_SERVICE"
+    or re.fullmatch(r"[0-9a-f]{64}", str(request.get("request_id"))) is None
+):
+    raise SystemExit("Telegram image request is invalid")
+commit = subprocess.check_output(
+    ["git", "-C", "/workspace", "rev-parse", "HEAD"], text=True
+).strip()
+tree = subprocess.check_output(
+    ["git", "-C", "/workspace", "rev-parse", "HEAD^{tree}"], text=True
+).strip()
+archive = subprocess.check_output(
+    ["git", "-C", "/workspace", "archive", "--format=tar", "HEAD"]
+)
+if commit != request.get("commit") or tree != request.get("tree"):
+    raise SystemExit("Telegram Git bundle identity differs from request")
+if hashlib.sha256(archive).hexdigest() != request.get("source_archive_sha256"):
+    raise SystemExit("Telegram Git tree differs from canonical archive")
+if archive != Path("/migration/source.tar").read_bytes():
+    raise SystemExit("Telegram source archive bytes differ")
+for name, field in (
+    ("source.tar", "source_archive_sha256"),
+    ("source.bundle", "source_bundle_sha256"),
+):
+    observed = hashlib.sha256((Path("/migration") / name).read_bytes()).hexdigest()
+    if observed != request.get(field):
+        raise SystemExit(f"Telegram {name} digest differs from request")
+PY
+
+RUN chmod 0555 /migration /workspace \
+    && chmod 0444 /migration/source.tar /migration/source.bundle \
+      /migration/request.json \
+    && chmod -R a-w /workspace
+
+WORKDIR /workspace
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "/workspace/ops/railway/run-telegram.py"]

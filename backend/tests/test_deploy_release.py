@@ -1046,6 +1046,7 @@ exec /bin/mv "$@"
         "SEICHE_CADDY_DEST": str(installed),
         "SEICHE_CADDY_BIN": str(caddy),
         "SEICHE_SYSTEMCTL_BIN": str(systemctl),
+        "SEICHE_CADDY_ENV_FILE": str(tmp_path / "railway-edge.env"),
         "REJECT_NEW_RELOAD": "1" if reject_new_reload else "0",
     }
     return env, installed, calls
@@ -1070,6 +1071,55 @@ def test_caddy_installer_validates_backs_up_installs_and_reloads(tmp_path):
     assert f"<{installed}>" in log
     assert f"caddy reload config={installed} content=NEW" in log
     assert not list(tmp_path.glob(".installed.Caddyfile.*"))
+
+
+def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
+    caddy = CADDYFILE.read_text()
+    snippet = caddy[
+        caddy.index("(seiche_stateful_upstream)") : caddy.index("api.seiche.info {")
+    ]
+    assert "{$SEICHE_API_UPSTREAM:127.0.0.1:8787}" in snippet
+    assert "{$SEICHE_RAILWAY_EDGE_TOKEN:local-edge-token-unused}" in snippet
+    assert "header_up Host {upstream_hostport}" in snippet
+    assert caddy.count("import seiche_stateful_upstream") == 4
+    private_delivery = caddy[
+        caddy.index("@world_model_delivery {") : caddy.index(
+            "@world_model_delivery_non_get"
+        )
+    ]
+    assert "reverse_proxy 127.0.0.1:8787" in private_delivery
+    assert "seiche_stateful_upstream" not in private_delivery
+
+
+def test_caddy_installer_loads_edge_file_as_data_without_sourcing(tmp_path):
+    env, installed, calls = _caddy_env(tmp_path)
+    edge = Path(env["SEICHE_CADDY_ENV_FILE"])
+    token = "x" * 40
+    edge.write_text(
+        "SEICHE_API_UPSTREAM=https://fixture.up.railway.app\n"
+        f"SEICHE_RAILWAY_EDGE_TOKEN={token}\n",
+        encoding="utf-8",
+    )
+    edge.chmod(0o600)
+    result = subprocess.run(
+        ["bash", str(CADDY_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert installed.read_text() == "NEW\n"
+    assert "fixture.up.railway.app" not in calls.read_text()
+
+    edge.write_text("SEICHE_API_UPSTREAM=$(touch /tmp/never-run)\n", encoding="utf-8")
+    rejected = subprocess.run(
+        ["bash", str(CADDY_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert "Railway edge environment is invalid" in rejected.stderr
 
 
 def test_caddy_reload_failure_restores_previous_config_and_stays_red(tmp_path):
@@ -3565,7 +3615,7 @@ def test_event_analysis_edge_is_post_only_and_excluded_from_public_get():
     assert "request_body" in event_handler
     assert "max_size 8KiB" in event_handler
     assert "max_size 8KB" not in event_handler
-    assert "reverse_proxy 127.0.0.1:8787" in event_handler
+    assert "import seiche_stateful_upstream" in event_handler
     assert "/api/auth/login" not in event_handler
     assert route not in other_post_matcher
     assert "/api/auth/login" in other_post_matcher

@@ -177,6 +177,8 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-release-poll.timer": "100644",
     "ops/deploy/seiche-release-recovery-seal.service": "100644",
     "ops/deploy/seiche-release-recovery-seal.sh": "100755",
+    "ops/deploy/seiche-railway-cutover-fence.sh": "100755",
+    "ops/deploy/seiche-railway-edge-mode.sh": "100755",
     "ops/deploy/seiche-remote-gate-verify.py": "100755",
     "ops/deploy/seiche-remote-snapshot-verify.py": "100755",
     "ops/deploy/seiche-snapshot-promote.service": "100644",
@@ -1590,6 +1592,8 @@ DATA_ARTIFACT_NAMES=(
   market-offsite-backup-helper
   market-backup-helper
   market-restore-check-helper
+  railway-cutover-fence-helper
+  railway-edge-mode-helper
   api-market-platform-dropin
   release-poll-storage-dropin
   validation-state-dropin
@@ -1605,6 +1609,8 @@ DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-market-offsite-backup.sh
   /etc/seiche/libexec/seiche-market-backup.sh
   /etc/seiche/libexec/seiche-market-restore-check.sh
+  /etc/seiche/libexec/seiche-railway-cutover-fence.sh
+  /etc/seiche/libexec/seiche-railway-edge-mode.sh
   /etc/systemd/system/seiche-api.service.d/market-platform.conf
   /etc/systemd/system/seiche-release-poll.service.d/storage-volume.conf
   /etc/systemd/system/seiche-market-validation.service.d/state-path.conf

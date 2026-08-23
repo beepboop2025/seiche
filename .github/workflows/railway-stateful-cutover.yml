@@ -1,0 +1,922 @@
+name: railway-stateful-cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Restore a read-only candidate or activate an already-proved candidate"
+        required: true
+        type: choice
+        options:
+          - candidate
+          - activate
+      snapshot_id:
+        description: "Candidate only: final frozen snapshot, for example 20260823T010203Z"
+        required: false
+        type: string
+      authority_fence_sha256:
+        description: "Candidate only: SHA-256 of canonical AUTHORITY-FENCE.json"
+        required: false
+        type: string
+      request_id:
+        description: "Activation only: accepted candidate request ID"
+        required: false
+        type: string
+      candidate_receipt_sha256:
+        description: "Activation only: accepted canonical candidate receipt SHA-256"
+        required: false
+        type: string
+      deployment_id:
+        description: "Activation only: exact Railway candidate deployment UUID"
+        required: false
+        type: string
+      confirmation:
+        description: "Exact operation-specific authority confirmation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-stateful-cutover-${{ inputs.operation }}
+  cancel-in-progress: false
+
+jobs:
+  restore-candidate:
+    if: github.repository == 'beepboop2025/seiche' && inputs.operation == 'candidate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: railway-stateful-cutover-candidate
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          "$tool_dir/railway" --version
+
+      - name: Prove the fenced source and isolated Railway target
+        id: control
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          FENCE_SHA256: ${{ inputs.authority_fence_sha256 }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          CONTROL_ROOT: ${{ runner.temp }}/railway-cutover-control
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = beepboop2025/seiche
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = HETZNER_FROZEN_RAILWAY_READ_ONLY
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SNAPSHOT_ID" =~ ^20[0-9]{6}T[0-9]{6}Z$ ]]
+          [[ "$FENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" \
+            "$RAILWAY_SERVICE_ID" "$RAILWAY_VOLUME_ID" "$RAILWAY_EDGE_TOKEN"; do
+            test -n "$value"
+          done
+          RAILWAY_EDGE_TOKEN="$RAILWAY_EDGE_TOKEN" python3 -I -S - <<'PY'
+          import os
+          import re
+
+          value = os.environ["RAILWAY_EDGE_TOKEN"]
+          if not 32 <= len(value) <= 512 or re.fullmatch(
+              r"[A-Za-z0-9._~=-]+", value
+          ) is None:
+              raise SystemExit("Railway edge token is invalid")
+          PY
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --short --untracked-files=no)"
+          mkdir -p "$CONTROL_ROOT/link" "$CONTROL_ROOT/evidence"
+          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/link" "$CONTROL_ROOT/evidence"
+          cd "$CONTROL_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          railway volume list --json >volumes.json
+          railway domain list --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >domains.json
+          railway variable list --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" --json >variables.json
+          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+            "/inbox/$SNAPSHOT_ID" --json >snapshot-files.json
+          EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" ORIGIN="$RAILWAY_ORIGIN" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          from urllib.parse import urlsplit
+
+          volumes = json.loads(Path("volumes.json").read_text())
+          compact = json.dumps(volumes, sort_keys=True, separators=(",", ":"))
+          if compact.count(os.environ["EXPECTED_VOLUME_ID"]) != 1:
+              raise SystemExit("the exact stateful volume is not uniquely attached")
+          if "/var/lib/seiche-platform" not in compact:
+              raise SystemExit("the stateful volume mount path is not exact")
+
+          domains = json.loads(Path("domains.json").read_text())
+          domain_text = json.dumps(domains, sort_keys=True, separators=(",", ":"))
+          observed = set(
+              re.findall(r"[a-z0-9][a-z0-9.-]+\.up\.railway\.app", domain_text)
+          )
+          expected = urlsplit(os.environ["ORIGIN"]).hostname
+          if observed != {expected}:
+              raise SystemExit("the exact Railway origin is not uniquely configured")
+
+          variables = json.loads(Path("variables.json").read_text())
+          names = set(variables) if isinstance(variables, dict) else {
+              item.get("name") for item in variables if isinstance(item, dict)
+          }
+          if "DATABASE_URL" not in names:
+              raise SystemExit("stateful service has no Railway PostgreSQL reference")
+          forbidden = {
+              "HETZNER_DATABASE_URL",
+              "NBS_SIGNING_KEY",
+              "TELEGRAM_BOT_TOKEN",
+              "GITHUB_TOKEN",
+              "RAILWAY_TOKEN",
+          }
+          if names & forbidden:
+              raise SystemExit("stateful service contains a forbidden control secret")
+
+          listing = json.loads(Path("snapshot-files.json").read_text())
+          rows = listing
+          if isinstance(listing, dict):
+              rows = listing.get("files", listing.get("entries", listing.get("items")))
+          if not isinstance(rows, list):
+              raise SystemExit("snapshot listing shape is invalid")
+          names = []
+          for row in rows:
+              if isinstance(row, str):
+                  names.append(Path(row).name)
+              elif isinstance(row, dict):
+                  raw = row.get("name", row.get("path"))
+                  if isinstance(raw, str):
+                      names.append(Path(raw).name)
+          required = {
+              "SHA256SUMS",
+              "seiche.dump",
+              "var-lib-seiche.tgz",
+              "api-data.tgz",
+              "table-counts.txt",
+              "deployed-sha.txt",
+              "manifest.env",
+          }
+          if len(names) != len(required) or set(names) != required:
+              raise SystemExit("final snapshot file set is not closed")
+          PY
+          rm -f variables.json
+          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt; do
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/inbox/$SNAPSHOT_ID/$member" "$CONTROL_ROOT/evidence/$member"
+          done
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/authority-fences/$FENCE_SHA256.json" \
+            "$CONTROL_ROOT/evidence/AUTHORITY-FENCE.json"
+          chmod go-w "$CONTROL_ROOT"/evidence/*
+          PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+            -m seiche.stateful_cutover validate fence \
+            "$CONTROL_ROOT/evidence/AUTHORITY-FENCE.json" \
+            >"$CONTROL_ROOT/evidence/fence.sha256"
+          test "$(cat "$CONTROL_ROOT/evidence/fence.sha256")" = "$FENCE_SHA256"
+          SNAPSHOT_ID="$SNAPSHOT_ID" TARGET="$GITHUB_SHA" \
+            FENCE_SHA256="$FENCE_SHA256" EVIDENCE="$CONTROL_ROOT/evidence" \
+            OUTPUT="$GITHUB_OUTPUT" python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          root = Path(os.environ["EVIDENCE"])
+          fence = json.loads((root / "AUTHORITY-FENCE.json").read_bytes())
+          snapshot = fence["snapshot"]
+          receipts = fence["receipts"]
+          if (
+              fence["commit"] != os.environ["TARGET"]
+              or snapshot["id"] != os.environ["SNAPSHOT_ID"]
+              or snapshot["source_revision"] != os.environ["TARGET"]
+          ):
+              raise SystemExit("authority fence identity differs from dispatch")
+          inventory = (root / "SHA256SUMS").read_bytes()
+          if hashlib.sha256(inventory).hexdigest() != snapshot["inventory_sha256"]:
+              raise SystemExit("snapshot inventory differs from authority fence")
+          if (root / "deployed-sha.txt").read_text(encoding="ascii") != (
+              os.environ["TARGET"] + "\n"
+          ):
+              raise SystemExit("snapshot belongs to another release")
+          manifest = (root / "manifest.env").read_text(encoding="utf-8")
+          if f"created_at={os.environ['SNAPSHOT_ID']}\n" not in manifest:
+              raise SystemExit("snapshot manifest identity differs")
+          counts = (root / "table-counts.txt").read_text(encoding="ascii")
+          if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\n", counts) is None:
+              raise SystemExit("snapshot count floor is invalid")
+          outputs = {
+              "tree": fence["tree"],
+              "inventory_sha256": snapshot["inventory_sha256"],
+              "content_set_sha256": snapshot["content_set_sha256"],
+              "release_receipt_sha256": receipts["release_sha256"],
+              "recovery_receipt_sha256": receipts["recovery_sha256"],
+              "shadow_receipt_sha256": receipts["latest_shadow_sha256"],
+              "fence_path": str(root / "AUTHORITY-FENCE.json"),
+          }
+          with Path(os.environ["OUTPUT"]).open("a", encoding="utf-8") as stream:
+              for name, value in outputs.items():
+                  stream.write(f"{name}={value}\n")
+          PY
+          test "$(git rev-parse 'HEAD^{tree}')" = \
+            "$(tail -n 7 "$GITHUB_OUTPUT" | awk -F= '$1=="tree"{print $2}')"
+          railway variable set \
+            "SEICHE_RAILWAY_VOLUME_ID=$RAILWAY_VOLUME_ID" \
+            "SEICHE_RAILWAY_CUTOVER_SNAPSHOT_ID=$SNAPSHOT_ID" \
+            "SEICHE_RAILWAY_AUTHORITY_FENCE_SHA256=$FENCE_SHA256" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
+          printf '%s' "$RAILWAY_EDGE_TOKEN" |
+            railway variable set SEICHE_RAILWAY_EDGE_TOKEN --stdin \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --skip-deploys >/dev/null
+
+      - name: Build the canonical cutover candidate request
+        id: request
+        env:
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          FENCE_SHA256: ${{ inputs.authority_fence_sha256 }}
+          TREE: ${{ steps.control.outputs.tree }}
+          INVENTORY_SHA256: ${{ steps.control.outputs.inventory_sha256 }}
+          CONTENT_SET_SHA256: ${{ steps.control.outputs.content_set_sha256 }}
+          RELEASE_RECEIPT_SHA256: ${{ steps.control.outputs.release_receipt_sha256 }}
+          RECOVERY_RECEIPT_SHA256: ${{ steps.control.outputs.recovery_receipt_sha256 }}
+          SHADOW_RECEIPT_SHA256: ${{ steps.control.outputs.shadow_receipt_sha256 }}
+          FENCE_PATH: ${{ steps.control.outputs.fence_path }}
+          UPLOAD_ROOT: ${{ runner.temp }}/railway-cutover-upload
+        run: |
+          set -euo pipefail
+          mkdir -p "$UPLOAD_ROOT"
+          git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"
+          git bundle verify "$UPLOAD_ROOT/source.bundle"
+          source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
+          source_bundle_sha256=$(sha256sum "$UPLOAD_ROOT/source.bundle" | awk '{print $1}')
+          request_id=$(printf '%s\n' \
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA:$SNAPSHOT_ID:cutover-candidate" |
+            sha256sum | awk '{print $1}')
+          requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cp ops/railway/Dockerfile.stateful "$UPLOAD_ROOT/Dockerfile"
+          cp ops/railway/railway.cutover.json "$UPLOAD_ROOT/railway.json"
+          TARGET="$GITHUB_SHA" SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+            SOURCE_BUNDLE_SHA256="$source_bundle_sha256" REQUEST_ID="$request_id" \
+            REQUESTED_AT="$requested_at" REQUEST_PATH="$UPLOAD_ROOT/request.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema": "seiche.railway-stateful-cutover-request.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-cutover.yml"
+              ),
+              "source_ref": os.environ["GITHUB_REF"],
+              "commit": os.environ["TARGET"],
+              "tree": os.environ["TREE"],
+              "source_archive_sha256": os.environ["SOURCE_ARCHIVE_SHA256"],
+              "source_bundle_sha256": os.environ["SOURCE_BUNDLE_SHA256"],
+              "request_id": os.environ["REQUEST_ID"],
+              "operation": "cutover_candidate",
+              "snapshot_id": os.environ["SNAPSHOT_ID"],
+              "source_revision": os.environ["TARGET"],
+              "source_inventory_sha256": os.environ["INVENTORY_SHA256"],
+              "source_content_set_sha256": os.environ["CONTENT_SET_SHA256"],
+              "source_release_receipt_sha256": os.environ[
+                  "RELEASE_RECEIPT_SHA256"
+              ],
+              "source_recovery_receipt_sha256": os.environ[
+                  "RECOVERY_RECEIPT_SHA256"
+              ],
+              "source_shadow_receipt_sha256": os.environ[
+                  "SHADOW_RECEIPT_SHA256"
+              ],
+              "source_fence_sha256": os.environ["FENCE_SHA256"],
+              "source_writers_frozen": True,
+              "public_traffic_enabled": False,
+              "requested_at": os.environ["REQUESTED_AT"],
+          }
+          Path(os.environ["REQUEST_PATH"]).write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          PYTHONPATH=backend REQUEST="$UPLOAD_ROOT/request.json" \
+            FENCE="$FENCE_PATH" python3 -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from seiche.stateful_cutover import validate_fence, validate_request
+
+          fence = validate_fence(json.loads(Path(os.environ["FENCE"]).read_bytes()))
+          validate_request(
+              json.loads(Path(os.environ["REQUEST"]).read_bytes()),
+              fence=fence,
+          )
+          PY
+          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 5
+          {
+            echo "request_id=$request_id"
+            echo "target=$GITHUB_SHA"
+            echo "upload_root=$UPLOAD_ROOT"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Deploy the exact read-only candidate
+        id: deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          UPLOAD_ROOT: ${{ steps.request.outputs.upload_root }}
+        run: |
+          set -euo pipefail
+          deployment_json=$(railway up "$UPLOAD_ROOT" --path-as-root --detach --json \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --message "seiche-cutover-candidate:$GITHUB_SHA:${{ inputs.snapshot_id }}:$GITHUB_RUN_ID")
+          deployment_id=$(DEPLOYMENT_JSON="$deployment_json" python3 -I -S - <<'PY'
+          import json
+          import os
+          import re
+
+          value = json.loads(os.environ["DEPLOYMENT_JSON"])
+          if not isinstance(value, dict) or set(value) != {"deploymentId", "logsUrl"}:
+              raise SystemExit("Railway upload returned an invalid response")
+          identity = value["deploymentId"]
+          if re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              identity,
+          ) is None:
+              raise SystemExit("Railway upload returned an invalid deployment ID")
+          print(identity)
+          PY
+          )
+          echo "deployment_id=$deployment_id" >>"$GITHUB_OUTPUT"
+
+      - name: Wait for the exact candidate deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          status=""
+          for _attempt in $(seq 1 360); do
+            railway deployment list --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --limit 100 --json >"${RUNNER_TEMP}/cutover-deployments.json"
+            status=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              STATUS_PATH="${RUNNER_TEMP}/cutover-deployments.json" \
+              python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          values = json.loads(Path(os.environ["STATUS_PATH"]).read_text())
+          matches = [
+              value for value in values
+              if isinstance(value, dict) and value.get("id") == os.environ["DEPLOYMENT_ID"]
+          ]
+          if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
+              raise SystemExit("exact Railway cutover deployment disappeared")
+          print(matches[0]["status"].upper())
+          PY
+            )
+            case "$status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED|REMOVING)
+                railway logs "$DEPLOYMENT_ID" --service "$RAILWAY_SERVICE_ID" \
+                  --project "$RAILWAY_PROJECT_ID" \
+                  --environment "$RAILWAY_ENVIRONMENT_ID" --lines 1000 || true
+                exit 1
+                ;;
+              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED) sleep 10 ;;
+              *) echo "unknown Railway deployment state: $status" >&2; exit 1 ;;
+            esac
+          done
+          test "$status" = SUCCESS
+
+      - name: Retrieve and validate the immutable candidate receipt
+        id: evidence
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          UPLOAD_ROOT: ${{ steps.request.outputs.upload_root }}
+          FENCE_PATH: ${{ steps.control.outputs.fence_path }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-cutover-candidate-evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          receipt="$EVIDENCE_ROOT/candidate-receipt.json"
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            cat "/var/lib/seiche-platform/cutover-receipts/$REQUEST_ID.candidate.json" \
+            >"$receipt"
+          receipt_sha256=$(PYTHONPATH=backend python3 -B \
+            -m seiche.stateful_cutover validate candidate "$receipt" \
+            --request "$UPLOAD_ROOT/request.json" --fence "$FENCE_PATH")
+          [[ "$receipt_sha256" =~ ^[0-9a-f]{64}$ ]]
+          EXPECTED_DEPLOYMENT="$DEPLOYMENT_ID" RECEIPT="$receipt" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["RECEIPT"]).read_bytes())
+          if value["railway"]["deployment_id"] != os.environ["EXPECTED_DEPLOYMENT"]:
+              raise SystemExit("candidate receipt belongs to another deployment")
+          PY
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            python -c 'import json,os,urllib.request; value=json.load(urllib.request.urlopen("http://127.0.0.1:"+os.environ["PORT"]+"/healthz", timeout=10)); assert value.get("status")=="ready" and value.get("mode")=="cutover_candidate"'
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+            --dump-header "$EVIDENCE_ROOT/origin.headers" \
+            --output "$EVIDENCE_ROOT/origin.json" --write-out '%{http_code}' \
+            "$RAILWAY_ORIGIN/api/health")
+          test "$status" = 200
+          HEADERS="$EVIDENCE_ROOT/origin.headers" DEPLOYMENT="$DEPLOYMENT_ID" \
+            TARGET="$GITHUB_SHA" python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+
+          values = {}
+          for line in Path(os.environ["HEADERS"]).read_text(
+              encoding="iso-8859-1"
+          ).splitlines():
+              if ":" in line:
+                  name, value = line.split(":", 1)
+                  values[name.strip().lower()] = value.strip()
+          expected = {
+              "x-seiche-railway-authority": "candidate",
+              "x-seiche-railway-deployment": os.environ["DEPLOYMENT"],
+              "x-seiche-release-sha": os.environ["TARGET"],
+          }
+          if any(values.get(name) != value for name, value in expected.items()):
+              raise SystemExit("direct Railway origin identity is invalid")
+          PY
+          cp "$UPLOAD_ROOT/request.json" "$EVIDENCE_ROOT/request.json"
+          cp "$FENCE_PATH" "$EVIDENCE_ROOT/AUTHORITY-FENCE.json"
+          {
+            echo "receipt_path=$receipt"
+            echo "receipt_sha256=$receipt_sha256"
+            echo "evidence_root=$EVIDENCE_ROOT"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "### Railway cutover candidate"
+            echo
+            echo "- Request: \`$REQUEST_ID\`"
+            echo "- Deployment: \`$DEPLOYMENT_ID\`"
+            echo "- Candidate receipt SHA-256: \`$receipt_sha256\`"
+            echo "- Authority: both writer planes fenced; Railway reads only"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private candidate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-cutover-candidate-${{ steps.request.outputs.target }}-${{ steps.request.outputs.request_id }}
+          path: ${{ steps.evidence.outputs.evidence_root }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: OIDC-attest the exact candidate receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.evidence.outputs.receipt_path }}
+
+  activate-candidate:
+    if: github.repository == 'beepboop2025/seiche' && inputs.operation == 'activate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: railway-stateful-activation
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact reviewed identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Recover and validate the exact candidate chain
+        id: candidate
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          EXPECTED_RECEIPT_SHA256: ${{ inputs.candidate_receipt_sha256 }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-cutover-activation-evidence
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = PUBLIC_EDGE_PROVES_CANDIDATE_ACTIVATE_RAILWAY
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" "$RAILWAY_ENVIRONMENT_ID" \
+            "$RAILWAY_SERVICE_ID" "$RAILWAY_VOLUME_ID" "$RAILWAY_EDGE_TOKEN"; do
+            test -n "$value"
+          done
+          mkdir -p "$EVIDENCE_ROOT"
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            cat "/var/lib/seiche-platform/cutover-receipts/$REQUEST_ID.candidate.json" \
+            >"$EVIDENCE_ROOT/candidate-receipt.json"
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            cat /migration/request.json >"$EVIDENCE_ROOT/request.json"
+          echo "$EXPECTED_RECEIPT_SHA256  $EVIDENCE_ROOT/candidate-receipt.json" |
+            sha256sum --check --strict
+          RECEIPT="$EVIDENCE_ROOT/candidate-receipt.json" \
+            EXPECTED_REQUEST="$REQUEST_ID" EXPECTED_DEPLOYMENT="$DEPLOYMENT_ID" \
+            EXPECTED_COMMIT="$GITHUB_SHA" OUTPUT="$GITHUB_OUTPUT" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["RECEIPT"]).read_bytes())
+          if (
+              value["request"]["id"] != os.environ["EXPECTED_REQUEST"]
+              or value["request"]["commit"] != os.environ["EXPECTED_COMMIT"]
+              or value["railway"]["deployment_id"] != os.environ["EXPECTED_DEPLOYMENT"]
+          ):
+              raise SystemExit("activation candidate identity differs")
+          with Path(os.environ["OUTPUT"]).open("a", encoding="utf-8") as stream:
+              stream.write(f"fence_sha256={value['fence']['sha256']}\n")
+          PY
+          fence_sha256=$(tail -n 1 "$GITHUB_OUTPUT" | cut -d= -f2)
+          [[ "$fence_sha256" =~ ^[0-9a-f]{64}$ ]]
+          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            "/authority-fences/$fence_sha256.json" \
+            "$EVIDENCE_ROOT/AUTHORITY-FENCE.json"
+          edge_digest=$(RAILWAY_EDGE_TOKEN="$RAILWAY_EDGE_TOKEN" python3 -I -S - <<'PY'
+          import hashlib
+          import os
+          print(hashlib.sha256(os.environ["RAILWAY_EDGE_TOKEN"].encode()).hexdigest())
+          PY
+          )
+          PYTHONPATH=backend python3 -B -m seiche.stateful_cutover \
+            validate candidate "$EVIDENCE_ROOT/candidate-receipt.json" \
+            --request "$EVIDENCE_ROOT/request.json" \
+            --fence "$EVIDENCE_ROOT/AUTHORITY-FENCE.json" >/dev/null
+          {
+            echo "evidence_root=$EVIDENCE_ROOT"
+            echo "edge_digest=$edge_digest"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Prove public edge reaches that read-only candidate
+        id: public
+        env:
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          EVIDENCE_ROOT: ${{ steps.candidate.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          probe() {
+            local prefix="$1" url="$2" token="$3" status
+            if [ -n "$token" ]; then
+              status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+                --connect-timeout 10 --max-time 30 \
+                --header "X-Seiche-Edge-Token: $token" \
+                --dump-header "$EVIDENCE_ROOT/$prefix.headers" \
+                --output "$EVIDENCE_ROOT/$prefix.json" --write-out '%{http_code}' \
+                "$url")
+            else
+              status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+                --connect-timeout 10 --max-time 30 \
+                --dump-header "$EVIDENCE_ROOT/$prefix.headers" \
+                --output "$EVIDENCE_ROOT/$prefix.json" --write-out '%{http_code}' \
+                "$url")
+            fi
+            test "$status" = 200
+          }
+          probe origin-candidate "$RAILWAY_ORIGIN/api/health" "$RAILWAY_EDGE_TOKEN"
+          probe public-candidate 'https://api.seiche.info/api/health' ''
+          for prefix in origin-candidate public-candidate; do
+            HEADERS="$EVIDENCE_ROOT/$prefix.headers" \
+              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+              python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+
+          values = {}
+          for line in Path(os.environ["HEADERS"]).read_text(
+              encoding="iso-8859-1"
+          ).splitlines():
+              if ":" in line:
+                  name, value = line.split(":", 1)
+                  values[name.strip().lower()] = value.strip()
+          expected = {
+              "x-seiche-railway-authority": "candidate",
+              "x-seiche-railway-deployment": os.environ["DEPLOYMENT"],
+              "x-seiche-release-sha": os.environ["TARGET"],
+          }
+          if any(values.get(name) != value for name, value in expected.items()):
+              raise SystemExit("candidate edge identity is invalid")
+          PY
+          done
+          OBSERVED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            BODY="$EVIDENCE_ROOT/public-candidate.json" \
+            DESTINATION="$EVIDENCE_ROOT/public-probe.json" \
+            DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+            python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          value = {
+              "schema": "seiche.railway-public-candidate-probe.v1",
+              "url": "https://api.seiche.info/api/health",
+              "status": 200,
+              "authority": "candidate",
+              "deployment_id": os.environ["DEPLOYMENT"],
+              "commit": os.environ["TARGET"],
+              "body_sha256": hashlib.sha256(
+                  Path(os.environ["BODY"]).read_bytes()
+              ).hexdigest(),
+              "observed_at": os.environ["OBSERVED_AT"],
+          }
+          Path(os.environ["DESTINATION"]).write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          probe_sha256=$(sha256sum "$EVIDENCE_ROOT/public-probe.json" | awk '{print $1}')
+          echo "probe_sha256=$probe_sha256" >>"$GITHUB_OUTPUT"
+
+      - name: Commit the one-time Railway authority grant
+        id: grant
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          RECEIPT_SHA256: ${{ inputs.candidate_receipt_sha256 }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          FENCE_SHA256: ${{ steps.candidate.outputs.fence_sha256 }}
+          EDGE_DIGEST: ${{ steps.candidate.outputs.edge_digest }}
+          PROBE_SHA256: ${{ steps.public.outputs.probe_sha256 }}
+          EVIDENCE_ROOT: ${{ steps.candidate.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          activated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          ACTIVATED_AT="$activated_at" DESTINATION="$EVIDENCE_ROOT/activation-grant.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = {
+              "schema": "seiche.railway-authority-grant.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-cutover.yml"
+              ),
+              "commit": os.environ["GITHUB_SHA"],
+              "request_id": os.environ["REQUEST_ID"],
+              "candidate_receipt_sha256": os.environ["RECEIPT_SHA256"],
+              "fence_sha256": os.environ["FENCE_SHA256"],
+              "deployment_id": os.environ["DEPLOYMENT_ID"],
+              "edge_token_sha256": os.environ["EDGE_DIGEST"],
+              "public_base_url": "https://api.seiche.info",
+              "public_probe_sha256": os.environ["PROBE_SHA256"],
+              "activated_at": os.environ["ACTIVATED_AT"],
+              "confirmation": "RAILWAY_BECOMES_SOLE_WRITER",
+          }
+          Path(os.environ["DESTINATION"]).write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          CANDIDATE="$EVIDENCE_ROOT/candidate-receipt.json" \
+            PROBE="$EVIDENCE_ROOT/public-probe.json" \
+            GRANT="$EVIDENCE_ROOT/activation-grant.json" \
+            EDGE_DIGEST="$EDGE_DIGEST" PYTHONPATH=backend python3 -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from seiche.stateful_cutover import (
+              validate_grant,
+              validate_public_candidate_probe,
+          )
+
+          candidate = json.loads(Path(os.environ["CANDIDATE"]).read_bytes())
+          grant = json.loads(Path(os.environ["GRANT"]).read_bytes())
+          probe = json.loads(Path(os.environ["PROBE"]).read_bytes())
+          validated = validate_grant(
+              grant,
+              candidate_receipt=candidate,
+              edge_token_digest=os.environ["EDGE_DIGEST"],
+          )
+          validate_public_candidate_probe(
+              probe,
+              candidate_receipt=candidate,
+              grant=validated,
+          )
+          PY
+          probe_b64=$(base64 -w0 "$EVIDENCE_ROOT/public-probe.json")
+          grant_b64=$(base64 -w0 "$EVIDENCE_ROOT/activation-grant.json")
+          grant_sha256=$(sha256sum "$EVIDENCE_ROOT/activation-grant.json" | awk '{print $1}')
+          published=$(railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            python -I -B -m seiche.stateful_cutover publish-authority \
+              "$REQUEST_ID" "$probe_b64" "$grant_b64")
+          test "$published" = "$PROBE_SHA256 $grant_sha256"
+          echo "grant_sha256=$grant_sha256" >>"$GITHUB_OUTPUT"
+
+      - name: Prove Railway production authority and receipt
+        id: activation
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+          EDGE_DIGEST: ${{ steps.candidate.outputs.edge_digest }}
+          EVIDENCE_ROOT: ${{ steps.candidate.outputs.evidence_root }}
+        run: |
+          set -euo pipefail
+          ready=0
+          for _attempt in $(seq 1 60); do
+            status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+              --connect-timeout 5 --max-time 15 \
+              --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+              --dump-header "$EVIDENCE_ROOT/origin-production.headers" \
+              --output "$EVIDENCE_ROOT/origin-production.json" \
+              --write-out '%{http_code}' "$RAILWAY_ORIGIN/api/health" || true)
+            if [ "$status" = 200 ] && \
+                grep -Eiq '^x-seiche-railway-authority:[[:space:]]*production' \
+                  "$EVIDENCE_ROOT/origin-production.headers"; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ready" = 1
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --dump-header "$EVIDENCE_ROOT/public-production.headers" \
+            --output "$EVIDENCE_ROOT/public-production.json" \
+            --write-out '%{http_code}' 'https://api.seiche.info/api/health')
+          test "$status" = 200
+          for prefix in origin-production public-production; do
+            HEADERS="$EVIDENCE_ROOT/$prefix.headers" \
+              DEPLOYMENT="$DEPLOYMENT_ID" TARGET="$GITHUB_SHA" \
+              python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+
+          values = {}
+          for line in Path(os.environ["HEADERS"]).read_text(
+              encoding="iso-8859-1"
+          ).splitlines():
+              if ":" in line:
+                  name, value = line.split(":", 1)
+                  values[name.strip().lower()] = value.strip()
+          expected = {
+              "x-seiche-railway-authority": "production",
+              "x-seiche-railway-deployment": os.environ["DEPLOYMENT"],
+              "x-seiche-release-sha": os.environ["TARGET"],
+          }
+          if any(values.get(name) != value for name, value in expected.items()):
+              raise SystemExit("production edge identity is invalid")
+          PY
+          done
+          receipt="$EVIDENCE_ROOT/activation-receipt.json"
+          railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
+            cat "/var/lib/seiche-platform/cutover-receipts/$REQUEST_ID.activation.json" \
+            >"$receipt"
+          receipt_sha256=$(PYTHONPATH=backend python3 -B \
+            -m seiche.stateful_cutover validate activation "$receipt" \
+            --request "$EVIDENCE_ROOT/request.json" \
+            --fence "$EVIDENCE_ROOT/AUTHORITY-FENCE.json" \
+            --candidate "$EVIDENCE_ROOT/candidate-receipt.json" \
+            --grant "$EVIDENCE_ROOT/activation-grant.json" \
+            --edge-token-sha256 "$EDGE_DIGEST")
+          [[ "$receipt_sha256" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "receipt_path=$receipt"
+            echo "receipt_sha256=$receipt_sha256"
+            echo "evidence_root=$EVIDENCE_ROOT"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "### Railway stateful activation"
+            echo
+            echo "- Request: \`$REQUEST_ID\`"
+            echo "- Deployment: \`$DEPLOYMENT_ID\`"
+            echo "- Activation receipt SHA-256: \`$receipt_sha256\`"
+            echo "- Railway is now the sole writer."
+            echo "- Final host acknowledgement still requires the downloaded receipt."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private activation evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-cutover-activation-${{ github.sha }}-${{ inputs.request_id }}
+          path: ${{ steps.activation.outputs.evidence_root }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: OIDC-attest the exact activation receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.activation.outputs.receipt_path }}

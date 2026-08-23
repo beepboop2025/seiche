@@ -85,6 +85,10 @@ RECOVERY_SEAL_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-release-recovery-seal
 RECOVERY_SEAL_SCRIPT_INSTALLED=/etc/seiche/libexec/seiche-release-recovery-seal.sh
 RECOVERY_SEAL_SERVICE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-release-recovery-seal.service"
 RECOVERY_SEAL_SERVICE_DESTINATION=/etc/systemd/system/seiche-release-recovery-seal.service
+RAILWAY_CUTOVER_FENCE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-railway-cutover-fence.sh"
+RAILWAY_CUTOVER_FENCE_INSTALLED=/etc/seiche/libexec/seiche-railway-cutover-fence.sh
+RAILWAY_EDGE_MODE_SOURCE="$ASSET_ROOT/ops/deploy/seiche-railway-edge-mode.sh"
+RAILWAY_EDGE_MODE_INSTALLED=/etc/seiche/libexec/seiche-railway-edge-mode.sh
 LEGACY_UPDATE_RETIRER="$ASSET_ROOT/ops/deploy/retire-legacy-update-units.sh"
 
 validate_signed_asset_root() {
@@ -128,6 +132,8 @@ required_paths = {
     "ops/deploy/seiche-nbs-intake.py",
     "ops/deploy/seiche-release-recovery-seal.service",
     "ops/deploy/seiche-release-recovery-seal.sh",
+    "ops/deploy/seiche-railway-cutover-fence.sh",
+    "ops/deploy/seiche-railway-edge-mode.sh",
     "ops/deploy/seiche-snapshot-promote.service",
     "ops/deploy/seiche-snapshot-import.service",
     "ops/deploy/seiche-source-worker.service",
@@ -1364,6 +1370,12 @@ install_runtime_shell_helper \
 install_runtime_shell_helper \
     "$MARKET_RESTORE_SCRIPT_SOURCE" "$MARKET_RESTORE_SCRIPT_INSTALLED" \
     seiche-market-restore-check
+install_runtime_shell_helper \
+    "$RAILWAY_CUTOVER_FENCE_SOURCE" "$RAILWAY_CUTOVER_FENCE_INSTALLED" \
+    seiche-railway-cutover-fence
+install_runtime_shell_helper \
+    "$RAILWAY_EDGE_MODE_SOURCE" "$RAILWAY_EDGE_MODE_INSTALLED" \
+    seiche-railway-edge-mode
 
 systemctl enable --now postgresql
 

@@ -9,6 +9,7 @@ SOURCE="${SEICHE_CADDY_SOURCE:-$APP_DIR/ops/Caddyfile}"
 DEST="${SEICHE_CADDY_DEST:-/etc/caddy/Caddyfile}"
 CADDY="${SEICHE_CADDY_BIN:-caddy}"
 SYSTEMCTL="${SEICHE_SYSTEMCTL_BIN:-systemctl}"
+CADDY_ENV_FILE="${SEICHE_CADDY_ENV_FILE:-/etc/seiche/railway-edge.env}"
 DEST_DIR=$(dirname -- "$DEST")
 DEST_BASE=$(basename -- "$DEST")
 STAGED=""
@@ -21,6 +22,57 @@ cleanup() {
     [ -z "$RESTORE_STAGED" ] || rm -f -- "$RESTORE_STAGED"
 }
 trap cleanup EXIT
+
+load_railway_edge_environment() {
+    local count=0 key line value
+    if [ ! -e "$CADDY_ENV_FILE" ] && [ ! -L "$CADDY_ENV_FILE" ]; then
+        return 0
+    fi
+    [ -f "$CADDY_ENV_FILE" ] && [ ! -L "$CADDY_ENV_FILE" ] \
+        || { echo "FAIL: Railway edge environment is unsafe." >&2; return 1; }
+    python3 -I -S - "$CADDY_ENV_FILE" <<'PY' \
+        || { echo "FAIL: Railway edge environment permissions are unsafe." >&2; return 1; }
+import os
+from pathlib import Path
+import stat
+import sys
+
+metadata = Path(sys.argv[1]).lstat()
+if (
+    not stat.S_ISREG(metadata.st_mode)
+    or metadata.st_nlink != 1
+    or metadata.st_mode & 0o077
+    or (os.geteuid() == 0 and metadata.st_uid != 0)
+):
+    raise SystemExit(1)
+PY
+    unset SEICHE_API_UPSTREAM SEICHE_RAILWAY_EDGE_TOKEN
+    while IFS= read -r line || [ -n "$line" ]; do
+        key=${line%%=*}
+        value=${line#*=}
+        [ "$key" != "$line" ] || return 1
+        case "$key" in
+            SEICHE_API_UPSTREAM)
+                [[ "$value" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]] \
+                    || return 1
+                SEICHE_API_UPSTREAM=$value
+                export SEICHE_API_UPSTREAM
+                ;;
+            SEICHE_RAILWAY_EDGE_TOKEN)
+                [ "${#value}" -ge 32 ] && [ "${#value}" -le 512 ] \
+                    && [[ "$value" =~ ^[A-Za-z0-9._~=-]+$ ]] || return 1
+                SEICHE_RAILWAY_EDGE_TOKEN=$value
+                export SEICHE_RAILWAY_EDGE_TOKEN
+                ;;
+            *) return 1 ;;
+        esac
+        count=$((count + 1))
+    done <"$CADDY_ENV_FILE"
+    [ "$count" -eq 2 ] \
+        && [ -n "${SEICHE_API_UPSTREAM:-}" ] \
+        && [ -n "${SEICHE_RAILWAY_EDGE_TOKEN:-}" ] \
+        || { echo "FAIL: Railway edge environment is incomplete." >&2; return 1; }
+}
 
 reload_caddy() {
     "$CADDY" reload --config "$DEST" --adapter caddyfile \
@@ -61,6 +113,8 @@ if ! command -v "$SYSTEMCTL" >/dev/null 2>&1; then
     echo "FAIL: systemctl binary not found: $SYSTEMCTL" >&2
     exit 1
 fi
+load_railway_edge_environment \
+    || { echo "FAIL: Railway edge environment is invalid." >&2; exit 1; }
 if [ ! -f "$DEST" ]; then
     echo "FAIL: installed Caddyfile is missing: $DEST" >&2
     exit 1

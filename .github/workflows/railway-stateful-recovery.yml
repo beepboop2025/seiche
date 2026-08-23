@@ -1,0 +1,1616 @@
+name: railway-stateful-recovery
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+    - cron: "31 2 * * *"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Configure native backups, monitor them, or export and restore-prove backup-v3"
+        required: true
+        type: choice
+        options:
+          - configure-native-backups
+          - preflight-offsite
+          - monitor
+          - export-recovery
+      confirmation:
+        description: "Exact operation-specific confirmation"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-stateful-recovery
+  cancel-in-progress: false
+
+jobs:
+  configure-native-backups:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'configure-native-backups'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: railway-stateful-recovery-admin
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          "$tool_dir/railway" --version
+
+      - name: Configure and lock the native volume and PostgreSQL canaries
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-admin
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = ENABLE_NATIVE_BACKUPS_AND_LOCK_CANARIES
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --short --untracked-files=no)"
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
+            "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID" \
+            "$RAILWAY_VOLUME_ID" "$RAILWAY_POSTGRES_SERVICE_ID"; do
+            test -n "$value"
+          done
+          mkdir -p "$EVIDENCE_ROOT/link"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+
+          cat >volume-instances.graphql <<'GRAPHQL'
+          query RecoveryVolume($volumeId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath region
+              sizeMB currentSizeMB deletedAt isPendingDeletion
+            }
+          }
+          GRAPHQL
+          railway api --file volume-instances.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            >volume-instances.json
+          VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            INPUT=volume-instances.json OUTPUT=volume-instance-id.txt \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["INPUT"]).read_text())
+          rows = payload.get("data", {}).get("adminVolumeInstancesForVolume")
+          matches = [
+              row for row in rows if isinstance(row, dict)
+              and row.get("volumeId") == os.environ["VOLUME_ID"]
+              and row.get("environmentId") == os.environ["ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-platform"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ] if isinstance(rows, list) else []
+          if len(matches) != 1:
+              raise SystemExit("the exact state volume instance is not unique")
+          Path(os.environ["OUTPUT"]).write_text(matches[0]["id"] + "\n")
+          PY
+          volume_instance_id=$(cat volume-instance-id.txt)
+
+          cat >volume-schedules-update.graphql <<'GRAPHQL'
+          mutation RecoverySchedules(
+            $volumeInstanceId: String!,
+            $kinds: [VolumeInstanceBackupScheduleKind!]!
+          ) {
+            volumeInstanceBackupScheduleUpdate(
+              volumeInstanceId: $volumeInstanceId,
+              kinds: $kinds
+            )
+          }
+          GRAPHQL
+          railway api --file volume-schedules-update.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" \
+            --var 'kinds=["DAILY","WEEKLY","MONTHLY"]' --compact \
+            >volume-schedules-update.json
+          python3 -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          value = json.loads(Path("volume-schedules-update.json").read_text())
+          if value != {"data": {"volumeInstanceBackupScheduleUpdate": True}}:
+              raise SystemExit("state volume backup schedules were not committed")
+          PY
+
+          canary_name="seiche-phase6-bootstrap-${GITHUB_SHA:0:8}-${GITHUB_RUN_ID}"
+          cat >volume-backup-create.graphql <<'GRAPHQL'
+          mutation RecoveryBackup($volumeInstanceId: String!, $name: String) {
+            volumeInstanceBackupCreate(
+              volumeInstanceId: $volumeInstanceId,
+              name: $name
+            ) { workflowId }
+          }
+          GRAPHQL
+          cat >volume-backups.graphql <<'GRAPHQL'
+          query RecoveryBackups($volumeInstanceId: String!) {
+            volumeInstanceBackupList(volumeInstanceId: $volumeInstanceId) {
+              id name createdAt expiresAt externalId referencedMB usedMB
+              scheduleId volumeInstanceSizeMB creatorId
+            }
+          }
+          GRAPHQL
+          backup_id=""
+          for _attempt in $(seq 1 60); do
+            railway api --file volume-backups.graphql \
+              --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+              >volume-backups.json
+            backup_id=$(CANARY="$canary_name" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("volume-backups.json").read_text()).get(
+              "data", {}
+          ).get("volumeInstanceBackupList", [])
+          matches = [row for row in rows if row.get("name") == os.environ["CANARY"]]
+          if len(matches) > 1:
+              raise SystemExit("state volume canary backup identity is ambiguous")
+          print(matches[0]["id"] if matches else "")
+          PY
+            )
+            test -z "$backup_id" || break
+            if [ "$_attempt" -eq 1 ]; then
+              railway api --file volume-backup-create.graphql \
+                --raw-var "volumeInstanceId=$volume_instance_id" \
+                --raw-var "name=$canary_name" --compact \
+                >volume-backup-create.json
+            fi
+            sleep 10
+          done
+          test -n "$backup_id"
+
+          cat >volume-backup-lock.graphql <<'GRAPHQL'
+          mutation LockRecoveryBackup(
+            $volumeInstanceId: String!,
+            $volumeInstanceBackupId: String!
+          ) {
+            volumeInstanceBackupLock(
+              volumeInstanceId: $volumeInstanceId,
+              volumeInstanceBackupId: $volumeInstanceBackupId
+            )
+          }
+          GRAPHQL
+          railway api --file volume-backup-lock.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" \
+            --raw-var "volumeInstanceBackupId=$backup_id" --compact \
+            >volume-backup-lock.json
+          python3 -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          value = json.loads(Path("volume-backup-lock.json").read_text())
+          if value != {"data": {"volumeInstanceBackupLock": True}}:
+              raise SystemExit("state volume canary was not locked")
+          PY
+
+          railway postgres pitr status \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-before.json
+          if ! python3 -I -S - <<'PY'
+          import json
+          from pathlib import Path
+          raise SystemExit(0 if json.loads(Path("pitr-before.json").read_text()).get("enabled") is True else 1)
+          PY
+          then
+            railway postgres pitr enable \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+              >pitr-enable.json
+          fi
+          railway postgres pitr schedule set --daily --weekly --monthly \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+            >pitr-schedule-set.json
+          pg_backup_id=""
+          for _attempt in $(seq 1 60); do
+            railway postgres pitr backup list \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+              >pitr-backups.json
+            pg_backup_id=$(CANARY="$canary_name" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("pitr-backups.json").read_text())
+          matches = [row for row in rows if row.get("name") == os.environ["CANARY"]]
+          if len(matches) > 1:
+              raise SystemExit("PostgreSQL canary backup identity is ambiguous")
+          print(matches[0]["id"] if matches else "")
+          PY
+            )
+            test -z "$pg_backup_id" || break
+            if [ "$_attempt" -eq 1 ]; then
+              railway postgres pitr backup create --name "$canary_name" \
+                --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+                >pitr-backup-create.json
+            fi
+            sleep 10
+          done
+          test -n "$pg_backup_id"
+          railway postgres pitr backup lock "$pg_backup_id" \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+            >pitr-backup-lock.json
+          PG_BACKUP_ID="$pg_backup_id" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path("pitr-backup-lock.json").read_text())
+          if value != {"id": os.environ["PG_BACKUP_ID"], "locked": True}:
+              raise SystemExit("PostgreSQL canary was not locked")
+          PY
+          railway postgres pitr status \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-after.json
+          railway postgres pitr schedule list \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+            >pitr-schedules.json
+          railway postgres pitr backup list \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json \
+            >pitr-backups-after.json
+          railway api --file volume-backups.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+            >volume-backups-after.json
+          cat >volume-schedules.graphql <<'GRAPHQL'
+          query RecoverySchedules($volumeInstanceId: String!) {
+            volumeInstanceBackupScheduleList(volumeInstanceId: $volumeInstanceId) {
+              id kind cron name retentionSeconds createdAt
+            }
+          }
+          GRAPHQL
+          railway api --file volume-schedules.graphql \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+            >volume-schedules.json
+          CANARY="$canary_name" POSTGRES_ID="$RAILWAY_POSTGRES_SERVICE_ID" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          def load(name):
+              return json.loads(Path(name).read_text())
+
+          def fresh(value):
+              moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+              age = datetime.now(UTC) - moment.astimezone(UTC)
+              return timedelta(0) <= age <= timedelta(hours=2)
+
+          volume_rows = load("volume-backups-after.json").get("data", {}).get(
+              "volumeInstanceBackupList", []
+          )
+          volume_matches = [
+              row for row in volume_rows if row.get("name") == os.environ["CANARY"]
+          ]
+          volume_schedules = load("volume-schedules.json").get("data", {}).get(
+              "volumeInstanceBackupScheduleList", []
+          )
+          if (
+              len(volume_matches) != 1
+              or volume_matches[0].get("expiresAt") is not None
+              or not fresh(volume_matches[0].get("createdAt"))
+              or {row.get("kind") for row in volume_schedules}
+              != {"DAILY", "WEEKLY", "MONTHLY"}
+          ):
+              raise SystemExit("state volume backup bootstrap is not durable")
+
+          status = load("pitr-after.json")
+          live = status.get("live")
+          pg_rows = load("pitr-backups-after.json")
+          pg_matches = [
+              row for row in pg_rows if row.get("name") == os.environ["CANARY"]
+          ] if isinstance(pg_rows, list) else []
+          pg_schedules = load("pitr-schedules.json")
+          if (
+              status.get("service", {}).get("id") != os.environ["POSTGRES_ID"]
+              or status.get("enabled") is not True
+              or status.get("bucketWired") is not True
+              or status.get("blockers", []) != []
+              or not isinstance(live, dict)
+              or live.get("available") is not True
+              or live.get("backupCoverageError") is not None
+              or not isinstance(live.get("backupSetCount"), int)
+              or live["backupSetCount"] < 1
+              or live.get("archiverError") is not None
+              or live.get("archiverHealthy") is not True
+              or len(pg_matches) != 1
+              or pg_matches[0].get("expiresAt") is not None
+              or not fresh(pg_matches[0].get("createdAt"))
+              or not isinstance(pg_schedules, list)
+              or {row.get("kind") for row in pg_schedules}
+              != {"DAILY", "WEEKLY", "MONTHLY"}
+          ):
+              raise SystemExit("PostgreSQL PITR bootstrap is not durable")
+          PY
+          cp "$GITHUB_WORKSPACE/ops/deploy/RAILWAY-STATEFUL-RECOVERY.md" \
+            "$EVIDENCE_ROOT/runbook.md"
+          {
+            echo "### Railway Phase 6 native backups"
+            echo
+            echo "- State volume schedules: daily, weekly, monthly"
+            echo "- PostgreSQL PITR schedules: daily, weekly, monthly"
+            echo "- Locked volume canary: \`$backup_id\`"
+            echo "- Locked PostgreSQL canary: \`$pg_backup_id\`"
+            echo "- Portable export remains a separate protected operation."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private native-backup evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-admin-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/railway-recovery-admin
+          if-no-files-found: error
+          retention-days: 90
+
+  preflight-offsite:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'preflight-offsite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: railway-stateful-recovery-export
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the exact main identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove external Object Lock without production state
+        id: preflight
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-offsite-preflight
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = PROVE_EXTERNAL_OBJECT_LOCK_ONLY
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          aws --version
+          mkdir -p "$EVIDENCE_ROOT"
+          chmod 0700 "$EVIDENCE_ROOT"
+          cd "$EVIDENCE_ROOT"
+          S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            python3 -I -S - <<'PY'
+          import os
+          import re
+          from urllib.parse import urlsplit
+
+          endpoint = urlsplit(os.environ["S3_ENDPOINT"])
+          if (
+              endpoint.scheme != "https"
+              or not endpoint.hostname
+              or endpoint.username is not None
+              or endpoint.password is not None
+              or endpoint.query
+              or endpoint.fragment
+              or endpoint.hostname.endswith(".railway.app")
+          ):
+              raise SystemExit("off-site S3 endpoint is not external HTTPS")
+          if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,62}", os.environ["S3_BUCKET"]) is None:
+              raise SystemExit("off-site bucket is invalid")
+          prefix = os.environ["S3_PREFIX"]
+          if (
+              re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,200}", prefix) is None
+              or prefix.startswith("/")
+              or prefix.endswith("/")
+              or ".." in prefix.split("/")
+          ):
+              raise SystemExit("off-site prefix is invalid")
+          PY
+          observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          retain_until=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
+          PREFLIGHT_AT="$observed_at" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = {
+              "schema": "seiche.railway-offsite-preflight-canary.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "created_at": os.environ["PREFLIGHT_AT"],
+              "production_data": False,
+              "authority_changed": False,
+              "research_only": True,
+              "can_publish": False,
+              "can_execute": False,
+          }
+          Path("canary.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          canary_sha256=$(sha256sum canary.json | awk '{print $1}')
+          canary_checksum=$(printf '%s' "$canary_sha256" | xxd -r -p | base64 -w0)
+          canary_key="$S3_PREFIX/preflight/$GITHUB_SHA/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
+            --bucket "$S3_BUCKET" --key "$canary_key" --body canary.json \
+            --server-side-encryption AES256 --metadata "sha256=$canary_sha256" \
+            --checksum-algorithm SHA256 --checksum-sha256 "$canary_checksum" \
+            --object-lock-mode COMPLIANCE \
+            --object-lock-retain-until-date "$retain_until" >canary.put.json
+          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+            --bucket "$S3_BUCKET" --key "$canary_key" --checksum-mode ENABLED \
+            >canary.head.json
+          EXPECTED_SHA="$canary_sha256" EXPECTED_CHECKSUM="$canary_checksum" \
+            EXPECTED_SIZE="$(stat -c %s canary.json)" \
+            S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            CANARY_KEY="$canary_key" PREFLIGHT_AT="$observed_at" \
+            python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          head = json.loads(Path("canary.head.json").read_text())
+          retained = datetime.fromisoformat(
+              str(head.get("ObjectLockRetainUntilDate", "")).replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if (
+              head.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
+              or head.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
+              or head.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or head.get("ObjectLockMode") != "COMPLIANCE"
+              or head.get("ServerSideEncryption") != "AES256"
+              or not isinstance(head.get("VersionId"), str)
+              or not head["VersionId"]
+              or retained < datetime.now(UTC) + timedelta(days=29)
+          ):
+              raise SystemExit("external Object Lock preflight failed")
+          value = {
+              "schema": "seiche.railway-offsite-preflight-receipt.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "canary": {
+                  "bucket": os.environ["S3_BUCKET"],
+                  "key": os.environ["CANARY_KEY"],
+                  "sha256": hashlib.sha256(Path("canary.json").read_bytes()).hexdigest(),
+                  "size": Path("canary.json").stat().st_size,
+                  "checksum_sha256": head["ChecksumSHA256"],
+                  "version_id": head["VersionId"],
+                  "server_side_encryption": "AES256",
+                  "object_lock_mode": "COMPLIANCE",
+                  "retain_until": head["ObjectLockRetainUntilDate"],
+              },
+              "verified_at": os.environ["PREFLIGHT_AT"],
+              "production_data": False,
+              "authority_changed": False,
+              "research_only": True,
+              "can_publish": False,
+              "can_execute": False,
+          }
+          Path("preflight-receipt.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          receipt_sha256=$(sha256sum preflight-receipt.json | awk '{print $1}')
+          receipt_checksum=$(printf '%s' "$receipt_sha256" | xxd -r -p | base64 -w0)
+          receipt_key="${canary_key%.json}.receipt.json"
+          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
+            --bucket "$S3_BUCKET" --key "$receipt_key" --body preflight-receipt.json \
+            --server-side-encryption AES256 --metadata "sha256=$receipt_sha256" \
+            --checksum-algorithm SHA256 --checksum-sha256 "$receipt_checksum" \
+            --object-lock-mode COMPLIANCE \
+            --object-lock-retain-until-date "$retain_until" >receipt.put.json
+          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+            --bucket "$S3_BUCKET" --key "$receipt_key" --checksum-mode ENABLED \
+            >receipt.head.json
+          EXPECTED_SHA="$receipt_sha256" EXPECTED_CHECKSUM="$receipt_checksum" \
+            EXPECTED_SIZE="$(stat -c %s preflight-receipt.json)" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          head = json.loads(Path("receipt.head.json").read_text())
+          retained = datetime.fromisoformat(
+              str(head.get("ObjectLockRetainUntilDate", "")).replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if (
+              head.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
+              or head.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
+              or head.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or head.get("ObjectLockMode") != "COMPLIANCE"
+              or head.get("ServerSideEncryption") != "AES256"
+              or not isinstance(head.get("VersionId"), str)
+              or not head["VersionId"]
+              or retained < datetime.now(UTC) + timedelta(days=29)
+          ):
+              raise SystemExit("external preflight receipt was not locked")
+          PY
+          echo "receipt_path=$EVIDENCE_ROOT/preflight-receipt.json" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Railway Phase 6 external storage preflight"
+            echo
+            echo "- Production data: no"
+            echo "- External checksum and version: verified"
+            echo "- Object lock: COMPLIANCE for at least 29 more days"
+            echo "- Authority changed: no"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private external-storage preflight evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-offsite-preflight-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/railway-recovery-offsite-preflight
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: OIDC-attest the external-storage preflight receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.preflight.outputs.receipt_path }}
+
+  monitor:
+    if: >-
+      github.repository == 'beepboop2025/seiche' &&
+      ((github.event_name == 'workflow_dispatch' &&
+        (inputs.operation == 'monitor' || inputs.operation == 'export-recovery')) ||
+       (github.event_name == 'schedule' &&
+        vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: railway-stateful-recovery-monitor
+    outputs:
+      deployment_id: ${{ steps.proof.outputs.deployment_id }}
+      release_sha: ${{ steps.proof.outputs.release_sha }}
+    steps:
+      - name: Check out the exact default-branch identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Prove native backups, PITR coverage, volume headroom, and both edges
+        id: proof
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_POSTGRES_SERVICE_ID: ${{ secrets.RAILWAY_POSTGRES_SERVICE_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          ALLOW_EMPTY_EXPORT_PROOF: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery' }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-monitor
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
+            "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID" \
+            "$RAILWAY_VOLUME_ID" "$RAILWAY_POSTGRES_SERVICE_ID" \
+            "$RAILWAY_ORIGIN" "$RAILWAY_EDGE_TOKEN"; do
+            test -n "$value"
+          done
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          mkdir -p "$EVIDENCE_ROOT/link"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link"
+          cd "$EVIDENCE_ROOT/link"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >link.json
+
+          cat >native-proof.graphql <<'GRAPHQL'
+          query RecoveryNativeProof($volumeId: String!, $volumeInstanceId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath region
+              sizeMB currentSizeMB deletedAt isPendingDeletion
+            }
+            volumeInstanceBackupScheduleList(volumeInstanceId: $volumeInstanceId) {
+              id kind cron name retentionSeconds createdAt
+            }
+            volumeInstanceBackupList(volumeInstanceId: $volumeInstanceId) {
+              id name createdAt expiresAt externalId referencedMB usedMB
+              scheduleId volumeInstanceSizeMB creatorId
+            }
+          }
+          GRAPHQL
+          cat >volume-instances.graphql <<'GRAPHQL'
+          query RecoveryVolume($volumeId: String!) {
+            adminVolumeInstancesForVolume(volumeId: $volumeId) {
+              id volumeId environmentId serviceId mountPath region
+              sizeMB currentSizeMB deletedAt isPendingDeletion
+            }
+          }
+          GRAPHQL
+          railway api --file volume-instances.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" --compact \
+            >volume-instances.json
+          volume_instance_id=$(VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          rows = json.loads(Path("volume-instances.json").read_text()).get(
+              "data", {}
+          ).get("adminVolumeInstancesForVolume", [])
+          matches = [
+              row for row in rows
+              if row.get("volumeId") == os.environ["VOLUME_ID"]
+              and row.get("environmentId") == os.environ["ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-platform"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ]
+          if len(matches) != 1:
+              raise SystemExit("the exact state volume instance is not unique")
+          print(matches[0]["id"])
+          PY
+          )
+          railway api --file native-proof.graphql \
+            --raw-var "volumeId=$RAILWAY_VOLUME_ID" \
+            --raw-var "volumeInstanceId=$volume_instance_id" --compact \
+            >native-proof.json
+          railway postgres pitr status \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-status.json
+          railway postgres pitr schedule list \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-schedules.json
+          railway postgres pitr backup list \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-backups.json
+          if ! railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+              /recovery-receipts --json >recovery-receipts.json; then
+            test "$ALLOW_EMPTY_EXPORT_PROOF" = true
+            printf '%s\n' '{"files":[]}' >recovery-receipts.json
+          fi
+          if ! railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+              /offsite-receipts --json >offsite-receipts.json; then
+            test "$ALLOW_EMPTY_EXPORT_PROOF" = true
+            printf '%s\n' '{"files":[]}' >offsite-receipts.json
+          fi
+
+          origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+            --dump-header origin.headers --output origin.json \
+            --write-out '%{http_code}' "$RAILWAY_ORIGIN/api/health")
+          public_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --dump-header public.headers --output public.json \
+            --write-out '%{http_code}' 'https://api.seiche.info/api/health')
+          runtime_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --output runtime.json --write-out '%{http_code}' \
+            "$RAILWAY_ORIGIN/healthz")
+          test "$origin_status" = 200
+          test "$public_status" = 200
+          test "$runtime_status" = 200
+
+          EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" \
+            EXPECTED_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            EXPECTED_SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            EXPECTED_POSTGRES_ID="$RAILWAY_POSTGRES_SERVICE_ID" \
+            ALLOW_EMPTY="$ALLOW_EMPTY_EXPORT_PROOF" OUTPUT="$GITHUB_OUTPUT" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+          import re
+
+          def load(name):
+              return json.loads(Path(name).read_text())
+
+          def moment(value):
+              if not isinstance(value, str):
+                  raise SystemExit("backup timestamp is absent")
+              return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+          def fresh(value, *, hours):
+              age = now - moment(value)
+              return timedelta(0) <= age <= timedelta(hours=hours)
+
+          def headers(name):
+              result = {}
+              for line in Path(name).read_text(encoding="iso-8859-1").splitlines():
+                  if ":" in line:
+                      key, value = line.split(":", 1)
+                      result[key.strip().lower()] = value.strip()
+              return result
+
+          now = datetime.now(UTC)
+          native = load("native-proof.json").get("data", {})
+          instances = native.get("adminVolumeInstancesForVolume")
+          matches = [
+              row for row in instances if isinstance(row, dict)
+              and row.get("volumeId") == os.environ["EXPECTED_VOLUME_ID"]
+              and row.get("environmentId") == os.environ["EXPECTED_ENVIRONMENT_ID"]
+              and row.get("serviceId") == os.environ["EXPECTED_SERVICE_ID"]
+              and row.get("mountPath") == "/var/lib/seiche-platform"
+              and row.get("deletedAt") is None
+              and row.get("isPendingDeletion") is False
+          ] if isinstance(instances, list) else []
+          if len(matches) != 1:
+              raise SystemExit("state volume identity changed")
+          instance = matches[0]
+          size = instance.get("sizeMB")
+          used = instance.get("currentSizeMB")
+          if not isinstance(size, int) or size <= 0 or not isinstance(used, (int, float)):
+              raise SystemExit("state volume usage is unavailable")
+          if used / size >= 0.80:
+              raise SystemExit("state volume has less than twenty percent headroom")
+          schedules = native.get("volumeInstanceBackupScheduleList")
+          if not isinstance(schedules, list) or {row.get("kind") for row in schedules} != {
+              "DAILY", "WEEKLY", "MONTHLY"
+          }:
+              raise SystemExit("state volume backup schedules are not exact")
+          backups = native.get("volumeInstanceBackupList")
+          if not isinstance(backups, list) or not backups:
+              raise SystemExit("state volume has no backups")
+          if not any(fresh(row.get("createdAt"), hours=26) for row in backups):
+              raise SystemExit("latest state volume backup is stale")
+          if not any(
+              str(row.get("name", "")).startswith("seiche-phase6-bootstrap-")
+              and row.get("expiresAt") is None for row in backups
+          ):
+              raise SystemExit("state volume has no locked Phase 6 canary")
+
+          status = load("pitr-status.json")
+          live = status.get("live")
+          if (
+              status.get("service", {}).get("id") != os.environ["EXPECTED_POSTGRES_ID"]
+              or status.get("enabled") is not True
+              or status.get("bucketWired") is not True
+              or status.get("blockers", []) != []
+              or not isinstance(live, dict)
+              or live.get("available") is not True
+              or live.get("backupCoverageError") is not None
+              or not isinstance(live.get("backupSetCount"), int)
+              or live["backupSetCount"] < 1
+              or live.get("archiverError") is not None
+              or live.get("archiverHealthy") is not True
+          ):
+              raise SystemExit("PostgreSQL PITR coverage is unhealthy")
+          if not fresh(live.get("latestBackupAt"), hours=26):
+              raise SystemExit("latest PostgreSQL PITR backup is stale")
+          pg_schedules = load("pitr-schedules.json")
+          if not isinstance(pg_schedules, list) or {row.get("kind") for row in pg_schedules} != {
+              "DAILY", "WEEKLY", "MONTHLY"
+          }:
+              raise SystemExit("PostgreSQL backup schedules are not exact")
+          pg_backups = load("pitr-backups.json")
+          if not isinstance(pg_backups, list) or not pg_backups:
+              raise SystemExit("PostgreSQL has no native backups")
+          if not any(fresh(row.get("createdAt"), hours=26) for row in pg_backups):
+              raise SystemExit("latest PostgreSQL native backup is stale")
+          if not any(
+              str(row.get("name", "")).startswith("seiche-phase6-bootstrap-")
+              and row.get("expiresAt") is None for row in pg_backups
+          ):
+              raise SystemExit("PostgreSQL has no locked Phase 6 canary")
+
+          origin = headers("origin.headers")
+          public = headers("public.headers")
+          required = {
+              "x-seiche-railway-authority": "production",
+              "x-seiche-railway-deployment": origin.get("x-seiche-railway-deployment"),
+              "x-seiche-release-sha": origin.get("x-seiche-release-sha"),
+          }
+          if any(origin.get(key) != value or public.get(key) != value for key, value in required.items()):
+              raise SystemExit("origin and public production identities differ")
+          deployment = required["x-seiche-railway-deployment"]
+          release = required["x-seiche-release-sha"]
+          if re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              deployment or "",
+          ) is None or re.fullmatch(r"[0-9a-f]{40}", release or "") is None:
+              raise SystemExit("production edge identity is malformed")
+          for name in ("origin.json", "public.json"):
+              body = load(name)
+              generated = moment(body.get("generated_at"))
+              if (
+                  not isinstance(body.get("version"), str)
+                  or not body["version"]
+                  or body.get("faults") != []
+                  or not isinstance(body.get("provenance"), list)
+                  or not body["provenance"]
+                  or not timedelta(0) <= now - generated <= timedelta(minutes=15)
+              ):
+                  raise SystemExit("production API health is invalid")
+          runtime = load("runtime.json")
+          if runtime.get("status") != "ready" or runtime.get("mode") != "production":
+              raise SystemExit("Railway activation-aware health is not ready")
+
+          proof_base = ""
+          if os.environ["ALLOW_EMPTY"] != "true":
+              pattern = re.compile(r"^(20[0-9]{6}T[0-9]{6}Z)-[0-9a-f]{64}\.json$")
+              latest = {}
+              for name in ("recovery-receipts.json", "offsite-receipts.json"):
+                  files = load(name).get("files")
+                  candidates = [
+                      (
+                          datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
+                              tzinfo=UTC
+                          ),
+                          str(row["name"]),
+                      )
+                      for row in files if isinstance(row, dict) and row.get("type") == "file"
+                      and (match := pattern.fullmatch(str(row.get("name", ""))))
+                  ] if isinstance(files, list) else []
+                  if not candidates:
+                      raise SystemExit(f"{name} has no fresh immutable proof")
+                  latest[name] = max(candidates)
+                  age = now - latest[name][0]
+                  if not timedelta(0) <= age <= timedelta(hours=26):
+                      raise SystemExit(f"{name} has no fresh immutable proof")
+              if latest["recovery-receipts.json"][1] != latest["offsite-receipts.json"][1]:
+                  raise SystemExit("latest Railway and off-site receipts do not form one pair")
+              proof_base = latest["recovery-receipts.json"][1].removesuffix(".json")
+          with open(os.environ["OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"deployment_id={deployment}\nrelease_sha={release}\n")
+              if proof_base:
+                  stream.write(f"proof_base={proof_base}\n")
+          PY
+          if [ "$ALLOW_EMPTY_EXPORT_PROOF" != true ]; then
+            proof_base=$(grep '^proof_base=' "$GITHUB_OUTPUT" | cut -d= -f2)
+            request_id=${proof_base#*-}
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/recovery-receipts/$proof_base.json" recovery-receipt.json
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/offsite-receipts/$proof_base.json" offsite-receipt.json
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/recovery-requests/$request_id.json" request.json
+            mkdir activation-candidates
+            railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+              /cutover-receipts --json >cutover-receipts.json
+            python3 -I -S - <<'PY' >activation-paths.txt
+          import json
+          from pathlib import Path
+
+          rows = json.loads(Path("cutover-receipts.json").read_text()).get("files")
+          if not isinstance(rows, list):
+              raise SystemExit("cutover receipt listing is invalid")
+          for row in rows:
+              if (
+                  isinstance(row, dict)
+                  and row.get("type") == "file"
+                  and str(row.get("name", "")).endswith(".activation.json")
+              ):
+                  print(row["path"])
+          PY
+            test -s activation-paths.txt
+            while IFS= read -r remote; do
+              railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+                "$remote" "activation-candidates/$(basename "$remote")"
+            done <activation-paths.txt
+            python3 -I -S - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          recovery = json.loads(Path("recovery-receipt.json").read_bytes())
+          matches = []
+          for path in Path("activation-candidates").iterdir():
+              body = path.read_bytes()
+              if hashlib.sha256(body).hexdigest() != recovery.get(
+                  "activation_receipt_sha256"
+              ):
+                  continue
+              try:
+                  value = json.loads(body)
+              except (UnicodeDecodeError, json.JSONDecodeError):
+                  continue
+              canonical = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+              if body == canonical:
+                  matches.append(body)
+          if len(matches) != 1:
+              raise SystemExit("monitored activation receipt is not unique")
+          Path("activation-receipt.json").write_bytes(matches[0])
+          PY
+            deployment=$(grep '^deployment_id=' "$GITHUB_OUTPUT" | cut -d= -f2)
+            release=$(grep '^release_sha=' "$GITHUB_OUTPUT" | cut -d= -f2)
+            monitor_digests=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
+              -m seiche.stateful_recovery validate-monitor \
+              recovery-receipt.json offsite-receipt.json \
+              --request request.json --activation activation-receipt.json \
+              --deployment-id "$deployment" --release-sha "$release")
+            [[ "$monitor_digests" =~ ^[0-9a-f]{64}\ [0-9a-f]{64}$ ]]
+          fi
+          {
+            echo "### Railway Phase 6 monitor"
+            echo
+            echo "- Production deployment: \`$(grep '^deployment_id=' "$GITHUB_OUTPUT" | cut -d= -f2)\`"
+            echo "- Release SHA: \`$(grep '^release_sha=' "$GITHUB_OUTPUT" | cut -d= -f2)\`"
+            echo "- State volume and PostgreSQL native backups are fresh and scheduled."
+            echo "- Origin and public edge agree on Railway production authority."
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  export-recovery:
+    needs: monitor
+    if: >-
+      always() && needs.monitor.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.operation == 'export-recovery') ||
+       (github.event_name == 'schedule' && github.event.schedule == '31 2 * * *' &&
+        vars.RAILWAY_STATEFUL_PHASE6_ENABLED == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: railway-stateful-recovery-export
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3
+        env:
+          POSTGRES_PASSWORD: phase6-restore-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out the exact default-branch identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up the recovery verifier
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install the project and checksum-pinned Railway CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check './backend[collectors,postgres]'
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          aws --version
+
+      - name: Request and download an activation-bound portable export
+        id: export
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          DEPLOYMENT_ID: ${{ needs.monitor.outputs.deployment_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-export
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            test "$CONFIRMATION" = EXPORT_WITHOUT_AUTHORITY_CHANGE
+          fi
+          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f-]{36}$ ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          test -n "$RAILWAY_EDGE_TOKEN"
+          mkdir -p "$EVIDENCE_ROOT/activation-candidates" \
+            "$EVIDENCE_ROOT/bundle" "$EVIDENCE_ROOT/proof"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/activation-candidates" \
+            "$EVIDENCE_ROOT/bundle" "$EVIDENCE_ROOT/proof"
+          cd "$EVIDENCE_ROOT"
+          railway link --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --json >proof/link.json
+          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+            /cutover-receipts --json >proof/cutover-receipts.json
+          python -I -S - <<'PY' >proof/activation-paths.txt
+          import json
+          from pathlib import Path
+
+          rows = json.loads(Path("proof/cutover-receipts.json").read_text()).get("files")
+          if not isinstance(rows, list):
+              raise SystemExit("cutover receipt listing is invalid")
+          for row in rows:
+              if (
+                  isinstance(row, dict)
+                  and row.get("type") == "file"
+                  and str(row.get("name", "")).endswith(".activation.json")
+              ):
+                  print(row["path"])
+          PY
+          test -s proof/activation-paths.txt
+          while IFS= read -r remote; do
+            name=$(basename "$remote")
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "$remote" "activation-candidates/$name"
+          done <proof/activation-paths.txt
+          DEPLOYMENT_ID="$DEPLOYMENT_ID" RELEASE_SHA="$RELEASE_SHA" \
+            python -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          matches = []
+          for path in Path("activation-candidates").iterdir():
+              body = path.read_bytes()
+              try:
+                  value = json.loads(body)
+              except (UnicodeDecodeError, json.JSONDecodeError):
+                  continue
+              canonical = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+              if body != canonical:
+                  continue
+              if (
+                  value.get("schema") == "seiche.railway-activation-receipt.v1"
+                  and value.get("commit") == os.environ["RELEASE_SHA"]
+                  and value.get("railway", {}).get("deployment_id") == os.environ["DEPLOYMENT_ID"]
+                  and value.get("authority", {}).get("source") == "railway"
+              ):
+                  matches.append((path, body))
+          if len(matches) != 1:
+              raise SystemExit("current activation receipt is not unique")
+          Path("activation-receipt.json").write_bytes(matches[0][1])
+          Path("proof/activation.sha256").write_text(
+              hashlib.sha256(matches[0][1]).hexdigest() + "\n"
+          )
+          PY
+          snapshot_id=$(date -u +%Y%m%dT%H%M%SZ)
+          requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          activation_sha256=$(cat proof/activation.sha256)
+          request_id=$(printf '%s\n' \
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$DEPLOYMENT_ID:$snapshot_id" |
+            sha256sum | awk '{print $1}')
+          SNAPSHOT_ID="$snapshot_id" REQUESTED_AT="$requested_at" \
+            REQUEST_ID="$request_id" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+            RELEASE_SHA="$RELEASE_SHA" ACTIVATION_SHA256="$activation_sha256" \
+            python -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          value = {
+              "schema": "seiche.railway-recovery-export-request.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": os.environ["RELEASE_SHA"],
+              "deployment_id": os.environ["DEPLOYMENT_ID"],
+              "activation_receipt_sha256": os.environ["ACTIVATION_SHA256"],
+              "request_id": os.environ["REQUEST_ID"],
+              "snapshot_id": os.environ["SNAPSHOT_ID"],
+              "requested_at": os.environ["REQUESTED_AT"],
+              "confirmation": "EXPORT_WITHOUT_AUTHORITY_CHANGE",
+          }
+          Path("request.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          request_b64=$(base64 -w0 request.json)
+          (
+            while [ ! -e proof/stop-continuity ]; do
+              observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+                --connect-timeout 5 --max-time 15 \
+                --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+                --output /dev/null --write-out '%{http_code}' \
+                "$RAILWAY_ORIGIN/api/health" || true)
+              public_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+                --connect-timeout 5 --max-time 15 \
+                --output /dev/null --write-out '%{http_code}' \
+                'https://api.seiche.info/api/health' || true)
+              printf '%s\t%s\t%s\n' \
+                "$observed_at" "$origin_status" "$public_status" \
+                >>proof/api-continuity.tsv
+              if [ "$origin_status" != 200 ] || [ "$public_status" != 200 ]; then
+                touch proof/api-continuity.failed
+              fi
+              sleep 2
+            done
+          ) &
+          continuity_pid=$!
+          trap 'touch proof/stop-continuity; wait "$continuity_pid" || true' EXIT
+          published=$(railway ssh --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" -- \
+            python -I -B -m seiche.stateful_recovery request "$request_b64")
+          test "$published" = "$request_id"
+          receipt_remote="/recovery-receipts/$snapshot_id-$request_id.json"
+          ready=0
+          for _attempt in $(seq 1 90); do
+            receipt_attempt="proof/recovery-receipt-attempt-${_attempt}.json"
+            if railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+                "$receipt_remote" "$receipt_attempt" 2>/dev/null; then
+              mv "$receipt_attempt" recovery-receipt.json
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ready" = 1
+          touch proof/stop-continuity
+          wait "$continuity_pid"
+          trap - EXIT
+          test ! -e proof/api-continuity.failed
+          test "$(wc -l <proof/api-continuity.tsv)" -ge 2
+          for member in SHA256SUMS seiche.dump var-lib-seiche.tgz \
+            api-data.tgz table-counts.txt deployed-sha.txt manifest.env; do
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "/recovery-snapshots/$snapshot_id/$member" "bundle/$member"
+          done
+          receipt_sha256=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B \
+            -m seiche.stateful_recovery validate-receipt recovery-receipt.json \
+            --request request.json --activation activation-receipt.json \
+            --bundle-root bundle)
+          [[ "$receipt_sha256" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "snapshot_id=$snapshot_id"
+            echo "request_id=$request_id"
+            echo "receipt_sha256=$receipt_sha256"
+            echo "receipt_path=$EVIDENCE_ROOT/recovery-receipt.json"
+            echo "evidence_root=$EVIDENCE_ROOT"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Perform an isolated filesystem and PostgreSQL reverse-restore proof
+        env:
+          EVIDENCE_ROOT: ${{ steps.export.outputs.evidence_root }}
+          SNAPSHOT_ID: ${{ steps.export.outputs.snapshot_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+          RESTORE_DSN: postgresql://postgres:phase6-restore-only@127.0.0.1:5432/postgres
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT"
+          SNAPSHOT_ID="$SNAPSHOT_ID" RELEASE_SHA="$RELEASE_SHA" \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from seiche import stateful_migration as migration
+          from seiche import stateful_recovery as recovery
+
+          bundle = recovery._bundle_identity(
+              Path("bundle"),
+              snapshot_id=os.environ["SNAPSHOT_ID"],
+              commit=os.environ["RELEASE_SHA"],
+          )
+          proof_root = Path("proof/filesystem-restore")
+          proof_root.mkdir(mode=0o700)
+          nbs_result, trees = migration.restore_filesystem_generation(
+              bundle,
+              proof_root,
+              runtime_uid=os.geteuid(),
+              runtime_gid=os.getegid(),
+          )
+          receipt = json.loads(Path("recovery-receipt.json").read_bytes())
+          if nbs_result != receipt["filesystem"]["nbs_full_store_audit_result"]:
+              raise SystemExit("reverse-restore NBS audit differs from export")
+          if dict(trees) != receipt["filesystem"]["tree_sha256"]:
+              raise SystemExit("reverse-restore filesystem trees differ from export")
+          shutil.rmtree(proof_root)
+          PY
+          PGPASSWORD=phase6-restore-only docker run --rm --network host \
+            postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
+            psql --host 127.0.0.1 --username postgres --dbname postgres \
+              --set ON_ERROR_STOP=1 --command \
+              "CREATE DATABASE seiche_phase6_restore TEMPLATE template0 ENCODING 'UTF8';"
+          docker run --rm --network host \
+            --volume "$EVIDENCE_ROOT/bundle:/recovery:ro" \
+            postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
+            pg_restore --exit-on-error --no-owner --no-privileges \
+              --dbname='postgresql://postgres:phase6-restore-only@127.0.0.1:5432/seiche_phase6_restore' \
+              /recovery/seiche.dump
+          RESTORE_TARGET_DSN='postgresql://postgres:phase6-restore-only@127.0.0.1:5432/seiche_phase6_restore' \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from seiche import stateful_migration as migration
+
+          receipt = json.loads(Path("recovery-receipt.json").read_bytes())
+          counts = migration.inspect_postgres_counts(os.environ["RESTORE_TARGET_DSN"])
+          floor = tuple(receipt["snapshot"]["critical_table_count_floor"])
+          if any(actual < minimum for actual, minimum in zip(counts, floor)):
+              raise SystemExit("reverse-restore PostgreSQL counts are below export floors")
+          proof = {
+              "schema": "seiche.railway-reverse-restore-proof.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": receipt["commit"],
+              "request_id": receipt["request_id"],
+              "recovery_receipt_sha256": hashlib.sha256(
+                  Path("recovery-receipt.json").read_bytes()
+              ).hexdigest(),
+              "filesystem_tree_sha256": receipt["filesystem"]["tree_sha256"],
+              "nbs_full_store_audit_result": receipt["filesystem"][
+                  "nbs_full_store_audit_result"
+              ],
+              "postgres_counts": list(counts),
+              "postgres_count_floor": list(floor),
+              "restored_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                  "+00:00", "Z"
+              ),
+              "authority_changed": False,
+              "research_only": True,
+              "can_publish": False,
+              "can_execute": False,
+          }
+          Path("proof/reverse-restore.json").write_text(
+              json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+
+      - name: Seal the portable export in external S3 Object Lock compliance mode
+        id: offsite
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
+          S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          EVIDENCE_ROOT: ${{ steps.export.outputs.evidence_root }}
+          SNAPSHOT_ID: ${{ steps.export.outputs.snapshot_id }}
+          REQUEST_ID: ${{ steps.export.outputs.request_id }}
+          DEPLOYMENT_ID: ${{ needs.monitor.outputs.deployment_id }}
+          RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          cd "$EVIDENCE_ROOT"
+          S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            python -I -S - <<'PY'
+          import os
+          import re
+          from urllib.parse import urlsplit
+
+          endpoint = urlsplit(os.environ["S3_ENDPOINT"])
+          if (
+              endpoint.scheme != "https"
+              or not endpoint.hostname
+              or endpoint.username is not None
+              or endpoint.password is not None
+              or endpoint.query
+              or endpoint.fragment
+              or endpoint.hostname.endswith(".railway.app")
+          ):
+              raise SystemExit("off-site S3 endpoint is not external HTTPS")
+          if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,62}", os.environ["S3_BUCKET"]) is None:
+              raise SystemExit("off-site bucket is invalid")
+          prefix = os.environ["S3_PREFIX"]
+          if (
+              re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,200}", prefix) is None
+              or prefix.startswith("/")
+              or prefix.endswith("/")
+              or ".." in prefix.split("/")
+          ):
+              raise SystemExit("off-site prefix is invalid")
+          PY
+          retain_until=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
+          key_root="$S3_PREFIX/$SNAPSHOT_ID/$REQUEST_ID"
+          mkdir -p proof/offsite-heads
+          printf '%s\n' \
+            activation-receipt.json request.json recovery-receipt.json \
+            bundle/SHA256SUMS bundle/seiche.dump bundle/var-lib-seiche.tgz \
+            bundle/api-data.tgz bundle/table-counts.txt bundle/deployed-sha.txt \
+            bundle/manifest.env proof/reverse-restore.json \
+            >proof/offsite-members.txt
+          while IFS= read -r path; do
+            name=${path#bundle/}
+            key="$key_root/$name"
+            digest=$(sha256sum "$path" | awk '{print $1}')
+            size=$(stat -c %s "$path")
+            test "$size" -le 5368709120
+            checksum=$(printf '%s' "$digest" | xxd -r -p | base64 -w0)
+            head="proof/offsite-heads/${name//\//_}.json"
+            if ! aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+                --bucket "$S3_BUCKET" --key "$key" --checksum-mode ENABLED \
+                >"$head" 2>/dev/null; then
+              aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
+                --bucket "$S3_BUCKET" --key "$key" --body "$path" \
+                --server-side-encryption AES256 \
+                --metadata "sha256=$digest" \
+                --checksum-algorithm SHA256 --checksum-sha256 "$checksum" \
+                --object-lock-mode COMPLIANCE \
+                --object-lock-retain-until-date "$retain_until" \
+                >"proof/offsite-heads/${name//\//_}.put.json"
+              aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+                --bucket "$S3_BUCKET" --key "$key" --checksum-mode ENABLED \
+                >"$head"
+            fi
+            EXPECTED_SHA="$digest" EXPECTED_CHECKSUM="$checksum" \
+              EXPECTED_SIZE="$size" \
+              EXPECTED_KEY="$key" HEAD="$head" python -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["HEAD"]).read_text())
+          retained = datetime.fromisoformat(
+              str(value.get("ObjectLockRetainUntilDate", "")).replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if (
+              value.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
+              or value.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
+              or value.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or not isinstance(value.get("VersionId"), str)
+              or not value["VersionId"]
+              or value.get("ObjectLockMode") != "COMPLIANCE"
+              or value.get("ServerSideEncryption") != "AES256"
+              or retained < datetime.now(UTC) + timedelta(days=29)
+          ):
+              raise SystemExit(f"immutable off-site proof failed for {os.environ['EXPECTED_KEY']}")
+          PY
+          done <proof/offsite-members.txt
+          S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
+            SNAPSHOT_ID="$SNAPSHOT_ID" REQUEST_ID="$REQUEST_ID" \
+            RETAIN_UNTIL="$retain_until" python -I -S - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          objects = {}
+          for raw in Path("proof/offsite-members.txt").read_text().splitlines():
+              path = Path(raw)
+              name = raw.removeprefix("bundle/")
+              head = json.loads(
+                  (Path("proof/offsite-heads") / f"{name.replace('/', '_')}.json").read_text()
+              )
+              objects[name] = {
+                  "key": (
+                      f"{os.environ['S3_PREFIX']}/{os.environ['SNAPSHOT_ID']}/"
+                      f"{os.environ['REQUEST_ID']}/{name}"
+                  ),
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  "size": path.stat().st_size,
+                  "version_id": head.get("VersionId"),
+              }
+          recovery = json.loads(Path("recovery-receipt.json").read_bytes())
+          value = {
+              "schema": "seiche.railway-offsite-recovery-receipt.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-stateful-recovery.yml"
+              ),
+              "commit": recovery["commit"],
+              "request_id": os.environ["REQUEST_ID"],
+              "snapshot_id": os.environ["SNAPSHOT_ID"],
+              "recovery_receipt_sha256": hashlib.sha256(
+                  Path("recovery-receipt.json").read_bytes()
+              ).hexdigest(),
+              "reverse_restore_proof_sha256": hashlib.sha256(
+                  Path("proof/reverse-restore.json").read_bytes()
+              ).hexdigest(),
+              "bucket": os.environ["S3_BUCKET"],
+              "prefix": os.environ["S3_PREFIX"],
+              "object_lock_mode": "COMPLIANCE",
+              "retain_until": os.environ["RETAIN_UNTIL"],
+              "objects": objects,
+              "sealed_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+                  "+00:00", "Z"
+              ),
+              "authority_changed": False,
+              "research_only": True,
+              "can_publish": False,
+              "can_execute": False,
+          }
+          Path("offsite-receipt.json").write_text(
+              json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          monitor_digests=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B \
+            -m seiche.stateful_recovery validate-monitor \
+            recovery-receipt.json offsite-receipt.json \
+            --request request.json --activation activation-receipt.json \
+            --deployment-id "$DEPLOYMENT_ID" --release-sha "$RELEASE_SHA")
+          [[ "$monitor_digests" =~ ^[0-9a-f]{64}\ [0-9a-f]{64}$ ]]
+          offsite_key="$key_root/offsite-receipt.json"
+          offsite_sha256=$(sha256sum offsite-receipt.json | awk '{print $1}')
+          offsite_checksum=$(printf '%s' "$offsite_sha256" | xxd -r -p | base64 -w0)
+          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
+            --bucket "$S3_BUCKET" --key "$offsite_key" --body offsite-receipt.json \
+            --server-side-encryption AES256 --metadata "sha256=$offsite_sha256" \
+            --checksum-algorithm SHA256 --checksum-sha256 "$offsite_checksum" \
+            --object-lock-mode COMPLIANCE \
+            --object-lock-retain-until-date "$retain_until" \
+            >proof/offsite-receipt.put.json
+          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
+            --bucket "$S3_BUCKET" --key "$offsite_key" --checksum-mode ENABLED \
+            >proof/offsite-receipt.head.json
+          EXPECTED_SHA="$offsite_sha256" EXPECTED_CHECKSUM="$offsite_checksum" \
+            EXPECTED_SIZE="$(stat -c %s offsite-receipt.json)" \
+            HEAD=proof/offsite-receipt.head.json python -I -S - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime, timedelta
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["HEAD"]).read_text())
+          retained = datetime.fromisoformat(
+              str(value.get("ObjectLockRetainUntilDate", "")).replace("Z", "+00:00")
+          ).astimezone(UTC)
+          if (
+              value.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
+              or value.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
+              or value.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or not isinstance(value.get("VersionId"), str)
+              or not value["VersionId"]
+              or value.get("ObjectLockMode") != "COMPLIANCE"
+              or value.get("ServerSideEncryption") != "AES256"
+              or retained < datetime.now(UTC) + timedelta(days=29)
+          ):
+              raise SystemExit("immutable off-site receipt proof failed")
+          PY
+          remote="/offsite-receipts/$SNAPSHOT_ID-$REQUEST_ID.json"
+          if ! railway volume files upload --volume "$RAILWAY_VOLUME_ID" \
+              offsite-receipt.json "$remote"; then
+            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              "$remote" proof/existing-offsite-receipt.json
+            cmp offsite-receipt.json proof/existing-offsite-receipt.json
+          fi
+          echo "receipt_path=$EVIDENCE_ROOT/offsite-receipt.json" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Railway Phase 6 portable recovery"
+            echo
+            echo "- Snapshot: \`$SNAPSHOT_ID\`"
+            echo "- Recovery request: \`$REQUEST_ID\`"
+            echo "- Isolated filesystem, NBS, SQLite, and PostgreSQL restore: passed"
+            echo "- External object lock: COMPLIANCE through at least \`$retain_until\`"
+            echo "- Authority changed: no"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Retain the private portable-recovery evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-recovery-${{ steps.export.outputs.snapshot_id }}-${{ steps.export.outputs.request_id }}
+          path: |
+            ${{ steps.export.outputs.evidence_root }}/activation-receipt.json
+            ${{ steps.export.outputs.evidence_root }}/request.json
+            ${{ steps.export.outputs.evidence_root }}/recovery-receipt.json
+            ${{ steps.export.outputs.evidence_root }}/offsite-receipt.json
+            ${{ steps.export.outputs.evidence_root }}/proof
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: OIDC-attest the exact recovery receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.export.outputs.receipt_path }}
+
+      - name: OIDC-attest the immutable off-site receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.offsite.outputs.receipt_path }}
