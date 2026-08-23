@@ -1,0 +1,45 @@
+name: audit-distribution-receipts
+
+on:
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-distribution-receipts
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Compare repository version with mandatory public receipts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Audit PyPI and official MCP Registry receipts
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set +e
+          python -I -S ops/release/audit_distribution_receipts.py \
+            --timeout-seconds 15 | tee "$RUNNER_TEMP/distribution-receipts.json"
+          audit_status="${PIPESTATUS[0]}"
+          set -e
+          {
+            echo "## Mandatory distribution receipt audit"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/distribution-receipts.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$audit_status"

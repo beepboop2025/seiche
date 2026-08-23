@@ -26,6 +26,7 @@ CANONICAL_DESCRIPTION = (
     "missing and stale evidence remains explicit."
 )
 OWNED_WORKFLOWS = (
+    ROOT / ".github/workflows/audit-distribution-receipts.yml",
     ROOT / ".github/workflows/distribution-contracts.yml",
     ROOT / ".github/workflows/publish-container.yml",
     ROOT / ".github/workflows/publish-mcp.yml",
@@ -543,6 +544,7 @@ class WorkflowContracts(unittest.TestCase):
         for required_path in (
             '"README.md"',
             '"backend/tests/test_distribution_listings.py"',
+            '"backend/tests/test_distribution_receipt_auditor.py"',
             '"backend/scripts/ard_coverage.py"',
             '"backend/tests/test_ai_discovery.py"',
             '"backend/tests/test_ard_coverage.py"',
@@ -557,6 +559,7 @@ class WorkflowContracts(unittest.TestCase):
             '"notebooks/**"',
             '"ops/deploy/release-allowed-signers"',
             '"ops/release/verify_public_dataset.py"',
+            '"ops/release/audit_distribution_receipts.py"',
         ):
             with self.subTest(path=required_path):
                 self.assertGreaterEqual(workflow.count(required_path), 2)
@@ -565,11 +568,13 @@ class WorkflowContracts(unittest.TestCase):
             "backend/tests/test_ai_discovery.py",
             "backend/tests/test_ard_coverage.py",
             "backend/tests/test_distribution_listings.py",
+            "backend/tests/test_distribution_receipt_auditor.py",
             "backend/tests/test_public_money_market_discovery.py",
             "backend/tests/test_public_dataset_deploy.py",
             "backend/tests/test_python_artifact_verifier.py",
             "distribution/datasets/test_distribution_kit.py",
             "ops/release/verify_public_dataset.py",
+            "ops/release/audit_distribution_receipts.py",
             "distribution/datasets/stage.py --validate-only",
             "clients/python/world_markets.py",
             "node --check clients/javascript/world-markets.mjs",
