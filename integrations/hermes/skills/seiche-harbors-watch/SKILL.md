@@ -63,7 +63,7 @@ snapshot).}
 
 - A missing component is stated, not papered over: "China local rate and
   regime unavailable; the served China view is metadata-only, while separately
-  sourced H.10 CNY FX remains available" is the correct boundary when that is
+  sourced H.10 CNY FX remains live" is the correct boundary when that is
   what the response says. Absence never means calm.
 - No cross-country stress ranking language like "India is more stressed than
   Japan" — each stress is against its own history. "India is unusual for
