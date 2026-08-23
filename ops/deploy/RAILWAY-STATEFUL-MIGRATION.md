@@ -169,7 +169,11 @@ three runs have:
 - successful restart/reuse validation of the receipted generation; and
 - an operator-reviewed rollback and authority-fencing rehearsal.
 
-Phase 5 must use a bounded maintenance freeze and one final snapshot. It must
-not introduce dual writes. Until that separately reviewed workflow exists and
-its final authority receipt is accepted, Hetzner remains production even when
-every Phase 4 check is green.
+Phase 5 uses a bounded maintenance freeze, one final snapshot, a content-bound
+authority fence, an authenticated read-only edge state, and a separately
+protected activation grant. Its implementation and exact operator sequence are
+in `RAILWAY-STATEFUL-CUTOVER.md`.
+
+Until all three Phase 4 runs are accepted, Phase 6 recovery controls are
+green, and the final Phase 5 activation receipt is acknowledged on Hetzner,
+Hetzner remains production even when every shadow check is green.

@@ -7,6 +7,8 @@ on:
       - "bot/**"
       - "ops/**"
       - ".github/workflows/market-platform-ci.yml"
+      - ".github/workflows/railway-stateful-recovery.yml"
+      - ".github/workflows/railway-telegram.yml"
   workflow_dispatch:
 
 permissions:
@@ -83,5 +85,13 @@ jobs:
           backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py
           backend/tests/test_fleet_mac_heartbeat.py
+      - name: Run Railway stateful and Telegram migration contracts
+        run: >-
+          python -m pytest -q
+          backend/tests/test_railway_cutover_fence.py
+          backend/tests/test_railway_stateful_migration.py
+          backend/tests/test_railway_stateful_cutover.py
+          backend/tests/test_railway_stateful_recovery.py
+          backend/tests/test_railway_telegram.py
       - name: Run Telegram bot contracts
         run: python -m pytest -q bot/tests
