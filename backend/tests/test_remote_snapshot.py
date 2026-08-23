@@ -196,7 +196,7 @@ def test_host_import_reseals_and_stages_exact_prebuilt_payload(
     assert calls == [(fake_snap, receipt)]
 
     tampered = json.loads(json.dumps(artifact))
-    tampered["payload"]["version"] = "tampered"
+    tampered["payload"]["version"] += "-digest-tamper"
     with pytest.raises(ValueError, match="payload digest"):
         remote_snapshot_import.stage_artifact(tampered, now=generated)
 

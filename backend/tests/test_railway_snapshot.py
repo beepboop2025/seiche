@@ -154,10 +154,11 @@ def test_host_accepts_only_the_exact_payload_and_source_binding(
         "railway_deployment_id"
     ]
 
-    remote["payload"]["version"] = "tampered"
+    tampered = json.loads(json.dumps(remote))
+    tampered["payload"]["version"] = "tampered"
     with pytest.raises(SystemExit):
         verifier.validate_remote_snapshot(
-            remote,
+            tampered,
             target="a" * 40,
             tree="b" * 40,
             source_archive_sha256=request["source_archive_sha256"],
