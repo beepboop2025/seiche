@@ -32,6 +32,33 @@ jobs:
       target: ${{ steps.request.outputs.target }}
       tree: ${{ steps.request.outputs.tree }}
     steps:
+      - name: Preflight required Railway configuration
+        shell: bash
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SNAPSHOT_SERVICE_ID: ${{ secrets.RAILWAY_SNAPSHOT_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          required=(
+            RAILWAY_TOKEN
+            RAILWAY_PROJECT_ID
+            RAILWAY_ENVIRONMENT_ID
+            RAILWAY_SNAPSHOT_SERVICE_ID
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if ((${#missing[@]})); then
+            printf '%s\n' 'Missing required Railway configuration:' >&2
+            printf '%s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+
       - name: Check out the exact event identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
