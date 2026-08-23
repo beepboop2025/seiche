@@ -1,35 +1,33 @@
 {
-  "date": "2026-08-22",
+  "date": "2026-08-23",
   "reported_prev": {
-    "Bitcoin (Coinbase daily close)": "2026-08-21",
-    "30y Treasury constant maturity yield": "2026-08-19",
-    "2y Treasury constant maturity yield": "2026-08-19"
+    "2y Treasury constant maturity yield": "2026-08-20"
   },
   "reported": {
     "2y Treasury constant maturity yield": "2026-08-20"
   },
   "letter_prev": {
     "regime": "STRAIN",
-    "value": 45.0,
+    "value": 45.1,
     "decomp": {
       "weather": 11.0,
       "kink": 7.4,
       "resonance": 6.7,
-      "rvxray": 6.2,
+      "rvxray": 6.1,
       "buffers": 3.0,
       "undertow": 2.8,
       "confession": 2.7,
       "warehouse": 2.4,
-      "tails": 1.8,
+      "tails": 2.0,
       "auctions": 1.0,
       "hydrophone": 0.0
     },
     "crunch": {
       "date": "2026-08-27",
-      "worst_case_b": 2881.4,
+      "worst_case_b": 2894.8,
       "settlement_b": 266.0
     },
-    "tell": 29.7
+    "tell": 23.3
   },
   "letter": {
     "regime": "STRAIN",

@@ -1,0 +1,108 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-23-march-2023-showed-why-system-liquidity-can-mask-a-lender-level-cash-cris",
+  "product": "seiche",
+  "slug": "2026-08-23-march-2023-showed-why-system-liquidity-can-mask-a-lender-level-cash-cris",
+  "date": "2026-08-23",
+  "article_type": "historical_replay",
+  "editorial_class": "desk_brief",
+  "topic": "Mar 2023 SVB / regional bank run",
+  "headline": "March 2023 showed why system liquidity can mask a lender-level cash crisis",
+  "dek": "This historical replay examines the March 2023 regional-bank run: aggregate dollar-funding capacity can be supported while individual lenders still face a cash crisis. Today’s tape did not clear Seiche’s full-story gate.",
+  "canonical_url": "https://seiche.info/articles/2026-08-23-march-2023-showed-why-system-liquidity-can-mask-a-lender-level-cash-cris/",
+  "published_at": "2026-08-23T11:13:27Z",
+  "evidence_as_of": "2026-08-21",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-23-daily",
+  "historical_episode": {
+    "episode": "Mar 2023 SVB / regional bank run",
+    "date": "2023-03-13",
+    "lead_days": 13,
+    "similarity": 0.435
+  },
+  "newsworthiness": {
+    "score": 25,
+    "decision": "desk_brief",
+    "factors": {
+      "fresh_observed_print": 0,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 0,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1108,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:457cbd1eb3dc6d092087c184d265d40773770b2b948be9c1b0eb723eb81881fe",
+    "memory_fingerprint": "sha256:59ac779098b0ebc83379e0088388693ddb3f43e159ec6f18355ba9c0771b7bab",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 2,
+    "dossier_sha256": "7169c9212f8ea02116ac4439bae9bb32d867b0ac7a17e18fcd12702cbd7f93fc",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Reframed the piece as a historical replay because today’s tape did not clear the full-story gate.",
+      "Strengthened the counter-case by making observed overnight pricing and backstop non-use capable of defeating the calendar thesis.",
+      "Made the next test observable and preserved the distinction between system funding, lender risk, and market exit capacity.",
+      "Removed unsupported investment-advice language and retained only dossier-supported claims, figures, dates, and URLs."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:457cbd1eb3dc6d092087c184d265d40773770b2b948be9c1b0eb723eb81881fe",
+      "memory_fingerprint": "sha256:59ac779098b0ebc83379e0088388693ddb3f43e159ec6f18355ba9c0771b7bab",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}

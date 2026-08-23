@@ -1,0 +1,128 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-08-23-daily",
+  "product": "seiche",
+  "slug": "2026-08-23-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-08-23-daily",
+  "headline": "No print cleared the 2.5 sigma bar: the freshest standing flag is 3 days old, strain at 45",
+  "dek": "The board reads 45 out of 100, STRAIN; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 5.9%; plumbing leads market pricing by +23 percentile points. The index is +0.0 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "desk_brief",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-08-23T11:13:27Z",
+  "clocks": {
+    "event_time": "2026-08-23T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-08-23T11:13:27Z",
+    "publication_time": "2026-08-23T11:13:27Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 25,
+    "decision": "desk_brief",
+    "factors": {
+      "fresh_observed_print": 0,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 0,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 45.1 in STRAIN.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 45.1,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-08-23",
+        "backtestable": false,
+        "status_note": "ACCRUING — 50/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 0.64,
+            "unit": "score",
+            "as_of": "2026-08-23",
+            "observations": 50,
+            "change_vs_prior_10_median": -0.59
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 119.0,
+            "unit": "terms/day",
+            "as_of": "2026-08-23",
+            "observations": 50,
+            "change_vs_prior_10_median": 105.5
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 25.0,
+            "unit": "0-100",
+            "as_of": "2026-08-23",
+            "observations": 46,
+            "change_vs_prior_10_median": 4.0
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 0.9bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-08-19",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-08-21",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 35th percentile of its own history.",
+      "asof": "2026-08-20",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "claim_fingerprint": "866daf4ace0a013f1765ccf1f0b7ecfabf7d26121c2eb3fd84af5490f7711951"
+}
