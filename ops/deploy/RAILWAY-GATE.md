@@ -361,6 +361,15 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   acknowledgement. Follow `RAILWAY-STATEFUL-CUTOVER.md`; do not
   activate it until three Phase 4 canaries and Phase 6 recovery controls
   are green.
+- Phase 6 adds separately protected native-backup administration, six-hour
+  production/PITR/volume monitoring, and a daily activation-bound backup-v3
+  export. Each export pauses only Railway writers, keeps reads online, restores
+  the portable bytes in isolation, and seals them outside Railway under
+  COMPLIANCE Object Lock. Native-backup bootstrap and a non-production external
+  storage preflight happen before Phase 5 activation; the first real export is
+  an immediate post-activation seal because it must bind the activation
+  receipt. Follow `RAILWAY-STATEFUL-RECOVERY.md`; merging the workflow does not
+  enable schedules, move authority, or prove a canary.
 - The Phase 5 core cutover does not migrate the separate
   `/var/lib/seiche-bot` Telegram state or its timers. That workload
   remains a separately named follow-on until it has snapshot, restore,

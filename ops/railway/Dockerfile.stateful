@@ -1,9 +1,12 @@
+FROM postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 AS postgres-client
+
 FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS stateful-runtime
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PATH=/opt/postgresql/17/bin:$PATH
 
 # The PostgreSQL client performs the closed backup-v3 restore. Git preserves
 # the real candidate commit identity for Seiche's runtime release check; tini
@@ -21,6 +24,15 @@ RUN printf '%s\n' \
     && groupadd --system --gid 10001 seiche \
     && useradd --system --uid 10001 --gid 10001 \
       --home-dir /nonexistent --shell /usr/sbin/nologin seiche
+
+# Phase 4 consumes a portable dump; Phase 6 also produces one. Keep the dump
+# and restore tools on the same reviewed PostgreSQL major as the Railway
+# database instead of inheriting Bookworm's older unqualified client.
+COPY --from=postgres-client /usr/lib/postgresql/17/bin/pg_dump /opt/postgresql/17/bin/pg_dump
+COPY --from=postgres-client /usr/lib/postgresql/17/bin/pg_restore /opt/postgresql/17/bin/pg_restore
+COPY --from=postgres-client /usr/lib/x86_64-linux-gnu/libpq.so.5* /usr/lib/x86_64-linux-gnu/
+RUN pg_dump --version | grep -Eq '^pg_dump \(PostgreSQL\) 17\.' \
+    && pg_restore --version | grep -Eq '^pg_restore \(PostgreSQL\) 17\.'
 
 WORKDIR /migration
 COPY source.tar source.bundle request.json /migration/

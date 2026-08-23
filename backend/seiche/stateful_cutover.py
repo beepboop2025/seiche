@@ -239,9 +239,7 @@ def validate_fence(
     if (
         not isinstance(snapshot["id"], str)
         or migration._SNAPSHOT_RE.fullmatch(snapshot["id"]) is None
-        or _validate_sha(
-            snapshot["source_revision"], label="fence snapshot revision"
-        )
+        or _validate_sha(snapshot["source_revision"], label="fence snapshot revision")
         != commit
     ):
         raise CutoverContractError("authority fence snapshot identity is invalid")
@@ -505,8 +503,7 @@ def validate_candidate_receipt(
         or bundle.get("schema") != migration.BACKUP_SCHEMA
         or bundle.get("snapshot_id") != request["snapshot_id"]
         or bundle.get("source_revision") != request["source_revision"]
-        or bundle.get("source_inventory_sha256")
-        != request["source_inventory_sha256"]
+        or bundle.get("source_inventory_sha256") != request["source_inventory_sha256"]
         or bundle.get("source_content_set_sha256")
         != request["source_content_set_sha256"]
         or not isinstance(bundle.get("member_sha256"), dict)
@@ -656,7 +653,9 @@ def restore_candidate(
         except migration.MigrationContractError as exc:
             raise CutoverContractError(str(exc)) from exc
     if generation_path.exists() or generation_path.is_symlink():
-        raise CutoverContractError("unreceipted cutover generation needs reconciliation")
+        raise CutoverContractError(
+            "unreceipted cutover generation needs reconciliation"
+        )
     staging = platform_root / f".cutover-{request['request_id']}"
     if staging.exists() or staging.is_symlink():
         raise CutoverContractError("stale cutover staging needs reconciliation")
@@ -792,8 +791,7 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
     if (
-        _digest(body)
-        != environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256")
+        _digest(body) != environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256")
         or value.get("schema") != CANDIDATE_RECEIPT_SCHEMA
         or value.get("request", {}).get("id")
         != environment.get("SEICHE_RAILWAY_CUTOVER_REQUEST_ID")
@@ -804,9 +802,9 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
         or value.get("authority", {}).get("railway_writers_started") is not False
     ):
         raise CutoverContractError("Railway candidate receipt binding is invalid")
-    if edge_token_sha256(environment.get("SEICHE_RAILWAY_EDGE_TOKEN", "")) != environment.get(
-        "SEICHE_RAILWAY_EDGE_TOKEN_SHA256"
-    ):
+    if edge_token_sha256(
+        environment.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
+    ) != environment.get("SEICHE_RAILWAY_EDGE_TOKEN_SHA256"):
         raise CutoverContractError("Railway edge token binding is invalid")
     return value
 
@@ -845,8 +843,7 @@ def validate_grant(
         or value.get("candidate_receipt_sha256")
         != _digest(_canonical(candidate_receipt))
         or value.get("fence_sha256") != candidate_receipt["fence"]["sha256"]
-        or value.get("deployment_id")
-        != candidate_receipt["railway"]["deployment_id"]
+        or value.get("deployment_id") != candidate_receipt["railway"]["deployment_id"]
         or value.get("edge_token_sha256") != edge_token_digest
     ):
         raise CutoverContractError("activation grant binding is invalid")
@@ -887,8 +884,7 @@ def validate_public_candidate_probe(
         or value.get("url") != "https://api.seiche.info/api/health"
         or value.get("status") != 200
         or value.get("authority") != "candidate"
-        or value.get("deployment_id")
-        != candidate_receipt["railway"]["deployment_id"]
+        or value.get("deployment_id") != candidate_receipt["railway"]["deployment_id"]
         or value.get("deployment_id") != grant["deployment_id"]
         or value.get("commit") != candidate_receipt["request"]["commit"]
         or value.get("commit") != grant["commit"]
@@ -1017,8 +1013,8 @@ def publish_authority_documents(
         )
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
-    observed_railway = dict(railway) if railway is not None else migration.railway_identity(
-        os.environ
+    observed_railway = (
+        dict(railway) if railway is not None else migration.railway_identity(os.environ)
     )
     candidate = validate_candidate_receipt(
         candidate_value,
@@ -1026,9 +1022,13 @@ def publish_authority_documents(
         fence=fence,
         railway=observed_railway,
     )
-    token = edge_token if edge_token is not None else os.environ.get(
-        "SEICHE_RAILWAY_EDGE_TOKEN",
-        "",
+    token = (
+        edge_token
+        if edge_token is not None
+        else os.environ.get(
+            "SEICHE_RAILWAY_EDGE_TOKEN",
+            "",
+        )
     )
     grant = validate_grant(
         grant_value,
@@ -1204,8 +1204,7 @@ def validate_activation_runtime(environment: Mapping[str, str]) -> dict[str, Any
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
     if (
-        _digest(body)
-        != environment.get("SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256")
+        _digest(body) != environment.get("SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256")
         or value.get("schema") != ACTIVATION_RECEIPT_SCHEMA
         or value.get("commit") != environment.get("SEICHE_RELEASE_SHA")
         or value.get("request_id")
@@ -1241,12 +1240,28 @@ def api_command(port: str) -> list[str]:
 
 def worker_commands() -> dict[str, list[str]]:
     return {
-        "market": [sys.executable, "-m", "seiche.cli", "market-worker", "--poll-seconds", "30"],
-        "source": [sys.executable, "-m", "seiche.cli", "source-worker", "--poll-seconds", "300"],
+        "market": [
+            sys.executable,
+            "-m",
+            "seiche.cli",
+            "market-worker",
+            "--poll-seconds",
+            "30",
+        ],
+        "source": [
+            sys.executable,
+            "-m",
+            "seiche.cli",
+            "source-worker",
+            "--poll-seconds",
+            "300",
+        ],
     }
 
 
-def _spawn(command: list[str], environment: Mapping[str, str]) -> subprocess.Popen[bytes]:
+def _spawn(
+    command: list[str], environment: Mapping[str, str]
+) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         command,
         cwd="/workspace",
@@ -1298,7 +1313,9 @@ def _serve_children(
     signal.signal(signal.SIGINT, stop)
     try:
         while not stopping:
-            exited = next((child for child in children if child.poll() is not None), None)
+            exited = next(
+                (child for child in children if child.poll() is not None), None
+            )
             if exited is not None:
                 return exited.returncode or 1
             time.sleep(poll_seconds)
@@ -1321,17 +1338,12 @@ def writer_environment(candidate: Mapping[str, str]) -> dict[str, str]:
     return environment
 
 
-def supervise_production(
+def _start_writer_children(
     production: Mapping[str, str],
+    commands: Mapping[str, list[str]],
     *,
-    poll_seconds: int = 2,
-) -> int:
-    if not 1 <= poll_seconds <= 60:
-        raise CutoverContractError("cutover poll interval is invalid")
-    validate_activation_runtime(production)
-    Path("/tmp/seiche-home").mkdir(mode=0o700, exist_ok=True)
-    os.chown("/tmp/seiche-home", migration.RUNTIME_UID, migration.RUNTIME_GID)
-    commands = worker_commands()
+    poll_seconds: int,
+) -> list[subprocess.Popen[bytes]]:
     children: list[subprocess.Popen[bytes]] = []
     try:
         children.extend(
@@ -1343,11 +1355,150 @@ def supervise_production(
         time.sleep(min(float(poll_seconds), 1.0))
         if any(child.poll() is not None for child in children):
             raise CutoverContractError("a Railway writer failed during restart")
-        children.append(_spawn(api_command(production.get("PORT", "")), production))
+        return children
     except Exception:
         _terminate_children(children)
         raise
-    return _serve_children(children, poll_seconds=poll_seconds)
+
+
+def _serve_production(
+    production: Mapping[str, str],
+    *,
+    writers: list[subprocess.Popen[bytes]],
+    api: subprocess.Popen[bytes],
+    commands: Mapping[str, list[str]],
+    poll_seconds: int,
+) -> int:
+    from seiche import stateful_recovery as recovery
+
+    stopping = False
+    failed_requests: set[str] = set()
+
+    def children() -> list[subprocess.Popen[bytes]]:
+        return [*writers, api]
+
+    def stop(signum: int, _frame: object) -> None:
+        nonlocal stopping
+        stopping = True
+        _stop_children(children(), signum)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        while not stopping:
+            exited = next(
+                (child for child in children() if child.poll() is not None), None
+            )
+            if exited is not None:
+                return exited.returncode or 1
+            request = recovery.next_pending_request(production)
+            if request is None or request["request_id"] in failed_requests:
+                time.sleep(poll_seconds)
+                continue
+            _terminate_children(writers)
+            writers.clear()
+            if stopping:
+                break
+            writers_stopped_at = migration._iso_now()
+            try:
+                exported = recovery.export_snapshot(production, request)
+            except Exception as exc:  # noqa: BLE001 - retain production, retry on restart
+                if stopping:
+                    break
+                api_returncode = api.poll()
+                if api_returncode is not None:
+                    return api_returncode or 1
+                writers.extend(
+                    _start_writer_children(
+                        production,
+                        commands,
+                        poll_seconds=poll_seconds,
+                    )
+                )
+                failed_requests.add(str(request["request_id"]))
+                print(
+                    "seiche Railway recovery: export failed; writers restored "
+                    f"fault_type={type(exc).__name__}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            if stopping or api.poll() is not None:
+                if api.poll() is not None:
+                    return api.returncode or 1
+                break
+            writers.extend(
+                _start_writer_children(
+                    production,
+                    commands,
+                    poll_seconds=poll_seconds,
+                )
+            )
+            if stopping:
+                break
+            writers_restarted_at = migration._iso_now()
+            try:
+                receipt_path, receipt = recovery.finalize_receipt(
+                    production,
+                    request,
+                    exported,
+                    writers_stopped_at=writers_stopped_at,
+                    writers_restarted_at=writers_restarted_at,
+                    worker_commands=commands,
+                )
+            except Exception as exc:  # noqa: BLE001 - bundle remains for restart recovery
+                failed_requests.add(str(request["request_id"]))
+                print(
+                    "seiche Railway recovery: receipt sealing deferred "
+                    f"fault_type={type(exc).__name__}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            print(
+                "seiche Railway recovery: export receipted "
+                f"request={request['request_id']} "
+                f"receipt={hashlib.sha256(_canonical(receipt)).hexdigest()} "
+                f"path={receipt_path}",
+                flush=True,
+            )
+    finally:
+        _terminate_children(children())
+    return 0
+
+
+def supervise_production(
+    production: Mapping[str, str],
+    *,
+    poll_seconds: int = 2,
+) -> int:
+    if not 1 <= poll_seconds <= 60:
+        raise CutoverContractError("cutover poll interval is invalid")
+    validate_activation_runtime(production)
+    Path("/tmp/seiche-home").mkdir(mode=0o700, exist_ok=True)
+    os.chown("/tmp/seiche-home", migration.RUNTIME_UID, migration.RUNTIME_GID)
+    commands = worker_commands()
+    writers: list[subprocess.Popen[bytes]] = []
+    api: subprocess.Popen[bytes] | None = None
+    try:
+        writers.extend(
+            _start_writer_children(
+                production,
+                commands,
+                poll_seconds=poll_seconds,
+            )
+        )
+        api = _spawn(api_command(production.get("PORT", "")), production)
+    except Exception:
+        _terminate_children([*writers, *([api] if api is not None else [])])
+        raise
+    return _serve_production(
+        production,
+        writers=writers,
+        api=api,
+        commands=commands,
+        poll_seconds=poll_seconds,
+    )
 
 
 def activate_and_supervise(
@@ -1403,7 +1554,13 @@ def activate_and_supervise(
     except Exception:
         _terminate_children(children)
         raise
-    return _serve_children(children, poll_seconds=poll_seconds)
+    return _serve_production(
+        production,
+        writers=children[:2],
+        api=children[2],
+        commands=commands,
+        poll_seconds=poll_seconds,
+    )
 
 
 def _load_cutover_document(path: Path, *, label: str) -> dict[str, Any]:
@@ -1470,8 +1627,10 @@ def supervise_cutover(
                 _stop_children(children, signal.SIGTERM)
                 children[0].wait(timeout=30)
                 children = []
-                activation_path = grant_path.parent.parent / "cutover-receipts" / (
-                    f"{candidate_receipt['request']['id']}.activation.json"
+                activation_path = (
+                    grant_path.parent.parent
+                    / "cutover-receipts"
+                    / (f"{candidate_receipt['request']['id']}.activation.json")
                 )
                 return activate_and_supervise(
                     candidate,
@@ -1498,9 +1657,7 @@ def run(
     if os.geteuid() != 0 or os.getegid() != 0:
         raise CutoverContractError("cutover supervisor must start as root")
     expected_fence = os.environ.get("SEICHE_RAILWAY_AUTHORITY_FENCE_SHA256", "")
-    fence_path = platform_root / "authority-fences" / (
-        f"{expected_fence}.json"
-    )
+    fence_path = platform_root / "authority-fences" / (f"{expected_fence}.json")
     fence = load_fence(
         fence_path,
         expected_sha256=expected_fence,
@@ -1517,13 +1674,17 @@ def run(
         raise CutoverContractError("runtime fence differs from request")
     railway = migration.railway_identity(os.environ)
     grant_path = platform_root / "authority" / "activation-grant.json"
-    activation_path = platform_root / "cutover-receipts" / (
-        f"{request['request_id']}.activation.json"
+    activation_path = (
+        platform_root
+        / "cutover-receipts"
+        / (f"{request['request_id']}.activation.json")
     )
     has_grant = grant_path.exists() or grant_path.is_symlink()
     has_activation = activation_path.exists() or activation_path.is_symlink()
     if has_activation and not has_grant:
-        raise CutoverContractError("activation receipt exists without its authority grant")
+        raise CutoverContractError(
+            "activation receipt exists without its authority grant"
+        )
     if not has_grant:
         validate_fence(fence)
         validate_request(request, fence=fence)
@@ -1589,7 +1750,9 @@ def run(
             grant,
             activation_path=activation_path,
         )
-    print("seiche Railway cutover: candidate ready; both writer planes fenced", flush=True)
+    print(
+        "seiche Railway cutover: candidate ready; both writer planes fenced", flush=True
+    )
     return supervise_cutover(
         environment,
         restore.receipt,
@@ -1627,7 +1790,9 @@ def _validate_cli(arguments: argparse.Namespace) -> int:
             validate_candidate_receipt(value, request=request, fence=fence)
         else:
             if not arguments.candidate or not arguments.grant:
-                raise CutoverContractError("activation validation context is incomplete")
+                raise CutoverContractError(
+                    "activation validation context is incomplete"
+                )
             _candidate_body, candidate_value = document(
                 arguments.candidate,
                 "candidate receipt",

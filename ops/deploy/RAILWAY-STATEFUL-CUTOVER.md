@@ -40,8 +40,9 @@ Do not start the maintenance freeze until all of these are true:
 - the stateful service still has exactly one replica, one volume mounted at
   `/var/lib/seiche-platform`, and one Railway-private PostgreSQL
   reference;
-- Phase 5 restart continuity plus Phase 6 backup, reverse-restore, monitoring,
-  and release controls are green; and
+- Phase 5 restart continuity and Phase 6 control tests, native-backup
+  bootstrap, and external Object-Lock preflight are green according to
+  `RAILWAY-STATEFUL-RECOVERY.md`; and
 - a maintenance window, rollback operator, and exact authority confirmations
   are recorded.
 
@@ -238,6 +239,19 @@ activation receipt, and only then admits the production API.
 Any failure before the grant may use the pre-activation rollback. Any failure
 after the grant is a Railway recovery incident; never restart Hetzner from its
 old frozen state.
+
+Before activation, Phase 6 must already have one accepted native-backup setup,
+one non-production external Object-Lock preflight, and green recovery contract
+tests. A production monitor/export cannot exist before the activation receipt
+that binds it. Merely merging the Phase 6 workflow is not a green recovery
+control.
+
+Immediately after the grant, run Phase 6's first `export-recovery` operation.
+Its prerequisite monitor, uninterrupted API log, isolated reverse restore,
+external COMPLIANCE objects, Railway/off-site receipts, and both production
+OIDC attestations must pass before the Hetzner acknowledgement in step 7. A
+failure is a Railway recovery incident; it is never permission to restart the
+old host.
 
 ## 7. Acknowledge activation on Hetzner
 
