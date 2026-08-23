@@ -1,0 +1,81 @@
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7 AS stateful-runtime
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# The PostgreSQL client performs the closed backup-v3 restore. Git preserves
+# the real candidate commit identity for Seiche's runtime release check; tini
+# gives the root supervisor correct signal and child-reaping behavior.
+RUN printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250814T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250814T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -type f -delete \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates git postgresql-client tini \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete \
+    && groupadd --system --gid 10001 seiche \
+    && useradd --system --uid 10001 --gid 10001 \
+      --home-dir /nonexistent --shell /usr/sbin/nologin seiche
+
+WORKDIR /migration
+COPY source.tar source.bundle request.json /migration/
+
+# A Git bundle is carried in addition to the canonical archive because the API
+# refuses an environment-only release SHA. Verify both representations before
+# installing dependencies, then retain a read-only exact-commit worktree.
+RUN git clone --quiet /migration/source.bundle /workspace \
+    && python -I -S - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+request_body = Path("/migration/request.json").read_bytes()
+request = json.loads(request_body)
+canonical = (
+    json.dumps(request, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    + "\n"
+).encode()
+if request_body != canonical:
+    raise SystemExit("stateful request is not canonical")
+commit = subprocess.check_output(
+    ["git", "-C", "/workspace", "rev-parse", "HEAD"], text=True
+).strip()
+tree = subprocess.check_output(
+    ["git", "-C", "/workspace", "rev-parse", "HEAD^{tree}"], text=True
+).strip()
+archive = subprocess.check_output(
+    ["git", "-C", "/workspace", "archive", "--format=tar", "HEAD"]
+)
+if commit != request.get("commit") or tree != request.get("tree"):
+    raise SystemExit("stateful Git bundle identity differs from request")
+if hashlib.sha256(archive).hexdigest() != request.get("source_archive_sha256"):
+    raise SystemExit("stateful Git bundle tree differs from source archive")
+if archive != Path("/migration/source.tar").read_bytes():
+    raise SystemExit("stateful source archive bytes differ from exact worktree")
+for name, field in (
+    ("source.tar", "source_archive_sha256"),
+    ("source.bundle", "source_bundle_sha256"),
+):
+    observed = hashlib.sha256((Path("/migration") / name).read_bytes()).hexdigest()
+    if observed != request.get(field):
+        raise SystemExit(f"stateful {name} digest differs from request")
+PY
+
+RUN python -m pip install -q "/workspace/backend[collectors,postgres]" \
+    && chmod 0555 /migration /workspace \
+    && chmod 0444 /migration/source.tar /migration/source.bundle \
+      /migration/request.json \
+    && chmod -R a-w /workspace
+
+WORKDIR /workspace
+EXPOSE 8080
+
+# Railway volumes are root-mounted. The supervisor performs the one-time
+# restore as root, then drops the public API child to uid/gid 10001.
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "/workspace/backend/seiche/stateful_migration.py"]

@@ -2677,6 +2677,55 @@ async def health(response: Response, require_rebuilt: bool = False):
     )
 
 
+@app.get("/healthz", include_in_schema=False)
+async def railway_stateful_health(response: Response):
+    """Admit only a receipted, non-authoritative Railway shadow runtime."""
+    if os.getenv("SEICHE_RAILWAY_STATEFUL_MODE") != "shadow":
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "not found"},
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        from seiche.stateful_migration import validate_runtime_receipt
+
+        receipt = validate_runtime_receipt(os.environ)
+    except Exception as exc:  # noqa: BLE001 - never expose storage diagnostics
+        logging.getLogger("seiche.api").error(
+            "Railway shadow receipt validation failed fault_type=%s",
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "shadow_receipt_unavailable"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    candidate = _health_response(
+        response,
+        require_rebuilt=True,
+        include_release_candidate=False,
+    )
+    if isinstance(candidate, Response):
+        return candidate
+    if (
+        receipt.get("authority", {}).get("source") != "hetzner"
+        or receipt.get("authority", {}).get("public_traffic_enabled") is not False
+        or receipt.get("authority", {}).get("workers_started") is not False
+    ):
+        return JSONResponse(
+            status_code=503,
+            content={"status": "shadow_authority_invalid"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "status": "ready",
+        "mode": "shadow",
+        "version": candidate.get("version"),
+        "generated_at": candidate.get("generated_at"),
+    }
+
+
 @app.get("/api/internal/v1/release-health", include_in_schema=False)
 async def release_health(response: Response):
     """Loopback-only deployment gate with the exact activation capability."""
