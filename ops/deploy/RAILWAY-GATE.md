@@ -252,6 +252,9 @@ has moved or that `RAILWAY_TELEGRAM_PHASE7_ENABLED` may be set.
 
    The IDs are treated as secrets so the workflow never relies on mutable names.
    Do not add them to repository files or Railway service variables.
+   Each workflow checks its four required names before checkout or any network
+   action. Missing configuration fails red immediately and reports names only,
+   never values.
 4. Ensure the existing `ghcr-release` GitHub environment permits both workflows'
    source-free publication jobs. Make both
    `ghcr.io/beepboop2025/seiche-release-gates` and

@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
 import tarfile
 
 import pytest
@@ -16,9 +17,47 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "ops" / "railway" / "run-gate.py"
 VERIFIER_PATH = ROOT / "ops" / "deploy" / "seiche-remote-gate-verify.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "railway-release-gate.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "market-platform-ci.yml"
 POLLER = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
 RAILWAY_CONFIG = ROOT / "ops" / "railway" / "railway.gate.json"
 RAILWAY_DOCKERFILE = ROOT / "ops" / "railway" / "Dockerfile.gate"
+PREFLIGHT_NAME = "Preflight required Railway configuration"
+
+
+def _workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    start = workflow.index(marker)
+    end = workflow.find("\n      - ", start + len(marker))
+    assert end != -1
+    return workflow[start:end]
+
+
+def _step_script(step: str) -> str:
+    marker = "        run: |\n"
+    body = step.split(marker, maxsplit=1)[1]
+    return "\n".join(line[10:] if line else "" for line in body.splitlines())
+
+
+def _expected_preflight_script(required: tuple[str, ...]) -> str:
+    return "\n".join(
+        (
+            "set -euo pipefail",
+            "required=(",
+            *(f"  {name}" for name in required),
+            ")",
+            "missing=()",
+            'for name in "${required[@]}"; do',
+            '  if [[ -z "${!name:-}" ]]; then',
+            '    missing+=("$name")',
+            "  fi",
+            "done",
+            "if ((${#missing[@]})); then",
+            "  printf '%s\\n' 'Missing required Railway configuration:' >&2",
+            "  printf '%s\\n' \"${missing[@]}\" >&2",
+            "  exit 1",
+            "fi",
+        )
+    )
 
 
 def _load(path: Path, name: str):
@@ -270,6 +309,75 @@ def test_host_requires_exact_canonical_receipt_bytes(verifier):
     assert verifier.load_canonical_receipt(verifier.canonical_json(payload)) == payload
     with pytest.raises(SystemExit):
         verifier.load_canonical_receipt(b'{"value": 1, "schema": "fixture"}\n')
+
+
+def test_railway_configuration_preflight_is_first_and_fails_with_names_only():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preflight = _workflow_step(workflow, PREFLIGHT_NAME)
+    checkout = _workflow_step(workflow, "Check out the exact event identity")
+
+    steps_start = workflow.index("    steps:\n")
+    assert workflow.index("      - ", steps_start) == workflow.index(preflight)
+    assert workflow.index(preflight) < workflow.index(checkout)
+    assert "on:\n  push:\n    branches: [main]" in workflow
+    required = (
+        "RAILWAY_TOKEN",
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_ENVIRONMENT_ID",
+        "RAILWAY_SERVICE_ID",
+    )
+    assert preflight.count("${{ secrets.") == len(required)
+    for name in required:
+        assert f"          {name}: ${{{{ secrets.{name} }}}}" in preflight
+    script = _step_script(preflight)
+    assert script == _expected_preflight_script(required)
+    assert "if:" not in preflight
+    assert "uses:" not in preflight
+    assert "continue-on-error" not in preflight
+
+    fake_configuration = {
+        "RAILWAY_TOKEN": "fake-token-must-not-be-printed",
+        "RAILWAY_PROJECT_ID": "fake-project-must-not-be-printed",
+        "RAILWAY_ENVIRONMENT_ID": "fake-environment-must-not-be-printed",
+        "RAILWAY_SERVICE_ID": "fake-service-must-not-be-printed",
+    }
+    missing = ("RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID")
+    environment = {"PATH": "/usr/bin:/bin", **fake_configuration}
+    for name in missing:
+        environment.pop(name)
+
+    failure = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert failure.returncode == 1
+    assert failure.stdout == ""
+    assert failure.stderr.splitlines() == [
+        "Missing required Railway configuration:",
+        *missing,
+    ]
+    output = failure.stdout + failure.stderr
+    assert all(value not in output for value in fake_configuration.values())
+
+    success = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", **fake_configuration},
+    )
+    assert success.returncode == 0
+    assert success.stdout == success.stderr == ""
+
+    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert '"integrations/hermes/**"' in ci_workflow
+    assert '".github/workflows/railway-release-gate.yml"' in ci_workflow
+    assert "backend/tests/test_cfets_rights_boundary.py" in ci_workflow
+    assert "backend/tests/test_railway_release_gate.py" in ci_workflow
 
 
 def test_controller_defaults_remote_and_never_falls_back_automatically():

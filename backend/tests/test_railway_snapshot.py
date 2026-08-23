@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -13,10 +14,48 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "ops" / "railway" / "run-snapshot.py"
 VERIFIER_PATH = ROOT / "ops" / "deploy" / "seiche-remote-snapshot-verify.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "railway-snapshot-prebuild.yml"
+CI_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "market-platform-ci.yml"
 POLLER_PATH = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
 WRAPPER_PATH = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
 INSTALLER_PATH = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 IMPORT_UNIT_PATH = ROOT / "ops" / "deploy" / "seiche-snapshot-import.service"
+PREFLIGHT_NAME = "Preflight required Railway configuration"
+
+
+def _workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    start = workflow.index(marker)
+    end = workflow.find("\n      - ", start + len(marker))
+    assert end != -1
+    return workflow[start:end]
+
+
+def _step_script(step: str) -> str:
+    marker = "        run: |\n"
+    body = step.split(marker, maxsplit=1)[1]
+    return "\n".join(line[10:] if line else "" for line in body.splitlines())
+
+
+def _expected_preflight_script(required: tuple[str, ...]) -> str:
+    return "\n".join(
+        (
+            "set -euo pipefail",
+            "required=(",
+            *(f"  {name}" for name in required),
+            ")",
+            "missing=()",
+            'for name in "${required[@]}"; do',
+            '  if [[ -z "${!name:-}" ]]; then',
+            '    missing+=("$name")',
+            "  fi",
+            "done",
+            "if ((${#missing[@]})); then",
+            "  printf '%s\\n' 'Missing required Railway configuration:' >&2",
+            "  printf '%s\\n' \"${missing[@]}\" >&2",
+            "  exit 1",
+            "fi",
+        )
+    )
 
 
 def _load(path: Path, name: str):
@@ -170,6 +209,73 @@ def test_host_defers_only_recognized_missing_snapshot_artifacts(verifier) -> Non
     assert verifier.missing_artifact_error("not found [http 404]")
     assert not verifier.missing_artifact_error("unauthorized")
     assert not verifier.missing_artifact_error("network unreachable")
+
+
+def test_railway_configuration_preflight_is_first_and_fails_with_names_only() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    preflight = _workflow_step(workflow, PREFLIGHT_NAME)
+    checkout = _workflow_step(workflow, "Check out the exact event identity")
+
+    steps_start = workflow.index("    steps:\n")
+    assert workflow.index("      - ", steps_start) == workflow.index(preflight)
+    assert workflow.index(preflight) < workflow.index(checkout)
+    assert "on:\n  push:\n    branches: [main]" in workflow
+    required = (
+        "RAILWAY_TOKEN",
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_ENVIRONMENT_ID",
+        "RAILWAY_SNAPSHOT_SERVICE_ID",
+    )
+    assert preflight.count("${{ secrets.") == len(required)
+    for name in required:
+        assert f"          {name}: ${{{{ secrets.{name} }}}}" in preflight
+    script = _step_script(preflight)
+    assert script == _expected_preflight_script(required)
+    assert "if:" not in preflight
+    assert "uses:" not in preflight
+    assert "continue-on-error" not in preflight
+
+    fake_configuration = {
+        "RAILWAY_TOKEN": "fake-token-must-not-be-printed",
+        "RAILWAY_PROJECT_ID": "fake-project-must-not-be-printed",
+        "RAILWAY_ENVIRONMENT_ID": "fake-environment-must-not-be-printed",
+        "RAILWAY_SNAPSHOT_SERVICE_ID": "fake-service-must-not-be-printed",
+    }
+    missing = ("RAILWAY_TOKEN", "RAILWAY_SNAPSHOT_SERVICE_ID")
+    environment = {"PATH": "/usr/bin:/bin", **fake_configuration}
+    for name in missing:
+        environment.pop(name)
+
+    failure = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert failure.returncode == 1
+    assert failure.stdout == ""
+    assert failure.stderr.splitlines() == [
+        "Missing required Railway configuration:",
+        *missing,
+    ]
+    output = failure.stdout + failure.stderr
+    assert all(value not in output for value in fake_configuration.values())
+
+    success = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", **fake_configuration},
+    )
+    assert success.returncode == 0
+    assert success.stdout == success.stderr == ""
+
+    ci_workflow = CI_WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert '".github/workflows/railway-snapshot-prebuild.yml"' in ci_workflow
+    assert "backend/tests/test_railway_snapshot.py" in ci_workflow
 
 
 def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -> None:
