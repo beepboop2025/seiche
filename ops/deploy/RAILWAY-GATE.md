@@ -323,7 +323,7 @@ That path still performs signature, supersession, full memray suite, admission,
 health, receipt, and rollback checks. Its v2 receipt is visibly marked
 `local-break-glass`; it cannot be confused with attested Railway evidence.
 
-## Phase-1 through Phase-4 limitations
+## Phase-1 through Phase-5 limitations
 
 - Railway transports its result through the exact deployment's retained logs.
   GitHub requires exactly one base64 canonical marker and binds it to the
@@ -353,10 +353,18 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   receipt; it does not move production state or rollback authority to Railway.
 - Phase 4 proves restore and private read compatibility only. Railway volumes
   constrain the stateful service to a single replica and do not provide
-  overlapping deployment semantics. Phase 5 therefore needs an explicit
-  maintenance freeze, final delta-free snapshot, authority fence, DNS/origin
-  transition, and rehearsed rollback; Phase 4 cannot be promoted by adding a
-  domain.
+  overlapping deployment semantics. Phase 4 cannot be promoted merely by
+  adding a domain.
+- Phase 5 implements the explicit maintenance freeze, final delta-free
+  snapshot, closed authority fence, authenticated read-only edge transition,
+  protected writer grant, immutable activation receipt, and one-way host
+  acknowledgement. Follow `RAILWAY-STATEFUL-CUTOVER.md`; do not
+  activate it until three Phase 4 canaries and Phase 6 recovery controls
+  are green.
+- The Phase 5 core cutover does not migrate the separate
+  `/var/lib/seiche-bot` Telegram state or its timers. That workload
+  remains a separately named follow-on until it has snapshot, restore,
+  idempotency, and Telegram offset proof.
 - Do not promise a Railway duration before benchmarking the configured service.
   Record queue, image-build, pytest, packaging, host-verification, and deployment
   times for at least three exact SHAs; then set an operational SLO from observed

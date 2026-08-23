@@ -76,6 +76,7 @@ RUN python -m pip install -q "/workspace/backend[collectors,postgres]" \
 WORKDIR /workspace
 EXPOSE 8080
 
-# Railway volumes are root-mounted. The supervisor performs the one-time
-# restore as root, then drops the public API child to uid/gid 10001.
-ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "/workspace/backend/seiche/stateful_migration.py"]
+# Railway volumes are root-mounted. The closed request-schema dispatcher picks
+# the non-authoritative Phase-4 shadow or writer-fenced Phase-5 cutover; each
+# root supervisor then drops every long-lived child to uid/gid 10001.
+ENTRYPOINT ["/usr/bin/tini", "--", "python", "-I", "-B", "/workspace/backend/seiche/stateful_entrypoint.py"]
