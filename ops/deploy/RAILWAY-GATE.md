@@ -1,4 +1,4 @@
-# Attested Railway gate, snapshot prebuild, recovery, and shadow (phases 1-4)
+# Attested Railway gate and stateful migration (phases 1-7)
 
 Phase 1 moves the memory-instrumented backend admission suite off the shared
 Hetzner host. Phase 2 also moves the pure snapshot computation, while retaining
@@ -14,6 +14,16 @@ PostgreSQL. It restores exact backup-v3 bytes and serves private compatibility
 health only. Hetzner remains the sole writer, public origin, and rollback
 authority; Phase 4 contains no cutover path. See
 [RAILWAY-STATEFUL-MIGRATION.md](RAILWAY-STATEFUL-MIGRATION.md).
+
+Phase 5 supplies the separately protected writer and edge cutover. Phase 6
+adds native backups, PostgreSQL PITR, recurring monitoring, and portable
+off-site recovery. Phase 7 supplies an independent authority transfer for the
+Seiche Telegram bot's state, long poll, and delivery schedules. These phases
+remain inert until their exact runbook gates are completed; merging them is not
+an activation. See
+[RAILWAY-STATEFUL-CUTOVER.md](RAILWAY-STATEFUL-CUTOVER.md),
+[RAILWAY-STATEFUL-RECOVERY.md](RAILWAY-STATEFUL-RECOVERY.md), and
+[RAILWAY-TELEGRAM.md](RAILWAY-TELEGRAM.md).
 
 ```text
 exact main SHA + tree
@@ -199,6 +209,24 @@ credential. Phases 1-3 receive no database URL. Phase 4 receives only its
 Railway-private PostgreSQL reference; the protected workflows use Railway's own
 project-scoped control token.
 
+## Phase-7 Telegram contract
+
+- `.github/workflows/railway-telegram.yml` prepares a dedicated one-volume
+  service, freezes and snapshots Hetzner through a bounded forced command,
+  restores a non-authoritative candidate, and seals the cutover snapshot under
+  external COMPLIANCE Object Lock.
+- A separately protected grant starts one unprivileged sequential worker. A
+  successful `getUpdates`, non-decreasing offset, completed schedule pass, and
+  current heartbeat must all precede the immutable activation receipt.
+- Pre-grant rollback first proves no grant exists. After grant, Hetzner remains
+  masked and any repair is a forward Railway recovery incident.
+- Six-hour monitoring validates the full authority chain, current worker,
+  volume identity/headroom, daily/weekly/monthly native backup schedules, fresh
+  backup, locked canary, and frozen source host.
+
+Follow `RAILWAY-TELEGRAM.md`. The workflow being present does not mean the bot
+has moved or that `RAILWAY_TELEGRAM_PHASE7_ENABLED` may be set.
+
 ## One-time Railway bootstrap
 
 1. Create a dedicated project with isolated services named
@@ -323,7 +351,7 @@ That path still performs signature, supersession, full memray suite, admission,
 health, receipt, and rollback checks. Its v2 receipt is visibly marked
 `local-break-glass`; it cannot be confused with attested Railway evidence.
 
-## Phase-1 through Phase-5 limitations
+## Phase-1 through Phase-7 limitations
 
 - Railway transports its result through the exact deployment's retained logs.
   GitHub requires exactly one base64 canonical marker and binds it to the
@@ -361,10 +389,24 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   acknowledgement. Follow `RAILWAY-STATEFUL-CUTOVER.md`; do not
   activate it until three Phase 4 canaries and Phase 6 recovery controls
   are green.
-- The Phase 5 core cutover does not migrate the separate
-  `/var/lib/seiche-bot` Telegram state or its timers. That workload
-  remains a separately named follow-on until it has snapshot, restore,
-  idempotency, and Telegram offset proof.
+- Phase 6 adds separately protected native-backup administration, six-hour
+  production/PITR/volume monitoring, and a daily activation-bound backup-v3
+  export. Each export pauses only Railway writers, keeps reads online, restores
+  the portable bytes in isolation, and seals them outside Railway under
+  COMPLIANCE Object Lock. Native-backup bootstrap and a non-production external
+  storage preflight happen before Phase 5 activation; the first real export is
+  an immediate post-activation seal because it must bind the activation
+  receipt. Follow `RAILWAY-STATEFUL-RECOVERY.md`; merging the workflow does not
+  enable schedules, move authority, or prove a canary.
+- Phase 7 implements the separate `/var/lib/seiche-bot` snapshot, restore,
+  delivery-idempotency, Telegram-offset, authority, native-backup, and monitor
+  contracts. It remains non-live until the candidate and activation receipts
+  in `RAILWAY-TELEGRAM.md` exist. Its immutable external snapshot is a cutover
+  canary, not a recurring portable export of future bot-state changes.
+- Phase 7 pins the Telegram service to its activation SHA. It does not yet
+  implement an authority-preserving in-place bot-code upgrade.
+- Rissaga/Hermes and `/var/lib/rissaga` remain an adjacent state and publishing
+  authority domain outside Phase 7.
 - Do not promise a Railway duration before benchmarking the configured service.
   Record queue, image-build, pytest, packaging, host-verification, and deployment
   times for at least three exact SHAs; then set an operational SLO from observed
