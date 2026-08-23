@@ -1,0 +1,447 @@
+name: railway-release-gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The dedicated Railway service is a single mutable execution slot. Queue exact
+# main identities so one deployment cannot replace another before its logs are
+# packaged and attested.
+concurrency:
+  group: railway-release-gate
+  cancel-in-progress: false
+
+env:
+  ARTIFACT_REPOSITORY: ghcr.io/beepboop2025/seiche-release-gates
+  INSTALL_COMMAND: python -m pip install -q ./backend[dev,collectors]
+  TEST_COMMAND: python -m pytest backend/tests -q --memray -o faulthandler_timeout=300
+  RUNNER_IMAGE: docker.io/library/python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
+
+jobs:
+  railway-gate:
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: railway-gate
+    outputs:
+      evidence_artifact_id: ${{ steps.evidence.outputs.artifact-id }}
+      evidence_artifact_digest: ${{ steps.evidence.outputs.artifact-digest }}
+      source_archive_sha256: ${{ steps.request.outputs.source_archive_sha256 }}
+      request_id: ${{ steps.request.outputs.request_id }}
+      target: ${{ steps.request.outputs.target }}
+      tree: ${{ steps.request.outputs.tree }}
+    steps:
+      - name: Check out the exact event identity
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build the canonical exact-source Railway request
+        id: request
+        env:
+          UPLOAD_ROOT: ${{ runner.temp }}/railway-gate-upload
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = beepboop2025/seiche
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --short --untracked-files=no)"
+
+          tree=$(git rev-parse 'HEAD^{tree}')
+          [[ "$tree" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "$UPLOAD_ROOT"
+          git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
+          [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]]
+          request_id=$(printf '%s\n' \
+            "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA" |
+            sha256sum | awk '{print $1}')
+
+          cp ops/railway/Dockerfile.gate "$UPLOAD_ROOT/Dockerfile"
+          cp ops/railway/run-gate.py "$UPLOAD_ROOT/run-gate.py"
+          cp ops/railway/railway.gate.json "$UPLOAD_ROOT/railway.json"
+          TARGET="$GITHUB_SHA" TREE="$tree" \
+            SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+            REQUEST_ID="$request_id" REQUEST_PATH="$UPLOAD_ROOT/gate-request.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema": "seiche.railway-gate-request.v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "workflow": (
+                  "beepboop2025/seiche/"
+                  ".github/workflows/railway-release-gate.yml"
+              ),
+              "source_ref": os.environ["GITHUB_REF"],
+              "commit": os.environ["TARGET"],
+              "tree": os.environ["TREE"],
+              "source_archive_sha256": os.environ["SOURCE_ARCHIVE_SHA256"],
+              "request_id": os.environ["REQUEST_ID"],
+              "runner_image": os.environ["RUNNER_IMAGE"],
+              "install_command": os.environ["INSTALL_COMMAND"],
+              "test_command": os.environ["TEST_COMMAND"],
+          }
+          Path(os.environ["REQUEST_PATH"]).write_text(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 5
+          {
+            echo "target=$GITHUB_SHA"
+            echo "tree=$tree"
+            echo "source_archive_sha256=$source_archive_sha256"
+            echo "request_id=$request_id"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Install the checksum-pinned Railway CLI
+        run: |
+          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          tool_dir="${RUNNER_TEMP}/railway-tools"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+            sha256sum --check --strict
+          test "$(tar -tzf "$archive")" = railway
+          tar -xzf "$archive" -C "$tool_dir" railway
+          chmod 0755 "$tool_dir/railway"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          export PATH="$tool_dir:$PATH"
+          railway --version
+
+      - name: Upload the exact request to the dedicated Railway gate service
+        id: deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          UPLOAD_ROOT: ${{ runner.temp }}/railway-gate-upload
+        run: |
+          set -euo pipefail
+          for value in \
+            "$RAILWAY_TOKEN" "$RAILWAY_PROJECT_ID" \
+            "$RAILWAY_ENVIRONMENT_ID" "$RAILWAY_SERVICE_ID"; do
+            test -n "$value"
+          done
+          deployment_json=$(railway up "$UPLOAD_ROOT" --path-as-root --detach --json \
+            --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --message "seiche-gate:$GITHUB_SHA:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT")
+          deployment_id=$(DEPLOYMENT_JSON="$deployment_json" python3 -I -S - <<'PY'
+          import json
+          import os
+          import re
+
+          payload = json.loads(os.environ["DEPLOYMENT_JSON"])
+          if not isinstance(payload, dict) or set(payload) != {"deploymentId", "logsUrl"}:
+              raise SystemExit("Railway upload did not return its exact deployment identity")
+          deployment_id = payload.get("deploymentId")
+          if not isinstance(deployment_id, str) or re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+              deployment_id,
+          ) is None:
+              raise SystemExit("Railway upload returned an invalid deployment identity")
+          if (
+              not isinstance(payload.get("logsUrl"), str)
+              or not payload["logsUrl"].startswith("https://")
+              or len(payload["logsUrl"]) > 2048
+          ):
+              raise SystemExit("Railway upload returned an invalid logs URL")
+          print(deployment_id)
+          PY
+          )
+          echo "deployment_id=$deployment_id" >>"$GITHUB_OUTPUT"
+
+      - name: Wait for Railway to finish the full gate
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          for _attempt in $(seq 1 360); do
+            railway deployment list \
+              --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --limit 100 --json >"${RUNNER_TEMP}/deployments-status.json"
+            status=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              STATUS_PATH="${RUNNER_TEMP}/deployments-status.json" \
+              python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          values = json.loads(Path(os.environ["STATUS_PATH"]).read_text())
+          matches = [
+              value for value in values
+              if isinstance(value, dict) and value.get("id") == os.environ["DEPLOYMENT_ID"]
+          ]
+          if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
+              raise SystemExit("exact Railway deployment disappeared")
+          print(matches[0]["status"].upper())
+          PY
+            )
+            case "$status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED|REMOVING)
+                echo "Railway gate deployment ended in $status" >&2
+                railway logs "$DEPLOYMENT_ID" --service "$RAILWAY_SERVICE_ID" \
+                  --project "$RAILWAY_PROJECT_ID" \
+                  --environment "$RAILWAY_ENVIRONMENT_ID" --lines 1000 || true
+                exit 1
+                ;;
+              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED) sleep 10 ;;
+              *) echo "unknown Railway deployment state: $status" >&2; exit 1 ;;
+            esac
+          done
+          test "${status:-}" = SUCCESS
+
+      - name: Extract and independently validate the exact Railway result
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          TARGET: ${{ steps.request.outputs.target }}
+          TREE: ${{ steps.request.outputs.tree }}
+          SOURCE_ARCHIVE_SHA256: ${{ steps.request.outputs.source_archive_sha256 }}
+          EXPECTED_REQUEST_ID: ${{ steps.request.outputs.request_id }}
+        run: |
+          set -euo pipefail
+          railway logs "$DEPLOYMENT_ID" \
+            --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"
+          LOG_PATH="${RUNNER_TEMP}/railway-gate.log" \
+            RECEIPT_PATH="${RUNNER_TEMP}/gate.json" \
+            python3 -I -S - <<'PY'
+          import base64
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          log = Path(os.environ["LOG_PATH"]).read_text(encoding="utf-8")
+          matches = re.findall(r"SEICHE_RAILWAY_GATE_RESULT_V1=([A-Za-z0-9+/=]+)", log)
+          if len(matches) != 1:
+              raise SystemExit(f"expected one Railway receipt marker, found {len(matches)}")
+          try:
+              body = base64.b64decode(matches[0], validate=True)
+              payload = json.loads(body)
+          except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+              raise SystemExit(f"Railway receipt marker is invalid: {exc}") from None
+          canonical = (
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+          ).encode("utf-8")
+          if body != canonical:
+              raise SystemExit("Railway receipt is not canonical JSON")
+
+          verifier_path = Path("ops/deploy/seiche-remote-gate-verify.py")
+          spec = importlib.util.spec_from_file_location("seiche_remote_gate_verify", verifier_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit("remote gate verifier cannot be loaded")
+          verifier = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(verifier)
+          verifier.validate_remote_receipt(
+              payload,
+              target=os.environ["TARGET"],
+              tree=os.environ["TREE"],
+              source_archive_sha256=os.environ["SOURCE_ARCHIVE_SHA256"],
+          )
+          expected_railway = {
+              "railway_deployment_id": os.environ["DEPLOYMENT_ID"],
+              "railway_project_id": os.environ["RAILWAY_PROJECT_ID"],
+              "railway_environment_id": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "railway_service_id": os.environ["RAILWAY_SERVICE_ID"],
+          }
+          for key, value in expected_railway.items():
+              if payload.get(key) != value:
+                  raise SystemExit(f"Railway receipt {key} differs from the selected deployment")
+          if payload.get("request_id") != os.environ["EXPECTED_REQUEST_ID"]:
+              raise SystemExit("Railway receipt request id differs from this workflow run")
+          Path(os.environ["RECEIPT_PATH"]).write_bytes(body)
+          PY
+          sha256sum "${RUNNER_TEMP}/gate.json"
+
+      - name: Upload the canonical Railway evidence for source-free publication
+        id: evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: railway-gate-${{ steps.request.outputs.target }}
+          path: ${{ runner.temp }}/gate.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-attested-receipt:
+    needs: railway-gate
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ghcr-release
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      artifact_digest: ${{ steps.publish.outputs.artifact_digest }}
+      receipt_sha256: ${{ steps.publish.outputs.receipt_sha256 }}
+    steps:
+      - name: Download the exact Railway receipt without a source checkout
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.railway-gate.outputs.evidence_artifact_id }}
+          path: ${{ runner.temp }}/evidence
+          digest-mismatch: error
+
+      - name: Recheck source and Actions artifact identity before write authority
+        env:
+          EXPECTED_ACTIONS_DIGEST: ${{ needs.railway-gate.outputs.evidence_artifact_digest }}
+          TARGET: ${{ needs.railway-gate.outputs.target }}
+          TREE: ${{ needs.railway-gate.outputs.tree }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = beepboop2025/seiche
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$TARGET"
+          [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TREE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_ACTIONS_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          test -f "${RUNNER_TEMP}/evidence/gate.json"
+
+      - name: Install the checksum-pinned OCI client
+        run: |
+          install -d -m 0755 "${RUNNER_TEMP}/tools"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64' \
+            --output "${RUNNER_TEMP}/tools/regctl"
+          echo 'c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  '"${RUNNER_TEMP}/tools/regctl" |
+            sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/tools/regctl"
+          echo "${RUNNER_TEMP}/tools" >>"$GITHUB_PATH"
+
+      - name: Log in only after the source-free evidence checks pass
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the canonical receipt as one immutable OCI artifact
+        id: publish
+        env:
+          TARGET: ${{ needs.railway-gate.outputs.target }}
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/evidence/gate.json"
+          reference="${ARTIFACT_REPOSITORY}:sha-${TARGET}"
+          regctl artifact put \
+            --artifact-type application/vnd.seiche.railway-gate-result.v1 \
+            --file-media-type application/vnd.seiche.railway-gate-result.v1+json \
+            --file "$receipt" --file-title --strip-dirs "$reference"
+          artifact_digest=$(regctl image digest "$reference")
+          [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(regctl image digest "${ARTIFACT_REPOSITORY}@${artifact_digest}")" = \
+            "$artifact_digest"
+          regctl artifact get --file gate.json \
+            "${ARTIFACT_REPOSITORY}@${artifact_digest}" \
+            >"${RUNNER_TEMP}/roundtrip-gate.json"
+          cmp "$receipt" "${RUNNER_TEMP}/roundtrip-gate.json"
+          receipt_sha256=$(sha256sum "$receipt" | awk '{print $1}')
+          {
+            echo "artifact_digest=$artifact_digest"
+            echo "receipt_sha256=$receipt_sha256"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: OIDC-attest the exact OCI manifest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.ARTIFACT_REPOSITORY }}
+          subject-digest: ${{ steps.publish.outputs.artifact_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+  prove-public:
+    needs: [railway-gate, publish-attested-receipt]
+    if: github.repository == 'beepboop2025/seiche'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Install checksum-pinned public verification tools
+        run: |
+          tool_dir="${RUNNER_TEMP}/tools"
+          mkdir -p "$tool_dir"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64' \
+            --output "$tool_dir/regctl"
+          echo 'c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  '"$tool_dir/regctl" |
+            sha256sum --check --strict
+          gh_archive="${RUNNER_TEMP}/gh_2.98.0_linux_amd64.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            'https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz' \
+            --output "$gh_archive"
+          echo '3b8ac6b30336802fc1a858d7c084e11cdf24ac1a761ca90b68022d7d729208de  '"$gh_archive" |
+            sha256sum --check --strict
+          tar --extract --gzip --file "$gh_archive" --strip-components=2 \
+            --directory "$tool_dir" gh_2.98.0_linux_amd64/bin/gh
+          chmod 0755 "$tool_dir/regctl" "$tool_dir/gh"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Prove anonymous receipt and exact workflow provenance
+        env:
+          ARTIFACT_DIGEST: ${{ needs.publish-attested-receipt.outputs.artifact_digest }}
+          RECEIPT_SHA256: ${{ needs.publish-attested-receipt.outputs.receipt_sha256 }}
+          TARGET: ${{ needs.railway-gate.outputs.target }}
+        run: |
+          set -euo pipefail
+          anonymous="${RUNNER_TEMP}/anonymous-docker"
+          mkdir -p "$anonymous"
+          printf '{"auths":{}}\n' >"$anonymous/config.json"
+          reference="${ARTIFACT_REPOSITORY}@${ARTIFACT_DIGEST}"
+          test "$(DOCKER_CONFIG="$anonymous" regctl image digest \
+            "${ARTIFACT_REPOSITORY}:sha-${TARGET}")" = "$ARTIFACT_DIGEST"
+          DOCKER_CONFIG="$anonymous" regctl artifact get --file gate.json "$reference" \
+            >"${RUNNER_TEMP}/public-gate.json"
+          echo "${RECEIPT_SHA256}  ${RUNNER_TEMP}/public-gate.json" |
+            sha256sum --check --strict
+          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous" \
+            gh attestation verify "oci://$reference" \
+              --bundle-from-oci \
+              --repo beepboop2025/seiche \
+              --signer-workflow beepboop2025/seiche/.github/workflows/railway-release-gate.yml \
+              --signer-digest "$TARGET" \
+              --source-ref refs/heads/main \
+              --source-digest "$TARGET" \
+              --deny-self-hosted-runners \
+              --format json >"${RUNNER_TEMP}/attestation.json"
+          ATTESTATION="${RUNNER_TEMP}/attestation.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          results = json.loads(Path(os.environ["ATTESTATION"]).read_text())
+          if not isinstance(results, list) or not results:
+              raise SystemExit("public attestation verification is empty")
+          PY

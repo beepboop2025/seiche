@@ -44,6 +44,10 @@ MARKET_WORKER = ROOT / "ops" / "deploy" / "seiche-market-worker.service"
 SOURCE_WORKER = ROOT / "ops" / "deploy" / "seiche-source-worker.service"
 DATA_READINESS_SERVICE = ROOT / "ops" / "deploy" / "seiche-data-readiness.service"
 DATA_READINESS_TIMER = ROOT / "ops" / "deploy" / "seiche-data-readiness.timer"
+RECOVERY_SEAL = ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.sh"
+RECOVERY_SEAL_SERVICE = (
+    ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.service"
+)
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
 LEGACY_UPDATE_RETIRER = ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
@@ -1042,6 +1046,7 @@ exec /bin/mv "$@"
         "SEICHE_CADDY_DEST": str(installed),
         "SEICHE_CADDY_BIN": str(caddy),
         "SEICHE_SYSTEMCTL_BIN": str(systemctl),
+        "SEICHE_CADDY_ENV_FILE": str(tmp_path / "railway-edge.env"),
         "REJECT_NEW_RELOAD": "1" if reject_new_reload else "0",
     }
     return env, installed, calls
@@ -1066,6 +1071,55 @@ def test_caddy_installer_validates_backs_up_installs_and_reloads(tmp_path):
     assert f"<{installed}>" in log
     assert f"caddy reload config={installed} content=NEW" in log
     assert not list(tmp_path.glob(".installed.Caddyfile.*"))
+
+
+def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
+    caddy = CADDYFILE.read_text()
+    snippet = caddy[
+        caddy.index("(seiche_stateful_upstream)") : caddy.index("api.seiche.info {")
+    ]
+    assert "{$SEICHE_API_UPSTREAM:127.0.0.1:8787}" in snippet
+    assert "{$SEICHE_RAILWAY_EDGE_TOKEN:local-edge-token-unused}" in snippet
+    assert "header_up Host {upstream_hostport}" in snippet
+    assert caddy.count("import seiche_stateful_upstream") == 4
+    private_delivery = caddy[
+        caddy.index("@world_model_delivery {") : caddy.index(
+            "@world_model_delivery_non_get"
+        )
+    ]
+    assert "reverse_proxy 127.0.0.1:8787" in private_delivery
+    assert "seiche_stateful_upstream" not in private_delivery
+
+
+def test_caddy_installer_loads_edge_file_as_data_without_sourcing(tmp_path):
+    env, installed, calls = _caddy_env(tmp_path)
+    edge = Path(env["SEICHE_CADDY_ENV_FILE"])
+    token = "x" * 40
+    edge.write_text(
+        "SEICHE_API_UPSTREAM=https://fixture.up.railway.app\n"
+        f"SEICHE_RAILWAY_EDGE_TOKEN={token}\n",
+        encoding="utf-8",
+    )
+    edge.chmod(0o600)
+    result = subprocess.run(
+        ["bash", str(CADDY_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert installed.read_text() == "NEW\n"
+    assert "fixture.up.railway.app" not in calls.read_text()
+
+    edge.write_text("SEICHE_API_UPSTREAM=$(touch /tmp/never-run)\n", encoding="utf-8")
+    rejected = subprocess.run(
+        ["bash", str(CADDY_INSTALLER)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert rejected.returncode != 0
+    assert "Railway edge environment is invalid" in rejected.stderr
 
 
 def test_caddy_reload_failure_restores_previous_config_and_stays_red(tmp_path):
@@ -1673,10 +1727,10 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     unit_capture = wrapper.index(
         "if ! capture_preupdate_data_units; then", enabled_capture
     )
-    timer_stop = wrapper.index(
-        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service",
-        unit_capture,
+    recovery_stop = wrapper.index(
+        "systemctl stop seiche-release-recovery-seal.service", unit_capture
     )
+    timer_stop = wrapper.index("seiche-data-readiness.timer", recovery_stop)
     writer_stop = wrapper.index(
         "systemctl stop seiche-market-worker.service seiche-market-backfill.service",
         timer_stop,
@@ -1689,6 +1743,7 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
         < timer_capture
         < enabled_capture
         < unit_capture
+        < recovery_stop
         < timer_stop
         < writer_stop
         < update
@@ -1717,17 +1772,18 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     assert "systemctl reset-failed" in start
     assert "seiche-market-worker.service seiche-source-worker.service" in start
     assert "seiche-market-backfill.service seiche-market-worker.service" in start
-    candidate_market = start.index("if ! systemctl start")
-    candidate_source = start.index("ensure_source_worker_ready")
-    candidate_timer = start.index("activate_data_readiness_after_proof")
-    assert candidate_market < candidate_source < candidate_timer
-    assert "systemctl start --no-block" not in start
-    assert "systemctl start --no-block seiche-source-worker.service" not in start
+    assert "systemctl start --no-block" in start
+    assert "seiche-source-worker.service" in start
+    assert "activate_data_readiness_after_proof" not in start
+    assert "ensure_source_worker_ready" not in start
     assert "seiche-source-worker.service seiche-data-readiness.timer" not in start
 
     rollback = wrapper[wrapper.index("# A red warm-up") :]
+    rollback_recovery_stop = rollback.index(
+        "systemctl stop seiche-release-recovery-seal.service"
+    )
     rollback_timer_stop = rollback.index(
-        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service"
+        "seiche-data-readiness.timer", rollback_recovery_stop
     )
     rollback_writer_stop = rollback.index(
         "systemctl stop seiche-market-worker.service seiche-market-backfill.service"
@@ -1738,7 +1794,7 @@ def test_wrapper_quiesces_and_restores_source_worker_and_readiness_timer():
     assert "seiche-source-worker.service" in rollback[rollback_writer_stop:reset]
 
 
-def test_wrapper_waits_for_market_worker_before_readiness(tmp_path: Path):
+def test_wrapper_queues_workers_without_waiting_for_recovery(tmp_path: Path):
     wrapper = DEPLOY_WRAPPER.read_text()
     helper = wrapper[
         wrapper.index("start_market_services() {") : wrapper.index(
@@ -1756,12 +1812,8 @@ case "$*" in
   "reset-failed seiche-market-worker.service seiche-source-worker.service")
     exit 0
     ;;
-  "start seiche-market-backfill.service seiche-market-worker.service")
-    touch "$state/market-worker.ready"
+  "start --no-block seiche-market-backfill.service seiche-market-worker.service seiche-source-worker.service")
     exit 0
-    ;;
-  *--no-block*)
-    exit 91
     ;;
   *)
     exit 92
@@ -1770,14 +1822,6 @@ esac
 """,
     )
     harness = f"""
-ensure_source_worker_ready() {{
-  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 81
-  printf '%s\n' source-ready >>"$FAKE_DATA_STATE/calls.log"
-}}
-activate_data_readiness_after_proof() {{
-  [ -f "$FAKE_DATA_STATE/market-worker.ready" ] || return 82
-  printf '%s\n' readiness >>"$FAKE_DATA_STATE/calls.log"
-}}
 {helper}
 start_market_services
 """
@@ -1797,13 +1841,11 @@ start_market_services
     assert result.returncode == 0, result.stdout + result.stderr
     assert (state / "calls.log").read_text().splitlines() == [
         "systemctl reset-failed seiche-market-worker.service seiche-source-worker.service",
-        "systemctl start seiche-market-backfill.service seiche-market-worker.service",
-        "source-ready",
-        "readiness",
+        "systemctl start --no-block seiche-market-backfill.service seiche-market-worker.service seiche-source-worker.service",
     ]
 
 
-def test_wrapper_never_activates_readiness_after_source_start_failure(
+def test_wrapper_fails_if_recovery_workers_cannot_be_queued(
     tmp_path: Path,
 ) -> None:
     wrapper = DEPLOY_WRAPPER.read_text()
@@ -1817,24 +1859,19 @@ def test_wrapper_never_activates_readiness_after_source_start_failure(
         """
 case "$*" in
   "reset-failed seiche-market-worker.service seiche-source-worker.service") exit 0 ;;
-  "start seiche-market-backfill.service seiche-market-worker.service") exit 0 ;;
+  "start --no-block seiche-market-backfill.service seiche-market-worker.service seiche-source-worker.service") exit 92 ;;
   *) exit 92 ;;
 esac
 """,
     )
     harness = f"""
-ensure_source_worker_ready() {{ return 83; }}
-activate_data_readiness_after_proof() {{ touch "$FAKE_ACTIVATED"; }}
 {helper}
 start_market_services
 """
-    activated = tmp_path / "activated"
-
     result = subprocess.run(
         ["bash", "-c", harness],
         env=os.environ
         | {
-            "FAKE_ACTIVATED": str(activated),
             "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
         },
         text=True,
@@ -1843,10 +1880,68 @@ start_market_services
     )
 
     assert result.returncode == 1
-    assert not activated.exists()
+    assert "could not be queued" in result.stdout
 
 
-def test_wrapper_starts_source_worker_before_strict_candidate_health():
+@pytest.mark.parametrize(
+    ("entry_mode", "expected_calls"),
+    [
+        ("local", []),
+        (
+            "forced",
+            [
+                "systemctl reset-failed seiche-release-recovery-seal.service",
+                "systemctl start --no-block seiche-release-recovery-seal.service",
+            ],
+        ),
+    ],
+)
+def test_forced_wrapper_queues_recovery_after_edge_convergence(
+    tmp_path: Path,
+    entry_mode: str,
+    expected_calls: list[str],
+) -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    helper = wrapper[
+        wrapper.index("queue_forced_recovery_seal() {") : wrapper.index(
+            'MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""'
+        )
+    ]
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_systemctl = _executable(
+        tmp_path / "systemctl",
+        'printf "systemctl %s\\n" "$*" >>"${FAKE_DATA_STATE:?}/calls.log"\n',
+    )
+    result = subprocess.run(
+        ["bash", "-c", f"{helper}\nqueue_forced_recovery_seal"],
+        env=os.environ
+        | {
+            "FAKE_DATA_STATE": str(state),
+            "PATH": f"{fake_systemctl.parent}:{os.environ['PATH']}",
+            "SEICHE_DEPLOY_ENTRY_MODE": entry_mode,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = state / "calls.log"
+    assert (calls.read_text().splitlines() if calls.exists() else []) == expected_calls
+    for branch_start in (
+        wrapper.index(
+            'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
+        ),
+        wrapper.index('if [ -n "$HEALTHY" ]'),
+    ):
+        edge = wrapper.index("deploy_caddy ||", branch_start)
+        verdict = wrapper.index("sync_verdict", edge)
+        queued = wrapper.index("queue_forced_recovery_seal", verdict)
+        assert edge < verdict < queued
+
+
+def test_wrapper_defers_source_worker_until_after_strict_candidate_health():
     wrapper = DEPLOY_WRAPPER.read_text()
 
     accepted_branch = wrapper.index(
@@ -1854,14 +1949,13 @@ def test_wrapper_starts_source_worker_before_strict_candidate_health():
     )
     normal_branch = wrapper.index('HEALTHY=""', accepted_branch)
     accepted_body = wrapper[accepted_branch:normal_branch]
-    assert accepted_body.index("ensure_source_worker_ready") < accepted_body.index(
-        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
-    )
+    assert "ensure_source_worker_ready" not in accepted_body
+    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in accepted_body
 
     normal_body = wrapper[normal_branch:]
-    assert normal_body.index("ensure_source_worker_ready") < normal_body.index(
-        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
-    )
+    before_cutover = normal_body[: normal_body.index('if [ -n "$HEALTHY" ]')]
+    assert "ensure_source_worker_ready" not in before_cutover
+    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in before_cutover
 
 
 def test_deploy_wrapper_warmup_timeout_contract():
@@ -1869,13 +1963,6 @@ def test_deploy_wrapper_warmup_timeout_contract():
     full_wait = 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
 
     assert wrapper.count("API_FULL_REBUILD_WAIT_SECONDS=1800") == 1
-
-    refresh = wrapper[
-        wrapper.index("ensure_candidate_fresh_for_readiness() {") : wrapper.index(
-            "validate_data_readiness_convergence_wait() {"
-        )
-    ]
-    assert refresh.count(f"{full_wait} 900") == 2
 
     restore = wrapper[
         wrapper.index("restore_preupdate_api() {") : wrapper.index(
@@ -1901,13 +1988,10 @@ def test_deploy_wrapper_warmup_timeout_contract():
             "MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=1"
         )
     ]
-    readiness = wrapper[
-        wrapper.index("activate_data_readiness_after_proof() {") : wrapper.index(
-            "ensure_source_worker_ready() {"
-        )
-    ]
     assert 'candidate_health_wait 120 "$AFTER"' in promotion
-    assert 'candidate_health_wait 120 "$AFTER" 900' in readiness
+    recovery = RECOVERY_SEAL.read_text()
+    assert "MAX_FRESH_WAIT_SECONDS=900" in recovery
+    assert "systemctl restart seiche-api" not in recovery
 
 
 def test_wrapper_restores_the_worker_unit_when_candidate_code_rolls_back():
@@ -1976,6 +2060,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     for unit in (
         "seiche-market-backfill.service",
         "seiche-source-worker.service",
+        "seiche-release-recovery-seal.service",
         "seiche-data-readiness.service",
         "seiche-data-readiness.timer",
         "seiche-market-offsite-backup.service",
@@ -1985,12 +2070,14 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
     for artifact in (
         "nbs-intake-launcher",
         "data-readiness-helper",
+        "release-recovery-helper",
         "market-offsite-backup-helper",
         "market-backup-helper",
         "market-restore-check-helper",
         "nbs-runtime-current-sha",
         "/etc/seiche/libexec/seiche-nbs-intake.py",
         "/etc/seiche/libexec/seiche-data-readiness.sh",
+        "/etc/seiche/libexec/seiche-release-recovery-seal.sh",
         "/etc/seiche/libexec/seiche-market-offsite-backup.sh",
         "/etc/seiche/libexec/seiche-market-backup.sh",
         "/etc/seiche/libexec/seiche-market-restore-check.sh",
@@ -2024,8 +2111,7 @@ def test_wrapper_restores_exact_predeploy_data_units_and_readiness_timer_state()
 
     capture_call = wrapper.index("if ! capture_preupdate_data_units; then")
     quiesce = wrapper.index(
-        "systemctl stop seiche-data-readiness.timer seiche-data-readiness.service",
-        capture_call,
+        "systemctl stop seiche-release-recovery-seal.service", capture_call
     )
     provision_flag = wrapper.index("DATA_UNITS_MAY_HAVE_CHANGED=1", quiesce)
     provision = wrapper.index("deploy_market_platform ||", provision_flag)
@@ -2552,7 +2638,7 @@ def test_candidate_health_wait_fails_immediately_if_api_dies_during_reseal(
     assert "seiche-api died during warm-up" in result.stdout
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_release_readiness_preflights_have_scoped_offsite_repair_bypass(
     script_path: Path,
 ) -> None:
@@ -2570,7 +2656,7 @@ def test_release_readiness_preflights_have_scoped_offsite_repair_bypass(
     assert helper.count("SEICHE_DATA_READINESS_SKIP_OFFSITE=1") == 2
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
     script_path: Path, tmp_path: Path
 ):
@@ -2614,7 +2700,7 @@ def test_fresh_v2_host_proves_backup_restore_and_readiness_before_timer(
     assert (state / "readiness-timer.enabled").is_file()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     script_path: Path, tmp_path: Path
 ):
@@ -2641,7 +2727,7 @@ def test_current_v2_proof_activates_timer_without_redundant_restore_drill(
     assert (state / "readiness-timer.enabled").is_file()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
     script_path: Path, tmp_path: Path
 ) -> None:
@@ -2684,7 +2770,7 @@ def test_stale_snapshot_triggers_one_refresh_then_proves_full_readiness(
     assert (state / "readiness-timer.enabled").is_file()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_stale_snapshot_refresh_trigger_failure_leaves_timer_disabled(
     script_path: Path, tmp_path: Path
 ) -> None:
@@ -2705,7 +2791,7 @@ def test_stale_snapshot_refresh_trigger_failure_leaves_timer_disabled(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_stale_snapshot_convergence_fails_if_api_dies_after_trigger(
     script_path: Path, tmp_path: Path
 ) -> None:
@@ -2726,7 +2812,7 @@ def test_stale_snapshot_convergence_fails_if_api_dies_after_trigger(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_stale_snapshot_convergence_timeout_is_bounded_and_disables_timer(
     script_path: Path, tmp_path: Path
 ) -> None:
@@ -2753,7 +2839,7 @@ def test_stale_snapshot_convergence_timeout_is_bounded_and_disables_timer(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 @pytest.mark.parametrize(
     "readiness_mode",
     ["operational-fail", "stale-wrong-status", "unexpected-success"],
@@ -2777,7 +2863,7 @@ def test_non_stale_or_malformed_readiness_results_fail_without_refresh(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_new_readiness_failure_after_refresh_fails_immediately(
     script_path: Path, tmp_path: Path
 ) -> None:
@@ -2792,7 +2878,7 @@ def test_new_readiness_failure_after_refresh_fails_immediately(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 @pytest.mark.parametrize("wait_seconds", ["901", "not-a-number", "-1"])
 def test_readiness_convergence_wait_is_strictly_bounded(
     script_path: Path, tmp_path: Path, wait_seconds: str
@@ -2810,30 +2896,44 @@ def test_readiness_convergence_wait_is_strictly_bounded(
     assert not (state / "readiness-timer.enabled").exists()
 
 
-def test_wrapper_candidate_evidence_is_resealed_before_readiness_timer(
-    tmp_path: Path,
-) -> None:
-    result, calls, state = _run_readiness_activation_helper(
-        DEPLOY_WRAPPER,
-        tmp_path,
-        readiness_mode="current",
-        candidate_health_wait_mode="fail-after-first",
+def test_recovery_seal_proves_health_before_activating_readiness_timer() -> None:
+    recovery = RECOVERY_SEAL.read_text()
+
+    worker_start = recovery.index(
+        "seiche-market-backfill.service seiche-market-worker.service"
     )
+    proof = recovery.index("if ! run_recovery_proof_preflight", worker_start)
+    freshness = recovery.index("wait_for_fresh_candidate", proof)
+    readiness = recovery.index("converge_operational_readiness", freshness)
+    timer = recovery.index(
+        '"$SYSTEMCTL" enable --now seiche-data-readiness.timer', readiness
+    )
+    final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)", timer)
+    receipt = recovery.index('"schema": "seiche.release-recovery-receipt.v1"')
 
-    assert result.returncode != 0
-    assert [call.split()[0] for call in calls] == [
-        "readiness",
-        "curl",
-        "candidate-health-wait",
-        "readiness",
-        "candidate-health-wait",
-    ]
-    assert calls[-1] == f"candidate-health-wait 120 {'a' * 40} 900"
-    assert "exact candidate evidence did not reseal" in result.stdout
-    assert not (state / "readiness-timer.enabled").exists()
+    assert worker_start < proof < freshness < readiness < timer < final_identity < receipt
+    assert "candidate_health_once" in recovery[freshness:timer]
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+def test_recovery_seal_restores_rails_before_waiting_for_controller_receipt() -> None:
+    recovery = RECOVERY_SEAL.read_text()
+    absent_receipt = recovery.index(
+        'print(target, "-", "-", "awaiting-receipt")'
+    )
+    worker_start = recovery.index(
+        '"$SYSTEMCTL" start \\\n    seiche-market-backfill.service seiche-market-worker.service'
+    )
+    backup = recovery.index('"$SYSTEMCTL" start seiche-market-backup.service')
+    readiness_timer = recovery.index(
+        '"$SYSTEMCTL" enable --now seiche-data-readiness.timer'
+    )
+    final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)")
+
+    assert absent_receipt < worker_start < backup < readiness_timer < final_identity
+    assert "recovery proof is ready but the immutable release receipt is pending" in recovery
+
+
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 def test_readiness_stale_convergence_preserves_freshness_and_poll_bounds(
     script_path: Path,
 ) -> None:
@@ -2861,7 +2961,7 @@ def test_readiness_stale_convergence_preserves_freshness_and_poll_bounds(
     assert "SEICHE_DATA_READINESS_MAX_GENERATED_AGE_SECONDS=" not in helper
 
 
-@pytest.mark.parametrize("script_path", [DEPLOY_WRAPPER, MARKET_INSTALLER])
+@pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
 @pytest.mark.parametrize(
     ("readiness_mode", "fail_command"),
     [
@@ -2903,66 +3003,20 @@ def test_readiness_bootstrap_failures_leave_timer_disabled(
         assert "systemctl enable --now seiche-data-readiness.timer" not in calls
 
 
-@pytest.mark.parametrize("nudge_curl_mode", ["success", "fail"])
-def test_wrapper_refresh_failure_after_recovery_proof_stays_fail_closed(
-    tmp_path: Path,
-    nudge_curl_mode: str,
-) -> None:
-    result, calls, state = _run_readiness_activation_helper(
-        DEPLOY_WRAPPER,
-        tmp_path,
-        readiness_mode="fresh",
-        candidate_health_wait_mode="fail",
-        nudge_curl_mode=nudge_curl_mode,
-    )
+def test_async_recovery_failure_never_restarts_the_live_api() -> None:
+    recovery = RECOVERY_SEAL.read_text()
 
-    assert result.returncode != 0
-    assert not (state / "readiness-timer.enabled").exists()
-    assert "systemctl restart seiche-api" in calls
-    assert sum(call.startswith("candidate-health-wait 1800 ") for call in calls) == 2
-    assert not any(call.startswith("readiness full ") for call in calls)
-
-
-@pytest.mark.parametrize(
-    ("nudge_curl_mode", "candidate_health_wait_mode"),
-    [("fail", "success"), ("success", "fail-once")],
-)
-def test_wrapper_refresh_restart_fallback_can_recover(
-    tmp_path: Path,
-    nudge_curl_mode: str,
-    candidate_health_wait_mode: str,
-) -> None:
-    result, calls, state = _run_readiness_activation_helper(
-        DEPLOY_WRAPPER,
-        tmp_path,
-        readiness_mode="current",
-        nudge_curl_mode=nudge_curl_mode,
-        candidate_health_wait_mode=candidate_health_wait_mode,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert calls.count("systemctl restart seiche-api") == 1
-    expected_waits = 2 if candidate_health_wait_mode == "fail-once" else 1
-    assert (
-        sum(call.startswith("candidate-health-wait 1800 ") for call in calls)
-        == expected_waits
-    )
-    assert calls[-1] == "systemctl enable --now seiche-data-readiness.timer"
-    assert (state / "readiness-timer.enabled").is_file()
+    assert '"$REFRESH_URL"' in recovery
+    assert "Restart=on-failure" in RECOVERY_SEAL_SERVICE.read_text()
+    assert "systemctl restart seiche-api" not in recovery
+    assert "exact candidate did not become fresh without an API restart" in recovery
 
 
 def test_recovery_refresh_does_not_rewrite_or_repromote_the_release() -> None:
-    wrapper = DEPLOY_WRAPPER.read_text()
-    refresh = wrapper[
-        wrapper.index("ensure_candidate_fresh_for_readiness() {") : wrapper.index(
-            "activate_data_readiness_after_proof() {"
-        )
-    ]
+    refresh = RECOVERY_SEAL.read_text()
 
     assert "/api/gauge" in refresh
-    assert (
-        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900' in refresh
-    )
+    assert "wait_for_fresh_candidate" in refresh
     assert "write_deployed_state" not in refresh
     assert "write_release_env" not in refresh
     assert "promote_snapshot_handoff" not in refresh
@@ -3561,7 +3615,7 @@ def test_event_analysis_edge_is_post_only_and_excluded_from_public_get():
     assert "request_body" in event_handler
     assert "max_size 8KiB" in event_handler
     assert "max_size 8KB" not in event_handler
-    assert "reverse_proxy 127.0.0.1:8787" in event_handler
+    assert "import seiche_stateful_upstream" in event_handler
     assert "/api/auth/login" not in event_handler
     assert route not in other_post_matcher
     assert "/api/auth/login" in other_post_matcher
@@ -3957,7 +4011,7 @@ def test_deploy_requires_a_stable_quiet_host_before_quiescing_services():
         assert result.returncode == expected
 
 
-def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
+def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     poller = RELEASE_POLLER.read_text()
     wrapper_handoff = poller[
         poller.index("run_deploy_wrapper() {") : poller.index(
@@ -3977,12 +4031,16 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
     full_gate = poller.index('"$VENV/bin/python" -m pytest backend/tests -q', detached)
+    remote_gate = poller.index(
+        'install_remote_gate_receipt "$GATE_RECEIPT"', full_gate
+    )
     refetched = poller.index(
-        'as_service git -C "$APP_DIR" fetch -q origin main', full_gate
+        'as_service git -C "$APP_DIR" fetch -q origin main', remote_gate
     )
     superseded = poller.index('if [ "$LATEST" != "$TARGET" ]', refetched)
     gate_receipt = poller.index('write_receipt gate "$GATE_RECEIPT"', superseded)
-    gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_receipt)
+    gate_digest = poller.index('GATE_DIGEST=$("$SHA256SUM"', superseded)
+    gate_only = poller.index('if [ "$GATE_ONLY" = 1 ]', gate_digest)
     post_gate_admission = poller.index("wait_for_post_gate_admission", gate_only)
     post_gate_refetch = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', post_gate_admission
@@ -4005,9 +4063,11 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < admission
         < detached
         < full_gate
+        < remote_gate
         < refetched
         < superseded
         < gate_receipt
+        < gate_digest
         < gate_only
         < post_gate_admission
         < post_gate_refetch
@@ -4017,6 +4077,15 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
         < handoff_started
         < deployed
     )
+    assert (
+        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"'
+        in poller
+    )
+    assert 'if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then' in poller
+    assert "local gate was not run automatically" in poller
+    assert 'validate_gate_provider "$GATE_RECEIPT" railway' in poller
+    assert "seiche.release-receipt.v2" in poller
+    assert "gate_provider" in poller
     assert 'CANDIDATE_PARENT="$STATE_DIR/candidates"' in poller
     assert 'install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700' in poller
     assert 'exec 8>"$CONTROL_LOCK"' in poller
@@ -4035,6 +4104,7 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "-o faulthandler_timeout=300" in gate_slice
     assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
+    assert "EnvironmentFile" not in poller[remote_gate:refetched]
     monitor = poller[
         poller.index("resolve_advertised_main() {") : poller.index(
             "is_inert_automation_content_commit() {"
@@ -4064,11 +4134,14 @@ def test_release_poller_gates_one_exact_detached_candidate_before_deploy():
     assert "release_timer_is_ready" in after_deploy
     early_exit = poller[
         poller.index('if [ "$GATE_ONLY" != 1 ]') : poller.index(
-            "# The candidate uses a detached worktree"
+            'CANDIDATE_TREE="$TARGET_TREE"'
         )
     ]
     assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit
-    assert "fully receipted" in early_exit
+    assert "live, strictly healthy, and recovery sealed" in early_exit
+    assert "live cutover is complete; recovery sealing continues asynchronously" in early_exit
+    assert "queue_recovery_seal" in early_exit
+    assert "existing recovery receipt evidence is invalid" in early_exit
     receipt_decision = poller[receipt_pair:admission]
     assert "0|1) ;;" in receipt_decision
     assert "existing release receipt evidence is invalid" in receipt_decision
@@ -4425,6 +4498,153 @@ def test_invalid_existing_release_receipt_evidence_fails_closed(tmp_path, tamper
     gate, release, commit, tree = _release_receipt_pair(tmp_path, tamper=tamper)
 
     result = _receipt_pair_result(gate, release, commit, tree)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+
+
+def _release_recovery_receipt(
+    tmp_path: Path,
+    *,
+    tamper: str | None = None,
+) -> tuple[Path, Path, str, str]:
+    commit = "a" * 40
+    tree = "b" * 40
+    release_payload = {
+        "schema": "seiche.release-receipt.v3",
+        "kind": "release",
+        "commit": commit,
+        "tree": tree,
+        "started_at": "2026-08-22T01:02:03Z",
+        "completed_at": "2026-08-22T01:03:04Z",
+        "conclusion": "success",
+        "gate_receipt_sha256": "c" * 64,
+        "snapshot_receipt_sha256": "d" * 64,
+    }
+    release = tmp_path / f"{commit}.release.json"
+    release.write_text(
+        json.dumps(release_payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    release.chmod(0o400)
+    recovery_payload = {
+        "schema": "seiche.release-recovery-receipt.v1",
+        "kind": "recovery",
+        "commit": commit,
+        "tree": tree,
+        "release_receipt_sha256": hashlib.sha256(release.read_bytes()).hexdigest(),
+        "backup_snapshot": "20260822T010400Z",
+        "backup_inventory_sha256": "e" * 64,
+        "restore_checked_at": "2026-08-22T01:05:06Z",
+        "restore_receipt_sha256": "f" * 64,
+        "worker_startup": "ready",
+        "data_readiness": "ready",
+        "offsite_schedule": "active",
+        "completed_at": "2026-08-22T01:06:07Z",
+        "conclusion": "success",
+    }
+    if tamper == "commit":
+        recovery_payload["commit"] = "9" * 40
+    elif tamper == "tree":
+        recovery_payload["tree"] = "8" * 40
+    elif tamper == "release_digest":
+        recovery_payload["release_receipt_sha256"] = "7" * 64
+    elif tamper == "worker_startup":
+        recovery_payload["worker_startup"] = "pending"
+    elif tamper == "completed_before_release":
+        recovery_payload["completed_at"] = "2026-08-22T01:01:01Z"
+    elif tamper == "restore_after_completion":
+        recovery_payload["restore_checked_at"] = "2026-08-22T01:07:08Z"
+    elif tamper == "backup_after_restore":
+        recovery_payload["backup_snapshot"] = "20260822T010607Z"
+
+    recovery = tmp_path / f"{commit}.recovery.json"
+    recovery_body = json.dumps(
+        recovery_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if tamper != "noncanonical":
+        recovery_body += "\n"
+    recovery.write_text(recovery_body, encoding="utf-8")
+    recovery.chmod(0o400)
+    if tamper == "unsafe_mode":
+        recovery.chmod(0o600)
+    elif tamper == "extra_link":
+        os.link(recovery, tmp_path / "recovery-alias.json")
+    return release, recovery, commit, tree
+
+
+def _recovery_receipt_result(
+    release: Path,
+    recovery: Path,
+    commit: str,
+    tree: str,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ | {
+        "SEICHE_CONTROL_LIBRARY_ONLY": "1",
+        "SEICHE_CONTROL_PYTHON": sys.executable,
+        "SEICHE_CONTROL_RECEIPT_UID": str(os.getuid()),
+        "SEICHE_CONTROL_RECEIPT_GID": str(os.getgid()),
+        "SEICHE_CONTROL_RECEIPT_MODE": "400",
+    }
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; recovery_receipt_status "$2" "$3" "$4" "$5"',
+            "seiche-recovery-receipt-test",
+            str(RELEASE_POLLER),
+            str(recovery),
+            str(release),
+            commit,
+            tree,
+        ],
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_complete_release_recovery_receipt_is_accepted(tmp_path):
+    release, recovery, commit, tree = _release_recovery_receipt(tmp_path)
+
+    result = _recovery_receipt_result(release, recovery, commit, tree)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_missing_release_recovery_receipt_reports_pending(tmp_path):
+    release, recovery, commit, tree = _release_recovery_receipt(tmp_path)
+    recovery.unlink()
+
+    result = _recovery_receipt_result(release, recovery, commit, tree)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "commit",
+        "tree",
+        "release_digest",
+        "worker_startup",
+        "completed_before_release",
+        "restore_after_completion",
+        "backup_after_restore",
+        "noncanonical",
+        "unsafe_mode",
+        "extra_link",
+    ),
+)
+def test_invalid_existing_recovery_receipt_evidence_fails_closed(tmp_path, tamper):
+    release, recovery, commit, tree = _release_recovery_receipt(
+        tmp_path,
+        tamper=tamper,
+    )
+
+    result = _recovery_receipt_result(release, recovery, commit, tree)
 
     assert result.returncode == 2, result.stdout + result.stderr
 
@@ -5584,18 +5804,23 @@ def test_first_controller_runbook_has_one_way_trust_and_storage_order():
 
 
 def test_official_readiness_preflights_start_with_a_clean_privileged_shell():
-    for script_path in (DEPLOY_WRAPPER, MARKET_INSTALLER):
+    for script_path in (RECOVERY_SEAL, MARKET_INSTALLER):
         script = script_path.read_text(encoding="utf-8")
         helper_start = script.index("run_recovery_proof_preflight() {")
-        helper_end = script.index(
-            "validate_data_readiness_convergence_wait() {", helper_start
-        )
+        if script_path == RECOVERY_SEAL:
+            helper_end = script.index("candidate_health_once() {", helper_start)
+            readiness_variable = "READINESS_SCRIPT"
+        else:
+            helper_end = script.index(
+                "validate_data_readiness_convergence_wait() {", helper_start
+            )
+            readiness_variable = "DATA_READINESS_SCRIPT"
         helpers = script[helper_start:helper_end]
 
         assert helpers.count("/usr/bin/env -i") == 2
         assert helpers.count("HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin") == 2
-        assert helpers.count('/usr/bin/bash -p "$DATA_READINESS_SCRIPT"') == 2
-        assert '/usr/bin/bash "$DATA_READINESS_SCRIPT"' not in helpers
+        assert helpers.count(f'/usr/bin/bash -p "${readiness_variable}"') == 2
+        assert f'/usr/bin/bash "${readiness_variable}"' not in helpers
         assert "SEICHE_DATA_READINESS_PROOF_ONLY=1" in helpers
         assert "SEICHE_DATA_READINESS_SKIP_OFFSITE=1" in helpers
         assert "SEICHE_DATA_READINESS_REQUIRED_UNITS=" in helpers

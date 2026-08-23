@@ -58,6 +58,7 @@ else
     HOME="$SEICHE_DEPLOY_ENTRY_HOME" LANG=C LC_ALL=C PATH=/usr/bin:/bin \
     SSH_ORIGINAL_COMMAND="${SSH_ORIGINAL_COMMAND-}" \
     SEICHE_EXPECTED_TARGET_SHA="${SEICHE_EXPECTED_TARGET_SHA-}" \
+    SEICHE_PREBUILT_SNAPSHOT_ARTIFACT="${SEICHE_PREBUILT_SNAPSHOT_ARTIFACT-}" \
     SEICHE_DEPLOY_ADMISSION_ONLY="${SEICHE_DEPLOY_ADMISSION_ONLY-}" \
     SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY="${SEICHE_DEPLOY_BOOTSTRAP_ASSETS_ONLY-}" \
     SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS-}" \
@@ -174,7 +175,14 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-release-poll.service": "100644",
     "ops/deploy/seiche-release-poll.sh": "100755",
     "ops/deploy/seiche-release-poll.timer": "100644",
+    "ops/deploy/seiche-release-recovery-seal.service": "100644",
+    "ops/deploy/seiche-release-recovery-seal.sh": "100755",
+    "ops/deploy/seiche-railway-cutover-fence.sh": "100755",
+    "ops/deploy/seiche-railway-edge-mode.sh": "100755",
+    "ops/deploy/seiche-remote-gate-verify.py": "100755",
+    "ops/deploy/seiche-remote-snapshot-verify.py": "100755",
     "ops/deploy/seiche-snapshot-promote.service": "100644",
+    "ops/deploy/seiche-snapshot-import.service": "100644",
     "ops/deploy/seiche-source-worker.service": "100644",
     "ops/deploy/seiche-storage-preflight.py": "100644",
     "ops/deploy/seiche-storage-preflight.service": "100644",
@@ -610,6 +618,9 @@ RELEASE_ENV=/etc/seiche/release.env
 PROMOTION_REQUEST_DIR=/run/seiche-release
 PROMOTION_REQUEST=$PROMOTION_REQUEST_DIR/promotion-request.json
 PROMOTION_UNIT=seiche-snapshot-promote.service
+PREBUILT_IMPORT_REQUEST=$PROMOTION_REQUEST_DIR/prebuilt-snapshot.json
+PREBUILT_IMPORT_RESULT=$PROMOTION_REQUEST_DIR/prebuilt-result.json
+PREBUILT_IMPORT_UNIT=seiche-snapshot-import.service
 DEPLOY_RUNTIME_DIR=/run/seiche-deploy
 DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
 SIGNED_ASSET_ROOT=""
@@ -623,6 +634,9 @@ BOOTSTRAP_PORTABLE=0
 BOOTSTRAP_PYTHON=/usr/bin/python3
 BOOTSTRAP_GIT_HOME=/root
 BOOTSTRAP_ALLOWED_SIGNERS=/etc/seiche-release.allowed-signers
+PREBUILT_SNAPSHOT_ARTIFACT=${SEICHE_PREBUILT_SNAPSHOT_ARTIFACT:-}
+PREBUILT_HANDOFF_ID=""
+PREBUILT_PAYLOAD_SHA256=""
 
 case "$BOOTSTRAP_ASSETS_ONLY" in
   0|1) ;;
@@ -1193,9 +1207,21 @@ write_deployed_state() {
 }
 
 write_release_env() {
-  local release_sha="$1" stage=""
+  local release_sha="$1" prebuilt_handoff_id="${2:-}"
+  local prebuilt_payload_sha256="${3:-}" stage=""
   if ! valid_release_sha "$release_sha"; then
     echo "FAIL: refusing to install a non-canonical release SHA"
+    return 1
+  fi
+  if [ -n "$prebuilt_handoff_id" ] \
+      && ! valid_activation_token "$prebuilt_handoff_id"; then
+    echo "FAIL: refusing to install an invalid prebuilt handoff ID"
+    return 1
+  fi
+  if { [ -n "$prebuilt_handoff_id" ] || [ -n "$prebuilt_payload_sha256" ]; } \
+      && { ! valid_activation_token "$prebuilt_handoff_id" \
+        || ! valid_activation_token "$prebuilt_payload_sha256"; }; then
+    echo "FAIL: refusing to install an incomplete prebuilt snapshot binding"
     return 1
   fi
   if [ ! -d /etc/seiche ] || [ -L /etc/seiche ]; then
@@ -1203,7 +1229,14 @@ write_release_env() {
     return 1
   fi
   stage=$(mktemp /etc/seiche/.release.env.XXXXXX) || return 1
-  if ! printf 'SEICHE_RELEASE_SHA=%s\n' "$release_sha" >"$stage" \
+  if ! {
+        printf 'SEICHE_RELEASE_SHA=%s\n' "$release_sha"
+        if [ -n "$prebuilt_handoff_id" ]; then
+          printf 'SEICHE_PREBUILT_HANDOFF_ID=%s\n' "$prebuilt_handoff_id"
+          printf 'SEICHE_PREBUILT_PAYLOAD_SHA256=%s\n' \
+            "$prebuilt_payload_sha256"
+        fi
+      } >"$stage" \
       || ! chown root:seiche "$stage" \
       || ! chmod 0640 "$stage" \
       || ! mv -f "$stage" "$RELEASE_ENV"; then
@@ -1211,6 +1244,145 @@ write_release_env() {
     echo "FAIL: could not atomically install the release environment"
     return 1
   fi
+}
+
+import_prebuilt_snapshot() {
+  local artifact="$1" expected_sha="$2" path_identity="" fd_identity=""
+  local request_stage="" result_values="" token="" payload_sha256=""
+  local stale_metadata="" expected_stale_metadata=""
+  if [ -z "$artifact" ]; then
+    PREBUILT_HANDOFF_ID=""
+    PREBUILT_PAYLOAD_SHA256=""
+    return 0
+  fi
+  if [[ ! "$artifact" =~ ^/run/seiche-control/([0-9a-f]{40})\.snapshot\.json$ ]] \
+      || [ "${BASH_REMATCH[1]}" != "$expected_sha" ]; then
+    echo "FAIL: prebuilt snapshot path does not bind the exact target"
+    return 1
+  fi
+  if [ -L "$artifact" ] || [ ! -f "$artifact" ] \
+      || [ "$(stat -c '%U:%G:%a:%h' "$artifact")" != root:root:600:1 ]; then
+    echo "FAIL: prebuilt snapshot artifact metadata is unsafe"
+    return 1
+  fi
+  exec 7<"$artifact" || return 1
+  path_identity=$(stat -c '%d:%i' "$artifact") || {
+    exec 7<&-
+    return 1
+  }
+  fd_identity=$(stat -Lc '%d:%i' "/proc/$$/fd/7") || {
+    exec 7<&-
+    return 1
+  }
+  if [ "$path_identity" != "$fd_identity" ]; then
+    exec 7<&-
+    echo "FAIL: prebuilt snapshot artifact changed while opening"
+    return 1
+  fi
+  if [ ! -d "$PROMOTION_REQUEST_DIR" ] \
+      || [ -L "$PROMOTION_REQUEST_DIR" ] \
+      || [ "$(stat -c '%U:%G:%a' "$PROMOTION_REQUEST_DIR")" != root:seiche:750 ]; then
+    exec 7<&-
+    echo "FAIL: snapshot import request directory metadata is unsafe"
+    return 1
+  fi
+  for stale in "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then
+      if [ "$stale" = "$PREBUILT_IMPORT_REQUEST" ]; then
+        expected_stale_metadata=root:seiche:640:1
+      else
+        expected_stale_metadata=seiche:seiche:600:1
+      fi
+      stale_metadata=$(stat -c '%U:%G:%a:%h' "$stale" 2>/dev/null) || {
+        exec 7<&-
+        echo "FAIL: stale snapshot import capability metadata is unreadable"
+        return 1
+      }
+      if [ -L "$stale" ] || [ ! -f "$stale" ] \
+          || [ "$stale_metadata" != "$expected_stale_metadata" ]; then
+        exec 7<&-
+        echo "FAIL: stale snapshot import capability is unsafe"
+        return 1
+      fi
+      rm -f -- "$stale" || {
+        exec 7<&-
+        return 1
+      }
+    fi
+  done
+  request_stage=$(mktemp "$PROMOTION_REQUEST_DIR/.prebuilt-snapshot.XXXXXX") || {
+    exec 7<&-
+    return 1
+  }
+  if ! cp -- "/proc/$$/fd/7" "$request_stage" \
+      || ! chown root:seiche "$request_stage" \
+      || ! chmod 0640 "$request_stage" \
+      || ! /usr/bin/sync -f "$request_stage" \
+      || ! mv -f "$request_stage" "$PREBUILT_IMPORT_REQUEST" \
+      || ! install -o seiche -g seiche -m 0600 /dev/null \
+        "$PREBUILT_IMPORT_RESULT"; then
+    rm -f -- "$request_stage" "$PREBUILT_IMPORT_REQUEST" \
+      "$PREBUILT_IMPORT_RESULT"
+    exec 7<&-
+    echo "FAIL: prebuilt snapshot import capabilities could not be installed"
+    return 1
+  fi
+  exec 7<&-
+  systemctl reset-failed "$PREBUILT_IMPORT_UNIT" 2>/dev/null || true
+  if ! systemctl start "$PREBUILT_IMPORT_UNIT"; then
+    rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"
+    echo "FAIL: prebuilt snapshot could not be resealed by its isolated unit"
+    return 1
+  fi
+  result_values=$(/usr/bin/python3 -I -B - "$PREBUILT_IMPORT_RESULT" <<'PY'
+import json
+import os
+import grp
+import pwd
+import re
+import stat
+import sys
+
+path = sys.argv[1]
+descriptor = os.open(
+    path, os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+)
+try:
+    info = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != pwd.getpwnam("seiche").pw_uid
+        or info.st_gid != grp.getgrnam("seiche").gr_gid
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_size > 1024
+    ):
+        raise ValueError("unsafe result metadata")
+    payload = json.loads(os.read(descriptor, 1025))
+    if set(payload) != {"handoff_id", "payload_sha256"}:
+        raise ValueError("invalid result shape")
+    for value in payload.values():
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("invalid result binding")
+    print(payload["handoff_id"], payload["payload_sha256"])
+finally:
+    os.close(descriptor)
+PY
+  ) || {
+    rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT"
+    echo "FAIL: isolated snapshot importer returned unsafe evidence"
+    return 1
+  }
+  rm -f -- "$PREBUILT_IMPORT_REQUEST" "$PREBUILT_IMPORT_RESULT" || return 1
+  if [[ ! "$result_values" =~ ^([0-9a-f]{64})\ ([0-9a-f]{64})$ ]]; then
+    echo "FAIL: isolated snapshot importer returned malformed evidence"
+    return 1
+  fi
+  token=${BASH_REMATCH[1]}
+  payload_sha256=${BASH_REMATCH[2]}
+  PREBUILT_HANDOFF_ID="$token"
+  PREBUILT_PAYLOAD_SHA256="$payload_sha256"
+  echo "snapshot prebuild: locally sealed and staged exact release handoff"
 }
 
 write_promotion_request() {
@@ -1327,6 +1499,7 @@ MARKET_WORKER_WAS_ENABLED=""
 MARKET_BACKFILL_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ACTIVE=""
 SOURCE_WORKER_WAS_ENABLED=""
+RECOVERY_SEAL_WAS_ACTIVE=""
 READINESS_TIMER_WAS_ACTIVE=""
 READINESS_TIMER_WAS_ENABLED=""
 VALIDATION_TIMER_WAS_ACTIVE=""
@@ -1351,6 +1524,10 @@ if systemctl is-active --quiet seiche-source-worker.service 2>/dev/null; then
 fi
 if systemctl is-enabled --quiet seiche-source-worker.service 2>/dev/null; then
   SOURCE_WORKER_WAS_ENABLED=1
+fi
+if systemctl is-active --quiet seiche-release-recovery-seal.service \
+    2>/dev/null; then
+  RECOVERY_SEAL_WAS_ACTIVE=1
 fi
 if systemctl is-active --quiet seiche-data-readiness.timer 2>/dev/null; then
   READINESS_TIMER_WAS_ACTIVE=1
@@ -1393,6 +1570,7 @@ DATA_UNIT_NAMES=(
   seiche-pull.service
   seiche-market-backfill.service
   seiche-source-worker.service
+  seiche-release-recovery-seal.service
   seiche-data-readiness.service
   seiche-data-readiness.timer
   seiche-market-validation.service
@@ -1404,14 +1582,18 @@ DATA_UNIT_NAMES=(
   seiche-market-restore-check.service
   seiche-market-restore-check.timer
   seiche-snapshot-promote.service
+  seiche-snapshot-import.service
 )
 DATA_ARTIFACT_NAMES=(
   storage-preflight-helper
   nbs-intake-launcher
   data-readiness-helper
+  release-recovery-helper
   market-offsite-backup-helper
   market-backup-helper
   market-restore-check-helper
+  railway-cutover-fence-helper
+  railway-edge-mode-helper
   api-market-platform-dropin
   release-poll-storage-dropin
   validation-state-dropin
@@ -1423,9 +1605,12 @@ DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
   /etc/seiche/libexec/seiche-nbs-intake.py
   /etc/seiche/libexec/seiche-data-readiness.sh
+  /etc/seiche/libexec/seiche-release-recovery-seal.sh
   /etc/seiche/libexec/seiche-market-offsite-backup.sh
   /etc/seiche/libexec/seiche-market-backup.sh
   /etc/seiche/libexec/seiche-market-restore-check.sh
+  /etc/seiche/libexec/seiche-railway-cutover-fence.sh
+  /etc/seiche/libexec/seiche-railway-edge-mode.sh
   /etc/systemd/system/seiche-api.service.d/market-platform.conf
   /etc/systemd/system/seiche-release-poll.service.d/storage-volume.conf
   /etc/systemd/system/seiche-market-validation.service.d/state-path.conf
@@ -1530,6 +1715,7 @@ restore_preupdate_data_units() {
   # A failed installer may already have enabled persistent candidate timers.
   # Quiesce every reader/writer before restoring files or generated drop-ins.
   systemctl stop \
+    seiche-release-recovery-seal.service \
     seiche-data-readiness.timer seiche-data-readiness.service \
     seiche-market-validation.timer seiche-market-validation.service \
     seiche-market-backup.timer seiche-market-backup.service \
@@ -1775,6 +1961,9 @@ restore_market_services() {
       systemctl start --no-block seiche-data-readiness.timer 2>/dev/null || true
     fi
   fi
+  [ -z "$RECOVERY_SEAL_WAS_ACTIVE" ] \
+    || systemctl start --no-block seiche-release-recovery-seal.service \
+      2>/dev/null || true
   [ -z "$VALIDATION_TIMER_WAS_ACTIVE" ] \
     || systemctl start --no-block seiche-market-validation.timer 2>/dev/null \
     || true
@@ -1790,178 +1979,9 @@ restore_market_services() {
     || systemctl start --no-block seiche-market-offsite-backup.timer \
       2>/dev/null || true
 }
-DATA_READINESS_PREFLIGHT_REQUIRED_UNITS="seiche-api.service seiche-market-worker.service seiche-source-worker.service seiche-market-backup.timer seiche-market-restore-check.timer seiche-market-validation.timer seiche-release-poll.timer"
-DATA_READINESS_SCRIPT=/etc/seiche/libexec/seiche-data-readiness.sh
-DATA_READINESS_CONVERGENCE_WAIT_SECONDS="${SEICHE_DATA_READINESS_CONVERGENCE_WAIT_SECONDS:-900}"
 # Full board assembly can exceed the freshness horizon on the shared host.
 # This is a fixed, reviewed controller budget rather than caller configuration.
 API_FULL_REBUILD_WAIT_SECONDS=1800
-run_recovery_proof_preflight() {
-  /usr/bin/env -i \
-    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
-    SEICHE_DATA_READINESS_PROOF_ONLY=1 \
-    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-    SEICHE_DATA_READINESS_REQUIRED_UNITS= \
-    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
-}
-run_data_readiness_preflight() {
-  /usr/bin/env -i \
-    HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
-    SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
-    SEICHE_DATA_READINESS_REQUIRED_UNITS="$DATA_READINESS_PREFLIGHT_REQUIRED_UNITS" \
-    /usr/bin/bash -p "$DATA_READINESS_SCRIPT"
-}
-ensure_candidate_fresh_for_readiness() {
-  # A release-bound backup and restore can legitimately consume the API's
-  # entire 15-minute freshness budget. Nudge the cache owner without taking
-  # readers offline, then require a fresh exact-SHA handoff before acceptance.
-  if ! curl -sf -m 20 http://127.0.0.1:8787/api/gauge >/dev/null; then
-    echo "data readiness: cache refresh nudge failed; restarting the exact candidate"
-    if ! systemctl restart seiche-api; then
-      echo "FAIL: API refresh restart failed after recovery proof"
-      return 1
-    fi
-    sleep 3
-  fi
-  if candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
-    return 0
-  fi
-  echo "data readiness: background refresh missed its deadline; restarting the exact candidate"
-  if ! systemctl restart seiche-api; then
-    echo "FAIL: API fallback restart failed after recovery proof"
-    return 1
-  fi
-  sleep 3
-  if ! candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" 900; then
-    echo "FAIL: API did not produce a fresh exact candidate after recovery proof"
-    return 1
-  fi
-}
-validate_data_readiness_convergence_wait() {
-  case "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" in
-    0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) ;;
-    *)
-      echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
-      return 1
-      ;;
-  esac
-  if [ "$DATA_READINESS_CONVERGENCE_WAIT_SECONDS" -gt 900 ]; then
-    echo "FAIL: data-readiness convergence wait must be an integer from 0 to 900 seconds"
-    return 1
-  fi
-}
-converge_operational_data_readiness() {
-  local readiness_output readiness_status deadline
-
-  if readiness_output=$(run_data_readiness_preflight 2>&1); then
-    readiness_status=0
-  else
-    readiness_status=$?
-  fi
-  if [ "$readiness_status" -eq 0 ]; then
-    if [ "$readiness_output" != "seiche data readiness: ready" ]; then
-      printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
-        "$readiness_output"
-      return 1
-    fi
-    return 0
-  fi
-  if [ "$readiness_status" -ne 1 ] \
-      || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
-    [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
-    return 1
-  fi
-
-  if ! systemctl is-active --quiet seiche-api.service; then
-    echo "FAIL: seiche-api is not active before stale snapshot refresh"
-    return 1
-  fi
-  if ! /usr/bin/curl --fail --silent --show-error --proto '=http' \
-      --connect-timeout 10 --max-time 10 --output /dev/null \
-      'http://127.0.0.1:8787/api/gauge'; then
-    echo "FAIL: stale API snapshot refresh trigger failed"
-    return 1
-  fi
-
-  deadline=$((SECONDS + DATA_READINESS_CONVERGENCE_WAIT_SECONDS))
-  while true; do
-    if ! systemctl is-active --quiet seiche-api.service; then
-      echo "FAIL: seiche-api died during stale snapshot convergence"
-      return 1
-    fi
-    if readiness_output=$(run_data_readiness_preflight 2>&1); then
-      readiness_status=0
-    else
-      readiness_status=$?
-    fi
-    if [ "$readiness_status" -eq 0 ]; then
-      if [ "$readiness_output" != "seiche data readiness: ready" ]; then
-        printf 'FAIL: operational data readiness returned unexpected success output: %s\n' \
-          "$readiness_output"
-        return 1
-      fi
-      return 0
-    fi
-    if [ "$readiness_status" -ne 1 ] \
-        || [ "$readiness_output" != "seiche data readiness: API snapshot stale" ]; then
-      [ -z "$readiness_output" ] || printf '%s\n' "$readiness_output" >&2
-      return 1
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      echo "FAIL: API snapshot remained stale after ${DATA_READINESS_CONVERGENCE_WAIT_SECONDS}s"
-      return 1
-    fi
-    sleep 10
-  done
-}
-activate_data_readiness_after_proof() {
-  validate_data_readiness_convergence_wait || return 1
-  # An already-current v2 backup and restore receipt avoid a redundant drill.
-  # A first v2/fresh host fails this preflight and must create and restore one
-  # real snapshot before the persistent timer is allowed to become active.
-  if ! run_recovery_proof_preflight; then
-    echo "data readiness: current v2 proof unavailable; bootstrapping backup and restore"
-    if ! systemctl start seiche-market-backup.service; then
-      echo "FAIL: v2 data-readiness bootstrap backup failed; readiness timer remains stopped"
-      return 1
-    fi
-    if ! systemctl start seiche-market-restore-check.service; then
-      echo "FAIL: v2 data-readiness bootstrap restore check failed; readiness timer remains stopped"
-      return 1
-    fi
-    if ! run_recovery_proof_preflight; then
-      echo "FAIL: v2 data-readiness bootstrap did not pass; readiness timer remains stopped"
-      return 1
-    fi
-  fi
-  if ! ensure_candidate_fresh_for_readiness; then
-    echo "FAIL: exact candidate freshness could not be restored before readiness"
-    return 1
-  fi
-  if ! converge_operational_data_readiness; then
-    echo "FAIL: operational data readiness did not pass; readiness timer remains stopped"
-    return 1
-  fi
-  # A background snapshot refresh publishes its in-memory board before the
-  # exact release handoff finishes sealing. Readiness can therefore turn green
-  # during that short interval; wait for the strict SHA-bound capability
-  # instead of accepting ordinary API health without current release evidence.
-  if ! candidate_health_wait 120 "$AFTER" 900; then
-    echo "FAIL: exact candidate evidence did not reseal after data-readiness convergence"
-    return 1
-  fi
-  if ! systemctl enable --now seiche-data-readiness.timer; then
-    echo "FAIL: proven readiness timer could not be activated"
-    return 1
-  fi
-}
-ensure_source_worker_ready() {
-  systemctl reset-failed seiche-source-worker.service 2>/dev/null || true
-  if ! systemctl start seiche-source-worker.service; then
-    echo "FAIL: source worker did not produce its initial durable heartbeat"
-    return 1
-  fi
-}
 start_market_services() {
   if [ -n "$MARKET_MUTATION_LOCK_HELD" ]; then
     echo "FAIL: refusing to start self-locking market services under deploy lock"
@@ -1970,27 +1990,30 @@ start_market_services() {
   systemctl reset-failed \
     seiche-market-worker.service seiche-source-worker.service 2>/dev/null \
     || true
-  # The worker is Type=notify and ordered after the one-shot backfill.  Wait
-  # for both jobs here: a --no-block start races the readiness preflight, which
-  # can mistake an activating worker for a stale recovery proof and repeat the
-  # full backup/restore drill on the controller's same-SHA convergence pass.
-  if ! systemctl start \
-      seiche-market-backfill.service seiche-market-worker.service; then
-    echo "FAIL: market backfill/worker did not become ready"
+  # Phase 3 ends the live-cutover transaction after exact API, snapshot, and
+  # edge health. The isolated recovery service waits for these Type=notify
+  # workers, then owns backup, restore, readiness, and its second receipt.
+  if ! systemctl start --no-block \
+      seiche-market-backfill.service seiche-market-worker.service \
+      seiche-source-worker.service; then
+    echo "FAIL: market/source recovery workers could not be queued"
     return 1
   fi
-  # Type=notify makes this block until the initial durable sweep has completed.
-  # Only then submit the persistent readiness timer; its After= on the market
-  # worker keeps a missed run queued until every collector startup is complete.
-  ensure_source_worker_ready || return 1
-  activate_data_readiness_after_proof || return 1
-  if [ -n "$OFFSITE_TIMER_WAS_ACTIVE" ] \
-      && systemctl is-enabled --quiet seiche-market-offsite-backup.timer; then
-    systemctl start seiche-market-offsite-backup.timer || {
-      echo "FAIL: offsite backup timer could not be restored after exact-SHA promotion"
-      return 1
-    }
+  echo "recovery sealing: market/source workers queued after live cutover"
+}
+queue_forced_recovery_seal() {
+  # The normal controller queues recovery only after its immutable release
+  # receipt exists. The independent SSH fallback has no such receipt yet, so
+  # queue the same retrying service after edge convergence: it restores the
+  # recovery rails immediately and seals once controller evidence arrives.
+  [ "$SEICHE_DEPLOY_ENTRY_MODE" = forced ] || return 0
+  systemctl reset-failed seiche-release-recovery-seal.service \
+    2>/dev/null || true
+  if ! systemctl start --no-block seiche-release-recovery-seal.service; then
+    echo "FAIL: forced deployment recovery sealing could not be queued"
+    return 1
   fi
+  echo "recovery sealing: queued for independent forced deployment"
 }
 MARKET_WORKER_UNIT_MAY_HAVE_CHANGED=""
 restore_preupdate_market_worker_unit() {
@@ -2060,7 +2083,8 @@ restore_pre_restart_services() {
   fi
   restore_market_services
 }
-systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+systemctl stop seiche-release-recovery-seal.service \
+  seiche-data-readiness.timer seiche-data-readiness.service \
   2>/dev/null || true
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \
@@ -2482,10 +2506,25 @@ deploy_market_platform || {
   exit 1
 }
 
+# The isolated importer consumes the same root-owned release identity as the
+# API and promotion unit, but receives the database environment only from
+# systemd's reviewed EnvironmentFile boundary.
+if ! write_release_env "$AFTER"; then
+  restore_pre_restart_services || true
+  echo "FAIL: candidate release identity could not be installed"
+  exit 1
+fi
+if ! import_prebuilt_snapshot "$PREBUILT_SNAPSHOT_ARTIFACT" "$AFTER"; then
+  restore_pre_restart_services || true
+  echo "FAIL: verified snapshot prebuild could not enter the candidate handoff"
+  exit 1
+fi
+
 # The API captures this root-controlled identity at process start. The same
 # file is required by the unprivileged promotion unit on both a normal deploy
 # and the second pass of the first controller rollout.
-if ! write_release_env "$AFTER"; then
+if ! write_release_env \
+    "$AFTER" "$PREBUILT_HANDOFF_ID" "$PREBUILT_PAYLOAD_SHA256"; then
   restore_pre_restart_services || true
   echo "FAIL: candidate release identity could not be installed"
   exit 1
@@ -2501,10 +2540,6 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
     fi
     sleep 3
   fi
-  ensure_source_worker_ready || {
-    echo "FAIL: accepted release source worker did not become ready"
-    exit 1
-  }
   candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER" || {
     echo "FAIL: accepted release did not recover strict health; market writers remain stopped"
     exit 1
@@ -2534,6 +2569,7 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  queue_forced_recovery_seal || exit 1
   echo "already deployed ${AFTER:0:7} — application and edge match the repo"
   exit 0
 fi
@@ -2552,8 +2588,7 @@ else
   echo "FAIL: seiche-api could not be restarted onto the candidate"
 fi
 if [ -n "$RESTARTED" ] && systemctl is-active --quiet seiche-api; then
-  if ensure_source_worker_ready \
-      && candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"; then
+  if candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"; then
     if market_health; then
       if deploy_pull_unit; then
         if promote_snapshot_handoff; then
@@ -2575,6 +2610,7 @@ if [ -n "$HEALTHY" ]; then
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
   sync_verdict
+  queue_forced_recovery_seal || exit 1
   echo "deployed ${AFTER:0:7} — service active, api healthy, edge config current"
   exit 0
 fi
@@ -2592,7 +2628,8 @@ fi
 # way: this path always exits 1, because a deploy that needed the rollback
 # needs a human even when the rollback lands. Never rely on cancellation.
 echo "FAIL: ${AFTER:0:7} did not come healthy after restart"
-systemctl stop seiche-data-readiness.timer seiche-data-readiness.service \
+systemctl stop seiche-release-recovery-seal.service \
+  seiche-data-readiness.timer seiche-data-readiness.service \
   2>/dev/null || true
 systemctl stop \
   seiche-market-validation.timer seiche-market-validation.service \

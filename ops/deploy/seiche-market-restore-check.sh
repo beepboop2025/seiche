@@ -665,11 +665,14 @@ def verify_restored_full_store() -> str:
         if any(
             not isinstance(path, str)
             or not path
-            or path == "/home"
-            or path.startswith("/home/")
             or (
                 test_override == "0"
-                and (not os.path.isabs(path) or os.path.normpath(path) != path)
+                and (
+                    path == "/home"
+                    or path.startswith("/home/")
+                    or not os.path.isabs(path)
+                    or os.path.normpath(path) != path
+                )
             )
             for path in initial_path
         ):
