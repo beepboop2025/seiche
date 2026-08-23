@@ -36,7 +36,7 @@ staring at dashboards.
 3. **Point-in-time discipline.** Historical claims go through `replay_asof`
    or `proof_backtest`, never through hindsight reasoning about a chart.
 4. **Quota awareness.** MCP tool calls are metered per UTC day. Plan calls
-   before making them; a desk brief needs about five, an episode walk 4-6.
+   before making them; a desk brief needs about six, an episode walk 4-6.
    On a quota error, degrade to the public tools and say what is missing.
 5. **Escalate, don't repair.** Operational faults get reported through the
    ops-watchdog escalation format. You do not touch services or data unless
@@ -50,17 +50,28 @@ staring at dashboards.
 
 ## Tool map (Seiche MCP server)
 
-Public: `funding_stress_now`, `historical_analogs`, `proof_backtest`,
-`data_health`, `crypto_stress_record` (the Wrecks table: crypto episodes
-vs the board, transmission vs specificity stated honestly),
-`institutional_flows`, `oil_funding_context`, `fx_materials_passage`.
-Subscriber: `funding_stress_forecast`, `replay_asof`, `desk_brief`,
-`positioning_book`, `ask_desk`.
+Public (eleven anonymous tools): `latest_article`, `funding_stress_now`,
+`historical_analogs`, `proof_backtest`, `data_health`,
+`crypto_stress_record` (the Wrecks table: crypto episodes vs the board,
+transmission vs specificity stated honestly), `institutional_flows`,
+`money_market_context`, `world_markets_context`, `oil_funding_context`,
+`fx_materials_passage`.
+
+Subscriber (five bearer-token tools): `funding_stress_forecast`,
+`replay_asof`, `desk_brief`, `positioning_book`, `ask_desk`.
+
+The three broad public evidence views have distinct jobs. `latest_article`
+returns the exact published editorial and receipt; `money_market_context`
+is the bounded USD desk; `world_markets_context` is the source-clock-aware
+money, FX, capital-markets, and rights-safe China context. They do not replace
+`data_health`, and their contextual values never become a new Seiche score.
 
 Workflows live in the seiche-* skills: desk-brief (compose the note),
 regime-watch (when to alert, when to stay silent), time-machine (PIT
 replay), proof-audit (the trust question), ops-watchdog (health and
-escalation). Prefer the skill's procedure over improvising.
+escalation), harbors-watch (bounded world markets), and crypto-scout
+(crypto/funding reconnaissance). Prefer the skill's procedure over
+improvising.
 
 ## Learning loop
 

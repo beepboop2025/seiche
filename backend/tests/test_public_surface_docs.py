@@ -31,7 +31,11 @@ GATED = {n for n, t in mcp_server.TOOLS.items() if not t[4]}
 DOCS = [
     REPO / "README.md",
     REPO / "docs" / "MCP.md",
+    REPO / "docs" / "HERMES.md",
     REPO / "backend" / "seiche" / "mcp_server.py",
+    REPO / "integrations" / "hermes" / "AGENTS.md",
+    REPO / "integrations" / "hermes" / "README.md",
+    REPO / "integrations" / "hermes" / "BOOTSTRAP.md",
 ]
 
 
@@ -54,6 +58,22 @@ def test_docs_name_every_anonymous_tool(path):
     text = path.read_text()
     missing = sorted(n for n in PUBLIC if n not in text)
     assert not missing, f"{path.name} does not name the free tools: {missing}"
+
+
+def test_hermes_persona_tool_map_is_exactly_the_runtime_surface():
+    """The persona is operational input, so an obsolete map is a runtime bug."""
+    text = (REPO / "integrations" / "hermes" / "AGENTS.md").read_text()
+    match = re.search(
+        r"Public \(eleven anonymous tools\):(.*?)\nSubscriber \(five",
+        text,
+        re.DOTALL,
+    )
+    assert match, "Hermes public MCP tool map is missing"
+    documented = set(re.findall(r"`([a-z][a-z0-9_]+)`", match.group(1)))
+    assert documented == PUBLIC, {
+        "missing": sorted(PUBLIC - documented),
+        "obsolete": sorted(documented - PUBLIC),
+    }
 
 
 @pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)

@@ -26,7 +26,7 @@ script cannot:
 - **Adaptive noise control.** "Only bother me at STRAIN or worse" is one
   sentence; the agent updates its own watch policy and remembers it.
 - **A learning loop.** Hermes persists procedures as skills and facts as
-  memory. The kit seeds six skills; the agent refines them from real use.
+  memory. The kit seeds seven skills; the agent refines them from real use.
 - **Distribution.** Anyone can point a Hermes at the hosted endpoint and
   get a working desk agent in minutes — Seiche is a free public good, and
   the kit is how it reaches the people (and agents) it exists to serve.
@@ -47,7 +47,7 @@ hermes setup        # pick a provider; any strong model works
 cd integrations/hermes && ./install.sh
 ```
 
-This copies the six `seiche-*` skills into `~/.hermes/skills/seiche/` and,
+This copies the seven `seiche-*` skills into `~/.hermes/skills/seiche/` and,
 if you don't already have one, installs the desk-agent persona as
 `~/.hermes/AGENTS.md`. It never edits config or secrets.
 
@@ -66,6 +66,14 @@ Merge the `mcp_servers` block from
 Then make the toolset available to your platform (`platform_toolsets:` in
 the same file) and confirm with `hermes tools` that the seiche tools
 appear.
+
+The hosted anonymous surface is exactly eleven tools: `latest_article`,
+`funding_stress_now`, `historical_analogs`, `proof_backtest`, `data_health`,
+`crypto_stress_record`, `institutional_flows`, `money_market_context`,
+`world_markets_context`, `oil_funding_context`, and
+`fx_materials_passage`. The bootstrap checks this list before it schedules
+work. A bearer token may add five subscriber tools; it must never remove or
+silently replace the public evidence views.
 
 ### 4. Gateway
 
@@ -87,19 +95,21 @@ strangers.
 Send the message in
 [`BOOTSTRAP.md`](../integrations/hermes/BOOTSTRAP.md). The agent verifies
 its own wiring, seeds memory (pull times, watch baseline, your channel),
-creates five scheduled jobs (morning brief 12:35 UTC, evening watch 21:05
-UTC, weekly PROOF report, daily ops check, weekly crypto scout), and runs
+creates six scheduled jobs (morning brief 12:35 UTC, evening watch 21:05
+UTC, weekly PROOF report, daily ops check, daily Harbors watch, weekly crypto
+scout), and runs
 the brief once so you see the format. From then on you manage everything conversationally.
 
 ## What each skill encodes
 
 | Skill | Lens |
 |---|---|
-| `seiche-desk-brief` | The note: `data_health` first, then index/regime, forward odds, analogs; chat-sized format; PROOF citation and advice disclaimer every time |
+| `seiche-desk-brief` | The note: `data_health` first, then index/regime, bounded USD context, forward odds, analogs, and optional exact editorial; chat-sized format; PROOF citation and advice disclaimer every time |
 | `seiche-regime-watch` | The pager: six triggers (regime change, 10-point jump, model agreement, Tell divergence, novelty, data fault), one alert per trigger per day, silent pass = success |
 | `seiche-time-machine` | The historian: episode walks at -21/-10/-5 days, then-vs-now by component, claim checking via replay instead of hindsight |
 | `seiche-proof-audit` | The skeptic's answer: recall with CI and N, the orthogonal test, misses by name, the notary ledger as the tamper-evidence fact |
 | `seiche-ops-watchdog` | The pager for the operator: green/amber/red on `data_health`, PIT-gap is always red, escalation format, report-don't-repair boundary |
+| `seiche-harbors-watch` | The world-markets watch: separate money/FX/capital clocks, bounded USD detail, rights-safe China metadata, and Palimpsest information-controls context kept out of market scores |
 | `seiche-crypto-scout` | The frontier watch: weekly crypto x money-market pass (stress transmission, tool gaps, grant deadlines, agent-payment rails) with a running ledger |
 
 The persona (`AGENTS.md`) carries the hard rules the skills assume: grounded
@@ -109,8 +119,8 @@ and "Not investment advice." on every reading.
 ## Costs and metering
 
 Every MCP `tools/call` is metered per caller per UTC day (see
-[MCP.md](MCP.md)). The kit's daily rhythm is roughly 12-15 tool calls
-(brief ~5, watch ~2 silent / ~4 firing, ops ~1, weekly audit ~2), well
+[MCP.md](MCP.md)). The kit's daily rhythm is roughly 17-21 tool calls
+(brief ~6, watch ~2 silent / ~4 firing, ops ~1, Harbors ~3, weekly audit ~2), well
 inside the `pro` quota with room for conversation. LLM inference cost sits
 with whatever provider you configured in Hermes: bring your own key, use a
 local model, or Nous Portal.

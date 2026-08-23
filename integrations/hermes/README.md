@@ -19,6 +19,7 @@ Full operator guide: [docs/HERMES.md](../../docs/HERMES.md).
 | `skills/seiche-time-machine/` | Point-in-time episode replay with no-lookahead discipline |
 | `skills/seiche-proof-audit/` | The trust question, answered from the PROOF scoreboard |
 | `skills/seiche-ops-watchdog/` | Data-health passes, amber/red classification, escalation format |
+| `skills/seiche-harbors-watch/` | Source-clock-aware world money, FX, capital-market and China-context watch |
 | `skills/seiche-crypto-scout/` | Weekly crypto x money-market recon: transmission, gaps, revenue opportunities |
 | `AGENTS.md` | The desk-agent persona and hard rules (grounding, advice disclaimer, PIT) |
 | `config.example.yaml` | Hermes config fragments: MCP wiring (3 options), provider, gateway |
@@ -44,6 +45,31 @@ hermes gateway
 Works against any of the three Seiche MCP wirings: local stdio
 (`seiche-mcp`), same-box HTTP (`127.0.0.1:8787/mcp`), or the hosted endpoint
 (`https://api.seiche.info/mcp`, anonymous free tier or subscriber token).
+
+## Anonymous tool contract
+
+The hosted endpoint exposes these eleven tools without a token. The list is
+tested against the server registry so a runtime change cannot leave this kit
+silently teaching an obsolete surface.
+
+| Tool | Hermes uses it for |
+|---|---|
+| `latest_article` | Exact published editorial, evidence clock, and publication receipt |
+| `funding_stress_now` | Current regime, composite, decomposition, and Tell |
+| `historical_analogs` | Nearest point-in-time precedents and novelty |
+| `proof_backtest` | Historical diagnostic status, misses, and eligibility |
+| `data_health` | Freshness, provenance, and faults before interpretation |
+| `crypto_stress_record` | Labelled crypto episodes against the funding board |
+| `institutional_flows` | Public positioning and flow context |
+| `money_market_context` | Bounded USD desk sections, sources, and methodology |
+| `world_markets_context` | Money, FX, capital-market, and rights-safe China context |
+| `oil_funding_context` | Oil/funding observations, market structure, and separate scenarios |
+| `fx_materials_passage` | FX/material pressure and holdout-tested Passage links |
+
+The five subscriber tools remain `funding_stress_forecast`, `replay_asof`,
+`desk_brief`, `positioning_book`, and `ask_desk`. Hermes must treat an auth or
+quota refusal as an access condition, not as evidence that the public board is
+down.
 
 Not investment advice; every reading the agent relays is backed by the
 public PROOF scoreboard, misses included.

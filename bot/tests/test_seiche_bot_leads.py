@@ -7,6 +7,7 @@ a neutral private-bot link; private subscription and lead behavior stays the
 same, and read-only group commands remain available.
 """
 
+import datetime as dt
 import json
 import os
 import sys
@@ -63,6 +64,109 @@ def test_a_private_start_with_a_ref_still_subscribes_and_books_a_lead(
     assert len(rows) == 1
     assert rows[0]["ref"] == "lab_letter"
     assert rows[0]["chat_id"] == 555
+
+
+def test_first_touch_attribution_is_stable_and_events_hide_chat_id(_isolated):
+    bot.handle(4242, "/start ng26_lab_176984_funding", "private")
+    bot.handle(4242, "/start later_ref", "private")
+
+    rows = _leads(_isolated)
+    events_text = (_isolated / "events.jsonl").read_text(encoding="utf-8")
+    opens = json.loads(
+        (_isolated / "start_attribution.json").read_text(encoding="utf-8")
+    )
+
+    assert [row["ref"] for row in rows] == ["ng26_lab_176984_funding"]
+    assert len(opens) == 1
+    assert next(iter(opens.values()))["ref"] == "ng26_lab_176984_funding"
+    assert '"chat_id":4242' not in events_text
+    assert '"actor"' in events_text
+
+
+def test_invalid_start_ref_subscribes_without_fabricating_a_lead(_isolated):
+    bot.handle(4242, "/start not+a+campaign", "private")
+
+    assert "4242" in bot.load_state("subscribers.json", {})
+    assert _leads(_isolated) == []
+    events = [
+        json.loads(line)
+        for line in (_isolated / "events.jsonl").read_text().splitlines()
+    ]
+    assert events[0]["event"] == "start"
+    assert events[0]["ref"] == "direct"
+
+
+def test_retention_records_exact_elapsed_days_once(_isolated, monkeypatch):
+    clock = [dt.datetime(2026, 8, 22, tzinfo=dt.timezone.utc)]
+    monkeypatch.setattr(bot, "utcnow", lambda: clock[0])
+    monkeypatch.setattr(bot, "ll_get", lambda *_args: {})
+
+    bot.handle(4242, "/start ng26_lab_176984_funding", "private")
+    bot.handle(4242, "/now", "private")
+    clock[0] += dt.timedelta(hours=25)
+    bot.handle(4242, "/letter", "private")
+    bot.handle(4242, "/now", "private")
+    clock[0] += dt.timedelta(days=6)
+    bot.handle(4242, "/tandem", "private")
+
+    state = bot.load_state("start_attribution.json", {})
+    record = next(iter(state.values()))
+    events = [
+        json.loads(line)
+        for line in (_isolated / "events.jsonl").read_text().splitlines()
+    ]
+
+    assert record["activation"] == "now"
+    assert record["active_days"] == [0, 1, 7]
+    assert [
+        row["day_index"] for row in events if row["event"] == "active_day"
+    ] == ["0", "1", "7"]
+    assert len([row for row in events if row["event"] == "activation"]) == 1
+    assert "4242" not in (_isolated / "events.jsonl").read_text()
+
+
+def test_growth_failures_do_not_suppress_start_or_useful_replies(
+        _isolated, monkeypatch, capsys):
+    sent = []
+    monkeypatch.setattr(
+        bot,
+        "send",
+        lambda _chat_id, text, *_args, **_kwargs: sent.append(text),
+    )
+    monkeypatch.setattr(
+        bot,
+        "_record_first_open",
+        lambda *_args: (_ for _ in ()).throw(OSError("analytics disk full")),
+    )
+
+    bot.handle(4242, "/start ng26_lab_176984_funding", "private")
+    assert (_isolated / "subscribers.json").is_file()
+    assert sent
+
+    monkeypatch.setattr(
+        bot,
+        "_record_activation",
+        lambda *_args: (_ for _ in ()).throw(OSError("analytics read-only")),
+    )
+    bot.handle(4242, "/now", "private")
+
+    assert len(sent) == 2
+    assert "cannot record first open" in capsys.readouterr().err
+
+
+def test_empty_ask_and_metadata_only_china_are_not_activations(
+        monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        bot,
+        "_safe_record_activation",
+        lambda _chat_id, command: calls.append(command),
+    )
+
+    bot.handle(4242, "/ask", "private")
+    bot.handle(4242, "/china", "private")
+
+    assert calls == []
 
 
 @pytest.mark.parametrize("chat_type", ["group", "supergroup", "channel"])
