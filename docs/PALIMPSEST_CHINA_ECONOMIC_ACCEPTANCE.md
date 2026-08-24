@@ -24,7 +24,7 @@ CFETS and ChinaMoney value rows remain hard denied.
    equals that commit. The manifest fields are self-declared metadata, not a
    GitHub signature. Independently inspect the GitHub API/run and the workflow's
    bundle attestation before proceeding. Verify the downloaded checksum subject
-   against the exact source commit and protected workflow:
+   against the exact source commit and release-reviewed workflow identity:
 
    ```bash
    gh attestation verify "$PALIMPSEST_SHA256SUMS_PATH" \
