@@ -307,7 +307,9 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     (nbs_state / "public" / "revisions").mkdir(parents=True)
     palimpsest_state = state.parent / "seiche-palimpsest-china"
     palimpsest_state.mkdir(mode=0o750)
+    palimpsest_state.chmod(0o750)
     (palimpsest_state / "receipts").mkdir(mode=0o700)
+    (palimpsest_state / "receipts").chmod(0o700)
     api_data = tmp_path / "app" / "backend" / "data"
     api_data.mkdir(parents=True)
     with sqlite3.connect(api_data / "seiche.sqlite") as database:
@@ -352,15 +354,19 @@ def _activate_palimpsest_state(
     state = Path(env["SEICHE_PALIMPSEST_CHINA_STATE_DIR"])
     config = tmp_path / "palimpsest-config"
     config.mkdir(mode=0o750)
+    config.chmod(0o750)
     dropin = tmp_path / "palimpsest-systemd" / "seiche-api.service.d"
     dropin.mkdir(parents=True)
+    dropin.chmod(0o755)
     locks = tmp_path / "palimpsest-locks"
     locks.mkdir(mode=0o700)
+    locks.chmod(0o700)
     deploy_lock = locks / "deploy.lock"
     deploy_lock.write_bytes(b"lock\n")
     deploy_lock.chmod(0o600)
     runtime = tmp_path / "palimpsest-runtime"
     runtime.mkdir()
+    runtime.chmod(0o755)
     sources_root = tmp_path / "palimpsest-operator"
     sources_root.mkdir(mode=0o700)
     sources = activation.BundleSources(

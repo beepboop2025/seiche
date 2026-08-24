@@ -181,6 +181,8 @@ def _activation_context(
         base,
         restore,
         edge_token=token,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
     )
     environment = cutover.production_environment(
         candidate_environment,
@@ -274,6 +276,8 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
         environment,
         request,
         platform_root=platform,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
     )
     bundle_root = platform / "recovery-snapshots" / str(request["snapshot_id"])
     assert {
@@ -398,6 +402,8 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
         environment,
         request,
         platform_root=platform,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
     )
     resumed_path, resumed_receipt = recovery.finalize_receipt(
         environment,
@@ -413,6 +419,58 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     )
     assert resumed_path == receipt_path
     assert resumed_receipt == receipt
+
+
+def test_recovery_restore_probe_propagates_production_runtime_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = migration.BackupBundle(
+        root=tmp_path / "bundle",
+        snapshot_id="20260824T010203Z",
+        source_revision="a" * 40,
+        inventory_sha256="b" * 64,
+        content_set_sha256="c" * 64,
+        member_sha256={},
+        counts_floor=(1, 2, 3, 4),
+        total_bytes=1,
+        schema=migration.BACKUP_SCHEMA,
+        palimpsest_china_state_audit={},
+    )
+    observed: dict[str, object] = {}
+
+    def restore(
+        received: migration.BackupBundle,
+        staging: Path,
+        *,
+        runtime_uid: int,
+        runtime_gid: int,
+    ) -> tuple[str, dict[str, str]]:
+        observed.update(
+            {
+                "bundle": received,
+                "staging_parent": staging.parent,
+                "runtime_uid": runtime_uid,
+                "runtime_gid": runtime_gid,
+            }
+        )
+        return "verified_head", {"palimpsest-china": "d" * 64}
+
+    monkeypatch.setattr(migration, "restore_filesystem_generation", restore)
+    result = recovery._restored_filesystem_identity(
+        bundle,
+        scratch_parent=tmp_path,
+        runtime_uid=10_001,
+        runtime_gid=10_001,
+    )
+
+    assert result == ("verified_head", {"palimpsest-china": "d" * 64})
+    assert observed == {
+        "bundle": bundle,
+        "staging_parent": tmp_path,
+        "runtime_uid": 10_001,
+        "runtime_gid": 10_001,
+    }
 
 
 class _Child:
@@ -441,7 +499,11 @@ def test_production_supervisor_orders_pause_export_restart_and_receipt(
         lambda _environment: request if "export" not in calls else None,
     )
 
-    def export(_environment: dict[str, str], _request: dict[str, str]) -> object:
+    def export(
+        _environment: dict[str, str],
+        _request: dict[str, str],
+        **_kwargs: object,
+    ) -> object:
         calls.append("export")
         return exported
 
@@ -490,7 +552,11 @@ def test_production_supervisor_does_not_receipt_after_api_exit(
         lambda _environment: request,
     )
 
-    def export(_environment: dict[str, str], _request: dict[str, str]) -> object:
+    def export(
+        _environment: dict[str, str],
+        _request: dict[str, str],
+        **_kwargs: object,
+    ) -> object:
         calls.append("export")
         api.code = 73
         return object()
@@ -534,7 +600,11 @@ def test_production_supervisor_does_not_restart_writers_after_export_and_api_fai
     api = _Child()
     monkeypatch.setattr(recovery, "next_pending_request", lambda _environment: request)
 
-    def export(_environment: dict[str, str], _request: dict[str, str]) -> object:
+    def export(
+        _environment: dict[str, str],
+        _request: dict[str, str],
+        **_kwargs: object,
+    ) -> object:
         calls.append("export")
         api.code = 79
         raise RuntimeError("simultaneous export and API failure")

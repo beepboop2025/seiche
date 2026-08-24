@@ -668,7 +668,12 @@ def restore_candidate(
                 fence=fence,
                 railway=railway,
             )
-            migration.validate_receipted_generation(generation_path, receipt)
+            migration.validate_receipted_generation(
+                generation_path,
+                receipt,
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
+            )
             dsn = migration._target_dsn(base_dsn, receipt["database"]["name"])
             if migration.inspect_postgres_counts(dsn) != tuple(
                 receipt["database"]["critical_table_counts"]
@@ -749,6 +754,8 @@ def candidate_environment(
     restore: CutoverRestore,
     *,
     edge_token: str,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> dict[str, str]:
     receipt = restore.receipt
     generation = str(receipt["filesystem"]["generation"])
@@ -812,7 +819,11 @@ def candidate_environment(
     )
     try:
         environment.update(
-            migration.palimpsest_runtime_environment(root / "palimpsest-china")
+            migration.palimpsest_runtime_environment(
+                root / "palimpsest-china",
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
+            )
         )
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
@@ -1445,7 +1456,12 @@ def _serve_production(
                 break
             writers_stopped_at = migration._iso_now()
             try:
-                exported = recovery.export_snapshot(production, request)
+                exported = recovery.export_snapshot(
+                    production,
+                    request,
+                    runtime_uid=migration.RUNTIME_UID,
+                    runtime_gid=migration.RUNTIME_GID,
+                )
             except Exception as exc:  # noqa: BLE001 - retain production, retry on restart
                 if stopping:
                     break
@@ -1747,12 +1763,16 @@ def run(
         platform_root=platform_root,
         base_dsn=base_dsn,
         railway=railway,
+        runtime_uid=migration.RUNTIME_UID,
+        runtime_gid=migration.RUNTIME_GID,
     )
     edge_token = os.environ.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     environment = candidate_environment(
         os.environ,
         restore,
         edge_token=edge_token,
+        runtime_uid=migration.RUNTIME_UID,
+        runtime_gid=migration.RUNTIME_GID,
     )
     validate_candidate_runtime(environment)
     _prepare_authority_directory(grant_path.parent)

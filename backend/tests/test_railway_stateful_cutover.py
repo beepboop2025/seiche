@@ -545,6 +545,7 @@ def test_production_receipt_preserves_irreversible_authority_boundary(
 
 def test_candidate_environment_drops_control_database_and_tokens(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fence_value, _request_value, receipt = _candidate(tmp_path)
     generation = str(receipt["filesystem"]["generation"])
@@ -555,6 +556,28 @@ def test_candidate_environment_drops_control_database_and_tokens(
         database_dsn="postgresql://generation-only",
         receipt_path=migration.PLATFORM_ROOT / "cutover-receipts" / "candidate.json",
         generation_path=generation_path,
+    )
+    observed: dict[str, object] = {}
+
+    def palimpsest_environment(
+        state_root: Path,
+        *,
+        runtime_uid: int,
+        runtime_gid: int,
+    ) -> dict[str, str]:
+        observed.update(
+            {
+                "state_root": state_root,
+                "runtime_uid": runtime_uid,
+                "runtime_gid": runtime_gid,
+            }
+        )
+        return {}
+
+    monkeypatch.setattr(
+        migration,
+        "palimpsest_runtime_environment",
+        palimpsest_environment,
     )
     environment = cutover.candidate_environment(
         {
@@ -569,6 +592,11 @@ def test_candidate_environment_drops_control_database_and_tokens(
     assert "RAILWAY_TOKEN" not in environment
     assert environment["SEICHE_DATABASE_URL"] == "postgresql://generation-only"
     assert environment["SEICHE_RAILWAY_STATEFUL_MODE"] == "cutover_candidate"
+    assert observed == {
+        "state_root": generation_path / "palimpsest-china",
+        "runtime_uid": 10_001,
+        "runtime_gid": 10_001,
+    }
 
 
 def test_healthz_distinguishes_candidate_from_production(
@@ -845,7 +873,11 @@ def test_expired_cutover_restart_uses_durable_grant_state(
     monkeypatch.setattr(
         migration, "validate_bundle", lambda *_args, **_kwargs: object()
     )
-    monkeypatch.setattr(migration, "palimpsest_runtime_environment", lambda _root: {})
+    monkeypatch.setattr(
+        migration,
+        "palimpsest_runtime_environment",
+        lambda _root, **_kwargs: {},
+    )
     monkeypatch.setattr(cutover, "restore_candidate", lambda *_args, **_kwargs: restore)
     monkeypatch.setattr(cutover, "_prepare_authority_directory", lambda _path: None)
     calls: list[str] = []

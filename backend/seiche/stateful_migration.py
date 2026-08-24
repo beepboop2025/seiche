@@ -735,8 +735,8 @@ def restore_filesystem_generation(
                 palimpsest,
                 root_uid=os.geteuid(),
                 root_gid=os.getegid(),
-                api_uid=os.geteuid(),
-                api_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
                 normalize_restored=True,
                 declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
             )
@@ -753,6 +753,33 @@ def restore_filesystem_generation(
         palimpsest = palimpsest_stage / "seiche-palimpsest-china"
         palimpsest.mkdir(mode=0o750)
         (palimpsest / "receipts").mkdir(mode=0o700)
+        try:
+            from seiche.palimpsest_china_activation import audit_activation_state
+
+            palimpsest_audit = audit_activation_state(
+                palimpsest,
+                root_uid=os.geteuid(),
+                root_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
+                normalize_restored=True,
+                declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+            )
+        except Exception as exc:
+            raise MigrationContractError(
+                "legacy Palimpsest China activation-state normalization failed"
+            ) from exc
+        if any(
+            (
+                palimpsest_audit["bundles"],
+                palimpsest_audit["receipts"],
+                palimpsest_audit["active_activation_id"],
+                palimpsest_audit["pending_candidate_activation_id"],
+            )
+        ):
+            raise MigrationContractError(
+                "legacy Palimpsest China activation state is not empty"
+            )
     market = state_stage / "seiche"
     nbs = state_stage / "seiche-nbs"
     api_data = api_stage / "api-data"
@@ -1221,6 +1248,9 @@ def _write_receipt(path: Path, document: Mapping[str, Any], *, gid: int) -> None
 def validate_receipted_generation(
     generation_path: Path,
     receipt: Mapping[str, Any],
+    *,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
 ) -> None:
     if not generation_path.is_dir() or generation_path.is_symlink():
         raise MigrationContractError("accepted shadow generation is missing")
@@ -1244,8 +1274,8 @@ def validate_receipted_generation(
             generation_path / "palimpsest-china",
             root_uid=os.geteuid(),
             root_gid=os.getegid(),
-            api_uid=os.geteuid(),
-            api_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
             declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
         )
     except Exception as exc:
@@ -1266,7 +1296,12 @@ def validate_receipted_generation(
         )
 
 
-def palimpsest_runtime_environment(state_root: Path) -> dict[str, str]:
+def palimpsest_runtime_environment(
+    state_root: Path,
+    *,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
+) -> dict[str, str]:
     """Render runtime paths only from one fully audited restored state tree."""
 
     try:
@@ -1276,16 +1311,16 @@ def palimpsest_runtime_environment(state_root: Path) -> dict[str, str]:
             state_root,
             root_uid=os.geteuid(),
             root_gid=os.getegid(),
-            api_uid=os.geteuid(),
-            api_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
             declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
         )
         paths = activation._activation_audit_paths(
             state_root,
             root_uid=os.geteuid(),
             root_gid=os.getegid(),
-            api_uid=os.geteuid(),
-            api_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
         )
         loaded = activation._read_active(
             paths,
@@ -1347,7 +1382,12 @@ def restore_shadow(
             request=request,
             railway=railway,
         )
-        validate_receipted_generation(generation_path, receipt)
+        validate_receipted_generation(
+            generation_path,
+            receipt,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        )
         target_dsn = _target_dsn(base_dsn, receipt["database"]["name"])
         if inspect_postgres_counts(target_dsn) != tuple(
             receipt["database"]["critical_table_counts"]
@@ -1400,6 +1440,8 @@ def runtime_environment(
     *,
     database_dsn: str,
     receipt_path: Path,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
 ) -> dict[str, str]:
     generation = str(receipt["filesystem"]["generation"])
     root = PLATFORM_ROOT / "generations" / generation
@@ -1453,7 +1495,13 @@ def runtime_environment(
             "SEICHE_SOURCE_HEARTBEAT_REQUIRED": "0",
         }
     )
-    environment.update(palimpsest_runtime_environment(root / "palimpsest-china"))
+    environment.update(
+        palimpsest_runtime_environment(
+            root / "palimpsest-china",
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        )
+    )
     return environment
 
 
@@ -1562,6 +1610,8 @@ def run_shadow() -> int:
         platform_root=platform_root,
         base_dsn=base_dsn,
         railway=railway,
+        runtime_uid=RUNTIME_UID,
+        runtime_gid=RUNTIME_GID,
     )
     receipt_path = platform_root / "receipts" / f"{request['request_id']}.json"
     environment = runtime_environment(
@@ -1569,6 +1619,8 @@ def run_shadow() -> int:
         receipt,
         database_dsn=database_dsn,
         receipt_path=receipt_path,
+        runtime_uid=RUNTIME_UID,
+        runtime_gid=RUNTIME_GID,
     )
     validate_runtime_receipt(environment)
     print(

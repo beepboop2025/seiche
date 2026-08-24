@@ -11,6 +11,8 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -68,6 +70,210 @@ def test_launcher_recreates_boot_lost_deploy_lock_and_holds_it(
         if contender >= 0:
             os.close(contender)
         os.close(descriptor)
+
+
+def _market_lock_fixture(launcher: object, tmp_path: Path) -> Path:
+    lock_root = tmp_path / "run-lock"
+    lock_root.mkdir(mode=0o775)
+    lock_root.chmod(0o775)
+    target = lock_root / "seiche-market-backup.lock"
+    launcher.MARKET_LOCK = target  # type: ignore[attr-defined]
+    return target
+
+
+def test_launcher_recreates_boot_lost_market_lock_and_validates_inherited_owner(
+    tmp_path: Path,
+) -> None:
+    launcher = _load_launcher()
+    target = _market_lock_fixture(launcher, tmp_path)
+
+    descriptor = launcher._open_market_lock(  # type: ignore[attr-defined]
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+    try:
+        metadata = target.stat()
+        assert stat.S_IMODE(metadata.st_mode) == 0o600
+        assert metadata.st_nlink == 1
+        launcher._validate_inherited_market_lock(  # type: ignore[attr-defined]
+            descriptor,
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+    finally:
+        os.close(descriptor)
+
+
+def test_launcher_tolerates_safe_concurrent_market_lock_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _load_launcher()
+    target = _market_lock_fixture(launcher, tmp_path)
+    real_open = os.open
+    raced = False
+
+    def racing_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal raced
+        if path == target.name and flags & os.O_EXCL and not raced:
+            competing = real_open(
+                path,
+                os.O_RDWR | os.O_NOFOLLOW | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=dir_fd,
+            )
+            os.fsync(competing)
+            os.close(competing)
+            raced = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(launcher.os, "open", racing_open)  # type: ignore[attr-defined]
+    descriptor = launcher._open_market_lock(  # type: ignore[attr-defined]
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+    try:
+        assert raced is True
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        assert target.stat().st_nlink == 1
+    finally:
+        os.close(descriptor)
+
+
+def test_launcher_rejects_unlocked_or_wrong_inode_market_descriptor(
+    tmp_path: Path,
+) -> None:
+    launcher = _load_launcher()
+    target = _market_lock_fixture(launcher, tmp_path)
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    unlocked = os.open(target, os.O_RDWR | os.O_NOFOLLOW)
+    wrong = _write(tmp_path / "wrong-market.lock", b"")
+    wrong_descriptor = os.open(wrong, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(launcher.LaunchError, match="not already exclusive"):  # type: ignore[attr-defined]
+            launcher._validate_inherited_market_lock(  # type: ignore[attr-defined]
+                unlocked,
+                expected_uid=os.getuid(),
+                expected_gid=os.getgid(),
+            )
+        fcntl.flock(wrong_descriptor, fcntl.LOCK_EX)
+        with pytest.raises(launcher.LaunchError, match="metadata is unsafe"):  # type: ignore[attr-defined]
+            launcher._validate_inherited_market_lock(  # type: ignore[attr-defined]
+                wrong_descriptor,
+                expected_uid=os.getuid(),
+                expected_gid=os.getgid(),
+            )
+    finally:
+        os.close(unlocked)
+        os.close(wrong_descriptor)
+
+
+@pytest.mark.parametrize("unsafe", ("writable", "symlink"))
+def test_launcher_rejects_unsafe_recreated_market_lock(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    launcher = _load_launcher()
+    target = _market_lock_fixture(launcher, tmp_path)
+    if unsafe == "writable":
+        target.write_bytes(b"")
+        target.chmod(0o644)
+    else:
+        target.symlink_to(tmp_path / "attacker-market-lock")
+
+    with pytest.raises(launcher.LaunchError):  # type: ignore[attr-defined]
+        launcher._open_market_lock(  # type: ignore[attr-defined]
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+
+
+def test_backup_audit_never_waits_on_deploy_while_deploy_waits_on_market(
+    tmp_path: Path,
+) -> None:
+    launcher = _load_launcher()
+    target = _market_lock_fixture(launcher, tmp_path)
+    deploy = tmp_path / "deploy.lock"
+    deploy.write_bytes(b"")
+    deploy.chmod(0o600)
+    ready = tmp_path / "deploy-ready"
+    proceed = tmp_path / "deploy-proceed"
+    finished = tmp_path / "deploy-finished"
+    program = """
+import fcntl
+import os
+from pathlib import Path
+import sys
+import time
+
+deploy, market, ready, proceed, finished = map(Path, sys.argv[1:])
+deploy_fd = os.open(deploy, os.O_RDWR | os.O_NOFOLLOW)
+market_fd = -1
+try:
+    fcntl.flock(deploy_fd, fcntl.LOCK_EX)
+    ready.write_text("ready")
+    while not proceed.exists():
+        time.sleep(0.01)
+    market_fd = os.open(market, os.O_RDWR | os.O_NOFOLLOW)
+    fcntl.flock(market_fd, fcntl.LOCK_EX)
+    finished.write_text("finished")
+finally:
+    if market_fd >= 0:
+        os.close(market_fd)
+    os.close(deploy_fd)
+"""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(deploy),
+            str(target),
+            str(ready),
+            str(proceed),
+            str(finished),
+        ]
+    )
+    descriptor = -1
+    try:
+        for _ in range(300):
+            if ready.exists():
+                break
+            if process.poll() is not None:
+                raise AssertionError("deploy contender exited before taking its lock")
+            time.sleep(0.01)
+        assert ready.exists()
+        descriptor = launcher._open_market_lock(  # type: ignore[attr-defined]
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+        launcher._validate_inherited_market_lock(  # type: ignore[attr-defined]
+            descriptor,
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+        proceed.write_text("go")
+        time.sleep(0.1)
+        assert process.poll() is None
+        assert not finished.exists()
+        os.close(descriptor)
+        descriptor = -1
+        process.wait(timeout=3)
+        assert process.returncode == 0
+        assert finished.read_text() == "finished"
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 def test_launcher_tolerates_safe_concurrent_deploy_lock_creation(
@@ -151,16 +357,22 @@ def _paths(tmp_path: Path) -> activation.ActivationPaths:
     uid, gid = os.getuid(), os.getgid()
     state = tmp_path / "state"
     state.mkdir(mode=0o750)
+    state.chmod(0o750)
     (state / "receipts").mkdir(mode=0o700)
+    (state / "receipts").chmod(0o700)
     environment = tmp_path / "etc"
     environment.mkdir(mode=0o750)
+    environment.chmod(0o750)
     dropin = tmp_path / "systemd" / "seiche-api.service.d"
     dropin.mkdir(parents=True, mode=0o755)
+    dropin.chmod(0o755)
     lock_root = tmp_path / "locks"
     lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
     deploy_lock = _write(lock_root / "deploy.lock", b"lock\n")
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o755)
+    runtime.chmod(0o755)
     return activation.ActivationPaths(
         state_root=state,
         env_file=environment / "palimpsest-china.env",
@@ -1169,7 +1381,13 @@ def test_installer_and_launcher_are_inert_and_release_addressed() -> None:
     assert 'DEPLOY_LOCK = Path("/run/seiche-deploy/deploy.lock")' in launcher
     assert "_validate_runtime(release_sha)" in launcher
     assert 'minimum=0 if name == "__init__.py" else 1' in launcher
-    assert "deploy_lock_descriptor=lock" in launcher
+    assert "deploy_lock_descriptor=deploy_lock" in launcher
+    assert 'MARKET_LOCK = Path("/run/lock/seiche-market-backup.lock")' in launcher
+    assert "--run-market-locked" in launcher
+    assert "_inherited_market_lock()" in launcher
+    assert launcher.index("deploy_lock = _open_deploy_lock()") < launcher.index(
+        "market_lock = _open_market_lock()"
+    )
     assert "BundleSources(*sources)" in launcher
     assert "len(arguments) != len(_SOURCE_LABELS)" in launcher
 

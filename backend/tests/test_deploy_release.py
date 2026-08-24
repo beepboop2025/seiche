@@ -3250,8 +3250,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "/usr/bin/setpriv is required" in installer
     assert "ReadWritePaths=$BACKUP_DIR" in installer
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
-    assert "ExecStart=/usr/bin/flock --wait 300" in backup
-    assert "seiche-market-backup.sh" in backup
+    assert (
+        "ExecStart=/etc/seiche/libexec/seiche-palimpsest-china-activate.py "
+        "--run-market-locked backup" in backup
+    )
+    assert "ExecStart=/usr/bin/flock" not in backup
     assert "mountpoint -q" in backup_script
     assert '"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"' in backup_script
     assert "cp -a --" not in backup_script
@@ -3287,8 +3290,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
     assert "RandomizedDelaySec=10m" in backup_timer
     assert "Persistent=true" in backup_timer
-    assert "ExecStart=/usr/bin/flock --wait 300" in restore
-    assert "seiche-market-restore-check.sh" in restore
+    assert (
+        "ExecStart=/etc/seiche/libexec/seiche-palimpsest-china-activate.py "
+        "--run-market-locked restore" in restore
+    )
+    assert "ExecStart=/usr/bin/flock" not in restore
     assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
     assert (
         "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock "

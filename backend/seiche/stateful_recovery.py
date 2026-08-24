@@ -467,6 +467,8 @@ def _restored_filesystem_identity(
     bundle: migration.BackupBundle,
     *,
     scratch_parent: Path,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> tuple[str, Mapping[str, str]]:
     scratch = Path(tempfile.mkdtemp(prefix=".recovery-inspect.", dir=scratch_parent))
     try:
@@ -474,8 +476,8 @@ def _restored_filesystem_identity(
             return migration.restore_filesystem_generation(
                 bundle,
                 scratch,
-                runtime_uid=os.geteuid(),
-                runtime_gid=os.getegid(),
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
             )
         except migration.MigrationContractError as exc:
             raise RecoveryContractError(str(exc)) from exc
@@ -489,6 +491,8 @@ def export_snapshot(
     request: Mapping[str, Any],
     *,
     platform_root: Path | None = None,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> RecoveryExport:
     root = platform_root or migration.PLATFORM_ROOT
     _activation_body, activation = activation_context(environment)
@@ -509,6 +513,8 @@ def export_snapshot(
         nbs_result, tree_digests = _restored_filesystem_identity(
             bundle,
             scratch_parent=snapshots,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
         )
         return RecoveryExport(
             bundle,
@@ -536,8 +542,8 @@ def export_snapshot(
                 palimpsest,
                 root_uid=os.geteuid(),
                 root_gid=os.getegid(),
-                api_uid=os.geteuid(),
-                api_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
                 declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
             )
             tree_digests = {

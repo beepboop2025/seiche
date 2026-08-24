@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import tarfile
 from datetime import UTC, datetime, timedelta
 
@@ -446,7 +447,11 @@ def test_active_palimpsest_state_restores_and_renders_exact_runtime_paths(
     )
     restored_state = staging / "generation" / "palimpsest-china"
 
-    environment = migration.palimpsest_runtime_environment(restored_state)
+    environment = migration.palimpsest_runtime_environment(
+        restored_state,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
 
     bundle_id = str(activated["active"]["bundle_id"])
     assert set(environment) == {
@@ -456,7 +461,101 @@ def test_active_palimpsest_state_restores_and_renders_exact_runtime_paths(
         spec.environment: str(restored_state / bundle_id / spec.filename)
         for spec in activation._BUNDLE_FILE_SPECS
     }
+    assert len(environment) == 11
+    generation = restored_state.parent
+    installed_bundle = restored_state / bundle_id
+    for directory in (generation, restored_state, installed_bundle):
+        metadata = directory.stat()
+        assert metadata.st_gid == os.getegid()
+        assert stat.S_IMODE(metadata.st_mode) & 0o050 == 0o050
+    for value in environment.values():
+        metadata = Path(value).stat()
+        assert metadata.st_gid == os.getegid()
+        assert stat.S_IMODE(metadata.st_mode) == 0o440
+
+    wrong_gid = os.getegid() + 1
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="runtime state is invalid",
+    ):
+        migration.palimpsest_runtime_environment(
+            restored_state,
+            runtime_uid=os.geteuid(),
+            runtime_gid=wrong_gid,
+        )
     assert len(digests) == 4
+
+
+def test_restore_propagates_production_runtime_identity_to_palimpsest_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
+    state, _activated = _active_palimpsest_state(tmp_path, monkeypatch)
+    _replace_bundle_palimpsest_state(root, state, request)
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "production-identity-staging"
+    staging.mkdir()
+    real_audit = activation.audit_activation_state
+    real_chown = os.chown
+    local_uid = os.geteuid()
+    local_gid = os.getegid()
+    observed: list[tuple[int, int, int, int, bool]] = []
+
+    def bridge_audit(
+        state_root: Path,
+        *,
+        root_uid: int,
+        root_gid: int,
+        api_uid: int,
+        api_gid: int,
+        normalize_restored: bool = False,
+        declared_state_root: Path | None = None,
+    ) -> dict[str, object]:
+        observed.append((root_uid, root_gid, api_uid, api_gid, normalize_restored))
+        # A non-root test runner cannot chown to Railway's production identity.
+        # Preserve the real normalization and full audit under the local IDs
+        # after recording the exact production boundary passed by migration.
+        return real_audit(
+            state_root,
+            root_uid=local_uid,
+            root_gid=local_gid,
+            api_uid=local_uid,
+            api_gid=local_gid,
+            normalize_restored=normalize_restored,
+            declared_state_root=declared_state_root,
+        )
+
+    monkeypatch.setattr(activation, "audit_activation_state", bridge_audit)
+
+    def bridge_chown(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        _uid: int,
+        _gid: int,
+        *,
+        follow_symlinks: bool = True,
+    ) -> None:
+        real_chown(
+            path,
+            local_uid,
+            local_gid,
+            follow_symlinks=follow_symlinks,
+        )
+
+    # Exercise the production root-supervisor/10001-child call graph without
+    # requiring the portable test runner to possess CAP_CHOWN.
+    monkeypatch.setattr(migration.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(migration.os, "getegid", lambda: 0)
+    monkeypatch.setattr(migration.os, "chown", bridge_chown)
+    monkeypatch.setattr(migration, "_audit_nbs", lambda _root: "not_onboarded")
+    migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=10_001,
+        runtime_gid=10_001,
+    )
+
+    assert observed == [(0, 0, 10_001, 10_001, True)]
 
 
 def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) -> None:
@@ -546,6 +645,8 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
         receipt,
         database_dsn=database.dsn,
         receipt_path=platform / "receipts" / "c.json",
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
     )
 
     assert "RAILWAY_TOKEN" not in environment
@@ -619,11 +720,21 @@ def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
         completed_at="2026-08-23T02:03:00Z",
     )
     generation = staging / "generation"
-    migration.validate_receipted_generation(generation, receipt)
+    migration.validate_receipted_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
     (generation / "market" / "raw" / "fixture.bin").write_bytes(b"changed\n")
 
     with pytest.raises(migration.MigrationContractError, match="digest changed"):
-        migration.validate_receipted_generation(generation, receipt)
+        migration.validate_receipted_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
 
 
 def test_receipt_writer_handles_partial_os_writes(
