@@ -33,10 +33,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.12"
+
       - name: Fetch the exact declared release tag
         run: |
           set -euo pipefail
-          version="$(python3 -I -S - <<'PY'
+          version="$(python -I -S - <<'PY'
           import json
           from pathlib import Path
 
@@ -51,7 +55,7 @@ jobs:
         env:
           RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
         run: >-
-          python3 -I -S ops/release/verify_catalog_publication.py
+          python -I -S ops/release/verify_catalog_publication.py
           --root .
           --expected-sha "$GITHUB_SHA"
           --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"

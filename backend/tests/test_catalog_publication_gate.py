@@ -162,6 +162,10 @@ def test_both_static_publishers_gate_before_their_first_public_write():
     assert full.index(marker) < full.index("Publish to GitHub Pages (seiche-site)")
     for workflow in (fast, full):
         assert "fetch-depth: 0" in workflow
+        assert (
+            "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in workflow
+        )
+        assert 'python-version: "3.12.12"' in workflow
         assert "ops/release/verify_catalog_publication.py" in workflow
         assert '--expected-sha "$GITHUB_SHA"' in workflow
         assert '--signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"' in workflow
