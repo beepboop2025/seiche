@@ -8,7 +8,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     PATH=/opt/postgresql/17/bin:$PATH
 
-# The PostgreSQL client performs the closed backup-v3 restore. Git preserves
+# The PostgreSQL client performs the closed backup-v4 restore. Git preserves
 # the real candidate commit identity for Seiche's runtime release check; tini
 # gives the root supervisor correct signal and child-reaping behavior.
 RUN printf '%s\n' \

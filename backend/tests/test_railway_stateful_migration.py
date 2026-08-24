@@ -10,12 +10,13 @@ import os
 from pathlib import Path
 import sqlite3
 import tarfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import Response
 
 from seiche import api
+from seiche import palimpsest_china_activation as activation
 from seiche import stateful_migration as migration
 
 
@@ -76,6 +77,8 @@ def _base_request(source_archive: Path, source_bundle: Path) -> dict[str, object
 
 def _bundle_fixture(
     tmp_path: Path,
+    *,
+    schema: str = migration.BACKUP_SCHEMA,
 ) -> tuple[Path, Path, Path, dict[str, object]]:
     source_archive, source_bundle = _source_files(tmp_path)
     request = _base_request(source_archive, source_bundle)
@@ -108,29 +111,173 @@ def _bundle_fixture(
             ("api-data/fixture.json", b"{}\n", 0o640),
         ],
     )
+    members = migration._BACKUP_MEMBERS
+    manifest_fields = [
+        f"schema={schema}",
+        "created_at=20260823T010203Z",
+        "database=seiche",
+        "postgres_port=5432",
+        "state_root=/var/lib/seiche",
+        "nbs_state_root=/var/lib/seiche-nbs",
+        "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1",
+        "nbs_full_store_audit_result=required_at_restore",
+        "api_data_root=/home/seiche/app/backend/data",
+        "critical_table_count_semantics=pre_dump_lower_bound",
+    ]
+    if schema == migration.BACKUP_SCHEMA:
+        palimpsest = tmp_path / "palimpsest-state"
+        palimpsest.mkdir(mode=0o750)
+        (palimpsest / "receipts").mkdir(mode=0o700)
+        audit = activation.audit_activation_state(
+            palimpsest,
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=os.geteuid(),
+            api_gid=os.getegid(),
+            declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+        )
+        _tar_directory(
+            root / "palimpsest-china.tgz",
+            [
+                ("seiche-palimpsest-china", None, 0o750),
+                ("seiche-palimpsest-china/receipts", None, 0o700),
+            ],
+        )
+        (root / "palimpsest-china-state.json").write_bytes(
+            migration.canonical_document(audit)
+        )
+        manifest_fields.extend(
+            (
+                "palimpsest_china_state_root=/var/lib/seiche-palimpsest-china",
+                "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1",
+                "palimpsest_china_state_audit_result=required_at_restore",
+            )
+        )
+    elif schema == migration.LEGACY_BACKUP_SCHEMA:
+        members = migration._LEGACY_BACKUP_MEMBERS
+    else:
+        raise AssertionError("unsupported fixture schema")
+    manifest_fields.extend(
+        ("research_only=true", "can_publish=false", "can_execute=false")
+    )
     (root / "seiche.dump").write_bytes(b"PGDMP fixture bytes\n")
     (root / "table-counts.txt").write_text("10|20|30|40\n", encoding="ascii")
     (root / "deployed-sha.txt").write_text("a" * 40 + "\n", encoding="ascii")
     (root / "manifest.env").write_text(
-        "\n".join(
-            (
-                "schema=seiche.market-backup.v3",
-                "created_at=20260823T010203Z",
-                "database=seiche",
-                "postgres_port=5432",
-                "state_root=/var/lib/seiche",
-                "nbs_state_root=/var/lib/seiche-nbs",
-                "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1",
-                "nbs_full_store_audit_result=required_at_restore",
-                "api_data_root=/home/seiche/app/backend/data",
-                "critical_table_count_semantics=pre_dump_lower_bound",
-                "research_only=true",
-                "can_publish=false",
-                "can_execute=false",
-            )
-        )
-        + "\n",
+        "\n".join(manifest_fields) + "\n",
         encoding="utf-8",
+    )
+    digests = {name: migration.sha256_file(root / name) for name in members}
+    inventory = "".join(f"{digests[name]}  {name}\n" for name in members).encode(
+        "ascii"
+    )
+    (root / "SHA256SUMS").write_bytes(inventory)
+    content = hashlib.sha256()
+    for name in members:
+        size = (root / name).stat().st_size
+        content.update(name.encode("ascii") + b"\0")
+        content.update(digests[name].encode("ascii") + b"\0")
+        content.update(str(size).encode("ascii") + b"\n")
+    request["source_inventory_sha256"] = hashlib.sha256(inventory).hexdigest()
+    request["source_content_set_sha256"] = content.hexdigest()
+    return root, source_archive, source_bundle, request
+
+
+def _active_palimpsest_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, dict[str, object]]:
+    state = tmp_path / "active-palimpsest-state"
+    state.mkdir(mode=0o750)
+    (state / "receipts").mkdir(mode=0o700)
+    config = tmp_path / "active-palimpsest-config"
+    config.mkdir(mode=0o750)
+    dropin = tmp_path / "active-palimpsest-systemd" / "seiche-api.service.d"
+    dropin.mkdir(parents=True)
+    locks = tmp_path / "active-palimpsest-locks"
+    locks.mkdir(mode=0o700)
+    deploy_lock = locks / "deploy.lock"
+    deploy_lock.write_bytes(b"lock\n")
+    deploy_lock.chmod(0o600)
+    runtime = tmp_path / "active-palimpsest-runtime"
+    runtime.mkdir()
+    sources_root = tmp_path / "active-palimpsest-sources"
+    sources_root.mkdir(mode=0o700)
+    sources = activation.BundleSources(
+        *(sources_root / spec.filename for spec in activation._BUNDLE_FILE_SPECS)
+    )
+    for name, path in sources.files().items():
+        path.write_bytes(f"stateful:{name}\n".encode())
+        path.chmod(0o600)
+    hashes = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in sources.files().items()
+    }
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    candidate = {
+        "schema": activation.CANDIDATE_SCHEMA,
+        "files": hashes,
+        "signer_key_id": "c" * 64,
+        "accepted_at": accepted_at.isoformat().replace("+00:00", "Z"),
+        "rights_expires_at": (accepted_at + timedelta(days=30))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "producer_repository": "beepboop2025/palimpsest",
+        "producer_sha": "b" * 40,
+        "producer_workflow_run_id": 100,
+    }
+    monkeypatch.setattr(
+        activation,
+        "_candidate_from_context",
+        lambda _sources, *, attest_dir=None: candidate,
+    )
+    result = activation.activate_bundle(
+        sources,
+        paths=activation.ActivationPaths(
+            state_root=state,
+            env_file=config / "palimpsest-china.env",
+            dropin_file=dropin / "palimpsest-china.conf",
+            deploy_lock=deploy_lock,
+            activation_lock=locks / "palimpsest-china.lock",
+            runtime_release=runtime,
+            release_sha="a" * 40,
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=os.geteuid(),
+            api_gid=os.getegid(),
+            api_url="http://127.0.0.1:18787",
+            python=Path(os.sys.executable),
+            portable=True,
+        ),
+    )
+    marker = dict(result["active"])
+    marker["receipt_path"] = (
+        f"/var/lib/seiche-palimpsest-china/receipts/{marker['activation_id']}.json"
+    )
+    (state / "active.json").chmod(0o600)
+    (state / "active.json").write_bytes(activation._canonical(marker))
+    (state / "active.json").chmod(0o400)
+    result = {**result, "active": marker}
+    return state, result
+
+
+def _replace_bundle_palimpsest_state(
+    root: Path,
+    state: Path,
+    request: dict[str, object],
+) -> None:
+    with tarfile.open(root / "palimpsest-china.tgz", mode="w:gz") as archive:
+        archive.add(state, arcname="seiche-palimpsest-china", recursive=True)
+    audit = activation.audit_activation_state(
+        state,
+        root_uid=os.geteuid(),
+        root_gid=os.getegid(),
+        api_uid=os.geteuid(),
+        api_gid=os.getegid(),
+        declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+    )
+    (root / "palimpsest-china-state.json").write_bytes(
+        migration.canonical_document(audit)
     )
     digests = {
         name: migration.sha256_file(root / name) for name in migration._BACKUP_MEMBERS
@@ -147,7 +294,6 @@ def _bundle_fixture(
         content.update(str(size).encode("ascii") + b"\n")
     request["source_inventory_sha256"] = hashlib.sha256(inventory).hexdigest()
     request["source_content_set_sha256"] = content.hexdigest()
-    return root, source_archive, source_bundle, request
 
 
 def _railway_identity() -> dict[str, str]:
@@ -163,7 +309,7 @@ def _railway_identity() -> dict[str, str]:
     }
 
 
-def test_request_and_backup_v3_bytes_are_bound_exactly(tmp_path: Path) -> None:
+def test_request_and_backup_v4_bytes_are_bound_exactly(tmp_path: Path) -> None:
     root, source_archive, source_bundle, request = _bundle_fixture(tmp_path)
     request_path = tmp_path / "request.json"
     request_path.write_bytes(migration.canonical_document(request))
@@ -179,6 +325,43 @@ def test_request_and_backup_v3_bytes_are_bound_exactly(tmp_path: Path) -> None:
     assert bundle.counts_floor == (10, 20, 30, 40)
     assert bundle.inventory_sha256 == request["source_inventory_sha256"]
     assert bundle.content_set_sha256 == request["source_content_set_sha256"]
+    assert bundle.schema == migration.BACKUP_SCHEMA
+    assert bundle.palimpsest_china_state_audit == {
+        "schema": activation.BACKUP_STATE_SCHEMA,
+        "state_root": "/var/lib/seiche-palimpsest-china",
+        "tree_sha256": bundle.palimpsest_china_state_audit["tree_sha256"],
+        "bundles": [],
+        "receipts": [],
+        "active_activation_id": None,
+        "pending_candidate_activation_id": None,
+    }
+
+
+def test_legacy_backup_v3_restores_an_empty_inactive_activation_state(
+    tmp_path: Path,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(
+        tmp_path,
+        schema=migration.LEGACY_BACKUP_SCHEMA,
+    )
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "legacy-staging"
+    staging.mkdir()
+
+    result, digests = migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+
+    assert result == "not_onboarded"
+    assert bundle.schema == migration.LEGACY_BACKUP_SCHEMA
+    assert bundle.palimpsest_china_state_audit is None
+    assert set(digests) == {"market", "nbs", "api", "palimpsest-china"}
+    restored = staging / "generation" / "palimpsest-china"
+    assert {entry.name for entry in restored.iterdir()} == {"receipts"}
+    assert list((restored / "receipts").iterdir()) == []
 
 
 def test_bundle_tampering_fails_before_restore(tmp_path: Path) -> None:
@@ -239,10 +422,41 @@ def test_filesystem_restore_runs_sqlite_and_full_nbs_audits(tmp_path: Path) -> N
     )
 
     assert result == "not_onboarded"
-    assert set(digests) == {"market", "nbs", "api"}
+    assert set(digests) == {"market", "nbs", "api", "palimpsest-china"}
     assert all(len(value) == 64 for value in digests.values())
     assert (staging / "generation" / "api" / "seiche.sqlite").is_file()
     assert (staging / "generation" / "market" / "raw" / "fixture.bin").is_file()
+
+
+def test_active_palimpsest_state_restores_and_renders_exact_runtime_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
+    state, activated = _active_palimpsest_state(tmp_path, monkeypatch)
+    _replace_bundle_palimpsest_state(root, state, request)
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "active-staging"
+    staging.mkdir()
+    _nbs_result, digests = migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    restored_state = staging / "generation" / "palimpsest-china"
+
+    environment = migration.palimpsest_runtime_environment(restored_state)
+
+    bundle_id = str(activated["active"]["bundle_id"])
+    assert set(environment) == {
+        spec.environment for spec in activation._BUNDLE_FILE_SPECS
+    }
+    assert environment == {
+        spec.environment: str(restored_state / bundle_id / spec.filename)
+        for spec in activation._BUNDLE_FILE_SPECS
+    }
+    assert len(digests) == 4
 
 
 def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) -> None:
@@ -262,7 +476,12 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
         bundle,
         database,
         generation_name=generation,
-        generation_digests={"market": "2" * 64, "nbs": "3" * 64, "api": "4" * 64},
+        generation_digests={
+            "market": "2" * 64,
+            "nbs": "3" * 64,
+            "api": "4" * 64,
+            "palimpsest-china": "5" * 64,
+        },
         nbs_audit_result="not_onboarded",
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
@@ -286,6 +505,7 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
 
 def test_child_environment_uses_one_generation_and_drops_control_tokens(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
     bundle = migration.validate_bundle(root, request)
@@ -300,12 +520,22 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
         bundle,
         database,
         generation_name=generation,
-        generation_digests={"market": "2" * 64, "nbs": "3" * 64, "api": "4" * 64},
+        generation_digests={
+            "market": "2" * 64,
+            "nbs": "3" * 64,
+            "api": "4" * 64,
+            "palimpsest-china": "5" * 64,
+        },
         nbs_audit_result="not_onboarded",
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
     )
+    platform = tmp_path / "platform"
+    monkeypatch.setattr(migration, "PLATFORM_ROOT", platform)
+    palimpsest = platform / "generations" / generation / "palimpsest-china"
+    palimpsest.mkdir(parents=True, mode=0o750)
+    (palimpsest / "receipts").mkdir(mode=0o700)
     environment = migration.runtime_environment(
         {
             "PORT": "8080",
@@ -315,7 +545,7 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
         },
         receipt,
         database_dsn=database.dsn,
-        receipt_path=migration.PLATFORM_ROOT / "receipts" / "c.json",
+        receipt_path=platform / "receipts" / "c.json",
     )
 
     assert "RAILWAY_TOKEN" not in environment

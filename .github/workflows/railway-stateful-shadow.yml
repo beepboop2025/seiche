@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       snapshot_id:
-        description: "Committed backup-v3 snapshot, for example 20260823T010203Z"
+        description: "Committed backup-v4 snapshot, for example 20260823T010203Z"
         required: true
         type: string
       source_inventory_sha256:
@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       source_content_set_sha256:
-        description: "Backup-v3 closed content-set SHA-256"
+        description: "Backup-v4 closed content-set SHA-256"
         required: true
         type: string
       source_release_receipt_sha256:
@@ -239,7 +239,8 @@ jobs:
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
 
-          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt; do
+          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt \
+            palimpsest-china-state.json; do
             railway volume files download \
               --volume "$RAILWAY_VOLUME_ID" \
               "/inbox/$SNAPSHOT_ID/$member" \
@@ -250,6 +251,7 @@ jobs:
             EXPECTED_INVENTORY_SHA256="$EXPECTED_INVENTORY_SHA256" \
             METADATA_ROOT="$CONTROL_ROOT/metadata" python3 -I -S - <<'PY'
           import hashlib
+          import json
           import os
           from pathlib import Path
           import re
@@ -269,6 +271,16 @@ jobs:
           counts = (root / "table-counts.txt").read_text(encoding="ascii")
           if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\n", counts) is None:
               raise SystemExit("staged snapshot count floor is invalid")
+          palimpsest = json.loads(
+              (root / "palimpsest-china-state.json").read_bytes()
+          )
+          if (
+              palimpsest.get("schema")
+              != "seiche.palimpsest-china-activation-state.v1"
+              or palimpsest.get("state_root")
+              != "/var/lib/seiche-palimpsest-china"
+          ):
+              raise SystemExit("staged Palimpsest China state proof is invalid")
           PY
 
       - name: Deploy the exact shadow runtime

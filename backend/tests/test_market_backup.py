@@ -9,12 +9,14 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from seiche import nbs_intake as nbs
 from seiche import nbs_trust
+from seiche import palimpsest_china_activation as activation
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = ROOT / "ops" / "deploy" / "seiche-market-backup.sh"
@@ -124,7 +126,9 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         """
         import os
         from pathlib import Path
+        import shutil
         import sys
+        import tarfile
 
         if os.environ.get("FAKE_TAR_FAIL") == "1":
             raise SystemExit(9)
@@ -133,10 +137,20 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
             handle.write("tar " + " ".join(args) + "\\n")
         if "--create" in args:
             target = Path(args[args.index("--file") + 1])
-            prefix = b"api-data-archive" if target.name == "api-data.tgz" else b"state-archive"
-            target.write_bytes(prefix + b"-payload")
+            if target.name == "palimpsest-china.tgz":
+                source = Path(args[args.index("--directory") + 1]) / args[-1]
+                with tarfile.open(target, "w:gz") as archive:
+                    archive.add(source, arcname=source.name, recursive=True)
+            else:
+                prefix = b"api-data-archive" if target.name == "api-data.tgz" else b"state-archive"
+                target.write_bytes(prefix + b"-payload")
         elif "--list" in args:
             target = Path(args[args.index("--file") + 1])
+            if target.name == "palimpsest-china.tgz":
+                with tarfile.open(target, "r:gz") as archive:
+                    for member in archive.getmembers():
+                        print(member.name)
+                raise SystemExit(0)
             payload = target.read_bytes()
             if not payload.startswith((b"state-archive", b"api-data-archive")):
                 raise SystemExit(10)
@@ -148,7 +162,10 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         elif "--extract" in args:
             archive = Path(args[args.index("--file") + 1])
             target = Path(args[args.index("--directory") + 1])
-            if archive.read_bytes().startswith(b"api-data-archive"):
+            if archive.name == "palimpsest-china.tgz":
+                with tarfile.open(archive, "r:gz") as source:
+                    source.extractall(target, filter="data")
+            elif archive.read_bytes().startswith(b"api-data-archive"):
                 restored = target / "api-data"
                 restored.mkdir(parents=True)
                 import sqlite3
@@ -222,6 +239,36 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         print("5432")
         """,
     )
+    palimpsest_audit = _executable(
+        tools / "palimpsest-china-audit",
+        f"""
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        sys.path.insert(0, {str(ROOT / "backend")!r})
+        from seiche import palimpsest_china_activation as activation
+
+        if len(sys.argv) != 4 or sys.argv[1] != "--audit-state" or sys.argv[3] not in {{"0", "1"}}:
+            raise SystemExit(98)
+        counter_path = os.environ.get("FAKE_PALIMPSEST_AUDIT_CALLS")
+        if counter_path:
+            counter = Path(counter_path)
+            current = int(counter.read_text()) if counter.exists() else 0
+            counter.write_text(str(current + 1))
+        value = activation.audit_activation_state(
+            Path(sys.argv[2]),
+            root_uid=os.getuid(),
+            root_gid=os.getgid(),
+            api_uid=os.getuid(),
+            api_gid=os.getgid(),
+            normalize_restored=sys.argv[3] == "1",
+            declared_state_root=Path(os.environ["FAKE_PALIMPSEST_STATE_ROOT"]),
+        )
+        print(json.dumps(value, allow_nan=False, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        """,
+    )
     env = {
         **os.environ,
         "SEICHE_ALLOW_NON_ROOT_BACKUP_TEST": "1",
@@ -238,6 +285,8 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "SEICHE_SYNC_BIN": str(sync),
         "SEICHE_DATE_BIN": str(date),
         "SEICHE_PYTHON_BIN": sys.executable,
+        "SEICHE_CMP_BIN": "/usr/bin/cmp",
+        "SEICHE_PALIMPSEST_CHINA_AUDIT_BIN": str(palimpsest_audit),
         "SEICHE_BACKUP_MIN_DUMP_BYTES": "1",
         "FAKE_CALLS": str(calls),
     }
@@ -256,6 +305,9 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     nbs_state = state.parent / "seiche-nbs"
     (nbs_state / "restricted").mkdir(parents=True)
     (nbs_state / "public" / "revisions").mkdir(parents=True)
+    palimpsest_state = state.parent / "seiche-palimpsest-china"
+    palimpsest_state.mkdir(mode=0o750)
+    (palimpsest_state / "receipts").mkdir(mode=0o700)
     api_data = tmp_path / "app" / "backend" / "data"
     api_data.mkdir(parents=True)
     with sqlite3.connect(api_data / "seiche.sqlite") as database:
@@ -270,6 +322,7 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
         {
             "SEICHE_MARKET_STATE_DIR": str(state),
             "SEICHE_NBS_STATE_DIR": str(nbs_state),
+            "SEICHE_PALIMPSEST_CHINA_STATE_DIR": str(palimpsest_state),
             "SEICHE_API_DATA_DIR": str(api_data),
             "SEICHE_MARKET_BACKUP_DIR": str(backup),
             "SEICHE_DEPLOYED_SHA_PATH": str(marker),
@@ -279,6 +332,7 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
             ),
             "SEICHE_BACKUP_STAMP": "20260810T020000Z",
             "SEICHE_BACKUP_RETENTION_DAYS": "21",
+            "FAKE_PALIMPSEST_STATE_ROOT": str(palimpsest_state),
         }
     )
     return state, backup, marker
@@ -288,6 +342,76 @@ def _run(script: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(script)], env=env, text=True, capture_output=True, check=False
     )
+
+
+def _activate_palimpsest_state(
+    tmp_path: Path,
+    env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    state = Path(env["SEICHE_PALIMPSEST_CHINA_STATE_DIR"])
+    config = tmp_path / "palimpsest-config"
+    config.mkdir(mode=0o750)
+    dropin = tmp_path / "palimpsest-systemd" / "seiche-api.service.d"
+    dropin.mkdir(parents=True)
+    locks = tmp_path / "palimpsest-locks"
+    locks.mkdir(mode=0o700)
+    deploy_lock = locks / "deploy.lock"
+    deploy_lock.write_bytes(b"lock\n")
+    deploy_lock.chmod(0o600)
+    runtime = tmp_path / "palimpsest-runtime"
+    runtime.mkdir()
+    sources_root = tmp_path / "palimpsest-operator"
+    sources_root.mkdir(mode=0o700)
+    sources = activation.BundleSources(
+        *[
+            source
+            for spec in activation._BUNDLE_FILE_SPECS
+            for source in [sources_root / spec.filename]
+        ]
+    )
+    for name, source in sources.files().items():
+        source.write_bytes(f"fixture:{name}\n".encode())
+        source.chmod(0o600)
+    hashes = {
+        name: hashlib.sha256(source.read_bytes()).hexdigest()
+        for name, source in sources.files().items()
+    }
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    candidate = {
+        "schema": activation.CANDIDATE_SCHEMA,
+        "files": hashes,
+        "signer_key_id": "c" * 64,
+        "accepted_at": accepted_at.isoformat().replace("+00:00", "Z"),
+        "rights_expires_at": (accepted_at + timedelta(days=30))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "producer_repository": "beepboop2025/palimpsest",
+        "producer_sha": "b" * 40,
+        "producer_workflow_run_id": 100,
+    }
+    monkeypatch.setattr(
+        activation,
+        "_candidate_from_context",
+        lambda _sources, *, attest_dir=None: candidate,
+    )
+    paths = activation.ActivationPaths(
+        state_root=state,
+        env_file=config / "palimpsest-china.env",
+        dropin_file=dropin / "palimpsest-china.conf",
+        deploy_lock=deploy_lock,
+        activation_lock=locks / "palimpsest-china.lock",
+        runtime_release=runtime,
+        release_sha="a" * 40,
+        root_uid=os.getuid(),
+        root_gid=os.getgid(),
+        api_uid=os.getuid(),
+        api_gid=os.getgid(),
+        api_url="http://127.0.0.1:18787",
+        python=Path(sys.executable),
+        portable=True,
+    )
+    return activation.activate_bundle(sources, paths=paths)
 
 
 def _rewrite_manifest_and_inventory(
@@ -519,12 +643,23 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
         "seiche.dump",
         "table-counts.txt",
         "var-lib-seiche.tgz",
+        "palimpsest-china.tgz",
+        "palimpsest-china-state.json",
     }
     manifest = (snapshot / "manifest.env").read_text()
-    assert "schema=seiche.market-backup.v3" in manifest
+    assert "schema=seiche.market-backup.v4" in manifest
     assert f"nbs_state_root={env['SEICHE_NBS_STATE_DIR']}" in manifest
     assert "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" in manifest
     assert "nbs_full_store_audit_result=required_at_restore" in manifest
+    assert (
+        f"palimpsest_china_state_root={env['SEICHE_PALIMPSEST_CHINA_STATE_DIR']}"
+        in manifest
+    )
+    assert (
+        "palimpsest_china_state_audit_contract="
+        "seiche.palimpsest-china-activation-state.v1" in manifest
+    )
+    assert "palimpsest_china_state_audit_result=required_at_restore" in manifest
     assert f"api_data_root={env['SEICHE_API_DATA_DIR']}" in manifest
     assert "postgres_port=5544" in manifest
     assert "research_only=true" in manifest
@@ -546,6 +681,14 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
         f"--directory {state.parent} {state.name} "
         f"--directory {nbs_state.parent} {nbs_state.name}"
     ) in log
+    palimpsest_state = Path(env["SEICHE_PALIMPSEST_CHINA_STATE_DIR"])
+    assert f"--directory {palimpsest_state.parent} {palimpsest_state.name}" in log
+    audit = json.loads((snapshot / "palimpsest-china-state.json").read_bytes())
+    assert audit["schema"] == "seiche.palimpsest-china-activation-state.v1"
+    assert audit["state_root"] == str(palimpsest_state)
+    assert audit["bundles"] == []
+    assert audit["receipts"] == []
+    assert audit["active_activation_id"] is None
     assert (backup.stat().st_mode & 0o777) == 0o700
     assert all(
         (member.stat().st_mode & 0o777) == 0o600 for member in snapshot.iterdir()
@@ -622,21 +765,84 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
     assert "critical_table_count_floor=11|12|13|14" in status
-    assert "schema=seiche.market-backup-restore-check.v4" in status
+    assert "schema=seiche.market-backup-restore-check.v5" in status
+    assert "source_backup_schema=seiche.market-backup.v4" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
     assert "nbs_public_revision_store=not_onboarded" in status
     assert "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" in status
     assert "nbs_full_store_audit_result=not_onboarded" in status
+    assert "palimpsest_china_state_archive_restore=verified" in status
+    assert (
+        "palimpsest_china_state_audit_contract="
+        "seiche.palimpsest-china-activation-state.v1" in status
+    )
+    assert "palimpsest_china_active_activation_id=none" in status
+    assert "palimpsest_china_pending_candidate_activation_id=none" in status
+    assert "palimpsest_china_bundle_count=0" in status
+    assert "palimpsest_china_receipt_count=0" in status
     assert "api_data_archive_restore=pass" in status
     assert not list(status_path.parent.glob(".backup-state-restore.*"))
     assert not list(status_path.parent.glob(".backup-api-data-restore.*"))
+    assert not list(status_path.parent.glob(".backup-palimpsest-restore.*"))
     assert "can_publish=false" in status
     log = calls.read_text()
     assert "setpriv " in log
     assert "createdb --template=template0" in log
     assert sum(line.startswith("dropdb ") for line in log.splitlines()) == 1
     assert "--port=5544" in log
+
+
+def test_backup_restore_preserves_an_active_palimpsest_china_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    activated = _activate_palimpsest_state(tmp_path, env, monkeypatch)
+    active_id = str(activated["active"]["activation_id"])
+    bundle_id = str(activated["active"]["bundle_id"])
+
+    backed_up = _run(BACKUP_SCRIPT, env)
+    assert backed_up.returncode == 0, backed_up.stdout + backed_up.stderr
+    snapshot = backup / "20260810T020000Z"
+    audit = json.loads((snapshot / "palimpsest-china-state.json").read_bytes())
+    assert audit["active_activation_id"] == active_id
+    assert audit["bundles"] == [bundle_id]
+    assert audit["receipts"] == [active_id]
+
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+    restored = _run(RESTORE_SCRIPT, env)
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    status = Path(env["SEICHE_RESTORE_STATUS_PATH"]).read_text()
+    assert f"palimpsest_china_active_activation_id={active_id}\n" in status
+    assert "palimpsest_china_pending_candidate_activation_id=none\n" in status
+    assert "palimpsest_china_bundle_count=1\n" in status
+    assert "palimpsest_china_receipt_count=1\n" in status
+
+
+def test_restore_rejects_rechecksummed_palimpsest_state_audit_tampering(
+    tmp_path: Path,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    audit_path = snapshot / "palimpsest-china-state.json"
+    audit = json.loads(audit_path.read_bytes())
+    audit["tree_sha256"] = "0" * 64
+    audit_path.write_bytes(_canonical_json(audit) + b"\n")
+    _rewrite_manifest_and_inventory(snapshot, lambda manifest: manifest)
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert (
+        "restored Palimpsest China state differs from its snapshot receipt"
+        in result.stderr
+    )
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
 
 
 def test_restore_strictly_verifies_a_signed_nbs_public_head(tmp_path: Path) -> None:
@@ -891,7 +1097,7 @@ def test_restore_rejects_pre_nbs_or_drifted_full_store_contract(
 
     replacements = {
         "v2_schema": (
-            "schema=seiche.market-backup.v3",
+            "schema=seiche.market-backup.v4",
             "schema=seiche.market-backup.v2",
         ),
         "wrong_nbs_root": (

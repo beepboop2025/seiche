@@ -64,9 +64,10 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     recovery_proof_dir.chmod(0o750)
     restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
-        "schema=seiche.market-backup-restore-check.v4\n"
+        "schema=seiche.market-backup-restore-check.v5\n"
         f"checked_at={(NOW - timedelta(hours=1)).isoformat()}\n"
         "snapshot=20260822T020000Z\n"
+        "source_backup_schema=seiche.market-backup.v4\n"
         f"deployed_sha={'a' * 40}\n"
         "critical_table_counts=11|12|13|14\n"
         "critical_table_count_floor=11|12|13|14\n"
@@ -75,6 +76,13 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1\n"
         "nbs_full_store_audit_result=not_onboarded\n"
         "nbs_public_revision_store=not_onboarded\n"
+        "palimpsest_china_state_archive_restore=verified\n"
+        "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1\n"
+        f"palimpsest_china_state_tree_sha256={'f' * 64}\n"
+        "palimpsest_china_active_activation_id=none\n"
+        "palimpsest_china_pending_candidate_activation_id=none\n"
+        "palimpsest_china_bundle_count=0\n"
+        "palimpsest_china_receipt_count=0\n"
         "api_data_archive_restore=pass\n"
         "research_only=true\n"
         "can_publish=false\n"
@@ -238,16 +246,22 @@ def _write_offsite_status(
     path.write_text(
         json.dumps(
             {
-                "schema": "seiche.market-offsite-backup-status.v2",
+                "schema": "seiche.market-offsite-backup-status.v3",
                 "status": current_status,
                 "observed_at": (NOW - timedelta(minutes=30)).isoformat(),
                 "attempt_id": attempt_id,
                 "snapshot_id": snapshot_id,
                 "source_revision": "b" * 40,
-                "source_backup_schema": "seiche.market-backup.v3",
+                "source_backup_schema": "seiche.market-backup.v4",
                 "nbs_state_root": "/var/lib/seiche-nbs",
                 "nbs_full_store_audit_contract": ("seiche.nbs-full-store-audit.v1"),
                 "nbs_full_store_audit_result": "required_at_restore",
+                "palimpsest_china_state_root": "/var/lib/seiche-palimpsest-china",
+                "palimpsest_china_state_audit_contract": (
+                    "seiche.palimpsest-china-activation-state.v1"
+                ),
+                "palimpsest_china_state_tree_sha256": "f" * 64,
+                "palimpsest_china_state": "inactive",
                 "provider": "hetzner-object-storage",
                 "bucket": bucket,
                 "prefix": prefix,
@@ -273,10 +287,16 @@ def _write_offsite_status(
                     "attempt_id": attempt_id,
                     "snapshot_id": snapshot_id,
                     "source_revision": "b" * 40,
-                    "source_backup_schema": "seiche.market-backup.v3",
+                    "source_backup_schema": "seiche.market-backup.v4",
                     "nbs_state_root": "/var/lib/seiche-nbs",
                     "nbs_full_store_audit_contract": ("seiche.nbs-full-store-audit.v1"),
                     "nbs_full_store_audit_result": "required_at_restore",
+                    "palimpsest_china_state_root": ("/var/lib/seiche-palimpsest-china"),
+                    "palimpsest_china_state_audit_contract": (
+                        "seiche.palimpsest-china-activation-state.v1"
+                    ),
+                    "palimpsest_china_state_tree_sha256": "f" * 64,
+                    "palimpsest_china_state": "inactive",
                     "bucket": bucket,
                     "prefix": prefix,
                     "key_id": "market-key-2026-08-v1",
@@ -825,8 +845,8 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
     ("old", "new"),
     [
         (
+            "schema=seiche.market-backup-restore-check.v5",
             "schema=seiche.market-backup-restore-check.v4",
-            "schema=seiche.market-backup-restore-check.v3",
         ),
         ("database_restore=pass", "database_restore=failed"),
         ("state_archive_restore=pass", "state_archive_restore=failed"),

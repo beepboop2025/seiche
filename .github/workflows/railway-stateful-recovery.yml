@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Configure native backups, monitor them, or export and restore-prove backup-v3"
+        description: "Configure native backups, monitor them, or export and restore-prove backup-v4"
         required: true
         type: choice
         options:
@@ -1252,7 +1252,8 @@ jobs:
           test ! -e proof/api-continuity.failed
           test "$(wc -l <proof/api-continuity.tsv)" -ge 2
           for member in SHA256SUMS seiche.dump var-lib-seiche.tgz \
-            api-data.tgz table-counts.txt deployed-sha.txt manifest.env; do
+            palimpsest-china.tgz palimpsest-china-state.json api-data.tgz \
+            table-counts.txt deployed-sha.txt manifest.env; do
             railway volume files download --volume "$RAILWAY_VOLUME_ID" \
               "/recovery-snapshots/$snapshot_id/$member" "bundle/$member"
           done
@@ -1421,6 +1422,7 @@ jobs:
           printf '%s\n' \
             activation-receipt.json request.json recovery-receipt.json \
             bundle/SHA256SUMS bundle/seiche.dump bundle/var-lib-seiche.tgz \
+            bundle/palimpsest-china.tgz bundle/palimpsest-china-state.json \
             bundle/api-data.tgz bundle/table-counts.txt bundle/deployed-sha.txt \
             bundle/manifest.env proof/reverse-restore.json \
             >proof/offsite-members.txt
@@ -1499,7 +1501,7 @@ jobs:
               }
           recovery = json.loads(Path("recovery-receipt.json").read_bytes())
           value = {
-              "schema": "seiche.railway-offsite-recovery-receipt.v1",
+              "schema": "seiche.railway-offsite-recovery-receipt.v2",
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": (
                   "beepboop2025/seiche/"

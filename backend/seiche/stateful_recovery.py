@@ -1,7 +1,7 @@
 """Phase-6 portable recovery exports for Railway stateful production.
 
 The production supervisor briefly pauses the two writer children, calls this
-module to commit one backup-v3 generation, restarts the writers, and only then
+module to commit one backup-v4 generation, restarts the writers, and only then
 publishes the recovery receipt.  Public API reads remain available throughout.
 """
 
@@ -29,8 +29,8 @@ from seiche import stateful_migration as migration
 
 
 REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v1"
-OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v1"
+RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v2"
+OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v2"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml"
 CONFIRMATION = "EXPORT_WITHOUT_AUTHORITY_CHANGE"
 REQUEST_MAX_AGE = timedelta(minutes=30)
@@ -452,6 +452,10 @@ def _bundle_identity(
             root / "api-data.tgz",
             expected_roots=frozenset({"api-data"}),
         )
+        migration.validate_tar_contract(
+            root / "palimpsest-china.tgz",
+            expected_roots=frozenset({"seiche-palimpsest-china"}),
+        )
     except migration.MigrationContractError as exc:
         raise RecoveryContractError(str(exc)) from exc
     if bundle.total_bytes != content_bytes or bundle.member_sha256 != digests:
@@ -523,13 +527,25 @@ def export_snapshot(
         market = generation / "market"
         nbs = generation / "nbs"
         api = generation / "api"
+        palimpsest = generation / "palimpsest-china"
         try:
             nbs_result = migration._audit_nbs(nbs)
+            from seiche.palimpsest_china_activation import audit_activation_state
+
+            palimpsest_audit = audit_activation_state(
+                palimpsest,
+                root_uid=os.geteuid(),
+                root_gid=os.getegid(),
+                api_uid=os.geteuid(),
+                api_gid=os.getegid(),
+                declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+            )
             tree_digests = {
                 "market": migration.hash_tree(market),
                 "nbs": migration.hash_tree(nbs),
+                "palimpsest-china": migration.hash_tree(palimpsest),
             }
-        except migration.MigrationContractError as exc:
+        except Exception as exc:
             raise RecoveryContractError(str(exc)) from exc
         counts_before = migration.inspect_postgres_counts(
             environment.get("SEICHE_DATABASE_URL", "")
@@ -547,6 +563,14 @@ def export_snapshot(
         _archive_roots(
             stage / "var-lib-seiche.tgz",
             {"seiche": market, "seiche-nbs": nbs},
+        )
+        _archive_roots(
+            stage / "palimpsest-china.tgz",
+            {"seiche-palimpsest-china": palimpsest},
+        )
+        _write_all(
+            stage / "palimpsest-china-state.json",
+            migration.canonical_document(palimpsest_audit),
         )
         _snapshot_api(api, api_stage)
         tree_digests["api"] = migration.hash_tree(api_stage)
@@ -573,6 +597,9 @@ def export_snapshot(
                     "nbs_full_store_audit_result=required_at_restore",
                     "api_data_root=/home/seiche/app/backend/data",
                     "critical_table_count_semantics=pre_dump_lower_bound",
+                    "palimpsest_china_state_root=/var/lib/seiche-palimpsest-china",
+                    "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1",
+                    "palimpsest_china_state_audit_result=required_at_restore",
                     "research_only=true",
                     "can_publish=false",
                     "can_execute=false",
@@ -658,6 +685,10 @@ def render_receipt(
         "filesystem": {
             "tree_sha256": dict(export.tree_sha256),
             "nbs_full_store_audit_result": export.nbs_audit_result,
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": "verified",
         },
         "timing": {
             "requested_at": request["requested_at"],
@@ -754,15 +785,25 @@ def validate_receipt(
     filesystem = value.get("filesystem")
     if (
         not isinstance(filesystem, dict)
-        or set(filesystem) != {"tree_sha256", "nbs_full_store_audit_result"}
+        or set(filesystem)
+        != {
+            "tree_sha256",
+            "nbs_full_store_audit_result",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_audit_result",
+        }
         or not isinstance(filesystem.get("tree_sha256"), dict)
-        or set(filesystem["tree_sha256"]) != {"market", "nbs", "api"}
+        or set(filesystem["tree_sha256"])
+        != {"market", "nbs", "api", "palimpsest-china"}
         or any(
             re.fullmatch(r"[0-9a-f]{64}", str(item)) is None
             for item in filesystem["tree_sha256"].values()
         )
         or filesystem.get("nbs_full_store_audit_result")
         not in {"not_onboarded", "verified_head"}
+        or filesystem.get("palimpsest_china_state_audit_contract")
+        != "seiche.palimpsest-china-activation-state.v1"
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
     ):
         raise RecoveryContractError("recovery receipt filesystem proof is invalid")
     timing = value.get("timing")

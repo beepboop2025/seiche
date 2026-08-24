@@ -2026,12 +2026,14 @@ cat >"$BACKUP_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
+Environment=SEICHE_PALIMPSEST_CHINA_STATE_DIR=/var/lib/seiche-palimpsest-china
+Environment=SEICHE_PALIMPSEST_CHINA_AUDIT_BIN=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 Environment=SEICHE_API_DATA_DIR=$API_DATA_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 ReadOnlyPaths=
-ReadOnlyPaths=$APP_DIR $STATE_DIR $NBS_STATE_DIR $API_DATA_DIR
+ReadOnlyPaths=$APP_DIR $STATE_DIR $NBS_STATE_DIR /var/lib/seiche-palimpsest-china $API_DATA_DIR /var/lib/seiche-deploy
 ReadWritePaths=
-ReadWritePaths=$BACKUP_DIR /run/lock
+ReadWritePaths=$BACKUP_DIR /run/lock /run/seiche-deploy
 EOF
 chmod 0644 "$BACKUP_STAGE"
 mv -f "$BACKUP_STAGE" \
@@ -2046,12 +2048,14 @@ cat >"$RESTORE_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
+Environment=SEICHE_PALIMPSEST_CHINA_STATE_DIR=/var/lib/seiche-palimpsest-china
+Environment=SEICHE_PALIMPSEST_CHINA_AUDIT_BIN=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 Environment=SEICHE_RESTORE_STATUS_PATH=$RESTORE_STATUS_PATH
 ReadOnlyPaths=
 ReadOnlyPaths=$APP_DIR $BACKUP_DIR
 ReadWritePaths=
-ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock
+ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock /run/seiche-deploy
 EOF
 chmod 0644 "$RESTORE_STAGE"
 mv -f "$RESTORE_STAGE" \
@@ -2218,6 +2222,7 @@ offsite_canary_receipt_is_valid() {
     /usr/bin/python3 -I -B - \
         "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" <<'PY'
 import json
+import re
 import sys
 
 env_path, status_path = sys.argv[1:]
@@ -2239,9 +2244,32 @@ resolved_status = (
     )
 )
 valid = (
-    status.get("schema") == "seiche.market-offsite-backup-status.v2"
+    status.get("schema")
+        in {
+            "seiche.market-offsite-backup-status.v2",
+            "seiche.market-offsite-backup-status.v3",
+        }
     and resolved_status
-    and status.get("source_backup_schema") == "seiche.market-backup.v3"
+    and (
+        (
+            status.get("schema") == "seiche.market-offsite-backup-status.v2"
+            and status.get("source_backup_schema") == "seiche.market-backup.v3"
+            and not any(key.startswith("palimpsest_china_") for key in status)
+        )
+        or (
+            status.get("schema") == "seiche.market-offsite-backup-status.v3"
+            and status.get("source_backup_schema") == "seiche.market-backup.v4"
+            and status.get("palimpsest_china_state_root")
+                == "/var/lib/seiche-palimpsest-china"
+            and status.get("palimpsest_china_state_audit_contract")
+                == "seiche.palimpsest-china-activation-state.v1"
+            and re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(status.get("palimpsest_china_state_tree_sha256", "")),
+            ) is not None
+            and status.get("palimpsest_china_state") in {"active", "inactive"}
+        )
+    )
     and status.get("nbs_state_root") == "/var/lib/seiche-nbs"
     and status.get("nbs_full_store_audit_contract")
         == "seiche.nbs-full-store-audit.v1"
@@ -2254,7 +2282,26 @@ valid = (
     and status.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
     and isinstance(success, dict)
     and success.get("restore_verified") is True
-    and success.get("source_backup_schema") == "seiche.market-backup.v3"
+    and (
+        (
+            status.get("schema") == "seiche.market-offsite-backup-status.v2"
+            and success.get("source_backup_schema") == "seiche.market-backup.v3"
+            and not any(key.startswith("palimpsest_china_") for key in success)
+        )
+        or (
+            status.get("schema") == "seiche.market-offsite-backup-status.v3"
+            and success.get("source_backup_schema") == "seiche.market-backup.v4"
+            and success.get("palimpsest_china_state_root")
+                == "/var/lib/seiche-palimpsest-china"
+            and success.get("palimpsest_china_state_audit_contract")
+                == "seiche.palimpsest-china-activation-state.v1"
+            and re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(success.get("palimpsest_china_state_tree_sha256", "")),
+            ) is not None
+            and success.get("palimpsest_china_state") in {"active", "inactive"}
+        )
+    )
     and success.get("nbs_state_root") == "/var/lib/seiche-nbs"
     and success.get("nbs_full_store_audit_contract")
         == "seiche.nbs-full-store-audit.v1"

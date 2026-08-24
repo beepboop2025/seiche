@@ -21,6 +21,7 @@ LAUNCHER = Path("/etc/seiche/libexec/seiche-palimpsest-china-activate.py")
 DEPLOY_LOCK = Path("/run/seiche-deploy/deploy.lock")
 DEPLOYED_SHA = Path("/var/lib/seiche-deploy/deployed-sha")
 RUNTIME_ROOT = Path("/opt/seiche-palimpsest-china")
+LIVE_STATE_ROOT = Path("/var/lib/seiche-palimpsest-china")
 LOCK_TIMEOUT_SECONDS = 300.0
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
 _SOURCE_LABELS = (
@@ -118,24 +119,71 @@ def _stable_read(
             os.close(descriptor)
 
 
-def _open_deploy_lock() -> int:
+def _open_deploy_lock(*, expected_uid: int = 0, expected_gid: int = 0) -> int:
     descriptor = -1
+    parent_descriptor = -1
     try:
-        descriptor = os.open(
-            DEPLOY_LOCK,
-            os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        directory_flags = (
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
         )
+        parent_descriptor = os.open(DEPLOY_LOCK.parent, directory_flags)
+        opened_parent = os.fstat(parent_descriptor)
+        visible_parent = os.stat(DEPLOY_LOCK.parent, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(opened_parent.st_mode)
+            or opened_parent.st_uid != expected_uid
+            or opened_parent.st_gid != expected_gid
+            or stat.S_IMODE(opened_parent.st_mode) != 0o700
+            or (opened_parent.st_dev, opened_parent.st_ino)
+            != (visible_parent.st_dev, visible_parent.st_ino)
+        ):
+            _fail("deploy lock root metadata is unsafe")
+
+        lock_flags = os.O_RDWR | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        created = False
+        try:
+            descriptor = os.open(
+                DEPLOY_LOCK.name,
+                lock_flags,
+                dir_fd=parent_descriptor,
+            )
+        except FileNotFoundError:
+            try:
+                descriptor = os.open(
+                    DEPLOY_LOCK.name,
+                    lock_flags | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=parent_descriptor,
+                )
+                created = True
+            except FileExistsError:
+                descriptor = os.open(
+                    DEPLOY_LOCK.name,
+                    lock_flags,
+                    dir_fd=parent_descriptor,
+                )
+        if created:
+            os.fchown(descriptor, expected_uid, expected_gid)
+            os.fchmod(descriptor, 0o600)
         opened = os.fstat(descriptor)
-        visible = os.stat(DEPLOY_LOCK, follow_symlinks=False)
+        visible = os.stat(
+            DEPLOY_LOCK.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
         if (
             not stat.S_ISREG(opened.st_mode)
             or opened.st_nlink != 1
-            or opened.st_uid != 0
-            or opened.st_gid != 0
+            or opened.st_uid != expected_uid
+            or opened.st_gid != expected_gid
             or stat.S_IMODE(opened.st_mode) != 0o600
             or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
         ):
             _fail("deploy lock metadata is unsafe")
+        os.fsync(descriptor)
+        os.fsync(parent_descriptor)
+        os.close(parent_descriptor)
+        parent_descriptor = -1
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
         while True:
             try:
@@ -151,10 +199,14 @@ def _open_deploy_lock() -> int:
     except OSError as exc:
         if descriptor >= 0:
             os.close(descriptor)
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
         raise LaunchError("deploy lock cannot be acquired safely") from exc
     except BaseException:
         if descriptor >= 0:
             os.close(descriptor)
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
         raise
 
 
@@ -266,21 +318,73 @@ def _validate_runtime(release_sha: str) -> Path:
     return runtime
 
 
-def run(arguments: list[str]) -> int:
-    if os.geteuid() != 0:
-        _fail("activation launcher must run as root")
-    if len(arguments) != len(_SOURCE_LABELS):
-        labels = " ".join(f"<{label.replace(' ', '-')}>" for label in _SOURCE_LABELS)
-        _fail(f"usage: {LAUNCHER} {labels}")
-    _validate_launcher()
-    sources = [Path(value) for value in arguments]
-    if any(
+def _audit_target(path: Path, *, normalize_restored: bool) -> None:
+    if (
         not path.is_absolute()
         or path == Path("/")
         or Path(os.path.normpath(path)) != path
-        for path in sources
+        or path.name != LIVE_STATE_ROOT.name
     ):
-        _fail("every handoff source path must be absolute and canonical")
+        _fail("activation-state audit path is invalid")
+    if not normalize_restored:
+        if path != LIVE_STATE_ROOT:
+            _fail("live activation-state audit path changed")
+        return
+    backup_parent = Path("/var/backups/seiche-market")
+    recovery_parent = Path("/var/lib/seiche-recovery-proof")
+    allowed = (
+        path.parent.name == "palimpsest-verify"
+        and path.parent.parent.name.startswith(".stage-")
+        and path.parent.parent.parent == backup_parent
+    ) or (
+        path.parent.name.startswith(".backup-palimpsest-restore.")
+        and path.parent.parent == recovery_parent
+    )
+    if not allowed:
+        _fail("restored activation-state audit path is outside a fixed scratch root")
+    try:
+        parent = path.parent.lstat()
+    except OSError as exc:
+        raise LaunchError(
+            "restored activation-state audit parent is unavailable"
+        ) from exc
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != 0
+        or stat.S_IMODE(parent.st_mode) & 0o022
+    ):
+        _fail("restored activation-state audit parent is unsafe")
+
+
+def run(arguments: list[str]) -> int:
+    if os.geteuid() != 0:
+        _fail("activation launcher must run as root")
+    audit_mode = len(arguments) == 3 and arguments[0] == "--audit-state"
+    if not audit_mode and len(arguments) != len(_SOURCE_LABELS):
+        labels = " ".join(f"<{label.replace(' ', '-')}>" for label in _SOURCE_LABELS)
+        _fail(
+            f"usage: {LAUNCHER} {labels}; or "
+            f"{LAUNCHER} --audit-state <state-root> <normalize-restored-0-or-1>"
+        )
+    _validate_launcher()
+    sources: list[Path] = []
+    audit_path: Path | None = None
+    normalize_restored = False
+    if audit_mode:
+        audit_path = Path(arguments[1])
+        if arguments[2] not in {"0", "1"}:
+            _fail("normalize-restored flag must be exactly 0 or 1")
+        normalize_restored = arguments[2] == "1"
+        _audit_target(audit_path, normalize_restored=normalize_restored)
+    else:
+        sources = [Path(value) for value in arguments]
+        if any(
+            not path.is_absolute()
+            or path == Path("/")
+            or Path(os.path.normpath(path)) != path
+            for path in sources
+        ):
+            _fail("every handoff source path must be absolute and canonical")
 
     lock = _open_deploy_lock()
     try:
@@ -296,7 +400,29 @@ def run(arguments: list[str]) -> int:
         expected_module = runtime / "seiche" / "palimpsest_china_activation.py"
         if Path(activation.__file__) != expected_module:
             _fail("activation module resolved outside the trusted runtime")
+        if activation.PRODUCTION_STATE_ROOT != LIVE_STATE_ROOT:
+            _fail("trusted activation runtime state root changed")
         api_uid, api_gid = _identity()
+        if audit_path is not None:
+            result = activation.audit_activation_state(
+                audit_path,
+                root_uid=0,
+                root_gid=0,
+                api_uid=api_uid,
+                api_gid=api_gid,
+                normalize_restored=normalize_restored,
+                declared_state_root=LIVE_STATE_ROOT,
+            )
+            print(
+                json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
         paths = activation.ActivationPaths(
             state_root=activation.PRODUCTION_STATE_ROOT,
             env_file=activation.PRODUCTION_ENV_FILE,

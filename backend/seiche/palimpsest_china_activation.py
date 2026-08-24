@@ -57,6 +57,7 @@ ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v1"
 CANDIDATE_SCHEMA = "seiche.palimpsest-china-activation-candidate.v1"
 RUNTIME_PROOF_SCHEMA = "seiche.palimpsest-china-rest-mcp-proof.v1"
 PENDING_SCHEMA = "seiche.palimpsest-china-activation-pending.v1"
+BACKUP_STATE_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
 PRODUCTION_STATE_ROOT = Path("/var/lib/seiche-palimpsest-china")
 PRODUCTION_ENV_FILE = Path("/etc/seiche/palimpsest-china.env")
 PRODUCTION_DROPIN_FILE = Path(
@@ -703,6 +704,112 @@ def _rename_noreplace(
     raise OSError(error, os.strerror(error), destination)
 
 
+def _publish_immutable_atomic(
+    path: Path,
+    body: bytes,
+    *,
+    uid: int,
+    gid: int,
+    mode: int,
+    portable: bool,
+) -> None:
+    stage = path.parent / (f".receipt-stage-{path.stem}-{secrets.token_hex(16)}")
+    try:
+        _write_immutable(stage, body, uid=uid, gid=gid, mode=mode)
+        try:
+            _rename_noreplace(stage, path, portable=portable)
+        except FileExistsError:
+            existing = _stable_read(
+                path,
+                label=f"existing immutable {path.name}",
+                maximum=max(len(body), 1),
+                uid=uid,
+                gid=gid,
+                modes=frozenset({mode}),
+            )
+            if existing != body:
+                _fail(f"immutable target {path} already contains different bytes")
+        _fsync_directory(path.parent)
+    finally:
+        try:
+            stage.unlink()
+            _fsync_directory(path.parent)
+        except FileNotFoundError:
+            pass
+
+
+def _cleanup_activation_stages(paths: ActivationPaths) -> None:
+    receipt_pattern = re.compile(r"\.receipt-stage-[0-9a-f]{64}-[0-9a-f]{32}")
+    changed = False
+    try:
+        receipt_entries = list(paths.receipts_dir.iterdir())
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation receipt stages cannot be enumerated"
+        ) from exc
+    for entry in receipt_entries:
+        if receipt_pattern.fullmatch(entry.name) is None:
+            continue
+        metadata = entry.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != paths.root_uid
+            or metadata.st_gid != paths.root_gid
+            or stat.S_IMODE(metadata.st_mode) not in {0o400, 0o600}
+            or metadata.st_size > 16 * 1024
+        ):
+            _fail("interrupted activation receipt stage is unsafe")
+        entry.unlink()
+        changed = True
+    if changed:
+        _fsync_directory(paths.receipts_dir)
+
+    bundle_pattern = re.compile(r"\.bundle-stage-[0-9a-f]{32}")
+    changed = False
+    try:
+        root_entries = list(paths.state_root.iterdir())
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation bundle stages cannot be enumerated"
+        ) from exc
+    for entry in root_entries:
+        if bundle_pattern.fullmatch(entry.name) is None:
+            continue
+        metadata = entry.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != paths.root_uid
+            or metadata.st_gid != paths.api_gid
+            or stat.S_IMODE(metadata.st_mode) not in {0o700, 0o750}
+        ):
+            _fail("interrupted activation bundle stage is unsafe")
+        try:
+            members = list(entry.iterdir())
+        except OSError as exc:
+            raise PalimpsestChinaActivationError(
+                "interrupted activation bundle stage cannot be enumerated"
+            ) from exc
+        if any(member.name not in _BUNDLE_FILENAMES for member in members):
+            _fail("interrupted activation bundle stage has unexpected members")
+        for member in members:
+            item = member.lstat()
+            if (
+                not stat.S_ISREG(item.st_mode)
+                or item.st_nlink != 1
+                or item.st_uid != paths.root_uid
+                or item.st_gid != paths.api_gid
+                or stat.S_IMODE(item.st_mode) not in {0o440, 0o600}
+                or item.st_size > _MAXIMUM_BY_FILENAME[member.name]
+            ):
+                _fail("interrupted activation bundle stage member is unsafe")
+            member.unlink()
+        entry.rmdir()
+        changed = True
+    if changed:
+        _fsync_directory(paths.state_root)
+
+
 def _validate_bundle(
     bundle: Path,
     *,
@@ -1178,7 +1285,12 @@ def _read_receipt(
     return receipt, body
 
 
-def _validate_active(value: Mapping[str, Any], *, paths: ActivationPaths) -> None:
+def _validate_active(
+    value: Mapping[str, Any],
+    *,
+    paths: ActivationPaths,
+    declared_receipts_dir: Path | None = None,
+) -> None:
     _exact_keys(value, _ACTIVE_KEYS, label="active marker")
     if value["schema"] != ACTIVE_MARKER_SCHEMA:
         _fail("active marker schema changed")
@@ -1193,13 +1305,17 @@ def _validate_active(value: Mapping[str, Any], *, paths: ActivationPaths) -> Non
         bundle_id=value["bundle_id"], release_sha=value["release_sha"]
     ):
         _fail("active marker identity changed")
-    expected = paths.receipts_dir / f"{value['activation_id']}.json"
+    expected = (declared_receipts_dir or paths.receipts_dir) / (
+        f"{value['activation_id']}.json"
+    )
     if value["receipt_path"] != str(expected):
         _fail("active marker receipt path changed")
 
 
 def _read_active(
     paths: ActivationPaths,
+    *,
+    declared_receipts_dir: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]] | None:
     marker = paths.active_marker
     if not marker.exists() and not marker.is_symlink():
@@ -1213,8 +1329,12 @@ def _read_active(
         modes=frozenset({0o400}),
     )
     active = _strict_json(body, label="active marker")
-    _validate_active(active, paths=paths)
-    receipt_path = Path(active["receipt_path"])
+    _validate_active(
+        active,
+        paths=paths,
+        declared_receipts_dir=declared_receipts_dir,
+    )
+    receipt_path = paths.receipts_dir / f"{active['activation_id']}.json"
     receipt, receipt_body = _read_receipt(receipt_path, paths=paths)
     if (
         _digest(receipt_body) != active["receipt_sha256"]
@@ -1671,6 +1791,395 @@ def _validate_bundle_hashes(
             _fail(f"installed bundle {spec.filename} digest changed")
 
 
+def _normalize_state_entry(
+    path: Path,
+    *,
+    directory: bool,
+    uid: int,
+    gid: int,
+    mode: int,
+) -> None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    if directory:
+        flags |= os.O_DIRECTORY
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        visible = os.stat(path, follow_symlinks=False)
+        if (
+            (
+                not stat.S_ISDIR(metadata.st_mode)
+                if directory
+                else not stat.S_ISREG(metadata.st_mode)
+            )
+            or (not directory and metadata.st_nlink != 1)
+            or (metadata.st_dev, metadata.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            _fail(f"restored activation-state entry is unsafe: {path}")
+        os.fchown(descriptor, uid, gid)
+        os.fchmod(descriptor, mode)
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            f"restored activation-state entry cannot be normalized: {path}"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _activation_audit_paths(
+    state_root: Path,
+    *,
+    root_uid: int,
+    root_gid: int,
+    api_uid: int,
+    api_gid: int,
+) -> ActivationPaths:
+    return ActivationPaths(
+        state_root=state_root,
+        env_file=state_root / ".unused-env",
+        dropin_file=state_root / ".unused-dropin",
+        deploy_lock=state_root / ".unused-deploy-lock",
+        activation_lock=state_root / ".unused-activation-lock",
+        runtime_release=state_root / ".unused-runtime",
+        release_sha="0" * 40,
+        root_uid=root_uid,
+        root_gid=root_gid,
+        api_uid=api_uid,
+        api_gid=api_gid,
+        portable=True,
+    )
+
+
+def audit_activation_state(
+    state_root: Path,
+    *,
+    root_uid: int,
+    root_gid: int,
+    api_uid: int,
+    api_gid: int,
+    normalize_restored: bool = False,
+    declared_state_root: Path | None = None,
+) -> dict[str, Any]:
+    """Validate or normalize one isolated backup of the activation state tree."""
+
+    state_root = Path(state_root)
+    declared_state_root = (
+        state_root if declared_state_root is None else Path(declared_state_root)
+    )
+    if (
+        not state_root.is_absolute()
+        or state_root == Path("/")
+        or Path(os.path.normpath(state_root)) != state_root
+        or not declared_state_root.is_absolute()
+        or declared_state_root == Path("/")
+        or Path(os.path.normpath(declared_state_root)) != declared_state_root
+        or type(normalize_restored) is not bool
+    ):
+        _fail("activation-state audit path or mode is invalid")
+    try:
+        root_metadata = state_root.lstat()
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation-state audit root is unavailable"
+        ) from exc
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        _fail("activation-state audit root is not a directory")
+    try:
+        root_entries = {entry.name: entry for entry in os.scandir(state_root)}
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation-state audit root cannot be enumerated"
+        ) from exc
+
+    receipt_names: set[str] = set()
+    bundle_names: set[str] = set()
+    for name, entry in root_entries.items():
+        metadata = entry.stat(follow_symlinks=False)
+        if name == "receipts":
+            if not stat.S_ISDIR(metadata.st_mode):
+                _fail("activation-state receipts root is unsafe")
+        elif name in {"active.json", "pending.json"}:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                _fail(f"activation-state control file is unsafe: {name}")
+        elif _SHA256_RE.fullmatch(name) is not None:
+            if not stat.S_ISDIR(metadata.st_mode):
+                _fail(f"activation-state bundle is unsafe: {name}")
+            bundle_names.add(name)
+        else:
+            _fail(f"activation-state root contains unexpected member: {name}")
+    if "receipts" not in root_entries:
+        _fail("activation-state receipts root is missing")
+
+    receipts_dir = state_root / "receipts"
+    try:
+        receipt_entries = {entry.name: entry for entry in os.scandir(receipts_dir)}
+    except OSError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation-state receipts cannot be enumerated"
+        ) from exc
+    for name, entry in receipt_entries.items():
+        metadata = entry.stat(follow_symlinks=False)
+        if (
+            re.fullmatch(r"[0-9a-f]{64}\.json", name) is None
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+        ):
+            _fail(f"activation-state receipt is unsafe: {name}")
+        receipt_names.add(name)
+
+    for bundle_name in bundle_names:
+        bundle = state_root / bundle_name
+        try:
+            entries = {entry.name: entry for entry in os.scandir(bundle)}
+        except OSError as exc:
+            raise PalimpsestChinaActivationError(
+                f"activation-state bundle cannot be enumerated: {bundle_name}"
+            ) from exc
+        if frozenset(entries) != _BUNDLE_FILENAMES:
+            _fail(f"activation-state bundle members changed: {bundle_name}")
+        for name, entry in entries.items():
+            metadata = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                _fail(f"activation-state bundle file is unsafe: {bundle_name}/{name}")
+
+    if normalize_restored:
+        _normalize_state_entry(
+            state_root,
+            directory=True,
+            uid=root_uid,
+            gid=api_gid,
+            mode=0o750,
+        )
+        _normalize_state_entry(
+            receipts_dir,
+            directory=True,
+            uid=root_uid,
+            gid=root_gid,
+            mode=0o700,
+        )
+        for name in receipt_names:
+            _normalize_state_entry(
+                receipts_dir / name,
+                directory=False,
+                uid=root_uid,
+                gid=root_gid,
+                mode=0o400,
+            )
+        for name in ("active.json", "pending.json"):
+            if name in root_entries:
+                _normalize_state_entry(
+                    state_root / name,
+                    directory=False,
+                    uid=root_uid,
+                    gid=root_gid,
+                    mode=0o400,
+                )
+        for bundle_name in bundle_names:
+            bundle = state_root / bundle_name
+            _normalize_state_entry(
+                bundle,
+                directory=True,
+                uid=root_uid,
+                gid=api_gid,
+                mode=0o750,
+            )
+            for spec in _BUNDLE_FILE_SPECS:
+                _normalize_state_entry(
+                    bundle / spec.filename,
+                    directory=False,
+                    uid=root_uid,
+                    gid=api_gid,
+                    mode=0o440,
+                )
+        _fsync_directory(receipts_dir)
+        for bundle_name in bundle_names:
+            _fsync_directory(state_root / bundle_name)
+        _fsync_directory(state_root)
+
+    paths = _activation_audit_paths(
+        state_root,
+        root_uid=root_uid,
+        root_gid=root_gid,
+        api_uid=api_uid,
+        api_gid=api_gid,
+    )
+    _validate_directory(
+        state_root,
+        uid=root_uid,
+        gid=api_gid,
+        mode=0o750,
+        label="activation-state root",
+    )
+    _validate_directory(
+        receipts_dir,
+        uid=root_uid,
+        gid=root_gid,
+        mode=0o700,
+        label="activation-state receipts root",
+    )
+
+    receipts: list[dict[str, Any]] = []
+    for name in sorted(receipt_names):
+        receipt, _body = _read_receipt(receipts_dir / name, paths=paths)
+        receipts.append(receipt)
+
+    bundle_hashes: dict[str, dict[str, str]] = {}
+    for bundle_name in sorted(bundle_names):
+        hashes: dict[str, str] = {}
+        for spec in _BUNDLE_FILE_SPECS:
+            body = _stable_read(
+                state_root / bundle_name / spec.filename,
+                label=f"activation-state bundle {bundle_name}/{spec.filename}",
+                maximum=spec.maximum,
+                uid=root_uid,
+                gid=api_gid,
+                modes=frozenset({0o440}),
+            )
+            hashes[spec.filename] = _digest(body)
+        if _bundle_id(hashes) != bundle_name:
+            _fail(f"activation-state bundle identity changed: {bundle_name}")
+        _validate_bundle_hashes(
+            state_root / bundle_name,
+            expected=hashes,
+            paths=paths,
+        )
+        bundle_hashes[bundle_name] = hashes
+
+    for receipt in receipts:
+        if receipt["bundle_id"] not in bundle_hashes:
+            _fail("activation-state receipt names a missing bundle")
+        if receipt["files"] != bundle_hashes[receipt["bundle_id"]]:
+            _fail("activation-state receipt bundle files changed")
+
+    active_receipt = _read_active(
+        paths,
+        declared_receipts_dir=declared_state_root / "receipts",
+    )
+    active_id = active_receipt[0]["activation_id"] if active_receipt else None
+    if active_receipt is not None:
+        active = active_receipt[0]
+        if active["bundle_id"] not in bundle_hashes:
+            _fail("activation-state active marker names a missing bundle")
+        _validate_bundle_hashes(
+            state_root / active["bundle_id"],
+            expected=active["files"],
+            paths=paths,
+        )
+
+    pending = _read_pending(paths)
+    pending_id = pending["candidate_activation_id"] if pending else None
+    if pending is not None:
+        candidate_bundle = pending["candidate_bundle_id"]
+        if candidate_bundle not in bundle_hashes:
+            _fail("activation-state pending marker names a missing bundle")
+        if bundle_hashes[candidate_bundle] != pending["candidate_files"]:
+            _fail("activation-state pending marker files changed")
+        if active_id == pending_id:
+            if (
+                active_receipt is None
+                or active_receipt[0]["files"] != pending["candidate_files"]
+            ):
+                _fail("activation-state completed pending marker changed")
+        elif active_id != pending["previous_activation_id"]:
+            _fail("activation-state pending marker does not bind active state")
+
+    tree_entries: list[dict[str, Any]] = [
+        {
+            "group": "api",
+            "kind": "directory",
+            "mode": "0750",
+            "owner": "root",
+            "path": ".",
+        },
+        {
+            "group": "root",
+            "kind": "directory",
+            "mode": "0700",
+            "owner": "root",
+            "path": "receipts",
+        },
+    ]
+    for name in sorted(receipt_names):
+        body = _stable_read(
+            receipts_dir / name,
+            label=f"activation-state receipt {name}",
+            maximum=16 * 1024,
+            uid=root_uid,
+            gid=root_gid,
+            modes=frozenset({0o400}),
+        )
+        tree_entries.append(
+            {
+                "bytes": len(body),
+                "group": "root",
+                "kind": "file",
+                "mode": "0400",
+                "owner": "root",
+                "path": f"receipts/{name}",
+                "sha256": _digest(body),
+            }
+        )
+    for name in ("active.json", "pending.json"):
+        if name not in root_entries:
+            continue
+        body = _stable_read(
+            state_root / name,
+            label=f"activation-state {name}",
+            maximum=8192,
+            uid=root_uid,
+            gid=root_gid,
+            modes=frozenset({0o400}),
+        )
+        tree_entries.append(
+            {
+                "bytes": len(body),
+                "group": "root",
+                "kind": "file",
+                "mode": "0400",
+                "owner": "root",
+                "path": name,
+                "sha256": _digest(body),
+            }
+        )
+    for bundle_name in sorted(bundle_names):
+        tree_entries.append(
+            {
+                "group": "api",
+                "kind": "directory",
+                "mode": "0750",
+                "owner": "root",
+                "path": bundle_name,
+            }
+        )
+        for spec in _BUNDLE_FILE_SPECS:
+            path = state_root / bundle_name / spec.filename
+            metadata = path.stat()
+            tree_entries.append(
+                {
+                    "bytes": metadata.st_size,
+                    "group": "api",
+                    "kind": "file",
+                    "mode": "0440",
+                    "owner": "root",
+                    "path": f"{bundle_name}/{spec.filename}",
+                    "sha256": bundle_hashes[bundle_name][spec.filename],
+                }
+            )
+    tree_body = _canonical({"entries": tree_entries})
+    return {
+        "schema": BACKUP_STATE_SCHEMA,
+        "state_root": str(declared_state_root),
+        "tree_sha256": _digest(tree_body),
+        "bundles": sorted(bundle_names),
+        "receipts": [receipt["activation_id"] for receipt in receipts],
+        "active_activation_id": active_id,
+        "pending_candidate_activation_id": pending_id,
+    }
+
+
 def _assert_config_consistency(
     active_receipt: tuple[dict[str, Any], dict[str, Any]] | None,
     *,
@@ -1922,12 +2431,13 @@ def _create_receipt(
     }
     _validate_receipt(receipt, expected_path=receipt_path)
     body = _canonical(receipt)
-    _write_immutable(
+    _publish_immutable_atomic(
         receipt_path,
         body,
         uid=paths.root_uid,
         gid=paths.root_gid,
         mode=0o400,
+        portable=paths.portable,
     )
     return receipt, body, receipt_path
 
@@ -2242,6 +2752,7 @@ def activate_bundle(
     with _deployment_lock(paths=paths, descriptor=deploy_lock_descriptor):
         _validate_runtime_release(paths)
         with _exclusive_lock(paths.activation_lock, paths=paths, create=True):
+            _cleanup_activation_stages(paths)
             _recover_pending(paths)
             bundle, hashes = _install_bundle(sources.files(), paths=paths)
             candidate = _verify_candidate(bundle, hashes=hashes, paths=paths)
@@ -2341,10 +2852,17 @@ def activate_bundle(
                     paths=paths,
                 )
                 activated_at = _now_text()
-                if _timestamp(
+                activated_at_value = _timestamp(
                     activated_at,
                     label="active marker.activated_at",
-                ) >= _timestamp(
+                )
+                recorded_at_value = _timestamp(
+                    receipt["recorded_at"],
+                    label="activation receipt.recorded_at",
+                )
+                if activated_at_value < recorded_at_value:
+                    _fail("system clock regressed before activation commit")
+                if activated_at_value >= _timestamp(
                     receipt["rights_expires_at"],
                     label="activation receipt.rights_expires_at",
                 ):
@@ -2367,6 +2885,13 @@ def activate_bundle(
                     gid=paths.root_gid,
                     mode=0o400,
                 )
+                published = _read_active(paths)
+                if (
+                    published is None
+                    or published[0] != marker
+                    or published[1] != receipt
+                ):
+                    _fail("published active marker could not be read back exactly")
             except BaseException as activation_error:
                 if not changed:
                     raise
@@ -2423,6 +2948,7 @@ def activate_bundle(
 __all__ = [
     "ACTIVATION_RECEIPT_SCHEMA",
     "ACTIVE_MARKER_SCHEMA",
+    "BACKUP_STATE_SCHEMA",
     "ActivationPaths",
     "BundleSources",
     "CANDIDATE_SCHEMA",
@@ -2438,5 +2964,6 @@ __all__ = [
     "RUNTIME_PROOF_SCHEMA",
     "PalimpsestChinaActivationError",
     "activate_bundle",
+    "audit_activation_state",
     "guarded_verify_main",
 ]

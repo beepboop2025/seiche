@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import errno
+import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 from types import SimpleNamespace
@@ -19,10 +23,119 @@ PRODUCER_SHA = "b" * 40
 SIGNER = "c" * 64
 
 
+def _load_launcher() -> object:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "ops/deploy/seiche-palimpsest-china-activate.py"
+    )
+    spec = importlib.util.spec_from_file_location("palimpsest_launcher_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _write(path: Path, body: bytes) -> Path:
     path.write_bytes(body)
     path.chmod(0o600)
     return path
+
+
+def test_launcher_recreates_boot_lost_deploy_lock_and_holds_it(
+    tmp_path: Path,
+) -> None:
+    launcher = _load_launcher()
+    lock_root = tmp_path / "seiche-deploy"
+    lock_root.mkdir(mode=0o700)
+    launcher.DEPLOY_LOCK = lock_root / "deploy.lock"  # type: ignore[attr-defined]
+
+    descriptor = launcher._open_deploy_lock(  # type: ignore[attr-defined]
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+    contender = -1
+    try:
+        metadata = (lock_root / "deploy.lock").stat()
+        assert stat.S_IMODE(metadata.st_mode) == 0o600
+        assert metadata.st_uid == os.getuid()
+        assert metadata.st_gid == os.getgid()
+        assert metadata.st_nlink == 1
+        contender = os.open(lock_root / "deploy.lock", os.O_RDWR | os.O_NOFOLLOW)
+        with pytest.raises(OSError) as locked:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert locked.value.errno in {errno.EACCES, errno.EAGAIN}
+    finally:
+        if contender >= 0:
+            os.close(contender)
+        os.close(descriptor)
+
+
+def test_launcher_tolerates_safe_concurrent_deploy_lock_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _load_launcher()
+    lock_root = tmp_path / "seiche-deploy"
+    lock_root.mkdir(mode=0o700)
+    launcher.DEPLOY_LOCK = lock_root / "deploy.lock"  # type: ignore[attr-defined]
+    real_open = os.open
+    raced = False
+
+    def racing_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal raced
+        if path == "deploy.lock" and flags & os.O_EXCL and not raced:
+            competing = real_open(
+                path,
+                os.O_RDWR | os.O_NOFOLLOW | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=dir_fd,
+            )
+            os.fsync(competing)
+            os.close(competing)
+            raced = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(launcher.os, "open", racing_open)  # type: ignore[attr-defined]
+    descriptor = launcher._open_deploy_lock(  # type: ignore[attr-defined]
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+    try:
+        assert raced is True
+        metadata = (lock_root / "deploy.lock").stat()
+        assert stat.S_IMODE(metadata.st_mode) == 0o600
+        assert metadata.st_nlink == 1
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize("unsafe", ("writable", "symlink"))
+def test_launcher_rejects_unsafe_recreated_deploy_lock(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    launcher = _load_launcher()
+    lock_root = tmp_path / "seiche-deploy"
+    lock_root.mkdir(mode=0o700)
+    target = lock_root / "deploy.lock"
+    if unsafe == "writable":
+        target.write_bytes(b"")
+        target.chmod(0o644)
+    else:
+        target.symlink_to(tmp_path / "attacker-lock")
+    launcher.DEPLOY_LOCK = target  # type: ignore[attr-defined]
+
+    with pytest.raises(launcher.LaunchError):  # type: ignore[attr-defined]
+        launcher._open_deploy_lock(  # type: ignore[attr-defined]
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
 
 
 def _sources(root: Path, *, generation: int = 1) -> activation.BundleSources:
@@ -189,6 +302,120 @@ def test_activation_installs_all_eleven_files_and_durable_authority(
     assert not paths.pending_marker.exists()
 
 
+def test_activation_state_backup_audit_round_trips_active_tree_and_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    result = activation.activate_bundle(sources, paths=paths)
+
+    live = activation.audit_activation_state(
+        paths.state_root,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+    )
+    assert live == {
+        "schema": activation.BACKUP_STATE_SCHEMA,
+        "state_root": str(paths.state_root),
+        "tree_sha256": live["tree_sha256"],
+        "bundles": [result["active"]["bundle_id"]],
+        "receipts": [result["active"]["activation_id"]],
+        "active_activation_id": result["active"]["activation_id"],
+        "pending_candidate_activation_id": None,
+    }
+
+    restored = tmp_path / "restore" / paths.state_root.name
+    shutil.copytree(paths.state_root, restored)
+    restored.chmod(0o700)
+    (restored / "receipts").chmod(0o755)
+    (restored / "active.json").chmod(0o600)
+    bundle = restored / result["active"]["bundle_id"]
+    bundle.chmod(0o700)
+    for member in bundle.iterdir():
+        member.chmod(0o600)
+    for member in (restored / "receipts").iterdir():
+        member.chmod(0o600)
+
+    normalized = activation.audit_activation_state(
+        restored,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+        normalize_restored=True,
+        declared_state_root=paths.state_root,
+    )
+
+    assert normalized == live
+    assert stat.S_IMODE(restored.stat().st_mode) == 0o750
+    assert stat.S_IMODE((restored / "receipts").stat().st_mode) == 0o700
+    assert stat.S_IMODE((restored / "active.json").stat().st_mode) == 0o400
+    assert stat.S_IMODE(bundle.stat().st_mode) == 0o750
+    assert all(
+        stat.S_IMODE(member.stat().st_mode) == 0o440 for member in bundle.iterdir()
+    )
+    assert all(
+        stat.S_IMODE(member.stat().st_mode) == 0o400
+        for member in (restored / "receipts").iterdir()
+    )
+
+
+def test_activation_state_backup_audit_supports_empty_inactive_state(
+    tmp_path: Path,
+) -> None:
+    paths = _paths(tmp_path)
+
+    result = activation.audit_activation_state(
+        paths.state_root,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+    )
+
+    assert result["schema"] == activation.BACKUP_STATE_SCHEMA
+    assert result["bundles"] == []
+    assert result["receipts"] == []
+    assert result["active_activation_id"] is None
+    assert result["pending_candidate_activation_id"] is None
+
+
+@pytest.mark.parametrize("unsafe", ["extra", "symlink", "hardlink"])
+def test_activation_state_backup_audit_rejects_unexpected_or_linked_members(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    paths = _paths(tmp_path)
+    if unsafe == "extra":
+        _write(paths.state_root / "unexpected", b"unexpected\n")
+    elif unsafe == "symlink":
+        target = _write(tmp_path / "outside", b"outside\n")
+        (paths.state_root / "active.json").symlink_to(target)
+    else:
+        receipt = _write(paths.receipts_dir / ("d" * 64 + ".json"), b"{}\n")
+        os.link(receipt, tmp_path / "receipt-hardlink")
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="unexpected member|control file is unsafe|receipt is unsafe",
+    ):
+        activation.audit_activation_state(
+            paths.state_root,
+            root_uid=paths.root_uid,
+            root_gid=paths.root_gid,
+            api_uid=paths.api_uid,
+            api_gid=paths.api_gid,
+        )
+
+
 def test_next_locked_run_recovers_an_interrupted_partial_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -334,6 +561,178 @@ def test_local_receipts_recompute_bundle_identity_and_rights_interval(
         match="clocks are inconsistent",
     ):
         activation._validate_receipt(expired_at_commit)
+
+
+def test_immutable_receipt_is_fully_staged_before_atomic_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    destination = paths.receipts_dir / ("d" * 64 + ".json")
+    body = b'{"complete":true}\n'
+    observed: dict[str, object] = {}
+
+    def publish(source: Path, target: Path, *, portable: bool = False) -> None:
+        observed["source"] = source
+        observed["portable"] = portable
+        assert target == destination
+        assert not destination.exists()
+        assert source.read_bytes() == body
+        assert stat.S_IMODE(source.stat().st_mode) == 0o400
+        source.rename(target)
+
+    monkeypatch.setattr(activation, "_rename_noreplace", publish)
+    activation._publish_immutable_atomic(
+        destination,
+        body,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o400,
+        portable=True,
+    )
+
+    assert destination.read_bytes() == body
+    assert observed["portable"] is True
+    assert not Path(observed["source"]).exists()  # type: ignore[arg-type]
+
+
+def test_interrupted_stages_are_cleaned_without_lowering_receipt_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    first_sources = _sources(tmp_path / "operator-one", generation=1)
+    second_sources = _sources(tmp_path / "operator-two", generation=2)
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={
+            1: accepted_at,
+            2: accepted_at - timedelta(minutes=1),
+        },
+        run_by_generation={1: 100, 2: 99},
+    )
+    first = activation.activate_bundle(first_sources, paths=paths)
+    receipt_stage = paths.receipts_dir / (
+        f".receipt-stage-{first['active']['activation_id']}-{'e' * 32}"
+    )
+    receipt_stage.write_bytes(b'{"truncated":')
+    receipt_stage.chmod(0o600)
+    bundle_stage = paths.state_root / f".bundle-stage-{'f' * 32}"
+    bundle_stage.mkdir(mode=0o700)
+    partial = bundle_stage / "manifest.json"
+    partial.write_bytes(b"partial")
+    partial.chmod(0o440)
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="acceptance clock would roll back",
+    ):
+        activation.activate_bundle(second_sources, paths=paths)
+
+    assert not receipt_stage.exists()
+    assert not bundle_stage.exists()
+    retained = list(paths.receipts_dir.iterdir())
+    assert len(retained) == 1
+    assert json.loads(retained[0].read_bytes()) == first["receipt"]
+    assert json.loads(paths.active_marker.read_bytes()) == first["active"]
+
+
+def test_activation_rejects_wall_clock_regression_before_marker_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    base = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=5)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: base},
+        run_by_generation={1: 100},
+    )
+    verified_at = (base + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+
+    def prove(
+        *,
+        paths: activation.ActivationPaths,
+        expected: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        if expected is None:
+            return None
+        return {
+            "schema": activation.RUNTIME_PROOF_SCHEMA,
+            "api_url": paths.api_url,
+            "rest_path": "/api/v2/world-markets?section=china_macro",
+            "mcp_path": "/mcp",
+            "rest_files": expected["files"],
+            "rest_signer_key_id": expected["signer_key_id"],
+            "mcp_files": expected["files"],
+            "mcp_signer_key_id": expected["signer_key_id"],
+            "verified_at": verified_at,
+        }
+
+    times = iter(
+        (
+            base + timedelta(minutes=1),
+            base + timedelta(minutes=3),
+            base + timedelta(minutes=2),
+        )
+    )
+    monkeypatch.setattr(activation, "_restart_and_probe", prove)
+    monkeypatch.setattr(
+        activation,
+        "_now_text",
+        lambda: next(times).isoformat().replace("+00:00", "Z"),
+    )
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="prior API configuration restored: system clock regressed",
+    ):
+        activation.activate_bundle(sources, paths=paths)
+
+    assert not paths.active_marker.exists()
+    assert not paths.pending_marker.exists()
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+
+
+def test_activation_rolls_back_when_published_marker_cannot_be_read_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    original_atomic_write = activation._atomic_write
+    corrupted = False
+
+    def corrupt_first_marker(
+        path: Path,
+        body: bytes,
+        *,
+        uid: int,
+        gid: int,
+        mode: int,
+    ) -> None:
+        nonlocal corrupted
+        original_atomic_write(path, body, uid=uid, gid=gid, mode=mode)
+        if path == paths.active_marker and not corrupted:
+            corrupted = True
+            original_atomic_write(path, b"{}\n", uid=uid, gid=gid, mode=mode)
+
+    monkeypatch.setattr(activation, "_atomic_write", corrupt_first_marker)
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="prior API configuration restored: active marker fields changed",
+    ):
+        activation.activate_bundle(sources, paths=paths)
+
+    assert corrupted is True
+    assert not paths.active_marker.exists()
+    assert not paths.pending_marker.exists()
+    assert len(list(paths.receipts_dir.iterdir())) == 1
 
 
 @pytest.mark.parametrize("unsafe", ["symlink", "hardlink"])
