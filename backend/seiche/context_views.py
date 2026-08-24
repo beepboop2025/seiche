@@ -279,6 +279,16 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
         "artifact": "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH",
         "input_ledger": "SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH",
         "availability": "SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH",
+        "producer_commit_evidence": (
+            "SEICHE_PALIMPSEST_CHINA_PRODUCER_COMMIT_EVIDENCE_PATH"
+        ),
+        "producer_main_evidence": (
+            "SEICHE_PALIMPSEST_CHINA_PRODUCER_MAIN_EVIDENCE_PATH"
+        ),
+        "handoff": "SEICHE_PALIMPSEST_CHINA_HANDOFF_PATH",
+        "checksums": "SEICHE_PALIMPSEST_CHINA_CHECKSUMS_PATH",
+        "lineage_chain": "SEICHE_PALIMPSEST_CHINA_LINEAGE_CHAIN_PATH",
+        "lineage_evidence": "SEICHE_PALIMPSEST_CHINA_LINEAGE_EVIDENCE_PATH",
         "acceptance": "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH",
     }
     configured = {key: os.getenv(name, "").strip() for key, name in names.items()}
@@ -296,4 +306,10 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
         configured["acceptance"],
         input_ledger_path=configured["input_ledger"],
         availability_path=configured["availability"],
+        producer_commit_evidence_path=configured["producer_commit_evidence"],
+        producer_main_evidence_path=configured["producer_main_evidence"],
+        handoff_path=configured["handoff"],
+        checksums_path=configured["checksums"],
+        lineage_chain_path=configured["lineage_chain"],
+        lineage_evidence_path=configured["lineage_evidence"],
     )

@@ -12,6 +12,8 @@ module creates :class:`seiche.domain.observation.Observation`, changes the
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -38,8 +40,15 @@ POLICY_SCHEMA = "palimpsest.china-economic-source-policy.v1"
 SERIES_REGISTRY_SCHEMA = "palimpsest-china-econ-wdi-series.v1"
 AVAILABILITY_RECEIPT_SCHEMA = "palimpsest-china-econ-wdi-run.v3"
 AVAILABILITY_SCHEMA = "palimpsest-china-econ-wdi-availability.v1"
-ACCEPTANCE_SCHEMA = "seiche.palimpsest-china-economic-acceptance.v1"
-ACCEPTANCE_DOMAIN = "seiche:palimpsest-china-economic-acceptance:v1"
+INDICATOR_PROVENANCE_SCHEMA = "palimpsest-china-econ-wdi-indicator-provenance.v1"
+COLLECTOR_ARTIFACT_SCHEMA = "palimpsest-collector-artifact/v1"
+HANDOFF_SCHEMA = "palimpsest.china-economic-handoff-receipt.v3"
+LINEAGE_CHAIN_SCHEMA = "palimpsest.china-economic-lineage-chain.v1"
+LINEAGE_RECORD_SCHEMA = "palimpsest.china-economic-lineage-record.v1"
+LINEAGE_EVIDENCE_SCHEMA = "palimpsest.china-economic-lineage-evidence.v1"
+LINEAGE_EVIDENCE_RECORD_SCHEMA = "palimpsest.china-economic-lineage-evidence-record.v1"
+ACCEPTANCE_SCHEMA = "seiche.palimpsest-china-economic-acceptance.v2"
+ACCEPTANCE_DOMAIN = "seiche:palimpsest-china-economic-acceptance:v2"
 CONTEXT_SCHEMA = "seiche.palimpsest-china-economic-context.v1"
 
 ALLOWED_SOURCE_IDS = frozenset({"world_bank_wdi"})
@@ -50,14 +59,37 @@ WDI_RIGHTS_EVIDENCE_URL = (
     "world-development-indicators"
 )
 WDI_ATTRIBUTION = "World Bank, World Development Indicators"
+WDI_DATASET = "World Development Indicators"
+WDI_COLLECTOR_ID = "world-bank-wdi-china"
+WDI_PUBLICATION_STATE = "public_context_only"
+WDI_LINEAGE_MODE = "git_tracked_append_only"
+WDI_LEDGER_PATH = "readings/china-econ-wdi-observations.jsonl"
+WDI_AVAILABILITY_PATH = "readings/china-econ-wdi-latest.json"
+WDI_REGISTRY_PATH = "config/china_econ_wdi_series.json"
+HANDOFF_LINEAGE_MODE = "git_tracked_reviewed_merge_chain"
+LINEAGE_CHAIN_PATH = "china-econ-wdi-lineage-chain.jsonl"
+LINEAGE_EVIDENCE_PATH = "github-commit-lineage-evidence.jsonl"
+WDI_UPSTREAM_ATTRIBUTION_STATE = "residual_gate"
+WDI_UPSTREAM_ATTRIBUTION_REQUIREMENT = (
+    "Pin and review a separate per-indicator upstream source and rights metadata "
+    "registry before claiming complete upstream attribution; the WDI observation "
+    "response does not carry that authority."
+)
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_INPUT_LEDGER_BYTES = 128 * 1024 * 1024
 MAX_AVAILABILITY_BYTES = 64 * 1024 * 1024
-MAX_ACCEPTANCE_BYTES = 4096
+MAX_PRODUCER_COMMIT_EVIDENCE_BYTES = 256 * 1024
+MAX_PRODUCER_MAIN_EVIDENCE_BYTES = 256 * 1024
+MAX_HANDOFF_BYTES = 2 * 1024 * 1024
+MAX_CHECKSUMS_BYTES = 64 * 1024
+MAX_LINEAGE_CHAIN_BYTES = 8 * 1024 * 1024
+MAX_LINEAGE_EVIDENCE_BYTES = 96 * 1024 * 1024
+MAX_ACCEPTANCE_BYTES = 16 * 1024
 MAX_SERIES_REGISTRY_BYTES = 2 * 1024 * 1024
+MAX_LINEAGE_RECORDS = 256
 MAX_RECORDS = 100_000
-MAX_SERIES = 60
+MAX_SERIES = 512
 
 # This process-local capability is deliberately not serializable and the
 # dataclass field which carries it is not accepted by ``__init__``.  Parsing a
@@ -106,6 +138,8 @@ _PRODUCER_WORKFLOW_KEYS = frozenset(
 )
 _PRODUCER_REPOSITORY = "beepboop2025/palimpsest"
 _PRODUCER_WORKFLOW_FILE = ".github/workflows/tests.yml"
+_PRODUCER_AUTHOR_LOGIN = "beepboop2025"
+_PRODUCER_COMMITTER_LOGIN = "web-flow"
 _ARTIFACT_RECEIPT_KEYS = frozenset(
     {"schema_version", "path", "media_type", "sha256", "bytes", "records"}
 )
@@ -170,6 +204,56 @@ _AVAILABILITY_KEYS = frozenset(
     }
 )
 _AVAILABILITY_ENTRY_KEYS = frozenset({"available", "footnote", "indicator_id", "year"})
+_LEDGER_SNAPSHOT_KEYS = frozenset({"sha256", "bytes", "records"})
+_RESPONSE_COVERAGE_KEYS = frozenset(
+    {
+        "coverage_semantics",
+        "requested_start_year",
+        "requested_end_year",
+        "configured_indicators",
+        "represented_indicators",
+        "populated_indicators",
+        "null_only_indicators",
+        "source_rows",
+        "populated_observations",
+        "null_rows",
+        "period_start",
+        "period_end",
+    }
+)
+_LEDGER_COVERAGE_KEYS = frozenset(
+    {"coverage_semantics", "records", "series_count", "period_start", "period_end"}
+)
+_REVISION_LINEAGE_KEYS = frozenset({"mode", "durable_cross_run", "ledger_path"})
+_INDICATOR_PROVENANCE_KEYS = frozenset(
+    {
+        "schema_version",
+        "records",
+        "entries",
+        "upstream_attribution_state",
+        "upstream_attribution_requirement",
+    }
+)
+_INDICATOR_PROVENANCE_ENTRY_KEYS = frozenset(
+    {"indicator_id", "reviewed_name", "source_title"}
+)
+_COLLECTOR_ARTIFACT_KEYS = frozenset(
+    {
+        "schema_version",
+        "collector_id",
+        "source_receipt",
+        "freshness",
+        "coverage",
+        "abstention",
+        "payload_sha256",
+    }
+)
+_COLLECTOR_SOURCE_RECEIPT_KEYS = frozenset(
+    {"url", "raw_sha256", "dataset_last_updated", "license"}
+)
+_COLLECTOR_FRESHNESS_KEYS = frozenset(
+    {"evidence_state", "observed_at", "native_cadence", "dataset_age_days"}
+)
 _SOURCE_DECISION_KEYS = frozenset(
     {
         "source_id",
@@ -239,10 +323,203 @@ _ACCEPTANCE_CLAIM_KEYS = frozenset(
         "accepted_at",
         "manifest_sha256",
         "artifact_sha256",
+        "producer_commit_evidence",
+        "producer_main_evidence",
+        "handoff_receipt",
+        "checksum_subject",
+        "governed_lineage",
+        "operator_confirmations",
         "signer_key_id",
     }
 )
 _ACCEPTANCE_KEYS = frozenset({*_ACCEPTANCE_CLAIM_KEYS, "signature"})
+_PRODUCER_COMMIT_EVIDENCE_KEYS = frozenset(
+    {
+        "path",
+        "request_url",
+        "sha256",
+        "bytes",
+        "sha",
+        "author_login",
+        "committer_login",
+        "parent_shas",
+        "verification",
+    }
+)
+_PRODUCER_COMMIT_VERIFICATION_KEYS = frozenset({"verified", "reason", "verified_at"})
+_PRODUCER_MAIN_EVIDENCE_KEYS = frozenset(
+    {
+        "path",
+        "request_url",
+        "sha256",
+        "bytes",
+        "observed_at",
+        "name",
+        "commit",
+        "protected",
+    }
+)
+_PRODUCER_MAIN_COMMIT_KEYS = frozenset({"sha"})
+_ACCEPTANCE_HANDOFF_KEYS = frozenset({"path", "schema_version", "sha256", "bytes"})
+_ACCEPTANCE_CHECKSUM_KEYS = frozenset({"path", "sha256", "bytes", "records"})
+_OPERATOR_CONFIRMATION_INPUT_KEYS = frozenset(
+    {
+        "github_attestation_verified",
+        "exact_checksum_subject_set_verified",
+        "producer_raw_identity_verified",
+        "detached_first_parent_lineage_rebuild_verified",
+        "current_main_branch_evidence_verified",
+        "rights_and_freshness_reviewed",
+    }
+)
+_OPERATOR_CONFIRMATION_KEYS = frozenset(
+    {
+        *_OPERATOR_CONFIRMATION_INPUT_KEYS,
+        "github_attestation_subject_sha256",
+        "checksum_subject_sha256",
+        "producer_commit_evidence_sha256",
+        "lineage_chain_sha256",
+        "lineage_evidence_sha256",
+        "lineage_evaluated_at_commit_sha",
+        "producer_main_evidence_sha256",
+        "manifest_sha256",
+        "availability_receipt_sha256",
+        "rights_expires_at",
+    }
+)
+_LINEAGE_CHAIN_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "path",
+        "sha256",
+        "bytes",
+        "records",
+        "root_commit_sha",
+        "tip_commit_sha",
+        "evaluated_at_commit_sha",
+        "governed_paths",
+        "evidence",
+    }
+)
+_LINEAGE_EVIDENCE_RECEIPT_KEYS = frozenset(
+    {"schema_version", "path", "sha256", "bytes", "records"}
+)
+_LINEAGE_RECORD_KEYS = frozenset(
+    {
+        "schema_version",
+        "sequence",
+        "commit",
+        "previous_change_sha",
+        "git_tree_entries",
+        "registry_transition",
+        "ledger",
+        "availability_receipt",
+        "ledger_transition",
+    }
+)
+_LINEAGE_COMMIT_KEYS = frozenset(
+    {
+        "sha",
+        "request_url",
+        "api_url",
+        "author_login",
+        "committer_login",
+        "parent_shas",
+        "verification",
+        "raw_sha256",
+        "raw_bytes",
+    }
+)
+_LINEAGE_EVIDENCE_RECORD_KEYS = frozenset(
+    {
+        "schema_version",
+        "sequence",
+        "commit_sha",
+        "raw_sha256",
+        "raw_bytes",
+        "encoding",
+        "payload_base64",
+    }
+)
+_LINEAGE_TREE_ENTRY_KEYS = frozenset({"mode", "type", "object_sha"})
+_LINEAGE_REGISTRY_TRANSITION_KEYS = frozenset(
+    {"state", "previous", "current", "added_source_indicators"}
+)
+_LINEAGE_REGISTRY_RECEIPT_KEYS = frozenset(
+    {"path", "schema_version", "sha256", "bytes", "series_records"}
+)
+_LINEAGE_LEDGER_KEYS = frozenset({"path", "sha256", "bytes", "records"})
+_LINEAGE_AVAILABILITY_KEYS = frozenset(
+    {"path", "schema_version", "sha256", "bytes", "generated_at"}
+)
+_LINEAGE_LEDGER_TRANSITION_KEYS = frozenset(
+    {"state", "prefix_bytes", "appended_records", "receipt_appended_observations"}
+)
+_HANDOFF_KEYS = frozenset(
+    {
+        "schema_version",
+        "producer",
+        "producer_commit_evidence",
+        "revision_lineage",
+        "artifact",
+        "input_ledger",
+        "reviewed_availability_receipt",
+        "live_verification",
+        "live_raw_response",
+        "files",
+    }
+)
+_HANDOFF_PRODUCER_COMMIT_KEYS = frozenset(
+    {
+        "path",
+        "sha",
+        "request_url",
+        "api_url",
+        "author_login",
+        "committer_login",
+        "parent_shas",
+        "verification",
+        "sha256",
+        "bytes",
+    }
+)
+_HANDOFF_LINEAGE_KEYS = frozenset(
+    {
+        "mode",
+        "chain",
+        "cross_run_revision_authority",
+        "live_check_new_vintages_appended",
+    }
+)
+_HANDOFF_LIVE_VERIFICATION_KEYS = frozenset(
+    {
+        "path",
+        "sha256",
+        "bytes",
+        "batch_raw_sha256",
+        "current_availability_sha256",
+    }
+)
+_HANDOFF_LIVE_RAW_KEYS = frozenset({"path", "sha256"})
+_HANDOFF_FILE_KEYS = frozenset({"path", "sha256", "bytes"})
+
+_CHECKSUM_SUBJECT_NAMES = frozenset(
+    {
+        "china-econ-wdi-latest.json",
+        "china-econ-wdi-live-check.json",
+        "china-econ-wdi-lineage-chain.jsonl",
+        "china-econ-wdi-observations.jsonl",
+        "china_econ_source_policy.json",
+        "china_econ_wdi_series.json",
+        "github-commit.json",
+        "github-commit-lineage-evidence.jsonl",
+        "handoff-receipt.json",
+        "palimpsest-china-economic-export-v1.jsonl",
+        "palimpsest-china-economic-export-v3-manifest.json",
+        "world-bank-wdi-response.json",
+    }
+)
+_HANDOFF_CORE_NAMES = _CHECKSUM_SUBJECT_NAMES - {"handoff-receipt.json"}
 
 
 class PalimpsestChinaIntakeError(ValueError):
@@ -286,6 +563,21 @@ def _canonical_json_line(value: object) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise PalimpsestChinaIntakeError("document is not canonical JSON data") from exc
+    return encoded + b"\n"
+
+
+def _ledger_json_line(value: object) -> bytes:
+    """Encode Palimpsest's durable ledger wire format exactly."""
+
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise PalimpsestChinaIntakeError("input ledger row is not JSON data") from exc
     return encoded + b"\n"
 
 
@@ -429,6 +721,439 @@ def _validate_producer(value: object) -> dict[str, Any]:
             "manifest.producer.workflow_run URL is not canonical"
         )
     return {**producer, "workflow_run": dict(workflow)}
+
+
+def _normalize_github_commit_evidence(
+    raw: bytes,
+    *,
+    expected_sha: str,
+    accepted_at: datetime,
+    label: str,
+) -> dict[str, Any]:
+    """Reparse one bounded raw GitHub commit response as a reviewed merge."""
+
+    if (
+        type(raw) is not bytes
+        or not raw
+        or len(raw) > MAX_PRODUCER_COMMIT_EVIDENCE_BYTES
+    ):
+        raise PalimpsestChinaIntakeError(f"{label} is empty or too large")
+    value = _strict_json(raw, label=label)
+    if type(value) is not dict:
+        raise PalimpsestChinaIntakeError(f"{label} must be an object")
+    commit_sha = _git_sha(value.get("sha"), label=f"{label}.sha")
+    if commit_sha != expected_sha:
+        raise PalimpsestChinaIntakeError(
+            f"{label} does not match the manifest producer or lineage commitment"
+        )
+    api_url = (
+        f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/commits/{commit_sha}"
+    )
+    request_url = f"{api_url}?per_page=1"
+    if value.get("url") != api_url:
+        raise PalimpsestChinaIntakeError(f"{label} API URL is not canonical")
+
+    author = value.get("author")
+    committer = value.get("committer")
+    if (
+        not isinstance(author, dict)
+        or author.get("login") != _PRODUCER_AUTHOR_LOGIN
+        or not isinstance(committer, dict)
+        or committer.get("login") != _PRODUCER_COMMITTER_LOGIN
+    ):
+        raise PalimpsestChinaIntakeError(
+            f"{label} GitHub author or committer identity is not reviewed"
+        )
+
+    parents = value.get("parents")
+    if not isinstance(parents, list) or not 2 <= len(parents) <= 64:
+        raise PalimpsestChinaIntakeError(
+            f"{label} must be a bounded merge with at least two parents"
+        )
+    parent_shas: list[str] = []
+    for position, parent in enumerate(parents, 1):
+        if not isinstance(parent, dict):
+            raise PalimpsestChinaIntakeError(f"{label} parent {position} is malformed")
+        parent_sha = _git_sha(parent.get("sha"), label=f"{label} parent {position}.sha")
+        expected_parent_url = (
+            f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/commits/{parent_sha}"
+        )
+        if parent.get("url") != expected_parent_url:
+            raise PalimpsestChinaIntakeError(
+                f"{label} parent {position} URL is not canonical"
+            )
+        parent_shas.append(parent_sha)
+    if len(parent_shas) != len(set(parent_shas)):
+        raise PalimpsestChinaIntakeError(f"{label} parent SHAs must be unique")
+
+    commit = value.get("commit")
+    verification = commit.get("verification") if isinstance(commit, dict) else None
+    if not isinstance(verification, dict):
+        raise PalimpsestChinaIntakeError(f"{label} verification evidence is missing")
+    verified_at_text, verified_at = _canonical_timestamp(
+        verification.get("verified_at"),
+        label=f"{label}.verification.verified_at",
+    )
+    if (
+        verification.get("verified") is not True
+        or verification.get("reason") != "valid"
+        or not isinstance(verification.get("signature"), str)
+        or not verification["signature"].strip()
+        or not isinstance(verification.get("payload"), str)
+        or not verification["payload"].strip()
+    ):
+        raise PalimpsestChinaIntakeError(f"{label} GitHub verification is not valid")
+    if verified_at > accepted_at:
+        raise PalimpsestChinaIntakeError(
+            f"{label} verification clock follows Seiche acceptance"
+        )
+
+    return {
+        "sha": commit_sha,
+        "request_url": request_url,
+        "api_url": api_url,
+        "author_login": _PRODUCER_AUTHOR_LOGIN,
+        "committer_login": _PRODUCER_COMMITTER_LOGIN,
+        "parent_shas": parent_shas,
+        "verification": {
+            "verified": True,
+            "reason": "valid",
+            "verified_at": verified_at_text,
+        },
+    }
+
+
+def _validate_producer_commit_evidence(
+    raw: bytes,
+    *,
+    producer: Mapping[str, Any],
+    accepted_at: datetime,
+) -> dict[str, Any]:
+    """Reparse raw GitHub commit JSON into the signed acceptance receipt."""
+
+    if producer.get("repository") != _PRODUCER_REPOSITORY:
+        raise PalimpsestChinaIntakeError(
+            "producer commit evidence repository is not reviewed"
+        )
+    normalized = _normalize_github_commit_evidence(
+        raw,
+        expected_sha=_git_sha(
+            producer.get("commit_sha"), label="manifest.producer.commit_sha"
+        ),
+        accepted_at=accepted_at,
+        label="producer commit evidence",
+    )
+    return {
+        "path": "github-commit.json",
+        "request_url": normalized["request_url"],
+        "sha256": _sha256(raw),
+        "bytes": len(raw),
+        "sha": normalized["sha"],
+        "author_login": normalized["author_login"],
+        "committer_login": normalized["committer_login"],
+        "parent_shas": normalized["parent_shas"],
+        "verification": normalized["verification"],
+    }
+
+
+def _validate_embedded_producer_commit_evidence(
+    value: object,
+) -> dict[str, Any]:
+    evidence = _exact_keys(
+        value,
+        _PRODUCER_COMMIT_EVIDENCE_KEYS,
+        label="acceptance.producer_commit_evidence",
+    )
+    if evidence["path"] != "github-commit.json":
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit evidence path changed"
+        )
+    sha = _git_sha(evidence["sha"], label="acceptance.producer_commit_evidence.sha")
+    expected_url = (
+        f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/commits/{sha}?per_page=1"
+    )
+    if evidence["request_url"] != expected_url:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit request URL is not canonical"
+        )
+    _sha(
+        evidence["sha256"],
+        label="acceptance.producer_commit_evidence.sha256",
+    )
+    size = _count(
+        evidence["bytes"],
+        label="acceptance.producer_commit_evidence.bytes",
+        positive=True,
+    )
+    if size > MAX_PRODUCER_COMMIT_EVIDENCE_BYTES:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit evidence is too large"
+        )
+    if (
+        evidence["author_login"] != _PRODUCER_AUTHOR_LOGIN
+        or evidence["committer_login"] != _PRODUCER_COMMITTER_LOGIN
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit identity is not reviewed"
+        )
+    parent_shas = evidence["parent_shas"]
+    if (
+        not isinstance(parent_shas, list)
+        or not 2 <= len(parent_shas) <= 64
+        or len(parent_shas) != len(set(parent_shas))
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit parent SHAs are invalid"
+        )
+    for position, parent_sha in enumerate(parent_shas, 1):
+        _git_sha(
+            parent_sha,
+            label=f"acceptance.producer_commit_evidence.parent_shas[{position}]",
+        )
+    verification = _exact_keys(
+        evidence["verification"],
+        _PRODUCER_COMMIT_VERIFICATION_KEYS,
+        label="acceptance.producer_commit_evidence.verification",
+    )
+    if verification["verified"] is not True or verification["reason"] != "valid":
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit verification is not valid"
+        )
+    _canonical_timestamp(
+        verification["verified_at"],
+        label="acceptance.producer_commit_evidence.verification.verified_at",
+    )
+    return dict(evidence)
+
+
+def _validate_producer_main_evidence(
+    raw: bytes,
+    *,
+    producer: Mapping[str, Any],
+    observed_at: datetime,
+) -> dict[str, Any]:
+    """Normalize one exact GitHub ``branches/main`` response for signing."""
+
+    if type(raw) is not bytes or not raw or len(raw) > MAX_PRODUCER_MAIN_EVIDENCE_BYTES:
+        raise PalimpsestChinaIntakeError("producer main evidence is empty or too large")
+    value = _strict_json(raw, label="producer main evidence")
+    if type(value) is not dict or value.get("name") != "main":
+        raise PalimpsestChinaIntakeError(
+            "producer main evidence must describe the main branch"
+        )
+    commit = value.get("commit")
+    if not isinstance(commit, dict):
+        raise PalimpsestChinaIntakeError("producer main evidence commit is missing")
+    commit_sha = _git_sha(commit.get("sha"), label="producer main evidence.commit.sha")
+    if (
+        producer.get("repository") != _PRODUCER_REPOSITORY
+        or producer.get("commit_sha") != commit_sha
+    ):
+        raise PalimpsestChinaIntakeError(
+            "producer main evidence does not match the manifest producer"
+        )
+    expected_commit_url = (
+        f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/commits/{commit_sha}"
+    )
+    if commit.get("url") != expected_commit_url:
+        raise PalimpsestChinaIntakeError(
+            "producer main evidence commit URL is not canonical"
+        )
+    protected = value.get("protected")
+    if type(protected) is not bool:
+        raise PalimpsestChinaIntakeError(
+            "producer main evidence protected state must be boolean"
+        )
+    observed_text = observed_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    request_url = f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/branches/main"
+    return {
+        "path": "github-main-branch.json",
+        "request_url": request_url,
+        "sha256": _sha256(raw),
+        "bytes": len(raw),
+        "observed_at": observed_text,
+        "name": "main",
+        "commit": {"sha": commit_sha},
+        "protected": protected,
+    }
+
+
+def _validate_embedded_producer_main_evidence(value: object) -> dict[str, Any]:
+    evidence = _exact_keys(
+        value,
+        _PRODUCER_MAIN_EVIDENCE_KEYS,
+        label="acceptance.producer_main_evidence",
+    )
+    if evidence["path"] != "github-main-branch.json":
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer main evidence path changed"
+        )
+    expected_url = f"https://api.github.com/repos/{_PRODUCER_REPOSITORY}/branches/main"
+    if evidence["request_url"] != expected_url:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer main request URL is not canonical"
+        )
+    _sha(evidence["sha256"], label="acceptance.producer_main_evidence.sha256")
+    size = _count(
+        evidence["bytes"],
+        label="acceptance.producer_main_evidence.bytes",
+        positive=True,
+    )
+    if size > MAX_PRODUCER_MAIN_EVIDENCE_BYTES:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer main evidence is too large"
+        )
+    _canonical_timestamp(
+        evidence["observed_at"],
+        label="acceptance.producer_main_evidence.observed_at",
+    )
+    if evidence["name"] != "main" or type(evidence["protected"]) is not bool:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer main branch state is invalid"
+        )
+    commit = _exact_keys(
+        evidence["commit"],
+        _PRODUCER_MAIN_COMMIT_KEYS,
+        label="acceptance.producer_main_evidence.commit",
+    )
+    _git_sha(commit["sha"], label="acceptance.producer_main_evidence.commit.sha")
+    return dict(evidence)
+
+
+def _validate_embedded_handoff_receipt(value: object) -> dict[str, Any]:
+    receipt = _exact_keys(
+        value, _ACCEPTANCE_HANDOFF_KEYS, label="acceptance.handoff_receipt"
+    )
+    if (
+        receipt["path"] != "handoff-receipt.json"
+        or receipt["schema_version"] != HANDOFF_SCHEMA
+    ):
+        raise PalimpsestChinaIntakeError("acceptance handoff receipt contract changed")
+    _sha(receipt["sha256"], label="acceptance.handoff_receipt.sha256")
+    size = _count(
+        receipt["bytes"], label="acceptance.handoff_receipt.bytes", positive=True
+    )
+    if size > MAX_HANDOFF_BYTES:
+        raise PalimpsestChinaIntakeError("acceptance handoff receipt is too large")
+    return dict(receipt)
+
+
+def _validate_embedded_checksum_subject(value: object) -> dict[str, Any]:
+    receipt = _exact_keys(
+        value, _ACCEPTANCE_CHECKSUM_KEYS, label="acceptance.checksum_subject"
+    )
+    if receipt["path"] != "SHA256SUMS":
+        raise PalimpsestChinaIntakeError("acceptance checksum subject path changed")
+    _sha(receipt["sha256"], label="acceptance.checksum_subject.sha256")
+    size = _count(
+        receipt["bytes"], label="acceptance.checksum_subject.bytes", positive=True
+    )
+    records = _count(
+        receipt["records"], label="acceptance.checksum_subject.records", positive=True
+    )
+    if size > MAX_CHECKSUMS_BYTES or records != len(_CHECKSUM_SUBJECT_NAMES):
+        raise PalimpsestChinaIntakeError("acceptance checksum subject bounds changed")
+    return dict(receipt)
+
+
+def _validate_embedded_lineage_receipt(value: object) -> dict[str, Any]:
+    receipt = _exact_keys(
+        value, _LINEAGE_CHAIN_RECEIPT_KEYS, label="acceptance.governed_lineage"
+    )
+    if (
+        receipt["schema_version"] != LINEAGE_CHAIN_SCHEMA
+        or receipt["path"] != LINEAGE_CHAIN_PATH
+        or receipt["governed_paths"]
+        != [WDI_REGISTRY_PATH, WDI_LEDGER_PATH, WDI_AVAILABILITY_PATH]
+    ):
+        raise PalimpsestChinaIntakeError("acceptance governed lineage contract changed")
+    _sha(receipt["sha256"], label="acceptance.governed_lineage.sha256")
+    size = _count(
+        receipt["bytes"], label="acceptance.governed_lineage.bytes", positive=True
+    )
+    records = _count(
+        receipt["records"],
+        label="acceptance.governed_lineage.records",
+        positive=True,
+    )
+    if size > MAX_LINEAGE_CHAIN_BYTES or records > MAX_LINEAGE_RECORDS:
+        raise PalimpsestChinaIntakeError("acceptance governed lineage bounds changed")
+    _git_sha(
+        receipt["root_commit_sha"],
+        label="acceptance.governed_lineage.root_commit_sha",
+    )
+    _git_sha(
+        receipt["tip_commit_sha"],
+        label="acceptance.governed_lineage.tip_commit_sha",
+    )
+    _git_sha(
+        receipt["evaluated_at_commit_sha"],
+        label="acceptance.governed_lineage.evaluated_at_commit_sha",
+    )
+    evidence = _exact_keys(
+        receipt["evidence"],
+        _LINEAGE_EVIDENCE_RECEIPT_KEYS,
+        label="acceptance.governed_lineage.evidence",
+    )
+    if (
+        evidence["schema_version"] != LINEAGE_EVIDENCE_SCHEMA
+        or evidence["path"] != LINEAGE_EVIDENCE_PATH
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance governed lineage evidence contract changed"
+        )
+    _sha(
+        evidence["sha256"],
+        label="acceptance.governed_lineage.evidence.sha256",
+    )
+    evidence_size = _count(
+        evidence["bytes"],
+        label="acceptance.governed_lineage.evidence.bytes",
+        positive=True,
+    )
+    evidence_records = _count(
+        evidence["records"],
+        label="acceptance.governed_lineage.evidence.records",
+        positive=True,
+    )
+    if evidence_size > MAX_LINEAGE_EVIDENCE_BYTES or evidence_records != records:
+        raise PalimpsestChinaIntakeError(
+            "acceptance governed lineage evidence bounds changed"
+        )
+    return dict(receipt)
+
+
+def _validate_embedded_operator_confirmations(value: object) -> dict[str, Any]:
+    confirmations = _exact_keys(
+        value,
+        _OPERATOR_CONFIRMATION_KEYS,
+        label="acceptance.operator_confirmations",
+    )
+    for key in _OPERATOR_CONFIRMATION_INPUT_KEYS:
+        if confirmations[key] is not True:
+            raise PalimpsestChinaIntakeError(
+                f"acceptance operator confirmation {key} is not true"
+            )
+    for key in (
+        "github_attestation_subject_sha256",
+        "checksum_subject_sha256",
+        "producer_commit_evidence_sha256",
+        "lineage_chain_sha256",
+        "lineage_evidence_sha256",
+        "producer_main_evidence_sha256",
+        "manifest_sha256",
+        "availability_receipt_sha256",
+    ):
+        _sha(confirmations[key], label=f"acceptance.operator_confirmations.{key}")
+    _git_sha(
+        confirmations["lineage_evaluated_at_commit_sha"],
+        label="acceptance.operator_confirmations.lineage_evaluated_at_commit_sha",
+    )
+    _canonical_timestamp(
+        confirmations["rights_expires_at"],
+        label="acceptance.operator_confirmations.rights_expires_at",
+    )
+    return dict(confirmations)
 
 
 def _timestamp(value: object, *, label: str) -> datetime:
@@ -614,6 +1339,12 @@ class PalimpsestChinaEconomicContext:
     manifest_schema_version: str
     manifest_sha256: str
     producer: Mapping[str, Any] | None
+    producer_commit_evidence: Mapping[str, Any] | None
+    producer_main_evidence: Mapping[str, Any] | None
+    handoff_receipt: Mapping[str, Any] | None
+    checksum_subject: Mapping[str, Any] | None
+    governed_lineage: Mapping[str, Any] | None
+    operator_confirmations: Mapping[str, Any] | None
     artifact_sha256: str
     artifact_bytes: int
     input_ledger_sha256: str
@@ -718,6 +1449,36 @@ class PalimpsestChinaEconomicContext:
             "provenance": {
                 "producer": (
                     _copy_json(self.producer) if self.producer is not None else None
+                ),
+                "producer_commit_evidence": (
+                    _copy_json(self.producer_commit_evidence)
+                    if self.producer_commit_evidence is not None
+                    else None
+                ),
+                "producer_main_evidence": (
+                    _copy_json(self.producer_main_evidence)
+                    if self.producer_main_evidence is not None
+                    else None
+                ),
+                "handoff_receipt": (
+                    _copy_json(self.handoff_receipt)
+                    if self.handoff_receipt is not None
+                    else None
+                ),
+                "checksum_subject": (
+                    _copy_json(self.checksum_subject)
+                    if self.checksum_subject is not None
+                    else None
+                ),
+                "governed_lineage": (
+                    _copy_json(self.governed_lineage)
+                    if self.governed_lineage is not None
+                    else None
+                ),
+                "operator_confirmations": (
+                    _copy_json(self.operator_confirmations)
+                    if self.operator_confirmations is not None
+                    else None
                 ),
                 "manifest_sha256": self.manifest_sha256,
                 "artifact_sha256": self.artifact_sha256,
@@ -1096,6 +1857,8 @@ class _LedgerState:
     record_sha256_by_observation_id: Mapping[str, str]
     latest_observation_id_by_identity: Mapping[tuple[str, int], str]
     latest_collected_at: datetime
+    sha256: str
+    bytes: int
     records: int
 
 
@@ -1111,6 +1874,802 @@ class _AvailabilityState:
     current_projectable_series_sha256: str
     current_projectable_source_indicators_sha256: str
     withdrawn_numeric_identities_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _LineageAuthority:
+    handoff_sha256: str
+    checksums_sha256: str
+    chain_sha256: str
+    evidence_sha256: str
+    chain_receipt: Mapping[str, Any]
+
+
+def _git_blob_oid(payload: bytes) -> str:
+    header = f"blob {len(payload)}\0".encode("ascii")
+    return hashlib.sha1(header + payload).hexdigest()  # noqa: S324 - Git SHA-1 ID
+
+
+def _canonical_jsonl_rows(
+    payload: bytes,
+    *,
+    label: str,
+    maximum: int,
+    expected_records: int,
+) -> list[dict[str, Any]]:
+    if (
+        type(payload) is not bytes
+        or not payload
+        or len(payload) > maximum
+        or not payload.endswith(b"\n")
+        or b"\r" in payload
+    ):
+        raise PalimpsestChinaIntakeError(
+            f"{label} is empty, oversized, or not LF-terminated"
+        )
+    lines = payload.splitlines(keepends=True)
+    if len(lines) != expected_records or not 1 <= len(lines) <= MAX_LINEAGE_RECORDS:
+        raise PalimpsestChinaIntakeError(f"{label} record count does not match")
+    rows: list[dict[str, Any]] = []
+    for position, line in enumerate(lines, 1):
+        if line == b"\n" or not line.endswith(b"\n"):
+            raise PalimpsestChinaIntakeError(
+                f"{label} line {position} is blank or unterminated"
+            )
+        value = _strict_json(line[:-1], label=f"{label} line {position}")
+        if type(value) is not dict or _canonical_json_line(value) != line:
+            raise PalimpsestChinaIntakeError(
+                f"{label} line {position} is not canonical JSON"
+            )
+        rows.append(value)
+    return rows
+
+
+def _lineage_registry_receipt(value: object, *, label: str) -> dict[str, Any]:
+    receipt = _exact_keys(value, _LINEAGE_REGISTRY_RECEIPT_KEYS, label=label)
+    if (
+        receipt["path"] != WDI_REGISTRY_PATH
+        or receipt["schema_version"] != SERIES_REGISTRY_SCHEMA
+    ):
+        raise PalimpsestChinaIntakeError(f"{label} registry contract changed")
+    _sha(receipt["sha256"], label=f"{label}.sha256")
+    _count(receipt["bytes"], label=f"{label}.bytes", positive=True)
+    records = _count(
+        receipt["series_records"], label=f"{label}.series_records", positive=True
+    )
+    if records > MAX_SERIES:
+        raise PalimpsestChinaIntakeError(f"{label} exceeds the reviewed series bound")
+    return dict(receipt)
+
+
+def _lineage_ledger_receipt(value: object, *, label: str) -> dict[str, Any]:
+    receipt = _exact_keys(value, _LINEAGE_LEDGER_KEYS, label=label)
+    if receipt["path"] != WDI_LEDGER_PATH:
+        raise PalimpsestChinaIntakeError(f"{label} path changed")
+    _sha(receipt["sha256"], label=f"{label}.sha256")
+    _count(receipt["bytes"], label=f"{label}.bytes", positive=True)
+    records = _count(receipt["records"], label=f"{label}.records", positive=True)
+    if records > MAX_RECORDS:
+        raise PalimpsestChinaIntakeError(f"{label} exceeds the ledger row bound")
+    return dict(receipt)
+
+
+def _lineage_availability_receipt(value: object, *, label: str) -> dict[str, Any]:
+    receipt = _exact_keys(value, _LINEAGE_AVAILABILITY_KEYS, label=label)
+    if (
+        receipt["path"] != WDI_AVAILABILITY_PATH
+        or receipt["schema_version"] != AVAILABILITY_RECEIPT_SCHEMA
+    ):
+        raise PalimpsestChinaIntakeError(f"{label} contract changed")
+    _sha(receipt["sha256"], label=f"{label}.sha256")
+    _count(receipt["bytes"], label=f"{label}.bytes", positive=True)
+    _canonical_timestamp(receipt["generated_at"], label=f"{label}.generated_at")
+    return dict(receipt)
+
+
+def _validate_lineage_evidence(
+    evidence_bytes: bytes,
+    *,
+    receipt_value: object,
+    accepted_at: datetime,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    receipt = _exact_keys(
+        receipt_value,
+        _LINEAGE_EVIDENCE_RECEIPT_KEYS,
+        label="handoff.revision_lineage.chain.evidence",
+    )
+    if (
+        receipt["schema_version"] != LINEAGE_EVIDENCE_SCHEMA
+        or receipt["path"] != LINEAGE_EVIDENCE_PATH
+    ):
+        raise PalimpsestChinaIntakeError("lineage evidence receipt contract changed")
+    expected_sha = _sha(receipt["sha256"], label="lineage evidence.sha256")
+    expected_bytes = _count(
+        receipt["bytes"], label="lineage evidence.bytes", positive=True
+    )
+    expected_records = _count(
+        receipt["records"], label="lineage evidence.records", positive=True
+    )
+    if (
+        expected_sha != _sha256(evidence_bytes)
+        or expected_bytes != len(evidence_bytes)
+        or expected_records > MAX_LINEAGE_RECORDS
+    ):
+        raise PalimpsestChinaIntakeError(
+            "lineage evidence hash, bytes, or record commitment does not match"
+        )
+    rows = _canonical_jsonl_rows(
+        evidence_bytes,
+        label="lineage evidence",
+        maximum=MAX_LINEAGE_EVIDENCE_BYTES,
+        expected_records=expected_records,
+    )
+    normalized: list[dict[str, Any]] = []
+    seen_commits: set[str] = set()
+    for sequence, candidate in enumerate(rows):
+        row = _exact_keys(
+            candidate,
+            _LINEAGE_EVIDENCE_RECORD_KEYS,
+            label=f"lineage evidence row {sequence}",
+        )
+        if (
+            row["schema_version"] != LINEAGE_EVIDENCE_RECORD_SCHEMA
+            or _count(
+                row["sequence"], label=f"lineage evidence row {sequence}.sequence"
+            )
+            != sequence
+            or row["encoding"] != "base64"
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"lineage evidence row {sequence} contract changed"
+            )
+        commit_sha = _git_sha(
+            row["commit_sha"], label=f"lineage evidence row {sequence}.commit_sha"
+        )
+        if commit_sha in seen_commits:
+            raise PalimpsestChinaIntakeError(
+                "lineage evidence repeats a governed commit"
+            )
+        seen_commits.add(commit_sha)
+        raw_sha = _sha(
+            row["raw_sha256"], label=f"lineage evidence row {sequence}.raw_sha256"
+        )
+        raw_bytes = _count(
+            row["raw_bytes"],
+            label=f"lineage evidence row {sequence}.raw_bytes",
+            positive=True,
+        )
+        if raw_bytes > MAX_PRODUCER_COMMIT_EVIDENCE_BYTES:
+            raise PalimpsestChinaIntakeError(
+                "lineage evidence contains an oversized GitHub response"
+            )
+        encoded = row["payload_base64"]
+        if (
+            type(encoded) is not str
+            or not encoded.isascii()
+            or len(encoded) > 4 * ((raw_bytes + 2) // 3)
+        ):
+            raise PalimpsestChinaIntakeError(
+                "lineage evidence base64 payload is malformed"
+            )
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise PalimpsestChinaIntakeError(
+                "lineage evidence base64 payload is malformed"
+            ) from exc
+        if (
+            len(raw) != raw_bytes
+            or _sha256(raw) != raw_sha
+            or base64.b64encode(raw).decode("ascii") != encoded
+        ):
+            raise PalimpsestChinaIntakeError(
+                "lineage evidence raw response commitment does not match"
+            )
+        commit = _normalize_github_commit_evidence(
+            raw,
+            expected_sha=commit_sha,
+            accepted_at=accepted_at,
+            label=f"lineage evidence commit {sequence}",
+        )
+        normalized.append(
+            {
+                "sequence": sequence,
+                "commit": commit,
+                "raw_sha256": raw_sha,
+                "raw_bytes": raw_bytes,
+                "raw": raw,
+            }
+        )
+    return dict(receipt), normalized
+
+
+def _validate_lineage_chain(
+    chain_bytes: bytes,
+    evidence_bytes: bytes,
+    *,
+    receipt_value: object,
+    producer: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    input_ledger_bytes: bytes,
+    availability_bytes: bytes,
+    accepted_at: datetime,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    receipt = _exact_keys(
+        receipt_value,
+        _LINEAGE_CHAIN_RECEIPT_KEYS,
+        label="handoff.revision_lineage.chain",
+    )
+    if (
+        receipt["schema_version"] != LINEAGE_CHAIN_SCHEMA
+        or receipt["path"] != LINEAGE_CHAIN_PATH
+    ):
+        raise PalimpsestChinaIntakeError("governed lineage chain contract changed")
+    chain_sha = _sha(receipt["sha256"], label="lineage chain.sha256")
+    chain_bytes_count = _count(
+        receipt["bytes"], label="lineage chain.bytes", positive=True
+    )
+    records = _count(receipt["records"], label="lineage chain.records", positive=True)
+    if (
+        chain_sha != _sha256(chain_bytes)
+        or chain_bytes_count != len(chain_bytes)
+        or records > MAX_LINEAGE_RECORDS
+    ):
+        raise PalimpsestChinaIntakeError(
+            "lineage chain hash, bytes, or record commitment does not match"
+        )
+    root_sha = _git_sha(
+        receipt["root_commit_sha"], label="lineage chain.root_commit_sha"
+    )
+    tip_sha = _git_sha(receipt["tip_commit_sha"], label="lineage chain.tip_commit_sha")
+    producer_sha = _git_sha(
+        producer.get("commit_sha"), label="manifest.producer.commit_sha"
+    )
+    if receipt["evaluated_at_commit_sha"] != producer_sha or receipt[
+        "governed_paths"
+    ] != [WDI_REGISTRY_PATH, WDI_LEDGER_PATH, WDI_AVAILABILITY_PATH]:
+        raise PalimpsestChinaIntakeError(
+            "lineage evaluation commit or governed paths changed"
+        )
+    evidence_receipt, evidence = _validate_lineage_evidence(
+        evidence_bytes,
+        receipt_value=receipt["evidence"],
+        accepted_at=accepted_at,
+    )
+    if evidence_receipt["records"] != records:
+        raise PalimpsestChinaIntakeError(
+            "lineage chain and evidence record counts differ"
+        )
+    rows = _canonical_jsonl_rows(
+        chain_bytes,
+        label="lineage chain",
+        maximum=MAX_LINEAGE_CHAIN_BYTES,
+        expected_records=records,
+    )
+
+    previous_sha: str | None = None
+    previous_registry: dict[str, Any] | None = None
+    previous_ledger: dict[str, Any] | None = None
+    previous_availability: dict[str, Any] | None = None
+    for sequence, candidate in enumerate(rows):
+        row = _exact_keys(
+            candidate,
+            _LINEAGE_RECORD_KEYS,
+            label=f"lineage chain row {sequence}",
+        )
+        if (
+            row["schema_version"] != LINEAGE_RECORD_SCHEMA
+            or _count(row["sequence"], label=f"lineage chain row {sequence}.sequence")
+            != sequence
+            or row["previous_change_sha"] != previous_sha
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"lineage chain row {sequence} sequence or predecessor changed"
+            )
+        commit = _exact_keys(
+            row["commit"],
+            _LINEAGE_COMMIT_KEYS,
+            label=f"lineage chain row {sequence}.commit",
+        )
+        evidence_row = evidence[sequence]
+        expected_commit = {
+            **evidence_row["commit"],
+            "raw_sha256": evidence_row["raw_sha256"],
+            "raw_bytes": evidence_row["raw_bytes"],
+        }
+        if commit != expected_commit:
+            raise PalimpsestChinaIntakeError(
+                f"lineage chain row {sequence} does not match raw commit evidence"
+            )
+        commit_sha = str(commit["sha"])
+
+        tree = _exact_keys(
+            row["git_tree_entries"],
+            frozenset({WDI_REGISTRY_PATH, WDI_LEDGER_PATH, WDI_AVAILABILITY_PATH}),
+            label=f"lineage chain row {sequence}.git_tree_entries",
+        )
+        normalized_tree: dict[str, dict[str, Any]] = {}
+        for path in (WDI_REGISTRY_PATH, WDI_LEDGER_PATH, WDI_AVAILABILITY_PATH):
+            entry = _exact_keys(
+                tree[path],
+                _LINEAGE_TREE_ENTRY_KEYS,
+                label=f"lineage chain row {sequence}.git_tree_entries.{path}",
+            )
+            if entry["mode"] != "100644" or entry["type"] != "blob":
+                raise PalimpsestChinaIntakeError(
+                    f"lineage chain row {sequence} contains a non-regular Git object"
+                )
+            _git_sha(
+                entry["object_sha"],
+                label=f"lineage chain row {sequence}.git_tree_entries.{path}.object_sha",
+            )
+            normalized_tree[path] = dict(entry)
+
+        registry_transition = _exact_keys(
+            row["registry_transition"],
+            _LINEAGE_REGISTRY_TRANSITION_KEYS,
+            label=f"lineage chain row {sequence}.registry_transition",
+        )
+        current_registry = _lineage_registry_receipt(
+            registry_transition["current"],
+            label=f"lineage chain row {sequence}.registry_transition.current",
+        )
+        added = registry_transition["added_source_indicators"]
+        if (
+            type(added) is not list
+            or added != sorted(set(added))
+            or any(
+                type(indicator) is not str
+                or _SOURCE_SERIES_ID_RE.fullmatch(indicator) is None
+                for indicator in added
+            )
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"lineage chain row {sequence} added indicators are invalid"
+            )
+
+        ledger = _lineage_ledger_receipt(
+            row["ledger"], label=f"lineage chain row {sequence}.ledger"
+        )
+        availability = _lineage_availability_receipt(
+            row["availability_receipt"],
+            label=f"lineage chain row {sequence}.availability_receipt",
+        )
+        transition = _exact_keys(
+            row["ledger_transition"],
+            _LINEAGE_LEDGER_TRANSITION_KEYS,
+            label=f"lineage chain row {sequence}.ledger_transition",
+        )
+        prefix_bytes = _count(
+            transition["prefix_bytes"],
+            label=f"lineage chain row {sequence}.ledger_transition.prefix_bytes",
+        )
+        appended = _count(
+            transition["appended_records"],
+            label=f"lineage chain row {sequence}.ledger_transition.appended_records",
+        )
+        receipt_appended = _count(
+            transition["receipt_appended_observations"],
+            label=(
+                f"lineage chain row {sequence}.ledger_transition."
+                "receipt_appended_observations"
+            ),
+        )
+        if appended != receipt_appended:
+            raise PalimpsestChinaIntakeError(
+                f"lineage chain row {sequence} append receipts disagree"
+            )
+
+        if sequence == 0:
+            if (
+                registry_transition["state"] != "initial_registry"
+                or registry_transition["previous"] is not None
+                or len(added) != current_registry["series_records"]
+                or transition["state"] != "initial_seed"
+                or prefix_bytes != 0
+                or appended != ledger["records"]
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "lineage genesis is not an exact initial registry and ledger seed"
+                )
+        else:
+            assert previous_registry is not None
+            assert previous_ledger is not None
+            assert previous_availability is not None
+            prior = _lineage_registry_receipt(
+                registry_transition["previous"],
+                label=f"lineage chain row {sequence}.registry_transition.previous",
+            )
+            registry_delta = (
+                current_registry["series_records"] - previous_registry["series_records"]
+            )
+            ledger_delta = ledger["records"] - previous_ledger["records"]
+            registry_state = registry_transition["state"]
+            if (
+                prior != previous_registry
+                or registry_delta < 0
+                or registry_delta != len(added)
+                or (
+                    registry_state == "unchanged"
+                    and (added or current_registry != previous_registry)
+                )
+                or (
+                    registry_state == "append_only_addition"
+                    and (not added or registry_delta < 1)
+                )
+                or registry_state not in {"unchanged", "append_only_addition"}
+            ):
+                raise PalimpsestChinaIntakeError(
+                    f"lineage chain row {sequence} registry transition is not append-only"
+                )
+            if (
+                ledger_delta < 0
+                or prefix_bytes != previous_ledger["bytes"]
+                or appended != ledger_delta
+                or (
+                    transition["state"] == "unchanged"
+                    and (appended != 0 or ledger != previous_ledger)
+                )
+                or (
+                    transition["state"] == "reviewed_prefix_extension"
+                    and (appended < 1 or ledger["bytes"] <= previous_ledger["bytes"])
+                )
+                or transition["state"] not in {"unchanged", "reviewed_prefix_extension"}
+            ):
+                raise PalimpsestChinaIntakeError(
+                    f"lineage chain row {sequence} ledger transition is not append-only"
+                )
+            if _timestamp(
+                availability["generated_at"],
+                label=f"lineage chain row {sequence}.availability.generated_at",
+            ) < _timestamp(
+                previous_availability["generated_at"],
+                label=f"lineage chain row {sequence - 1}.availability.generated_at",
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "lineage availability clock moved backward"
+                )
+            if (
+                current_registry == previous_registry
+                and ledger == previous_ledger
+                and availability == previous_availability
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "lineage includes a row with no governed-path change"
+                )
+
+        if sequence == records - 1:
+            if normalized_tree[WDI_LEDGER_PATH]["object_sha"] != _git_blob_oid(
+                input_ledger_bytes
+            ) or normalized_tree[WDI_AVAILABILITY_PATH]["object_sha"] != _git_blob_oid(
+                availability_bytes
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "lineage tip Git blobs do not match the supplied governed bytes"
+                )
+        previous_sha = commit_sha
+        previous_registry = current_registry
+        previous_ledger = ledger
+        previous_availability = availability
+
+    assert previous_registry is not None
+    assert previous_ledger is not None
+    assert previous_availability is not None
+    if root_sha != rows[0]["commit"]["sha"] or tip_sha != previous_sha:
+        raise PalimpsestChinaIntakeError(
+            "lineage root or tip commitment does not match its rows"
+        )
+    manifest_registry = manifest["series_registry"]
+    manifest_ledger = manifest["input_ledger"]
+    manifest_availability = manifest["availability_receipt"]
+    if (
+        {key: previous_registry[key] for key in ("sha256", "bytes", "schema_version")}
+        != {
+            key: manifest_registry[key] for key in ("sha256", "bytes", "schema_version")
+        }
+        or {key: previous_ledger[key] for key in ("sha256", "bytes", "records")}
+        != {key: manifest_ledger[key] for key in ("sha256", "bytes", "records")}
+        or {
+            key: previous_availability[key]
+            for key in ("sha256", "bytes", "schema_version", "generated_at")
+        }
+        != {
+            key: manifest_availability[key]
+            for key in ("sha256", "bytes", "schema_version", "generated_at")
+        }
+    ):
+        raise PalimpsestChinaIntakeError(
+            "lineage tip does not match the exact export governed receipts"
+        )
+    return dict(receipt), evidence
+
+
+def _validate_checksum_subject(
+    checksums_bytes: bytes,
+    *,
+    expected_hashes: Mapping[str, str],
+) -> dict[str, str]:
+    if (
+        type(checksums_bytes) is not bytes
+        or not checksums_bytes
+        or len(checksums_bytes) > MAX_CHECKSUMS_BYTES
+        or not checksums_bytes.endswith(b"\n")
+        or b"\r" in checksums_bytes
+    ):
+        raise PalimpsestChinaIntakeError(
+            "SHA256SUMS is empty, oversized, or not LF-terminated"
+        )
+    try:
+        lines = checksums_bytes.decode("ascii", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise PalimpsestChinaIntakeError("SHA256SUMS is not ASCII") from exc
+    parsed: dict[str, str] = {}
+    ordered_names: list[str] = []
+    for position, line in enumerate(lines, 1):
+        if len(line) < 67 or line[64:66] != " *":
+            raise PalimpsestChinaIntakeError(f"SHA256SUMS line {position} is malformed")
+        digest = line[:64]
+        name = line[66:]
+        if (
+            _SHA256_RE.fullmatch(digest) is None
+            or not name
+            or PurePosixPath(name).name != name
+            or name in parsed
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"SHA256SUMS line {position} has an unsafe or duplicate subject"
+            )
+        parsed[name] = digest
+        ordered_names.append(name)
+    if (
+        frozenset(parsed) != _CHECKSUM_SUBJECT_NAMES
+        or ordered_names != sorted(ordered_names)
+        or parsed != dict(expected_hashes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "SHA256SUMS exact subject set or digest commitments changed"
+        )
+    return parsed
+
+
+def _validate_handoff_authority(
+    *,
+    manifest_bytes: bytes,
+    artifact_bytes: bytes,
+    input_ledger_bytes: bytes,
+    availability_bytes: bytes,
+    producer_commit_evidence_bytes: bytes,
+    handoff_bytes: bytes,
+    checksums_bytes: bytes,
+    lineage_chain_bytes: bytes,
+    lineage_evidence_bytes: bytes,
+    accepted_at: datetime,
+) -> _LineageAuthority:
+    if not handoff_bytes or len(handoff_bytes) > MAX_HANDOFF_BYTES:
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest handoff receipt is empty or too large"
+        )
+    handoff = _strict_json(handoff_bytes, label="Palimpsest handoff receipt")
+    if type(handoff) is not dict or _canonical_json_line(handoff) != handoff_bytes:
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest handoff receipt must use exact canonical JSON bytes"
+        )
+    handoff = _exact_keys(handoff, _HANDOFF_KEYS, label="Palimpsest handoff receipt")
+    if handoff["schema_version"] != HANDOFF_SCHEMA:
+        raise PalimpsestChinaIntakeError(
+            f"Palimpsest handoff receipt must use {HANDOFF_SCHEMA}"
+        )
+    manifest = _strict_json(manifest_bytes, label="manifest")
+    assert type(manifest) is dict
+    producer = _validate_producer(manifest["producer"])
+    if handoff["producer"] != producer:
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest handoff producer does not match the manifest"
+        )
+
+    normalized_commit = _normalize_github_commit_evidence(
+        producer_commit_evidence_bytes,
+        expected_sha=_git_sha(
+            producer["commit_sha"], label="manifest.producer.commit_sha"
+        ),
+        accepted_at=accepted_at,
+        label="handoff producer commit evidence",
+    )
+    handoff_commit = _exact_keys(
+        handoff["producer_commit_evidence"],
+        _HANDOFF_PRODUCER_COMMIT_KEYS,
+        label="handoff.producer_commit_evidence",
+    )
+    expected_commit = {
+        "path": "github-commit.json",
+        **normalized_commit,
+        "sha256": _sha256(producer_commit_evidence_bytes),
+        "bytes": len(producer_commit_evidence_bytes),
+    }
+    if handoff_commit != expected_commit:
+        raise PalimpsestChinaIntakeError(
+            "handoff producer identity does not match the exact raw GitHub response"
+        )
+
+    lineage = _exact_keys(
+        handoff["revision_lineage"],
+        _HANDOFF_LINEAGE_KEYS,
+        label="handoff.revision_lineage",
+    )
+    if (
+        lineage["mode"] != HANDOFF_LINEAGE_MODE
+        or lineage["cross_run_revision_authority"] is not True
+        or _count(
+            lineage["live_check_new_vintages_appended"],
+            label="handoff.revision_lineage.live_check_new_vintages_appended",
+        )
+        != 0
+    ):
+        raise PalimpsestChinaIntakeError(
+            "handoff does not confer exact cross-run revision authority"
+        )
+    chain_receipt, lineage_evidence = _validate_lineage_chain(
+        lineage_chain_bytes,
+        lineage_evidence_bytes,
+        receipt_value=lineage["chain"],
+        producer=producer,
+        manifest=manifest,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
+        accepted_at=accepted_at,
+    )
+    if (
+        chain_receipt["tip_commit_sha"] == producer["commit_sha"]
+        and lineage_evidence[-1]["raw"] != producer_commit_evidence_bytes
+    ):
+        raise PalimpsestChinaIntakeError(
+            "producer commit evidence differs from the matching lineage tip evidence"
+        )
+
+    if (
+        handoff["artifact"] != manifest["artifact"]
+        or handoff["input_ledger"] != manifest["input_ledger"]
+        or handoff["reviewed_availability_receipt"] != manifest["availability_receipt"]
+    ):
+        raise PalimpsestChinaIntakeError(
+            "handoff export receipts do not match the exact manifest"
+        )
+    live = _exact_keys(
+        handoff["live_verification"],
+        _HANDOFF_LIVE_VERIFICATION_KEYS,
+        label="handoff.live_verification",
+    )
+    live_raw = _exact_keys(
+        handoff["live_raw_response"],
+        _HANDOFF_LIVE_RAW_KEYS,
+        label="handoff.live_raw_response",
+    )
+    reviewed_availability = _strict_json(
+        availability_bytes, label="reviewed availability receipt"
+    )
+    assert type(reviewed_availability) is dict
+    expected_current_availability_sha = _sha256(
+        _canonical_json_line(reviewed_availability["availability"])
+    )
+    if (
+        live["path"] != "china-econ-wdi-live-check.json"
+        or _sha(live["sha256"], label="handoff.live_verification.sha256")
+        != live["sha256"]
+        or _count(live["bytes"], label="handoff.live_verification.bytes", positive=True)
+        != live["bytes"]
+        or _sha(
+            live["batch_raw_sha256"],
+            label="handoff.live_verification.batch_raw_sha256",
+        )
+        != live["batch_raw_sha256"]
+        or live["current_availability_sha256"] != expected_current_availability_sha
+        or live_raw
+        != {
+            "path": "world-bank-wdi-response.json",
+            "sha256": live["batch_raw_sha256"],
+        }
+    ):
+        raise PalimpsestChinaIntakeError(
+            "handoff live current-response verification does not reconcile"
+        )
+
+    files = handoff["files"]
+    if type(files) is not list or len(files) != len(_HANDOFF_CORE_NAMES):
+        raise PalimpsestChinaIntakeError("handoff exact file receipt set changed")
+    file_receipts: dict[str, dict[str, Any]] = {}
+    ordered_names: list[str] = []
+    for position, candidate in enumerate(files, 1):
+        receipt = _exact_keys(
+            candidate,
+            _HANDOFF_FILE_KEYS,
+            label=f"handoff.files[{position}]",
+        )
+        path = receipt["path"]
+        if (
+            type(path) is not str
+            or PurePosixPath(path).name != path
+            or path in file_receipts
+        ):
+            raise PalimpsestChinaIntakeError(
+                "handoff file receipt path is unsafe or duplicated"
+            )
+        _sha(receipt["sha256"], label=f"handoff.files[{position}].sha256")
+        _count(
+            receipt["bytes"],
+            label=f"handoff.files[{position}].bytes",
+            positive=True,
+        )
+        file_receipts[path] = dict(receipt)
+        ordered_names.append(path)
+    if frozenset(file_receipts) != _HANDOFF_CORE_NAMES or ordered_names != sorted(
+        ordered_names
+    ):
+        raise PalimpsestChinaIntakeError(
+            "handoff file receipts are not the exact sorted subject set"
+        )
+
+    exact_supplied = {
+        "palimpsest-china-economic-export-v3-manifest.json": manifest_bytes,
+        "palimpsest-china-economic-export-v1.jsonl": artifact_bytes,
+        "china-econ-wdi-observations.jsonl": input_ledger_bytes,
+        "china-econ-wdi-latest.json": availability_bytes,
+        "github-commit.json": producer_commit_evidence_bytes,
+        LINEAGE_CHAIN_PATH: lineage_chain_bytes,
+        LINEAGE_EVIDENCE_PATH: lineage_evidence_bytes,
+    }
+    if (
+        PurePosixPath(manifest["artifact"]["path"]).name
+        != "palimpsest-china-economic-export-v1.jsonl"
+        or PurePosixPath(manifest["input_ledger"]["path"]).name
+        != "china-econ-wdi-observations.jsonl"
+        or PurePosixPath(manifest["availability_receipt"]["path"]).name
+        != "china-econ-wdi-latest.json"
+    ):
+        raise PalimpsestChinaIntakeError(
+            "manifest handoff filenames do not match the reviewed subject set"
+        )
+    for name, body in exact_supplied.items():
+        if file_receipts[name] != {
+            "path": name,
+            "sha256": _sha256(body),
+            "bytes": len(body),
+        }:
+            raise PalimpsestChinaIntakeError(
+                f"handoff file receipt does not match exact supplied {name} bytes"
+            )
+    manifest_receipts = {
+        "china_econ_source_policy.json": manifest["policy"],
+        "china_econ_wdi_series.json": manifest["series_registry"],
+    }
+    for name, manifest_receipt in manifest_receipts.items():
+        file_receipt = file_receipts[name]
+        if file_receipt["sha256"] != manifest_receipt["sha256"] or (
+            "bytes" in manifest_receipt
+            and file_receipt["bytes"] != manifest_receipt["bytes"]
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"handoff {name} receipt does not match the manifest"
+            )
+    if (
+        file_receipts["china-econ-wdi-live-check.json"]
+        != {"path": live["path"], "sha256": live["sha256"], "bytes": live["bytes"]}
+        or file_receipts["world-bank-wdi-response.json"]["sha256"] != live_raw["sha256"]
+    ):
+        raise PalimpsestChinaIntakeError("handoff live receipt files do not reconcile")
+
+    handoff_sha = _sha256(handoff_bytes)
+    checksum_hashes = {
+        name: receipt["sha256"] for name, receipt in file_receipts.items()
+    }
+    checksum_hashes["handoff-receipt.json"] = handoff_sha
+    _validate_checksum_subject(checksums_bytes, expected_hashes=checksum_hashes)
+    return _LineageAuthority(
+        handoff_sha256=handoff_sha,
+        checksums_sha256=_sha256(checksums_bytes),
+        chain_sha256=_sha256(lineage_chain_bytes),
+        evidence_sha256=_sha256(lineage_evidence_bytes),
+        chain_receipt=MappingProxyType(dict(chain_receipt)),
+    )
 
 
 def _identity_digest(identities: set[tuple[str, int]]) -> str:
@@ -1135,6 +2694,44 @@ def _series_digest(series_ids: set[str]) -> str:
         for series_id in sorted(series_ids)
     )
     return _sha256(body)
+
+
+def _ledger_snapshot(value: object, *, label: str) -> dict[str, Any]:
+    snapshot = _exact_keys(value, _LEDGER_SNAPSHOT_KEYS, label=label)
+    digest = _sha(snapshot["sha256"], label=f"{label}.sha256")
+    byte_size = _count(snapshot["bytes"], label=f"{label}.bytes")
+    records = _count(snapshot["records"], label=f"{label}.records")
+    if (records == 0) != (byte_size == 0):
+        raise PalimpsestChinaIntakeError(
+            f"{label} empty byte and record counts do not reconcile"
+        )
+    if records == 0 and digest != _sha256(b""):
+        raise PalimpsestChinaIntakeError(
+            f"{label} empty snapshot digest does not reconcile"
+        )
+    return {"sha256": digest, "bytes": byte_size, "records": records}
+
+
+def _canonical_wdi_request_url(
+    indicators: set[str], *, start_year: int, end_year: int
+) -> str:
+    if not indicators:
+        raise PalimpsestChinaIntakeError(
+            "availability receipt represents no reviewed WDI indicators"
+        )
+    joined = ";".join(sorted(indicators))
+    return (
+        "https://api.worldbank.org/v2/country/CHN/indicator/"
+        f"{joined}?source=2&date={start_year}%3A{end_year}&format=json&"
+        "per_page=20000&footnote=y"
+    )
+
+
+def _bounded_utf8_string(value: object, *, label: str, maximum_bytes: int) -> str:
+    text = _required_string(value, label=label, maximum=maximum_bytes)
+    if len(text.encode("utf-8")) > maximum_bytes:
+        raise PalimpsestChinaIntakeError(f"{label} must be a bounded non-empty string")
+    return text
 
 
 def _validate_input_ledger(
@@ -1180,9 +2777,9 @@ def _validate_input_ledger(
                 f"input ledger line {position} is blank or unterminated"
             )
         value = _strict_json(line[:-1], label=f"input ledger line {position}")
-        if _canonical_json_line(value) != line:
+        if _ledger_json_line(value) != line:
             raise PalimpsestChinaIntakeError(
-                f"input ledger line {position} is not canonical JSON"
+                f"input ledger line {position} does not use the durable wire format"
             )
         observation = _validate_observation(
             value,
@@ -1242,7 +2839,9 @@ def _validate_input_ledger(
                     "input ledger same-value provenance changed revision"
                 )
         previous_by_identity[identity] = (numeric_value, revision, released_at)
-        record_sha256_by_observation_id[observation_id] = _sha256(line)
+        record_sha256_by_observation_id[observation_id] = _sha256(
+            _canonical_json_line(value)
+        )
         selection = (revision, released_at, collected_at, observation_id)
         selected = latest_by_identity.get(identity)
         if selected is None or selection > selected[0]:
@@ -1259,6 +2858,8 @@ def _validate_input_ledger(
             {identity: selected[1] for identity, selected in latest_by_identity.items()}
         ),
         latest_collected_at=previous_global_collection,
+        sha256=expected_sha,
+        bytes=len(ledger_bytes),
         records=len(lines),
     )
 
@@ -1328,54 +2929,104 @@ def _validate_availability(
         or run["generated_at"] != receipt_generated_text
         or run["batch_raw_sha256"] != batch_raw_sha256
         or run["source_id"] != "world_bank_wdi"
+        or run["dataset"] != WDI_DATASET
         or run["context_only"] is not True
         or run["scoring_allowed"] is not False
         or run["license"] != "CC-BY-4.0"
         or run["license_url"] != WDI_LICENSE_URL
         or run["rights_evidence_url"] != WDI_RIGHTS_EVIDENCE_URL
+        or run["redistribution_status"] != "allowed"
+        or run["publication_state"] != WDI_PUBLICATION_STATE
     ):
         raise PalimpsestChinaIntakeError(
             "availability receipt source, rights, clocks, or safety fields changed"
         )
-    _required_string(run["dataset"], label="availability receipt.dataset")
-    _date(
+    dataset_last_updated = _date(
         run["dataset_last_updated"],
         label="availability receipt.dataset_last_updated",
     )
-    _count(
+    if dataset_last_updated > receipt_generated_at.date():
+        raise PalimpsestChinaIntakeError(
+            "availability receipt dataset clock follows its generation clock"
+        )
+    limitations = run["limitations"]
+    if type(limitations) is not list or not 1 <= len(limitations) <= 32:
+        raise PalimpsestChinaIntakeError(
+            "availability receipt limitations must be a bounded non-empty list"
+        )
+    for position, limitation in enumerate(limitations, 1):
+        _bounded_utf8_string(
+            limitation,
+            label=f"availability receipt.limitations[{position}]",
+            maximum_bytes=8192,
+        )
+    if WDI_UPSTREAM_ATTRIBUTION_REQUIREMENT not in limitations:
+        raise PalimpsestChinaIntakeError(
+            "availability receipt omits the upstream attribution limitation"
+        )
+
+    lineage = _exact_keys(
+        run["revision_lineage"],
+        _REVISION_LINEAGE_KEYS,
+        label="availability receipt.revision_lineage",
+    )
+    if lineage != {
+        "mode": WDI_LINEAGE_MODE,
+        "durable_cross_run": True,
+        "ledger_path": WDI_LEDGER_PATH,
+    }:
+        raise PalimpsestChinaIntakeError(
+            "public availability receipt requires the reviewed durable lineage"
+        )
+
+    ledger_before = _ledger_snapshot(
+        run["ledger_before"], label="availability receipt.ledger_before"
+    )
+    ledger_after = _ledger_snapshot(
+        run["ledger_after"], label="availability receipt.ledger_after"
+    )
+    appended = _count(
         run["appended_observations"],
         label="availability receipt.appended_observations",
     )
-    ledger_before = _count(
-        run["ledger_before"], label="availability receipt.ledger_before"
-    )
-    ledger_after = _count(
-        run["ledger_after"], label="availability receipt.ledger_after"
-    )
     if (
-        ledger_after != ledger.records
-        or ledger_after < ledger_before
-        or run["appended_observations"] != ledger_after - ledger_before
+        ledger_after
+        != {"sha256": ledger.sha256, "bytes": ledger.bytes, "records": ledger.records}
+        or ledger_after["records"] != ledger_before["records"] + appended
+        or ledger_after["bytes"] < ledger_before["bytes"]
+        or (appended == 0 and ledger_before != ledger_after)
+        or (appended > 0 and ledger_after["bytes"] == ledger_before["bytes"])
     ):
         raise PalimpsestChinaIntakeError(
-            "availability receipt ledger counts do not match the exact input ledger"
+            "availability receipt ledger transition does not match the exact input ledger"
         )
 
     availability = _exact_keys(
         run["availability"], _AVAILABILITY_KEYS, label="availability"
     )
-    if availability["schema_version"] != AVAILABILITY_SCHEMA:
-        raise PalimpsestChinaIntakeError(f"availability must use {AVAILABILITY_SCHEMA}")
-    for key in ("coverage_semantics", "withdrawal_limitation", "withdrawal_state"):
-        _required_string(availability[key], label=f"availability.{key}")
+    if (
+        availability["schema_version"] != AVAILABILITY_SCHEMA
+        or availability["coverage_semantics"] != "exact_current_response"
+        or availability["withdrawal_state"]
+        != "residual_gate_no_append_only_withdrawal_ledger"
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt current-response semantics changed"
+        )
+    _bounded_utf8_string(
+        availability["withdrawal_limitation"],
+        label="availability.withdrawal_limitation",
+        maximum_bytes=8192,
+    )
     entries = availability["entries"]
-    if type(entries) is not list or len(entries) > MAX_RECORDS:
+    if type(entries) is not list or not 1 <= len(entries) <= MAX_RECORDS:
         raise PalimpsestChinaIntakeError("availability entries must be a bounded list")
     if _count(availability["records"], label="availability.records") != len(entries):
         raise PalimpsestChinaIntakeError("availability records count does not match")
 
     current_identities: set[tuple[str, int]] = set()
     ordered_identities: list[tuple[str, int]] = []
+    represented_indicators: set[str] = set()
     null_records = 0
     for position, candidate in enumerate(entries, 1):
         entry = _exact_keys(
@@ -1395,7 +3046,7 @@ def _validate_availability(
         if (
             isinstance(year, bool)
             or not isinstance(year, int)
-            or not 1800 <= year <= 2200
+            or not 1900 <= year <= receipt_generated_at.year + 1
         ):
             raise PalimpsestChinaIntakeError(
                 f"availability entry {position} year is invalid"
@@ -1406,10 +3057,10 @@ def _validate_availability(
             )
         footnote = entry["footnote"]
         if footnote is not None:
-            _required_string(
+            _bounded_utf8_string(
                 footnote,
                 label=f"availability entry {position}.footnote",
-                maximum=8192,
+                maximum_bytes=4096,
             )
         identity = (indicator_id, year)
         if ordered_identities and identity <= ordered_identities[-1]:
@@ -1417,6 +3068,7 @@ def _validate_availability(
                 "availability entries must be uniquely sorted"
             )
         ordered_identities.append(identity)
+        represented_indicators.add(indicator_id)
         if entry["available"]:
             current_identities.add(identity)
         else:
@@ -1431,6 +3083,225 @@ def _validate_availability(
     if not current_identities.issubset(ledger.identities):
         raise PalimpsestChinaIntakeError(
             "current numeric availability contains an identity absent from the ledger"
+        )
+
+    response_coverage = _exact_keys(
+        run["response_coverage"],
+        _RESPONSE_COVERAGE_KEYS,
+        label="availability receipt.response_coverage",
+    )
+    start_year = _count(
+        response_coverage["requested_start_year"],
+        label="availability receipt.response_coverage.requested_start_year",
+        positive=True,
+    )
+    end_year = _count(
+        response_coverage["requested_end_year"],
+        label="availability receipt.response_coverage.requested_end_year",
+        positive=True,
+    )
+    if not 1900 <= start_year <= end_year <= receipt_generated_at.year + 1 or any(
+        not start_year <= year <= end_year for _indicator, year in ordered_identities
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt response request range does not reconcile"
+        )
+    populated_indicators = {indicator_id for indicator_id, _year in current_identities}
+    expected_response_start = (
+        f"{min(year for _indicator, year in current_identities):04d}-01-01"
+        if current_identities
+        else None
+    )
+    expected_response_end = (
+        f"{max(year for _indicator, year in current_identities):04d}-12-31"
+        if current_identities
+        else None
+    )
+    if (
+        response_coverage["coverage_semantics"] != "exact_current_response"
+        or _count(
+            response_coverage["configured_indicators"],
+            label="availability receipt.response_coverage.configured_indicators",
+        )
+        != len(represented_indicators)
+        or _count(
+            response_coverage["represented_indicators"],
+            label="availability receipt.response_coverage.represented_indicators",
+        )
+        != len(represented_indicators)
+        or _count(
+            response_coverage["populated_indicators"],
+            label="availability receipt.response_coverage.populated_indicators",
+        )
+        != len(populated_indicators)
+        or _count(
+            response_coverage["null_only_indicators"],
+            label="availability receipt.response_coverage.null_only_indicators",
+        )
+        != len(represented_indicators - populated_indicators)
+        or _count(
+            response_coverage["source_rows"],
+            label="availability receipt.response_coverage.source_rows",
+        )
+        != len(entries)
+        or _count(
+            response_coverage["populated_observations"],
+            label="availability receipt.response_coverage.populated_observations",
+        )
+        != len(current_identities)
+        or _count(
+            response_coverage["null_rows"],
+            label="availability receipt.response_coverage.null_rows",
+        )
+        != null_records
+        or response_coverage["period_start"] != expected_response_start
+        or response_coverage["period_end"] != expected_response_end
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt response coverage does not reconcile"
+        )
+
+    ledger_coverage = _exact_keys(
+        run["ledger_coverage"],
+        _LEDGER_COVERAGE_KEYS,
+        label="availability receipt.ledger_coverage",
+    )
+    expected_ledger_start = (
+        f"{min(year for _indicator, year in ledger.identities):04d}-01-01"
+        if ledger.identities
+        else None
+    )
+    expected_ledger_end = (
+        f"{max(year for _indicator, year in ledger.identities):04d}-12-31"
+        if ledger.identities
+        else None
+    )
+    if (
+        ledger_coverage["coverage_semantics"]
+        != "accumulated_append_only_history_not_current_response"
+        or _count(
+            ledger_coverage["records"],
+            label="availability receipt.ledger_coverage.records",
+        )
+        != ledger.records
+        or _count(
+            ledger_coverage["series_count"],
+            label="availability receipt.ledger_coverage.series_count",
+        )
+        != len(ledger.source_to_series)
+        or ledger_coverage["period_start"] != expected_ledger_start
+        or ledger_coverage["period_end"] != expected_ledger_end
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt ledger coverage does not reconcile"
+        )
+
+    provenance = _exact_keys(
+        run["indicator_provenance"],
+        _INDICATOR_PROVENANCE_KEYS,
+        label="availability receipt.indicator_provenance",
+    )
+    provenance_entries = provenance["entries"]
+    if (
+        provenance["schema_version"] != INDICATOR_PROVENANCE_SCHEMA
+        or provenance["upstream_attribution_state"] != WDI_UPSTREAM_ATTRIBUTION_STATE
+        or provenance["upstream_attribution_requirement"]
+        != WDI_UPSTREAM_ATTRIBUTION_REQUIREMENT
+        or type(provenance_entries) is not list
+        or _count(
+            provenance["records"],
+            label="availability receipt.indicator_provenance.records",
+        )
+        != len(provenance_entries)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt indicator provenance is invalid"
+        )
+    provenance_indicators: list[str] = []
+    for position, candidate in enumerate(provenance_entries, 1):
+        entry = _exact_keys(
+            candidate,
+            _INDICATOR_PROVENANCE_ENTRY_KEYS,
+            label=f"availability receipt.indicator_provenance.entries[{position}]",
+        )
+        indicator_id = entry["indicator_id"]
+        if (
+            type(indicator_id) is not str
+            or _SOURCE_SERIES_ID_RE.fullmatch(indicator_id) is None
+        ):
+            raise PalimpsestChinaIntakeError(
+                "availability receipt indicator provenance ID is invalid"
+            )
+        _bounded_utf8_string(
+            entry["reviewed_name"],
+            label=f"indicator provenance entry {position}.reviewed_name",
+            maximum_bytes=512,
+        )
+        _bounded_utf8_string(
+            entry["source_title"],
+            label=f"indicator provenance entry {position}.source_title",
+            maximum_bytes=512,
+        )
+        provenance_indicators.append(indicator_id)
+    if provenance_indicators != sorted(represented_indicators):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt indicator provenance is not exact and sorted"
+        )
+
+    collector = _exact_keys(
+        run["collector_artifact"],
+        _COLLECTOR_ARTIFACT_KEYS,
+        label="availability receipt.collector_artifact",
+    )
+    source_receipt = _exact_keys(
+        collector["source_receipt"],
+        _COLLECTOR_SOURCE_RECEIPT_KEYS,
+        label="availability receipt.collector_artifact.source_receipt",
+    )
+    freshness = _exact_keys(
+        collector["freshness"],
+        _COLLECTOR_FRESHNESS_KEYS,
+        label="availability receipt.collector_artifact.freshness",
+    )
+    payload = dict(run)
+    payload.pop("collector_artifact")
+    payload_sha256 = _sha256(_canonical_json_line(payload))
+    dataset_age_days = (receipt_generated_at.date() - dataset_last_updated).days
+    expected_evidence_state = "fresh" if dataset_age_days <= 120 else "stale"
+    expected_request_url = _canonical_wdi_request_url(
+        represented_indicators,
+        start_year=start_year,
+        end_year=end_year,
+    )
+    if (
+        collector["schema_version"] != COLLECTOR_ARTIFACT_SCHEMA
+        or collector["collector_id"] != WDI_COLLECTOR_ID
+        or collector["abstention"] is not None
+        or collector["coverage"] != response_coverage
+        or _sha(
+            collector["payload_sha256"],
+            label="availability receipt.collector_artifact.payload_sha256",
+        )
+        != payload_sha256
+        or source_receipt["url"] != expected_request_url
+        or _sha(
+            source_receipt["raw_sha256"],
+            label="availability receipt.collector_artifact.source_receipt.raw_sha256",
+        )
+        != batch_raw_sha256
+        or source_receipt["dataset_last_updated"] != run["dataset_last_updated"]
+        or source_receipt["license"] != "CC-BY-4.0"
+        or freshness["evidence_state"] != expected_evidence_state
+        or freshness["observed_at"] != receipt_generated_text
+        or freshness["native_cadence"] != "annual"
+        or _count(
+            freshness["dataset_age_days"],
+            label="availability receipt.collector_artifact.freshness.dataset_age_days",
+        )
+        != dataset_age_days
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt collector artifact does not reconcile"
         )
 
     withdrawn = set(ledger.identities) - current_identities
@@ -1702,7 +3573,8 @@ def verify_export(
             or values != sorted(set(values))
         ):
             raise PalimpsestChinaIntakeError(
-                f"market_channel_mapping.{channel} must be sorted unique WDI series"
+                f"market_channel_mapping.{channel} must contain at most "
+                f"{MAX_SERIES} sorted unique WDI series"
             )
         declared_mapping[channel] = values
 
@@ -1896,6 +3768,12 @@ def verify_export(
         manifest_schema_version=manifest_schema,
         manifest_sha256=_sha256(manifest_bytes),
         producer=_freeze_json(producer) if producer is not None else None,
+        producer_commit_evidence=None,
+        producer_main_evidence=None,
+        handoff_receipt=None,
+        checksum_subject=None,
+        governed_lineage=None,
+        operator_confirmations=None,
         artifact_sha256=artifact_sha256,
         artifact_bytes=artifact_size,
         input_ledger_sha256=input_ledger_sha256,
@@ -1965,6 +3843,13 @@ def build_acceptance_claim(
     *,
     input_ledger_bytes: bytes | None = None,
     availability_bytes: bytes | None = None,
+    producer_commit_evidence_bytes: bytes | None = None,
+    producer_main_evidence_bytes: bytes | None = None,
+    handoff_bytes: bytes | None = None,
+    checksums_bytes: bytes | None = None,
+    lineage_chain_bytes: bytes | None = None,
+    lineage_evidence_bytes: bytes | None = None,
+    operator_confirmations: Mapping[str, object] | None = None,
     accepted_at: datetime,
     signer_key_id: str,
 ) -> dict[str, Any]:
@@ -1988,6 +3873,69 @@ def build_acceptance_claim(
         accepted_at=accepted_at,
     )
     _require_authoritative_producer(context)
+    if (
+        input_ledger_bytes is None
+        or availability_bytes is None
+        or producer_commit_evidence_bytes is None
+        or producer_main_evidence_bytes is None
+        or handoff_bytes is None
+        or checksums_bytes is None
+        or lineage_chain_bytes is None
+        or lineage_evidence_bytes is None
+        or context.producer is None
+    ):
+        raise PalimpsestChinaIntakeError(
+            "authoritative acceptance requires every exact handoff and producer evidence file"
+        )
+    producer_commit_evidence = _validate_producer_commit_evidence(
+        producer_commit_evidence_bytes,
+        producer=context.producer,
+        accepted_at=accepted_at.astimezone(UTC),
+    )
+    producer_main_evidence = _validate_producer_main_evidence(
+        producer_main_evidence_bytes,
+        producer=context.producer,
+        observed_at=accepted_at.astimezone(UTC),
+    )
+    authority = _validate_handoff_authority(
+        manifest_bytes=manifest_bytes,
+        artifact_bytes=artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
+        producer_commit_evidence_bytes=producer_commit_evidence_bytes,
+        handoff_bytes=handoff_bytes,
+        checksums_bytes=checksums_bytes,
+        lineage_chain_bytes=lineage_chain_bytes,
+        lineage_evidence_bytes=lineage_evidence_bytes,
+        accepted_at=accepted_at.astimezone(UTC),
+    )
+    supplied_confirmations = _exact_keys(
+        operator_confirmations,
+        _OPERATOR_CONFIRMATION_INPUT_KEYS,
+        label="operator confirmations",
+    )
+    for key in _OPERATOR_CONFIRMATION_INPUT_KEYS:
+        if supplied_confirmations[key] is not True:
+            raise PalimpsestChinaIntakeError(
+                f"operator confirmation {key} must be explicit true"
+            )
+    assert context.availability_receipt_sha256 is not None
+    signed_confirmations = {
+        **supplied_confirmations,
+        "github_attestation_subject_sha256": authority.checksums_sha256,
+        "checksum_subject_sha256": authority.checksums_sha256,
+        "producer_commit_evidence_sha256": producer_commit_evidence["sha256"],
+        "lineage_chain_sha256": authority.chain_sha256,
+        "lineage_evidence_sha256": authority.evidence_sha256,
+        "lineage_evaluated_at_commit_sha": authority.chain_receipt[
+            "evaluated_at_commit_sha"
+        ],
+        "producer_main_evidence_sha256": producer_main_evidence["sha256"],
+        "manifest_sha256": context.manifest_sha256,
+        "availability_receipt_sha256": context.availability_receipt_sha256,
+        "rights_expires_at": context.source_decision["expires_at"],
+    }
+    _validate_embedded_operator_confirmations(signed_confirmations)
     signer = _sha(signer_key_id, label="acceptance.signer_key_id")
     return {
         "schema_version": ACCEPTANCE_SCHEMA,
@@ -1996,6 +3944,22 @@ def build_acceptance_claim(
         "accepted_at": context.accepted_at,
         "manifest_sha256": context.manifest_sha256,
         "artifact_sha256": context.artifact_sha256,
+        "producer_commit_evidence": producer_commit_evidence,
+        "producer_main_evidence": producer_main_evidence,
+        "handoff_receipt": {
+            "path": "handoff-receipt.json",
+            "schema_version": HANDOFF_SCHEMA,
+            "sha256": authority.handoff_sha256,
+            "bytes": len(handoff_bytes),
+        },
+        "checksum_subject": {
+            "path": "SHA256SUMS",
+            "sha256": authority.checksums_sha256,
+            "bytes": len(checksums_bytes),
+            "records": len(_CHECKSUM_SUBJECT_NAMES),
+        },
+        "governed_lineage": dict(authority.chain_receipt),
+        "operator_confirmations": signed_confirmations,
         "signer_key_id": signer,
     }
 
@@ -2006,6 +3970,13 @@ def build_acceptance_claim_from_files(
     *,
     input_ledger_path: str | Path | None = None,
     availability_path: str | Path | None = None,
+    producer_commit_evidence_path: str | Path | None = None,
+    producer_main_evidence_path: str | Path | None = None,
+    handoff_path: str | Path | None = None,
+    checksums_path: str | Path | None = None,
+    lineage_chain_path: str | Path | None = None,
+    lineage_evidence_path: str | Path | None = None,
+    operator_confirmations: Mapping[str, object] | None = None,
     accepted_at: datetime,
     signer_key_id: str,
 ) -> dict[str, Any]:
@@ -2035,11 +4006,72 @@ def build_acceptance_claim_from_files(
         if availability_path is not None
         else None
     )
+    producer_commit_evidence_bytes = (
+        _stable_read(
+            producer_commit_evidence_path,
+            label="Palimpsest producer commit evidence",
+            maximum=MAX_PRODUCER_COMMIT_EVIDENCE_BYTES,
+        )
+        if producer_commit_evidence_path is not None
+        else None
+    )
+    producer_main_evidence_bytes = (
+        _stable_read(
+            producer_main_evidence_path,
+            label="Palimpsest producer main evidence",
+            maximum=MAX_PRODUCER_MAIN_EVIDENCE_BYTES,
+        )
+        if producer_main_evidence_path is not None
+        else None
+    )
+    handoff_bytes = (
+        _stable_read(
+            handoff_path,
+            label="Palimpsest China handoff receipt",
+            maximum=MAX_HANDOFF_BYTES,
+        )
+        if handoff_path is not None
+        else None
+    )
+    checksums_bytes = (
+        _stable_read(
+            checksums_path,
+            label="Palimpsest China checksum subject",
+            maximum=MAX_CHECKSUMS_BYTES,
+        )
+        if checksums_path is not None
+        else None
+    )
+    lineage_chain_bytes = (
+        _stable_read(
+            lineage_chain_path,
+            label="Palimpsest China governed lineage chain",
+            maximum=MAX_LINEAGE_CHAIN_BYTES,
+        )
+        if lineage_chain_path is not None
+        else None
+    )
+    lineage_evidence_bytes = (
+        _stable_read(
+            lineage_evidence_path,
+            label="Palimpsest China governed lineage evidence",
+            maximum=MAX_LINEAGE_EVIDENCE_BYTES,
+        )
+        if lineage_evidence_path is not None
+        else None
+    )
     return build_acceptance_claim(
         manifest_bytes,
         artifact_bytes,
         input_ledger_bytes=input_ledger_bytes,
         availability_bytes=availability_bytes,
+        producer_commit_evidence_bytes=producer_commit_evidence_bytes,
+        producer_main_evidence_bytes=producer_main_evidence_bytes,
+        handoff_bytes=handoff_bytes,
+        checksums_bytes=checksums_bytes,
+        lineage_chain_bytes=lineage_chain_bytes,
+        lineage_evidence_bytes=lineage_evidence_bytes,
+        operator_confirmations=operator_confirmations,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
     )
@@ -2058,6 +4090,43 @@ def encode_acceptance_claim(claim: Mapping[str, Any]) -> bytes:
     _canonical_timestamp(row["accepted_at"], label="acceptance.accepted_at")
     _sha(row["manifest_sha256"], label="acceptance.manifest_sha256")
     _sha(row["artifact_sha256"], label="acceptance.artifact_sha256")
+    commit_evidence = _validate_embedded_producer_commit_evidence(
+        row["producer_commit_evidence"]
+    )
+    main_evidence = _validate_embedded_producer_main_evidence(
+        row["producer_main_evidence"]
+    )
+    if main_evidence["observed_at"] != row["accepted_at"]:
+        raise PalimpsestChinaIntakeError(
+            "producer main observation clock must equal Seiche accepted_at"
+        )
+    _validate_embedded_handoff_receipt(row["handoff_receipt"])
+    checksum = _validate_embedded_checksum_subject(row["checksum_subject"])
+    lineage = _validate_embedded_lineage_receipt(row["governed_lineage"])
+    confirmations = _validate_embedded_operator_confirmations(
+        row["operator_confirmations"]
+    )
+    if (
+        lineage["evaluated_at_commit_sha"] != commit_evidence["sha"]
+        or main_evidence["commit"]["sha"] != commit_evidence["sha"]
+        or confirmations["github_attestation_subject_sha256"] != checksum["sha256"]
+        or confirmations["checksum_subject_sha256"] != checksum["sha256"]
+        or confirmations["producer_commit_evidence_sha256"] != commit_evidence["sha256"]
+        or confirmations["lineage_chain_sha256"] != lineage["sha256"]
+        or confirmations["lineage_evidence_sha256"] != lineage["evidence"]["sha256"]
+        or confirmations["lineage_evaluated_at_commit_sha"]
+        != lineage["evaluated_at_commit_sha"]
+        or confirmations["producer_main_evidence_sha256"] != main_evidence["sha256"]
+        or confirmations["manifest_sha256"] != row["manifest_sha256"]
+        or _timestamp(
+            confirmations["rights_expires_at"],
+            label="acceptance.operator_confirmations.rights_expires_at",
+        )
+        <= _timestamp(row["accepted_at"], label="acceptance.accepted_at")
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance evidence and operator confirmation commitments disagree"
+        )
     _sha(row["signer_key_id"], label="acceptance.signer_key_id")
     return _canonical_json_line(dict(row))
 
@@ -2068,6 +4137,13 @@ def build_acceptance_receipt(
     *,
     input_ledger_bytes: bytes | None = None,
     availability_bytes: bytes | None = None,
+    producer_commit_evidence_bytes: bytes | None = None,
+    producer_main_evidence_bytes: bytes | None = None,
+    handoff_bytes: bytes | None = None,
+    checksums_bytes: bytes | None = None,
+    lineage_chain_bytes: bytes | None = None,
+    lineage_evidence_bytes: bytes | None = None,
+    operator_confirmations: Mapping[str, object] | None = None,
     accepted_at: datetime,
     signer_key_id: str,
     signature: str,
@@ -2080,6 +4156,13 @@ def build_acceptance_receipt(
         artifact_bytes,
         input_ledger_bytes=input_ledger_bytes,
         availability_bytes=availability_bytes,
+        producer_commit_evidence_bytes=producer_commit_evidence_bytes,
+        producer_main_evidence_bytes=producer_main_evidence_bytes,
+        handoff_bytes=handoff_bytes,
+        checksums_bytes=checksums_bytes,
+        lineage_chain_bytes=lineage_chain_bytes,
+        lineage_evidence_bytes=lineage_evidence_bytes,
+        operator_confirmations=operator_confirmations,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
     )
@@ -2105,6 +4188,13 @@ def build_acceptance_receipt_from_files(
     *,
     input_ledger_path: str | Path | None = None,
     availability_path: str | Path | None = None,
+    producer_commit_evidence_path: str | Path | None = None,
+    producer_main_evidence_path: str | Path | None = None,
+    handoff_path: str | Path | None = None,
+    checksums_path: str | Path | None = None,
+    lineage_chain_path: str | Path | None = None,
+    lineage_evidence_path: str | Path | None = None,
+    operator_confirmations: Mapping[str, object] | None = None,
     accepted_at: datetime,
     signer_key_id: str,
     signature: str,
@@ -2136,11 +4226,72 @@ def build_acceptance_receipt_from_files(
         if availability_path is not None
         else None
     )
+    producer_commit_evidence_bytes = (
+        _stable_read(
+            producer_commit_evidence_path,
+            label="Palimpsest producer commit evidence",
+            maximum=MAX_PRODUCER_COMMIT_EVIDENCE_BYTES,
+        )
+        if producer_commit_evidence_path is not None
+        else None
+    )
+    producer_main_evidence_bytes = (
+        _stable_read(
+            producer_main_evidence_path,
+            label="Palimpsest producer main evidence",
+            maximum=MAX_PRODUCER_MAIN_EVIDENCE_BYTES,
+        )
+        if producer_main_evidence_path is not None
+        else None
+    )
+    handoff_bytes = (
+        _stable_read(
+            handoff_path,
+            label="Palimpsest China handoff receipt",
+            maximum=MAX_HANDOFF_BYTES,
+        )
+        if handoff_path is not None
+        else None
+    )
+    checksums_bytes = (
+        _stable_read(
+            checksums_path,
+            label="Palimpsest China checksum subject",
+            maximum=MAX_CHECKSUMS_BYTES,
+        )
+        if checksums_path is not None
+        else None
+    )
+    lineage_chain_bytes = (
+        _stable_read(
+            lineage_chain_path,
+            label="Palimpsest China governed lineage chain",
+            maximum=MAX_LINEAGE_CHAIN_BYTES,
+        )
+        if lineage_chain_path is not None
+        else None
+    )
+    lineage_evidence_bytes = (
+        _stable_read(
+            lineage_evidence_path,
+            label="Palimpsest China governed lineage evidence",
+            maximum=MAX_LINEAGE_EVIDENCE_BYTES,
+        )
+        if lineage_evidence_path is not None
+        else None
+    )
     return build_acceptance_receipt(
         manifest_bytes,
         artifact_bytes,
         input_ledger_bytes=input_ledger_bytes,
         availability_bytes=availability_bytes,
+        producer_commit_evidence_bytes=producer_commit_evidence_bytes,
+        producer_main_evidence_bytes=producer_main_evidence_bytes,
+        handoff_bytes=handoff_bytes,
+        checksums_bytes=checksums_bytes,
+        lineage_chain_bytes=lineage_chain_bytes,
+        lineage_evidence_bytes=lineage_evidence_bytes,
+        operator_confirmations=operator_confirmations,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
         signature=signature,
@@ -2167,6 +4318,12 @@ def _load_accepted_export_cached(
     artifact_identity: tuple[str, int, int, int, int, int],
     input_ledger_identity: tuple[str, int, int, int, int, int] | None,
     availability_identity: tuple[str, int, int, int, int, int] | None,
+    producer_commit_evidence_identity: tuple[str, int, int, int, int, int] | None,
+    producer_main_evidence_identity: tuple[str, int, int, int, int, int] | None,
+    handoff_identity: tuple[str, int, int, int, int, int] | None,
+    checksums_identity: tuple[str, int, int, int, int, int] | None,
+    lineage_chain_identity: tuple[str, int, int, int, int, int] | None,
+    lineage_evidence_identity: tuple[str, int, int, int, int, int] | None,
     acceptance_identity: tuple[str, int, int, int, int, int],
     attest_dir: str | None,
     trust_identity: tuple[str, int, int, int, int, int] | None,
@@ -2211,6 +4368,66 @@ def _load_accepted_export_cached(
         if availability_identity is not None
         else None
     )
+    producer_commit_evidence_bytes = (
+        _stable_read(
+            producer_commit_evidence_identity[0],
+            label="Palimpsest producer commit evidence",
+            maximum=MAX_PRODUCER_COMMIT_EVIDENCE_BYTES,
+            expected_identity=producer_commit_evidence_identity,
+        )
+        if producer_commit_evidence_identity is not None
+        else None
+    )
+    producer_main_evidence_bytes = (
+        _stable_read(
+            producer_main_evidence_identity[0],
+            label="Palimpsest producer main evidence",
+            maximum=MAX_PRODUCER_MAIN_EVIDENCE_BYTES,
+            expected_identity=producer_main_evidence_identity,
+        )
+        if producer_main_evidence_identity is not None
+        else None
+    )
+    handoff_bytes = (
+        _stable_read(
+            handoff_identity[0],
+            label="Palimpsest China handoff receipt",
+            maximum=MAX_HANDOFF_BYTES,
+            expected_identity=handoff_identity,
+        )
+        if handoff_identity is not None
+        else None
+    )
+    checksums_bytes = (
+        _stable_read(
+            checksums_identity[0],
+            label="Palimpsest China checksum subject",
+            maximum=MAX_CHECKSUMS_BYTES,
+            expected_identity=checksums_identity,
+        )
+        if checksums_identity is not None
+        else None
+    )
+    lineage_chain_bytes = (
+        _stable_read(
+            lineage_chain_identity[0],
+            label="Palimpsest China governed lineage chain",
+            maximum=MAX_LINEAGE_CHAIN_BYTES,
+            expected_identity=lineage_chain_identity,
+        )
+        if lineage_chain_identity is not None
+        else None
+    )
+    lineage_evidence_bytes = (
+        _stable_read(
+            lineage_evidence_identity[0],
+            label="Palimpsest China governed lineage evidence",
+            maximum=MAX_LINEAGE_EVIDENCE_BYTES,
+            expected_identity=lineage_evidence_identity,
+        )
+        if lineage_evidence_identity is not None
+        else None
+    )
     acceptance_bytes = _stable_read(
         acceptance_path,
         label="Palimpsest China acceptance receipt",
@@ -2236,6 +4453,58 @@ def _load_accepted_export_cached(
         raise PalimpsestChinaIntakeError(
             "acceptance receipt artifact hash does not match"
         )
+    embedded_evidence = _validate_embedded_producer_commit_evidence(
+        claim["producer_commit_evidence"]
+    )
+    if (
+        producer_commit_evidence_bytes is None
+        or embedded_evidence["sha256"] != _sha256(producer_commit_evidence_bytes)
+        or embedded_evidence["bytes"] != len(producer_commit_evidence_bytes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance receipt producer commit evidence hash/bytes do not match"
+        )
+    embedded_main_evidence = _validate_embedded_producer_main_evidence(
+        claim["producer_main_evidence"]
+    )
+    if (
+        producer_main_evidence_bytes is None
+        or embedded_main_evidence["sha256"] != _sha256(producer_main_evidence_bytes)
+        or embedded_main_evidence["bytes"] != len(producer_main_evidence_bytes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance receipt producer main evidence hash/bytes do not match"
+        )
+    embedded_handoff = _validate_embedded_handoff_receipt(claim["handoff_receipt"])
+    if (
+        handoff_bytes is None
+        or embedded_handoff["sha256"] != _sha256(handoff_bytes)
+        or embedded_handoff["bytes"] != len(handoff_bytes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance receipt handoff hash/bytes do not match"
+        )
+    embedded_checksums = _validate_embedded_checksum_subject(claim["checksum_subject"])
+    if (
+        checksums_bytes is None
+        or embedded_checksums["sha256"] != _sha256(checksums_bytes)
+        or embedded_checksums["bytes"] != len(checksums_bytes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance receipt checksum subject hash/bytes do not match"
+        )
+    embedded_lineage = _validate_embedded_lineage_receipt(claim["governed_lineage"])
+    if (
+        lineage_chain_bytes is None
+        or lineage_evidence_bytes is None
+        or embedded_lineage["sha256"] != _sha256(lineage_chain_bytes)
+        or embedded_lineage["bytes"] != len(lineage_chain_bytes)
+        or embedded_lineage["evidence"]["sha256"] != _sha256(lineage_evidence_bytes)
+        or embedded_lineage["evidence"]["bytes"] != len(lineage_evidence_bytes)
+    ):
+        raise PalimpsestChinaIntakeError(
+            "acceptance receipt governed lineage hash/bytes do not match"
+        )
     try:
         verify_trusted_palimpsest_china_signature(
             claim_bytes,
@@ -2258,12 +4527,90 @@ def _load_accepted_export_cached(
         accepted_at=accepted_at,
     )
     _require_authoritative_producer(context)
+    assert context.producer is not None
+    normalized_evidence = _validate_producer_commit_evidence(
+        producer_commit_evidence_bytes,
+        producer=context.producer,
+        accepted_at=accepted_at,
+    )
+    normalized_main_evidence = _validate_producer_main_evidence(
+        producer_main_evidence_bytes,
+        producer=context.producer,
+        observed_at=accepted_at,
+    )
+    if normalized_evidence != embedded_evidence:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer commit evidence does not match raw GitHub bytes"
+        )
+    if normalized_main_evidence != embedded_main_evidence:
+        raise PalimpsestChinaIntakeError(
+            "acceptance producer main evidence does not match raw GitHub bytes"
+        )
+    if (
+        input_ledger_bytes is None
+        or availability_bytes is None
+        or handoff_bytes is None
+        or checksums_bytes is None
+        or lineage_chain_bytes is None
+        or lineage_evidence_bytes is None
+    ):
+        raise PalimpsestChinaIntakeError(
+            "accepted export is missing an authoritative handoff input"
+        )
+    authority = _validate_handoff_authority(
+        manifest_bytes=manifest_bytes,
+        artifact_bytes=artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
+        producer_commit_evidence_bytes=producer_commit_evidence_bytes,
+        handoff_bytes=handoff_bytes,
+        checksums_bytes=checksums_bytes,
+        lineage_chain_bytes=lineage_chain_bytes,
+        lineage_evidence_bytes=lineage_evidence_bytes,
+        accepted_at=accepted_at,
+    )
+    confirmations = _validate_embedded_operator_confirmations(
+        claim["operator_confirmations"]
+    )
+    expected_confirmations = {key: True for key in _OPERATOR_CONFIRMATION_INPUT_KEYS}
+    assert context.availability_receipt_sha256 is not None
+    expected_confirmations.update(
+        {
+            "github_attestation_subject_sha256": authority.checksums_sha256,
+            "checksum_subject_sha256": authority.checksums_sha256,
+            "producer_commit_evidence_sha256": normalized_evidence["sha256"],
+            "lineage_chain_sha256": authority.chain_sha256,
+            "lineage_evidence_sha256": authority.evidence_sha256,
+            "lineage_evaluated_at_commit_sha": authority.chain_receipt[
+                "evaluated_at_commit_sha"
+            ],
+            "producer_main_evidence_sha256": normalized_main_evidence["sha256"],
+            "manifest_sha256": context.manifest_sha256,
+            "availability_receipt_sha256": context.availability_receipt_sha256,
+            "rights_expires_at": context.source_decision["expires_at"],
+        }
+    )
+    if (
+        embedded_lineage != dict(authority.chain_receipt)
+        or embedded_handoff["sha256"] != authority.handoff_sha256
+        or embedded_checksums["sha256"] != authority.checksums_sha256
+        or confirmations != expected_confirmations
+    ):
+        raise PalimpsestChinaIntakeError(
+            "signed acceptance does not match the revalidated handoff authority"
+        )
     if context.accepted_at != accepted_at_text:
         raise PalimpsestChinaIntakeError("acceptance clock normalization changed")
     context = replace(
         context,
         acceptance_sha256=_sha256(acceptance_bytes),
         acceptance_signer_key_id=claim["signer_key_id"],
+        producer_commit_evidence=_freeze_json(normalized_evidence),
+        producer_main_evidence=_freeze_json(normalized_main_evidence),
+        handoff_receipt=_freeze_json(embedded_handoff),
+        checksum_subject=_freeze_json(embedded_checksums),
+        governed_lineage=_freeze_json(dict(authority.chain_receipt)),
+        operator_confirmations=_freeze_json(confirmations),
     )
     object.__setattr__(
         context,
@@ -2286,6 +4633,12 @@ def load_accepted_export(
     *,
     input_ledger_path: str | Path | None = None,
     availability_path: str | Path | None = None,
+    producer_commit_evidence_path: str | Path | None = None,
+    producer_main_evidence_path: str | Path | None = None,
+    handoff_path: str | Path | None = None,
+    checksums_path: str | Path | None = None,
+    lineage_chain_path: str | Path | None = None,
+    lineage_evidence_path: str | Path | None = None,
     attest_dir: str | Path | None = None,
     now: datetime | None = None,
 ) -> PalimpsestChinaEconomicContext:
@@ -2316,6 +4669,48 @@ def load_accepted_export(
                 label="Palimpsest China availability receipt",
             )
             if availability_path is not None
+            else None
+        ),
+        (
+            _file_identity(
+                producer_commit_evidence_path,
+                label="Palimpsest producer commit evidence",
+            )
+            if producer_commit_evidence_path is not None
+            else None
+        ),
+        (
+            _file_identity(
+                producer_main_evidence_path,
+                label="Palimpsest producer main evidence",
+            )
+            if producer_main_evidence_path is not None
+            else None
+        ),
+        (
+            _file_identity(handoff_path, label="Palimpsest China handoff receipt")
+            if handoff_path is not None
+            else None
+        ),
+        (
+            _file_identity(checksums_path, label="Palimpsest China checksum subject")
+            if checksums_path is not None
+            else None
+        ),
+        (
+            _file_identity(
+                lineage_chain_path,
+                label="Palimpsest China governed lineage chain",
+            )
+            if lineage_chain_path is not None
+            else None
+        ),
+        (
+            _file_identity(
+                lineage_evidence_path,
+                label="Palimpsest China governed lineage evidence",
+            )
+            if lineage_evidence_path is not None
             else None
         ),
         _file_identity(acceptance_path, label="Palimpsest China acceptance receipt"),
@@ -2351,9 +4746,21 @@ __all__ = [
     "AVAILABILITY_SCHEMA",
     "CONTEXT_SCHEMA",
     "EXPORT_SCHEMA",
+    "HANDOFF_SCHEMA",
     "LEGACY_MANIFEST_SCHEMA",
     "MANIFEST_SCHEMA",
     "MARKET_CHANNELS",
+    "MAX_ACCEPTANCE_BYTES",
+    "MAX_ARTIFACT_BYTES",
+    "MAX_AVAILABILITY_BYTES",
+    "MAX_CHECKSUMS_BYTES",
+    "MAX_HANDOFF_BYTES",
+    "MAX_INPUT_LEDGER_BYTES",
+    "MAX_LINEAGE_CHAIN_BYTES",
+    "MAX_LINEAGE_EVIDENCE_BYTES",
+    "MAX_MANIFEST_BYTES",
+    "MAX_PRODUCER_COMMIT_EVIDENCE_BYTES",
+    "MAX_PRODUCER_MAIN_EVIDENCE_BYTES",
     "POLICY_SCHEMA",
     "PRODUCER_SCHEMA",
     "REVIEW_MANIFEST_SCHEMA",
