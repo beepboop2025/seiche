@@ -1098,6 +1098,9 @@ def test_acceptance_cli_requires_independent_run_and_input_hash_confirmations(
     with pytest.raises(SystemExit) as missing_hashes:
         acceptance_cli.main([*command, "--confirm-github-run-attestation-verified"])
     assert missing_hashes.value.code == 2
+    with pytest.raises(SystemExit) as missing_github:
+        acceptance_cli.main([*command, "--confirm-exact-input-hashes-verified"])
+    assert missing_github.value.code == 2
 
 
 def test_configured_loader_is_offline_and_partial_configuration_fails_loud(
