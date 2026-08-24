@@ -926,9 +926,7 @@ def _public_openapi_document() -> dict[str, Any]:
                         {
                             "if": {
                                 "required": ["selection"],
-                                "properties": {
-                                    "selection": {"const": "china_macro"}
-                                },
+                                "properties": {"selection": {"const": "china_macro"}},
                             },
                             "then": {"required": ["china_macro"]},
                         }
@@ -1137,10 +1135,14 @@ def _public_openapi_document() -> dict[str, Any]:
                 "summary": "Read Seiche's unified world-markets context",
                 "description": (
                     "A chartless, bounded projection of already assembled money-"
-                    "market, forex, capital-market and metadata-only China macro "
+                    "market, forex, capital-market and bounded China macro "
                     "evidence. The China structural catalog is unsigned; only a "
                     "restricted response has verified Seiche owner-attested "
-                    "revision provenance, and neither state publishes values. It includes "
+                    "revision provenance; NBS values remain withheld. A separately "
+                    "accepted Palimpsest economic_context may carry licensed annual "
+                    "World Bank WDI values with distinct source-release, Palimpsest-"
+                    "collection and Seiche-acceptance clocks. It is structural context "
+                    "only and cannot enter a score, gauge, forecast, or signal. It includes "
                     "explicit observed, derived, structural, restricted, and "
                     "unavailable boundaries plus canonical citation URLs. The "
                     "request reads only a completed memory or persisted snapshot "
@@ -1910,12 +1912,14 @@ def _completed_world_markets_snapshot() -> dict[str, Any] | None:
 
 @app.get("/api/v2/world-markets")
 def world_markets_v2(response: Response, section: str = "all"):
-    """Read the cache-only market catalog or China metadata context.
+    """Read the cache-only market catalog or bounded China context.
 
     ``china_macro`` always publishes an unsigned structural series catalog.
     When a restricted response is present, its Seiche owner attestation has
     been verified. ``knowledge_time`` dates that capture; it is not an
-    observation clock, and no NBS values, raw exports or history appear.
+    observation clock, and no NBS values, raw exports or history appear. A
+    separately accepted Palimpsest WDI export may add annual structural values;
+    it preserves source release/collection clocks and never enters a gauge.
     """
 
     if section not in WORLD_MARKETS_SELECTORS:
@@ -1932,10 +1936,14 @@ def world_markets_v2(response: Response, section: str = "all"):
             selector=section,
             evaluation_asof=datetime.now(UTC).replace(microsecond=0),
             china_macro_context=context_views.public_china_macro_context(),
+            china_economic_context=context_views.public_china_economic_context(),
         )
 
     china_macro_context = (
         context_views.public_china_macro_context() if section == "all" else None
+    )
+    china_economic_context = (
+        context_views.public_china_economic_context() if section == "all" else None
     )
     snapshot = _completed_world_markets_snapshot()
     if snapshot is None:
@@ -1948,6 +1956,7 @@ def world_markets_v2(response: Response, section: str = "all"):
             content=unavailable_world_markets(
                 selector=section,
                 china_macro_context=china_macro_context,
+                china_economic_context=china_economic_context,
                 reason=(
                     "no completed cached or persisted snapshot is available; "
                     "this request never starts collection or model fitting"
@@ -1960,6 +1969,7 @@ def world_markets_v2(response: Response, section: str = "all"):
         selector=section,
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
         china_macro_context=china_macro_context,
+        china_economic_context=china_economic_context,
     )
 
 
@@ -2768,21 +2778,25 @@ async def railway_stateful_health(response: Response):
         return candidate
     authority = receipt.get("authority", {})
     valid_authority = (
-        mode == "shadow"
-        and authority.get("source") == "hetzner"
-        and authority.get("public_traffic_enabled") is False
-        and authority.get("workers_started") is False
-    ) or (
-        mode == "cutover_candidate"
-        and authority.get("source") == "none"
-        and authority.get("hetzner_writers_frozen") is True
-        and authority.get("railway_writers_started") is False
-    ) or (
-        mode == "production"
-        and authority.get("source") == "railway"
-        and authority.get("hetzner_writers_frozen") is True
-        and authority.get("railway_writers_started") is True
-        and authority.get("public_traffic_enabled") is True
+        (
+            mode == "shadow"
+            and authority.get("source") == "hetzner"
+            and authority.get("public_traffic_enabled") is False
+            and authority.get("workers_started") is False
+        )
+        or (
+            mode == "cutover_candidate"
+            and authority.get("source") == "none"
+            and authority.get("hetzner_writers_frozen") is True
+            and authority.get("railway_writers_started") is False
+        )
+        or (
+            mode == "production"
+            and authority.get("source") == "railway"
+            and authority.get("hetzner_writers_frozen") is True
+            and authority.get("railway_writers_started") is True
+            and authority.get("public_traffic_enabled") is True
+        )
     )
     if not valid_authority:
         return JSONResponse(

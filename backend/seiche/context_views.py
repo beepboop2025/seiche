@@ -16,6 +16,11 @@ from seiche.nbs_intake import (
     NBSMacroContext,
     load_public_context_from_public_dir,
 )
+from seiche.palimpsest_china_intake import (
+    PalimpsestChinaEconomicContext,
+    PalimpsestChinaIntakeError,
+    load_accepted_export,
+)
 
 
 def _object(value: Any) -> dict:
@@ -233,6 +238,7 @@ def world_markets(
     selector: str = "all",
     evaluation_asof: Any = None,
     china_macro_context: NBSMacroContext | None = None,
+    china_economic_context: PalimpsestChinaEconomicContext | None = None,
 ) -> dict[str, Any]:
     """Unified chartless catalog over one already completed board snapshot.
 
@@ -245,6 +251,7 @@ def world_markets(
         selector=selector,
         evaluation_asof=evaluation_asof,
         china_macro_context=china_macro_context,
+        china_economic_context=china_economic_context,
     )
 
 
@@ -256,3 +263,33 @@ def public_china_macro_context() -> NBSMacroContext | None:
         return None
     context = load_public_context_from_public_dir(public_dir)
     return context if isinstance(context, NBSMacroContext) else None
+
+
+def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
+    """Load one exact, operator-accepted Palimpsest export from local files.
+
+    An entirely absent configuration means the additive context is not
+    onboarded. A partial or invalid configuration fails loud; silently dropping
+    a configured rights or integrity failure would let clients mistake missing
+    China evidence for a valid empty panel.
+    """
+
+    names = {
+        "manifest": "SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH",
+        "artifact": "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH",
+        "acceptance": "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH",
+    }
+    configured = {key: os.getenv(name, "").strip() for key, name in names.items()}
+    if not any(configured.values()):
+        return None
+    missing = [names[key] for key, value in configured.items() if not value]
+    if missing:
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest China intake configuration is incomplete: "
+            + ", ".join(sorted(missing))
+        )
+    return load_accepted_export(
+        configured["manifest"],
+        configured["artifact"],
+        configured["acceptance"],
+    )

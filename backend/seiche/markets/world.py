@@ -183,6 +183,13 @@ OFFICIAL_SOURCE_REGISTRY: tuple[dict[str, Any], ...] = (
         "url": "https://www.stats.gov.cn/english/nbs/200701/t20070104_59236.html",
         "status": "structural",
     },
+    {
+        "id": "world_bank_wdi",
+        "publisher": "World Bank",
+        "domains": ["china_macro"],
+        "url": "https://datacatalog.worldbank.org/search/dataset/0037712/world-development-indicators",
+        "status": "structural",
+    },
 )
 
 STATUS_DEFINITIONS = {
@@ -1076,9 +1083,7 @@ _CHINA_PUBLIC_RECORD_FIELDS = frozenset(
         "attestation",
     }
 )
-_CHINA_PROVENANCE_FIELDS = frozenset(
-    {"manifest_sha256", "owner_attestation"}
-)
+_CHINA_PROVENANCE_FIELDS = frozenset({"manifest_sha256", "owner_attestation"})
 _CHINA_ATTESTATION_FIELDS = frozenset(
     {
         "schema",
@@ -1181,7 +1186,10 @@ def _verified_china_record_matches_catalog(
     )
 
 
-def _china_macro(context: object | None) -> dict[str, Any]:
+def _china_macro(
+    context: object | None,
+    economic_context: object | None = None,
+) -> dict[str, Any]:
     """Project only the release-reviewed, metadata-only NBS public contract.
 
     The caller may inject a signature-verified public revision.  This second
@@ -1195,6 +1203,10 @@ def _china_macro(context: object | None) -> dict[str, Any]:
         NBS_PUBLIC_SCHEMA,
         NBSMacroContext,
         nbs_public_catalog,
+    )
+    from seiche.palimpsest_china_intake import (
+        CONTEXT_SCHEMA as PALIMPSEST_CHINA_CONTEXT_SCHEMA,
+        PalimpsestChinaEconomicContext,
     )
 
     catalog = nbs_public_catalog()
@@ -1322,6 +1334,31 @@ def _china_macro(context: object | None) -> dict[str, Any]:
         out["attestation"] = attestation
     if not available and isinstance(context.get("reason_code"), str):
         out["reason_code"] = context.get("reason_code")
+    economic_is_owner_attested = bool(
+        isinstance(economic_context, PalimpsestChinaEconomicContext)
+        and economic_context.owner_attested
+    )
+    economic = (
+        economic_context.to_dict()
+        if isinstance(economic_context, PalimpsestChinaEconomicContext)
+        else None
+    )
+    if (
+        economic_is_owner_attested
+        and isinstance(economic, dict)
+        and economic.get("schema") == PALIMPSEST_CHINA_CONTEXT_SCHEMA
+        and economic.get("source_id") == "world_bank_wdi"
+        and economic.get("context_only") is True
+        and economic.get("scoring_eligible") is False
+        and economic.get("cn_cny_gauge_eligible") is False
+        and economic.get("market_observation_eligible") is False
+    ):
+        # This is a separate, rights-cleared and owner-attested annual
+        # structural panel. Existing NBS fields above remain metadata-only and
+        # retain their exact meaning. A direct ``verify_export`` result is
+        # intentionally insufficient: only ``load_accepted_export`` holds the
+        # private process capability required at this public boundary.
+        out["economic_context"] = economic
     return out
 
 
@@ -1596,6 +1633,7 @@ def project_world_markets(
     selector: str = "all",
     evaluation_asof: Any = None,
     china_macro_context: object | None = None,
+    china_economic_context: object | None = None,
 ) -> dict[str, Any]:
     """Project one completed snapshot into a selector-bounded public contract."""
 
@@ -1608,6 +1646,7 @@ def project_world_markets(
             selector=selector,
             reason="no completed snapshot is available",
             china_macro_context=china_macro_context,
+            china_economic_context=china_economic_context,
         )
 
     # A standalone China response is an independent metadata-only evidence
@@ -1628,7 +1667,7 @@ def project_world_markets(
         "forex": _forex(projection_snapshot),
         "capital_markets": _capital_markets(projection_snapshot),
     }
-    china_macro = _china_macro(china_macro_context)
+    china_macro = _china_macro(china_macro_context, china_economic_context)
     out = _base(
         projection_snapshot,
         selector,
@@ -1659,6 +1698,7 @@ def unavailable_world_markets(
     selector: str = "all",
     reason: str = "no completed cached or persisted snapshot is available",
     china_macro_context: object | None = None,
+    china_economic_context: object | None = None,
 ) -> dict[str, Any]:
     """Return the same typed envelope for a cold cache without implying a build."""
 
@@ -1668,7 +1708,7 @@ def unavailable_world_markets(
         name: {"status": "unavailable", "as_of": None, "reason": reason}
         for name in _WORLD_DOMAIN_IDS
     }
-    china_macro = _china_macro(china_macro_context)
+    china_macro = _china_macro(china_macro_context, china_economic_context)
     out = _base({}, selector, domains, None, china_macro)
     if selector != "china_macro":
         out.update(ok=False, status="unavailable", reason=reason)

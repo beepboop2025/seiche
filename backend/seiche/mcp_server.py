@@ -901,16 +901,21 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
             selector=selector,
             evaluation_asof=datetime.now(UTC).replace(microsecond=0),
             china_macro_context=context_views.public_china_macro_context(),
+            china_economic_context=context_views.public_china_economic_context(),
         )
 
     china_macro_context = (
         context_views.public_china_macro_context() if selector == "all" else None
+    )
+    china_economic_context = (
+        context_views.public_china_economic_context() if selector == "all" else None
     )
     snapshot = _get_completed_snapshot()
     if snapshot is None:
         return unavailable_world_markets(
             selector=selector,
             china_macro_context=china_macro_context,
+            china_economic_context=china_economic_context,
             reason=(
                 "no completed cached or persisted snapshot is available; "
                 "world_markets_context never triggers collection, repository "
@@ -923,6 +928,7 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
         selector=selector,
         evaluation_asof=datetime.now(UTC).replace(microsecond=0),
         china_macro_context=china_macro_context,
+        china_economic_context=china_economic_context,
     )
 
 
@@ -1018,16 +1024,20 @@ TOOLS: dict[str, tuple] = {
         True,
     ),
     "world_markets_context": (
-        "Seiche World Markets: money, FX, macro-capital and China metadata",
+        "Seiche World Markets: money, FX, macro-capital and China evidence",
         "Unified, chartless context for broad financial-market questions. It "
         "projects only completed/public state into money_markets, forex, "
-        "macro-capital transmission, metadata-only China macro evidence, official "
+        "macro-capital transmission, China macro evidence, official "
         "references, methodology, or a compact "
         "summary. Every response carries snapshot/as-of clocks, canonical Seiche "
         "citation URLs, and explicit observed, derived, structural, restricted, "
         "and unavailable boundaries. The China structural catalog is unsigned; "
         "only status=restricted represents a verified Seiche owner-attested "
-        "revision, and neither state publishes values, raw evidence, or history. "
+        "revision; both states keep NBS values, raw evidence, and history withheld. "
+        "A separately operator-accepted economic_context may publish licensed "
+        "World Bank WDI values with annual/structural freshness, distinct release, "
+        "Palimpsest collection, and Seiche acceptance clocks. Those values are "
+        "context only and never a live print, score, gauge, forecast, or signal. "
         "The sources selector is reference-only; use all when verified China "
         "context and its NBS source linkage must appear together. Coverage is "
         "curated and partial rather than "
@@ -1300,7 +1310,9 @@ CHINA_MACRO_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": (
         "Metadata-only NBS catalog. Structural is an unsigned code-owned catalog; "
-        "restricted means a Seiche owner-attested revision was verified."
+        "restricted means a Seiche owner-attested revision was verified. A separate "
+        "optional economic_context contains only operator-accepted annual World Bank "
+        "WDI observations and remains ineligible for scores and gauges."
     ),
     "required": [
         "status",
@@ -1342,6 +1354,45 @@ CHINA_MACRO_OUTPUT_SCHEMA: dict[str, Any] = {
         "series_count": {"const": 4},
         "revision_id": {"type": "string"},
         "knowledge_time": {"type": "string", "format": "date-time"},
+        "economic_context": {
+            "type": "object",
+            "required": [
+                "schema",
+                "status",
+                "available",
+                "context_only",
+                "scoring_eligible",
+                "cn_cny_gauge_eligible",
+                "market_observation_eligible",
+                "clocks",
+                "freshness",
+                "channel_families",
+            ],
+            "properties": {
+                "schema": {"const": "seiche.palimpsest-china-economic-context.v1"},
+                "status": {"const": "structural"},
+                "available": {"const": True},
+                "context_only": {"const": True},
+                "scoring_eligible": {"const": False},
+                "cn_cny_gauge_eligible": {"const": False},
+                "market_observation_eligible": {"const": False},
+                "clocks": {"type": "object"},
+                "freshness": {
+                    "type": "object",
+                    "properties": {
+                        "native_cadence": {"const": "annual"},
+                        "classification": {"const": "structural"},
+                        "state": {"const": "annual_structural"},
+                    },
+                    "required": ["native_cadence", "classification", "state"],
+                },
+                "channel_families": {
+                    "type": "object",
+                    "required": ["money_market", "capital_market"],
+                },
+            },
+            "additionalProperties": True,
+        },
     },
     "oneOf": [
         {
@@ -1933,7 +1984,11 @@ PROMPTS: dict[str, tuple] = {
             "restricted response means a verified Seiche owner-attested revision. "
             "That is not an NBS digital signature. knowledge_time dates the "
             "owner's capture and is not an observation clock; never infer or "
-            "reconstruct withheld NBS values. section='sources' is a reference-only "
+            "reconstruct withheld NBS values. An optional economic_context is a "
+            "licensed annual World Bank WDI structural panel; preserve its release, "
+            "Palimpsest collection, and Seiche accepted_at clocks and never treat it "
+            "as live data, a score, forecast, causal result, or trade signal. "
+            "section='sources' is a reference-only "
             "catalog and does not load restricted China evidence; request "
             "section='all' when verified China context and used_in_snapshot NBS "
             "source linkage must appear together. Treat only used_in_snapshot=true "
@@ -2031,7 +2086,11 @@ SERVER_INSTRUCTIONS = (
     "China macro's structural catalog is unsigned; only a restricted response "
     "means a verified Seiche owner-attested revision, not an NBS signature. Its "
     "knowledge_time dates evidence capture, not an observed economic value, and "
-    "withheld NBS values must never be inferred or reconstructed. capital_markets "
+    "withheld NBS values must never be inferred or reconstructed. The optional "
+    "economic_context contains licensed annual World Bank WDI structural values; "
+    "keep release, Palimpsest collection, and Seiche accepted_at clocks separate "
+    "and never turn them into a live-market claim, score, forecast, causal result, "
+    "or trading signal. capital_markets "
     "here means Treasury primary-market absorption, public positioning proxies, "
     "market stress, official liquidity and global dollar credit—not security-"
     "level issuer coverage. Sources and methodology are separate selectors: "
@@ -2333,9 +2392,7 @@ def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
         return _result(
             msg_id,
             {
-                "content": [
-                    {"type": "text", "text": f"ERROR: {failure['reason']}"}
-                ],
+                "content": [{"type": "text", "text": f"ERROR: {failure['reason']}"}],
                 "structuredContent": failure,
                 "isError": True,
             },
