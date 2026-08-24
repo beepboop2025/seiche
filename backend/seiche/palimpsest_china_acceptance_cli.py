@@ -44,6 +44,24 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("artifact", type=Path)
         command.add_argument("--accepted-at", type=_timestamp, required=True)
         command.add_argument("--signer-key-id", required=True)
+        command.add_argument(
+            "--confirm-github-run-attestation-verified",
+            action="store_true",
+            required=True,
+            help=(
+                "confirm independent verification of the completed exact-SHA "
+                "GitHub run and its bundle attestation"
+            ),
+        )
+        command.add_argument(
+            "--confirm-exact-input-hashes-verified",
+            action="store_true",
+            required=True,
+            help=(
+                "confirm independent verification of the manifest, artifact, "
+                "input ledger, policy, and series-registry hashes"
+            ),
+        )
 
     claim = commands.add_parser("claim", help="emit exact bytes for offline signing")
     export_arguments(claim)

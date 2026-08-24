@@ -23,8 +23,10 @@ from seiche.markets.world import project_world_markets
 from seiche.palimpsest_china_intake import (
     ACCEPTANCE_SCHEMA,
     EXPORT_SCHEMA,
+    LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     POLICY_SCHEMA,
+    PRODUCER_SCHEMA,
     SERIES_REGISTRY_SCHEMA,
     PalimpsestChinaIntakeError,
     build_acceptance_claim,
@@ -36,6 +38,8 @@ from seiche.palimpsest_china_intake import (
 )
 
 ACCEPTED_AT = datetime(2026, 8, 24, 12, 2, tzinfo=UTC)
+PALIMPSEST_COMMIT_SHA = "e" * 40
+PALIMPSEST_RUN_ID = 12_345_678_901
 EVIDENCE_URL = (
     "https://api.worldbank.org/v2/country/CHN/indicator/"
     "AG.PRD.CREL.MT;FM.LBL.BMNY.ZG?"
@@ -176,6 +180,32 @@ def _decision_digest(row: dict) -> str:
     return hashlib.sha256(_canonical(policy_payload)).hexdigest()
 
 
+def _producer(*, event: str = "push", workflow_run: bool = True) -> dict:
+    run = (
+        {
+            "provider": "github_actions",
+            "workflow_file": ".github/workflows/tests.yml",
+            "run_id": PALIMPSEST_RUN_ID,
+            "run_attempt": 1,
+            "head_sha": PALIMPSEST_COMMIT_SHA,
+            "event": event,
+            "conclusion": "success",
+            "url": (
+                "https://github.com/beepboop2025/palimpsest/actions/runs/"
+                f"{PALIMPSEST_RUN_ID}"
+            ),
+        }
+        if workflow_run
+        else None
+    )
+    return {
+        "schema_version": PRODUCER_SCHEMA,
+        "repository": "beepboop2025/palimpsest",
+        "commit_sha": PALIMPSEST_COMMIT_SHA,
+        "workflow_run": run,
+    }
+
+
 def _bundle() -> tuple[dict, bytes, bytes]:
     cereal = _observation(
         series_id="cn.wdi.cereal_production",
@@ -211,6 +241,7 @@ def _bundle() -> tuple[dict, bytes, bytes]:
         "generated_at": "2026-08-24T12:01:00Z",
         "context_only": True,
         "scoring_allowed": False,
+        "producer": _producer(),
         "artifact": {
             "path": "data/review/palimpsest-china-economic-export-v1.jsonl",
             "media_type": "application/x-ndjson",
@@ -299,6 +330,27 @@ def _signed_receipt(
         signature=signature,
         attest_dir=trust,
     )
+
+
+def _raw_signed_receipt(
+    manifest_bytes: bytes,
+    artifact_bytes: bytes,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> bytes:
+    """Sign the closed claim directly to exercise load-time defenses."""
+
+    private_key, public_key, _trust = signer
+    claim = {
+        "schema_version": ACCEPTANCE_SCHEMA,
+        "algorithm": "ed25519",
+        "domain": intake.ACCEPTANCE_DOMAIN,
+        "accepted_at": "2026-08-24T12:02:00Z",
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "artifact_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+        "signer_key_id": public_key,
+    }
+    signature = private_key.sign(encode_acceptance_claim(claim)).hex()
+    return _canonical({**claim, "signature": signature})
 
 
 def _write_signed_bundle(
@@ -391,6 +443,132 @@ def test_verified_export_preserves_four_clocks_and_bounded_channel_families() ->
     assert money["released_at"] == "2026-07-13T23:59:59+00:00"
     assert money["collected_at"] == "2026-08-24T12:00:00+00:00"
     assert money["accepted_at"] == "2026-08-24T12:02:00Z"
+    assert public["provenance"]["producer"] == _producer()
+
+
+def test_review_manifest_may_omit_run_but_cannot_be_signed_or_loaded(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> None:
+    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest["producer"] = _producer(workflow_run=False)
+    manifest_bytes = _canonical(manifest)
+
+    review = verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+    assert review.owner_attested is False
+    assert review.to_dict()["provenance"]["producer"]["workflow_run"] is None
+    with pytest.raises(
+        PalimpsestChinaIntakeError, match="successful exact-commit push"
+    ):
+        build_acceptance_claim(
+            manifest_bytes,
+            artifact_bytes,
+            accepted_at=ACCEPTED_AT,
+            signer_key_id=signer[1],
+        )
+
+    manifest_path = tmp_path / "manifest.json"
+    artifact_path = tmp_path / "artifact.jsonl"
+    acceptance_path = tmp_path / "acceptance.json"
+    manifest_path.write_bytes(manifest_bytes)
+    artifact_path.write_bytes(artifact_bytes)
+    acceptance_path.write_bytes(
+        _raw_signed_receipt(manifest_bytes, artifact_bytes, signer)
+    )
+    with pytest.raises(
+        PalimpsestChinaIntakeError, match="successful exact-commit push"
+    ):
+        load_accepted_export(
+            manifest_path,
+            artifact_path,
+            acceptance_path,
+            attest_dir=signer[2],
+            now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
+        )
+
+
+def test_legacy_manifest_remains_offline_review_only(
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> None:
+    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest["schema_version"] = LEGACY_MANIFEST_SCHEMA
+    manifest.pop("producer")
+    manifest_bytes = _canonical(manifest)
+
+    context = verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+    assert context.manifest_schema_version == LEGACY_MANIFEST_SCHEMA
+    assert context.producer is None
+    with pytest.raises(
+        PalimpsestChinaIntakeError, match="successful exact-commit push"
+    ):
+        build_acceptance_claim(
+            manifest_bytes,
+            artifact_bytes,
+            accepted_at=ACCEPTED_AT,
+            signer_key_id=signer[1],
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda producer: producer.update(repository="someone/fork"),
+            "repository is not release-reviewed",
+        ),
+        (
+            lambda producer: producer.update(commit_sha="not-a-git-sha"),
+            "lowercase 40-hex Git SHA",
+        ),
+        (
+            lambda producer: producer["workflow_run"].update(head_sha="f" * 40),
+            "does not match producer commit",
+        ),
+        (
+            lambda producer: producer["workflow_run"].update(
+                url="https://github.com/someone/fork/actions/runs/12345678901"
+            ),
+            "URL is not canonical",
+        ),
+        (
+            lambda producer: producer["workflow_run"].update(event="workflow_dispatch"),
+            "event is not reviewed",
+        ),
+        (
+            lambda producer: producer["workflow_run"].update(conclusion="failure"),
+            "conclusion must be success",
+        ),
+    ],
+)
+def test_producer_receipt_malformed_mismatched_or_cross_repo_fails_closed(
+    mutation,
+    message: str,
+) -> None:
+    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    mutation(manifest["producer"])
+
+    with pytest.raises(PalimpsestChinaIntakeError, match=message):
+        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+
+
+def test_successful_pull_request_run_is_reviewable_but_not_authoritative(
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> None:
+    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest["producer"] = _producer(event="pull_request")
+    manifest_bytes = _canonical(manifest)
+
+    review = verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+    assert review.producer is not None
+    with pytest.raises(
+        PalimpsestChinaIntakeError, match="successful exact-commit push"
+    ):
+        build_acceptance_claim(
+            manifest_bytes,
+            artifact_bytes,
+            accepted_at=ACCEPTED_AT,
+            signer_key_id=signer[1],
+        )
 
 
 def test_default_projection_returns_only_featured_current_observations() -> None:
@@ -871,6 +1049,8 @@ def test_acceptance_cli_emits_exact_claim_and_verified_receipt(
         "2026-08-24T12:02:00Z",
         "--signer-key-id",
         public_key,
+        "--confirm-github-run-attestation-verified",
+        "--confirm-exact-input-hashes-verified",
     ]
 
     assert acceptance_cli.main(["claim", *common]) == 0
@@ -892,6 +1072,32 @@ def test_acceptance_cli_emits_exact_claim_and_verified_receipt(
     receipt = json.loads(capfd.readouterr().out)
     assert receipt["signature"] == signature
     assert receipt["signer_key_id"] == public_key
+
+
+def test_acceptance_cli_requires_independent_run_and_input_hash_confirmations(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+) -> None:
+    _private_key, public_key, _trust = signer
+    manifest_path, artifact_path, _acceptance_path = _write_signed_bundle(
+        tmp_path, signer
+    )
+    command = [
+        "claim",
+        str(manifest_path),
+        str(artifact_path),
+        "--accepted-at",
+        "2026-08-24T12:02:00Z",
+        "--signer-key-id",
+        public_key,
+    ]
+
+    with pytest.raises(SystemExit) as missing_both:
+        acceptance_cli.main(command)
+    assert missing_both.value.code == 2
+    with pytest.raises(SystemExit) as missing_hashes:
+        acceptance_cli.main([*command, "--confirm-github-run-attestation-verified"])
+    assert missing_hashes.value.code == 2
 
 
 def test_configured_loader_is_offline_and_partial_configuration_fails_loud(

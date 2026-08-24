@@ -30,7 +30,9 @@ from seiche.china_economic_focus import featured_series
 from seiche.nbs_trust import verify_trusted_ed25519_signature
 
 EXPORT_SCHEMA = "palimpsest.china-economic-export.v1"
-MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v1"
+LEGACY_MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v1"
+MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v2"
+PRODUCER_SCHEMA = "palimpsest.producer-receipt.v1"
 POLICY_SCHEMA = "palimpsest.china-economic-source-policy.v1"
 SERIES_REGISTRY_SCHEMA = "palimpsest-china-econ-wdi-series.v1"
 ACCEPTANCE_SCHEMA = "seiche.palimpsest-china-economic-acceptance.v1"
@@ -59,13 +61,14 @@ MAX_SERIES = 60
 _OWNER_ATTESTED_AUTHORITY = object()
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _ED25519_SIGNATURE_RE = re.compile(r"[0-9a-f]{128}")
 _SOURCE_ID_RE = re.compile(r"[a-z0-9][a-z0-9_]{1,79}")
 _SERIES_ID_RE = re.compile(r"cn\.wdi\.[a-z0-9][a-z0-9_]{1,119}")
 _SOURCE_SERIES_ID_RE = re.compile(r"[A-Z0-9][A-Z0-9._-]{1,79}")
 _FORBIDDEN_VALUE_SOURCE_MARKERS = ("cfets", "chinamoney", "china_money")
 
-_MANIFEST_KEYS = frozenset(
+_MANIFEST_V1_KEYS = frozenset(
     {
         "schema_version",
         "generated_at",
@@ -79,6 +82,24 @@ _MANIFEST_KEYS = frozenset(
         "market_channel_mapping",
     }
 )
+_MANIFEST_KEYS = frozenset({*_MANIFEST_V1_KEYS, "producer"})
+_PRODUCER_KEYS = frozenset(
+    {"schema_version", "repository", "commit_sha", "workflow_run"}
+)
+_PRODUCER_WORKFLOW_KEYS = frozenset(
+    {
+        "provider",
+        "workflow_file",
+        "run_id",
+        "run_attempt",
+        "head_sha",
+        "event",
+        "conclusion",
+        "url",
+    }
+)
+_PRODUCER_REPOSITORY = "beepboop2025/palimpsest"
+_PRODUCER_WORKFLOW_FILE = ".github/workflows/tests.yml"
 _ARTIFACT_RECEIPT_KEYS = frozenset(
     {"schema_version", "path", "media_type", "sha256", "bytes", "records"}
 )
@@ -271,6 +292,81 @@ def _count(value: object, *, label: str, positive: bool = False) -> int:
     return value
 
 
+def _git_sha(value: object, *, label: str) -> str:
+    if type(value) is not str or _GIT_SHA_RE.fullmatch(value) is None:
+        raise PalimpsestChinaIntakeError(f"{label} must be a lowercase 40-hex Git SHA")
+    return value
+
+
+def _validate_producer(value: object) -> dict[str, Any]:
+    """Validate the closed shape of Palimpsest's producer declaration.
+
+    A null workflow run is deliberately valid only as offline review metadata.
+    The signed acceptance boundary applies the stronger push-run requirement.
+    These self-declared fields are not independent GitHub attestation; the
+    offline owner must verify the run and bundle hashes before signing.
+    """
+
+    producer = _exact_keys(value, _PRODUCER_KEYS, label="manifest.producer")
+    if producer["schema_version"] != PRODUCER_SCHEMA:
+        raise PalimpsestChinaIntakeError(
+            f"manifest.producer must use {PRODUCER_SCHEMA}"
+        )
+    if producer["repository"] != _PRODUCER_REPOSITORY:
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer repository is not release-reviewed"
+        )
+    commit_sha = _git_sha(producer["commit_sha"], label="manifest.producer.commit_sha")
+    workflow_value = producer["workflow_run"]
+    if workflow_value is None:
+        return dict(producer)
+
+    workflow = _exact_keys(
+        workflow_value,
+        _PRODUCER_WORKFLOW_KEYS,
+        label="manifest.producer.workflow_run",
+    )
+    if workflow["provider"] != "github_actions":
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer.workflow_run provider must be github_actions"
+        )
+    if workflow["workflow_file"] != _PRODUCER_WORKFLOW_FILE:
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer.workflow_run workflow is not release-reviewed"
+        )
+    run_id = _count(
+        workflow["run_id"],
+        label="manifest.producer.workflow_run.run_id",
+        positive=True,
+    )
+    _count(
+        workflow["run_attempt"],
+        label="manifest.producer.workflow_run.run_attempt",
+        positive=True,
+    )
+    head_sha = _git_sha(
+        workflow["head_sha"], label="manifest.producer.workflow_run.head_sha"
+    )
+    if head_sha != commit_sha:
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer workflow head SHA does not match producer commit"
+        )
+    if workflow["event"] not in {"pull_request", "push"}:
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer.workflow_run event is not reviewed"
+        )
+    if workflow["conclusion"] != "success":
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer.workflow_run conclusion must be success"
+        )
+    expected_url = f"https://github.com/{_PRODUCER_REPOSITORY}/actions/runs/{run_id}"
+    if workflow["url"] != expected_url:
+        raise PalimpsestChinaIntakeError(
+            "manifest.producer.workflow_run URL is not canonical"
+        )
+    return {**producer, "workflow_run": dict(workflow)}
+
+
 def _timestamp(value: object, *, label: str) -> datetime:
     text = _required_string(value, label=label, maximum=64)
     try:
@@ -447,7 +543,9 @@ class PalimpsestChinaEconomicContext:
     """Verified context projection for one exact Palimpsest export."""
 
     accepted_at: str
+    manifest_schema_version: str
     manifest_sha256: str
+    producer: Mapping[str, Any] | None
     artifact_sha256: str
     artifact_bytes: int
     input_ledger_sha256: str
@@ -544,6 +642,9 @@ class PalimpsestChinaEconomicContext:
                 "expires_at": decision["expires_at"],
             },
             "provenance": {
+                "producer": (
+                    _copy_json(self.producer) if self.producer is not None else None
+                ),
                 "manifest_sha256": self.manifest_sha256,
                 "artifact_sha256": self.artifact_sha256,
                 "artifact_bytes": self.artifact_bytes,
@@ -925,9 +1026,19 @@ def verify_export(
     manifest = _strict_json(manifest_bytes, label="manifest")
     if _canonical_json_line(manifest) != manifest_bytes:
         raise PalimpsestChinaIntakeError("manifest must use exact canonical JSON bytes")
-    manifest = _exact_keys(manifest, _MANIFEST_KEYS, label="manifest")
-    if manifest["schema_version"] != MANIFEST_SCHEMA:
-        raise PalimpsestChinaIntakeError(f"manifest must use {MANIFEST_SCHEMA}")
+    if type(manifest) is not dict:
+        raise PalimpsestChinaIntakeError("manifest must be an object")
+    manifest_schema = manifest.get("schema_version")
+    if manifest_schema == MANIFEST_SCHEMA:
+        manifest = _exact_keys(manifest, _MANIFEST_KEYS, label="manifest")
+        producer = _validate_producer(manifest["producer"])
+    elif manifest_schema == LEGACY_MANIFEST_SCHEMA:
+        manifest = _exact_keys(manifest, _MANIFEST_V1_KEYS, label="manifest")
+        producer = None
+    else:
+        raise PalimpsestChinaIntakeError(
+            f"manifest must use {LEGACY_MANIFEST_SCHEMA} or {MANIFEST_SCHEMA}"
+        )
     if manifest["context_only"] is not True or manifest["scoring_allowed"] is not False:
         raise PalimpsestChinaIntakeError(
             "manifest must remain context-only and unscored"
@@ -1154,7 +1265,9 @@ def verify_export(
     accepted_text = accepted_at.isoformat().replace("+00:00", "Z")
     return PalimpsestChinaEconomicContext(
         accepted_at=accepted_text,
+        manifest_schema_version=manifest_schema,
         manifest_sha256=_sha256(manifest_bytes),
+        producer=_freeze_json(producer) if producer is not None else None,
         artifact_sha256=artifact_sha256,
         artifact_bytes=artifact_size,
         input_ledger_sha256=input_ledger_sha256,
@@ -1166,6 +1279,26 @@ def verify_export(
         observations=tuple(observations),
         current_observations=tuple(latest[key] for key in sorted(latest)),
     )
+
+
+def _require_authoritative_producer(
+    context: PalimpsestChinaEconomicContext,
+) -> None:
+    """Require a final-main producer declaration before owner acceptance."""
+
+    producer = context.producer
+    workflow = producer.get("workflow_run") if isinstance(producer, Mapping) else None
+    if (
+        context.manifest_schema_version != MANIFEST_SCHEMA
+        or not isinstance(workflow, Mapping)
+        or workflow.get("event") != "push"
+        or workflow.get("conclusion") != "success"
+        or workflow.get("head_sha") != producer.get("commit_sha")
+    ):
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest producer declaration must identify a successful "
+            "exact-commit push run"
+        )
 
 
 def build_acceptance_claim(
@@ -1188,6 +1321,7 @@ def build_acceptance_claim(
     if accepted_at.astimezone(UTC) > _utc_now():
         raise PalimpsestChinaIntakeError("accepted_at cannot be in the future")
     context = verify_export(manifest_bytes, artifact_bytes, accepted_at=accepted_at)
+    _require_authoritative_producer(context)
     signer = _sha(signer_key_id, label="acceptance.signer_key_id")
     return {
         "schema_version": ACCEPTANCE_SCHEMA,
@@ -1381,6 +1515,7 @@ def _load_accepted_export_cached(
         claim["accepted_at"], label="acceptance.accepted_at"
     )
     context = verify_export(manifest_bytes, artifact_bytes, accepted_at=accepted_at)
+    _require_authoritative_producer(context)
     if context.accepted_at != accepted_at_text:
         raise PalimpsestChinaIntakeError("acceptance clock normalization changed")
     context = replace(
@@ -1457,9 +1592,11 @@ __all__ = [
     "ALLOWED_SOURCE_IDS",
     "CONTEXT_SCHEMA",
     "EXPORT_SCHEMA",
+    "LEGACY_MANIFEST_SCHEMA",
     "MANIFEST_SCHEMA",
     "MARKET_CHANNELS",
     "POLICY_SCHEMA",
+    "PRODUCER_SCHEMA",
     "SERIES_REGISTRY_SCHEMA",
     "PalimpsestChinaEconomicContext",
     "PalimpsestChinaIntakeError",
