@@ -277,6 +277,8 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
     names = {
         "manifest": "SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH",
         "artifact": "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH",
+        "input_ledger": "SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH",
+        "availability": "SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH",
         "acceptance": "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH",
     }
     configured = {key: os.getenv(name, "").strip() for key, name in names.items()}
@@ -292,4 +294,6 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
         configured["manifest"],
         configured["artifact"],
         configured["acceptance"],
+        input_ledger_path=configured["input_ledger"],
+        availability_path=configured["availability"],
     )

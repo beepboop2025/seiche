@@ -22,11 +22,14 @@ from seiche import palimpsest_china_acceptance_cli as acceptance_cli
 from seiche.markets.world import project_world_markets
 from seiche.palimpsest_china_intake import (
     ACCEPTANCE_SCHEMA,
+    AVAILABILITY_RECEIPT_SCHEMA,
+    AVAILABILITY_SCHEMA,
     EXPORT_SCHEMA,
     LEGACY_MANIFEST_SCHEMA,
     MANIFEST_SCHEMA,
     POLICY_SCHEMA,
     PRODUCER_SCHEMA,
+    REVIEW_MANIFEST_SCHEMA,
     SERIES_REGISTRY_SCHEMA,
     PalimpsestChinaIntakeError,
     build_acceptance_claim,
@@ -40,11 +43,6 @@ from seiche.palimpsest_china_intake import (
 ACCEPTED_AT = datetime(2026, 8, 24, 12, 2, tzinfo=UTC)
 PALIMPSEST_COMMIT_SHA = "e" * 40
 PALIMPSEST_RUN_ID = 12_345_678_901
-EVIDENCE_URL = (
-    "https://api.worldbank.org/v2/country/CHN/indicator/"
-    "AG.PRD.CREL.MT;FM.LBL.BMNY.ZG?"
-    "source=2&date=2024%3A2024&format=json&per_page=20000&footnote=y"
-)
 
 
 @pytest.fixture(autouse=True)
@@ -99,19 +97,28 @@ def _observation(
     source_series_id: str,
     value: float,
     unit: str,
+    year: int = 2024,
+    revision: int = 0,
+    released_at: str = "2026-07-13T23:59:59+00:00",
+    collected_at: str = "2026-08-24T12:00:00+00:00",
+    source_document_version: str = "2026-07-13",
 ) -> dict:
     row = {
         "series_id": series_id,
         "value": float(value),
         "unit": unit,
         "frequency": "A",
-        "period_start": "2024-01-01",
-        "period_end": "2024-12-31",
-        "released_at": "2026-07-13T23:59:59+00:00",
-        "collected_at": "2026-08-24T12:00:00+00:00",
+        "period_start": f"{year:04d}-01-01",
+        "period_end": f"{year:04d}-12-31",
+        "released_at": released_at,
+        "collected_at": collected_at,
         "source_id": "world_bank_wdi",
-        "evidence_url": EVIDENCE_URL,
-        "revision": 0,
+        "evidence_url": (
+            "https://api.worldbank.org/v2/country/CHN/indicator/"
+            f"{source_series_id}?source=2&date={year}%3A{year}&format=json&"
+            "per_page=20000&footnote=y"
+        ),
+        "revision": revision,
         "status": "estimate",
         "geography": "CN",
         "sector": "all",
@@ -122,7 +129,7 @@ def _observation(
         "metadata": {
             "family": "wdi_officially_recognized_sources",
             "source_series_id": source_series_id,
-            "source_document_version": "2026-07-13",
+            "source_document_version": source_document_version,
             "parser_version": "world-bank-wdi-json.v1",
             "release_time_semantics": "dataset_lastupdated_upper_bound",
             "aggregation_window": "calendar_year",
@@ -206,7 +213,93 @@ def _producer(*, event: str = "push", workflow_run: bool = True) -> dict:
     }
 
 
-def _bundle() -> tuple[dict, bytes, bytes]:
+def _identity_digest(identities: set[tuple[str, int]]) -> str:
+    return hashlib.sha256(
+        b"".join(
+            _canonical({"indicator_id": indicator_id, "year": year})
+            for indicator_id, year in sorted(identities)
+        )
+    ).hexdigest()
+
+
+def _indicator_digest(indicators: set[str]) -> str:
+    return hashlib.sha256(
+        b"".join(
+            _canonical({"indicator_id": indicator_id})
+            for indicator_id in sorted(indicators)
+        )
+    ).hexdigest()
+
+
+def _series_digest(series_ids: set[str]) -> str:
+    return hashlib.sha256(
+        b"".join(
+            _canonical({"series_id": series_id}) for series_id in sorted(series_ids)
+        )
+    ).hexdigest()
+
+
+def _availability_document(
+    entries: list[dict],
+    *,
+    ledger_after: int | None = None,
+    ledger_before: int = 0,
+) -> bytes:
+    if ledger_after is None:
+        ledger_after = len([row for row in entries if row["available"]])
+    return _canonical(
+        {
+            "appended_observations": ledger_after - ledger_before,
+            "availability": {
+                "coverage_semantics": "exact current batch response",
+                "entries": entries,
+                "null_records": len(
+                    [row for row in entries if row["available"] is False]
+                ),
+                "records": len(entries),
+                "schema_version": AVAILABILITY_SCHEMA,
+                "withdrawal_limitation": "current batch only",
+                "withdrawal_state": "evaluated",
+            },
+            "batch_raw_sha256": "9" * 64,
+            "collector_artifact": {"name": "world-bank-wdi-batch.json"},
+            "context_only": True,
+            "dataset": "World Development Indicators",
+            "dataset_last_updated": "2026-07-13",
+            "generated_at": "2026-08-24T12:00:30Z",
+            "indicator_provenance": [],
+            "ledger_after": ledger_after,
+            "ledger_before": ledger_before,
+            "ledger_coverage": {},
+            "license": "CC-BY-4.0",
+            "license_url": "https://creativecommons.org/licenses/by/4.0/",
+            "limitations": [],
+            "publication_state": "review",
+            "redistribution_status": "allowed_with_attribution",
+            "response_coverage": {},
+            "revision_lineage": {},
+            "rights_evidence_url": (
+                "https://datacatalog.worldbank.org/search/dataset/0037712/"
+                "world-development-indicators"
+            ),
+            "schema_version": AVAILABILITY_RECEIPT_SCHEMA,
+            "scoring_allowed": False,
+            "source_id": "world_bank_wdi",
+        }
+    )
+
+
+def _wrapper(row: dict, *channels: str) -> dict:
+    return {
+        "schema_version": EXPORT_SCHEMA,
+        "context_only": True,
+        "scoring_allowed": False,
+        "market_channels": sorted(channels),
+        "observation": row,
+    }
+
+
+def _bundle() -> tuple[dict, bytes, bytes, bytes, bytes]:
     cereal = _observation(
         series_id="cn.wdi.cereal_production",
         source_series_id="AG.PRD.CREL.MT",
@@ -220,22 +313,31 @@ def _bundle() -> tuple[dict, bytes, bytes]:
         unit="annual percent",
     )
     wrappers = [
-        {
-            "schema_version": EXPORT_SCHEMA,
-            "context_only": True,
-            "scoring_allowed": False,
-            "market_channels": ["capital_market"],
-            "observation": cereal,
-        },
-        {
-            "schema_version": EXPORT_SCHEMA,
-            "context_only": True,
-            "scoring_allowed": False,
-            "market_channels": ["capital_market", "money_market"],
-            "observation": money,
-        },
+        _wrapper(cereal, "capital_market"),
+        _wrapper(money, "capital_market", "money_market"),
     ]
     artifact_bytes = b"".join(_canonical(row) for row in wrappers)
+    ledger_bytes = b"".join(_canonical(row) for row in (cereal, money))
+    current_identities = {
+        ("AG.PRD.CREL.MT", 2024),
+        ("FM.LBL.BMNY.ZG", 2024),
+    }
+    projectable_indicators = {identity[0] for identity in current_identities}
+    projectable_series = {
+        "cn.wdi.broad_money_growth",
+        "cn.wdi.cereal_production",
+    }
+    availability_bytes = _availability_document(
+        [
+            {
+                "available": True,
+                "footnote": None,
+                "indicator_id": indicator_id,
+                "year": year,
+            }
+            for indicator_id, year in sorted(current_identities)
+        ]
+    )
     manifest = {
         "schema_version": MANIFEST_SCHEMA,
         "generated_at": "2026-08-24T12:01:00Z",
@@ -252,8 +354,8 @@ def _bundle() -> tuple[dict, bytes, bytes]:
         },
         "input_ledger": {
             "path": "data/review/china-econ-wdi-observations.jsonl",
-            "sha256": "b" * 64,
-            "bytes": 10_000,
+            "sha256": hashlib.sha256(ledger_bytes).hexdigest(),
+            "bytes": len(ledger_bytes),
             "records": len(wrappers),
         },
         "policy": {
@@ -267,6 +369,27 @@ def _bundle() -> tuple[dict, bytes, bytes]:
             "sha256": "d" * 64,
             "bytes": 20_000,
             "schema_version": SERIES_REGISTRY_SCHEMA,
+        },
+        "availability_receipt": {
+            "path": "data/review/china-econ-wdi-latest.json",
+            "sha256": hashlib.sha256(availability_bytes).hexdigest(),
+            "bytes": len(availability_bytes),
+            "schema_version": AVAILABILITY_RECEIPT_SCHEMA,
+            "generated_at": "2026-08-24T12:00:30Z",
+            "batch_raw_sha256": "9" * 64,
+            "availability_schema_version": AVAILABILITY_SCHEMA,
+            "current_numeric_identities_sha256": _identity_digest(current_identities),
+            "current_numeric_identities_records": len(current_identities),
+            "current_projectable_series_sha256": _series_digest(projectable_series),
+            "current_projectable_series_records": len(projectable_series),
+            "current_projectable_source_indicators_sha256": _indicator_digest(
+                projectable_indicators
+            ),
+            "current_projectable_source_indicators_records": len(
+                projectable_indicators
+            ),
+            "withdrawn_numeric_identities_sha256": _identity_digest(set()),
+            "withdrawn_numeric_identities_records": 0,
         },
         "source_decisions": [
             _decision(
@@ -296,7 +419,13 @@ def _bundle() -> tuple[dict, bytes, bytes]:
             "money_market": ["cn.wdi.broad_money_growth"],
         },
     }
-    return manifest, _canonical(manifest), artifact_bytes
+    return (
+        manifest,
+        _canonical(manifest),
+        artifact_bytes,
+        ledger_bytes,
+        availability_bytes,
+    )
 
 
 def _replace_artifact(manifest: dict, wrappers: list[dict]) -> tuple[bytes, bytes]:
@@ -309,15 +438,114 @@ def _replace_artifact(manifest: dict, wrappers: list[dict]) -> tuple[bytes, byte
     return _canonical(manifest), artifact_bytes
 
 
+def _rebuild_v3(
+    manifest: dict,
+    *,
+    wrappers: list[dict],
+    ledger_rows: list[dict],
+    availability_entries: list[dict],
+) -> tuple[bytes, bytes, bytes, bytes]:
+    """Recompute fixture commitments from exact v3 handoff inputs."""
+
+    artifact_bytes = b"".join(_canonical(row) for row in wrappers)
+    ledger_bytes = b"".join(_canonical(row) for row in ledger_rows)
+    availability_bytes = _availability_document(
+        availability_entries,
+        ledger_after=len(ledger_rows),
+    )
+    ledger_identities = {
+        (row["metadata"]["source_series_id"], int(row["period_end"][:4]))
+        for row in ledger_rows
+    }
+    current_identities = {
+        (row["indicator_id"], row["year"])
+        for row in availability_entries
+        if row["available"]
+    }
+    source_to_series = {
+        row["metadata"]["source_series_id"]: row["series_id"] for row in ledger_rows
+    }
+    withdrawn = ledger_identities - current_identities
+    withdrawn_sources = {indicator_id for indicator_id, _year in withdrawn}
+    projectable_indicators = set(source_to_series) - withdrawn_sources
+    projectable_series = {
+        source_to_series[indicator_id] for indicator_id in projectable_indicators
+    }
+
+    manifest["artifact"].update(
+        sha256=hashlib.sha256(artifact_bytes).hexdigest(),
+        bytes=len(artifact_bytes),
+        records=len(wrappers),
+    )
+    manifest["input_ledger"].update(
+        sha256=hashlib.sha256(ledger_bytes).hexdigest(),
+        bytes=len(ledger_bytes),
+        records=len(ledger_rows),
+    )
+    manifest["availability_receipt"].update(
+        sha256=hashlib.sha256(availability_bytes).hexdigest(),
+        bytes=len(availability_bytes),
+        current_numeric_identities_sha256=_identity_digest(current_identities),
+        current_numeric_identities_records=len(current_identities),
+        current_projectable_series_sha256=_series_digest(projectable_series),
+        current_projectable_series_records=len(projectable_series),
+        current_projectable_source_indicators_sha256=_indicator_digest(
+            projectable_indicators
+        ),
+        current_projectable_source_indicators_records=len(projectable_indicators),
+        withdrawn_numeric_identities_sha256=_identity_digest(withdrawn),
+        withdrawn_numeric_identities_records=len(withdrawn),
+    )
+    wdi = next(
+        row
+        for row in manifest["source_decisions"]
+        if row["source_id"] == "world_bank_wdi"
+    )
+    wdi["input_records"] = len(ledger_rows)
+    wdi["exported_records"] = len(wrappers)
+    manifest["market_channel_mapping"] = {
+        channel: sorted(
+            {
+                wrapper["observation"]["series_id"]
+                for wrapper in wrappers
+                if channel in wrapper["market_channels"]
+            }
+        )
+        for channel in ("capital_market", "money_market")
+    }
+    return _canonical(manifest), artifact_bytes, ledger_bytes, availability_bytes
+
+
+def _verify(
+    manifest_bytes: bytes,
+    artifact_bytes: bytes,
+    ledger_bytes: bytes,
+    availability_bytes: bytes,
+    *,
+    accepted_at: datetime = ACCEPTED_AT,
+):
+    return verify_export(
+        manifest_bytes,
+        artifact_bytes,
+        input_ledger_bytes=ledger_bytes,
+        availability_bytes=availability_bytes,
+        accepted_at=accepted_at,
+    )
+
+
 def _signed_receipt(
     manifest_bytes: bytes,
     artifact_bytes: bytes,
+    ledger_bytes: bytes,
+    availability_bytes: bytes,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> bytes:
     private_key, public_key, trust = signer
     claim = build_acceptance_claim(
         manifest_bytes,
         artifact_bytes,
+        input_ledger_bytes=ledger_bytes,
+        availability_bytes=availability_bytes,
         accepted_at=ACCEPTED_AT,
         signer_key_id=public_key,
     )
@@ -325,6 +553,8 @@ def _signed_receipt(
     return build_acceptance_receipt(
         manifest_bytes,
         artifact_bytes,
+        input_ledger_bytes=ledger_bytes,
+        availability_bytes=availability_bytes,
         accepted_at=ACCEPTED_AT,
         signer_key_id=public_key,
         signature=signature,
@@ -356,19 +586,59 @@ def _raw_signed_receipt(
 def _write_signed_bundle(
     directory: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
-) -> tuple[Path, Path, Path]:
-    _manifest, manifest_bytes, artifact_bytes = _bundle()
+) -> tuple[Path, Path, Path, Path, Path]:
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     manifest_path = directory / "manifest.json"
     artifact_path = directory / "artifact.jsonl"
     acceptance_path = directory / "acceptance.json"
+    ledger_path = directory / "ledger.jsonl"
+    availability_path = directory / "availability.json"
     manifest_path.write_bytes(manifest_bytes)
     artifact_path.write_bytes(artifact_bytes)
-    acceptance_path.write_bytes(_signed_receipt(manifest_bytes, artifact_bytes, signer))
-    return manifest_path, artifact_path, acceptance_path
+    ledger_path.write_bytes(ledger_bytes)
+    availability_path.write_bytes(availability_bytes)
+    acceptance_path.write_bytes(
+        _signed_receipt(
+            manifest_bytes,
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+            signer,
+        )
+    )
+    return (
+        manifest_path,
+        artifact_path,
+        acceptance_path,
+        ledger_path,
+        availability_path,
+    )
 
 
-def _expanded_bundle() -> tuple[bytes, bytes]:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+def _load_written_bundle(
+    paths: tuple[Path, Path, Path, Path, Path],
+    *,
+    attest_dir: Path,
+    now: datetime,
+):
+    manifest, artifact, acceptance, ledger, availability = paths
+    return load_accepted_export(
+        manifest,
+        artifact,
+        acceptance,
+        input_ledger_path=ledger,
+        availability_path=availability,
+        attest_dir=attest_dir,
+        now=now,
+    )
+
+
+def _expanded_bundle() -> tuple[bytes, bytes, bytes, bytes]:
+    manifest, _manifest_bytes, artifact_bytes, _ledger_bytes, _availability_bytes = (
+        _bundle()
+    )
     wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
     additions = (
         "cn.wdi.equity_market_cap_share",
@@ -378,6 +648,7 @@ def _expanded_bundle() -> tuple[bytes, bytes]:
         "cn.wdi.container_port_traffic",
     )
     for position, series_id in enumerate(additions, 1):
+        source_series_id = f"TEST.WDI.SERIES.{position}"
         wrappers.append(
             {
                 "schema_version": EXPORT_SCHEMA,
@@ -386,15 +657,52 @@ def _expanded_bundle() -> tuple[bytes, bytes]:
                 "market_channels": ["capital_market"],
                 "observation": _observation(
                     series_id=series_id,
-                    source_series_id="AG.PRD.CREL.MT",
+                    source_series_id=source_series_id,
                     value=float(position),
                     unit="index",
                 ),
             }
         )
-    manifest_bytes, artifact_bytes = _replace_artifact(manifest, wrappers)
-    manifest = json.loads(manifest_bytes)
-    manifest["input_ledger"]["records"] = len(wrappers)
+    artifact_bytes = b"".join(_canonical(row) for row in wrappers)
+    ledger_rows = [row["observation"] for row in wrappers]
+    ledger_bytes = b"".join(_canonical(row) for row in ledger_rows)
+    identities = {
+        (row["metadata"]["source_series_id"], int(row["period_end"][:4]))
+        for row in ledger_rows
+    }
+    indicators = {identity[0] for identity in identities}
+    series_ids = {row["series_id"] for row in ledger_rows}
+    availability_bytes = _availability_document(
+        [
+            {
+                "available": True,
+                "footnote": None,
+                "indicator_id": indicator_id,
+                "year": year,
+            }
+            for indicator_id, year in sorted(identities)
+        ]
+    )
+    manifest["artifact"].update(
+        sha256=hashlib.sha256(artifact_bytes).hexdigest(),
+        bytes=len(artifact_bytes),
+        records=len(wrappers),
+    )
+    manifest["input_ledger"].update(
+        sha256=hashlib.sha256(ledger_bytes).hexdigest(),
+        bytes=len(ledger_bytes),
+        records=len(ledger_rows),
+    )
+    manifest["availability_receipt"].update(
+        sha256=hashlib.sha256(availability_bytes).hexdigest(),
+        bytes=len(availability_bytes),
+        current_numeric_identities_sha256=_identity_digest(identities),
+        current_numeric_identities_records=len(identities),
+        current_projectable_series_sha256=_series_digest(series_ids),
+        current_projectable_series_records=len(series_ids),
+        current_projectable_source_indicators_sha256=_indicator_digest(indicators),
+        current_projectable_source_indicators_records=len(indicators),
+    )
     wdi = next(
         row
         for row in manifest["source_decisions"]
@@ -405,16 +713,19 @@ def _expanded_bundle() -> tuple[bytes, bytes]:
     manifest["market_channel_mapping"]["capital_market"] = sorted(
         {row["observation"]["series_id"] for row in wrappers}
     )
-    return _canonical(manifest), artifact_bytes
+    return _canonical(manifest), artifact_bytes, ledger_bytes, availability_bytes
 
 
 def test_verified_export_preserves_four_clocks_and_bounded_channel_families() -> None:
-    _manifest, manifest_bytes, artifact_bytes = _bundle()
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
 
-    context = verify_export(
+    context = _verify(
         manifest_bytes,
         artifact_bytes,
-        accepted_at=ACCEPTED_AT,
+        ledger_bytes,
+        availability_bytes,
     )
     public = context.to_dict()
 
@@ -450,7 +761,9 @@ def test_review_manifest_may_omit_run_but_cannot_be_signed_or_loaded(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    manifest["schema_version"] = REVIEW_MANIFEST_SCHEMA
+    manifest.pop("availability_receipt")
     manifest["producer"] = _producer(workflow_run=False)
     manifest_bytes = _canonical(manifest)
 
@@ -505,9 +818,10 @@ def test_live_nbs_notary_key_cannot_authorize_palimpsest_acceptance() -> None:
 def test_legacy_manifest_remains_offline_review_only(
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
     manifest["schema_version"] = LEGACY_MANIFEST_SCHEMA
     manifest.pop("producer")
+    manifest.pop("availability_receipt")
     manifest_bytes = _canonical(manifest)
 
     context = verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
@@ -559,17 +873,26 @@ def test_producer_receipt_malformed_mismatched_or_cross_repo_fails_closed(
     mutation,
     message: str,
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     mutation(manifest["producer"])
 
     with pytest.raises(PalimpsestChinaIntakeError, match=message):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 def test_successful_pull_request_run_is_reviewable_but_not_authoritative(
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    manifest["schema_version"] = REVIEW_MANIFEST_SCHEMA
+    manifest.pop("availability_receipt")
     manifest["producer"] = _producer(event="pull_request")
     manifest_bytes = _canonical(manifest)
 
@@ -586,10 +909,422 @@ def test_successful_pull_request_run_is_reviewable_but_not_authoritative(
         )
 
 
+@pytest.mark.parametrize("missing", ["input_ledger", "availability"])
+def test_authoritative_v3_requires_both_exact_supplemental_inputs(
+    missing: str,
+) -> None:
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    kwargs = {
+        "input_ledger_bytes": ledger_bytes,
+        "availability_bytes": availability_bytes,
+    }
+    kwargs[f"{missing}_bytes"] = None
+
+    with pytest.raises(
+        PalimpsestChinaIntakeError,
+        match="requires exact input ledger and availability bytes",
+    ):
+        verify_export(
+            manifest_bytes,
+            artifact_bytes,
+            accepted_at=ACCEPTED_AT,
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("sha256", "0" * 64, "hash/bytes commitment"),
+        (
+            "current_numeric_identities_sha256",
+            "0" * 64,
+            "current numeric identities commitment",
+        ),
+        (
+            "current_projectable_series_sha256",
+            "0" * 64,
+            "current projectable series commitment",
+        ),
+        (
+            "current_projectable_source_indicators_sha256",
+            "0" * 64,
+            "current projectable source indicators commitment",
+        ),
+        (
+            "withdrawn_numeric_identities_sha256",
+            "0" * 64,
+            "withdrawn numeric identities commitment",
+        ),
+    ],
+)
+def test_availability_hash_and_derived_set_commitments_fail_closed(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    manifest["availability_receipt"][field] = value
+
+    with pytest.raises(PalimpsestChinaIntakeError, match=message):
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
+
+
+def test_availability_clock_batch_and_entry_order_fail_closed() -> None:
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    run = json.loads(availability_bytes)
+    run["generated_at"] = "2026-08-24T12:02:00Z"
+    later_bytes = _canonical(run)
+    manifest["availability_receipt"].update(
+        generated_at=run["generated_at"],
+        sha256=hashlib.sha256(later_bytes).hexdigest(),
+        bytes=len(later_bytes),
+    )
+    with pytest.raises(PalimpsestChinaIntakeError, match="generated after"):
+        _verify(_canonical(manifest), artifact_bytes, ledger_bytes, later_bytes)
+
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    manifest["availability_receipt"]["batch_raw_sha256"] = "8" * 64
+    with pytest.raises(PalimpsestChinaIntakeError, match="fields changed"):
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
+
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    run = json.loads(availability_bytes)
+    run["availability"]["entries"].reverse()
+    reordered_bytes = _canonical(run)
+    manifest["availability_receipt"].update(
+        sha256=hashlib.sha256(reordered_bytes).hexdigest(),
+        bytes=len(reordered_bytes),
+    )
+    with pytest.raises(PalimpsestChinaIntakeError, match="uniquely sorted"):
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            reordered_bytes,
+        )
+
+
+def test_availability_ledger_counts_bind_the_exact_input_ledger() -> None:
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    run = json.loads(availability_bytes)
+    run["ledger_before"] = 1
+    mismatched_bytes = _canonical(run)
+    manifest["availability_receipt"].update(
+        sha256=hashlib.sha256(mismatched_bytes).hexdigest(),
+        bytes=len(mismatched_bytes),
+    )
+
+    with pytest.raises(PalimpsestChinaIntakeError, match="ledger counts"):
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            mismatched_bytes,
+        )
+
+
+def test_ledger_collection_clock_cannot_follow_availability_receipt() -> None:
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    money = wrappers[1]["observation"]
+    late_cereal = _observation(
+        series_id="cn.wdi.cereal_production",
+        source_series_id="AG.PRD.CREL.MT",
+        value=652_290_000,
+        unit="metric tons",
+        collected_at="2026-08-24T12:00:45+00:00",
+    )
+    entries = [
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2024,
+        },
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "FM.LBL.BMNY.ZG",
+            "year": 2024,
+        },
+    ]
+    handoff = _rebuild_v3(
+        manifest,
+        wrappers=[
+            _wrapper(late_cereal, "capital_market"),
+            _wrapper(money, "capital_market", "money_market"),
+        ],
+        ledger_rows=[money, late_cereal],
+        availability_entries=entries,
+    )
+
+    with pytest.raises(PalimpsestChinaIntakeError, match="collection clock"):
+        _verify(*handoff)
+
+
+def test_withdrawn_numeric_identity_omits_entire_series_without_old_fallback() -> None:
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    original_wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    cereal_current = original_wrappers[0]["observation"]
+    money = original_wrappers[1]["observation"]
+    cereal_old = _observation(
+        series_id="cn.wdi.cereal_production",
+        source_series_id="AG.PRD.CREL.MT",
+        value=640_000_000,
+        unit="metric tons",
+        year=2023,
+    )
+    entries = [
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2023,
+        },
+        {
+            "available": False,
+            "footnote": "withdrawn by current source response",
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2024,
+        },
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "FM.LBL.BMNY.ZG",
+            "year": 2024,
+        },
+    ]
+    handoff = _rebuild_v3(
+        manifest,
+        wrappers=[_wrapper(money, "capital_market", "money_market")],
+        ledger_rows=[cereal_old, cereal_current, money],
+        availability_entries=entries,
+    )
+
+    context = _verify(*handoff)
+    assert {row.series_id for row in context.observations} == {
+        "cn.wdi.broad_money_growth"
+    }
+    assert {
+        row["series_id"]
+        for family in context.to_dict()["channel_families"].values()
+        for row in family["observations"]
+    } == {"cn.wdi.broad_money_growth"}
+
+    bad_handoff = _rebuild_v3(
+        manifest,
+        wrappers=[
+            _wrapper(cereal_old, "capital_market"),
+            _wrapper(money, "capital_market", "money_market"),
+        ],
+        ledger_rows=[cereal_old, cereal_current, money],
+        availability_entries=entries,
+    )
+    with pytest.raises(PalimpsestChinaIntakeError, match="artifact identities"):
+        _verify(*bad_handoff)
+
+
+def test_never_numeric_null_year_does_not_withdraw_a_projectable_series() -> None:
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, _availability = _bundle()
+    wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    ledger_rows = [json.loads(line) for line in ledger_bytes.splitlines()]
+    entries = [
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2024,
+        },
+        {
+            "available": False,
+            "footnote": "no numeric value has ever entered the ledger",
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2025,
+        },
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "FM.LBL.BMNY.ZG",
+            "year": 2024,
+        },
+    ]
+
+    context = _verify(
+        *_rebuild_v3(
+            manifest,
+            wrappers=wrappers,
+            ledger_rows=ledger_rows,
+            availability_entries=entries,
+        )
+    )
+    assert {row.series_id for row in context.observations} == {
+        "cn.wdi.broad_money_growth",
+        "cn.wdi.cereal_production",
+    }
+
+
+def test_current_numeric_availability_must_have_an_exact_ledger_identity() -> None:
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    ledger_rows = [json.loads(line) for line in ledger_bytes.splitlines()]
+    entries = json.loads(availability_bytes)["availability"]["entries"]
+    entries.append(
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "NY.GDP.MKTP.CD",
+            "year": 2024,
+        }
+    )
+    entries.sort(key=lambda row: (row["indicator_id"], row["year"]))
+    handoff = _rebuild_v3(
+        manifest,
+        wrappers=wrappers,
+        ledger_rows=ledger_rows,
+        availability_entries=entries,
+    )
+
+    with pytest.raises(PalimpsestChinaIntakeError, match="absent from the ledger"):
+        _verify(*handoff)
+
+
+def test_artifact_must_select_exact_latest_ledger_vintage() -> None:
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    original_wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    cereal_old = original_wrappers[0]["observation"]
+    money = original_wrappers[1]["observation"]
+    cereal_latest = _observation(
+        series_id="cn.wdi.cereal_production",
+        source_series_id="AG.PRD.CREL.MT",
+        value=653_000_000,
+        unit="metric tons",
+        revision=1,
+        released_at="2026-07-14T23:59:59+00:00",
+        collected_at="2026-08-24T12:00:10+00:00",
+        source_document_version="2026-07-14",
+    )
+    entries = [
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2024,
+        },
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "FM.LBL.BMNY.ZG",
+            "year": 2024,
+        },
+    ]
+    ledger = [cereal_old, money, cereal_latest]
+    context = _verify(
+        *_rebuild_v3(
+            manifest,
+            wrappers=[
+                _wrapper(cereal_latest, "capital_market"),
+                _wrapper(money, "capital_market", "money_market"),
+            ],
+            ledger_rows=ledger,
+            availability_entries=entries,
+        )
+    )
+    cereal = next(
+        row
+        for row in context.observations
+        if row.series_id == "cn.wdi.cereal_production"
+    )
+    assert cereal.record["value"] == 653_000_000.0
+    assert cereal.record["revision"] == 1
+
+    stale = _rebuild_v3(
+        manifest,
+        wrappers=[
+            _wrapper(cereal_old, "capital_market"),
+            _wrapper(money, "capital_market", "money_market"),
+        ],
+        ledger_rows=ledger,
+        availability_entries=entries,
+    )
+    with pytest.raises(PalimpsestChinaIntakeError, match="not the latest"):
+        _verify(*stale)
+
+
+def test_artifact_cannot_emit_multiple_vintages_for_one_identity() -> None:
+    manifest, _manifest_bytes, artifact_bytes, _ledger, _availability = _bundle()
+    original_wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
+    cereal_old = original_wrappers[0]["observation"]
+    money = original_wrappers[1]["observation"]
+    cereal_latest = _observation(
+        series_id="cn.wdi.cereal_production",
+        source_series_id="AG.PRD.CREL.MT",
+        value=653_000_000,
+        unit="metric tons",
+        revision=1,
+        released_at="2026-07-14T23:59:59+00:00",
+        collected_at="2026-08-24T12:00:10+00:00",
+        source_document_version="2026-07-14",
+    )
+    entries = [
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "AG.PRD.CREL.MT",
+            "year": 2024,
+        },
+        {
+            "available": True,
+            "footnote": None,
+            "indicator_id": "FM.LBL.BMNY.ZG",
+            "year": 2024,
+        },
+    ]
+    handoff = _rebuild_v3(
+        manifest,
+        wrappers=[
+            _wrapper(cereal_latest, "capital_market"),
+            _wrapper(cereal_old, "capital_market"),
+            _wrapper(money, "capital_market", "money_market"),
+        ],
+        ledger_rows=[cereal_old, money, cereal_latest],
+        availability_entries=entries,
+    )
+
+    with pytest.raises(PalimpsestChinaIntakeError, match="exactly one latest row"):
+        _verify(*handoff)
+
+
 def test_default_projection_returns_only_featured_current_observations() -> None:
-    manifest_bytes, artifact_bytes = _expanded_bundle()
-    public = verify_export(
-        manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT
+    manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _expanded_bundle()
+    )
+    public = _verify(
+        manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes
     ).to_dict()
     capital = public["channel_families"]["capital_market"]
 
@@ -605,8 +1340,12 @@ def test_only_owner_attested_context_is_additive_and_never_changes_gauge(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    _manifest, manifest_bytes, artifact_bytes = _bundle()
-    candidate = verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
+    candidate = _verify(
+        manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes
+    )
 
     baseline = project_world_markets({}, selector="china_macro")["china_macro"]
     unsigned = project_world_markets(
@@ -632,8 +1371,8 @@ def test_only_owner_attested_context_is_additive_and_never_changes_gauge(
         )["china_macro"]
     )
 
-    context = load_accepted_export(
-        *_write_signed_bundle(tmp_path, signer),
+    context = _load_written_bundle(
+        _write_signed_bundle(tmp_path, signer),
         attest_dir=signer[2],
         now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
     )
@@ -676,8 +1415,8 @@ def test_rest_and_mcp_expose_the_same_context_without_building_the_world_board(
     signer: tuple[Ed25519PrivateKey, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = load_accepted_export(
-        *_write_signed_bundle(tmp_path, signer),
+    context = _load_written_bundle(
+        _write_signed_bundle(tmp_path, signer),
         attest_dir=signer[2],
         now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
     )
@@ -740,7 +1479,9 @@ def test_non_china_selectors_do_not_read_the_offline_export(
 def test_value_rows_from_cfets_chinamoney_or_unknown_sources_are_hard_rejected(
     source_id: str,
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
     wrappers[0]["observation"]["source_id"] = source_id
     wrappers[0]["observation"]["observation_id"] = _observation_id(
@@ -749,11 +1490,13 @@ def test_value_rows_from_cfets_chinamoney_or_unknown_sources_are_hard_rejected(
     manifest_bytes, artifact_bytes = _replace_artifact(manifest, wrappers)
 
     with pytest.raises(PalimpsestChinaIntakeError, match="not allowlisted"):
-        verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes)
 
 
 def test_nonallowlisted_source_decision_cannot_enable_values_or_export() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     cfets = next(
         row
         for row in manifest["source_decisions"]
@@ -767,11 +1510,18 @@ def test_nonallowlisted_source_decision_cannot_enable_values_or_export() -> None
     cfets["decision_sha256"] = _decision_digest(cfets)
 
     with pytest.raises(PalimpsestChinaIntakeError, match="CFETS/ChinaMoney"):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 def test_unknown_source_decision_is_null_default_deny_with_zero_exports() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     unknown = {
         "source_id": "mystery_feed",
         "decision": "unknown",
@@ -785,14 +1535,13 @@ def test_unknown_source_decision_is_null_default_deny_with_zero_exports() -> Non
         "reviewed_at": None,
         "expires_at": None,
         "reason": "No reviewed source-policy decision; default deny applies.",
-        "input_records": 1,
+        "input_records": 0,
         "exported_records": 0,
     }
     manifest["source_decisions"].insert(2, unknown)
-    manifest["input_ledger"]["records"] += 1
 
-    context = verify_export(
-        _canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT
+    context = _verify(
+        _canonical(manifest), artifact_bytes, ledger_bytes, availability_bytes
     )
 
     assert context.to_dict()["observation_count"] == 2
@@ -802,7 +1551,9 @@ def test_unknown_source_decision_is_null_default_deny_with_zero_exports() -> Non
 
 
 def test_allow_decision_expiring_at_generation_time_is_rejected() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     wdi = next(
         row
         for row in manifest["source_decisions"]
@@ -811,11 +1562,18 @@ def test_allow_decision_expiring_at_generation_time_is_rejected() -> None:
     wdi["expires_at"] = manifest["generated_at"]
 
     with pytest.raises(PalimpsestChinaIntakeError, match="effective state"):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 def test_rights_must_remain_effective_at_acceptance() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     wdi = next(
         row
         for row in manifest["source_decisions"]
@@ -827,11 +1585,18 @@ def test_rights_must_remain_effective_at_acceptance() -> None:
     with pytest.raises(
         PalimpsestChinaIntakeError, match="expired at Seiche acceptance"
     ):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 def test_source_decision_digest_is_recomputed() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     wdi = next(
         row
         for row in manifest["source_decisions"]
@@ -840,7 +1605,12 @@ def test_source_decision_digest_is_recomputed() -> None:
     wdi["decision_sha256"] = "0" * 64
 
     with pytest.raises(PalimpsestChinaIntakeError, match="digest does not match"):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 @pytest.mark.parametrize(
@@ -861,30 +1631,43 @@ def test_manifest_artifact_commitments_and_channel_mapping_fail_closed(
     mutation,
     message: str,
 ) -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     mutation(manifest)
 
     with pytest.raises(PalimpsestChinaIntakeError, match=message):
-        verify_export(_canonical(manifest), artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(
+            _canonical(manifest),
+            artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
+        )
 
 
 def test_observation_id_is_recomputed_after_artifact_commitments_pass() -> None:
-    manifest, _manifest_bytes, artifact_bytes = _bundle()
+    manifest, _manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     wrappers = [json.loads(line) for line in artifact_bytes.splitlines()]
     wrappers[0]["observation"]["value"] = 1.0
     manifest_bytes, artifact_bytes = _replace_artifact(manifest, wrappers)
 
     with pytest.raises(PalimpsestChinaIntakeError, match="observation_id"):
-        verify_export(manifest_bytes, artifact_bytes, accepted_at=ACCEPTED_AT)
+        _verify(manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes)
 
 
 def test_seiche_acceptance_clock_cannot_precede_palimpest_collection() -> None:
-    _manifest, manifest_bytes, artifact_bytes = _bundle()
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
 
     with pytest.raises(PalimpsestChinaIntakeError, match="accepted_at"):
-        verify_export(
+        _verify(
             manifest_bytes,
             artifact_bytes,
+            ledger_bytes,
+            availability_bytes,
             accepted_at=datetime(2026, 8, 24, 11, 59, tzinfo=UTC),
         )
 
@@ -893,8 +1676,9 @@ def test_file_reader_rejects_symlinks_and_identity_swaps(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    manifest_path, artifact_path, acceptance_path = _write_signed_bundle(
-        tmp_path, signer
+    paths = _write_signed_bundle(tmp_path, signer)
+    manifest_path, artifact_path, acceptance_path, ledger_path, availability_path = (
+        paths
     )
     manifest_link = tmp_path / "manifest-link.json"
     manifest_link.symlink_to(manifest_path)
@@ -903,9 +1687,36 @@ def test_file_reader_rejects_symlinks_and_identity_swaps(
             manifest_link,
             artifact_path,
             acceptance_path,
+            input_ledger_path=ledger_path,
+            availability_path=availability_path,
             attest_dir=signer[2],
             now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
         )
+
+    original_paths = [
+        manifest_path,
+        artifact_path,
+        acceptance_path,
+        ledger_path,
+        availability_path,
+    ]
+    for position, target in enumerate(original_paths):
+        link = tmp_path / f"bundle-link-{position}"
+        link.symlink_to(target)
+        selected = list(original_paths)
+        selected[position] = link
+        with pytest.raises(
+            PalimpsestChinaIntakeError, match="single-link regular file"
+        ):
+            load_accepted_export(
+                selected[0],
+                selected[1],
+                selected[2],
+                input_ledger_path=selected[3],
+                availability_path=selected[4],
+                attest_dir=signer[2],
+                now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
+            )
 
     original_identity = intake._file_identity(
         manifest_path, label="Palimpsest China manifest"
@@ -926,9 +1737,17 @@ def test_acceptance_receipt_binds_exact_local_files(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    _manifest, manifest_bytes, artifact_bytes = _bundle()
+    _manifest, manifest_bytes, artifact_bytes, ledger_bytes, availability_bytes = (
+        _bundle()
+    )
     _private_key, public_key, trust = signer
-    receipt_bytes = _signed_receipt(manifest_bytes, artifact_bytes, signer)
+    receipt_bytes = _signed_receipt(
+        manifest_bytes,
+        artifact_bytes,
+        ledger_bytes,
+        availability_bytes,
+        signer,
+    )
     receipt = json.loads(receipt_bytes)
     assert receipt["schema_version"] == ACCEPTANCE_SCHEMA
     assert receipt["algorithm"] == "ed25519"
@@ -940,14 +1759,20 @@ def test_acceptance_receipt_binds_exact_local_files(
     manifest_path = tmp_path / "manifest.json"
     artifact_path = tmp_path / "artifact.jsonl"
     acceptance_path = tmp_path / "acceptance.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    availability_path = tmp_path / "availability.json"
     manifest_path.write_bytes(manifest_bytes)
     artifact_path.write_bytes(artifact_bytes)
+    ledger_path.write_bytes(ledger_bytes)
+    availability_path.write_bytes(availability_bytes)
     acceptance_path.write_bytes(receipt_bytes)
 
     loaded = load_accepted_export(
         manifest_path,
         artifact_path,
         acceptance_path,
+        input_ledger_path=ledger_path,
+        availability_path=availability_path,
         attest_dir=trust,
         now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
     )
@@ -968,6 +1793,8 @@ def test_acceptance_receipt_binds_exact_local_files(
             manifest_path,
             artifact_path,
             acceptance_path,
+            input_ledger_path=ledger_path,
+            availability_path=availability_path,
             attest_dir=trust,
             now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
         )
@@ -977,8 +1804,9 @@ def test_untrusted_or_tampered_acceptance_signature_fails_closed(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
-    manifest_path, artifact_path, acceptance_path = _write_signed_bundle(
-        tmp_path, signer
+    paths = _write_signed_bundle(tmp_path, signer)
+    manifest_path, artifact_path, acceptance_path, ledger_path, availability_path = (
+        paths
     )
     other_key = Ed25519PrivateKey.generate().public_key().public_bytes_raw().hex()
     other_trust = tmp_path / "other-trust"
@@ -990,6 +1818,8 @@ def test_untrusted_or_tampered_acceptance_signature_fails_closed(
             manifest_path,
             artifact_path,
             acceptance_path,
+            input_ledger_path=ledger_path,
+            availability_path=availability_path,
             attest_dir=other_trust,
             now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
         )
@@ -1003,6 +1833,8 @@ def test_untrusted_or_tampered_acceptance_signature_fails_closed(
             manifest_path,
             artifact_path,
             acceptance_path,
+            input_ledger_path=ledger_path,
+            availability_path=availability_path,
             attest_dir=signer[2],
             now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
         )
@@ -1014,8 +1846,8 @@ def test_cached_verification_still_rechecks_future_clock_and_rights_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = _write_signed_bundle(tmp_path, signer)
-    loaded = load_accepted_export(
-        *paths,
+    loaded = _load_written_bundle(
+        paths,
         attest_dir=signer[2],
         now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
     )
@@ -1025,8 +1857,8 @@ def test_cached_verification_still_rechecks_future_clock_and_rights_expiry(
 
     monkeypatch.setattr(intake, "verify_export", forbidden_verify)
     assert (
-        load_accepted_export(
-            *paths,
+        _load_written_bundle(
+            paths,
             attest_dir=signer[2],
             now=datetime(2026, 8, 24, 13, 1, tzinfo=UTC),
         )
@@ -1035,16 +1867,46 @@ def test_cached_verification_still_rechecks_future_clock_and_rights_expiry(
     with pytest.raises(
         PalimpsestChinaIntakeError, match="acceptance clock is in the future"
     ):
-        load_accepted_export(
-            *paths,
+        _load_written_bundle(
+            paths,
             attest_dir=signer[2],
             now=datetime(2026, 8, 24, 12, 1, tzinfo=UTC),
         )
     with pytest.raises(PalimpsestChinaIntakeError, match="expired at serve time"):
-        load_accepted_export(
-            *paths,
+        _load_written_bundle(
+            paths,
             attest_dir=signer[2],
             now=datetime(2027, 8, 24, 0, 0, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    ("path_index", "message"),
+    [
+        (3, "input ledger hash/bytes"),
+        (4, "availability receipt hash/bytes"),
+    ],
+)
+def test_cache_identity_includes_ledger_and_availability_files(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+    path_index: int,
+    message: str,
+) -> None:
+    paths = _write_signed_bundle(tmp_path, signer)
+    _load_written_bundle(
+        paths,
+        attest_dir=signer[2],
+        now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
+    )
+    selected = paths[path_index]
+    selected.write_bytes(selected.read_bytes() + b" ")
+
+    with pytest.raises(PalimpsestChinaIntakeError, match=message):
+        _load_written_bundle(
+            paths,
+            attest_dir=signer[2],
+            now=datetime(2026, 8, 24, 13, 1, tzinfo=UTC),
         )
 
 
@@ -1054,12 +1916,20 @@ def test_acceptance_cli_emits_exact_claim_and_verified_receipt(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     private_key, public_key, trust = signer
-    manifest_path, artifact_path, _acceptance_path = _write_signed_bundle(
-        tmp_path, signer
-    )
+    (
+        manifest_path,
+        artifact_path,
+        _acceptance_path,
+        ledger_path,
+        availability_path,
+    ) = _write_signed_bundle(tmp_path, signer)
     common = [
         str(manifest_path),
         str(artifact_path),
+        "--input-ledger",
+        str(ledger_path),
+        "--availability-receipt",
+        str(availability_path),
         "--accepted-at",
         "2026-08-24T12:02:00Z",
         "--signer-key-id",
@@ -1094,13 +1964,21 @@ def test_acceptance_cli_requires_independent_run_and_input_hash_confirmations(
     signer: tuple[Ed25519PrivateKey, str, Path],
 ) -> None:
     _private_key, public_key, _trust = signer
-    manifest_path, artifact_path, _acceptance_path = _write_signed_bundle(
-        tmp_path, signer
-    )
+    (
+        manifest_path,
+        artifact_path,
+        _acceptance_path,
+        ledger_path,
+        availability_path,
+    ) = _write_signed_bundle(tmp_path, signer)
     command = [
         "claim",
         str(manifest_path),
         str(artifact_path),
+        "--input-ledger",
+        str(ledger_path),
+        "--availability-receipt",
+        str(availability_path),
         "--accepted-at",
         "2026-08-24T12:02:00Z",
         "--signer-key-id",
@@ -1125,6 +2003,8 @@ def test_configured_loader_is_offline_and_partial_configuration_fails_loud(
         "SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH",
         "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH",
         "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH",
+        "SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH",
+        "SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH",
     ):
         monkeypatch.delenv(name, raising=False)
     assert context_views.public_china_economic_context() is None

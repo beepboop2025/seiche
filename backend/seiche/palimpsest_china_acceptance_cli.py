@@ -42,6 +42,8 @@ def _parser() -> argparse.ArgumentParser:
     def export_arguments(command: argparse.ArgumentParser) -> None:
         command.add_argument("manifest", type=Path)
         command.add_argument("artifact", type=Path)
+        command.add_argument("--input-ledger", type=Path, required=True)
+        command.add_argument("--availability-receipt", type=Path, required=True)
         command.add_argument("--accepted-at", type=_timestamp, required=True)
         command.add_argument("--signer-key-id", required=True)
         command.add_argument(
@@ -77,6 +79,8 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("manifest", type=Path)
     verify.add_argument("artifact", type=Path)
     verify.add_argument("acceptance", type=Path)
+    verify.add_argument("--input-ledger", type=Path, required=True)
+    verify.add_argument("--availability-receipt", type=Path, required=True)
     verify.add_argument("--attest-dir", type=Path)
     return parser
 
@@ -88,6 +92,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             claim = build_acceptance_claim_from_files(
                 args.manifest,
                 args.artifact,
+                input_ledger_path=args.input_ledger,
+                availability_path=args.availability_receipt,
                 accepted_at=args.accepted_at,
                 signer_key_id=args.signer_key_id,
             )
@@ -97,6 +103,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             receipt = build_acceptance_receipt_from_files(
                 args.manifest,
                 args.artifact,
+                input_ledger_path=args.input_ledger,
+                availability_path=args.availability_receipt,
                 accepted_at=args.accepted_at,
                 signer_key_id=args.signer_key_id,
                 signature=args.signature,
@@ -109,6 +117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.manifest,
             args.artifact,
             args.acceptance,
+            input_ledger_path=args.input_ledger,
+            availability_path=args.availability_receipt,
             attest_dir=args.attest_dir,
         )
         payload = context.to_dict()

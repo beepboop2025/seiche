@@ -31,10 +31,13 @@ from seiche.nbs_trust import verify_trusted_palimpsest_china_signature
 
 EXPORT_SCHEMA = "palimpsest.china-economic-export.v1"
 LEGACY_MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v1"
-MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v2"
+REVIEW_MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v2"
+MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v3"
 PRODUCER_SCHEMA = "palimpsest.producer-receipt.v1"
 POLICY_SCHEMA = "palimpsest.china-economic-source-policy.v1"
 SERIES_REGISTRY_SCHEMA = "palimpsest-china-econ-wdi-series.v1"
+AVAILABILITY_RECEIPT_SCHEMA = "palimpsest-china-econ-wdi-run.v3"
+AVAILABILITY_SCHEMA = "palimpsest-china-econ-wdi-availability.v1"
 ACCEPTANCE_SCHEMA = "seiche.palimpsest-china-economic-acceptance.v1"
 ACCEPTANCE_DOMAIN = "seiche:palimpsest-china-economic-acceptance:v1"
 CONTEXT_SCHEMA = "seiche.palimpsest-china-economic-context.v1"
@@ -49,6 +52,8 @@ WDI_RIGHTS_EVIDENCE_URL = (
 WDI_ATTRIBUTION = "World Bank, World Development Indicators"
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_INPUT_LEDGER_BYTES = 128 * 1024 * 1024
+MAX_AVAILABILITY_BYTES = 64 * 1024 * 1024
 MAX_ACCEPTANCE_BYTES = 4096
 MAX_SERIES_REGISTRY_BYTES = 2 * 1024 * 1024
 MAX_RECORDS = 100_000
@@ -82,7 +87,8 @@ _MANIFEST_V1_KEYS = frozenset(
         "market_channel_mapping",
     }
 )
-_MANIFEST_KEYS = frozenset({*_MANIFEST_V1_KEYS, "producer"})
+_MANIFEST_V2_KEYS = frozenset({*_MANIFEST_V1_KEYS, "producer"})
+_MANIFEST_KEYS = frozenset({*_MANIFEST_V2_KEYS, "availability_receipt"})
 _PRODUCER_KEYS = frozenset(
     {"schema_version", "repository", "commit_sha", "workflow_run"}
 )
@@ -106,6 +112,64 @@ _ARTIFACT_RECEIPT_KEYS = frozenset(
 _INPUT_LEDGER_KEYS = frozenset({"path", "sha256", "bytes", "records"})
 _POLICY_RECEIPT_KEYS = frozenset({"path", "sha256", "schema_version", "evaluated_at"})
 _SERIES_REGISTRY_RECEIPT_KEYS = frozenset({"path", "sha256", "bytes", "schema_version"})
+_AVAILABILITY_RECEIPT_KEYS = frozenset(
+    {
+        "path",
+        "sha256",
+        "bytes",
+        "schema_version",
+        "generated_at",
+        "batch_raw_sha256",
+        "availability_schema_version",
+        "current_numeric_identities_sha256",
+        "current_numeric_identities_records",
+        "current_projectable_series_sha256",
+        "current_projectable_series_records",
+        "current_projectable_source_indicators_sha256",
+        "current_projectable_source_indicators_records",
+        "withdrawn_numeric_identities_sha256",
+        "withdrawn_numeric_identities_records",
+    }
+)
+_RUN_RECEIPT_KEYS = frozenset(
+    {
+        "appended_observations",
+        "availability",
+        "batch_raw_sha256",
+        "collector_artifact",
+        "context_only",
+        "dataset",
+        "dataset_last_updated",
+        "generated_at",
+        "indicator_provenance",
+        "ledger_after",
+        "ledger_before",
+        "ledger_coverage",
+        "license",
+        "license_url",
+        "limitations",
+        "publication_state",
+        "redistribution_status",
+        "response_coverage",
+        "revision_lineage",
+        "rights_evidence_url",
+        "schema_version",
+        "scoring_allowed",
+        "source_id",
+    }
+)
+_AVAILABILITY_KEYS = frozenset(
+    {
+        "coverage_semantics",
+        "entries",
+        "null_records",
+        "records",
+        "schema_version",
+        "withdrawal_limitation",
+        "withdrawal_state",
+    }
+)
+_AVAILABILITY_ENTRY_KEYS = frozenset({"available", "footnote", "indicator_id", "year"})
 _SOURCE_DECISION_KEYS = frozenset(
     {
         "source_id",
@@ -424,7 +488,11 @@ def _https(value: object, *, label: str, nullable: bool = False) -> str | None:
 def _safe_relative_path(value: object, *, label: str, suffix: str | None = None) -> str:
     text = _required_string(value, label=label, maximum=512)
     path = PurePosixPath(text)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if (
+        path.is_absolute()
+        or path.as_posix() != text
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
         raise PalimpsestChinaIntakeError(f"{label} must be a safe relative path")
     if suffix is not None and not text.endswith(suffix):
         raise PalimpsestChinaIntakeError(f"{label} must end in {suffix}")
@@ -549,6 +617,12 @@ class PalimpsestChinaEconomicContext:
     artifact_sha256: str
     artifact_bytes: int
     input_ledger_sha256: str
+    availability_receipt_sha256: str | None
+    availability_batch_raw_sha256: str | None
+    current_numeric_identities_sha256: str | None
+    current_projectable_series_sha256: str | None
+    current_projectable_source_indicators_sha256: str | None
+    withdrawn_numeric_identities_sha256: str | None
     policy_sha256: str
     series_registry_sha256: str
     acceptance_sha256: str | None
@@ -649,6 +723,20 @@ class PalimpsestChinaEconomicContext:
                 "artifact_sha256": self.artifact_sha256,
                 "artifact_bytes": self.artifact_bytes,
                 "input_ledger_sha256": self.input_ledger_sha256,
+                "availability_receipt_sha256": self.availability_receipt_sha256,
+                "availability_batch_raw_sha256": self.availability_batch_raw_sha256,
+                "current_numeric_identities_sha256": (
+                    self.current_numeric_identities_sha256
+                ),
+                "current_projectable_series_sha256": (
+                    self.current_projectable_series_sha256
+                ),
+                "current_projectable_source_indicators_sha256": (
+                    self.current_projectable_source_indicators_sha256
+                ),
+                "withdrawn_numeric_identities_sha256": (
+                    self.withdrawn_numeric_identities_sha256
+                ),
                 "policy_sha256": self.policy_sha256,
                 "series_registry_sha256": self.series_registry_sha256,
                 "acceptance_sha256": self.acceptance_sha256,
@@ -1001,10 +1089,425 @@ def _validate_source_decisions(
     return allowed
 
 
+@dataclass(frozen=True, slots=True)
+class _LedgerState:
+    identities: frozenset[tuple[str, int]]
+    source_to_series: Mapping[str, str]
+    record_sha256_by_observation_id: Mapping[str, str]
+    latest_observation_id_by_identity: Mapping[tuple[str, int], str]
+    latest_collected_at: datetime
+    records: int
+
+
+@dataclass(frozen=True, slots=True)
+class _AvailabilityState:
+    receipt_sha256: str
+    batch_raw_sha256: str
+    current_identities: frozenset[tuple[str, int]]
+    projectable_source_indicators: frozenset[str]
+    projectable_series: frozenset[str]
+    expected_artifact_identities: frozenset[tuple[str, int]]
+    current_numeric_identities_sha256: str
+    current_projectable_series_sha256: str
+    current_projectable_source_indicators_sha256: str
+    withdrawn_numeric_identities_sha256: str
+
+
+def _identity_digest(identities: set[tuple[str, int]]) -> str:
+    body = b"".join(
+        _canonical_json_line({"indicator_id": indicator_id, "year": year})
+        for indicator_id, year in sorted(identities)
+    )
+    return _sha256(body)
+
+
+def _source_indicator_digest(indicators: set[str]) -> str:
+    body = b"".join(
+        _canonical_json_line({"indicator_id": indicator_id})
+        for indicator_id in sorted(indicators)
+    )
+    return _sha256(body)
+
+
+def _series_digest(series_ids: set[str]) -> str:
+    body = b"".join(
+        _canonical_json_line({"series_id": series_id})
+        for series_id in sorted(series_ids)
+    )
+    return _sha256(body)
+
+
+def _validate_input_ledger(
+    ledger_bytes: bytes,
+    *,
+    receipt: Mapping[str, Any],
+    accepted_at: datetime,
+) -> _LedgerState:
+    if not ledger_bytes or len(ledger_bytes) > MAX_INPUT_LEDGER_BYTES:
+        raise PalimpsestChinaIntakeError("input ledger is empty or too large")
+    expected_sha = _sha(receipt["sha256"], label="input_ledger.sha256")
+    expected_bytes = _count(receipt["bytes"], label="input_ledger.bytes", positive=True)
+    expected_records = _count(
+        receipt["records"], label="input_ledger.records", positive=True
+    )
+    if expected_sha != _sha256(ledger_bytes) or expected_bytes != len(ledger_bytes):
+        raise PalimpsestChinaIntakeError(
+            "input ledger hash/bytes commitment does not match"
+        )
+    if not ledger_bytes.endswith(b"\n") or b"\r" in ledger_bytes:
+        raise PalimpsestChinaIntakeError(
+            "input ledger must be canonical LF-terminated JSONL"
+        )
+    lines = ledger_bytes.splitlines(keepends=True)
+    if len(lines) != expected_records or len(lines) > MAX_RECORDS:
+        raise PalimpsestChinaIntakeError(
+            "input ledger records commitment does not match"
+        )
+
+    identities: set[tuple[str, int]] = set()
+    observation_ids: set[str] = set()
+    source_to_series: dict[str, str] = {}
+    series_to_source: dict[str, str] = {}
+    record_sha256_by_observation_id: dict[str, str] = {}
+    latest_by_identity: dict[
+        tuple[str, int], tuple[tuple[int, datetime, datetime, str], str]
+    ] = {}
+    previous_global_collection: datetime | None = None
+    previous_by_identity: dict[tuple[str, int], tuple[float, int, datetime]] = {}
+    for position, line in enumerate(lines, 1):
+        if line == b"\n" or not line.endswith(b"\n"):
+            raise PalimpsestChinaIntakeError(
+                f"input ledger line {position} is blank or unterminated"
+            )
+        value = _strict_json(line[:-1], label=f"input ledger line {position}")
+        if _canonical_json_line(value) != line:
+            raise PalimpsestChinaIntakeError(
+                f"input ledger line {position} is not canonical JSON"
+            )
+        observation = _validate_observation(
+            value,
+            channels=(),
+            accepted_at=accepted_at,
+            position=position,
+        )
+        row = observation.record
+        observation_id = str(row["observation_id"])
+        if observation_id in observation_ids:
+            raise PalimpsestChinaIntakeError(
+                "input ledger observation_id values must be unique"
+            )
+        observation_ids.add(observation_id)
+        collected_at = observation.collected_at
+        if (
+            previous_global_collection is not None
+            and collected_at < previous_global_collection
+        ):
+            raise PalimpsestChinaIntakeError(
+                "input ledger collected_at order moved backward"
+            )
+        previous_global_collection = collected_at
+
+        source_series_id = str(row["metadata"]["source_series_id"])
+        series_id = observation.series_id
+        existing_series = source_to_series.setdefault(source_series_id, series_id)
+        existing_source = series_to_source.setdefault(series_id, source_series_id)
+        if existing_series != series_id or existing_source != source_series_id:
+            raise PalimpsestChinaIntakeError(
+                "input ledger source/internal series mapping is not one-to-one"
+            )
+        identity = (source_series_id, observation.period_end.year)
+        identities.add(identity)
+        numeric_value = float(row["value"])
+        revision = int(row["revision"])
+        released_at = observation.released_at
+        previous = previous_by_identity.get(identity)
+        if previous is None:
+            if revision != 0:
+                raise PalimpsestChinaIntakeError(
+                    "input ledger first identity revision must be zero"
+                )
+        else:
+            previous_value, previous_revision, previous_release = previous
+            if released_at < previous_release:
+                raise PalimpsestChinaIntakeError(
+                    "input ledger release clock moved backward within an identity"
+                )
+            if numeric_value != previous_value:
+                if revision != previous_revision + 1:
+                    raise PalimpsestChinaIntakeError(
+                        "input ledger value change did not increment revision"
+                    )
+            elif revision != previous_revision:
+                raise PalimpsestChinaIntakeError(
+                    "input ledger same-value provenance changed revision"
+                )
+        previous_by_identity[identity] = (numeric_value, revision, released_at)
+        record_sha256_by_observation_id[observation_id] = _sha256(line)
+        selection = (revision, released_at, collected_at, observation_id)
+        selected = latest_by_identity.get(identity)
+        if selected is None or selection > selected[0]:
+            latest_by_identity[identity] = (selection, observation_id)
+
+    assert previous_global_collection is not None
+    return _LedgerState(
+        identities=frozenset(identities),
+        source_to_series=MappingProxyType(dict(source_to_series)),
+        record_sha256_by_observation_id=MappingProxyType(
+            record_sha256_by_observation_id
+        ),
+        latest_observation_id_by_identity=MappingProxyType(
+            {identity: selected[1] for identity, selected in latest_by_identity.items()}
+        ),
+        latest_collected_at=previous_global_collection,
+        records=len(lines),
+    )
+
+
+def _validate_availability(
+    availability_bytes: bytes,
+    *,
+    receipt_value: object,
+    manifest_generated_at: datetime,
+    ledger: _LedgerState,
+) -> _AvailabilityState:
+    if not availability_bytes or len(availability_bytes) > MAX_AVAILABILITY_BYTES:
+        raise PalimpsestChinaIntakeError("availability receipt is empty or too large")
+    receipt = _exact_keys(
+        receipt_value,
+        _AVAILABILITY_RECEIPT_KEYS,
+        label="manifest.availability_receipt",
+    )
+    path = _safe_relative_path(
+        receipt["path"], label="availability_receipt.path", suffix=".json"
+    )
+    if PurePosixPath(path).name != "china-econ-wdi-latest.json":
+        raise PalimpsestChinaIntakeError(
+            "availability receipt path is not release-reviewed"
+        )
+    expected_sha = _sha(receipt["sha256"], label="availability_receipt.sha256")
+    expected_bytes = _count(
+        receipt["bytes"], label="availability_receipt.bytes", positive=True
+    )
+    if expected_sha != _sha256(availability_bytes) or expected_bytes != len(
+        availability_bytes
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt hash/bytes commitment does not match"
+        )
+    if receipt["schema_version"] != AVAILABILITY_RECEIPT_SCHEMA:
+        raise PalimpsestChinaIntakeError(
+            f"availability receipt must use {AVAILABILITY_RECEIPT_SCHEMA}"
+        )
+    receipt_generated_text, receipt_generated_at = _canonical_timestamp(
+        receipt["generated_at"], label="availability_receipt.generated_at"
+    )
+    if receipt_generated_at > manifest_generated_at:
+        raise PalimpsestChinaIntakeError(
+            "availability receipt was generated after the export manifest"
+        )
+    if ledger.latest_collected_at > receipt_generated_at:
+        raise PalimpsestChinaIntakeError(
+            "input ledger collection clock follows the availability receipt"
+        )
+    batch_raw_sha256 = _sha(
+        receipt["batch_raw_sha256"], label="availability_receipt.batch_raw_sha256"
+    )
+    if receipt["availability_schema_version"] != AVAILABILITY_SCHEMA:
+        raise PalimpsestChinaIntakeError(
+            f"availability receipt must bind {AVAILABILITY_SCHEMA}"
+        )
+
+    run = _strict_json(availability_bytes, label="availability receipt")
+    if _canonical_json_line(run) != availability_bytes:
+        raise PalimpsestChinaIntakeError(
+            "availability receipt must use exact canonical JSON bytes"
+        )
+    run = _exact_keys(run, _RUN_RECEIPT_KEYS, label="availability receipt")
+    if (
+        run["schema_version"] != AVAILABILITY_RECEIPT_SCHEMA
+        or run["generated_at"] != receipt_generated_text
+        or run["batch_raw_sha256"] != batch_raw_sha256
+        or run["source_id"] != "world_bank_wdi"
+        or run["context_only"] is not True
+        or run["scoring_allowed"] is not False
+        or run["license"] != "CC-BY-4.0"
+        or run["license_url"] != WDI_LICENSE_URL
+        or run["rights_evidence_url"] != WDI_RIGHTS_EVIDENCE_URL
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt source, rights, clocks, or safety fields changed"
+        )
+    _required_string(run["dataset"], label="availability receipt.dataset")
+    _date(
+        run["dataset_last_updated"],
+        label="availability receipt.dataset_last_updated",
+    )
+    _count(
+        run["appended_observations"],
+        label="availability receipt.appended_observations",
+    )
+    ledger_before = _count(
+        run["ledger_before"], label="availability receipt.ledger_before"
+    )
+    ledger_after = _count(
+        run["ledger_after"], label="availability receipt.ledger_after"
+    )
+    if (
+        ledger_after != ledger.records
+        or ledger_after < ledger_before
+        or run["appended_observations"] != ledger_after - ledger_before
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability receipt ledger counts do not match the exact input ledger"
+        )
+
+    availability = _exact_keys(
+        run["availability"], _AVAILABILITY_KEYS, label="availability"
+    )
+    if availability["schema_version"] != AVAILABILITY_SCHEMA:
+        raise PalimpsestChinaIntakeError(f"availability must use {AVAILABILITY_SCHEMA}")
+    for key in ("coverage_semantics", "withdrawal_limitation", "withdrawal_state"):
+        _required_string(availability[key], label=f"availability.{key}")
+    entries = availability["entries"]
+    if type(entries) is not list or len(entries) > MAX_RECORDS:
+        raise PalimpsestChinaIntakeError("availability entries must be a bounded list")
+    if _count(availability["records"], label="availability.records") != len(entries):
+        raise PalimpsestChinaIntakeError("availability records count does not match")
+
+    current_identities: set[tuple[str, int]] = set()
+    ordered_identities: list[tuple[str, int]] = []
+    null_records = 0
+    for position, candidate in enumerate(entries, 1):
+        entry = _exact_keys(
+            candidate,
+            _AVAILABILITY_ENTRY_KEYS,
+            label=f"availability entry {position}",
+        )
+        indicator_id = entry["indicator_id"]
+        if (
+            type(indicator_id) is not str
+            or _SOURCE_SERIES_ID_RE.fullmatch(indicator_id) is None
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"availability entry {position} indicator_id is invalid"
+            )
+        year = entry["year"]
+        if (
+            isinstance(year, bool)
+            or not isinstance(year, int)
+            or not 1800 <= year <= 2200
+        ):
+            raise PalimpsestChinaIntakeError(
+                f"availability entry {position} year is invalid"
+            )
+        if type(entry["available"]) is not bool:
+            raise PalimpsestChinaIntakeError(
+                f"availability entry {position} available must be boolean"
+            )
+        footnote = entry["footnote"]
+        if footnote is not None:
+            _required_string(
+                footnote,
+                label=f"availability entry {position}.footnote",
+                maximum=8192,
+            )
+        identity = (indicator_id, year)
+        if ordered_identities and identity <= ordered_identities[-1]:
+            raise PalimpsestChinaIntakeError(
+                "availability entries must be uniquely sorted"
+            )
+        ordered_identities.append(identity)
+        if entry["available"]:
+            current_identities.add(identity)
+        else:
+            null_records += 1
+    if (
+        _count(availability["null_records"], label="availability.null_records")
+        != null_records
+    ):
+        raise PalimpsestChinaIntakeError(
+            "availability null_records count does not match"
+        )
+    if not current_identities.issubset(ledger.identities):
+        raise PalimpsestChinaIntakeError(
+            "current numeric availability contains an identity absent from the ledger"
+        )
+
+    withdrawn = set(ledger.identities) - current_identities
+    ledger_sources = set(ledger.source_to_series)
+    withdrawn_sources = {indicator_id for indicator_id, _year in withdrawn}
+    projectable_sources = ledger_sources - withdrawn_sources
+    projectable_series = {
+        ledger.source_to_series[source] for source in projectable_sources
+    }
+    expected_artifact_identities = {
+        identity
+        for identity in current_identities
+        if identity[0] in projectable_sources
+    }
+
+    commitments: tuple[tuple[str, str, int, str], ...] = (
+        (
+            "current_numeric_identities",
+            _identity_digest(current_identities),
+            len(current_identities),
+            "current numeric identities",
+        ),
+        (
+            "current_projectable_series",
+            _series_digest(projectable_series),
+            len(projectable_series),
+            "current projectable series",
+        ),
+        (
+            "current_projectable_source_indicators",
+            _source_indicator_digest(projectable_sources),
+            len(projectable_sources),
+            "current projectable source indicators",
+        ),
+        (
+            "withdrawn_numeric_identities",
+            _identity_digest(withdrawn),
+            len(withdrawn),
+            "withdrawn numeric identities",
+        ),
+    )
+    computed: dict[str, str] = {}
+    for prefix, digest, records, label in commitments:
+        supplied_digest = _sha(
+            receipt[f"{prefix}_sha256"],
+            label=f"availability_receipt.{prefix}_sha256",
+        )
+        supplied_records = _count(
+            receipt[f"{prefix}_records"],
+            label=f"availability_receipt.{prefix}_records",
+        )
+        if supplied_digest != digest or supplied_records != records:
+            raise PalimpsestChinaIntakeError(f"{label} commitment does not match")
+        computed[prefix] = digest
+
+    return _AvailabilityState(
+        receipt_sha256=expected_sha,
+        batch_raw_sha256=batch_raw_sha256,
+        current_identities=frozenset(current_identities),
+        projectable_source_indicators=frozenset(projectable_sources),
+        projectable_series=frozenset(projectable_series),
+        expected_artifact_identities=frozenset(expected_artifact_identities),
+        current_numeric_identities_sha256=computed["current_numeric_identities"],
+        current_projectable_series_sha256=computed["current_projectable_series"],
+        current_projectable_source_indicators_sha256=computed[
+            "current_projectable_source_indicators"
+        ],
+        withdrawn_numeric_identities_sha256=computed["withdrawn_numeric_identities"],
+    )
+
+
 def verify_export(
     manifest_bytes: bytes,
     artifact_bytes: bytes,
     *,
+    input_ledger_bytes: bytes | None = None,
+    availability_bytes: bytes | None = None,
     accepted_at: datetime,
 ) -> PalimpsestChinaEconomicContext:
     """Verify exact offline bytes and return a bounded context projection."""
@@ -1032,18 +1535,41 @@ def verify_export(
     if manifest_schema == MANIFEST_SCHEMA:
         manifest = _exact_keys(manifest, _MANIFEST_KEYS, label="manifest")
         producer = _validate_producer(manifest["producer"])
+        if input_ledger_bytes is None or availability_bytes is None:
+            raise PalimpsestChinaIntakeError(
+                "manifest v3 requires exact input ledger and availability bytes"
+            )
+    elif manifest_schema == REVIEW_MANIFEST_SCHEMA:
+        manifest = _exact_keys(manifest, _MANIFEST_V2_KEYS, label="manifest")
+        producer = _validate_producer(manifest["producer"])
+        if input_ledger_bytes is not None or availability_bytes is not None:
+            raise PalimpsestChinaIntakeError(
+                "review manifest v2 cannot accept v3 supplemental inputs"
+            )
     elif manifest_schema == LEGACY_MANIFEST_SCHEMA:
         manifest = _exact_keys(manifest, _MANIFEST_V1_KEYS, label="manifest")
         producer = None
+        if input_ledger_bytes is not None or availability_bytes is not None:
+            raise PalimpsestChinaIntakeError(
+                "legacy manifest v1 cannot accept v3 supplemental inputs"
+            )
     else:
         raise PalimpsestChinaIntakeError(
-            f"manifest must use {LEGACY_MANIFEST_SCHEMA} or {MANIFEST_SCHEMA}"
+            "manifest must use "
+            f"{LEGACY_MANIFEST_SCHEMA}, {REVIEW_MANIFEST_SCHEMA}, or {MANIFEST_SCHEMA}"
         )
     if manifest["context_only"] is not True or manifest["scoring_allowed"] is not False:
         raise PalimpsestChinaIntakeError(
             "manifest must remain context-only and unscored"
         )
-    generated_at = _timestamp(manifest["generated_at"], label="manifest.generated_at")
+    if manifest_schema == MANIFEST_SCHEMA:
+        _generated_text, generated_at = _canonical_timestamp(
+            manifest["generated_at"], label="manifest.generated_at"
+        )
+    else:
+        generated_at = _timestamp(
+            manifest["generated_at"], label="manifest.generated_at"
+        )
     if generated_at > accepted_at:
         raise PalimpsestChinaIntakeError(
             "manifest.generated_at follows Seiche accepted_at"
@@ -1088,6 +1614,15 @@ def verify_export(
         raise PalimpsestChinaIntakeError(
             "input ledger cannot contain fewer records than the export"
         )
+    ledger_state = (
+        _validate_input_ledger(
+            input_ledger_bytes,
+            receipt=input_ledger,
+            accepted_at=accepted_at,
+        )
+        if input_ledger_bytes is not None
+        else None
+    )
 
     policy = _exact_keys(
         manifest["policy"], _POLICY_RECEIPT_KEYS, label="manifest.policy"
@@ -1122,6 +1657,17 @@ def verify_export(
     )
     if series_registry_size > MAX_SERIES_REGISTRY_BYTES:
         raise PalimpsestChinaIntakeError("series registry receipt is too large")
+
+    availability_state = (
+        _validate_availability(
+            availability_bytes,
+            receipt_value=manifest["availability_receipt"],
+            manifest_generated_at=generated_at,
+            ledger=ledger_state,
+        )
+        if availability_bytes is not None and ledger_state is not None
+        else None
+    )
 
     source_decision = _validate_source_decisions(
         manifest["source_decisions"],
@@ -1172,6 +1718,12 @@ def verify_export(
     seen_ids: set[str] = set()
     derived_mapping = {channel: set() for channel in MARKET_CHANNELS}
     series_contracts: dict[str, tuple[object, ...]] = {}
+    artifact_identities: set[tuple[str, int]] = set()
+    artifact_source_indicators: set[str] = set()
+    artifact_series_ids: set[str] = set()
+    artifact_source_to_series: dict[str, str] = {}
+    artifact_series_to_source: dict[str, str] = {}
+    seen_artifact_identities: set[tuple[str, int]] = set()
     for position, line in enumerate(lines, 1):
         if not line.endswith(b"\n") or line == b"\n":
             raise PalimpsestChinaIntakeError(
@@ -1217,6 +1769,46 @@ def verify_export(
                 f"artifact duplicates observation_id {observation_id}"
             )
         seen_ids.add(observation_id)
+        source_series_id = str(observation.record["metadata"]["source_series_id"])
+        identity = (source_series_id, observation.period_end.year)
+        if identity in seen_artifact_identities:
+            raise PalimpsestChinaIntakeError(
+                "artifact must contain exactly one latest row per identity"
+            )
+        seen_artifact_identities.add(identity)
+        artifact_identities.add(identity)
+        artifact_source_indicators.add(source_series_id)
+        artifact_series_ids.add(observation.series_id)
+        mapped_series = artifact_source_to_series.setdefault(
+            source_series_id, observation.series_id
+        )
+        mapped_source = artifact_series_to_source.setdefault(
+            observation.series_id, source_series_id
+        )
+        if mapped_series != observation.series_id or mapped_source != source_series_id:
+            raise PalimpsestChinaIntakeError(
+                "artifact source/internal series mapping is not one-to-one"
+            )
+        if ledger_state is not None:
+            ledger_record_sha256 = ledger_state.record_sha256_by_observation_id.get(
+                observation_id
+            )
+            if (
+                ledger_record_sha256
+                != _sha256(_canonical_json_line(wrapper["observation"]))
+                or ledger_state.source_to_series.get(source_series_id)
+                != observation.series_id
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "artifact observation is not an exact input-ledger row"
+                )
+            if (
+                ledger_state.latest_observation_id_by_identity.get(identity)
+                != observation_id
+            ):
+                raise PalimpsestChinaIntakeError(
+                    "artifact observation is not the latest input-ledger row"
+                )
         for channel in channels:
             derived_mapping[channel].add(observation.series_id)
         contract = (
@@ -1244,20 +1836,56 @@ def verify_export(
     if len(series_contracts) > MAX_SERIES:
         raise PalimpsestChinaIntakeError(f"artifact exceeds {MAX_SERIES} series")
 
-    latest: dict[str, PalimpsestChinaObservation] = {}
+    if availability_state is not None:
+        if artifact_identities != set(availability_state.expected_artifact_identities):
+            raise PalimpsestChinaIntakeError(
+                "artifact identities do not match current projectable availability"
+            )
+        if artifact_source_indicators != set(
+            availability_state.projectable_source_indicators
+        ):
+            raise PalimpsestChinaIntakeError(
+                "artifact source indicators do not match current projectable availability"
+            )
+        if artifact_series_ids != set(availability_state.projectable_series):
+            raise PalimpsestChinaIntakeError(
+                "artifact series do not match current projectable availability"
+            )
+
+    latest_identity: dict[tuple[str, int], PalimpsestChinaObservation] = {}
     for row in observations:
+        identity = (
+            str(row.record["metadata"]["source_series_id"]),
+            row.period_end.year,
+        )
+        prior = latest_identity.get(identity)
+        if prior is None or (
+            int(row.record["revision"]),
+            row.released_at,
+            row.collected_at,
+            str(row.record["observation_id"]),
+        ) > (
+            int(prior.record["revision"]),
+            prior.released_at,
+            prior.collected_at,
+            str(prior.record["observation_id"]),
+        ):
+            latest_identity[identity] = row
+
+    latest: dict[str, PalimpsestChinaObservation] = {}
+    for row in latest_identity.values():
         prior = latest.get(row.series_id)
         if prior is None or (
             row.period_end,
+            int(row.record["revision"]),
             row.released_at,
             row.collected_at,
-            int(row.record["revision"]),
             str(row.record["observation_id"]),
         ) > (
             prior.period_end,
+            int(prior.record["revision"]),
             prior.released_at,
             prior.collected_at,
-            int(prior.record["revision"]),
             str(prior.record["observation_id"]),
         ):
             latest[row.series_id] = row
@@ -1271,6 +1899,36 @@ def verify_export(
         artifact_sha256=artifact_sha256,
         artifact_bytes=artifact_size,
         input_ledger_sha256=input_ledger_sha256,
+        availability_receipt_sha256=(
+            availability_state.receipt_sha256
+            if availability_state is not None
+            else None
+        ),
+        availability_batch_raw_sha256=(
+            availability_state.batch_raw_sha256
+            if availability_state is not None
+            else None
+        ),
+        current_numeric_identities_sha256=(
+            availability_state.current_numeric_identities_sha256
+            if availability_state is not None
+            else None
+        ),
+        current_projectable_series_sha256=(
+            availability_state.current_projectable_series_sha256
+            if availability_state is not None
+            else None
+        ),
+        current_projectable_source_indicators_sha256=(
+            availability_state.current_projectable_source_indicators_sha256
+            if availability_state is not None
+            else None
+        ),
+        withdrawn_numeric_identities_sha256=(
+            availability_state.withdrawn_numeric_identities_sha256
+            if availability_state is not None
+            else None
+        ),
         policy_sha256=policy_sha256,
         series_registry_sha256=series_registry_sha256,
         acceptance_sha256=None,
@@ -1305,6 +1963,8 @@ def build_acceptance_claim(
     manifest_bytes: bytes,
     artifact_bytes: bytes,
     *,
+    input_ledger_bytes: bytes | None = None,
+    availability_bytes: bytes | None = None,
     accepted_at: datetime,
     signer_key_id: str,
 ) -> dict[str, Any]:
@@ -1320,7 +1980,13 @@ def build_acceptance_claim(
         )
     if accepted_at.astimezone(UTC) > _utc_now():
         raise PalimpsestChinaIntakeError("accepted_at cannot be in the future")
-    context = verify_export(manifest_bytes, artifact_bytes, accepted_at=accepted_at)
+    context = verify_export(
+        manifest_bytes,
+        artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
+        accepted_at=accepted_at,
+    )
     _require_authoritative_producer(context)
     signer = _sha(signer_key_id, label="acceptance.signer_key_id")
     return {
@@ -1338,6 +2004,8 @@ def build_acceptance_claim_from_files(
     manifest_path: str | Path,
     artifact_path: str | Path,
     *,
+    input_ledger_path: str | Path | None = None,
+    availability_path: str | Path | None = None,
     accepted_at: datetime,
     signer_key_id: str,
 ) -> dict[str, Any]:
@@ -1349,9 +2017,29 @@ def build_acceptance_claim_from_files(
     artifact_bytes = _stable_read(
         artifact_path, label="Palimpsest China artifact", maximum=MAX_ARTIFACT_BYTES
     )
+    input_ledger_bytes = (
+        _stable_read(
+            input_ledger_path,
+            label="Palimpsest China input ledger",
+            maximum=MAX_INPUT_LEDGER_BYTES,
+        )
+        if input_ledger_path is not None
+        else None
+    )
+    availability_bytes = (
+        _stable_read(
+            availability_path,
+            label="Palimpsest China availability receipt",
+            maximum=MAX_AVAILABILITY_BYTES,
+        )
+        if availability_path is not None
+        else None
+    )
     return build_acceptance_claim(
         manifest_bytes,
         artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
     )
@@ -1378,6 +2066,8 @@ def build_acceptance_receipt(
     manifest_bytes: bytes,
     artifact_bytes: bytes,
     *,
+    input_ledger_bytes: bytes | None = None,
+    availability_bytes: bytes | None = None,
     accepted_at: datetime,
     signer_key_id: str,
     signature: str,
@@ -1388,6 +2078,8 @@ def build_acceptance_receipt(
     claim = build_acceptance_claim(
         manifest_bytes,
         artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
     )
@@ -1411,6 +2103,8 @@ def build_acceptance_receipt_from_files(
     manifest_path: str | Path,
     artifact_path: str | Path,
     *,
+    input_ledger_path: str | Path | None = None,
+    availability_path: str | Path | None = None,
     accepted_at: datetime,
     signer_key_id: str,
     signature: str,
@@ -1424,9 +2118,29 @@ def build_acceptance_receipt_from_files(
     artifact_bytes = _stable_read(
         artifact_path, label="Palimpsest China artifact", maximum=MAX_ARTIFACT_BYTES
     )
+    input_ledger_bytes = (
+        _stable_read(
+            input_ledger_path,
+            label="Palimpsest China input ledger",
+            maximum=MAX_INPUT_LEDGER_BYTES,
+        )
+        if input_ledger_path is not None
+        else None
+    )
+    availability_bytes = (
+        _stable_read(
+            availability_path,
+            label="Palimpsest China availability receipt",
+            maximum=MAX_AVAILABILITY_BYTES,
+        )
+        if availability_path is not None
+        else None
+    )
     return build_acceptance_receipt(
         manifest_bytes,
         artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
         accepted_at=accepted_at,
         signer_key_id=signer_key_id,
         signature=signature,
@@ -1451,6 +2165,8 @@ def _file_identity(
 def _load_accepted_export_cached(
     manifest_identity: tuple[str, int, int, int, int, int],
     artifact_identity: tuple[str, int, int, int, int, int],
+    input_ledger_identity: tuple[str, int, int, int, int, int] | None,
+    availability_identity: tuple[str, int, int, int, int, int] | None,
     acceptance_identity: tuple[str, int, int, int, int, int],
     attest_dir: str | None,
     trust_identity: tuple[str, int, int, int, int, int] | None,
@@ -1474,6 +2190,26 @@ def _load_accepted_export_cached(
         label="Palimpsest China artifact",
         maximum=MAX_ARTIFACT_BYTES,
         expected_identity=artifact_identity,
+    )
+    input_ledger_bytes = (
+        _stable_read(
+            input_ledger_identity[0],
+            label="Palimpsest China input ledger",
+            maximum=MAX_INPUT_LEDGER_BYTES,
+            expected_identity=input_ledger_identity,
+        )
+        if input_ledger_identity is not None
+        else None
+    )
+    availability_bytes = (
+        _stable_read(
+            availability_identity[0],
+            label="Palimpsest China availability receipt",
+            maximum=MAX_AVAILABILITY_BYTES,
+            expected_identity=availability_identity,
+        )
+        if availability_identity is not None
+        else None
     )
     acceptance_bytes = _stable_read(
         acceptance_path,
@@ -1514,7 +2250,13 @@ def _load_accepted_export_cached(
     accepted_at_text, accepted_at = _canonical_timestamp(
         claim["accepted_at"], label="acceptance.accepted_at"
     )
-    context = verify_export(manifest_bytes, artifact_bytes, accepted_at=accepted_at)
+    context = verify_export(
+        manifest_bytes,
+        artifact_bytes,
+        input_ledger_bytes=input_ledger_bytes,
+        availability_bytes=availability_bytes,
+        accepted_at=accepted_at,
+    )
     _require_authoritative_producer(context)
     if context.accepted_at != accepted_at_text:
         raise PalimpsestChinaIntakeError("acceptance clock normalization changed")
@@ -1542,6 +2284,8 @@ def load_accepted_export(
     artifact_path: str | Path,
     acceptance_path: str | Path,
     *,
+    input_ledger_path: str | Path | None = None,
+    availability_path: str | Path | None = None,
     attest_dir: str | Path | None = None,
     now: datetime | None = None,
 ) -> PalimpsestChinaEconomicContext:
@@ -1561,6 +2305,19 @@ def load_accepted_export(
     context = _load_accepted_export_cached(
         _file_identity(manifest_path, label="Palimpsest China manifest"),
         _file_identity(artifact_path, label="Palimpsest China artifact"),
+        (
+            _file_identity(input_ledger_path, label="Palimpsest China input ledger")
+            if input_ledger_path is not None
+            else None
+        ),
+        (
+            _file_identity(
+                availability_path,
+                label="Palimpsest China availability receipt",
+            )
+            if availability_path is not None
+            else None
+        ),
         _file_identity(acceptance_path, label="Palimpsest China acceptance receipt"),
         selected_attest_dir,
         trust_identity,
@@ -1590,6 +2347,8 @@ __all__ = [
     "ACCEPTANCE_DOMAIN",
     "ACCEPTANCE_SCHEMA",
     "ALLOWED_SOURCE_IDS",
+    "AVAILABILITY_RECEIPT_SCHEMA",
+    "AVAILABILITY_SCHEMA",
     "CONTEXT_SCHEMA",
     "EXPORT_SCHEMA",
     "LEGACY_MANIFEST_SCHEMA",
@@ -1597,6 +2356,7 @@ __all__ = [
     "MARKET_CHANNELS",
     "POLICY_SCHEMA",
     "PRODUCER_SCHEMA",
+    "REVIEW_MANIFEST_SCHEMA",
     "SERIES_REGISTRY_SCHEMA",
     "PalimpsestChinaEconomicContext",
     "PalimpsestChinaIntakeError",
