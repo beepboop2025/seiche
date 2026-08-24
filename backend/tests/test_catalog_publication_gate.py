@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import shutil
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,26 @@ def test_local_catalog_release_identity_is_internally_exact():
         "cross_market_cash_pressure",
     ]
     assert entry["resourceTemplates"] == []
+
+
+@pytest.mark.parametrize("unsafe_readme", ["symlink", "oversized"])
+def test_local_identity_rejects_an_unsafe_package_readme(tmp_path, unsafe_readme):
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "frontend/public/.well-known").mkdir(parents=True)
+    for relative in (
+        "server.json",
+        "backend/pyproject.toml",
+        "frontend/public/.well-known/ai-catalog.json",
+    ):
+        shutil.copy2(ROOT / relative, tmp_path / relative)
+    readme = tmp_path / "backend/README.md"
+    if unsafe_readme == "symlink":
+        readme.symlink_to(ROOT / "backend/README.md")
+    else:
+        readme.write_bytes(b"x" * (gate.MAX_JSON_BYTES + 1))
+
+    with pytest.raises(gate.PublicationGateError, match="README.md"):
+        gate.verify_local_identity(tmp_path)
 
 
 def test_public_receipts_require_both_exact_pypi_bodies_and_live_runtime():

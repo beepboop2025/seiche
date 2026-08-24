@@ -117,6 +117,8 @@ def verify_local_identity(root: Path) -> tuple[str, dict[str, Any]]:
     pyproject_path = root / "backend/pyproject.toml"
     if pyproject_path.is_symlink() or not pyproject_path.is_file():
         raise PublicationGateError("backend/pyproject.toml is not a regular file")
+    if pyproject_path.stat().st_size > MAX_JSON_BYTES:
+        raise PublicationGateError("backend/pyproject.toml is too large")
     try:
         pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
@@ -125,10 +127,17 @@ def verify_local_identity(root: Path) -> tuple[str, dict[str, Any]]:
         pyproject.get("project", {}).get("version") != version
     ):
         raise PublicationGateError("package and server release identities differ")
-    if (
-        f"mcp-name: {MCP_NAME}"
-        not in (root / "backend/README.md").read_text(encoding="utf-8").splitlines()
-    ):
+
+    readme_path = root / "backend/README.md"
+    if readme_path.is_symlink() or not readme_path.is_file():
+        raise PublicationGateError("backend/README.md is not a regular file")
+    if readme_path.stat().st_size > MAX_JSON_BYTES:
+        raise PublicationGateError("backend/README.md is too large")
+    try:
+        readme_lines = readme_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise PublicationGateError("backend/README.md is not UTF-8") from exc
+    if f"mcp-name: {MCP_NAME}" not in readme_lines:
         raise PublicationGateError(
             "published package README lacks the MCP ownership proof"
         )
