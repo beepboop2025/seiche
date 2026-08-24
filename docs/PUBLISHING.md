@@ -42,8 +42,8 @@ listed here as a runbook rather than automated blind.
    ```bash
    gh workflow run publish-pypi.yml \
      --repo beepboop2025/seiche \
-     --ref v0.11.0 \
-     -f release_tag=v0.11.0
+     --ref v0.11.1 \
+     -f release_tag=v0.11.1
    ```
    Do not run a local token-backed `twine upload`: PyPI versions are immutable,
    and bypassing the signed-tag/OIDC gate would sever the artifact-to-commit
@@ -59,13 +59,13 @@ listed here as a runbook rather than automated blind.
 4. **Wait for the immutable PyPI receipt.** Do not create the GitHub Release
    while the tag-triggered PyPI workflow is queued or failing. Watch that run to
    completion, then confirm PyPI exposes exactly one wheel and one source archive
-   for `0.11.0` and retain their server-reported SHA-256 digests:
+   for `0.11.1` and retain their server-reported SHA-256 digests:
    ```bash
    gh run list --repo beepboop2025/seiche \
      --workflow publish-pypi.yml --event push --limit 10
    gh run watch RUN_ID --repo beepboop2025/seiche --exit-status
    curl --fail --show-error --silent \
-     https://pypi.org/pypi/seiche/0.11.0/json |
+     https://pypi.org/pypi/seiche/0.11.1/json |
      jq -r '.urls[] | [.filename, .digests.sha256] | @tsv'
    ```
    The workflow already verifies the immutable PyPI bytes against the signed
@@ -77,7 +77,7 @@ listed here as a runbook rather than automated blind.
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new
    GitHub releases only after repository enablement. The repository's
    [`.zenodo.json` follows Zenodo's documented GitHub authoring format](https://help.zenodo.org/docs/github/describe-software/zenodo-json/) and
-   explicitly carries version `0.11.0`, language `eng`, `upload_type`, license,
+   explicitly carries version `0.11.1`, language `eng`, `upload_type`, license,
    access, creators, related identifiers, and the research boundary. Because
    Zenodo ignores `CITATION.cff` whenever `.zenodo.json` is present, all required
    release metadata must remain complete in this file. CI pins and checks the
@@ -86,8 +86,8 @@ listed here as a runbook rather than automated blind.
    schema is not the raw `.zenodo.json` authoring contract.
    Confirm that no release exists yet:
    ```bash
-   if gh release view v0.11.0 --repo beepboop2025/seiche >/dev/null 2>&1; then
-     echo "v0.11.0 already released; inspect receipts instead of recreating it" >&2
+   if gh release view v0.11.1 --repo beepboop2025/seiche >/dev/null 2>&1; then
+     echo "v0.11.1 already released; inspect receipts instead of recreating it" >&2
      exit 1
    fi
    ```
@@ -96,10 +96,10 @@ listed here as a runbook rather than automated blind.
    starts Zenodo archival plus the MCP and GHCR publishers. It must happen only
    after steps 4 and 5 are green:
    ```bash
-   gh release create v0.11.0 \
+   gh release create v0.11.1 \
      --repo beepboop2025/seiche \
      --verify-tag \
-     --title "Seiche 0.11.0" \
+     --title "Seiche 0.11.1" \
      --generate-notes
    ```
    Do not delete and recreate the release as a retry mechanism. Use the
@@ -109,16 +109,16 @@ listed here as a runbook rather than automated blind.
 7. **Receipt the three release-triggered surfaces.** Treat these as separate
    outcomes even though the GitHub Release starts them concurrently:
 
-   - **Zenodo:** wait for the integration to archive `v0.11.0`; open the record,
-     confirm version `0.11.0`, software type, open access, creator, license, and
+   - **Zenodo:** wait for the integration to archive `v0.11.1`; open the record,
+     confirm version `0.11.1`, software type, open access, creator, license, and
      GitHub relationship, then record the version DOI, concept DOI, record URL,
      and archive checksum. Do not claim a DOI while only `.zenodo.json` exists.
    - **MCP Registry:** watch `publish-mcp.yml`, then query the owner namespace and
-     retain the workflow URL plus the returned `0.11.0` record. Recovery must use
+     retain the workflow URL plus the returned `0.11.1` record. Recovery must use
      the tag as both workflow ref and explicit input:
      ```bash
      gh workflow run publish-mcp.yml --repo beepboop2025/seiche \
-       --ref v0.11.0 -f release_tag=v0.11.0
+       --ref v0.11.1 -f release_tag=v0.11.1
      curl --fail --show-error --silent \
        'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.beepboop2025%2Fseiche/versions/latest'
      ```
@@ -157,8 +157,8 @@ listed here as a runbook rather than automated blind.
    ```bash
    gh workflow run publish-openbb.yml \
      --repo beepboop2025/seiche \
-     --ref v0.11.0 \
-     -f release_tag=v0.11.0 \
+     --ref v0.11.1 \
+     -f release_tag=v0.11.1 \
      -f openbb_version=0.1.0
    ```
    After the immutable PyPI page and clean-install receipt are public, use

@@ -44,7 +44,7 @@ dataset_info:
 
 > **Dataset identity: rights-reviewed direct-OFR snapshot. No DOI has been
 > assigned. Public listing status is receipt-tracked in Seiche's
-> [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.11.0/distribution/submissions.csv).**
+> [distribution ledger](https://github.com/beepboop2025/seiche/blob/v0.11.1/distribution/submissions.csv).**
 
 This dataset contains 11,163 observations from ten series obtained
 directly from the United States Office of Financial Research Short-term Funding
@@ -55,7 +55,7 @@ The package deliberately excludes every value fetched through FRED, New York
 Fed reference-rate rows with additional terms, the semantically mismatched
 primary-dealer row, licensed/restricted series, and all Seiche-derived outputs.
 The exact inclusion and exclusion review is recorded in
-[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](https://github.com/beepboop2025/seiche/blob/v0.11.0/integrations/datacommons/RIGHTS_AND_SOURCES.md).
+[`integrations/datacommons/RIGHTS_AND_SOURCES.md`](https://github.com/beepboop2025/seiche/blob/v0.11.1/integrations/datacommons/RIGHTS_AND_SOURCES.md).
 
 ## Data contract
 

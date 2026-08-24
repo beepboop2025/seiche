@@ -87,6 +87,10 @@ class ScientificMetadataContracts(unittest.TestCase):
             self.codemeta["downloadUrl"], f"https://pypi.org/project/seiche/{version}/"
         )
 
+    def test_pypi_readme_carries_the_registry_ownership_marker(self) -> None:
+        marker = "mcp-name: io.github.beepboop2025/seiche"
+        self.assertIn(marker, _read("backend/README.md").splitlines())
+
     def test_release_date_and_tag_url_are_consistent_without_a_self_sha(self) -> None:
         version = self.project["version"]
         release_date = _cff_scalar(self.citation, "date-released")
@@ -227,7 +231,7 @@ class PublicCatalogContracts(unittest.TestCase):
         )
         self.assertEqual(
             graph[canonical]["dcat:landingPage"]["@id"],
-            f"{REPOSITORY}/tree/v0.11.0/distribution/datasets",
+            f"{REPOSITORY}/tree/v0.11.1/distribution/datasets",
         )
 
         self.assertEqual(
@@ -272,15 +276,15 @@ class PublicCatalogContracts(unittest.TestCase):
         ):
             command = publishing.split(f"gh workflow run {workflow}", maxsplit=1)[1]
             command = command.split("```", maxsplit=1)[0]
-            self.assertIn("--ref v0.11.0", command)
-            self.assertIn("release_tag=v0.11.0", command)
+            self.assertIn("--ref v0.11.1", command)
+            self.assertIn("release_tag=v0.11.1", command)
         openbb_submission = _read("integrations/openbb/SUBMISSION.md")
         openbb_command = openbb_submission.split(
             "gh workflow run publish-openbb.yml", maxsplit=1
         )[1].split("```", maxsplit=1)[0]
         self.assertIn("--repo beepboop2025/seiche", openbb_command)
-        self.assertIn("--ref v0.11.0", openbb_command)
-        self.assertIn("release_tag=v0.11.0", openbb_command)
+        self.assertIn("--ref v0.11.1", openbb_command)
+        self.assertIn("release_tag=v0.11.1", openbb_command)
         self.assertIn("openbb_version=0.1.0", openbb_command)
         self.assertIn("python3 -m venv /tmp/openbb-seiche-public", openbb_submission)
         self.assertNotIn("\npython -m venv ", openbb_submission)

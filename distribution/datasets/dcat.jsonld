@@ -42,7 +42,7 @@
       },
       "dct:subject": ["repo markets", "money market funds", "financial time series"],
       "dcat:keyword": ["repo markets", "money market funds", "secured funding", "financial time series"],
-      "dcat:landingPage": {"@id": "https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets"},
+      "dcat:landingPage": {"@id": "https://github.com/beepboop2025/seiche/tree/v0.11.1/distribution/datasets"},
       "seiche:sourceRevision": {"@id": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons"},
       "dcat:version": "0.1.0-draft",
       "seiche:publicationStatus": "draft_not_submitted",
