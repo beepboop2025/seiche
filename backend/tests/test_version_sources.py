@@ -2,7 +2,7 @@
 
 The MCP handshake, hosted registry listing, and build metadata describe the
 deployed server and must agree. The optional PyPI transport advertises the same
-0.11.0 distribution release and eleven-tool public surface so the release and
+0.11.1 distribution release and eleven-tool public surface so the release and
 immutable registry entry point at the same artifact.
 """
 
@@ -42,7 +42,7 @@ def test_hosted_version_sources_agree():
 
 
 def test_registry_stdio_package_matches_hosted_surface():
-    """The registry card pins the 0.11.0 / eleven-tool public surface."""
+    """The registry card pins the 0.11.1 / eleven-tool public surface."""
     server = _server_json()
     package = server["packages"][0]
     description = package["environmentVariables"][0]["description"]
@@ -50,13 +50,19 @@ def test_registry_stdio_package_matches_hosted_surface():
 
     assert package["registryType"] == "pypi"
     assert package["identifier"] == "seiche"
-    assert package["version"] == hosted == "0.11.0"
+    assert package["version"] == hosted == "0.11.1"
     assert package["transport"] == {"type": "stdio"}
     assert "eleven free public tools" in description
     assert "latest_article" in description
     assert "money_market_context" in description
     assert "world_markets_context" in description
-    assert "0.11.0" in description
+    assert "0.11.1" in description
+
+
+def test_pypi_readme_proves_the_official_mcp_registry_namespace():
+    """The Registry validates the literal marker in published PyPI metadata."""
+    readme = (REPO / "backend" / "README.md").read_text(encoding="utf-8")
+    assert "mcp-name: io.github.beepboop2025/seiche" in readme.splitlines()
 
 
 def test_money_market_discovery_separates_catalog_from_dated_evidence():

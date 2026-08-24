@@ -61,10 +61,10 @@ flows, oil/funding, FX/materials, US money markets, world markets, and the lates
 article. Five higher-cost forecast, replay, positioning, prose, and LLM tools
 require an account and are omitted from anonymous `tools/list` responses.
 
-The canonical registry identifier is:
+The canonical registry ownership marker is:
 
 ```text
-io.github.beepboop2025/seiche
+mcp-name: io.github.beepboop2025/seiche
 ```
 
 See the [MCP integration guide](https://github.com/beepboop2025/seiche/blob/main/docs/MCP.md)

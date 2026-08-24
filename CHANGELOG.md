@@ -11,6 +11,22 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-24
+
+### Fixed
+
+- Restored the literal `mcp-name: io.github.beepboop2025/seiche` ownership
+  marker in the PyPI long description and added a release regression contract
+  so the official MCP Registry can validate the package namespace.
+- Synchronized the hosted runtime, Python package, MCP server card, AI catalog,
+  and citation metadata on the superseding `0.11.1` patch identity. The
+  immutable `0.11.0` artifacts remain available as historical receipts.
+- Made both static publishers fail closed before their first public write until
+  the pinned signed tag, exact wheel and source-archive bytes, fault-free hosted
+  runtime, and matching MCP discovery record all exist.
+- Published the complete anonymous MCP inventory in the AI catalog: eleven
+  tools, four prompt templates, and an explicit zero-resource boundary.
+
 ## [0.11.0] - 2026-08-22
 
 ### Added
@@ -119,7 +135,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/beepboop2025/seiche/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/beepboop2025/seiche/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/beepboop2025/seiche/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/beepboop2025/seiche/compare/v0.9.1...v0.10.0

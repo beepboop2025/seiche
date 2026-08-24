@@ -12,6 +12,7 @@ on:
       - ".github/workflows/publish-openbb.yml"
       - ".github/workflows/publish-pypi.yml"
       - ".github/workflows/publish-static.yml"
+      - ".github/workflows/publish.yml"
       - ".zenodo.json"
       - "CITATION.cff"
       - "Dockerfile"
@@ -29,6 +30,7 @@ on:
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
       - "backend/tests/test_public_dataset_deploy.py"
+      - "backend/tests/test_catalog_publication_gate.py"
       - "backend/tests/test_python_artifact_verifier.py"
       - "clients/**"
       - "codemeta.json"
@@ -43,6 +45,7 @@ on:
       - "notebooks/**"
       - "ops/deploy/release-allowed-signers"
       - "ops/release/verify_python_artifacts.py"
+      - "ops/release/verify_catalog_publication.py"
       - "ops/release/verify_public_dataset.py"
       - "ops/release/audit_distribution_receipts.py"
       - "server.json"
@@ -58,6 +61,7 @@ on:
       - ".github/workflows/publish-openbb.yml"
       - ".github/workflows/publish-pypi.yml"
       - ".github/workflows/publish-static.yml"
+      - ".github/workflows/publish.yml"
       - ".zenodo.json"
       - "CITATION.cff"
       - "Dockerfile"
@@ -75,6 +79,7 @@ on:
       - "backend/tests/test_distribution_listings.py"
       - "backend/tests/test_public_money_market_discovery.py"
       - "backend/tests/test_public_dataset_deploy.py"
+      - "backend/tests/test_catalog_publication_gate.py"
       - "backend/tests/test_python_artifact_verifier.py"
       - "clients/**"
       - "codemeta.json"
@@ -89,6 +94,7 @@ on:
       - "notebooks/**"
       - "ops/deploy/release-allowed-signers"
       - "ops/release/verify_python_artifacts.py"
+      - "ops/release/verify_catalog_publication.py"
       - "ops/release/verify_public_dataset.py"
       - "ops/release/audit_distribution_receipts.py"
       - "server.json"
@@ -135,6 +141,7 @@ jobs:
             backend/tests/test_distribution_receipt_auditor.py \
             backend/tests/test_distribution_listings.py \
             backend/tests/test_public_money_market_discovery.py \
+            backend/tests/test_catalog_publication_gate.py \
             backend/tests/test_public_dataset_deploy.py \
             backend/tests/test_python_artifact_verifier.py \
             distribution/datasets/test_distribution_kit.py \
@@ -150,8 +157,10 @@ jobs:
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
             backend/tests/test_distribution_receipt_auditor.py \
+            backend/tests/test_catalog_publication_gate.py \
             backend/tests/test_public_dataset_deploy.py \
             ops/release/audit_distribution_receipts.py \
+            ops/release/verify_catalog_publication.py \
             ops/release/verify_python_artifacts.py \
             ops/release/verify_public_dataset.py
           ruff format --check --no-cache \
@@ -161,8 +170,10 @@ jobs:
             distribution/datasets/test_distribution_kit.py \
             backend/tests/test_python_artifact_verifier.py \
             backend/tests/test_distribution_receipt_auditor.py \
+            backend/tests/test_catalog_publication_gate.py \
             backend/tests/test_public_dataset_deploy.py \
             ops/release/audit_distribution_receipts.py \
+            ops/release/verify_catalog_publication.py \
             ops/release/verify_python_artifacts.py \
             ops/release/verify_public_dataset.py
 

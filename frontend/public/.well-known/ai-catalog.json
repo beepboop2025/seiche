@@ -15,7 +15,7 @@
         "name": "io.github.beepboop2025/seiche",
         "title": "Seiche — world-markets evidence terminal",
         "description": "Money, FX, capital-market and metadata-only China macro evidence with source clocks and limits.",
-        "version": "0.11.0",
+        "version": "0.11.1",
         "repository": {
           "url": "https://github.com/beepboop2025/seiche",
           "source": "github"
@@ -31,14 +31,14 @@
           {
             "registryType": "pypi",
             "identifier": "seiche",
-            "version": "0.11.0",
+            "version": "0.11.1",
             "transport": {
               "type": "stdio"
             },
             "environmentVariables": [
               {
                 "name": "SEICHE_MCP_PUBLIC",
-                "description": "Set to 1 to expose the eleven free public tools shipped by seiche 0.11.0 over stdio: latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows, oil_funding_context, fx_materials_passage, money_market_context, world_markets_context.",
+                "description": "Set to 1 to expose the eleven free public tools shipped by seiche 0.11.1 over stdio: latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health, crypto_stress_record, institutional_flows, oil_funding_context, fx_materials_passage, money_market_context, world_markets_context.",
                 "isRequired": false
               }
             ]
@@ -73,6 +73,13 @@
         "money_market_context",
         "world_markets_context"
       ],
+      "prompts": [
+        "is_now_dangerous",
+        "money_market_deep_dive",
+        "world_markets_briefing",
+        "cross_market_cash_pressure"
+      ],
+      "resourceTemplates": [],
       "representativeQueries": [
         "What is the current US dollar funding stress regime?",
         "What historical episodes most resemble today?",
@@ -80,14 +87,17 @@
         "Are oil, FX or material cash demands—including current Cushing stocks and Brent−WTI basis—reaching dollar funding markets, and which structure figures are dated references?",
         "Give me a bounded money, FX and capital-markets briefing with source clocks, evidence statuses and canonical citations."
       ],
-      "version": "0.11.0",
-      "updatedAt": "2026-08-22T12:00:00Z",
+      "version": "0.11.1",
+      "updatedAt": "2026-08-24T14:52:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",
         "schemaProfile": "MCP Registry 2025-12-11 server metadata",
         "experimentalServerCardConformance": false,
         "publicToolCount": 11,
+        "publicPromptCount": 4,
+        "publicResourceCount": 0,
+        "mcpDiscovery": "https://api.seiche.info/.well-known/mcp.json",
         "worldMarketsApi": "https://api.seiche.info/api/v2/world-markets",
         "worldMarketsPage": "https://seiche.info/markets/",
         "forexPage": "https://seiche.info/markets/forex/",
@@ -139,8 +149,8 @@
         "Retrieve compact oil-funding, live-vs-reference market structure and FX-material transmission context.",
         "Retrieve a bounded money, FX, capital-markets and metadata-only China macro context with source clocks, status vocabulary and canonical citation URLs."
       ],
-      "version": "0.11.0",
-      "updatedAt": "2026-08-22T12:00:00Z",
+      "version": "0.11.1",
+      "updatedAt": "2026-08-24T14:52:00Z",
       "metadata": {
         "authentication": "none",
         "access": "public-read-only",

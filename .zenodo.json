@@ -6,8 +6,8 @@
       "name": "Mrinal"
     }
   ],
-  "publication_date": "2026-08-22",
-  "version": "0.11.0",
+  "publication_date": "2026-08-24",
+  "version": "0.11.1",
   "upload_type": "software",
   "language": "eng",
   "access_right": "open",
@@ -31,7 +31,7 @@
       "scheme": "url"
     },
     {
-      "identifier": "https://pypi.org/project/seiche/0.11.0/",
+      "identifier": "https://pypi.org/project/seiche/0.11.1/",
       "relation": "isSupplementTo",
       "scheme": "url"
     }

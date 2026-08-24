@@ -7,7 +7,7 @@
   "prepared_at": "2026-08-22T00:00:00Z",
   "source_manifest_generated_at": "2026-08-21T18:05:16+00:00",
   "provenance": {
-    "metadata_publication": "https://github.com/beepboop2025/seiche/tree/v0.11.0/distribution/datasets",
+    "metadata_publication": "https://github.com/beepboop2025/seiche/tree/v0.11.1/distribution/datasets",
     "source_revision": "https://github.com/beepboop2025/seiche/tree/93e83bbc592098fc2f6465ffb49c5e872d61c018/integrations/datacommons"
   },
   "record_count": 11163,

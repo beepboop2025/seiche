@@ -31,10 +31,12 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.12"
           cache: pip
 
       - name: Install pinned Caddy config adapter
@@ -187,6 +189,29 @@ jobs:
       # shell is the bug, so a missing snapshot stops the publish.
       - name: Prerender the no-JS home page
         run: python -m seiche.prerender frontend/dist
+
+      - name: Fetch the exact declared release tag
+        run: |
+          set -euo pipefail
+          version="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          print(json.loads(Path("server.json").read_text())["version"])
+          PY
+          )"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          git fetch --force --no-tags origin \
+            "+refs/tags/v${version}:refs/tags/v${version}"
+
+      - name: Gate catalog on the signed release, runtime, and PyPI receipts
+        env:
+          RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
+        run: >-
+          python -I -S ops/release/verify_catalog_publication.py
+          --root .
+          --expected-sha "$GITHUB_SHA"
+          --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
 
       # Primary 24/7 publish: push the built site + snapshot to the PUBLIC
       # seiche-site repo (GitHub Pages) — no tokens beyond the deploy key,

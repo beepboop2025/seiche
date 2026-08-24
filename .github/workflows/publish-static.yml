@@ -14,6 +14,7 @@ on:
       - ".github/workflows/publish-static.yml"
       - "frontend/public/**"
       - "!frontend/public/data/**"
+      - "ops/release/verify_catalog_publication.py"
       - "ops/release/verify_public_dataset.py"
 
 permissions:
@@ -29,6 +30,35 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.12"
+
+      - name: Fetch the exact declared release tag
+        run: |
+          set -euo pipefail
+          version="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          print(json.loads(Path("server.json").read_text())["version"])
+          PY
+          )"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          git fetch --force --no-tags origin \
+            "+refs/tags/v${version}:refs/tags/v${version}"
+
+      - name: Gate catalog on the signed release, runtime, and PyPI receipts
+        env:
+          RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
+        run: >-
+          python -I -S ops/release/verify_catalog_publication.py
+          --root .
+          --expected-sha "$GITHUB_SHA"
+          --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
 
       - name: Push static files to the live site repo
         env:

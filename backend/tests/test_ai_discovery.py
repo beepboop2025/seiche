@@ -73,10 +73,23 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
     assert len(mcp["capabilities"]) == 11
+    assert mcp["prompts"] == [
+        "is_now_dangerous",
+        "money_market_deep_dive",
+        "world_markets_briefing",
+        "cross_market_cash_pressure",
+    ]
+    assert mcp["resourceTemplates"] == []
     assert mcp["metadata"]["schemaProfile"] == (
         "MCP Registry 2025-12-11 server metadata"
     )
     assert mcp["metadata"]["experimentalServerCardConformance"] is False
+    assert mcp["metadata"]["publicToolCount"] == len(mcp["capabilities"])
+    assert mcp["metadata"]["publicPromptCount"] == len(mcp["prompts"])
+    assert mcp["metadata"]["publicResourceCount"] == len(mcp["resourceTemplates"])
+    assert mcp["metadata"]["mcpDiscovery"] == (
+        "https://api.seiche.info/.well-known/mcp.json"
+    )
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]
@@ -315,14 +328,11 @@ def test_proof_failure_is_labeled_as_withheld_evidence_not_engine_failure():
 
 def test_financial_evidence_router_is_external_pinned_and_china_complete():
     revision = "34549a5bcc2a42c7760c04c95bd449f1d10a18fc"
-    catalog = json.loads(
-        (PUBLIC / ".well-known" / "ai-catalog.json").read_text()
-    )
+    catalog = json.loads((PUBLIC / ".well-known" / "ai-catalog.json").read_text())
     router = next(
         entry
         for entry in catalog["entries"]
-        if entry["identifier"]
-        == "urn:air:seiche.info:workflow:financial-evidence"
+        if entry["identifier"] == "urn:air:seiche.info:workflow:financial-evidence"
     )
     assert router["version"] == revision
     assert router["url"] == (
@@ -339,13 +349,9 @@ def test_financial_evidence_router_is_external_pinned_and_china_complete():
 
     card = json.loads((PUBLIC / "product-card.json").read_text())
     assert card["updated"] == "2026-08-24"
-    assert "financial-evidence-skills" in card["access"][
-        "financial_evidence_skill"
-    ]
+    assert "financial-evidence-skills" in card["access"]["financial_evidence_skill"]
 
-    china = (
-        PUBLIC / "use-cases" / "china-economy-evidence" / "index.html"
-    ).read_text()
+    china = (PUBLIC / "use-cases" / "china-economy-evidence" / "index.html").read_text()
     assert "revision-safe public economic observations" in china
     assert "Far Basin model-entry gate" in china
     assert "never enters Seiche's market composite or model features" not in china
