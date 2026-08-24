@@ -346,6 +346,29 @@ def _run(script: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _write_durability_request(
+    path: Path,
+    *,
+    activation_id: str,
+    tree_sha256: str,
+    snapshot_id: str = "20260810T020000Z",
+) -> None:
+    value = {
+        "schema": "seiche.palimpsest-china-durability-request.v1",
+        "activation_id": activation_id,
+        "tree_sha256": tree_sha256,
+        "release_sha": "a" * 40,
+        "snapshot_id": snapshot_id,
+        "requested_at": "2026-08-10T02:00:00Z",
+    }
+    path.write_text(
+        json.dumps(value, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o400)
+
+
 def _activate_palimpsest_state(
     tmp_path: Path,
     env: dict[str, str],
@@ -367,6 +390,9 @@ def _activate_palimpsest_state(
     runtime = tmp_path / "palimpsest-runtime"
     runtime.mkdir()
     runtime.chmod(0o755)
+    durability = tmp_path / "palimpsest-durability"
+    durability.mkdir(mode=0o700)
+    durability.chmod(0o700)
     sources_root = tmp_path / "palimpsest-operator"
     sources_root.mkdir(mode=0o700)
     sources = activation.BundleSources(
@@ -407,6 +433,7 @@ def _activate_palimpsest_state(
         dropin_file=dropin / "palimpsest-china.conf",
         deploy_lock=deploy_lock,
         activation_lock=locks / "palimpsest-china.lock",
+        durability_root=durability,
         runtime_release=runtime,
         release_sha="a" * 40,
         root_uid=os.getuid(),
@@ -722,6 +749,34 @@ def test_backup_ignores_untrusted_pythonpath_for_sqlite_snapshot(
     assert not marker.exists()
 
 
+def test_durability_request_rejects_conflicting_backup_and_restore_overrides(
+    tmp_path: Path,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    request = tmp_path / "palimpsest-china-durability-request.json"
+    _write_durability_request(
+        request,
+        activation_id="d" * 64,
+        tree_sha256="e" * 64,
+        snapshot_id="20260811T020000Z",
+    )
+    env["SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH"] = str(request)
+
+    backup_result = _run(BACKUP_SCRIPT, env)
+
+    assert backup_result.returncode != 0
+    assert "snapshot override conflicts" in backup_result.stderr
+    assert not (backup / "20260811T020000Z").exists()
+
+    env.pop("SEICHE_BACKUP_STAMP")
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
+    restore_result = _run(RESTORE_SCRIPT, env)
+
+    assert restore_result.returncode != 0
+    assert "snapshot override conflicts" in restore_result.stderr
+
+
 def test_backup_accepts_append_only_writes_during_snapshot(tmp_path: Path):
     env, _ = _tools(tmp_path)
     _, backup, _ = _layout(tmp_path, env)
@@ -808,20 +863,36 @@ def test_backup_restore_preserves_an_active_palimpsest_china_state(
     activated = _activate_palimpsest_state(tmp_path, env, monkeypatch)
     active_id = str(activated["active"]["activation_id"])
     bundle_id = str(activated["active"]["bundle_id"])
+    live_audit = activation.audit_activation_state(
+        Path(env["SEICHE_PALIMPSEST_CHINA_STATE_DIR"]),
+        root_uid=os.getuid(),
+        root_gid=os.getgid(),
+        api_uid=os.getuid(),
+        api_gid=os.getgid(),
+        declared_state_root=Path(env["SEICHE_PALIMPSEST_CHINA_STATE_DIR"]),
+    )
+    request = tmp_path / "palimpsest-china-durability-request.json"
+    _write_durability_request(
+        request,
+        activation_id=active_id,
+        tree_sha256=str(live_audit["tree_sha256"]),
+    )
+    env["SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH"] = str(request)
 
     backed_up = _run(BACKUP_SCRIPT, env)
     assert backed_up.returncode == 0, backed_up.stdout + backed_up.stderr
     snapshot = backup / "20260810T020000Z"
     audit = json.loads((snapshot / "palimpsest-china-state.json").read_bytes())
     assert audit["active_activation_id"] == active_id
+    assert audit["tree_sha256"] == live_audit["tree_sha256"]
     assert audit["bundles"] == [bundle_id]
     assert audit["receipts"] == [active_id]
 
-    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
     restored = _run(RESTORE_SCRIPT, env)
     assert restored.returncode == 0, restored.stdout + restored.stderr
     status = Path(env["SEICHE_RESTORE_STATUS_PATH"]).read_text()
     assert f"palimpsest_china_active_activation_id={active_id}\n" in status
+    assert f"palimpsest_china_state_tree_sha256={live_audit['tree_sha256']}\n" in status
     assert "palimpsest_china_pending_candidate_activation_id=none\n" in status
     assert "palimpsest_china_bundle_count=1\n" in status
     assert "palimpsest_china_receipt_count=1\n" in status

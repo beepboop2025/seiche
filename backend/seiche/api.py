@@ -75,7 +75,6 @@ from seiche.markets.registry import UnknownMarketError, default_registry
 from seiche.markets.world import (
     WORLD_MARKETS_SELECTORS,
     WORLD_MARKETS_STATUSES,
-    unavailable_world_markets,
 )
 from seiche.public_faults import (
     project_public_fault,
@@ -1953,7 +1952,7 @@ def world_markets_v2(response: Response, section: str = "all"):
                 "Cache-Control": "no-store",
                 "Retry-After": "30",
             },
-            content=unavailable_world_markets(
+            content=context_views.unavailable_world_markets(
                 selector=section,
                 china_macro_context=china_macro_context,
                 china_economic_context=china_economic_context,

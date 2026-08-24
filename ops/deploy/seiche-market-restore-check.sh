@@ -24,6 +24,7 @@ SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
 CMP_BIN="${SEICHE_CMP_BIN:-/usr/bin/cmp}"
+DURABILITY_REQUEST_PATH="${SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH:-/run/seiche-deploy/palimpsest-china-durability-request.json}"
 ALLOW_NON_ROOT_TEST="${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}"
 
 fail() {
@@ -61,6 +62,9 @@ else
     [ "$PALIMPSEST_CHINA_AUDIT_BIN" = \
         /etc/seiche/libexec/seiche-palimpsest-china-activate.py ] \
         || fail "production Palimpsest China audit launcher is fixed"
+    [ "$DURABILITY_REQUEST_PATH" = \
+        /run/seiche-deploy/palimpsest-china-durability-request.json ] \
+        || fail "production activation durability request path is fixed"
     [ "$PYTHON_BIN" = /usr/bin/python3 ] \
         || fail "production Python runtime is fixed at /usr/bin/python3"
 fi
@@ -93,7 +97,71 @@ run_as_postgres() {
         --init-groups --inh-caps=-all -- "$@"
 }
 
+DURABILITY_EXPECTED_ACTIVATION_ID=""
+DURABILITY_EXPECTED_TREE_SHA256=""
+DURABILITY_EXPECTED_RELEASE_SHA=""
+DURABILITY_EXPECTED_SNAPSHOT=""
+if [ -e "$DURABILITY_REQUEST_PATH" ] || [ -L "$DURABILITY_REQUEST_PATH" ]; then
+    mapfile -t DURABILITY_REQUEST_FIELDS < <(
+        "$PYTHON_BIN" -I -B - "$DURABILITY_REQUEST_PATH" <<'PY'
+from __future__ import annotations
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+path = Path(sys.argv[1])
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+try:
+    before = os.fstat(fd)
+    visible = path.lstat()
+    uid = 0 if os.geteuid() == 0 else os.geteuid()
+    gid = 0 if os.geteuid() == 0 else os.getegid()
+    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+        or (before.st_uid, before.st_gid) != (uid, gid)
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        or not 1 <= before.st_size <= 4096):
+        raise ValueError("request metadata is unsafe")
+    body = os.read(fd, 4097)
+    after = os.fstat(fd)
+    identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_nlink, item.st_uid, item.st_gid, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+    if len(body) != before.st_size or identity(before) != identity(after):
+        raise ValueError("request changed while read")
+finally:
+    os.close(fd)
+value = json.loads(body)
+keys = {"schema", "activation_id", "tree_sha256", "release_sha", "snapshot_id", "requested_at"}
+canonical = json.dumps(value, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+if (type(value) is not dict or set(value) != keys or body != canonical
+    or value["schema"] != "seiche.palimpsest-china-durability-request.v1"
+    or re.fullmatch(r"[0-9a-f]{64}", value["activation_id"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{64}", value["tree_sha256"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{40}", value["release_sha"] or "") is None
+    or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", value["snapshot_id"] or "") is None
+    or re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value["requested_at"] or "") is None):
+    raise ValueError("request contract changed")
+for key in ("activation_id", "tree_sha256", "release_sha", "snapshot_id"):
+    print(value[key])
+PY
+    ) || fail "activation durability request is invalid"
+    [ "${#DURABILITY_REQUEST_FIELDS[@]}" -eq 4 ] \
+        || fail "activation durability request proof is incomplete"
+    DURABILITY_EXPECTED_ACTIVATION_ID=${DURABILITY_REQUEST_FIELDS[0]}
+    DURABILITY_EXPECTED_TREE_SHA256=${DURABILITY_REQUEST_FIELDS[1]}
+    DURABILITY_EXPECTED_RELEASE_SHA=${DURABILITY_REQUEST_FIELDS[2]}
+    DURABILITY_EXPECTED_SNAPSHOT=${DURABILITY_REQUEST_FIELDS[3]}
+fi
+
 SNAPSHOT="${SEICHE_RESTORE_SNAPSHOT:-}"
+if [ -n "$DURABILITY_EXPECTED_SNAPSHOT" ]; then
+    [ -z "$SNAPSHOT" ] \
+        || [ "$SNAPSHOT" = "$BACKUP_DIR/$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        || fail "snapshot override conflicts with the activation durability request"
+    SNAPSHOT="$BACKUP_DIR/$DURABILITY_EXPECTED_SNAPSHOT"
+fi
 if [ -z "$SNAPSHOT" ]; then
     while IFS= read -r CANDIDATE; do
         SNAPSHOT="$CANDIDATE"
@@ -977,6 +1045,18 @@ PY
         )
     rm -rf -- "$PALIMPSEST_STAGE"
     PALIMPSEST_STAGE=""
+fi
+if [ -n "$DURABILITY_EXPECTED_ACTIVATION_ID" ]; then
+    [ "$BACKUP_SCHEMA" = "seiche.market-backup.v4" ] \
+        && [ "$SNAPSHOT_NAME" = "$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        && [ "$(tr -d '[:space:]' <"$SNAPSHOT/deployed-sha.txt")" = \
+            "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
+        && [ "$PALIMPSEST_CHINA_ACTIVE_ACTIVATION_ID" = \
+            "$DURABILITY_EXPECTED_ACTIVATION_ID" ] \
+        && [ "$PALIMPSEST_CHINA_TREE_SHA256" = \
+            "$DURABILITY_EXPECTED_TREE_SHA256" ] \
+        && [ "$PALIMPSEST_CHINA_PENDING_CANDIDATE_ACTIVATION_ID" = none ] \
+        || fail "restored snapshot does not prove the requested exact activation"
 fi
 
 API_STAGE=$(mktemp -d "$STATUS_DIR/.backup-api-data-restore.XXXXXX")

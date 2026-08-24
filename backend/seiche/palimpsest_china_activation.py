@@ -53,11 +53,13 @@ from seiche.palimpsest_china_intake import (
 
 
 ACTIVATION_RECEIPT_SCHEMA = "seiche.palimpsest-china-activation-receipt.v1"
-ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v1"
+ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v2"
+LEGACY_ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v1"
 CANDIDATE_SCHEMA = "seiche.palimpsest-china-activation-candidate.v1"
 RUNTIME_PROOF_SCHEMA = "seiche.palimpsest-china-rest-mcp-proof.v1"
 PENDING_SCHEMA = "seiche.palimpsest-china-activation-pending.v1"
 BACKUP_STATE_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
+DURABILITY_RECEIPT_SCHEMA = "seiche.palimpsest-china-activation-durability.v1"
 PRODUCTION_STATE_ROOT = Path("/var/lib/seiche-palimpsest-china")
 PRODUCTION_ENV_FILE = Path("/etc/seiche/palimpsest-china.env")
 PRODUCTION_DROPIN_FILE = Path(
@@ -65,6 +67,12 @@ PRODUCTION_DROPIN_FILE = Path(
 )
 PRODUCTION_DEPLOY_LOCK = Path("/run/seiche-deploy/deploy.lock")
 PRODUCTION_ACTIVATION_LOCK = Path("/run/seiche-deploy/palimpsest-china.lock")
+PRODUCTION_TRANSACTION_LOCK = Path(
+    "/run/seiche-deploy/palimpsest-china-transaction.lock"
+)
+PRODUCTION_DURABILITY_ROOT = Path(
+    "/var/lib/seiche-recovery-proof/palimpsest-china-durability"
+)
 PRODUCTION_API_URL = "http://127.0.0.1:8787"
 PRODUCTION_SYSTEMCTL = Path("/usr/bin/systemctl")
 PRODUCTION_RUNUSER = Path("/usr/sbin/runuser")
@@ -81,6 +89,7 @@ PRODUCTION_RELEASE_PRINCIPAL = "beepboop2025@users.noreply.github.com"
 LOCK_TIMEOUT_SECONDS = 300.0
 PROBE_TIMEOUT_SECONDS = 180.0
 PROBE_INTERVAL_SECONDS = 2.0
+MAX_ACTIVE_MARKER_BYTES = 16 * 1024
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -112,6 +121,69 @@ _ACTIVE_KEYS = frozenset(
         "receipt_sha256",
         "files",
         "activated_at",
+        "publication_status",
+        "legacy_active_marker",
+        "legacy_active_marker_sha256",
+    }
+)
+_LEGACY_ACTIVE_KEYS = _ACTIVE_KEYS - frozenset(
+    {"publication_status", "legacy_active_marker", "legacy_active_marker_sha256"}
+)
+_DURABILITY_KEYS = frozenset(
+    {
+        "schema",
+        "status",
+        "activation_id",
+        "bundle_id",
+        "release_sha",
+        "active_marker_sha256",
+        "activation_receipt_sha256",
+        "activation_state_audit_sha256",
+        "activation_state_tree_sha256",
+        "local_backup_snapshot",
+        "local_backup_inventory_sha256",
+        "local_restore_schema",
+        "local_restore_activation_id",
+        "local_restore_tree_sha256",
+        "local_restore_checked_at",
+        "local_restore_receipt",
+        "local_restore_receipt_sha256",
+        "offsite_status_schema",
+        "offsite_snapshot",
+        "offsite_activation_id",
+        "offsite_tree_sha256",
+        "offsite_attempt_id",
+        "offsite_remote_receipt_key",
+        "offsite_remote_receipt_sha256",
+        "offsite_verified_at",
+        "completed_at",
+    }
+)
+_LOCAL_RESTORE_KEYS = frozenset(
+    {
+        "schema",
+        "checked_at",
+        "snapshot",
+        "source_backup_schema",
+        "deployed_sha",
+        "critical_table_counts",
+        "critical_table_count_floor",
+        "nbs_full_store_audit_contract",
+        "nbs_full_store_audit_result",
+        "nbs_public_revision_store",
+        "palimpsest_china_state_archive_restore",
+        "palimpsest_china_state_audit_contract",
+        "palimpsest_china_state_tree_sha256",
+        "palimpsest_china_active_activation_id",
+        "palimpsest_china_pending_candidate_activation_id",
+        "palimpsest_china_bundle_count",
+        "palimpsest_china_receipt_count",
+        "database_restore",
+        "state_archive_restore",
+        "api_data_archive_restore",
+        "research_only",
+        "can_publish",
+        "can_execute",
     }
 )
 _CANDIDATE_KEYS = frozenset(
@@ -285,6 +357,7 @@ class ActivationPaths:
     python: Path = PRODUCTION_PYTHON
     portable: bool = False
     attest_dir: Path | None = None
+    durability_root: Path | None = None
 
     @property
     def receipts_dir(self) -> Path:
@@ -297,6 +370,14 @@ class ActivationPaths:
     @property
     def pending_marker(self) -> Path:
         return self.state_root / "pending.json"
+
+    @property
+    def resolved_durability_root(self) -> Path:
+        if self.durability_root is not None:
+            return self.durability_root
+        if self.portable:
+            return self.state_root.parent / "palimpsest-china-durability"
+        return PRODUCTION_DURABILITY_ROOT
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +478,16 @@ def _now_text() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _now_text_at_or_after(floor: datetime | None, *, label: str) -> str:
+    """Render wall time only when it does not regress retained authority."""
+
+    rendered = _now_text()
+    now = _timestamp(rendered, label="current system clock")
+    if floor is not None and now < floor:
+        _fail(f"system clock regressed below {label}")
+    return rendered
+
+
 def _digest(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
@@ -408,6 +499,28 @@ def _file_hashes(value: object, *, label: str) -> dict[str, str]:
         name: _sha(value[name], label=f"{label}.{name}")
         for name in sorted(_BUNDLE_FILENAMES)
     }
+
+
+def _local_restore_fields(body: bytes) -> dict[str, str]:
+    try:
+        lines = body.decode("ascii", "strict").splitlines()
+    except UnicodeDecodeError as exc:
+        raise PalimpsestChinaActivationError(
+            "activation durability local restore receipt is not ASCII"
+        ) from exc
+    if not body.endswith(b"\n") or not lines or len(body) > 16 * 1024:
+        _fail("activation durability local restore receipt is invalid")
+    fields: dict[str, str] = {}
+    for line in lines:
+        if line.count("=") != 1:
+            _fail("activation durability local restore receipt has an invalid field")
+        key, value = line.split("=", 1)
+        if not key or key in fields:
+            _fail("activation durability local restore receipt has duplicate fields")
+        fields[key] = value
+    if set(fields) != _LOCAL_RESTORE_KEYS:
+        _fail("activation durability local restore receipt fields changed")
+    return fields
 
 
 def _bundle_id(hashes: Mapping[str, str]) -> str:
@@ -842,9 +955,9 @@ def _validate_bundle(
             _fail(f"installed bundle {name} differs from reviewed input")
 
 
-def _install_bundle(
+def _read_source_bundle(
     source_files: Mapping[str, Path], *, paths: ActivationPaths
-) -> tuple[Path, dict[str, str]]:
+) -> tuple[dict[str, bytes], dict[str, str]]:
     if frozenset(source_files) != _BUNDLE_FILENAMES:
         _fail("activation requires the exact eleven handoff files")
     bodies: dict[str, bytes] = {}
@@ -865,11 +978,20 @@ def _install_bundle(
             modes=frozenset({0o400, 0o600}),
         )
     hashes = {name: _digest(body) for name, body in sorted(bodies.items())}
+    return bodies, hashes
+
+
+def _publish_bundle(
+    bodies: Mapping[str, bytes],
+    hashes: Mapping[str, str],
+    *,
+    paths: ActivationPaths,
+) -> Path:
     identifier = _bundle_id(hashes)
     target = paths.state_root / identifier
     if target.exists() or target.is_symlink():
         _validate_bundle(target, paths=paths, expected=bodies)
-        return target, hashes
+        return target
 
     stage = paths.state_root / f".bundle-stage-{secrets.token_hex(16)}"
     try:
@@ -891,7 +1013,7 @@ def _install_bundle(
             _validate_bundle(target, paths=paths, expected=bodies)
         _fsync_directory(paths.state_root)
         _validate_bundle(target, paths=paths, expected=bodies)
-        return target, hashes
+        return target
     finally:
         if stage.exists() and not stage.is_symlink():
             for name in bodies:
@@ -903,6 +1025,13 @@ def _install_bundle(
                 stage.rmdir()
             except FileNotFoundError:
                 pass
+
+
+def _install_bundle(
+    source_files: Mapping[str, Path], *, paths: ActivationPaths
+) -> tuple[Path, dict[str, str]]:
+    bodies, hashes = _read_source_bundle(source_files, paths=paths)
+    return _publish_bundle(bodies, hashes, paths=paths), hashes
 
 
 def _validate_lock(descriptor: int, path: Path, *, paths: ActivationPaths) -> None:
@@ -1285,15 +1414,12 @@ def _read_receipt(
     return receipt, body
 
 
-def _validate_active(
+def _validate_active_semantics(
     value: Mapping[str, Any],
     *,
     paths: ActivationPaths,
     declared_receipts_dir: Path | None = None,
 ) -> None:
-    _exact_keys(value, _ACTIVE_KEYS, label="active marker")
-    if value["schema"] != ACTIVE_MARKER_SCHEMA:
-        _fail("active marker schema changed")
     for key in ("activation_id", "bundle_id", "receipt_sha256"):
         _sha(value[key], label=f"active marker.{key}")
     _git_sha(value["release_sha"], label="active marker.release_sha")
@@ -1312,6 +1438,73 @@ def _validate_active(
         _fail("active marker receipt path changed")
 
 
+def _validate_legacy_active(
+    value: Mapping[str, Any],
+    *,
+    paths: ActivationPaths,
+    declared_receipts_dir: Path | None = None,
+    label: str = "legacy active marker",
+) -> None:
+    _exact_keys(value, _LEGACY_ACTIVE_KEYS, label=label)
+    if value["schema"] != LEGACY_ACTIVE_MARKER_SCHEMA:
+        _fail(f"{label} schema changed")
+    _validate_active_semantics(
+        value,
+        paths=paths,
+        declared_receipts_dir=declared_receipts_dir,
+    )
+
+
+def _validate_active(
+    value: Mapping[str, Any],
+    *,
+    paths: ActivationPaths,
+    declared_receipts_dir: Path | None = None,
+) -> None:
+    if value.get("schema") == LEGACY_ACTIVE_MARKER_SCHEMA:
+        _validate_legacy_active(
+            value,
+            paths=paths,
+            declared_receipts_dir=declared_receipts_dir,
+        )
+        return
+    _exact_keys(value, _ACTIVE_KEYS, label="active marker")
+    if value["schema"] != ACTIVE_MARKER_SCHEMA:
+        _fail("active marker schema changed")
+    _validate_active_semantics(
+        value,
+        paths=paths,
+        declared_receipts_dir=declared_receipts_dir,
+    )
+    if value["publication_status"] != "provisional":
+        _fail("active marker publication status must remain provisional")
+    legacy_raw = value["legacy_active_marker"]
+    legacy_digest = value["legacy_active_marker_sha256"]
+    if legacy_raw is None and legacy_digest is None:
+        return
+    if not isinstance(legacy_raw, str):
+        _fail("active marker legacy archive must be exact UTF-8 text")
+    try:
+        legacy_body = legacy_raw.encode("utf-8", "strict")
+    except UnicodeEncodeError as exc:
+        raise PalimpsestChinaActivationError(
+            "active marker legacy archive is not strict UTF-8"
+        ) from exc
+    _sha(legacy_digest, label="active marker.legacy_active_marker_sha256")
+    if _digest(legacy_body) != legacy_digest:
+        _fail("active marker legacy archive digest changed")
+    legacy = _strict_json(legacy_body, label="active marker legacy archive")
+    _validate_legacy_active(
+        legacy,
+        paths=paths,
+        declared_receipts_dir=declared_receipts_dir,
+        label="active marker legacy archive",
+    )
+    for key in _LEGACY_ACTIVE_KEYS - {"schema"}:
+        if value[key] != legacy[key]:
+            _fail("active marker legacy semantic projection changed")
+
+
 def _read_active(
     paths: ActivationPaths,
     *,
@@ -1323,7 +1516,7 @@ def _read_active(
     body = _stable_read(
         marker,
         label="active marker",
-        maximum=4096,
+        maximum=MAX_ACTIVE_MARKER_BYTES,
         uid=paths.root_uid,
         gid=paths.root_gid,
         modes=frozenset({0o400}),
@@ -1354,6 +1547,211 @@ def _read_active(
     ):
         _fail("active marker clock falls outside its proved rights interval")
     return active, receipt
+
+
+def _durability_receipt_path(
+    paths: ActivationPaths, *, activation_id: str, tree_sha256: str
+) -> Path:
+    _sha(activation_id, label="durability activation id")
+    _sha(tree_sha256, label="durability state tree")
+    return paths.resolved_durability_root / f"{activation_id}.{tree_sha256}.json"
+
+
+def _validate_durability_receipt(
+    value: Mapping[str, Any],
+    *,
+    active: Mapping[str, Any],
+    activation_receipt: Mapping[str, Any],
+    active_marker_sha256: str,
+    activation_receipt_sha256: str,
+    audit: Mapping[str, Any],
+    expected_path: Path | None = None,
+) -> None:
+    _exact_keys(value, _DURABILITY_KEYS, label="activation durability receipt")
+    if (
+        value["schema"] != DURABILITY_RECEIPT_SCHEMA
+        or value["status"] != "activated_durable"
+    ):
+        _fail("activation durability receipt status changed")
+    for key in (
+        "activation_id",
+        "bundle_id",
+        "active_marker_sha256",
+        "activation_receipt_sha256",
+        "activation_state_audit_sha256",
+        "activation_state_tree_sha256",
+        "local_backup_inventory_sha256",
+        "local_restore_activation_id",
+        "local_restore_tree_sha256",
+        "local_restore_receipt_sha256",
+        "offsite_activation_id",
+        "offsite_tree_sha256",
+        "offsite_remote_receipt_sha256",
+    ):
+        _sha(value[key], label=f"activation durability receipt.{key}")
+    _git_sha(value["release_sha"], label="activation durability receipt.release_sha")
+    if (
+        value["activation_id"] != active["activation_id"]
+        or value["bundle_id"] != active["bundle_id"]
+        or value["active_marker_sha256"] != active_marker_sha256
+        or value["activation_receipt_sha256"] != activation_receipt_sha256
+        or value["activation_state_audit_sha256"] != _digest(_canonical(audit))
+        or value["activation_state_tree_sha256"] != audit.get("tree_sha256")
+        or value["local_restore_activation_id"] != active["activation_id"]
+        or value["local_restore_tree_sha256"] != audit.get("tree_sha256")
+        or value["offsite_activation_id"] != active["activation_id"]
+        or value["offsite_tree_sha256"] != audit.get("tree_sha256")
+    ):
+        _fail("activation durability receipt does not bind the live activation")
+    if value["local_restore_schema"] != "seiche.market-backup-restore-check.v5":
+        _fail("activation durability local restore schema changed")
+    if value["offsite_status_schema"] != "seiche.market-offsite-backup-status.v4":
+        _fail("activation durability offsite status schema changed")
+    snapshot = value["local_backup_snapshot"]
+    if (
+        type(snapshot) is not str
+        or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", snapshot) is None
+        or value["offsite_snapshot"] != snapshot
+    ):
+        _fail("activation durability snapshot identity changed")
+    attempt = value["offsite_attempt_id"]
+    if (
+        type(attempt) is not str
+        or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", attempt) is None
+    ):
+        _fail("activation durability offsite attempt is invalid")
+    remote_key = value["offsite_remote_receipt_key"]
+    if (
+        type(remote_key) is not str
+        or not remote_key.endswith(
+            f"/snapshots/{snapshot}/attempts/{attempt}/RECEIPT.json"
+        )
+        or "/canary/" in remote_key
+    ):
+        _fail("activation durability requires a scheduled offsite receipt")
+    local_checked = _timestamp(
+        value["local_restore_checked_at"],
+        label="activation durability receipt.local_restore_checked_at",
+    )
+    embedded_restore = value["local_restore_receipt"]
+    if type(embedded_restore) is not str:
+        _fail("activation durability local restore receipt is malformed")
+    embedded_restore_body = embedded_restore.encode("utf-8")
+    restore = _local_restore_fields(embedded_restore_body)
+    count_shape = r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+"
+    if (
+        _digest(embedded_restore_body) != value["local_restore_receipt_sha256"]
+        or restore["schema"] != value["local_restore_schema"]
+        or restore["checked_at"] != value["local_restore_checked_at"]
+        or restore["snapshot"] != snapshot
+        or restore["source_backup_schema"] != "seiche.market-backup.v4"
+        or restore["deployed_sha"] != value["release_sha"]
+        or restore["palimpsest_china_state_archive_restore"] != "verified"
+        or restore["palimpsest_china_state_audit_contract"]
+        != "seiche.palimpsest-china-activation-state.v1"
+        or restore["palimpsest_china_state_tree_sha256"] != audit.get("tree_sha256")
+        or restore["palimpsest_china_active_activation_id"] != active["activation_id"]
+        or restore["palimpsest_china_pending_candidate_activation_id"] != "none"
+        or restore["database_restore"] != "pass"
+        or restore["state_archive_restore"] != "pass"
+        or restore["api_data_archive_restore"] != "pass"
+        or restore["research_only"] != "true"
+        or restore["can_publish"] != "false"
+        or restore["can_execute"] != "false"
+        or restore["nbs_full_store_audit_contract"] != "seiche.nbs-full-store-audit.v1"
+        or restore["nbs_full_store_audit_result"]
+        != restore["nbs_public_revision_store"]
+        or restore["nbs_full_store_audit_result"]
+        not in {"not_onboarded", "verified_head"}
+        or re.fullmatch(count_shape, restore["critical_table_counts"]) is None
+        or re.fullmatch(count_shape, restore["critical_table_count_floor"]) is None
+        or re.fullmatch(r"[0-9]+", restore["palimpsest_china_bundle_count"]) is None
+        or re.fullmatch(r"[0-9]+", restore["palimpsest_china_receipt_count"]) is None
+    ):
+        _fail("activation durability embedded local restore proof changed")
+    offsite_verified = _timestamp(
+        value["offsite_verified_at"],
+        label="activation durability receipt.offsite_verified_at",
+    )
+    completed = _timestamp(
+        value["completed_at"], label="activation durability receipt.completed_at"
+    )
+    recorded = _timestamp(
+        activation_receipt["recorded_at"],
+        label="activation receipt.recorded_at",
+    )
+    activated = _timestamp(active["activated_at"], label="active marker.activated_at")
+    if not (recorded <= activated <= local_checked <= offsite_verified <= completed):
+        _fail("activation durability proof chronology regressed")
+    if completed >= _timestamp(
+        activation_receipt["rights_expires_at"],
+        label="activation receipt.rights_expires_at",
+    ):
+        _fail("activation durability completed after serving rights expired")
+    if expected_path is not None and expected_path.name != (
+        f"{active['activation_id']}.{audit['tree_sha256']}.json"
+    ):
+        _fail("activation durability receipt filename changed")
+
+
+def _read_durability_receipt(
+    paths: ActivationPaths,
+    *,
+    active: Mapping[str, Any],
+    activation_receipt: Mapping[str, Any],
+    audit: Mapping[str, Any],
+) -> tuple[dict[str, Any], bytes, Path] | None:
+    active_body = _stable_read(
+        paths.active_marker,
+        label="active marker",
+        maximum=MAX_ACTIVE_MARKER_BYTES,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        modes=frozenset({0o400}),
+    )
+    receipt_path = paths.receipts_dir / f"{active['activation_id']}.json"
+    receipt_body = _stable_read(
+        receipt_path,
+        label="activation receipt",
+        maximum=16 * 1024,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        modes=frozenset({0o400}),
+    )
+    path = _durability_receipt_path(
+        paths,
+        activation_id=active["activation_id"],
+        tree_sha256=audit["tree_sha256"],
+    )
+    if not path.exists() and not path.is_symlink():
+        return None
+    _validate_directory(
+        paths.resolved_durability_root,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o700,
+        label="Palimpsest China durability receipt root",
+        validate_ancestry=not paths.portable,
+    )
+    body = _stable_read(
+        path,
+        label="activation durability receipt",
+        maximum=64 * 1024,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        modes=frozenset({0o400}),
+    )
+    value = _strict_json(body, label="activation durability receipt")
+    _validate_durability_receipt(
+        value,
+        active=active,
+        activation_receipt=activation_receipt,
+        active_marker_sha256=_digest(active_body),
+        activation_receipt_sha256=_digest(receipt_body),
+        audit=audit,
+        expected_path=path,
+    )
+    return value, body, path
 
 
 def _validate_pending(value: Mapping[str, Any]) -> None:
@@ -1419,7 +1817,7 @@ def _remove_controlled_file(
         raise PalimpsestChinaActivationError(f"could not remove {label}") from exc
 
 
-def _render_env(bundle: Path) -> bytes:
+def _render_legacy_env(bundle: Path) -> bytes:
     lines = [
         f"{spec.environment}={bundle / spec.filename}\n" for spec in _BUNDLE_FILE_SPECS
     ]
@@ -1429,6 +1827,12 @@ def _render_env(bundle: Path) -> bytes:
         raise PalimpsestChinaActivationError(
             "runtime bundle path must be ASCII"
         ) from exc
+
+
+def _render_env(bundle: Path) -> bytes:
+    return _render_legacy_env(bundle) + (
+        b"SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS=provisional\n"
+    )
 
 
 def _render_dropin(bundle: Path, *, env_file: Path) -> bytes:
@@ -1548,6 +1952,7 @@ def _assert_projection(
     if (
         economic.get("schema") != "seiche.palimpsest-china-economic-context.v1"
         or economic.get("context_only") is not True
+        or economic.get("publication_status") != "provisional"
         or economic.get("scoring_eligible") is not False
         or economic.get("cn_cny_gauge_eligible") is not False
         or provenance.get("owner_attestation") != "ed25519"
@@ -1697,7 +2102,10 @@ def _systemctl(paths: ActivationPaths, *arguments: str) -> None:
 
 
 def _served_proof(
-    *, paths: ActivationPaths, expected: Mapping[str, Any]
+    *,
+    paths: ActivationPaths,
+    expected: Mapping[str, Any],
+    clock_floor: datetime | None = None,
 ) -> dict[str, Any]:
     files = _file_hashes(expected.get("files"), label="served proof files")
     signer_key_id = _sha(
@@ -1713,16 +2121,23 @@ def _served_proof(
         "rest_signer_key_id": signer_key_id,
         "mcp_files": files,
         "mcp_signer_key_id": signer_key_id,
-        "verified_at": _now_text(),
+        "verified_at": _now_text_at_or_after(
+            clock_floor, label="retained activation proof clock"
+        ),
     }
 
 
 def _restart_and_probe(
-    *, paths: ActivationPaths, expected: Mapping[str, Any] | None
+    *,
+    paths: ActivationPaths,
+    expected: Mapping[str, Any] | None,
+    clock_floor: datetime | None = None,
 ) -> dict[str, Any] | None:
     if paths.portable:
         return (
-            None if expected is None else _served_proof(paths=paths, expected=expected)
+            None
+            if expected is None
+            else _served_proof(paths=paths, expected=expected, clock_floor=clock_floor)
         )
     _systemctl(paths, "daemon-reload")
     _systemctl(paths, "restart", "seiche-api.service")
@@ -1737,6 +2152,7 @@ def _restart_and_probe(
                 else _served_proof(
                     paths=paths,
                     expected=expected,
+                    clock_floor=clock_floor,
                 )
             )
         except PalimpsestChinaActivationError as exc:
@@ -2128,7 +2544,7 @@ def audit_activation_state(
         body = _stable_read(
             state_root / name,
             label=f"activation-state {name}",
-            maximum=8192,
+            maximum=(MAX_ACTIVE_MARKER_BYTES if name == "active.json" else 8192),
             uid=root_uid,
             gid=root_gid,
             modes=frozenset({0o400}),
@@ -2180,6 +2596,193 @@ def audit_activation_state(
     }
 
 
+def activation_durability_status(paths: ActivationPaths) -> dict[str, Any]:
+    """Return the exact live-tree durability overlay without mutating state.
+
+    ``paths.release_sha`` identifies the trusted code performing this audit;
+    the active marker and receipt retain the historical release that performed
+    activation. A later signed Seiche release does not relabel unchanged data.
+    """
+
+    active_pair = _read_active(paths)
+    if active_pair is None:
+        return {
+            "schema": "seiche.palimpsest-china-durability-status.v1",
+            "status": "inactive",
+            "activation_id": None,
+            "tree_sha256": None,
+            "durability_receipt_path": None,
+            "durability_receipt_sha256": None,
+        }
+    active, activation_receipt = active_pair
+    audit = audit_activation_state(
+        paths.state_root,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+        declared_state_root=(
+            paths.state_root if paths.portable else PRODUCTION_STATE_ROOT
+        ),
+    )
+    if audit["active_activation_id"] != active["activation_id"]:
+        _fail("live activation and canonical state audit disagree")
+    if audit["pending_candidate_activation_id"] is not None:
+        _fail("pending activation cannot be declared durable")
+    durable = None
+    if active["schema"] == ACTIVE_MARKER_SCHEMA:
+        durable = _read_durability_receipt(
+            paths,
+            active=active,
+            activation_receipt=activation_receipt,
+            audit=audit,
+        )
+    return {
+        "schema": "seiche.palimpsest-china-durability-status.v1",
+        "status": "activated_durable" if durable is not None else "provisional",
+        "activation_id": active["activation_id"],
+        "tree_sha256": audit["tree_sha256"],
+        "durability_receipt_path": str(durable[2]) if durable is not None else None,
+        "durability_receipt_sha256": (
+            _digest(durable[1]) if durable is not None else None
+        ),
+    }
+
+
+def seal_activation_durability(
+    paths: ActivationPaths, evidence: Mapping[str, Any]
+) -> tuple[dict[str, Any], bytes, Path]:
+    """Publish one immutable exact-live-tree receipt outside the backed-up tree."""
+
+    expected_evidence = _DURABILITY_KEYS - {
+        "schema",
+        "status",
+        "activation_id",
+        "bundle_id",
+        "release_sha",
+        "active_marker_sha256",
+        "activation_receipt_sha256",
+        "activation_state_audit_sha256",
+        "activation_state_tree_sha256",
+        "completed_at",
+    }
+    _exact_keys(evidence, expected_evidence, label="activation durability evidence")
+    active_pair = _read_active(paths)
+    if active_pair is None:
+        _fail("inactive Palimpsest China state cannot be sealed")
+    active, activation_receipt = active_pair
+    if active["schema"] != ACTIVE_MARKER_SCHEMA:
+        _fail(
+            "legacy active marker must complete its one-way v2 migration before sealing"
+        )
+    audit = audit_activation_state(
+        paths.state_root,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+        declared_state_root=(
+            paths.state_root if paths.portable else PRODUCTION_STATE_ROOT
+        ),
+    )
+    if (
+        audit["active_activation_id"] != active["activation_id"]
+        or audit["pending_candidate_activation_id"] is not None
+    ):
+        _fail("live activation state is not sealable")
+    _validate_directory(
+        paths.resolved_durability_root,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o700,
+        label="Palimpsest China durability receipt root",
+        validate_ancestry=not paths.portable,
+    )
+    active_body = _stable_read(
+        paths.active_marker,
+        label="active marker",
+        maximum=MAX_ACTIVE_MARKER_BYTES,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        modes=frozenset({0o400}),
+    )
+    activation_receipt_path = paths.receipts_dir / f"{active['activation_id']}.json"
+    activation_receipt_body = _stable_read(
+        activation_receipt_path,
+        label="activation receipt",
+        maximum=16 * 1024,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        modes=frozenset({0o400}),
+    )
+    floor = max(
+        _timestamp(
+            activation_receipt["recorded_at"],
+            label="activation receipt.recorded_at",
+        ),
+        _timestamp(active["activated_at"], label="active marker.activated_at"),
+        _timestamp(
+            evidence["local_restore_checked_at"],
+            label="activation durability evidence.local_restore_checked_at",
+        ),
+        _timestamp(
+            evidence["offsite_verified_at"],
+            label="activation durability evidence.offsite_verified_at",
+        ),
+    )
+    payload = {
+        "schema": DURABILITY_RECEIPT_SCHEMA,
+        "status": "activated_durable",
+        "activation_id": active["activation_id"],
+        "bundle_id": active["bundle_id"],
+        # The marker and immutable activation receipt retain the historical
+        # release that first published these exact bytes. The durability proof
+        # is produced by the currently deployed, independently verified
+        # release and must bind that restore/offsite execution identity.
+        "release_sha": paths.release_sha,
+        "active_marker_sha256": _digest(active_body),
+        "activation_receipt_sha256": _digest(activation_receipt_body),
+        "activation_state_audit_sha256": _digest(_canonical(audit)),
+        "activation_state_tree_sha256": audit["tree_sha256"],
+        **dict(evidence),
+        "completed_at": _now_text_at_or_after(
+            floor, label="activation durability evidence"
+        ),
+    }
+    path = _durability_receipt_path(
+        paths,
+        activation_id=active["activation_id"],
+        tree_sha256=audit["tree_sha256"],
+    )
+    _validate_durability_receipt(
+        payload,
+        active=active,
+        activation_receipt=activation_receipt,
+        active_marker_sha256=_digest(active_body),
+        activation_receipt_sha256=_digest(activation_receipt_body),
+        audit=audit,
+        expected_path=path,
+    )
+    body = _canonical(payload)
+    _publish_immutable_atomic(
+        path,
+        body,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o400,
+        portable=paths.portable,
+    )
+    loaded = _read_durability_receipt(
+        paths,
+        active=active,
+        activation_receipt=activation_receipt,
+        audit=audit,
+    )
+    if loaded is None or loaded[0] != payload or loaded[1] != body:
+        _fail("activation durability receipt could not be read back exactly")
+    return loaded
+
+
 def _assert_config_consistency(
     active_receipt: tuple[dict[str, Any], dict[str, Any]] | None,
     *,
@@ -2214,10 +2817,110 @@ def _assert_config_consistency(
         gid=paths.root_gid,
         modes=frozenset({0o644}),
     )
-    if env != _render_env(bundle) or dropin != _render_dropin(
+    expected_envs = {_render_env(bundle)}
+    if active["schema"] == LEGACY_ACTIVE_MARKER_SCHEMA:
+        # A hard stop after the migration's provisional environment commit but
+        # before its atomic marker rename leaves this exact mixed state. It is
+        # safe only as a one-way retry input for the same locked v1 marker.
+        expected_envs.add(_render_legacy_env(bundle))
+    if env not in expected_envs or dropin != _render_dropin(
         bundle, env_file=paths.env_file
     ):
         _fail("active marker and API configuration disagree")
+
+
+def _migrate_legacy_active(
+    paths: ActivationPaths,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Upgrade one exact v1 marker to provisional v2 under activation locks."""
+
+    current = _read_active(paths)
+    if current is None or current[0]["schema"] == ACTIVE_MARKER_SCHEMA:
+        return current
+    active, _receipt = current
+    if active["schema"] != LEGACY_ACTIVE_MARKER_SCHEMA:
+        _fail("unknown active marker cannot be migrated")
+    legacy_body = _canonical(active)
+    bundle = paths.state_root / active["bundle_id"]
+    _validate_bundle_hashes(bundle, expected=active["files"], paths=paths)
+    expected_dropin = _render_dropin(bundle, env_file=paths.env_file)
+    current_env = _configured_body(
+        paths.env_file,
+        label="legacy active Palimpsest China environment",
+        uid=paths.root_uid,
+        gid=paths.api_gid,
+        mode=0o640,
+    )
+    current_dropin = _configured_body(
+        paths.dropin_file,
+        label="legacy active Palimpsest China API drop-in",
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o644,
+    )
+    if current_env not in {_render_legacy_env(bundle), _render_env(bundle)}:
+        _fail("legacy active marker and API environment disagree")
+    if current_dropin != expected_dropin:
+        _fail("legacy active marker and API drop-in disagree")
+    pending = _read_pending(paths)
+    if pending is not None and (
+        pending["candidate_activation_id"] != active["activation_id"]
+        or pending["candidate_bundle_id"] != active["bundle_id"]
+        or pending["candidate_files"] != active["files"]
+    ):
+        _fail("legacy active migration found a different pending activation")
+    migrated = {
+        **active,
+        "schema": ACTIVE_MARKER_SCHEMA,
+        "publication_status": "provisional",
+        "legacy_active_marker": legacy_body.decode("utf-8", "strict"),
+        "legacy_active_marker_sha256": _digest(legacy_body),
+    }
+    _validate_active(migrated, paths=paths)
+    try:
+        _atomic_write(
+            paths.env_file,
+            _render_env(bundle),
+            uid=paths.root_uid,
+            gid=paths.api_gid,
+            mode=0o640,
+        )
+        _atomic_write(
+            paths.dropin_file,
+            expected_dropin,
+            uid=paths.root_uid,
+            gid=paths.root_gid,
+            mode=0o644,
+        )
+        _restart_and_probe(paths=paths, expected=_active_expected(current))
+        _atomic_write(
+            paths.active_marker,
+            _canonical(migrated),
+            uid=paths.root_uid,
+            gid=paths.root_gid,
+            mode=0o400,
+        )
+    except BaseException as migration_error:
+        try:
+            observed = _read_active(paths)
+        except BaseException as audit_error:
+            raise PalimpsestChinaActivationError(
+                "legacy active migration left an unauditable marker"
+            ) from audit_error
+        if observed is not None and observed[0] == migrated:
+            return observed
+        if observed is not None and observed[0] == active:
+            raise PalimpsestChinaActivationError(
+                "legacy active marker remains provisional; retry its exact ID "
+                "to complete the one-way v2 migration"
+            ) from migration_error
+        raise PalimpsestChinaActivationError(
+            "legacy active marker changed unexpectedly during migration"
+        ) from migration_error
+    observed = _read_active(paths)
+    if observed is None or observed[0] != migrated:
+        _fail("migrated v2 active marker could not be read back exactly")
+    return observed
 
 
 def _configured_body(
@@ -2258,6 +2961,10 @@ def _recover_pending(paths: ActivationPaths) -> None:
         if active is None or active[0]["files"] != pending["candidate_files"]:
             _fail("completed pending activation does not bind its candidate files")
         _assert_config_consistency(active, paths=paths)
+        if active[0]["schema"] == LEGACY_ACTIVE_MARKER_SCHEMA:
+            # The locked one-way migration below upgrades the marker and API
+            # environment before this pending record can be cleared.
+            return
         _restart_and_probe(paths=paths, expected=_active_expected(active))
         _remove_controlled_file(
             paths.pending_marker,
@@ -2275,8 +2982,15 @@ def _recover_pending(paths: ActivationPaths) -> None:
         paths.state_root / active[0]["bundle_id"] if active is not None else None
     )
     candidate_env = _render_env(candidate_bundle)
+    legacy_candidate_env = _render_legacy_env(candidate_bundle)
     candidate_dropin = _render_dropin(candidate_bundle, env_file=paths.env_file)
-    previous_env = _render_env(previous_bundle) if previous_bundle is not None else None
+    previous_env = None
+    if previous_bundle is not None:
+        previous_env = (
+            _render_legacy_env(previous_bundle)
+            if active is not None and active[0]["schema"] == LEGACY_ACTIVE_MARKER_SCHEMA
+            else _render_env(previous_bundle)
+        )
     previous_dropin = (
         _render_dropin(previous_bundle, env_file=paths.env_file)
         if previous_bundle is not None
@@ -2296,7 +3010,12 @@ def _recover_pending(paths: ActivationPaths) -> None:
         gid=paths.root_gid,
         mode=0o644,
     )
-    if current_env not in {None, candidate_env, previous_env} or current_dropin not in {
+    if current_env not in {
+        None,
+        candidate_env,
+        legacy_candidate_env,
+        previous_env,
+    } or current_dropin not in {
         None,
         candidate_dropin,
         previous_dropin,
@@ -2352,7 +3071,8 @@ def _receipt_floor(
     *,
     bundle_id: str,
     paths: ActivationPaths,
-) -> None:
+    active: tuple[dict[str, Any], dict[str, Any]] | None,
+) -> datetime:
     """Reject a newly accepted bundle older than any retained activation."""
 
     try:
@@ -2362,11 +3082,16 @@ def _receipt_floor(
             "activation receipts cannot be enumerated"
         ) from exc
     accepted_at = _timestamp(candidate["accepted_at"], label="candidate.accepted_at")
+    clock_floor = accepted_at
     run_id = candidate["producer_workflow_run_id"]
     for entry in entries:
         if entry.name.startswith(".") or not entry.name.endswith(".json"):
             _fail("activation receipts directory contains an unexpected member")
         receipt, _body = _read_receipt(entry, paths=paths)
+        clock_floor = max(
+            clock_floor,
+            _timestamp(receipt["recorded_at"], label="retained receipt.recorded_at"),
+        )
         if receipt["bundle_id"] == bundle_id:
             continue
         if accepted_at <= _timestamp(
@@ -2375,6 +3100,12 @@ def _receipt_floor(
             _fail("candidate acceptance clock would roll back retained authority")
         if run_id <= receipt["producer_workflow_run_id"]:
             _fail("candidate producer run id would roll back retained authority")
+    if active is not None:
+        clock_floor = max(
+            clock_floor,
+            _timestamp(active[0]["activated_at"], label="retained active.activated_at"),
+        )
+    return clock_floor
 
 
 def _create_receipt(
@@ -2383,6 +3114,7 @@ def _create_receipt(
     bundle_id: str,
     previous: tuple[dict[str, Any], dict[str, Any]] | None,
     runtime_proof: Mapping[str, Any],
+    clock_floor: datetime,
     paths: ActivationPaths,
 ) -> tuple[dict[str, Any], bytes, Path]:
     previous_digest: str | None = None
@@ -2420,7 +3152,9 @@ def _create_receipt(
         runtime_proof.get("verified_at"),
         label="runtime proof.verified_at",
     )
-    recorded_at = _now_text()
+    recorded_at = _now_text_at_or_after(
+        max(clock_floor, verified_at), label="retained activation receipt clock"
+    )
     if verified_at > _timestamp(recorded_at, label="activation recorded_at"):
         _fail("runtime proof is later than its activation receipt")
     receipt = {
@@ -2452,6 +3186,7 @@ def _validate_activation_paths(paths: ActivationPaths) -> None:
             and paths.dropin_file == PRODUCTION_DROPIN_FILE
             and paths.deploy_lock == PRODUCTION_DEPLOY_LOCK
             and paths.activation_lock == PRODUCTION_ACTIVATION_LOCK
+            and paths.resolved_durability_root == PRODUCTION_DURABILITY_ROOT
             and paths.runtime_release
             == PRODUCTION_RUNTIME_ROOT / "releases" / paths.release_sha
             and paths.python == PRODUCTION_PYTHON
@@ -2494,6 +3229,19 @@ def _validate_activation_paths(paths: ActivationPaths) -> None:
         mode=0o700,
         label="Palimpsest China receipts root",
     )
+    durability_root_exists = (
+        paths.resolved_durability_root.exists()
+        or paths.resolved_durability_root.is_symlink()
+    )
+    if not paths.portable or durability_root_exists:
+        _validate_directory(
+            paths.resolved_durability_root,
+            uid=paths.root_uid,
+            gid=paths.root_gid,
+            mode=0o700,
+            label="Palimpsest China durability receipt root",
+            validate_ancestry=not paths.portable,
+        )
     _validate_directory(
         paths.env_file.parent,
         uid=paths.root_uid,
@@ -2754,34 +3502,82 @@ def activate_bundle(
         with _exclusive_lock(paths.activation_lock, paths=paths, create=True):
             _cleanup_activation_stages(paths)
             _recover_pending(paths)
-            bundle, hashes = _install_bundle(sources.files(), paths=paths)
-            candidate = _verify_candidate(bundle, hashes=hashes, paths=paths)
+            _migrate_legacy_active(paths)
+            _recover_pending(paths)
+            bodies, hashes = _read_source_bundle(sources.files(), paths=paths)
             identifier = _bundle_id(hashes)
-            if bundle.name != identifier:
-                _fail("bundle identity changed after verification")
-
             previous = _read_active(paths)
             _assert_config_consistency(previous, paths=paths)
-            expected = {
-                "files": dict(hashes),
-                "signer_key_id": candidate["signer_key_id"],
-            }
             current_activation_id = _activation_id(
                 bundle_id=identifier,
                 release_sha=paths.release_sha,
             )
+            same_live_bundle = (
+                previous is not None
+                and previous[0]["bundle_id"] == identifier
+                and previous[0]["files"] == hashes
+            )
             if (
                 previous is not None
-                and previous[0]["activation_id"] == current_activation_id
+                and previous[0]["activation_id"] != current_activation_id
+                and not same_live_bundle
+                and activation_durability_status(paths)["status"] != "activated_durable"
             ):
-                _restart_and_probe(paths=paths, expected=expected)
+                _fail(
+                    "a different activation cannot replace the live provisional "
+                    "activation; resume its exact ID first"
+                )
+            bundle = _publish_bundle(bodies, hashes, paths=paths)
+            candidate = _verify_candidate(bundle, hashes=hashes, paths=paths)
+            if bundle.name != identifier:
+                _fail("bundle identity changed after verification")
+            if same_live_bundle and previous is not None:
+                previous_receipt = previous[1]
+                for key in (
+                    "files",
+                    "producer_repository",
+                    "producer_sha",
+                    "producer_workflow_run_id",
+                    "signer_key_id",
+                    "accepted_at",
+                    "rights_expires_at",
+                ):
+                    if candidate[key] != previous_receipt[key]:
+                        _fail(
+                            "same live bundle verification differs from its "
+                            "immutable activation receipt"
+                        )
+            expected = {
+                "files": dict(hashes),
+                "signer_key_id": candidate["signer_key_id"],
+            }
+            clock_floor = _receipt_floor(
+                candidate,
+                bundle_id=identifier,
+                paths=paths,
+                active=previous,
+            )
+            if previous is not None and (
+                previous[0]["activation_id"] == current_activation_id
+                or same_live_bundle
+            ):
+                _restart_and_probe(
+                    paths=paths,
+                    expected=expected,
+                    clock_floor=clock_floor,
+                )
+                durability = activation_durability_status(paths)
                 return {
                     "schema": ACTIVE_MARKER_SCHEMA,
-                    "status": "already_active",
+                    "status": (
+                        "already_activated_durable"
+                        if durability["status"] == "activated_durable"
+                        else "already_active_provisional"
+                    ),
                     "active": previous[0],
                     "receipt": previous[1],
+                    "durability": durability,
                 }
-            _receipt_floor(candidate, bundle_id=identifier, paths=paths)
 
             snapshots = (
                 _snapshot(
@@ -2803,7 +3599,7 @@ def activate_bundle(
                     uid=paths.root_uid,
                     gid=paths.root_gid,
                     mode=0o400,
-                    maximum=4096,
+                    maximum=MAX_ACTIVE_MARKER_BYTES,
                 ),
             )
             pending = {
@@ -2814,7 +3610,9 @@ def activate_bundle(
                 "previous_activation_id": (
                     previous[0]["activation_id"] if previous is not None else None
                 ),
-                "started_at": _now_text(),
+                "started_at": _now_text_at_or_after(
+                    clock_floor, label="retained activation clock"
+                ),
             }
             _validate_pending(pending)
             _atomic_write(
@@ -2825,6 +3623,7 @@ def activate_bundle(
                 mode=0o400,
             )
             changed = False
+            marker_committed = False
             try:
                 _atomic_write(
                     paths.env_file,
@@ -2841,7 +3640,11 @@ def activate_bundle(
                     gid=paths.root_gid,
                     mode=0o644,
                 )
-                runtime_proof = _restart_and_probe(paths=paths, expected=expected)
+                runtime_proof = _restart_and_probe(
+                    paths=paths,
+                    expected=expected,
+                    clock_floor=clock_floor,
+                )
                 if runtime_proof is None:
                     _fail("candidate activation did not produce a REST/MCP proof")
                 receipt, receipt_body, receipt_path = _create_receipt(
@@ -2849,9 +3652,19 @@ def activate_bundle(
                     bundle_id=identifier,
                     previous=previous,
                     runtime_proof=runtime_proof,
+                    clock_floor=clock_floor,
                     paths=paths,
                 )
-                activated_at = _now_text()
+                activated_at = _now_text_at_or_after(
+                    max(
+                        clock_floor,
+                        _timestamp(
+                            receipt["recorded_at"],
+                            label="activation receipt.recorded_at",
+                        ),
+                    ),
+                    label="retained activation clock",
+                )
                 activated_at_value = _timestamp(
                     activated_at,
                     label="active marker.activated_at",
@@ -2876,6 +3689,9 @@ def activate_bundle(
                     "receipt_sha256": _digest(receipt_body),
                     "files": dict(hashes),
                     "activated_at": activated_at,
+                    "publication_status": "provisional",
+                    "legacy_active_marker": None,
+                    "legacy_active_marker_sha256": None,
                 }
                 _validate_active(marker, paths=paths)
                 _atomic_write(
@@ -2885,6 +3701,7 @@ def activate_bundle(
                     gid=paths.root_gid,
                     mode=0o400,
                 )
+                marker_committed = True
                 published = _read_active(paths)
                 if (
                     published is None
@@ -2893,6 +3710,11 @@ def activate_bundle(
                 ):
                     _fail("published active marker could not be read back exactly")
             except BaseException as activation_error:
+                if marker_committed:
+                    raise PalimpsestChinaActivationError(
+                        "activation marker committed; live API remains provisional and "
+                        f"must be resumed without rollback: {activation_error}"
+                    ) from activation_error
                 if not changed:
                     raise
                 rollback_error: BaseException | None = None
@@ -2939,9 +3761,10 @@ def activate_bundle(
 
             return {
                 "schema": ACTIVE_MARKER_SCHEMA,
-                "status": "activated",
+                "status": "activated_provisional",
                 "active": marker,
                 "receipt": receipt,
+                "durability": activation_durability_status(paths),
             }
 
 
@@ -2949,6 +3772,8 @@ __all__ = [
     "ACTIVATION_RECEIPT_SCHEMA",
     "ACTIVE_MARKER_SCHEMA",
     "BACKUP_STATE_SCHEMA",
+    "DURABILITY_RECEIPT_SCHEMA",
+    "LEGACY_ACTIVE_MARKER_SCHEMA",
     "ActivationPaths",
     "BundleSources",
     "CANDIDATE_SCHEMA",
@@ -2956,14 +3781,18 @@ __all__ = [
     "PRODUCTION_ACTIVATION_LOCK",
     "PRODUCTION_API_URL",
     "PRODUCTION_DEPLOY_LOCK",
+    "PRODUCTION_DURABILITY_ROOT",
     "PRODUCTION_DROPIN_FILE",
     "PRODUCTION_ENV_FILE",
     "PRODUCTION_PYTHON",
     "PRODUCTION_RUNTIME_ROOT",
     "PRODUCTION_STATE_ROOT",
+    "PRODUCTION_TRANSACTION_LOCK",
     "RUNTIME_PROOF_SCHEMA",
     "PalimpsestChinaActivationError",
     "activate_bundle",
+    "activation_durability_status",
     "audit_activation_state",
     "guarded_verify_main",
+    "seal_activation_durability",
 ]

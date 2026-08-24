@@ -1429,7 +1429,8 @@ jobs:
           EVIDENCE_ROOT: ${{ steps.export.outputs.evidence_root }}
           SNAPSHOT_ID: ${{ steps.export.outputs.snapshot_id }}
           RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
-          RESTORE_DSN: postgresql://postgres:phase6-restore-only@127.0.0.1:5432/postgres
+          PGPASSWORD: phase6-restore-only
+          RESTORE_DSN: postgresql://postgres@127.0.0.1:5432/postgres
         run: |
           set -euo pipefail
           cd "$EVIDENCE_ROOT"
@@ -1437,6 +1438,7 @@ jobs:
             PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
           import json
           import os
+          import shutil
           from pathlib import Path
 
           from seiche import stateful_migration as migration
@@ -1467,18 +1469,20 @@ jobs:
               raise SystemExit("reverse-restore Palimpsest China state differs")
           shutil.rmtree(proof_root)
           PY
-          PGPASSWORD=phase6-restore-only docker run --rm --network host \
+          docker run --rm --network host --env PGPASSWORD \
             postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
             psql --host 127.0.0.1 --username postgres --dbname postgres \
               --set ON_ERROR_STOP=1 --command \
               "CREATE DATABASE seiche_phase6_restore TEMPLATE template0 ENCODING 'UTF8';"
           docker run --rm --network host \
+            --env PGPASSWORD \
             --volume "$EVIDENCE_ROOT/bundle:/recovery:ro" \
             postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
             pg_restore --exit-on-error --no-owner --no-privileges \
-              --dbname='postgresql://postgres:phase6-restore-only@127.0.0.1:5432/seiche_phase6_restore' \
+              --host 127.0.0.1 --username postgres \
+              --dbname=seiche_phase6_restore \
               /recovery/seiche.dump
-          RESTORE_TARGET_DSN='postgresql://postgres:phase6-restore-only@127.0.0.1:5432/seiche_phase6_restore' \
+          RESTORE_TARGET_DSN='postgresql://postgres@127.0.0.1:5432/seiche_phase6_restore' \
             PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
           import hashlib
           import json

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import errno
 import fcntl
@@ -12,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -43,6 +46,98 @@ def _write(path: Path, body: bytes) -> Path:
     return path
 
 
+def _launcher_restore_status(
+    *, activation_id: str, tree_sha256: str, snapshot: str
+) -> dict[str, str]:
+    return {
+        "schema": "seiche.market-backup-restore-check.v5",
+        "checked_at": "2026-08-24T01:02:03Z",
+        "snapshot": snapshot,
+        "source_backup_schema": "seiche.market-backup.v4",
+        "deployed_sha": RELEASE_SHA,
+        "critical_table_counts": "1|2|3|4",
+        "critical_table_count_floor": "1|2|3|4",
+        "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
+        "nbs_full_store_audit_result": "not_onboarded",
+        "nbs_public_revision_store": "not_onboarded",
+        "palimpsest_china_state_archive_restore": "verified",
+        "palimpsest_china_state_audit_contract": (
+            "seiche.palimpsest-china-activation-state.v1"
+        ),
+        "palimpsest_china_state_tree_sha256": tree_sha256,
+        "palimpsest_china_active_activation_id": activation_id,
+        "palimpsest_china_pending_candidate_activation_id": "none",
+        "palimpsest_china_bundle_count": "1",
+        "palimpsest_china_receipt_count": "1",
+        "database_restore": "pass",
+        "state_archive_restore": "pass",
+        "api_data_archive_restore": "pass",
+        "research_only": "true",
+        "can_publish": "false",
+        "can_execute": "false",
+    }
+
+
+def _launcher_offsite_status(
+    *, activation_id: str, tree_sha256: str, snapshot: str, inventory: str
+) -> dict[str, object]:
+    attempt = "20260824T010203Z-123"
+    remote_key = f"proof/snapshots/{snapshot}/attempts/{attempt}/RECEIPT.json"
+    destination = {
+        "id": "primary",
+        "endpoint": "https://example.invalid",
+        "region": "hel1",
+        "bucket": "recovery",
+        "prefix": "proof",
+    }
+    common = {
+        "mode": "scheduled",
+        "attempt_id": attempt,
+        "snapshot_id": snapshot,
+        "source_revision": RELEASE_SHA,
+        "bucket": "recovery",
+        "prefix": "proof",
+        "key_id": "key-v1",
+        "destination": destination,
+        "ciphertext_sha256": "2" * 64,
+        "ciphertext_bytes": 1234,
+        "ciphertext_version_id": "archive-version",
+        "ciphertext_etag": '"1234567890abcdef"',
+        "checksum_version_id": "checksum-version",
+        "checksum_etag": '"abcdef1234567890"',
+        "source_inventory_sha256": inventory,
+        "source_content_set_sha256": "3" * 64,
+        "source_backup_schema": "seiche.market-backup.v4",
+        "nbs_state_root": "/var/lib/seiche-nbs",
+        "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
+        "nbs_full_store_audit_result": "required_at_restore",
+        "palimpsest_china_state_root": "/var/lib/seiche-palimpsest-china",
+        "palimpsest_china_state_audit_contract": (
+            "seiche.palimpsest-china-activation-state.v1"
+        ),
+        "palimpsest_china_state_tree_sha256": tree_sha256,
+        "palimpsest_china_state": "active",
+        "palimpsest_china_active_activation_id": activation_id,
+        "palimpsest_china_pending_candidate_activation_id": None,
+        "object_lock": {"days": 90, "mode": "COMPLIANCE"},
+        "remote_receipt_key": remote_key,
+        "remote_receipt_sha256": "4" * 64,
+        "remote_receipt_version_id": "receipt-version",
+        "remote_receipt_etag": '"fedcba0987654321"',
+        "restore_verified": True,
+    }
+    success = {**common, "verified_at": "2026-08-24T01:03:04Z"}
+    return {
+        "schema": "seiche.market-offsite-backup-status.v4",
+        "status": "success",
+        "observed_at": "2026-08-24T01:03:04Z",
+        "provider": "hetzner-object-storage",
+        "failure_class": None,
+        "last_success": success,
+        **common,
+    }
+
+
 def test_launcher_recreates_boot_lost_deploy_lock_and_holds_it(
     tmp_path: Path,
 ) -> None:
@@ -70,6 +165,138 @@ def test_launcher_recreates_boot_lost_deploy_lock_and_holds_it(
         if contender >= 0:
             os.close(contender)
         os.close(descriptor)
+
+
+def test_launcher_completes_exact_restore_offsite_and_final_live_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _load_launcher()
+    activation_id = "5" * 64
+    tree_sha256 = "6" * 64
+    inventory = "7" * 64
+    snapshot = "20260824T010000Z"
+    audit = {
+        "schema": "seiche.palimpsest-china-activation-state.v1",
+        "state_root": "/var/lib/seiche-palimpsest-china",
+        "tree_sha256": tree_sha256,
+        "bundles": ["8" * 64],
+        "receipts": [activation_id],
+        "active_activation_id": activation_id,
+        "pending_candidate_activation_id": None,
+    }
+    restore_body = (
+        "".join(
+            f"{key}={value}\n"
+            for key, value in _launcher_restore_status(
+                activation_id=activation_id,
+                tree_sha256=tree_sha256,
+                snapshot=snapshot,
+            ).items()
+        )
+    ).encode()
+    offsite = _launcher_offsite_status(
+        activation_id=activation_id,
+        tree_sha256=tree_sha256,
+        snapshot=snapshot,
+        inventory=inventory,
+    )
+    offsite_body = (
+        json.dumps(offsite, allow_nan=False, separators=(",", ":"), sort_keys=True)
+        + "\n"
+    ).encode()
+    receipt_body = b'{"sealed":true}\n'
+    receipt_path = tmp_path / "durability.json"
+    calls: list[str] = []
+    status_calls = 0
+
+    def durability_status(_paths: object) -> dict[str, object]:
+        nonlocal status_calls
+        status_calls += 1
+        if status_calls == 1:
+            return {
+                "status": "provisional",
+                "activation_id": activation_id,
+                "tree_sha256": tree_sha256,
+            }
+        return {
+            "status": "activated_durable",
+            "activation_id": activation_id,
+            "tree_sha256": tree_sha256,
+            "durability_receipt_path": str(receipt_path),
+            "durability_receipt_sha256": hashlib.sha256(receipt_body).hexdigest(),
+        }
+
+    def seal(_paths: object, evidence: dict[str, object]):
+        assert evidence["local_backup_inventory_sha256"] == inventory
+        assert evidence["offsite_remote_receipt_sha256"] == "4" * 64
+        embedded_restore = evidence["local_restore_receipt"]
+        assert isinstance(embedded_restore, str)
+        assert (
+            hashlib.sha256(embedded_restore.encode("ascii")).hexdigest()
+            == evidence["local_restore_receipt_sha256"]
+        )
+        receipt = {"activation_id": activation_id}
+        return receipt, receipt_body, receipt_path
+
+    fake_activation = SimpleNamespace(
+        activation_durability_status=durability_status,
+        audit_activation_state=lambda *_args, **_kwargs: dict(audit),
+        seal_activation_durability=seal,
+    )
+    paths = SimpleNamespace(root_uid=0, root_gid=0, api_uid=10001, api_gid=10001)
+    monkeypatch.setattr(launcher, "_release_sha", lambda: RELEASE_SHA)
+    monkeypatch.setattr(launcher, "_snapshot_id", lambda: snapshot)
+    monkeypatch.setattr(launcher, "_write_durability_request", lambda _value: None)
+    monkeypatch.setattr(launcher, "_remove_durability_request", lambda: None)
+    monkeypatch.setattr(
+        launcher,
+        "_start_unit",
+        lambda unit: calls.append(unit),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_read_snapshot_audit",
+        lambda _snapshot: (dict(audit), inventory),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_stable_read",
+        lambda path, **_kwargs: (
+            restore_body if path == launcher.RESTORE_STATUS else offsite_body
+        ),
+    )
+
+    result = launcher._run_activation_durability(fake_activation, paths)
+
+    assert result["status"] == "activated_durable"
+    assert calls == list(launcher.DURABILITY_UNITS)
+    assert status_calls == 2
+
+
+def test_launcher_durable_retry_removes_a_crash_stale_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _load_launcher()
+    status = {
+        "status": "activated_durable",
+        "activation_id": "5" * 64,
+        "tree_sha256": "6" * 64,
+    }
+    removed: list[bool] = []
+    fake_activation = SimpleNamespace(
+        activation_durability_status=lambda _paths: status
+    )
+    monkeypatch.setattr(
+        launcher, "_remove_durability_request", lambda: removed.append(True)
+    )
+    monkeypatch.setattr(
+        launcher,
+        "_start_unit",
+        lambda _unit: pytest.fail("durable retry must not start a backup unit"),
+    )
+
+    assert launcher._run_activation_durability(fake_activation, object()) is status
+    assert removed == [True]
 
 
 def _market_lock_fixture(launcher: object, tmp_path: Path) -> Path:
@@ -173,6 +400,39 @@ def test_launcher_rejects_unlocked_or_wrong_inode_market_descriptor(
     finally:
         os.close(unlocked)
         os.close(wrong_descriptor)
+
+
+def test_launcher_reuses_the_exact_locked_activation_transaction_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _load_launcher()
+    lock_root = tmp_path / "seiche-deploy"
+    lock_root.mkdir(mode=0o700)
+    target = lock_root / "palimpsest-china-transaction.lock"
+    launcher.TRANSACTION_LOCK = target  # type: ignore[attr-defined]
+    descriptor = launcher._open_transaction_lock(  # type: ignore[attr-defined]
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+    contender = -1
+    try:
+        monkeypatch.setenv(
+            launcher.TRANSACTION_LOCK_FD_ENV,  # type: ignore[attr-defined]
+            str(descriptor),
+        )
+        inherited = launcher._inherited_transaction_lock(  # type: ignore[attr-defined]
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+        assert inherited == descriptor
+        contender = os.open(target, os.O_RDWR | os.O_NOFOLLOW)
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        if contender >= 0:
+            os.close(contender)
+        os.close(descriptor)
 
 
 @pytest.mark.parametrize("unsafe", ("writable", "symlink"))
@@ -373,6 +633,9 @@ def _paths(tmp_path: Path) -> activation.ActivationPaths:
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o755)
     runtime.chmod(0o755)
+    durability = tmp_path / "durability"
+    durability.mkdir(mode=0o700)
+    durability.chmod(0o700)
     return activation.ActivationPaths(
         state_root=state,
         env_file=environment / "palimpsest-china.env",
@@ -388,6 +651,7 @@ def _paths(tmp_path: Path) -> activation.ActivationPaths:
         api_url="http://127.0.0.1:18787",
         python=Path(os.sys.executable),
         portable=True,
+        durability_root=durability,
     )
 
 
@@ -418,6 +682,71 @@ def _candidate(
     }
 
 
+def _durability_evidence(
+    paths: activation.ActivationPaths,
+    result: dict[str, object],
+    *,
+    local_checked_at: str | None = None,
+    offsite_verified_at: str | None = None,
+) -> dict[str, object]:
+    active = result["active"]
+    assert isinstance(active, dict)
+    audit = activation.audit_activation_state(
+        paths.state_root,
+        root_uid=paths.root_uid,
+        root_gid=paths.root_gid,
+        api_uid=paths.api_uid,
+        api_gid=paths.api_gid,
+    )
+    snapshot = "20260824T010203Z"
+    attempt = "20260824T010300Z-123"
+    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    local_checked_at = local_checked_at or now
+    offsite_verified_at = offsite_verified_at or now
+    restore = _launcher_restore_status(
+        activation_id=str(active["activation_id"]),
+        tree_sha256=str(audit["tree_sha256"]),
+        snapshot=snapshot,
+    )
+    restore["deployed_sha"] = paths.release_sha
+    restore["checked_at"] = local_checked_at
+    restore_body = "".join(f"{key}={value}\n" for key, value in restore.items())
+    return {
+        "local_backup_snapshot": snapshot,
+        "local_backup_inventory_sha256": "d" * 64,
+        "local_restore_schema": "seiche.market-backup-restore-check.v5",
+        "local_restore_activation_id": active["activation_id"],
+        "local_restore_tree_sha256": audit["tree_sha256"],
+        "local_restore_checked_at": local_checked_at,
+        "local_restore_receipt": restore_body,
+        "local_restore_receipt_sha256": hashlib.sha256(
+            restore_body.encode("ascii")
+        ).hexdigest(),
+        "offsite_status_schema": "seiche.market-offsite-backup-status.v4",
+        "offsite_snapshot": snapshot,
+        "offsite_activation_id": active["activation_id"],
+        "offsite_tree_sha256": audit["tree_sha256"],
+        "offsite_attempt_id": attempt,
+        "offsite_remote_receipt_key": (
+            "seiche/market-backups/v1/snapshots/"
+            f"{snapshot}/attempts/{attempt}/RECEIPT.json"
+        ),
+        "offsite_remote_receipt_sha256": "f" * 64,
+        "offsite_verified_at": offsite_verified_at,
+    }
+
+
+def _seal_durable(
+    paths: activation.ActivationPaths,
+    result: dict[str, object],
+) -> dict[str, object]:
+    sealed, _body, _path = activation.seal_activation_durability(
+        paths,
+        _durability_evidence(paths, result),
+    )
+    return sealed
+
+
 def _fake_verifier(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -440,6 +769,39 @@ def _fake_verifier(
     monkeypatch.setattr(activation, "_candidate_from_context", verify)
 
 
+def _downgrade_active_to_legacy_v1(
+    paths: activation.ActivationPaths,
+    result: dict[str, object],
+) -> tuple[dict[str, object], bytes]:
+    """Recreate the exact active bytes and environment written by 6c310487."""
+
+    marker = dict(result["active"])  # type: ignore[arg-type]
+    marker["schema"] = activation.LEGACY_ACTIVE_MARKER_SCHEMA
+    assert marker.pop("publication_status") == "provisional"
+    assert marker.pop("legacy_active_marker") is None
+    assert marker.pop("legacy_active_marker_sha256") is None
+    body = activation._canonical(marker)
+    activation._atomic_write(
+        paths.active_marker,
+        body,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o400,
+    )
+    bundle = paths.state_root / str(marker["bundle_id"])
+    activation._atomic_write(
+        paths.env_file,
+        activation._render_legacy_env(bundle),
+        uid=paths.root_uid,
+        gid=paths.api_gid,
+        mode=0o640,
+    )
+    loaded = activation._read_active(paths)
+    assert loaded is not None and loaded[0] == marker
+    assert paths.active_marker.read_bytes() == body
+    return marker, body
+
+
 def test_activation_installs_all_eleven_files_and_durable_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -454,7 +816,7 @@ def test_activation_installs_all_eleven_files_and_durable_authority(
 
     result = activation.activate_bundle(sources, paths=paths)
 
-    assert result["status"] == "activated"
+    assert result["status"] == "activated_provisional"
     marker = result["active"]
     receipt = result["receipt"]
     assert marker["files"] == _hashes(sources)
@@ -494,7 +856,7 @@ def test_activation_installs_all_eleven_files_and_durable_authority(
     assert env_lines == [
         f"{spec.environment}={bundle / spec.filename}"
         for spec in activation._BUNDLE_FILE_SPECS
-    ]
+    ] + ["SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS=provisional"]
     assert stat.S_IMODE(paths.env_file.stat().st_mode) == 0o640
     dropin = paths.dropin_file.read_text()
     assert f"EnvironmentFile={paths.env_file}" in dropin
@@ -509,9 +871,513 @@ def test_activation_installs_all_eleven_files_and_durable_authority(
     assert receipt_path.read_bytes().endswith(b"\n")
 
     again = activation.activate_bundle(sources, paths=paths)
-    assert again["status"] == "already_active"
+    assert again["status"] == "already_active_provisional"
     assert len(list(paths.receipts_dir.iterdir())) == 1
     assert not paths.pending_marker.exists()
+
+
+def test_known_v1_marker_migrates_once_with_exact_archive_and_stays_provisional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    receipt_path = Path(first["active"]["receipt_path"])  # type: ignore[index]
+    receipt_before = receipt_path.read_bytes()
+    legacy, legacy_body = _downgrade_active_to_legacy_v1(paths, first)
+    later_release = replace(paths, release_sha="9" * 40)
+    probes: list[dict[str, object] | None] = []
+    original_probe = activation._restart_and_probe
+
+    def record_probe(
+        *,
+        paths: activation.ActivationPaths,
+        expected: dict[str, object] | None,
+        **kwargs: object,
+    ) -> dict[str, object] | None:
+        probes.append(expected)
+        return original_probe(paths=paths, expected=expected, **kwargs)
+
+    monkeypatch.setattr(activation, "_restart_and_probe", record_probe)
+
+    status = activation.activation_durability_status(later_release)
+    assert status["status"] == "provisional"
+    assert status["durability_receipt_path"] is None
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="legacy active marker must complete its one-way v2 migration",
+    ):
+        activation.seal_activation_durability(
+            later_release,
+            _durability_evidence(later_release, first),
+        )
+
+    migrated = activation.activate_bundle(sources, paths=later_release)
+
+    assert migrated["status"] == "already_active_provisional"
+    marker = migrated["active"]
+    assert marker["schema"] == activation.ACTIVE_MARKER_SCHEMA
+    assert marker["activation_id"] == legacy["activation_id"]
+    assert marker["release_sha"] == RELEASE_SHA
+    assert marker["publication_status"] == "provisional"
+    assert marker["legacy_active_marker"] == legacy_body.decode("utf-8")
+    assert (
+        marker["legacy_active_marker_sha256"] == hashlib.sha256(legacy_body).hexdigest()
+    )
+    assert json.loads(marker["legacy_active_marker"]) == legacy
+    assert all(marker[key] == legacy[key] for key in legacy if key != "schema")
+    assert receipt_path.read_bytes() == receipt_before
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+    assert list(paths.resolved_durability_root.iterdir()) == []
+    assert len(probes) == 2
+    assert all(proof is not None for proof in probes)
+    assert paths.env_file.read_bytes().endswith(
+        b"SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS=provisional\n"
+    )
+
+    marker_body = paths.active_marker.read_bytes()
+    again = activation.activate_bundle(sources, paths=later_release)
+    assert again["status"] == "already_active_provisional"
+    assert paths.active_marker.read_bytes() == marker_body
+    assert receipt_path.read_bytes() == receipt_before
+
+    replacement = _sources(tmp_path / "operator-replacement", generation=2)
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="different activation cannot replace the live provisional activation",
+    ):
+        activation.activate_bundle(replacement, paths=later_release)
+    assert paths.active_marker.read_bytes() == marker_body
+    assert receipt_path.read_bytes() == receipt_before
+
+    sealed = _seal_durable(later_release, migrated)
+    assert sealed["release_sha"] == later_release.release_sha
+    assert sealed["release_sha"] != migrated["active"]["release_sha"]
+    assert (
+        f"deployed_sha={later_release.release_sha}\n" in sealed["local_restore_receipt"]
+    )
+    durable = activation.activation_durability_status(later_release)
+    assert durable["status"] == "activated_durable"
+    assert durable["activation_id"] == legacy["activation_id"]
+    assert json.loads(paths.active_marker.read_bytes())["release_sha"] == RELEASE_SHA
+    assert (
+        activation.activation_durability_status(replace(paths, release_sha="8" * 40))[
+            "status"
+        ]
+        == "activated_durable"
+    )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ("unknown-schema", "missing-field", "extra-field", "noncanonical"),
+)
+def test_v1_migration_rejects_malformed_or_unknown_marker_without_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    legacy, _legacy_body = _downgrade_active_to_legacy_v1(paths, first)
+    damaged = dict(legacy)
+    if damage == "unknown-schema":
+        damaged["schema"] = "seiche.palimpsest-china-active.v0"
+        body = activation._canonical(damaged)
+    elif damage == "missing-field":
+        damaged.pop("activated_at")
+        body = activation._canonical(damaged)
+    elif damage == "extra-field":
+        damaged["unexpected"] = True
+        body = activation._canonical(damaged)
+    else:
+        body = json.dumps(damaged, indent=2, sort_keys=True).encode() + b"\n"
+    activation._atomic_write(
+        paths.active_marker,
+        body,
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o400,
+    )
+
+    with pytest.raises(activation.PalimpsestChinaActivationError):
+        activation.activation_durability_status(paths)
+    assert paths.active_marker.read_bytes() == body
+    with pytest.raises(activation.PalimpsestChinaActivationError):
+        activation.activate_bundle(sources, paths=paths)
+    assert paths.active_marker.read_bytes() == body
+    assert paths.env_file.read_bytes() == activation._render_legacy_env(
+        paths.state_root / str(legacy["bundle_id"])
+    )
+    assert list(paths.resolved_durability_root.iterdir()) == []
+
+
+def test_v1_migration_crash_before_marker_rename_is_retryable_same_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    legacy, legacy_body = _downgrade_active_to_legacy_v1(paths, first)
+    pending = {
+        "schema": activation.PENDING_SCHEMA,
+        "candidate_activation_id": legacy["activation_id"],
+        "candidate_bundle_id": legacy["bundle_id"],
+        "candidate_files": legacy["files"],
+        "previous_activation_id": None,
+        "started_at": datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    activation._atomic_write(
+        paths.pending_marker,
+        activation._canonical(pending),
+        uid=paths.root_uid,
+        gid=paths.root_gid,
+        mode=0o400,
+    )
+    original_atomic_write = activation._atomic_write
+    interrupted = False
+
+    def fail_before_marker_rename(
+        path: Path,
+        body: bytes,
+        *,
+        uid: int,
+        gid: int,
+        mode: int,
+    ) -> None:
+        nonlocal interrupted
+        if path == paths.active_marker and not interrupted:
+            candidate = json.loads(body)
+            if candidate.get("schema") == activation.ACTIVE_MARKER_SCHEMA:
+                interrupted = True
+                raise OSError("synthetic crash before marker rename")
+        original_atomic_write(path, body, uid=uid, gid=gid, mode=mode)
+
+    monkeypatch.setattr(activation, "_atomic_write", fail_before_marker_rename)
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="legacy active marker remains provisional; retry its exact ID",
+    ):
+        activation.activate_bundle(sources, paths=paths)
+
+    assert interrupted is True
+    assert paths.active_marker.read_bytes() == legacy_body
+    assert json.loads(paths.active_marker.read_bytes()) == legacy
+    assert paths.env_file.read_bytes().endswith(
+        b"SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS=provisional\n"
+    )
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="pending activation cannot be declared durable",
+    ):
+        activation.activation_durability_status(paths)
+    assert json.loads(paths.pending_marker.read_bytes()) == pending
+
+    monkeypatch.setattr(activation, "_atomic_write", original_atomic_write)
+    retried = activation.activate_bundle(sources, paths=paths)
+    assert retried["status"] == "already_active_provisional"
+    assert retried["active"]["legacy_active_marker"] == legacy_body.decode()
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+    assert not paths.pending_marker.exists()
+
+
+def test_v1_migration_error_after_marker_rename_commits_exact_v2_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    _legacy, legacy_body = _downgrade_active_to_legacy_v1(paths, first)
+    original_atomic_write = activation._atomic_write
+    interrupted = False
+
+    def fail_after_marker_rename(
+        path: Path,
+        body: bytes,
+        *,
+        uid: int,
+        gid: int,
+        mode: int,
+    ) -> None:
+        nonlocal interrupted
+        original_atomic_write(path, body, uid=uid, gid=gid, mode=mode)
+        if path == paths.active_marker and not interrupted:
+            candidate = json.loads(body)
+            if candidate.get("schema") == activation.ACTIVE_MARKER_SCHEMA:
+                interrupted = True
+                raise OSError("synthetic crash after marker rename")
+
+    monkeypatch.setattr(activation, "_atomic_write", fail_after_marker_rename)
+    migrated = activation.activate_bundle(sources, paths=paths)
+
+    assert interrupted is True
+    assert migrated["status"] == "already_active_provisional"
+    assert migrated["active"]["legacy_active_marker"] == legacy_body.decode()
+    committed = paths.active_marker.read_bytes()
+    monkeypatch.setattr(activation, "_atomic_write", original_atomic_write)
+    again = activation.activate_bundle(sources, paths=paths)
+    assert again["status"] == "already_active_provisional"
+    assert paths.active_marker.read_bytes() == committed
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+
+
+def test_concurrent_v1_migration_requests_serialize_and_publish_one_v2_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    _legacy, legacy_body = _downgrade_active_to_legacy_v1(paths, first)
+    original_migrate = activation._migrate_legacy_active
+    first_inside_lock = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    observed_schemas: list[str] = []
+
+    def delayed_migrate(
+        locked_paths: activation.ActivationPaths,
+    ) -> tuple[dict[str, object], dict[str, object]] | None:
+        current = activation._read_active(locked_paths)
+        assert current is not None
+        observed_schemas.append(str(current[0]["schema"]))
+        if current[0]["schema"] == activation.LEGACY_ACTIVE_MARKER_SCHEMA:
+            first_inside_lock.set()
+            assert release_first.wait(timeout=5)
+        return original_migrate(locked_paths)
+
+    def invoke(*, second: bool = False) -> dict[str, object]:
+        if second:
+            second_started.set()
+        return activation.activate_bundle(sources, paths=paths)
+
+    monkeypatch.setattr(activation, "_migrate_legacy_active", delayed_migrate)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_request = pool.submit(invoke)
+        assert first_inside_lock.wait(timeout=5)
+        second_request = pool.submit(invoke, second=True)
+        assert second_started.wait(timeout=5)
+        release_first.set()
+        results = [first_request.result(timeout=10), second_request.result(timeout=10)]
+
+    assert [result["status"] for result in results] == [
+        "already_active_provisional",
+        "already_active_provisional",
+    ]
+    assert observed_schemas == [
+        activation.LEGACY_ACTIVE_MARKER_SCHEMA,
+        activation.ACTIVE_MARKER_SCHEMA,
+    ]
+    marker = json.loads(paths.active_marker.read_bytes())
+    assert marker["schema"] == activation.ACTIVE_MARKER_SCHEMA
+    assert marker["legacy_active_marker"] == legacy_body.decode()
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+
+
+def test_portable_activation_can_publish_provisionally_before_durability_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    shutil.rmtree(paths.resolved_durability_root)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+
+    result = activation.activate_bundle(sources, paths=paths)
+
+    assert result["status"] == "activated_provisional"
+    assert result["durability"]["status"] == "provisional"
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="durability receipt root is unavailable",
+    ):
+        _seal_durable(paths, result)
+
+
+def test_exact_durability_receipt_makes_same_id_retry_durable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+
+    assert activation.activation_durability_status(paths)["status"] == "provisional"
+    sealed = _seal_durable(paths, first)
+    status = activation.activation_durability_status(paths)
+
+    assert status["status"] == "activated_durable"
+    assert status["activation_id"] == first["active"]["activation_id"]
+    assert status["tree_sha256"] == sealed["activation_state_tree_sha256"]
+    assert status["durability_receipt_sha256"] is not None
+    again = activation.activate_bundle(sources, paths=paths)
+    assert again["status"] == "already_activated_durable"
+
+    later_release = replace(paths, release_sha="9" * 40)
+    later_status = activation.activation_durability_status(later_release)
+    assert later_status == status
+
+
+def test_different_id_cannot_replace_a_live_provisional_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    first_sources = _sources(tmp_path / "operator-one", generation=1)
+    second_sources = _sources(tmp_path / "operator-two", generation=2)
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=2)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={
+            1: accepted_at,
+            2: accepted_at + timedelta(hours=1),
+        },
+        run_by_generation={1: 100, 2: 101},
+    )
+    first = activation.activate_bundle(first_sources, paths=paths)
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="different activation cannot replace the live provisional activation",
+    ):
+        activation.activate_bundle(second_sources, paths=paths)
+
+    assert json.loads(paths.active_marker.read_bytes()) == first["active"]
+    assert len(list(paths.receipts_dir.iterdir())) == 1
+
+
+def test_durability_status_rejects_a_tampered_immutable_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    _seal_durable(paths, first)
+    receipt_path = Path(
+        activation.activation_durability_status(paths)["durability_receipt_path"]
+    )
+    document = json.loads(receipt_path.read_bytes())
+    document["activation_state_audit_sha256"] = "0" * 64
+    receipt_path.chmod(0o600)
+    receipt_path.write_bytes(activation._canonical(document))
+    receipt_path.chmod(0o400)
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="does not bind the live activation",
+    ):
+        activation.activation_durability_status(paths)
+
+
+def test_durability_seal_rejects_a_regressed_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    active = first["active"]
+    assert isinstance(active, dict)
+    regressed = activation._timestamp(
+        active["activated_at"], label="test active time"
+    ) - timedelta(seconds=1)
+    monkeypatch.setattr(
+        activation,
+        "_now_text",
+        lambda: regressed.isoformat().replace("+00:00", "Z"),
+    )
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="system clock regressed",
+    ):
+        _seal_durable(paths, first)
+
+
+def test_durability_rejects_proof_clocks_before_the_live_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    evidence = _durability_evidence(
+        paths,
+        first,
+        local_checked_at="2000-01-01T00:00:00Z",
+        offsite_verified_at="2000-01-01T00:00:01Z",
+    )
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="proof chronology regressed",
+    ):
+        activation.seal_activation_durability(paths, evidence)
+
+    reversed_evidence = _durability_evidence(paths, first)
+    reversed_evidence["offsite_verified_at"] = "2000-01-01T00:00:00Z"
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="proof chronology regressed",
+    ):
+        activation.seal_activation_durability(paths, reversed_evidence)
 
 
 def test_activation_state_backup_audit_round_trips_active_tree_and_modes(
@@ -679,6 +1545,7 @@ def test_next_locked_run_recovers_an_interrupted_partial_switch(
         *,
         paths: activation.ActivationPaths,
         expected: dict[str, object] | None,
+        **_kwargs: object,
     ) -> None:
         del paths
         assert expected is not None
@@ -687,7 +1554,7 @@ def test_next_locked_run_recovers_an_interrupted_partial_switch(
     monkeypatch.setattr(activation, "_restart_and_probe", prove)
     result = activation.activate_bundle(first_sources, paths=paths)
 
-    assert result["status"] == "already_active"
+    assert result["status"] == "already_active_provisional"
     assert proofs == [_hashes(first_sources), _hashes(first_sources)]
     first_bundle = paths.state_root / first["active"]["bundle_id"]
     assert paths.env_file.read_bytes() == activation._render_env(first_bundle)
@@ -731,6 +1598,7 @@ def test_next_locked_run_finishes_a_proved_switch_interrupted_before_cleanup(
         *,
         paths: activation.ActivationPaths,
         expected: dict[str, object] | None,
+        **_kwargs: object,
     ) -> None:
         del paths
         assert expected is not None
@@ -739,7 +1607,7 @@ def test_next_locked_run_finishes_a_proved_switch_interrupted_before_cleanup(
     monkeypatch.setattr(activation, "_restart_and_probe", prove)
     result = activation.activate_bundle(sources, paths=paths)
 
-    assert result["status"] == "already_active"
+    assert result["status"] == "already_active_provisional"
     assert proofs == [_hashes(sources), _hashes(sources)]
     assert not paths.pending_marker.exists()
 
@@ -823,6 +1691,7 @@ def test_interrupted_stages_are_cleaned_without_lowering_receipt_floor(
         run_by_generation={1: 100, 2: 99},
     )
     first = activation.activate_bundle(first_sources, paths=paths)
+    _seal_durable(paths, first)
     receipt_stage = paths.receipts_dir / (
         f".receipt-stage-{first['active']['activation_id']}-{'e' * 32}"
     )
@@ -865,6 +1734,7 @@ def test_activation_rejects_wall_clock_regression_before_marker_commit(
         *,
         paths: activation.ActivationPaths,
         expected: dict[str, object] | None,
+        **_kwargs: object,
     ) -> dict[str, object] | None:
         if expected is None:
             return None
@@ -905,7 +1775,7 @@ def test_activation_rejects_wall_clock_regression_before_marker_commit(
     assert len(list(paths.receipts_dir.iterdir())) == 1
 
 
-def test_activation_rolls_back_when_published_marker_cannot_be_read_back(
+def test_activation_never_rolls_back_after_marker_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _paths(tmp_path)
@@ -937,13 +1807,15 @@ def test_activation_rolls_back_when_published_marker_cannot_be_read_back(
 
     with pytest.raises(
         activation.PalimpsestChinaActivationError,
-        match="prior API configuration restored: active marker fields changed",
+        match="live API remains provisional.*active marker fields changed",
     ):
         activation.activate_bundle(sources, paths=paths)
 
     assert corrupted is True
-    assert not paths.active_marker.exists()
-    assert not paths.pending_marker.exists()
+    assert paths.active_marker.read_bytes() == b"{}\n"
+    assert paths.pending_marker.exists()
+    assert paths.env_file.exists()
+    assert paths.dropin_file.exists()
     assert len(list(paths.receipts_dir.iterdir())) == 1
 
 
@@ -1014,6 +1886,7 @@ def test_failed_activation_restores_prior_env_dropin_marker_and_runtime_proof(
         run_by_generation={1: 100, 2: 101},
     )
     first = activation.activate_bundle(first_sources, paths=paths)
+    _seal_durable(paths, first)
     before = {
         path: path.read_bytes()
         for path in (paths.env_file, paths.dropin_file, paths.active_marker)
@@ -1026,6 +1899,7 @@ def test_failed_activation_restores_prior_env_dropin_marker_and_runtime_proof(
         *,
         paths: activation.ActivationPaths,
         expected: dict[str, object] | None,
+        **_kwargs: object,
     ) -> None:
         del paths
         files = None if expected is None else expected["files"]
@@ -1073,6 +1947,7 @@ def test_retained_receipts_prevent_bundle_rollback(
         run_by_generation={1: 100, 2: run_id},
     )
     first = activation.activate_bundle(first_sources, paths=paths)
+    _seal_durable(paths, first)
 
     with pytest.raises(activation.PalimpsestChinaActivationError, match=message):
         activation.activate_bundle(second_sources, paths=paths)
@@ -1166,6 +2041,7 @@ def _projection(files: dict[str, str], *, signer: str = SIGNER) -> dict[str, obj
             "economic_context": {
                 "schema": "seiche.palimpsest-china-economic-context.v1",
                 "context_only": True,
+                "publication_status": "provisional",
                 "scoring_eligible": False,
                 "cn_cny_gauge_eligible": False,
                 "provenance": provenance,

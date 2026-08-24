@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -23,6 +26,7 @@ RECOVERY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "railway-stateful-recovery.yml"
 )
 STATEFUL_DOCKERFILE = REPOSITORY_ROOT / "ops" / "railway" / "Dockerfile.stateful"
+RECOVERY_RUNBOOK = REPOSITORY_ROOT / "ops" / "deploy" / "RAILWAY-STATEFUL-RECOVERY.md"
 
 
 def _iso(moment: datetime) -> str:
@@ -880,3 +884,102 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         "RAILWAY_BECOMES_SOLE_WRITER",
     ):
         assert forbidden not in text
+
+
+def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(
+    tmp_path: Path,
+) -> None:
+    text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    start = text.index(
+        "- name: Perform an isolated filesystem and PostgreSQL reverse-restore proof"
+    )
+    end = text.index("- name: Seal the portable export", start)
+    step = text[start:end]
+    marker = "PYTHONPATH=\"$GITHUB_WORKSPACE/backend\" python -B - <<'PY'\n"
+    code_start = step.index(marker) + len(marker)
+    code_end = step.index("\n          PY", code_start)
+    program = textwrap.dedent(step[code_start:code_end])
+
+    package = tmp_path / "stub" / "seiche"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "stateful_recovery.py").write_text(
+        "class Bundle:\n"
+        "    palimpsest_china_state_audit = object()\n"
+        "\n"
+        "def _bundle_identity(*args, **kwargs):\n"
+        "    return Bundle()\n",
+        encoding="utf-8",
+    )
+    (package / "stateful_migration.py").write_text(
+        "def restore_filesystem_generation(*args, **kwargs):\n"
+        "    return 'verified_head', {'state': 'd' * 64}\n"
+        "\n"
+        "def palimpsest_china_state_from_audit(*args, **kwargs):\n"
+        "    return {\n"
+        "        'audit_schema': 'seiche.palimpsest-china-activation-state.v1',\n"
+        "        'tree_sha256': 'e' * 64,\n"
+        "        'active_activation_id': 'f' * 64,\n"
+        "        'pending_candidate_activation_id': None,\n"
+        "    }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "bundle").mkdir()
+    (tmp_path / "proof").mkdir()
+    (tmp_path / "recovery-receipt.json").write_text(
+        json.dumps(
+            {
+                "filesystem": {
+                    "nbs_full_store_audit_result": "verified_head",
+                    "tree_sha256": {"state": "d" * 64},
+                },
+                "palimpsest_china_state": {
+                    "audit_schema": "seiche.palimpsest-china-activation-state.v1",
+                    "tree_sha256": "e" * 64,
+                    "active_activation_id": "f" * 64,
+                    "pending_candidate_activation_id": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    environment = {
+        **os.environ,
+        "PYTHONPATH": str(tmp_path / "stub"),
+        "SNAPSHOT_ID": "20260824T000000Z",
+        "RELEASE_SHA": "a" * 40,
+    }
+
+    completed = subprocess.run(
+        [sys.executable, "-B", "-"],
+        cwd=tmp_path,
+        env=environment,
+        input=program,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert not (tmp_path / "proof" / "filesystem-restore").exists()
+    assert "PGPASSWORD: phase6-restore-only" in step
+    assert step.count("--env PGPASSWORD") == 2
+    assert "PGPASSWORD=phase6-restore-only docker" not in step
+    assert "postgresql://postgres:phase6-restore-only" not in step
+
+
+def test_scheduled_recovery_environments_do_not_require_per_run_reviewers() -> None:
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    runbook = RECOVERY_RUNBOOK.read_text(encoding="utf-8")
+
+    assert "Require human reviewers on all three environments" not in runbook
+    assert "Require human reviewers on `railway-stateful-recovery-admin`" in runbook
+    assert "do **not** configure per-run required\nreviewers on either one" in runbook
+    assert "26-hour freshness bound" in runbook
+    assert (
+        "cutover, activation,\nwriter-grant, reverse-transfer, or production-recovery"
+        in runbook
+    )
+    assert workflow.count("environment: railway-stateful-recovery-admin") == 1
+    assert workflow.count("environment: railway-stateful-recovery-monitor") == 1
+    assert workflow.count("environment: railway-stateful-recovery-export") == 2

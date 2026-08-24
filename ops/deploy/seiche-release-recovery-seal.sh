@@ -7,6 +7,9 @@ export LC_ALL=C
 
 readonly RELEASE_ENV=/etc/seiche/release.env
 readonly DEPLOYED_STATE=/var/lib/seiche-deploy/deployed-sha
+readonly PALIMPSEST_CHINA_TRANSACTION_LOCK=/run/seiche-deploy/palimpsest-china-transaction.lock
+readonly TRANSACTION_LOCK_UID=0
+readonly TRANSACTION_LOCK_GID=0
 readonly RECEIPT_DIR=/var/lib/seiche-control/receipts
 readonly RESTORE_RECEIPT=/var/lib/seiche-recovery-proof/backup-restore-check.status
 readonly BACKUP_DIR=/var/backups/seiche-market
@@ -16,6 +19,7 @@ readonly REFRESH_URL=http://127.0.0.1:8787/api/gauge
 readonly SYSTEMCTL=/usr/bin/systemctl
 readonly CURL=/usr/bin/curl
 readonly PYTHON=/usr/bin/python3
+readonly FLOCK=/usr/bin/flock
 readonly MKTEMP=/usr/bin/mktemp
 readonly RM=/usr/bin/rm
 readonly SYNC=/usr/bin/sync
@@ -29,10 +33,132 @@ fail() {
 }
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail "must run as root"
-for command_path in "$SYSTEMCTL" "$CURL" "$PYTHON" "$MKTEMP" "$RM" "$SYNC"; do
+for command_path in \
+    "$SYSTEMCTL" "$CURL" "$PYTHON" "$FLOCK" "$MKTEMP" "$RM" "$SYNC"; do
     [ -x "$command_path" ] || fail "required command is unavailable: $command_path"
 done
 [ -x "$READINESS_SCRIPT" ] || fail "data-readiness helper is unavailable"
+
+prepare_activation_transaction_lock() {
+    "$PYTHON" -I -B - "$PALIMPSEST_CHINA_TRANSACTION_LOCK" \
+        "$TRANSACTION_LOCK_UID" "$TRANSACTION_LOCK_GID" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+path = Path(sys.argv[1])
+expected_uid = int(sys.argv[2])
+expected_gid = int(sys.argv[3])
+parent = path.parent
+parent_metadata = parent.lstat()
+if (
+    not stat.S_ISDIR(parent_metadata.st_mode)
+    or stat.S_ISLNK(parent_metadata.st_mode)
+    or parent_metadata.st_uid != expected_uid
+    or parent_metadata.st_gid != expected_gid
+    or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+):
+    raise SystemExit("Palimpsest China transaction lock parent is unsafe")
+flags = os.O_RDWR | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+created = False
+try:
+    descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    created = True
+except FileExistsError:
+    descriptor = os.open(path, flags)
+try:
+    opened = os.fstat(descriptor)
+    visible = path.lstat()
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_nlink != 1
+        or opened.st_uid != expected_uid
+        or opened.st_gid != expected_gid
+        or stat.S_IMODE(opened.st_mode) != 0o600
+        or not stat.S_ISREG(visible.st_mode)
+        or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+    ):
+        raise SystemExit("Palimpsest China transaction lock metadata is unsafe")
+    if created:
+        os.fsync(descriptor)
+        parent_descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+finally:
+    os.close(descriptor)
+PY
+}
+
+validate_activation_transaction_lock_fd() {
+    local held="$1"
+    "$PYTHON" -I -B - "$PALIMPSEST_CHINA_TRANSACTION_LOCK" 10 "$held" \
+        "$TRANSACTION_LOCK_UID" "$TRANSACTION_LOCK_GID" <<'PY'
+from __future__ import annotations
+
+import errno
+import fcntl
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+path = Path(sys.argv[1])
+descriptor = int(sys.argv[2])
+held = sys.argv[3] == "1"
+expected_uid = int(sys.argv[4])
+expected_gid = int(sys.argv[5])
+opened = os.fstat(descriptor)
+visible = path.lstat()
+if (
+    not stat.S_ISREG(opened.st_mode)
+    or opened.st_nlink != 1
+    or opened.st_uid != expected_uid
+    or opened.st_gid != expected_gid
+    or stat.S_IMODE(opened.st_mode) != 0o600
+    or not stat.S_ISREG(visible.st_mode)
+    or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+):
+    raise SystemExit("Palimpsest China transaction lock changed identity")
+if held:
+    contender = os.open(
+        path,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        try:
+            fcntl.flock(contender, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno not in {errno.EACCES, errno.EAGAIN}:
+                raise
+        else:
+            fcntl.flock(contender, fcntl.LOCK_UN)
+            raise SystemExit("Palimpsest China transaction lock is not exclusive")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(contender)
+PY
+}
+
+# Global order is activation transaction -> deploy -> market -> activation.
+# Recovery holds the outer lease across every current-state proof and the final
+# immutable receipt write, preventing a provisional activation from racing the
+# proof-to-seal boundary.
+prepare_activation_transaction_lock \
+    || fail "Palimpsest China transaction lock could not be prepared safely"
+exec 10<>"$PALIMPSEST_CHINA_TRANSACTION_LOCK"
+validate_activation_transaction_lock_fd 0 \
+    || fail "Palimpsest China transaction lock changed identity"
+"$FLOCK" --exclusive 10 \
+    || fail "Palimpsest China transaction lock could not be acquired"
+validate_activation_transaction_lock_fd 1 \
+    || fail "Palimpsest China transaction lock is not held safely"
 
 # Validate all root-selected identities before starting any writer. The output
 # contains only fixed-format hashes and one state word, so shell parsing cannot
@@ -264,6 +390,7 @@ PY
 
 IDENTITY=$(load_release_identity) || fail "release identity is not sealable"
 read -r TARGET TREE RELEASE_RECEIPT_SHA256 RECOVERY_STATE <<<"$IDENTITY"
+RECOVERY_ALREADY_COMPLETE=""
 [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] \
     || fail "validated release identity output is malformed"
 case "$RECOVERY_STATE" in
@@ -271,8 +398,7 @@ case "$RECOVERY_STATE" in
         [[ "$TREE" =~ ^[0-9a-f]{40}$ ]] \
             && [[ "$RELEASE_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]] \
             || fail "validated complete recovery identity is malformed"
-        printf 'seiche release recovery: %s already sealed\n' "${TARGET:0:7}"
-        exit 0
+        RECOVERY_ALREADY_COMPLETE=1
         ;;
     pending)
         [[ "$TREE" =~ ^[0-9a-f]{40}$ ]] \
@@ -312,6 +438,7 @@ assert_release_identity() {
 run_recovery_proof_preflight() {
     /usr/bin/env -i \
         HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_PALIMPSEST_CHINA_TRANSACTION_LOCK_FD=10 \
         SEICHE_DATA_READINESS_PROOF_ONLY=1 \
         SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
         SEICHE_DATA_READINESS_REQUIRED_UNITS= \
@@ -321,10 +448,24 @@ run_recovery_proof_preflight() {
 run_operational_readiness_preflight() {
     /usr/bin/env -i \
         HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+        SEICHE_PALIMPSEST_CHINA_TRANSACTION_LOCK_FD=10 \
         SEICHE_DATA_READINESS_SKIP_OFFSITE=1 \
         SEICHE_DATA_READINESS_REQUIRED_UNITS="$READINESS_REQUIRED_UNITS" \
         /usr/bin/bash -p "$READINESS_SCRIPT"
 }
+
+# An immutable historical recovery receipt is not a current readiness proof.
+# Re-audit the exact live activation/local-restore/offsite binding before this
+# service ever reports an existing seal as complete.
+if [ -n "$RECOVERY_ALREADY_COMPLETE" ]; then
+    run_recovery_proof_preflight \
+        || fail "existing recovery seal lacks current durability proof"
+    assert_release_identity \
+        || fail "release identity changed during current durability proof"
+    printf 'seiche release recovery: %s already sealed and currently durable\n' \
+        "${TARGET:0:7}"
+    exit 0
+fi
 
 candidate_health_once() {
     local body="" status=0

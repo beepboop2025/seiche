@@ -29,6 +29,7 @@ GIT_BIN="${SEICHE_GIT_BIN:-git}"
 PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
 CMP_BIN="${SEICHE_CMP_BIN:-/usr/bin/cmp}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+DURABILITY_REQUEST_PATH="${SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH:-/run/seiche-deploy/palimpsest-china-durability-request.json}"
 ALLOW_NON_ROOT_TEST="${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}"
 
 fail() {
@@ -67,6 +68,9 @@ else
     [ "$PALIMPSEST_CHINA_AUDIT_BIN" = \
         /etc/seiche/libexec/seiche-palimpsest-china-activate.py ] \
         || fail "production Palimpsest China audit launcher is fixed"
+    [ "$DURABILITY_REQUEST_PATH" = \
+        /run/seiche-deploy/palimpsest-china-durability-request.json ] \
+        || fail "production activation durability request path is fixed"
 fi
 [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] \
     || fail "state directory must be a real directory"
@@ -134,7 +138,83 @@ query_counts() {
         --command "$COUNTS_SQL" | tr -d '[:space:]'
 }
 
-STAMP="${SEICHE_BACKUP_STAMP:-$($DATE_BIN -u +%Y%m%dT%H%M%SZ)}"
+DURABILITY_EXPECTED_ACTIVATION_ID=""
+DURABILITY_EXPECTED_TREE_SHA256=""
+DURABILITY_EXPECTED_RELEASE_SHA=""
+DURABILITY_EXPECTED_SNAPSHOT=""
+if [ -e "$DURABILITY_REQUEST_PATH" ] || [ -L "$DURABILITY_REQUEST_PATH" ]; then
+    mapfile -t DURABILITY_REQUEST_FIELDS < <(
+        "$PYTHON_BIN" -I -B - "$DURABILITY_REQUEST_PATH" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+path = Path(sys.argv[1])
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+try:
+    before = os.fstat(fd)
+    visible = path.lstat()
+    expected_uid = 0 if os.geteuid() == 0 else os.geteuid()
+    expected_gid = 0 if os.geteuid() == 0 else os.getegid()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_uid != expected_uid
+        or before.st_gid != expected_gid
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        or not 1 <= before.st_size <= 4096
+    ):
+        raise ValueError("request metadata is unsafe")
+    body = os.read(fd, 4097)
+    after = os.fstat(fd)
+    identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_nlink, item.st_uid, item.st_gid, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+    if len(body) != before.st_size or identity(before) != identity(after):
+        raise ValueError("request changed while read")
+finally:
+    os.close(fd)
+value = json.loads(body)
+keys = {"schema", "activation_id", "tree_sha256", "release_sha", "snapshot_id", "requested_at"}
+canonical = json.dumps(value, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+if (
+    type(value) is not dict
+    or set(value) != keys
+    or body != canonical
+    or value["schema"] != "seiche.palimpsest-china-durability-request.v1"
+    or re.fullmatch(r"[0-9a-f]{64}", value["activation_id"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{64}", value["tree_sha256"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{40}", value["release_sha"] or "") is None
+    or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", value["snapshot_id"] or "") is None
+    or re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value["requested_at"] or "") is None
+):
+    raise ValueError("request contract changed")
+print(value["activation_id"])
+print(value["tree_sha256"])
+print(value["release_sha"])
+print(value["snapshot_id"])
+PY
+    ) || fail "activation durability request is invalid"
+    [ "${#DURABILITY_REQUEST_FIELDS[@]}" -eq 4 ] \
+        || fail "activation durability request proof is incomplete"
+    DURABILITY_EXPECTED_ACTIVATION_ID=${DURABILITY_REQUEST_FIELDS[0]}
+    DURABILITY_EXPECTED_TREE_SHA256=${DURABILITY_REQUEST_FIELDS[1]}
+    DURABILITY_EXPECTED_RELEASE_SHA=${DURABILITY_REQUEST_FIELDS[2]}
+    DURABILITY_EXPECTED_SNAPSHOT=${DURABILITY_REQUEST_FIELDS[3]}
+fi
+
+if [ -n "$DURABILITY_EXPECTED_SNAPSHOT" ]; then
+    [ -z "${SEICHE_BACKUP_STAMP:-}" ] \
+        || [ "$SEICHE_BACKUP_STAMP" = "$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        || fail "snapshot override conflicts with the activation durability request"
+    STAMP=$DURABILITY_EXPECTED_SNAPSHOT
+else
+    STAMP="${SEICHE_BACKUP_STAMP:-$($DATE_BIN -u +%Y%m%dT%H%M%SZ)}"
+fi
 case "$STAMP" in
     [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
     *) fail "snapshot stamp must be UTC basic format" ;;
@@ -234,6 +314,24 @@ DUMP_BYTES=$(wc -c <"$STAGE/seiche.dump" | tr -d '[:space:]')
     --audit-state "$PALIMPSEST_CHINA_STATE_DIR" 0 \
     >"$STAGE/palimpsest-china-state.json"
 validate_palimpsest_audit "$STAGE/palimpsest-china-state.json"
+if [ -n "$DURABILITY_EXPECTED_ACTIVATION_ID" ]; then
+    "$PYTHON_BIN" -I -B - "$STAGE/palimpsest-china-state.json" \
+        "$DURABILITY_EXPECTED_ACTIVATION_ID" \
+        "$DURABILITY_EXPECTED_TREE_SHA256" <<'PY' \
+        || fail "snapshot does not contain the requested exact activation"
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_bytes())
+if (
+    value.get("active_activation_id") != sys.argv[2]
+    or value.get("tree_sha256") != sys.argv[3]
+    or value.get("pending_candidate_activation_id") is not None
+):
+    raise SystemExit(1)
+PY
+fi
 
 STATE_PARENT=$(dirname "$STATE_DIR")
 STATE_NAME=$(basename "$STATE_DIR")
@@ -326,6 +424,10 @@ if ! printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     || fail "cannot bind the snapshot to a deployed commit"
+if [ -n "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
+        && [ "$DEPLOYED_SHA" != "$DURABILITY_EXPECTED_RELEASE_SHA" ]; then
+    fail "snapshot release differs from the activation durability request"
+fi
 printf '%s\n' "$DEPLOYED_SHA" >"$STAGE/deployed-sha.txt"
 printf '%s\n' \
     "schema=seiche.market-backup.v4" \

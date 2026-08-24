@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import grp
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -141,6 +142,21 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         print(f"fake 100 10 90 {percent}% /")
         """,
     )
+    activation_status = _executable(
+        tools / "palimpsest-china-activation-status",
+        """
+        import json
+        import os
+        import sys
+
+        if sys.argv[1:] != ["--durability-status"]:
+            raise SystemExit(97)
+        if os.environ.get("FAKE_ACTIVATION_STATUS_FAIL") == "1":
+            raise SystemExit(1)
+        value = json.loads(os.environ["FAKE_ACTIVATION_STATUS"])
+        print(json.dumps(value, allow_nan=False, sort_keys=True, separators=(",", ":")))
+        """,
+    )
 
     env = {
         **os.environ,
@@ -152,6 +168,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "SEICHE_DF_BIN": str(df),
         "SEICHE_MKTEMP_BIN": shutil.which("mktemp") or "/usr/bin/mktemp",
         "SEICHE_RM_BIN": shutil.which("rm") or "/bin/rm",
+        "SEICHE_DATA_READINESS_ACTIVATION_STATUS_BIN": str(activation_status),
         "SEICHE_DATA_READINESS_HEALTH_URL": "http://127.0.0.1:8787/api/health",
         "SEICHE_DATA_READINESS_BACKUP_DIR": str(backup_dir),
         "SEICHE_DATA_READINESS_RESTORE_RECEIPT": str(restore_receipt),
@@ -184,6 +201,16 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "FAKE_UNIT_CALLS": str(unit_calls),
         "FAKE_DISK_PERCENT": "12",
         "FAKE_INODE_PERCENT": "9",
+        "FAKE_ACTIVATION_STATUS": json.dumps(
+            {
+                "schema": "seiche.palimpsest-china-durability-status.v1",
+                "status": "inactive",
+                "activation_id": None,
+                "tree_sha256": None,
+                "durability_receipt_path": None,
+                "durability_receipt_sha256": None,
+            }
+        ),
     }
     return env, backup_dir, restore_receipt
 
@@ -326,6 +353,136 @@ def _write_offsite_status(
     return path
 
 
+def _write_durable_activation(
+    env: dict[str, str],
+    backup_dir: Path,
+    restore_receipt: Path,
+) -> dict[str, object]:
+    activation_id = "1" * 64
+    tree = "f" * 64
+    snapshot = "20260822T020000Z"
+    attempt = "20260822T052000Z-1234"
+    local_checked_at = (NOW - timedelta(hours=1)).isoformat()
+    offsite_verified_at = (NOW - timedelta(minutes=45)).isoformat()
+
+    restore_receipt.write_text(
+        restore_receipt.read_text()
+        .replace(
+            "palimpsest_china_active_activation_id=none",
+            f"palimpsest_china_active_activation_id={activation_id}",
+        )
+        .replace("palimpsest_china_bundle_count=0", "palimpsest_china_bundle_count=1")
+        .replace(
+            "palimpsest_china_receipt_count=0",
+            "palimpsest_china_receipt_count=1",
+        )
+    )
+    restore_body = restore_receipt.read_bytes()
+
+    sealed_snapshot = backup_dir / snapshot
+    sealed_snapshot.mkdir(exist_ok=True)
+    inventory_body = b"verified\n"
+    (sealed_snapshot / "SHA256SUMS").write_bytes(inventory_body)
+    (sealed_snapshot / "palimpsest-china-state.json").write_text(
+        json.dumps(
+            {
+                "schema": "seiche.palimpsest-china-activation-state.v1",
+                "state_root": "/var/lib/seiche-palimpsest-china",
+                "tree_sha256": tree,
+                "bundles": ["2" * 64],
+                "receipts": [activation_id],
+                "active_activation_id": activation_id,
+                "pending_candidate_activation_id": None,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+    _write_offsite_config(env)
+    offsite_path = _write_offsite_status(
+        env,
+        verified_at=datetime.fromisoformat(offsite_verified_at),
+    )
+    offsite = json.loads(offsite_path.read_text())
+    remote_key = (
+        f"seiche/market-backups/v1/snapshots/{snapshot}/attempts/{attempt}/RECEIPT.json"
+    )
+    for record in (offsite, offsite["last_success"]):
+        record["mode"] = "scheduled"
+        record["source_revision"] = "a" * 40
+        record["palimpsest_china_state"] = "active"
+        record["palimpsest_china_active_activation_id"] = activation_id
+        record["palimpsest_china_pending_candidate_activation_id"] = None
+        record["remote_receipt_key"] = remote_key
+        record["remote_receipt_sha256"] = "9" * 64
+    offsite["schema"] = "seiche.market-offsite-backup-status.v4"
+    offsite_path.write_text(
+        json.dumps(offsite, allow_nan=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+
+    receipt = {
+        "schema": "seiche.palimpsest-china-activation-durability.v1",
+        "status": "activated_durable",
+        "activation_id": activation_id,
+        "bundle_id": "2" * 64,
+        "release_sha": "a" * 40,
+        "active_marker_sha256": "3" * 64,
+        "activation_receipt_sha256": "4" * 64,
+        "activation_state_audit_sha256": "5" * 64,
+        "activation_state_tree_sha256": tree,
+        "local_backup_snapshot": snapshot,
+        "local_backup_inventory_sha256": hashlib.sha256(inventory_body).hexdigest(),
+        "local_restore_schema": "seiche.market-backup-restore-check.v5",
+        "local_restore_activation_id": activation_id,
+        "local_restore_tree_sha256": tree,
+        "local_restore_checked_at": local_checked_at,
+        "local_restore_receipt": restore_body.decode("ascii"),
+        "local_restore_receipt_sha256": hashlib.sha256(restore_body).hexdigest(),
+        "offsite_status_schema": "seiche.market-offsite-backup-status.v4",
+        "offsite_snapshot": snapshot,
+        "offsite_activation_id": activation_id,
+        "offsite_tree_sha256": tree,
+        "offsite_attempt_id": attempt,
+        "offsite_remote_receipt_key": remote_key,
+        "offsite_remote_receipt_sha256": "9" * 64,
+        "offsite_verified_at": offsite_verified_at,
+        "completed_at": (NOW - timedelta(minutes=30)).isoformat(),
+    }
+    durability_dir = backup_dir.parent / "palimpsest-china-durability"
+    durability_dir.mkdir(mode=0o700)
+    durability_dir.chmod(0o700)
+    durability_path = durability_dir / f"{activation_id}.{tree}.json"
+    durability_body = (
+        json.dumps(receipt, allow_nan=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode()
+    durability_path.write_bytes(durability_body)
+    durability_path.chmod(0o400)
+    env["FAKE_ACTIVATION_STATUS"] = json.dumps(
+        {
+            "schema": "seiche.palimpsest-china-durability-status.v1",
+            "status": "activated_durable",
+            "activation_id": activation_id,
+            "tree_sha256": tree,
+            "durability_receipt_path": str(durability_path),
+            "durability_receipt_sha256": hashlib.sha256(durability_body).hexdigest(),
+        }
+    )
+    return {
+        "activation_id": activation_id,
+        "tree": tree,
+        "snapshot": snapshot,
+        "attempt": attempt,
+        "offsite_path": offsite_path,
+        "durability_path": durability_path,
+        "local_checked_at": local_checked_at,
+        "offsite_verified_at": offsite_verified_at,
+    }
+
+
 def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     tmp_path: Path,
 ) -> None:
@@ -334,6 +491,248 @@ def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "seiche data readiness: ready\n"
     assert result.stderr == ""
+
+
+def test_fresh_inactive_restore_cannot_mask_a_live_provisional_activation(
+    tmp_path: Path,
+) -> None:
+    activation_id = "1" * 64
+    tree = "2" * 64
+    result = _run(
+        tmp_path,
+        FAKE_ACTIVATION_STATUS=json.dumps(
+            {
+                "schema": "seiche.palimpsest-china-durability-status.v1",
+                "status": "provisional",
+                "activation_id": activation_id,
+                "tree_sha256": tree,
+                "durability_receipt_path": None,
+                "durability_receipt_sha256": None,
+            }
+        ),
+    )
+
+    assert result.returncode == 1
+    assert (
+        "seiche data readiness: Palimpsest China activation is provisional\n"
+        in result.stderr
+    )
+
+
+def test_unavailable_activation_durability_audit_fails_readiness(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path, FAKE_ACTIVATION_STATUS_FAIL="1")
+
+    assert result.returncode == 1
+    assert (
+        "seiche data readiness: Palimpsest China durability status unavailable\n"
+        in result.stderr
+    )
+
+
+def test_durable_activation_requires_and_accepts_the_exact_sealed_proofs(
+    tmp_path: Path,
+) -> None:
+    env, backup_dir, restore_receipt = _layout(tmp_path)
+    _write_durable_activation(env, backup_dir, restore_receipt)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("current_status", ["running", "failed"])
+def test_durable_activation_remains_ready_during_a_pre_receipt_offsite_attempt(
+    tmp_path: Path,
+    current_status: str,
+) -> None:
+    env, backup_dir, restore_receipt = _layout(tmp_path)
+    details = _write_durable_activation(env, backup_dir, restore_receipt)
+    offsite_path = Path(str(details["offsite_path"]))
+    offsite = json.loads(offsite_path.read_text())
+    offsite.update(
+        {
+            "status": current_status,
+            "attempt_id": "20260822T070000Z-9999",
+            "remote_receipt_key": None,
+            "remote_receipt_sha256": None,
+            "remote_receipt_version_id": None,
+            "remote_receipt_etag": None,
+            "restore_verified": False,
+            "failure_class": (
+                "operational_failure" if current_status == "failed" else None
+            ),
+        }
+    )
+    offsite_path.write_text(
+        json.dumps(offsite, allow_nan=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_newer_release_proofs_survive_retention_of_the_sealed_local_snapshot(
+    tmp_path: Path,
+) -> None:
+    env, backup_dir, restore_receipt = _layout(tmp_path)
+    details = _write_durable_activation(env, backup_dir, restore_receipt)
+    newer_snapshot = "20260822T030000Z"
+    newer_attempt = "20260822T060000Z-5678"
+    newer_restore_clock = (NOW - timedelta(minutes=20)).isoformat()
+    deployed = Path(env["SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH"])
+    deployed.write_text("b" * 40 + "\n")
+    restore_receipt.write_text(
+        restore_receipt.read_text()
+        .replace(str(details["snapshot"]), newer_snapshot)
+        .replace("deployed_sha=" + "a" * 40, "deployed_sha=" + "b" * 40)
+        .replace(str(details["local_checked_at"]), newer_restore_clock)
+    )
+    offsite_path = Path(str(details["offsite_path"]))
+    offsite = json.loads(offsite_path.read_text())
+    newer_key = (
+        "seiche/market-backups/v1/snapshots/"
+        f"{newer_snapshot}/attempts/{newer_attempt}/RECEIPT.json"
+    )
+    for record in (offsite, offsite["last_success"]):
+        record["snapshot_id"] = newer_snapshot
+        record["attempt_id"] = newer_attempt
+        record["source_revision"] = "b" * 40
+        record["remote_receipt_key"] = newer_key
+        record["remote_receipt_sha256"] = "8" * 64
+    offsite["last_success"]["verified_at"] = (NOW - timedelta(minutes=10)).isoformat()
+    offsite_path.write_text(
+        json.dumps(offsite, allow_nan=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+    shutil.rmtree(backup_dir / str(details["snapshot"]))
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("surface", ["restore", "offsite"])
+def test_same_snapshot_successor_must_equal_the_sealed_receipt(
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    env, backup_dir, restore_receipt = _layout(tmp_path)
+    details = _write_durable_activation(env, backup_dir, restore_receipt)
+    if surface == "restore":
+        restore_receipt.write_text(
+            restore_receipt.read_text().replace(
+                "critical_table_counts=11|12|13|14",
+                "critical_table_counts=21|22|23|24",
+            )
+        )
+        expected = "Palimpsest China sealed local restore proof is unavailable"
+    else:
+        offsite_path = Path(str(details["offsite_path"]))
+        offsite = json.loads(offsite_path.read_text())
+        offsite["remote_receipt_sha256"] = "8" * 64
+        offsite["last_success"]["remote_receipt_sha256"] = "8" * 64
+        offsite_path.write_text(
+            json.dumps(
+                offsite,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        expected = "Palimpsest China offsite proof does not match the live activation"
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert f"seiche data readiness: {expected}\n" in result.stderr
+
+
+@pytest.mark.parametrize("surface", ["restore", "offsite"])
+def test_newer_snapshot_cannot_regress_below_the_sealed_proof_clock(
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    env, backup_dir, restore_receipt = _layout(tmp_path)
+    details = _write_durable_activation(env, backup_dir, restore_receipt)
+    newer_snapshot = "20260822T030000Z"
+    if surface == "restore":
+        restore_receipt.write_text(
+            restore_receipt.read_text()
+            .replace(str(details["snapshot"]), newer_snapshot)
+            .replace(
+                str(details["local_checked_at"]),
+                (NOW - timedelta(hours=2)).isoformat(),
+            )
+        )
+        expected = "Palimpsest China sealed local restore proof is unavailable"
+    else:
+        offsite_path = Path(str(details["offsite_path"]))
+        offsite = json.loads(offsite_path.read_text())
+        newer_attempt = "20260822T060000Z-5678"
+        newer_key = (
+            "seiche/market-backups/v1/snapshots/"
+            f"{newer_snapshot}/attempts/{newer_attempt}/RECEIPT.json"
+        )
+        for record in (offsite, offsite["last_success"]):
+            record["snapshot_id"] = newer_snapshot
+            record["attempt_id"] = newer_attempt
+            record["remote_receipt_key"] = newer_key
+        offsite["last_success"]["verified_at"] = (NOW - timedelta(hours=2)).isoformat()
+        offsite_path.write_text(
+            json.dumps(
+                offsite,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        expected = "Palimpsest China offsite proof does not match the live activation"
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert f"seiche data readiness: {expected}\n" in result.stderr
 
 
 def test_readiness_accepts_a_verified_nbs_head_receipt(tmp_path: Path) -> None:
@@ -1211,15 +1610,21 @@ def test_installer_never_repairs_or_executes_a_checkout_readiness_helper() -> No
     )
 
 
-def test_capability_free_readiness_service_can_traverse_restore_receipt_tree() -> None:
-    """Keep the unit identity aligned with installer and receipt permissions."""
+def test_capability_free_readiness_service_can_traverse_receipts_and_own_lock_root() -> (
+    None
+):
+    """Keep the unit identities aligned with receipt and lock permissions."""
 
     service = SERVICE.read_text()
     installer = INSTALLER.read_text()
     restore_check = RESTORE_CHECK.read_text()
 
     assert "User=root\n" in service
-    assert "Group=seiche\n" in service
+    assert "Group=root\n" in service
+    assert "SupplementaryGroups=seiche\n" in service
+    assert "RuntimeDirectory=seiche-deploy\n" in service
+    assert "RuntimeDirectoryMode=0700\n" in service
+    assert "RuntimeDirectoryPreserve=yes\n" in service
     assert "CapabilityBoundingSet=\n" in service
     assert "install -d -o seiche -g seiche -m 0750 \\\n" in installer
     assert '"$STATE_DIR" "$STATE_DIR/raw"' in installer

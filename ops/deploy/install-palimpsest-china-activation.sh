@@ -8,10 +8,12 @@ RELEASE_TARGET=${SEICHE_RELEASE_TARGET_SHA:?exact release target SHA is required
 RUNTIME_ROOT=/opt/seiche-palimpsest-china
 STATE_ROOT=/var/lib/seiche-palimpsest-china
 RECEIPTS_ROOT=$STATE_ROOT/receipts
+DURABILITY_ROOT=/var/lib/seiche-recovery-proof/palimpsest-china-durability
 LAUNCHER_SOURCE=$ASSET_ROOT/ops/deploy/seiche-palimpsest-china-activate.py
 LAUNCHER_DESTINATION=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 DEPLOY_RUNTIME=/run/seiche-deploy
 ACTIVATION_LOCK=$DEPLOY_RUNTIME/palimpsest-china.lock
+TRANSACTION_LOCK=$DEPLOY_RUNTIME/palimpsest-china-transaction.lock
 
 fail() {
     echo "Palimpsest China activation installer: $*" >&2
@@ -83,8 +85,19 @@ PY
 id -u seiche >/dev/null 2>&1 || fail "seiche user is unavailable"
 getent group seiche >/dev/null || fail "seiche group is unavailable"
 
+DURABILITY_PARENT=$(dirname "$DURABILITY_ROOT")
+if [ ! -e "$DURABILITY_PARENT" ] && [ ! -L "$DURABILITY_PARENT" ]; then
+    install -d -o root -g seiche -m 0750 "$DURABILITY_PARENT"
+    /usr/bin/sync "$(dirname "$DURABILITY_PARENT")"
+fi
+[ -d "$DURABILITY_PARENT" ] && [ ! -L "$DURABILITY_PARENT" ] \
+    && [ "$(stat -c '%U:%G:%a' "$DURABILITY_PARENT")" = root:seiche:750 ] \
+    || fail "durability parent ownership or mode is unsafe"
+
 validate_root_traversal "$(dirname "$STATE_ROOT")" "state parent" \
     || fail "state parent traversal is unsafe"
+validate_root_traversal "$DURABILITY_PARENT" "durability parent" \
+    || fail "durability parent traversal is unsafe"
 validate_root_traversal /etc/seiche/libexec "Seiche libexec root" \
     || fail "Seiche libexec traversal is unsafe"
 validate_root_traversal "$DEPLOY_RUNTIME" "deploy lock root" \
@@ -114,16 +127,28 @@ else
     install -d -o root -g root -m 0700 "$RECEIPTS_ROOT"
     /usr/bin/sync "$STATE_ROOT"
 fi
-validate_directory "$DEPLOY_RUNTIME" root root 700 "deploy lock root"
-if [ -e "$ACTIVATION_LOCK" ] || [ -L "$ACTIVATION_LOCK" ]; then
-    [ -f "$ACTIVATION_LOCK" ] && [ ! -L "$ACTIVATION_LOCK" ] \
-        && [ "$(stat -c '%U:%G:%a:%h' "$ACTIVATION_LOCK")" = root:root:600:1 ] \
-        || fail "activation lock metadata is unsafe"
+if [ -e "$DURABILITY_ROOT" ] || [ -L "$DURABILITY_ROOT" ]; then
+    validate_directory "$DURABILITY_ROOT" root root 700 "durability root"
 else
-    install -o root -g root -m 0600 /dev/null "$ACTIVATION_LOCK"
-    /usr/bin/sync -f "$ACTIVATION_LOCK"
-    /usr/bin/sync "$DEPLOY_RUNTIME"
+    install -d -o root -g root -m 0700 "$DURABILITY_ROOT"
+    /usr/bin/sync "$(dirname "$DURABILITY_ROOT")"
 fi
+validate_directory "$DEPLOY_RUNTIME" root root 700 "deploy lock root"
+for lock_specification in \
+        "activation:$ACTIVATION_LOCK" \
+        "transaction:$TRANSACTION_LOCK"; do
+    lock_label=${lock_specification%%:*}
+    lock_path=${lock_specification#*:}
+    if [ -e "$lock_path" ] || [ -L "$lock_path" ]; then
+        [ -f "$lock_path" ] && [ ! -L "$lock_path" ] \
+            && [ "$(stat -c '%U:%G:%a:%h' "$lock_path")" = root:root:600:1 ] \
+            || fail "$lock_label lock metadata is unsafe"
+    else
+        install -o root -g root -m 0600 /dev/null "$lock_path"
+        /usr/bin/sync -f "$lock_path"
+        /usr/bin/sync "$DEPLOY_RUNTIME"
+    fi
+done
 
 validate_directory /etc/seiche/libexec root root 755 "Seiche libexec root"
 if [ -e "$LAUNCHER_DESTINATION" ] || [ -L "$LAUNCHER_DESTINATION" ]; then

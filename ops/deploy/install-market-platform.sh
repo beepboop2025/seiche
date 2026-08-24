@@ -2248,6 +2248,7 @@ valid = (
         in {
             "seiche.market-offsite-backup-status.v2",
             "seiche.market-offsite-backup-status.v3",
+            "seiche.market-offsite-backup-status.v4",
         }
     and resolved_status
     and (
@@ -2257,7 +2258,10 @@ valid = (
             and not any(key.startswith("palimpsest_china_") for key in status)
         )
         or (
-            status.get("schema") == "seiche.market-offsite-backup-status.v3"
+            status.get("schema") in {
+                "seiche.market-offsite-backup-status.v3",
+                "seiche.market-offsite-backup-status.v4",
+            }
             and status.get("source_backup_schema") == "seiche.market-backup.v4"
             and status.get("palimpsest_china_state_root")
                 == "/var/lib/seiche-palimpsest-china"
@@ -2268,6 +2272,28 @@ valid = (
                 str(status.get("palimpsest_china_state_tree_sha256", "")),
             ) is not None
             and status.get("palimpsest_china_state") in {"active", "inactive"}
+            and (
+                status.get("schema") != "seiche.market-offsite-backup-status.v4"
+                or (
+                    status.get("mode") in {"canary", "scheduled"}
+                    and (
+                        status.get("palimpsest_china_active_activation_id") is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(status.get("palimpsest_china_active_activation_id", "")),
+                        ) is not None
+                    )
+                    and status.get("palimpsest_china_pending_candidate_activation_id")
+                    is None
+                    and (
+                        status.get("status") != "success"
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(status.get("remote_receipt_sha256", "")),
+                        ) is not None
+                    )
+                )
+            )
         )
     )
     and status.get("nbs_state_root") == "/var/lib/seiche-nbs"
@@ -2289,7 +2315,10 @@ valid = (
             and not any(key.startswith("palimpsest_china_") for key in success)
         )
         or (
-            status.get("schema") == "seiche.market-offsite-backup-status.v3"
+            status.get("schema") in {
+                "seiche.market-offsite-backup-status.v3",
+                "seiche.market-offsite-backup-status.v4",
+            }
             and success.get("source_backup_schema") == "seiche.market-backup.v4"
             and success.get("palimpsest_china_state_root")
                 == "/var/lib/seiche-palimpsest-china"
@@ -2300,6 +2329,25 @@ valid = (
                 str(success.get("palimpsest_china_state_tree_sha256", "")),
             ) is not None
             and success.get("palimpsest_china_state") in {"active", "inactive"}
+            and (
+                status.get("schema") != "seiche.market-offsite-backup-status.v4"
+                or (
+                    success.get("mode") == status.get("mode")
+                    and (
+                        success.get("palimpsest_china_active_activation_id") is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(success.get("palimpsest_china_active_activation_id", "")),
+                        ) is not None
+                    )
+                    and success.get("palimpsest_china_pending_candidate_activation_id")
+                    is None
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(success.get("remote_receipt_sha256", "")),
+                    ) is not None
+                )
+            )
         )
     )
     and success.get("nbs_state_root") == "/var/lib/seiche-nbs"

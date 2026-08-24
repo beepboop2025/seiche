@@ -2581,7 +2581,7 @@ def test_only_owner_attested_context_is_additive_and_never_changes_gauge(
     assert "china_macro.economic_context" in wdi_source["projection_paths"]
 
 
-def test_rest_and_mcp_expose_the_same_context_without_building_the_world_board(
+def test_rest_and_mcp_label_legacy_v1_context_provisional_without_building_board(
     tmp_path: Path,
     signer: tuple[Ed25519PrivateKey, str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -2593,6 +2593,33 @@ def test_rest_and_mcp_expose_the_same_context_without_building_the_world_board(
     )
     monkeypatch.setattr(context_views, "public_china_macro_context", lambda: None)
     monkeypatch.setattr(context_views, "public_china_economic_context", lambda: context)
+    legacy_environment = {
+        "SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH": "/legacy/manifest.json",
+        "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH": "/legacy/artifact.jsonl",
+        "SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH": "/legacy/input-ledger.jsonl",
+        "SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH": "/legacy/availability.json",
+        "SEICHE_PALIMPSEST_CHINA_PRODUCER_COMMIT_EVIDENCE_PATH": (
+            "/legacy/github-commit.json"
+        ),
+        "SEICHE_PALIMPSEST_CHINA_PRODUCER_MAIN_EVIDENCE_PATH": (
+            "/legacy/github-main-branch.json"
+        ),
+        "SEICHE_PALIMPSEST_CHINA_HANDOFF_PATH": "/legacy/handoff-receipt.json",
+        "SEICHE_PALIMPSEST_CHINA_CHECKSUMS_PATH": "/legacy/SHA256SUMS",
+        "SEICHE_PALIMPSEST_CHINA_LINEAGE_CHAIN_PATH": (
+            "/legacy/china-econ-wdi-lineage-chain.jsonl"
+        ),
+        "SEICHE_PALIMPSEST_CHINA_LINEAGE_EVIDENCE_PATH": (
+            "/legacy/github-commit-lineage-evidence.jsonl"
+        ),
+        "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH": "/legacy/acceptance.json",
+    }
+    for name, value in legacy_environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv(
+        "SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS",
+        raising=False,
+    )
 
     def forbidden_board(*_args, **_kwargs):
         raise AssertionError("China context must not build or restore the world board")
@@ -2623,7 +2650,60 @@ def test_rest_and_mcp_expose_the_same_context_without_building_the_world_board(
         == (rest["china_macro"]["economic_context"])
     )
     assert rest["china_macro"]["economic_context"]["scoring_eligible"] is False
+    assert (
+        rest["china_macro"]["economic_context"]["publication_status"] == "provisional"
+    )
     assert rest["generated_at"] is None
+
+    monkeypatch.setattr(api, "_completed_world_markets_snapshot", lambda: None)
+    cold_rest_response = TestClient(api.app).get("/api/v2/world-markets?section=all")
+    assert cold_rest_response.status_code == 503
+    cold_rest = cold_rest_response.json()
+    monkeypatch.setattr(mcp, "_get_completed_snapshot", lambda: None)
+    cold_rpc = mcp.dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": "palimpsest-china-cold",
+            "method": "tools/call",
+            "params": {
+                "name": "world_markets_context",
+                "arguments": {"section": "all"},
+            },
+        },
+        public=True,
+    )
+    cold_mcp = json.loads(cold_rpc["result"]["content"][0]["text"])
+    assert (
+        cold_mcp["china_macro"]["economic_context"]
+        == cold_rest["china_macro"]["economic_context"]
+    )
+    assert (
+        cold_rest["china_macro"]["economic_context"]["publication_status"]
+        == "provisional"
+    )
+
+
+def test_served_palimpsest_context_rejects_nonprovisional_status(
+    tmp_path: Path,
+    signer: tuple[Ed25519PrivateKey, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _load_written_bundle(
+        _write_signed_bundle(tmp_path, signer),
+        attest_dir=signer[2],
+        now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
+    )
+    monkeypatch.setenv("SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS", "durable")
+
+    with pytest.raises(
+        intake.PalimpsestChinaIntakeError,
+        match="publication status must remain provisional",
+    ):
+        context_views.world_markets(
+            {},
+            selector="china_macro",
+            china_economic_context=context,
+        )
 
 
 def test_non_china_selectors_do_not_read_the_offline_export(

@@ -12,6 +12,7 @@ CONFIG_ENV_FILE="${SEICHE_OFFSITE_BACKUP_ENV_FILE:-/etc/seiche/offsite-backup.en
 PASSPHRASE_FILE="${SEICHE_OFFSITE_BACKUP_PASSPHRASE_FILE:-/etc/seiche/offsite-backup.passphrase}"
 CREDENTIAL_ENV_FILE="${SEICHE_OFFSITE_BACKUP_CREDENTIAL_ENV_FILE:-/root/.config/anchor/object-storage.env}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+DURABILITY_REQUEST_PATH="${SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH:-/run/seiche-deploy/palimpsest-china-durability-request.json}"
 RELEASE_SHA="${SEICHE_RELEASE_SHA:-}"
 LOCK_PATH="${SEICHE_OFFSITE_BACKUP_LOCK_PATH:-/run/lock/seiche-market-backup.lock}"
 RUN_LOCK_PATH="${SEICHE_OFFSITE_BACKUP_RUN_LOCK_PATH:-/run/lock/seiche-market-offsite-backup.lock}"
@@ -76,6 +77,7 @@ for specification in \
         "passphrase path:$PASSPHRASE_FILE" \
         "credential path:$CREDENTIAL_ENV_FILE" \
         "deployed SHA path:$DEPLOYED_SHA_PATH" \
+        "activation durability request path:$DURABILITY_REQUEST_PATH" \
         "backup lock path:$LOCK_PATH" \
         "offsite run lock path:$RUN_LOCK_PATH"; do
     label=${specification%%:*}
@@ -90,6 +92,11 @@ printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$' \
 if [ "${EUID:-$($PYTHON_BIN -c 'import os; print(os.geteuid())')}" -ne 0 ] \
         && [ "$ALLOW_NON_ROOT_TEST" != 1 ]; then
     fail "must run as root"
+fi
+if [ "$ALLOW_NON_ROOT_TEST" != 1 ]; then
+    [ "$DURABILITY_REQUEST_PATH" = \
+        /run/seiche-deploy/palimpsest-china-durability-request.json ] \
+        || fail "production activation durability request path is fixed"
 fi
 [ "$WRITE_ENABLED" = 1 ] || fail "offsite writes are not explicitly enabled"
 case "$CANARY" in
@@ -288,7 +295,73 @@ fi
 "$FLOCK_BIN" --shared --timeout 300 9 \
     || fail "timed out waiting for the local backup lease"
 
+DURABILITY_EXPECTED_ACTIVATION_ID=""
+DURABILITY_EXPECTED_TREE_SHA256=""
+DURABILITY_EXPECTED_RELEASE_SHA=""
+DURABILITY_EXPECTED_SNAPSHOT=""
+if [ -e "$DURABILITY_REQUEST_PATH" ] || [ -L "$DURABILITY_REQUEST_PATH" ]; then
+    [ "$CANARY" = 0 ] \
+        || fail "activation durability requires scheduled offsite mode"
+    mapfile -t DURABILITY_REQUEST_FIELDS < <(
+        "$PYTHON_BIN" -I -B - "$DURABILITY_REQUEST_PATH" <<'PY'
+from __future__ import annotations
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+path = Path(sys.argv[1])
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+try:
+    before = os.fstat(fd)
+    visible = path.lstat()
+    uid = 0 if os.geteuid() == 0 else os.geteuid()
+    gid = 0 if os.geteuid() == 0 else os.getegid()
+    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+        or (before.st_uid, before.st_gid) != (uid, gid)
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        or not 1 <= before.st_size <= 4096):
+        raise ValueError("request metadata is unsafe")
+    body = os.read(fd, 4097)
+    after = os.fstat(fd)
+    identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_nlink, item.st_uid, item.st_gid, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+    if len(body) != before.st_size or identity(before) != identity(after):
+        raise ValueError("request changed while read")
+finally:
+    os.close(fd)
+value = json.loads(body)
+keys = {"schema", "activation_id", "tree_sha256", "release_sha", "snapshot_id", "requested_at"}
+canonical = json.dumps(value, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+if (type(value) is not dict or set(value) != keys or body != canonical
+    or value["schema"] != "seiche.palimpsest-china-durability-request.v1"
+    or re.fullmatch(r"[0-9a-f]{64}", value["activation_id"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{64}", value["tree_sha256"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{40}", value["release_sha"] or "") is None
+    or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", value["snapshot_id"] or "") is None
+    or re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value["requested_at"] or "") is None):
+    raise ValueError("request contract changed")
+for key in ("activation_id", "tree_sha256", "release_sha", "snapshot_id"):
+    print(value[key])
+PY
+    ) || fail "activation durability request is invalid"
+    [ "${#DURABILITY_REQUEST_FIELDS[@]}" -eq 4 ] \
+        || fail "activation durability request proof is incomplete"
+    DURABILITY_EXPECTED_ACTIVATION_ID=${DURABILITY_REQUEST_FIELDS[0]}
+    DURABILITY_EXPECTED_TREE_SHA256=${DURABILITY_REQUEST_FIELDS[1]}
+    DURABILITY_EXPECTED_RELEASE_SHA=${DURABILITY_REQUEST_FIELDS[2]}
+    DURABILITY_EXPECTED_SNAPSHOT=${DURABILITY_REQUEST_FIELDS[3]}
+fi
+
 SNAPSHOT_ID="${SEICHE_OFFSITE_BACKUP_SNAPSHOT_ID:-}"
+if [ -n "$DURABILITY_EXPECTED_SNAPSHOT" ]; then
+    [ -z "$SNAPSHOT_ID" ] \
+        || [ "$SNAPSHOT_ID" = "$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        || fail "snapshot override conflicts with the activation durability request"
+    SNAPSHOT_ID=$DURABILITY_EXPECTED_SNAPSHOT
+fi
 if [ -n "$SNAPSHOT_ID" ]; then
     printf '%s' "$SNAPSHOT_ID" \
         | grep -Eq '^20[0-9]{6}T[0-9]{6}Z$' \
@@ -447,6 +520,8 @@ palimpsest_root = "/var/lib/seiche-palimpsest-china"
 palimpsest_contract = "seiche.palimpsest-china-activation-state.v1"
 palimpsest_tree = "absent"
 palimpsest_state = "legacy_absent_inactive"
+palimpsest_active = "none"
+palimpsest_pending = "none"
 if schema == "seiche.market-backup.v4":
     if (
         manifest["palimpsest_china_state_root"] != palimpsest_root
@@ -509,6 +584,8 @@ if schema == "seiche.market-backup.v4":
     palimpsest_state = (
         "active" if audit["active_activation_id"] is not None else "inactive"
     )
+    palimpsest_active = audit["active_activation_id"] or "none"
+    palimpsest_pending = audit["pending_candidate_activation_id"] or "none"
 revision = (root / "deployed-sha.txt").read_text(encoding="ascii")
 if not re.fullmatch(r"[0-9a-f]{40}\n", revision):
     raise SystemExit("snapshot revision is invalid")
@@ -536,13 +613,15 @@ print(palimpsest_root)
 print(palimpsest_contract)
 print(palimpsest_tree)
 print(palimpsest_state)
+print(palimpsest_active)
+print(palimpsest_pending)
 PY
 }
 
 SOURCE_PROOF_TEXT=$(validate_snapshot "$SNAPSHOT_PATH") \
     || fail "selected snapshot failed its closed backup contract"
 mapfile -t SOURCE_PROOF <<<"$SOURCE_PROOF_TEXT"
-[ "${#SOURCE_PROOF[@]}" -eq 12 ] \
+[ "${#SOURCE_PROOF[@]}" -eq 14 ] \
     || fail "selected snapshot proof is incomplete"
 SOURCE_REVISION=${SOURCE_PROOF[0]}
 SOURCE_INVENTORY_SHA=${SOURCE_PROOF[1]}
@@ -556,6 +635,19 @@ SOURCE_PALIMPSEST_CHINA_STATE_ROOT=${SOURCE_PROOF[8]}
 SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT=${SOURCE_PROOF[9]}
 SOURCE_PALIMPSEST_CHINA_TREE_SHA=${SOURCE_PROOF[10]}
 SOURCE_PALIMPSEST_CHINA_STATE=${SOURCE_PROOF[11]}
+SOURCE_PALIMPSEST_CHINA_ACTIVE_ID=${SOURCE_PROOF[12]}
+SOURCE_PALIMPSEST_CHINA_PENDING_ID=${SOURCE_PROOF[13]}
+if [ -n "$DURABILITY_EXPECTED_ACTIVATION_ID" ]; then
+    [ "$SNAPSHOT_ID" = "$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        && [ "$SOURCE_REVISION" = "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
+        && [ "$SOURCE_BACKUP_SCHEMA" = seiche.market-backup.v4 ] \
+        && [ "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" = \
+            "$DURABILITY_EXPECTED_ACTIVATION_ID" ] \
+        && [ "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" = \
+            "$DURABILITY_EXPECTED_TREE_SHA256" ] \
+        && [ "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" = none ] \
+        || fail "selected snapshot does not prove the requested exact activation"
+fi
 case "$SNAPSHOT_BYTES" in
     ''|*[!0-9]*) fail "snapshot byte count is invalid" ;;
 esac
@@ -609,20 +701,22 @@ same_destination = (
         "seiche.market-offsite-backup-status.v1",
         "seiche.market-offsite-backup-status.v2",
         "seiche.market-offsite-backup-status.v3",
+        "seiche.market-offsite-backup-status.v4",
     }
     and value.get("key_id") == key_id
     and value.get("destination") == destination
 )
-unresolved = same_destination and (
-    value.get("status") == "running"
-    or (
-        value.get("status") == "failed"
-        and (
-            isinstance(value.get("remote_receipt_key"), str)
-            or isinstance(value.get("remote_receipt_version_id"), str)
-        )
-    )
+receipt_intent = isinstance(value.get("remote_receipt_key"), str) or isinstance(
+    value.get("remote_receipt_version_id"), str
 )
+if value.get("schema") == "seiche.market-offsite-backup-status.v4":
+    unresolved = same_destination and value.get("status") in {"running", "failed"} and receipt_intent
+else:
+    # Older schemas cannot distinguish a pre-receipt running state safely.
+    unresolved = same_destination and (
+        value.get("status") == "running"
+        or (value.get("status") == "failed" and receipt_intent)
+    )
 raise SystemExit(0 if unresolved else 1)
 PY
     then
@@ -637,7 +731,9 @@ PY
             "$SOURCE_PALIMPSEST_CHINA_STATE_ROOT" \
             "$SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT" \
             "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" \
-            "$SOURCE_PALIMPSEST_CHINA_STATE" <<'PY'
+            "$SOURCE_PALIMPSEST_CHINA_STATE" \
+            "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" \
+            "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" <<'PY'
 import json
 import re
 import sys
@@ -658,6 +754,8 @@ import sys
     palimpsest_audit_contract,
     palimpsest_tree_sha,
     palimpsest_state,
+    palimpsest_active_id,
+    palimpsest_pending_id,
 ) = sys.argv[1:]
 try:
     value = json.load(open(path, encoding="utf-8"))
@@ -666,34 +764,52 @@ except (OSError, ValueError, TypeError):
     raise SystemExit(1)
 schema = value.get("schema")
 modern_contract = (
-    schema == "seiche.market-offsite-backup-status.v3"
+    schema in {
+        "seiche.market-offsite-backup-status.v3",
+        "seiche.market-offsite-backup-status.v4",
+    }
     and isinstance(success, dict)
-    and all(
-        record.get("source_backup_schema") == backup_schema
-        and record.get("nbs_state_root") == nbs_state_root
-        and record.get("nbs_full_store_audit_contract") == nbs_audit_contract
-        and record.get("nbs_full_store_audit_result") == nbs_audit_result
-        and record.get("palimpsest_china_state_root") == palimpsest_state_root
-        and record.get("palimpsest_china_state_audit_contract")
-        == palimpsest_audit_contract
-        and record.get("palimpsest_china_state_tree_sha256")
-        == palimpsest_tree_sha
-        and record.get("palimpsest_china_state") == palimpsest_state
-        for record in (value, success)
+    and success.get("source_backup_schema") == "seiche.market-backup.v4"
+    and success.get("nbs_state_root") == "/var/lib/seiche-nbs"
+    and success.get("nbs_full_store_audit_contract")
+    == "seiche.nbs-full-store-audit.v1"
+    and success.get("nbs_full_store_audit_result") == "required_at_restore"
+    and success.get("palimpsest_china_state_root")
+    == "/var/lib/seiche-palimpsest-china"
+    and success.get("palimpsest_china_state_audit_contract")
+    == "seiche.palimpsest-china-activation-state.v1"
+    and re.fullmatch(
+        r"[0-9a-f]{64}",
+        success.get("palimpsest_china_state_tree_sha256", ""),
     )
+    is not None
+    and success.get("palimpsest_china_state") in {"active", "inactive"}
 )
+if modern_contract and schema == "seiche.market-offsite-backup-status.v4":
+    success_active = success.get("palimpsest_china_active_activation_id")
+    success_pending = success.get("palimpsest_china_pending_candidate_activation_id")
+    modern_contract = (
+        (
+            success_active is None
+            if success.get("palimpsest_china_state") == "inactive"
+            else re.fullmatch(r"[0-9a-f]{64}", success_active or "") is not None
+        )
+        and (
+            success_pending is None
+            or re.fullmatch(r"[0-9a-f]{64}", success_pending or "") is not None
+        )
+        and re.fullmatch(r"[0-9a-f]{64}", success.get("remote_receipt_sha256", ""))
+        is not None
+    )
 legacy_contract = (
     schema == "seiche.market-offsite-backup-status.v2"
     and isinstance(success, dict)
-    and all(
-        record.get("source_backup_schema") == "seiche.market-backup.v3"
-        and record.get("nbs_state_root") == "/var/lib/seiche-nbs"
-        and record.get("nbs_full_store_audit_contract")
+    and success.get("source_backup_schema") == "seiche.market-backup.v3"
+    and success.get("nbs_state_root") == "/var/lib/seiche-nbs"
+    and success.get("nbs_full_store_audit_contract")
         == "seiche.nbs-full-store-audit.v1"
-        and record.get("nbs_full_store_audit_result") == "required_at_restore"
-        and not any(key.startswith("palimpsest_china_") for key in record)
-        for record in (value, success)
-    )
+    and success.get("nbs_full_store_audit_result") == "required_at_restore"
+    and not any(key.startswith("palimpsest_china_") for key in success)
 )
 valid = (
     (modern_contract or legacy_contract)
@@ -726,11 +842,37 @@ valid = (
 )
 if not valid:
     raise SystemExit(1)
-print(success["snapshot_id"])
+mode = success.get("mode")
+if mode not in {"canary", "scheduled"}:
+    key = success.get("remote_receipt_key", "")
+    mode = "canary" if "/canary/" in key else "scheduled"
+matches_current = (
+    success.get("source_backup_schema") == backup_schema
+    and success.get("nbs_state_root") == nbs_state_root
+    and success.get("nbs_full_store_audit_contract") == nbs_audit_contract
+    and success.get("nbs_full_store_audit_result") == nbs_audit_result
+    and success.get("palimpsest_china_state_root") == palimpsest_state_root
+    and success.get("palimpsest_china_state_audit_contract")
+    == palimpsest_audit_contract
+    and success.get("palimpsest_china_state_tree_sha256") == palimpsest_tree_sha
+    and success.get("palimpsest_china_state") == palimpsest_state
+    and success.get("palimpsest_china_active_activation_id")
+    == (None if palimpsest_active_id == "none" else palimpsest_active_id)
+    and success.get("palimpsest_china_pending_candidate_activation_id")
+    == (None if palimpsest_pending_id == "none" else palimpsest_pending_id)
+)
+print(f'{success["snapshot_id"]}|{mode}|{int(matches_current)}')
 PY
     ); then
         prior_success=1
     fi
+fi
+PRIOR_SUCCESS_MODE=""
+PRIOR_SUCCESS_MATCHES_CURRENT=0
+if [ "$prior_success" = 1 ]; then
+    IFS='|' read -r PRIOR_SUCCESS_SNAPSHOT PRIOR_SUCCESS_MODE \
+        PRIOR_SUCCESS_MATCHES_CURRENT \
+        <<<"$PRIOR_SUCCESS_SNAPSHOT"
 fi
 if [ "$CANARY" = 1 ] && [ "$prior_success" = 1 ]; then
     fail "canary already succeeded; set canary=0 before recurring writes"
@@ -738,7 +880,10 @@ fi
 if [ "$CANARY" = 0 ] && [ "$prior_success" != 1 ]; then
     fail "scheduled mode requires a successful first-write canary"
 fi
-if [ "$CANARY" = 0 ] && [ "$SNAPSHOT_ID" = "$PRIOR_SUCCESS_SNAPSHOT" ]; then
+if [ "$CANARY" = 0 ] && [ "$PRIOR_SUCCESS_MODE" = scheduled ] \
+        && [ "$SNAPSHOT_ID" = "$PRIOR_SUCCESS_SNAPSHOT" ]; then
+    [ "$PRIOR_SUCCESS_MATCHES_CURRENT" = 1 ] \
+        || fail "prior success for this snapshot binds different source evidence"
     log "snapshot $SNAPSHOT_ID is already restore-verified off-node; no write needed"
     exit 0
 fi
@@ -775,6 +920,7 @@ DOWNLOADED_RECEIPT="$RUN_ROOT/receipt.downloaded.json"
 ARCHIVE_SHA=""
 ARCHIVE_BYTES=0
 REMOTE_RECEIPT_KEY=""
+REMOTE_RECEIPT_SHA=""
 ARCHIVE_VERSION_ID=""
 ARCHIVE_ETAG=""
 CHECKSUM_VERSION_ID=""
@@ -798,7 +944,7 @@ PY
         )
     fi
     temporary=$(mktemp "$STATUS_ROOT/.status.XXXXXX")
-    "$PYTHON_BIN" - "$temporary" "$state" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
+    "$PYTHON_BIN" - "$temporary" "$state" "$CANARY" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
         "$SOURCE_REVISION" "$BUCKET" "$PREFIX" "$ARCHIVE_SHA" \
         "$ARCHIVE_BYTES" "$SOURCE_INVENTORY_SHA" "$SOURCE_CONTENT_SHA" \
         "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
@@ -807,7 +953,10 @@ PY
         "$SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT" \
         "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" \
         "$SOURCE_PALIMPSEST_CHINA_STATE" \
-        "$RETENTION_DAYS" "$REMOTE_RECEIPT_KEY" "$failure_class" \
+        "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" \
+        "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" \
+        "$RETENTION_DAYS" "$REMOTE_RECEIPT_KEY" "$REMOTE_RECEIPT_SHA" \
+        "$failure_class" \
         "$previous_success" "$KEY_ID" "$DESTINATION_ID" \
         "$RCLONE_CONFIG_ANCHOR_ENDPOINT" "$RCLONE_CONFIG_ANCHOR_REGION" \
         "$ARCHIVE_VERSION_ID" "$ARCHIVE_ETAG" "$CHECKSUM_VERSION_ID" \
@@ -818,11 +967,12 @@ import sys
 from datetime import datetime, timezone
 
 (
-    path, state, attempt, snapshot, revision, bucket, prefix, archive_sha,
+    path, state, canary, attempt, snapshot, revision, bucket, prefix, archive_sha,
     archive_bytes, inventory_sha, content_sha, backup_schema, nbs_state_root,
     nbs_audit_contract, nbs_audit_result, palimpsest_state_root,
     palimpsest_audit_contract, palimpsest_tree_sha, palimpsest_state,
-    days, receipt_key, failure_class,
+    palimpsest_active_id, palimpsest_pending_id,
+    days, receipt_key, receipt_sha, failure_class,
     previous_success, key_id, destination_id, endpoint, region, archive_version,
     archive_etag, checksum_version, checksum_etag, receipt_version, receipt_etag,
 ) = sys.argv[1:]
@@ -835,8 +985,9 @@ destination = {
     "prefix": prefix,
 }
 document = {
-    "schema": "seiche.market-offsite-backup-status.v3",
+    "schema": "seiche.market-offsite-backup-status.v4",
     "status": state,
+    "mode": "canary" if canary == "1" else "scheduled",
     "observed_at": now,
     "attempt_id": attempt,
     "snapshot_id": snapshot,
@@ -862,8 +1013,15 @@ document = {
     "palimpsest_china_state_audit_contract": palimpsest_audit_contract,
     "palimpsest_china_state_tree_sha256": palimpsest_tree_sha,
     "palimpsest_china_state": palimpsest_state,
+    "palimpsest_china_active_activation_id": (
+        None if palimpsest_active_id == "none" else palimpsest_active_id
+    ),
+    "palimpsest_china_pending_candidate_activation_id": (
+        None if palimpsest_pending_id == "none" else palimpsest_pending_id
+    ),
     "object_lock": {"mode": "COMPLIANCE", "days": int(days)},
     "remote_receipt_key": receipt_key or None,
+    "remote_receipt_sha256": receipt_sha or None,
     "remote_receipt_version_id": receipt_version or None,
     "remote_receipt_etag": receipt_etag or None,
     "restore_verified": state == "success",
@@ -873,6 +1031,7 @@ document = {
 if state == "success":
     document["last_success"] = {
         "attempt_id": attempt,
+        "mode": "canary" if canary == "1" else "scheduled",
         "snapshot_id": snapshot,
         "source_revision": revision,
         "bucket": bucket,
@@ -895,7 +1054,14 @@ if state == "success":
         "palimpsest_china_state_audit_contract": palimpsest_audit_contract,
         "palimpsest_china_state_tree_sha256": palimpsest_tree_sha,
         "palimpsest_china_state": palimpsest_state,
+        "palimpsest_china_active_activation_id": (
+            None if palimpsest_active_id == "none" else palimpsest_active_id
+        ),
+        "palimpsest_china_pending_candidate_activation_id": (
+            None if palimpsest_pending_id == "none" else palimpsest_pending_id
+        ),
         "remote_receipt_key": receipt_key,
+        "remote_receipt_sha256": receipt_sha,
         "remote_receipt_version_id": receipt_version,
         "remote_receipt_etag": receipt_etag,
         "object_lock": {"mode": "COMPLIANCE", "days": int(days)},
@@ -903,7 +1069,14 @@ if state == "success":
         "verified_at": now,
     }
 with open(path, "w", encoding="utf-8") as handle:
-    json.dump(document, handle, indent=2, sort_keys=True)
+    json.dump(
+        document,
+        handle,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     handle.write("\n")
     handle.flush()
     os.fsync(handle.fileno())
@@ -923,7 +1096,7 @@ PY
 
 status_commits_current_attempt() {
     [ -f "$STATUS_PATH" ] && [ ! -L "$STATUS_PATH" ] || return 1
-    "$PYTHON_BIN" - "$STATUS_PATH" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
+    "$PYTHON_BIN" - "$STATUS_PATH" "$CANARY" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
         "$SOURCE_REVISION" "$ARCHIVE_SHA" "$REMOTE_RECEIPT_KEY" \
         "$RECEIPT_VERSION_ID" "$KEY_ID" "$DESTINATION_ID" \
         "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
@@ -931,23 +1104,28 @@ status_commits_current_attempt() {
         "$SOURCE_PALIMPSEST_CHINA_STATE_ROOT" \
         "$SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT" \
         "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" \
-        "$SOURCE_PALIMPSEST_CHINA_STATE" <<'PY'
+        "$SOURCE_PALIMPSEST_CHINA_STATE" \
+        "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" \
+        "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" \
+        "$REMOTE_RECEIPT_SHA" <<'PY'
 import json
 import sys
 
 (
-    path, attempt, snapshot, revision, digest, receipt_key, receipt_version,
+    path, canary, attempt, snapshot, revision, digest, receipt_key, receipt_version,
     key_id, destination_id, backup_schema, nbs_state_root, nbs_audit_contract,
     nbs_audit_result, palimpsest_state_root, palimpsest_audit_contract,
-    palimpsest_tree_sha, palimpsest_state,
+    palimpsest_tree_sha, palimpsest_state, palimpsest_active_id,
+    palimpsest_pending_id, receipt_sha,
 ) = sys.argv[1:]
 try:
     value = json.load(open(path, encoding="utf-8"))
 except (OSError, ValueError, TypeError):
     raise SystemExit(1)
 valid = (
-    value.get("schema") == "seiche.market-offsite-backup-status.v3"
+    value.get("schema") == "seiche.market-offsite-backup-status.v4"
     and value.get("status") == "success"
+    and value.get("mode") == ("canary" if canary == "1" else "scheduled")
     and value.get("attempt_id") == attempt
     and value.get("snapshot_id") == snapshot
     and value.get("source_revision") == revision
@@ -965,6 +1143,11 @@ valid = (
     == palimpsest_audit_contract
     and value.get("palimpsest_china_state_tree_sha256") == palimpsest_tree_sha
     and value.get("palimpsest_china_state") == palimpsest_state
+    and value.get("palimpsest_china_active_activation_id")
+    == (None if palimpsest_active_id == "none" else palimpsest_active_id)
+    and value.get("palimpsest_china_pending_candidate_activation_id")
+    == (None if palimpsest_pending_id == "none" else palimpsest_pending_id)
+    and value.get("remote_receipt_sha256") == receipt_sha
     and value.get("restore_verified") is True
 )
 raise SystemExit(0 if valid else 1)
@@ -1179,7 +1362,7 @@ mkdir -m 0700 -- "$RESTORE_ROOT"
 RESTORED_PROOF_TEXT=$(validate_snapshot "$RESTORE_ROOT/$SNAPSHOT_ID") \
     || fail "downloaded snapshot failed its authenticated restore contract"
 mapfile -t RESTORED_PROOF <<<"$RESTORED_PROOF_TEXT"
-[ "${#RESTORED_PROOF[@]}" -eq 12 ] \
+[ "${#RESTORED_PROOF[@]}" -eq 14 ] \
     && [ "${RESTORED_PROOF[0]}" = "$SOURCE_REVISION" ] \
     && [ "${RESTORED_PROOF[1]}" = "$SOURCE_INVENTORY_SHA" ] \
     && [ "${RESTORED_PROOF[2]}" = "$SOURCE_CONTENT_SHA" ] \
@@ -1192,10 +1375,16 @@ mapfile -t RESTORED_PROOF <<<"$RESTORED_PROOF_TEXT"
     && [ "${RESTORED_PROOF[9]}" = "$SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT" ] \
     && [ "${RESTORED_PROOF[10]}" = "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" ] \
     && [ "${RESTORED_PROOF[11]}" = "$SOURCE_PALIMPSEST_CHINA_STATE" ] \
+    && [ "${RESTORED_PROOF[12]}" = "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" ] \
+    && [ "${RESTORED_PROOF[13]}" = "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" ] \
     || fail "restored snapshot hashes differ from the completed source"
 
 REMOTE_RECEIPT_KEY="$OBJECT_BASE/RECEIPT.json"
-"$PYTHON_BIN" - "$RECEIPT" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
+# Persist the receipt-intent boundary before the immutable completion marker can
+# be published. A hard kill after remote copy but before local success fsync is
+# therefore unresolved on restart and must be reconciled, never retried blind.
+write_status running
+"$PYTHON_BIN" - "$RECEIPT" "$CANARY" "$ATTEMPT_ID" "$SNAPSHOT_ID" \
     "$SOURCE_REVISION" "$BUCKET" "$PREFIX" "$ARCHIVE_SHA" \
     "$ARCHIVE_BYTES" "$SOURCE_INVENTORY_SHA" "$SOURCE_CONTENT_SHA" \
     "$SOURCE_BACKUP_SCHEMA" "$SOURCE_NBS_STATE_ROOT" \
@@ -1204,6 +1393,8 @@ REMOTE_RECEIPT_KEY="$OBJECT_BASE/RECEIPT.json"
     "$SOURCE_PALIMPSEST_CHINA_AUDIT_CONTRACT" \
     "$SOURCE_PALIMPSEST_CHINA_TREE_SHA" \
     "$SOURCE_PALIMPSEST_CHINA_STATE" \
+    "$SOURCE_PALIMPSEST_CHINA_ACTIVE_ID" \
+    "$SOURCE_PALIMPSEST_CHINA_PENDING_ID" \
     "$RETENTION_DAYS" "$REMOTE_RECEIPT_KEY" "$KEY_ID" "$DESTINATION_ID" \
     "$RCLONE_CONFIG_ANCHOR_ENDPOINT" "$RCLONE_CONFIG_ANCHOR_REGION" \
     "$ARCHIVE_VERSION_ID" "$ARCHIVE_ETAG" "$CHECKSUM_VERSION_ID" \
@@ -1214,17 +1405,18 @@ import sys
 from datetime import datetime, timezone
 
 (
-    path, attempt, snapshot, revision, bucket, prefix, archive_sha,
+    path, canary, attempt, snapshot, revision, bucket, prefix, archive_sha,
     archive_bytes, inventory_sha, content_sha, backup_schema, nbs_state_root,
     nbs_audit_contract, nbs_audit_result, palimpsest_state_root,
     palimpsest_audit_contract, palimpsest_tree_sha, palimpsest_state,
-    days, receipt_key, key_id,
+    palimpsest_active_id, palimpsest_pending_id, days, receipt_key, key_id,
     destination_id, endpoint, region, archive_version, archive_etag,
     checksum_version, checksum_etag,
 ) = sys.argv[1:]
 document = {
-    "schema": "seiche.market-offsite-backup-receipt.v3",
+    "schema": "seiche.market-offsite-backup-receipt.v4",
     "status": "remote_restore_verified",
+    "mode": "canary" if canary == "1" else "scheduled",
     "verified_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "attempt_id": attempt,
     "snapshot_id": snapshot,
@@ -1258,6 +1450,12 @@ document = {
     "palimpsest_china_state_audit_contract": palimpsest_audit_contract,
     "palimpsest_china_state_tree_sha256": palimpsest_tree_sha,
     "palimpsest_china_state": palimpsest_state,
+    "palimpsest_china_active_activation_id": (
+        None if palimpsest_active_id == "none" else palimpsest_active_id
+    ),
+    "palimpsest_china_pending_candidate_activation_id": (
+        None if palimpsest_pending_id == "none" else palimpsest_pending_id
+    ),
     "encryption": "openpgp-symmetric-aes256-ocb-aead-s2k-sha512",
     "verification": (
         "download-ciphertext-sha256-aead-decrypt-and-closed-source-hash-"
@@ -1275,6 +1473,10 @@ with open(path, "x", encoding="utf-8") as handle:
     os.fsync(handle.fileno())
 os.chmod(path, 0o600)
 PY
+
+REMOTE_RECEIPT_SHA=$($SHA256SUM_BIN "$RECEIPT" | "$AWK_BIN" '{print $1}')
+printf '%s' "$REMOTE_RECEIPT_SHA" | grep -Eq '^[0-9a-f]{64}$' \
+    || fail "remote receipt digest is malformed"
 
 # Receipt-last publication is the only remote completion marker. Every rclone
 # operation is copyto; this script intentionally has no delete or sync path.

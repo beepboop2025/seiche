@@ -64,6 +64,14 @@ Every run:
 A failed run removes its hidden staging directory and cannot replace a prior
 snapshot. Snapshot files are root-only mode `0600`; directories are `0700`.
 
+An activation durability run supplies a canonical, root-only request under
+`/run/seiche-deploy`. That request fixes the new snapshot name, deployed release
+SHA, live Palimpsest China activation ID, and canonical state-tree digest. A
+conflicting manual snapshot override is rejected. The backup re-audits the live
+tree while holding its normal market lease and will not commit a snapshot whose
+audit differs from the request. The request does not grant backup, restore, or
+offsite code permission to acquire the deploy or activation transaction locks.
+
 Operator checks:
 
 ```sh
@@ -152,6 +160,10 @@ no longer complete; these are deliberately different signals.
 - the exact v5 restore receipt is missing, invalid, older than eight days,
   future-dated, or does not record a strictly verified NBS full-store and
   Palimpsest China activation-state archive;
+- the live Palimpsest China marker is provisional without an exact immutable
+  durability receipt, or the restore-v5/offsite-v4 activation ID, canonical
+  tree digest, snapshot, receipt digest, or scheduled mode differs from that
+  receipt (a newer-looking inactive or older-activation snapshot still fails);
 - a required service/timer is inactive, or a required timer is disabled for
   the next boot; or
 - block or inode use reaches 90 percent on a monitored filesystem.
@@ -230,13 +242,56 @@ state paths, and audit-policy labels.
    versus inactive state. They do not claim `verified_head` and do not publish
    NBS member inventories, Palimpsest bundle contents, or evidence values.
 
-The local record uses `seiche.market-offsite-backup-status.v3`; the immutable
-remote completion marker uses `seiche.market-offsite-backup-receipt.v3`.
-Version 2 success records remain readable only for legacy v3 snapshots and
-cannot authorize a v4 upload because they lack the Palimpsest China state
-commitments. A version 1 `running` record or failed
+The local record uses `seiche.market-offsite-backup-status.v4`; the immutable
+remote completion marker uses `seiche.market-offsite-backup-receipt.v4`.
+Version 4 adds the explicit `canary` versus `scheduled` mode, exact active and
+pending Palimpsest China activation IDs, and the SHA-256 of the downloaded
+immutable remote receipt bytes. A canary success never deduplicates the first
+scheduled write, even for the same snapshot; only an exact prior scheduled
+success can deduplicate a scheduled retry. Version 3 remains readable for
+ordinary historical freshness, but cannot complete a current activation
+durability transaction because it lacks those bindings. Version 2 success
+records remain readable only for legacy v3 snapshots and cannot authorize a v4
+upload because they lack the Palimpsest China state commitments. A version 1
+`running` record or failed
 record that reached receipt intent remains an unresolved boundary and still
 requires operator reconciliation.
+
+Activation durability additionally seals the exact restore-v5 receipt bytes
+and digest inside the root-only immutable activation receipt, plus the
+scheduled offsite-v4 immutable remote receipt key, digest, and verified clock.
+That embedded closed restore proof remains authoritative after the ordinary
+21-day local snapshot retention policy removes its historical snapshot; the
+mutable current restore receipt must still be a non-regressed successor.
+The mutable latest restore/offsite status may advance after a later release,
+but readiness accepts it only as a successor: schema v5/v4, the same live
+activation ID and canonical tree, no pending candidate, a non-regressing proof
+clock, and an equal immutable receipt identity whenever the snapshot is the
+same. A fresh inactive or older snapshot never satisfies that contract.
+
+The exact-parent active-marker v1 compatibility path is one-way and
+provisional-only. While a legacy eleven-path API environment has no explicit
+status variable, every served Palimpsest economic context is still labeled
+`provisional`. The locked migration accepts only canonical, fully validated v1
+bytes with their matching immutable activation receipt. Marker v2 archives
+those exact bytes and SHA-256, requires every historical semantic field to be
+equal, and preserves the historical activation ID and release SHA when the same
+bundle is resumed by a later signed Seiche release. It creates no owner
+acceptance or durability claim. Malformed or unknown v1 fails without rewrite;
+a crash before the atomic marker rename retries the same activation, while an
+already committed v2 is idempotent. Restore-v5, scheduled offsite-v4, final
+live audit, and the outside-tree seal remain mandatory after migration. The
+seal's release SHA is the current trusted release that produced those durability
+proofs and must equal the embedded restore's deployed SHA and scheduled offsite
+source revision; the marker and activation receipt keep their historical
+publication release.
+
+The outside-tree durability receipt is deliberately not copied into its own
+activation snapshot. A total host/volume restore that loses it therefore
+restores the live marker as provisional and fails readiness. Recovery must
+resume the same activation ID to produce a new exact local restore, scheduled
+immutable offsite proof, final live audit, and local seal; a different
+activation or release remains blocked until that replay completes.
 
 A remote attempt without `RECEIPT.json` is incomplete. Recovery must enumerate
 receipt versions and use the recorded ciphertext VersionId and SHA-256, never
@@ -246,8 +301,11 @@ A failure after the attempt workspace and status trap are established preserves
 the last successful proof inside `last_success` while recording the current
 failure. Earlier configuration/snapshot/disk preflight failures are visible in
 the failed systemd unit and its OnFailure alert without replacing status.
-Any prior `running` status, or `failed` status that reached receipt intent or a
-receipt VersionId, is an unresolved commit boundary. Both the job and installer
+Any legacy prior `running` status is unresolved. In v4, a pre-receipt
+`running`/`failed` status with no receipt key or VersionId can retry while
+preserving its exact `last_success`; the job fsyncs a second `running` status
+with the receipt key before any immutable receipt upload. From that intent
+boundary onward, `running` or `failed` is unresolved. Both the job and installer
 refuse to re-arm recurring writes until an operator inspects the exact attempt
 path/version history and atomically reconciles status; this prevents a crash
 between remote receipt publication and local status fsync from duplicating the
@@ -456,7 +514,7 @@ test "$(systemctl is-active seiche-market-offsite-backup.timer)" = inactive
 ```
 
 Do not manually run the old status-v1 service after this transition. Install
-the signed candidate, require its v3 local backup and v4 restore receipt, and
+the signed candidate, require its v4 local backup and v5 restore receipt, and
 then perform the new v2 canary below. The new service independently proves that
 `seiche/market-backups/v2/canary/v1` has no versions or delete markers before
 its irreversible first write.

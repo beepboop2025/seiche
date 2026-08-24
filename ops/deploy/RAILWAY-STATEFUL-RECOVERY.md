@@ -55,8 +55,21 @@ Scheduled jobs are inert until repository variable
 
 ## Protected environments and secrets
 
-Require human reviewers on all three environments. Add these secrets to the
-admin environment:
+Require human reviewers on `railway-stateful-recovery-admin`: it changes native
+backup schedules and creates/locks the bootstrap canaries. Keep the scheduled
+`railway-stateful-recovery-monitor` and `railway-stateful-recovery-export`
+environments restricted to `main`, but do **not** configure per-run required
+reviewers on either one. Their six-hour monitor and daily append-only export
+must start unattended so the workflow's 26-hour freshness bound remains
+enforceable; a queued environment review is not recovery evidence. The export
+lane can request a no-authority-change snapshot and append immutable evidence,
+but it cannot cut over traffic, grant writers, restore production, delete an
+object, or weaken retention.
+
+This automation exception does not extend to any mutable cutover, activation,
+writer-grant, reverse-transfer, or production-recovery environment. Those
+environments remain manually dispatched and required-reviewer gated. Add these
+secrets to the admin environment:
 
 - `RAILWAY_TOKEN`
 - `RAILWAY_PROJECT_ID`

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,8 @@ def _snapshot(
     snapshot_id: str = SNAPSHOT_ID,
     extra: bool = False,
     schema: str = "v4",
+    active_id: str | None = None,
+    tree_sha256: str = "b" * 64,
 ) -> Path:
     snapshot = backup_root / snapshot_id
     snapshot.mkdir(parents=True)
@@ -76,10 +79,10 @@ def _snapshot(
         audit = {
             "schema": "seiche.palimpsest-china-activation-state.v1",
             "state_root": "/var/lib/seiche-palimpsest-china",
-            "tree_sha256": "b" * 64,
-            "bundles": [],
-            "receipts": [],
-            "active_activation_id": None,
+            "tree_sha256": tree_sha256,
+            "bundles": (["c" * 64] if active_id is not None else []),
+            "receipts": ([active_id] if active_id is not None else []),
+            "active_activation_id": active_id,
             "pending_candidate_activation_id": None,
         }
         payloads["palimpsest-china.tgz"] = b"palimpsest-china-state-archive\n"
@@ -276,6 +279,7 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
         from pathlib import Path
         import json
         import os
+        import signal
         import shutil
         import sys
 
@@ -294,6 +298,11 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
         destination_path = resolve(destination)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_path, destination_path)
+        if (
+            os.environ.get("FAKE_KILL_AFTER_RECEIPT_COPY") == "1"
+            and destination_path.name == "RECEIPT.json"
+        ):
+            os.kill(os.getppid(), signal.SIGKILL)
         with open(os.environ["FAKE_CALLS"], "a", encoding="utf-8") as handle:
             handle.write(json.dumps(["rclone", *args]) + "\\n")
         """,
@@ -366,6 +375,11 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
                     and target.name == "downloaded.tar.gpg"
                 ):
                     target.write_bytes(target.read_bytes() + b"x")
+                if (
+                    os.environ.get("FAKE_RECEIPT_TAMPER") == "1"
+                    and target.name == "receipt.downloaded.json"
+                ):
+                    target.write_bytes(target.read_bytes() + b"x")
         with open(os.environ["FAKE_CALLS"], "a", encoding="utf-8") as handle:
             handle.write(json.dumps(["curl", *args]) + "\\n")
         print(code, end="")
@@ -385,11 +399,20 @@ def _fake_tools(tmp_path: Path) -> dict[str, Path]:
 
 
 def _layout(
-    tmp_path: Path, *, extra_snapshot_member: bool = False
+    tmp_path: Path,
+    *,
+    extra_snapshot_member: bool = False,
+    active_id: str | None = None,
+    tree_sha256: str = "b" * 64,
 ) -> tuple[dict[str, str], Path, Path, Path]:
     fake = _fake_tools(tmp_path)
     backup_root = tmp_path / "backups"
-    snapshot = _snapshot(backup_root, extra=extra_snapshot_member)
+    snapshot = _snapshot(
+        backup_root,
+        extra=extra_snapshot_member,
+        active_id=active_id,
+        tree_sha256=tree_sha256,
+    )
     work_root = tmp_path / "work"
     status_path = tmp_path / "state" / "status.json"
     config = tmp_path / "offsite-backup.env"
@@ -489,9 +512,21 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     result = _run(env)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    status = json.loads(status_path.read_text())
-    assert status["schema"] == "seiche.market-offsite-backup-status.v3"
+    status_body = status_path.read_bytes()
+    status = json.loads(status_body)
+    assert status_body == (
+        json.dumps(
+            status,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        + b"\n"
+    )
+    assert status["schema"] == "seiche.market-offsite-backup-status.v4"
     assert status["status"] == "success"
+    assert status["mode"] == "canary"
     assert status["restore_verified"] is True
     assert status["source_revision"] == REVISION
     assert status["object_lock"] == {"days": 90, "mode": "COMPLIANCE"}
@@ -516,6 +551,8 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
         )
         assert record["palimpsest_china_state_tree_sha256"] == "b" * 64
         assert record["palimpsest_china_state"] == "inactive"
+        assert record["palimpsest_china_active_activation_id"] is None
+        assert record["palimpsest_china_pending_candidate_activation_id"] is None
     assert status["last_success"]["ciphertext_version_id"].startswith("version-")
     assert status["last_success"]["remote_receipt_version_id"].startswith("version-")
     assert status["remote_receipt_key"] == (
@@ -535,7 +572,8 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     ]
     receipt_path = next(remote_root.rglob("RECEIPT.json"))
     receipt = json.loads(receipt_path.read_text())
-    assert receipt["schema"] == "seiche.market-offsite-backup-receipt.v3"
+    assert receipt["schema"] == "seiche.market-offsite-backup-receipt.v4"
+    assert receipt["mode"] == "canary"
     assert receipt["source_backup_schema"] == "seiche.market-backup.v4"
     assert receipt["nbs_state_root"] == "/var/lib/seiche-nbs"
     assert receipt["nbs_full_store_audit_contract"] == "seiche.nbs-full-store-audit.v1"
@@ -547,6 +585,16 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     )
     assert receipt["palimpsest_china_state_tree_sha256"] == "b" * 64
     assert receipt["palimpsest_china_state"] == "inactive"
+    assert receipt["palimpsest_china_active_activation_id"] is None
+    assert receipt["palimpsest_china_pending_candidate_activation_id"] is None
+    assert (
+        status["remote_receipt_sha256"]
+        == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    )
+    assert (
+        status["last_success"]["remote_receipt_sha256"]
+        == status["remote_receipt_sha256"]
+    )
     assert "closed-source-hash" in receipt["verification"]
     assert "palimpsest-state-audits-required-at-restore" in receipt["verification"]
     assert not {
@@ -591,9 +639,145 @@ def test_canary_is_exactly_once_and_scheduled_mode_requires_it(tmp_path: Path):
     }
     scheduled = _run(scheduled_env)
     assert scheduled.returncode == 0, scheduled.stdout + scheduled.stderr
-    assert [call for call in _calls(calls_path) if call[0] == "rclone"] == [
-        call for call in calls_after_canary if call[0] == "rclone"
-    ]
+    all_rclone = [call for call in _calls(calls_path) if call[0] == "rclone"]
+    canary_rclone = [call for call in calls_after_canary if call[0] == "rclone"]
+    assert len(all_rclone) == len(canary_rclone) + 3
+    assert all(
+        "/snapshots/20260822T020000Z/attempts/" in call[3] for call in all_rclone[-3:]
+    )
+    scheduled_status = json.loads(status_path.read_text())
+    assert scheduled_status["mode"] == "scheduled"
+    assert scheduled_status["last_success"]["mode"] == "scheduled"
+    assert "/canary/" not in scheduled_status["remote_receipt_key"]
+
+
+def test_scheduled_durability_request_binds_exact_activation_tree_and_receipt(
+    tmp_path: Path,
+) -> None:
+    activation_id = "1" * 64
+    tree = "2" * 64
+    env, status_path, _remote_root, calls_path = _layout(
+        tmp_path,
+        active_id=activation_id,
+        tree_sha256=tree,
+    )
+    assert _run(env).returncode == 0
+    request = tmp_path / "durability-request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema": "seiche.palimpsest-china-durability-request.v1",
+                "activation_id": activation_id,
+                "tree_sha256": tree,
+                "release_sha": REVISION,
+                "snapshot_id": SNAPSHOT_ID,
+                "requested_at": "2026-08-22T05:30:00Z",
+            },
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    request.chmod(0o400)
+    scheduled = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH": str(request),
+            "FAKE_ATTEMPT_STAMP": "20260823T052000Z",
+        }
+    )
+
+    assert scheduled.returncode == 0, scheduled.stdout + scheduled.stderr
+    status = json.loads(status_path.read_text())
+    for record in (status, status["last_success"]):
+        assert record["palimpsest_china_active_activation_id"] == activation_id
+        assert record["palimpsest_china_pending_candidate_activation_id"] is None
+        assert record["palimpsest_china_state_tree_sha256"] == tree
+    receipt_key = status["last_success"]["remote_receipt_key"]
+    assert "/snapshots/" in receipt_key and "/canary/" not in receipt_key
+    assert re.fullmatch(
+        r"[0-9a-f]{64}", status["last_success"]["remote_receipt_sha256"]
+    )
+
+    before = len([call for call in _calls(calls_path) if call[0] == "rclone"])
+    document = json.loads(request.read_text())
+    document["tree_sha256"] = "3" * 64
+    request.chmod(0o600)
+    request.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+    )
+    request.chmod(0o400)
+    rejected = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH": str(request),
+            "FAKE_ATTEMPT_STAMP": "20260824T052000Z",
+        }
+    )
+    assert rejected.returncode != 0
+    assert "requested exact activation" in rejected.stderr
+    assert len([call for call in _calls(calls_path) if call[0] == "rclone"]) == before
+
+
+def test_inactive_canary_authorizes_first_active_scheduled_durability_snapshot(
+    tmp_path: Path,
+) -> None:
+    activation_id = "1" * 64
+    tree = "2" * 64
+    env, status_path, _remote_root, _calls_path = _layout(tmp_path)
+    assert _run(env).returncode == 0
+    canary = json.loads(status_path.read_text())["last_success"]
+    assert canary["mode"] == "canary"
+    assert canary["palimpsest_china_state"] == "inactive"
+
+    active_snapshot_id = "20260823T020000Z"
+    active_snapshot = _snapshot(
+        Path(env["SEICHE_MARKET_BACKUP_DIR"]),
+        snapshot_id=active_snapshot_id,
+        active_id=activation_id,
+        tree_sha256=tree,
+    )
+    request = tmp_path / "durability-request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema": "seiche.palimpsest-china-durability-request.v1",
+                "activation_id": activation_id,
+                "tree_sha256": tree,
+                "release_sha": REVISION,
+                "snapshot_id": active_snapshot_id,
+                "requested_at": "2026-08-23T05:30:00Z",
+            },
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    request.chmod(0o400)
+
+    scheduled = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "SEICHE_OFFSITE_BACKUP_SNAPSHOT_ID": active_snapshot_id,
+            "SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH": str(request),
+            "FAKE_SNAPSHOT_PATH": str(active_snapshot),
+            "FAKE_ATTEMPT_STAMP": "20260823T052000Z",
+        }
+    )
+
+    assert scheduled.returncode == 0, scheduled.stdout + scheduled.stderr
+    success = json.loads(status_path.read_text())["last_success"]
+    assert success["mode"] == "scheduled"
+    assert success["snapshot_id"] == active_snapshot_id
+    assert success["palimpsest_china_state"] == "active"
+    assert success["palimpsest_china_active_activation_id"] == activation_id
+    assert success["palimpsest_china_state_tree_sha256"] == tree
+    assert success["palimpsest_china_pending_candidate_activation_id"] is None
 
 
 def test_remote_canary_marker_blocks_retry_when_local_status_is_lost(tmp_path: Path):
@@ -659,6 +843,44 @@ def test_scheduled_mode_blocks_unresolved_running_or_receipt_intent(tmp_path: Pa
         assert "prior offsite attempt is unresolved" in result.stderr
 
     assert [call for call in _calls(calls_path) if call[0] == "rclone"] == rclone_calls
+
+
+def test_hard_crash_after_remote_receipt_copy_is_an_unresolved_commit_boundary(
+    tmp_path: Path,
+) -> None:
+    env, status_path, remote_root, calls_path = _layout(tmp_path)
+    assert _run(env).returncode == 0
+    crash = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "FAKE_ATTEMPT_STAMP": "20260823T052000Z",
+            "FAKE_KILL_AFTER_RECEIPT_COPY": "1",
+        }
+    )
+
+    assert crash.returncode < 0
+    status = json.loads(status_path.read_text())
+    assert status["schema"] == "seiche.market-offsite-backup-status.v4"
+    assert status["status"] == "running"
+    assert status["remote_receipt_key"].endswith("/RECEIPT.json")
+    assert status["remote_receipt_version_id"] is None
+    assert status["restore_verified"] is False
+    assert status["last_success"]["mode"] == "canary"
+    assert len(list(remote_root.rglob("RECEIPT.json"))) == 2
+    calls_after_crash = _calls(calls_path)
+
+    retry = _run(
+        env
+        | {
+            "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+            "FAKE_ATTEMPT_STAMP": "20260823T062000Z",
+        }
+    )
+
+    assert retry.returncode != 0
+    assert "prior offsite attempt is unresolved" in retry.stderr
+    assert _calls(calls_path) == calls_after_crash
 
 
 def test_scheduled_mode_without_canary_refuses_every_remote_write(tmp_path: Path):
@@ -751,6 +973,25 @@ def test_ciphertext_tamper_fails_and_never_uploads_receipt(tmp_path: Path):
     assert not list(Path(env["SEICHE_OFFSITE_BACKUP_WORK_DIR"]).glob(".run-*"))
 
 
+def test_remote_receipt_must_round_trip_exactly_before_local_success(
+    tmp_path: Path,
+):
+    env, status_path, remote_root, _calls_path = _layout(tmp_path)
+    env["FAKE_RECEIPT_TAMPER"] = "1"
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "downloaded remote receipt differs" in result.stderr
+    status = json.loads(status_path.read_text())
+    assert status["schema"] == "seiche.market-offsite-backup-status.v4"
+    assert status["status"] == "failed"
+    assert status["last_success"] is None
+    assert status["restore_verified"] is False
+    assert list(remote_root.rglob("RECEIPT.json"))
+    assert not list(Path(env["SEICHE_OFFSITE_BACKUP_WORK_DIR"]).glob(".run-*"))
+
+
 def test_restored_hash_failure_preserves_last_success_and_no_new_receipt(
     tmp_path: Path,
 ):
@@ -778,6 +1019,66 @@ def test_restored_hash_failure_preserves_last_success_and_no_new_receipt(
     assert status["last_success"] == first
     assert len(list(remote_root.rglob("RECEIPT.json"))) == 1
     assert len(list(remote_root.rglob("seiche-market-backup.tar.gpg"))) == 2
+
+    retry = _run(
+        {
+            key: value
+            for key, value in failed_env.items()
+            if key != "FAKE_RESTORE_TAMPER"
+        }
+        | {"FAKE_ATTEMPT_STAMP": "20260823T062000Z"}
+    )
+    assert retry.returncode == 0, retry.stdout + retry.stderr
+    retried_status = json.loads(status_path.read_text())
+    assert retried_status["status"] == "success"
+    assert retried_status["last_success"]["mode"] == "scheduled"
+    assert retried_status["last_success"]["snapshot_id"] == next_snapshot_id
+
+
+def test_pre_receipt_v4_running_status_preserves_successful_retry_authority(
+    tmp_path: Path,
+) -> None:
+    env, status_path, _remote_root, _calls_path = _layout(tmp_path)
+    assert _run(env).returncode == 0
+    scheduled_env = env | {
+        "SEICHE_OFFSITE_BACKUP_CANARY": "0",
+        "FAKE_ATTEMPT_STAMP": "20260822T062000Z",
+    }
+    assert _run(scheduled_env).returncode == 0
+    previous = json.loads(status_path.read_text())
+    next_snapshot_id = "20260823T020000Z"
+    next_snapshot = _snapshot(
+        Path(env["SEICHE_MARKET_BACKUP_DIR"]), snapshot_id=next_snapshot_id
+    )
+    running = {
+        **previous,
+        "status": "running",
+        "attempt_id": "20260823T052000Z-99",
+        "snapshot_id": next_snapshot_id,
+        "remote_receipt_key": None,
+        "remote_receipt_sha256": None,
+        "remote_receipt_version_id": None,
+        "remote_receipt_etag": None,
+        "restore_verified": False,
+        "failure_class": None,
+    }
+    status_path.write_text(
+        json.dumps(running, sort_keys=True, separators=(",", ":")) + "\n"
+    )
+
+    retry = _run(
+        scheduled_env
+        | {
+            "SEICHE_OFFSITE_BACKUP_SNAPSHOT_ID": next_snapshot_id,
+            "FAKE_SNAPSHOT_PATH": str(next_snapshot),
+            "FAKE_ATTEMPT_STAMP": "20260823T062000Z",
+        }
+    )
+
+    assert retry.returncode == 0, retry.stdout + retry.stderr
+    status = json.loads(status_path.read_text())
+    assert status["status"] == "success"
+    assert status["last_success"]["snapshot_id"] == next_snapshot_id
 
 
 def test_legacy_v2_snapshot_cannot_masquerade_after_rehash(tmp_path: Path):
