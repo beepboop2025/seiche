@@ -830,10 +830,20 @@ def test_every_durable_data_consumer_is_mount_guarded() -> None:
         unit = (ROOT / "ops" / "deploy" / name).read_text()
         assert "Requires=seiche-storage-preflight.service" in unit, name
         assert "After=" in unit and "seiche-storage-preflight.service" in unit, name
-        assert (
-            "RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs "
-            "/var/backups/seiche-market"
-        ) in unit, name
+        mounts_line = next(
+            line for line in unit.splitlines() if line.startswith("RequiresMountsFor=")
+        )
+        mounts = set(mounts_line.removeprefix("RequiresMountsFor=").split())
+        assert {
+            "/var/lib/seiche",
+            "/var/lib/seiche-nbs",
+            "/var/backups/seiche-market",
+        } <= mounts, name
+        if name in {
+            "seiche-market-backup.service",
+            "seiche-market-restore-check.service",
+        }:
+            assert "/var/lib/seiche-palimpsest-china" in mounts, name
 
     preflight = UNIT.read_text()
     assert "Type=oneshot" in preflight

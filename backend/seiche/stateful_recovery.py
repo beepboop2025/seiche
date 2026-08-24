@@ -1,7 +1,7 @@
 """Phase-6 portable recovery exports for Railway stateful production.
 
 The production supervisor briefly pauses the two writer children, calls this
-module to commit one backup-v3 generation, restarts the writers, and only then
+module to commit one backup-v4 generation, restarts the writers, and only then
 publishes the recovery receipt.  Public API reads remain available throughout.
 """
 
@@ -29,12 +29,14 @@ from seiche import stateful_migration as migration
 
 
 REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v1"
-OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v1"
+RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v3"
+OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v3"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml"
 CONFIRMATION = "EXPORT_WITHOUT_AUTHORITY_CHANGE"
 REQUEST_MAX_AGE = timedelta(minutes=30)
 REQUEST_FUTURE_SKEW = timedelta(minutes=5)
+MAX_SHADOW_RECEIPTS = 1024
+MAX_SHADOW_RECEIPT_BYTES = 64 * 1024 * 1024
 
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
@@ -65,10 +67,13 @@ _RECEIPT_KEYS = frozenset(
         "request_id",
         "request_sha256",
         "activation_receipt_sha256",
+        "candidate_receipt_sha256",
+        "shadow_receipt_sha256",
         "railway",
         "authority",
         "snapshot",
         "filesystem",
+        "palimpsest_china_state",
         "timing",
         "workers",
         "research_only",
@@ -86,6 +91,7 @@ _OFFSITE_RECEIPT_KEYS = frozenset(
         "snapshot_id",
         "recovery_receipt_sha256",
         "reverse_restore_proof_sha256",
+        "palimpsest_china_state",
         "bucket",
         "prefix",
         "object_lock_mode",
@@ -101,6 +107,8 @@ _OFFSITE_RECEIPT_KEYS = frozenset(
 _OFFSITE_OBJECTS = frozenset(
     {
         "activation-receipt.json",
+        "candidate-receipt.json",
+        "shadow-receipt.json",
         "request.json",
         "recovery-receipt.json",
         *migration._ALL_BACKUP_MEMBERS,
@@ -117,6 +125,7 @@ class RecoveryExport(NamedTuple):
     bundle: migration.BackupBundle
     nbs_audit_result: str
     tree_sha256: Mapping[str, str]
+    palimpsest_china_state: Mapping[str, Any]
     started_at: str
     completed_at: str
 
@@ -133,6 +142,24 @@ def _validate_digest(value: object, *, label: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise RecoveryContractError(f"{label} is invalid")
     return value
+
+
+def _palimpsest_china_state(value: object) -> dict[str, Any]:
+    try:
+        return migration.validate_palimpsest_china_state(value)
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
+
+
+def _palimpsest_china_state_from_bundle(
+    bundle: migration.BackupBundle,
+) -> dict[str, Any]:
+    try:
+        return migration.palimpsest_china_state_from_audit(
+            bundle.palimpsest_china_state_audit
+        )
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
 
 
 def _utc(value: object, *, label: str) -> datetime:
@@ -223,6 +250,221 @@ def activation_context(environment: Mapping[str, str]) -> tuple[bytes, dict[str,
     ):
         raise RecoveryContractError("recovery activation receipt differs from runtime")
     return body, value
+
+
+def validate_candidate_chain(
+    value: object,
+    *,
+    activation_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the activation-bound v3 candidate identity used by recovery."""
+
+    expected_keys = {
+        "schema",
+        "request",
+        "authority",
+        "fence",
+        "bundle",
+        "database",
+        "filesystem",
+        "palimpsest_china_state",
+        "railway",
+        "timing",
+        "research_only",
+        "can_publish",
+        "can_execute",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise RecoveryContractError("recovery candidate receipt fields are invalid")
+    candidate_request = value.get("request")
+    if (
+        value.get("schema") != cutover.CANDIDATE_RECEIPT_SCHEMA
+        or activation_receipt.get("candidate_receipt_sha256")
+        != _digest(_canonical(value))
+        or not isinstance(candidate_request, dict)
+        or set(candidate_request)
+        != {
+            "id",
+            "sha256",
+            "commit",
+            "tree",
+            "source_shadow_receipt_sha256",
+        }
+        or candidate_request.get("id") != activation_receipt.get("request_id")
+        or candidate_request.get("commit") != activation_receipt.get("commit")
+        or value.get("railway") != activation_receipt.get("railway")
+        or value.get("authority")
+        != {
+            "mode": "cutover_candidate",
+            "source": "none",
+            "hetzner_writers_frozen": True,
+            "railway_writers_started": False,
+            "public_traffic_enabled": False,
+        }
+        or value.get("research_only") is not True
+        or value.get("can_publish") is not False
+        or value.get("can_execute") is not False
+    ):
+        raise RecoveryContractError("recovery candidate receipt binding is invalid")
+    _validate_digest(
+        candidate_request.get("source_shadow_receipt_sha256"),
+        label="candidate source shadow receipt",
+    )
+    for name in ("id", "sha256"):
+        _validate_digest(candidate_request.get(name), label=f"candidate request {name}")
+    for name in ("commit", "tree"):
+        if (
+            not isinstance(candidate_request.get(name), str)
+            or _SHA40_RE.fullmatch(candidate_request[name]) is None
+        ):
+            raise RecoveryContractError(f"candidate request {name} is invalid")
+    _palimpsest_china_state(value.get("palimpsest_china_state"))
+    return dict(value)
+
+
+def candidate_context(
+    environment: Mapping[str, str],
+    *,
+    activation_receipt: Mapping[str, Any],
+) -> tuple[bytes, dict[str, Any]]:
+    path = Path(environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_PATH", ""))
+    if (
+        not path.is_absolute()
+        or path.parent != migration.PLATFORM_ROOT / "cutover-receipts"
+        or not path.name.endswith(".candidate.json")
+    ):
+        raise RecoveryContractError("recovery candidate receipt path is invalid")
+    body, value = _load_canonical(
+        path,
+        label="candidate receipt",
+        maximum_bytes=256 * 1024,
+    )
+    if _digest(body) != activation_receipt.get("candidate_receipt_sha256") or _digest(
+        body
+    ) != environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256"):
+        raise RecoveryContractError("recovery candidate receipt digest differs")
+    return body, validate_candidate_chain(
+        value,
+        activation_receipt=activation_receipt,
+    )
+
+
+def validate_shadow_chain(
+    value: object,
+    *,
+    candidate_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected_keys = {
+        "schema",
+        "request",
+        "authority",
+        "bundle",
+        "database",
+        "filesystem",
+        "palimpsest_china_state",
+        "railway",
+        "timing",
+        "research_only",
+        "can_publish",
+        "can_execute",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise RecoveryContractError("recovery shadow receipt fields are invalid")
+    candidate_request = candidate_receipt.get("request", {})
+    expected_digest = candidate_request.get("source_shadow_receipt_sha256")
+    shadow_request = value.get("request")
+    if (
+        value.get("schema") != migration.RECEIPT_SCHEMA
+        or _digest(_canonical(value)) != expected_digest
+        or not isinstance(shadow_request, dict)
+        or set(shadow_request)
+        != {
+            "id",
+            "sha256",
+            "commit",
+            "tree",
+            "source_archive_sha256",
+            "source_bundle_sha256",
+            "source_release_receipt_sha256",
+            "source_recovery_receipt_sha256",
+        }
+        or shadow_request.get("commit") != candidate_request.get("commit")
+        or value.get("authority")
+        != {
+            "mode": "shadow",
+            "source": "hetzner",
+            "source_writers_frozen": False,
+            "public_traffic_enabled": False,
+            "workers_started": False,
+        }
+        or value.get("research_only") is not True
+        or value.get("can_publish") is not False
+        or value.get("can_execute") is not False
+    ):
+        raise RecoveryContractError("recovery shadow receipt binding is invalid")
+    for name in (
+        "id",
+        "sha256",
+        "source_archive_sha256",
+        "source_bundle_sha256",
+        "source_release_receipt_sha256",
+        "source_recovery_receipt_sha256",
+    ):
+        _validate_digest(shadow_request.get(name), label=f"shadow request {name}")
+    for name in ("commit", "tree"):
+        if (
+            not isinstance(shadow_request.get(name), str)
+            or _SHA40_RE.fullmatch(shadow_request[name]) is None
+        ):
+            raise RecoveryContractError(f"shadow request {name} is invalid")
+    shadow_state = _palimpsest_china_state(value.get("palimpsest_china_state"))
+    candidate_state = _palimpsest_china_state(
+        candidate_receipt.get("palimpsest_china_state")
+    )
+    if shadow_state != candidate_state:
+        raise RecoveryContractError(
+            "cutover Palimpsest China state differs from shadow"
+        )
+    return dict(value)
+
+
+def shadow_context(
+    *,
+    candidate_receipt: Mapping[str, Any],
+    platform_root: Path | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    receipts = (platform_root or migration.PLATFORM_ROOT) / "receipts"
+    if not receipts.is_dir() or receipts.is_symlink():
+        raise RecoveryContractError("shadow receipt directory is unsafe")
+    entries = sorted(receipts.iterdir(), key=lambda path: path.name)
+    if len(entries) > MAX_SHADOW_RECEIPTS:
+        raise RecoveryContractError("shadow receipt directory is unbounded")
+    expected_digest = candidate_receipt.get("request", {}).get(
+        "source_shadow_receipt_sha256"
+    )
+    _validate_digest(expected_digest, label="candidate source shadow receipt")
+    matches: list[tuple[bytes, dict[str, Any]]] = []
+    total_bytes = 0
+    for path in entries:
+        if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
+            raise RecoveryContractError("shadow receipt directory is not closed")
+        body, value = _load_canonical(
+            path,
+            label="shadow receipt",
+            maximum_bytes=256 * 1024,
+        )
+        total_bytes += len(body)
+        if total_bytes > MAX_SHADOW_RECEIPT_BYTES:
+            raise RecoveryContractError("shadow receipt directory exceeds capacity")
+        if _digest(body) == expected_digest:
+            matches.append((body, value))
+    if len(matches) != 1:
+        raise RecoveryContractError("activation-bound shadow receipt is not unique")
+    body, value = matches[0]
+    return body, validate_shadow_chain(
+        value,
+        candidate_receipt=candidate_receipt,
+    )
 
 
 def publish_request(
@@ -452,6 +694,10 @@ def _bundle_identity(
             root / "api-data.tgz",
             expected_roots=frozenset({"api-data"}),
         )
+        migration.validate_tar_contract(
+            root / "palimpsest-china.tgz",
+            expected_roots=frozenset({"seiche-palimpsest-china"}),
+        )
     except migration.MigrationContractError as exc:
         raise RecoveryContractError(str(exc)) from exc
     if bundle.total_bytes != content_bytes or bundle.member_sha256 != digests:
@@ -463,6 +709,8 @@ def _restored_filesystem_identity(
     bundle: migration.BackupBundle,
     *,
     scratch_parent: Path,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> tuple[str, Mapping[str, str]]:
     scratch = Path(tempfile.mkdtemp(prefix=".recovery-inspect.", dir=scratch_parent))
     try:
@@ -470,8 +718,8 @@ def _restored_filesystem_identity(
             return migration.restore_filesystem_generation(
                 bundle,
                 scratch,
-                runtime_uid=os.geteuid(),
-                runtime_gid=os.getegid(),
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
             )
         except migration.MigrationContractError as exc:
             raise RecoveryContractError(str(exc)) from exc
@@ -485,9 +733,22 @@ def export_snapshot(
     request: Mapping[str, Any],
     *,
     platform_root: Path | None = None,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> RecoveryExport:
     root = platform_root or migration.PLATFORM_ROOT
     _activation_body, activation = activation_context(environment)
+    _candidate_body, candidate = candidate_context(
+        environment,
+        activation_receipt=activation,
+    )
+    _shadow_body, _shadow = shadow_context(
+        candidate_receipt=candidate,
+        platform_root=root,
+    )
+    expected_palimpsest_state = _palimpsest_china_state(
+        candidate.get("palimpsest_china_state")
+    )
     validated = validate_request(request, activation_receipt=activation)
     snapshot_id = str(validated["snapshot_id"])
     snapshots = root / "recovery-snapshots"
@@ -505,11 +766,19 @@ def export_snapshot(
         nbs_result, tree_digests = _restored_filesystem_identity(
             bundle,
             scratch_parent=snapshots,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
         )
+        observed_palimpsest_state = _palimpsest_china_state_from_bundle(bundle)
+        if observed_palimpsest_state != expected_palimpsest_state:
+            raise RecoveryContractError(
+                "recovery snapshot Palimpsest China state differs from candidate"
+            )
         return RecoveryExport(
             bundle,
             nbs_result,
             tree_digests,
+            observed_palimpsest_state,
             started_at,
             _iso_now(),
         )
@@ -523,14 +792,40 @@ def export_snapshot(
         market = generation / "market"
         nbs = generation / "nbs"
         api = generation / "api"
+        palimpsest = generation / "palimpsest-china"
         try:
             nbs_result = migration._audit_nbs(nbs)
+            from seiche.palimpsest_china_activation import audit_activation_state
+
+            palimpsest_audit = audit_activation_state(
+                palimpsest,
+                root_uid=os.geteuid(),
+                root_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
+                declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+            )
             tree_digests = {
                 "market": migration.hash_tree(market),
                 "nbs": migration.hash_tree(nbs),
+                "palimpsest-china": migration.hash_tree(palimpsest),
             }
-        except migration.MigrationContractError as exc:
+        except Exception as exc:
             raise RecoveryContractError(str(exc)) from exc
+        observed_palimpsest_state = _palimpsest_china_state(
+            {
+                "audit_schema": palimpsest_audit.get("schema"),
+                "tree_sha256": palimpsest_audit.get("tree_sha256"),
+                "active_activation_id": palimpsest_audit.get("active_activation_id"),
+                "pending_candidate_activation_id": palimpsest_audit.get(
+                    "pending_candidate_activation_id"
+                ),
+            }
+        )
+        if observed_palimpsest_state != expected_palimpsest_state:
+            raise RecoveryContractError(
+                "live Palimpsest China state differs from cutover candidate"
+            )
         counts_before = migration.inspect_postgres_counts(
             environment.get("SEICHE_DATABASE_URL", "")
         )
@@ -547,6 +842,14 @@ def export_snapshot(
         _archive_roots(
             stage / "var-lib-seiche.tgz",
             {"seiche": market, "seiche-nbs": nbs},
+        )
+        _archive_roots(
+            stage / "palimpsest-china.tgz",
+            {"seiche-palimpsest-china": palimpsest},
+        )
+        _write_all(
+            stage / "palimpsest-china-state.json",
+            migration.canonical_document(palimpsest_audit),
         )
         _snapshot_api(api, api_stage)
         tree_digests["api"] = migration.hash_tree(api_stage)
@@ -573,6 +876,9 @@ def export_snapshot(
                     "nbs_full_store_audit_result=required_at_restore",
                     "api_data_root=/home/seiche/app/backend/data",
                     "critical_table_count_semantics=pre_dump_lower_bound",
+                    "palimpsest_china_state_root=/var/lib/seiche-palimpsest-china",
+                    "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1",
+                    "palimpsest_china_state_audit_result=required_at_restore",
                     "research_only=true",
                     "can_publish=false",
                     "can_execute=false",
@@ -609,6 +915,7 @@ def export_snapshot(
             bundle,
             nbs_result,
             tree_digests,
+            observed_palimpsest_state,
             started_at,
             _iso_now(),
         )
@@ -620,6 +927,8 @@ def export_snapshot(
 def render_receipt(
     request: Mapping[str, Any],
     activation_receipt: Mapping[str, Any],
+    candidate_receipt: Mapping[str, Any],
+    shadow_receipt: Mapping[str, Any],
     export: RecoveryExport,
     *,
     railway: Mapping[str, str],
@@ -628,6 +937,19 @@ def render_receipt(
     worker_commands: Mapping[str, list[str]],
 ) -> dict[str, Any]:
     bundle = export.bundle
+    candidate = validate_candidate_chain(
+        candidate_receipt,
+        activation_receipt=activation_receipt,
+    )
+    validate_shadow_chain(
+        shadow_receipt,
+        candidate_receipt=candidate,
+    )
+    palimpsest_china_state = _palimpsest_china_state(export.palimpsest_china_state)
+    if palimpsest_china_state != candidate["palimpsest_china_state"]:
+        raise RecoveryContractError(
+            "recovery export Palimpsest China state differs from candidate"
+        )
     return {
         "schema": RECEIPT_SCHEMA,
         "repository": migration.REPOSITORY,
@@ -636,6 +958,8 @@ def render_receipt(
         "request_id": request["request_id"],
         "request_sha256": _digest(_canonical(request)),
         "activation_receipt_sha256": _digest(_canonical(activation_receipt)),
+        "candidate_receipt_sha256": _digest(_canonical(candidate)),
+        "shadow_receipt_sha256": _digest(_canonical(shadow_receipt)),
         "railway": dict(railway),
         "authority": {
             "source": "railway",
@@ -658,7 +982,12 @@ def render_receipt(
         "filesystem": {
             "tree_sha256": dict(export.tree_sha256),
             "nbs_full_store_audit_result": export.nbs_audit_result,
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": "verified",
         },
+        "palimpsest_china_state": palimpsest_china_state,
         "timing": {
             "requested_at": request["requested_at"],
             "writers_stopped_at": writers_stopped_at,
@@ -681,9 +1010,16 @@ def validate_receipt(
     *,
     request: Mapping[str, Any],
     activation_receipt: Mapping[str, Any],
+    candidate_receipt: Mapping[str, Any],
+    shadow_receipt: Mapping[str, Any],
     railway: Mapping[str, str] | None = None,
     bundle_root: Path | None = None,
 ) -> dict[str, Any]:
+    validate_request(
+        request,
+        activation_receipt=activation_receipt,
+        require_fresh=False,
+    )
     if not isinstance(value, dict) or set(value) != _RECEIPT_KEYS:
         raise RecoveryContractError("recovery receipt fields are invalid")
     expected_authority = {
@@ -702,12 +1038,23 @@ def validate_receipt(
         or value.get("request_sha256") != _digest(_canonical(request))
         or value.get("activation_receipt_sha256")
         != _digest(_canonical(activation_receipt))
+        or value.get("candidate_receipt_sha256")
+        != _digest(_canonical(candidate_receipt))
+        or value.get("shadow_receipt_sha256") != _digest(_canonical(shadow_receipt))
         or value.get("authority") != expected_authority
         or value.get("research_only") is not True
         or value.get("can_publish") is not False
         or value.get("can_execute") is not False
     ):
         raise RecoveryContractError("recovery receipt binding is invalid")
+    candidate = validate_candidate_chain(
+        candidate_receipt,
+        activation_receipt=activation_receipt,
+    )
+    validate_shadow_chain(
+        shadow_receipt,
+        candidate_receipt=candidate,
+    )
     observed_railway = value.get("railway")
     if observed_railway != activation_receipt.get("railway") or (
         railway is not None and observed_railway != dict(railway)
@@ -754,17 +1101,34 @@ def validate_receipt(
     filesystem = value.get("filesystem")
     if (
         not isinstance(filesystem, dict)
-        or set(filesystem) != {"tree_sha256", "nbs_full_store_audit_result"}
+        or set(filesystem)
+        != {
+            "tree_sha256",
+            "nbs_full_store_audit_result",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_audit_result",
+        }
         or not isinstance(filesystem.get("tree_sha256"), dict)
-        or set(filesystem["tree_sha256"]) != {"market", "nbs", "api"}
+        or set(filesystem["tree_sha256"])
+        != {"market", "nbs", "api", "palimpsest-china"}
         or any(
             re.fullmatch(r"[0-9a-f]{64}", str(item)) is None
             for item in filesystem["tree_sha256"].values()
         )
         or filesystem.get("nbs_full_store_audit_result")
         not in {"not_onboarded", "verified_head"}
+        or filesystem.get("palimpsest_china_state_audit_contract")
+        != "seiche.palimpsest-china-activation-state.v1"
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
     ):
         raise RecoveryContractError("recovery receipt filesystem proof is invalid")
+    palimpsest_china_state = _palimpsest_china_state(
+        value.get("palimpsest_china_state")
+    )
+    if palimpsest_china_state != candidate["palimpsest_china_state"]:
+        raise RecoveryContractError(
+            "recovery Palimpsest China state differs from candidate"
+        )
     timing = value.get("timing")
     if not isinstance(timing, dict) or set(timing) != {
         "requested_at",
@@ -823,6 +1187,11 @@ def validate_receipt(
             or bundle.total_bytes != snapshot["total_bytes"]
         ):
             raise RecoveryContractError("recovery receipt differs from bundle")
+        bundle_palimpsest_state = _palimpsest_china_state_from_bundle(bundle)
+        if bundle_palimpsest_state != palimpsest_china_state:
+            raise RecoveryContractError(
+                "recovery receipt Palimpsest China state differs from bundle"
+            )
     return dict(value)
 
 
@@ -837,6 +1206,7 @@ def validate_offsite_receipt(
         raise RecoveryContractError("off-site recovery receipt fields are invalid")
     if (
         value.get("schema") != OFFSITE_RECEIPT_SCHEMA
+        or recovery_receipt.get("schema") != RECEIPT_SCHEMA
         or value.get("repository") != migration.REPOSITORY
         or value.get("workflow") != WORKFLOW
         or value.get("commit") != recovery_receipt.get("commit")
@@ -854,6 +1224,16 @@ def validate_offsite_receipt(
         value.get("reverse_restore_proof_sha256"),
         label="reverse restore proof",
     )
+    offsite_palimpsest_state = _palimpsest_china_state(
+        value.get("palimpsest_china_state")
+    )
+    recovery_palimpsest_state = _palimpsest_china_state(
+        recovery_receipt.get("palimpsest_china_state")
+    )
+    if offsite_palimpsest_state != recovery_palimpsest_state:
+        raise RecoveryContractError(
+            "off-site Palimpsest China state differs from recovery"
+        )
     bucket = value.get("bucket")
     prefix = value.get("prefix")
     if (
@@ -888,6 +1268,8 @@ def validate_offsite_receipt(
         raise RecoveryContractError("off-site recovery object set is not closed")
     expected_digests = {
         "activation-receipt.json": recovery_receipt["activation_receipt_sha256"],
+        "candidate-receipt.json": recovery_receipt["candidate_receipt_sha256"],
+        "shadow-receipt.json": recovery_receipt["shadow_receipt_sha256"],
         "request.json": recovery_receipt["request_sha256"],
         "recovery-receipt.json": _digest(_canonical(recovery_receipt)),
         "SHA256SUMS": recovery_receipt["snapshot"]["inventory_sha256"],
@@ -925,10 +1307,20 @@ def finalize_receipt(
 ) -> tuple[Path, dict[str, Any]]:
     root = platform_root or migration.PLATFORM_ROOT
     _activation_body, activation = activation_context(environment)
+    _candidate_body, candidate = candidate_context(
+        environment,
+        activation_receipt=activation,
+    )
+    _shadow_body, shadow = shadow_context(
+        candidate_receipt=candidate,
+        platform_root=root,
+    )
     railway = migration.railway_identity(environment)
     receipt = render_receipt(
         request,
         activation,
+        candidate,
+        shadow,
         export,
         railway=railway,
         writers_stopped_at=writers_stopped_at,
@@ -939,6 +1331,8 @@ def finalize_receipt(
         receipt,
         request=request,
         activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
         railway=railway,
         bundle_root=export.bundle.root,
     )
@@ -955,6 +1349,8 @@ def finalize_receipt(
             existing,
             request=request,
             activation_receipt=activation,
+            candidate_receipt=candidate,
+            shadow_receipt=shadow,
             railway=railway,
             bundle_root=export.bundle.root,
         )
@@ -984,12 +1380,16 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("receipt")
     validate.add_argument("--request", required=True)
     validate.add_argument("--activation", required=True)
+    validate.add_argument("--candidate", required=True)
+    validate.add_argument("--shadow", required=True)
     validate.add_argument("--bundle-root", required=True)
     monitor = subparsers.add_parser("validate-monitor")
     monitor.add_argument("recovery_receipt")
     monitor.add_argument("offsite_receipt")
     monitor.add_argument("--request", required=True)
     monitor.add_argument("--activation", required=True)
+    monitor.add_argument("--candidate", required=True)
+    monitor.add_argument("--shadow", required=True)
     monitor.add_argument("--deployment-id", required=True)
     monitor.add_argument("--release-sha", required=True)
     arguments = parser.parse_args(argv)
@@ -1019,6 +1419,16 @@ def main(argv: list[str] | None = None) -> int:
         label="activation receipt",
         maximum_bytes=256 * 1024,
     )
+    _candidate_body, candidate = _load_canonical(
+        Path(arguments.candidate),
+        label="candidate receipt",
+        maximum_bytes=256 * 1024,
+    )
+    _shadow_body, shadow = _load_canonical(
+        Path(arguments.shadow),
+        label="shadow receipt",
+        maximum_bytes=256 * 1024,
+    )
     validate_request(
         request_value,
         activation_receipt=activation,
@@ -1028,6 +1438,8 @@ def main(argv: list[str] | None = None) -> int:
         receipt,
         request=request_value,
         activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
         bundle_root=(
             Path(arguments.bundle_root)
             if arguments.command == "validate-receipt"

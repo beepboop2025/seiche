@@ -6,6 +6,8 @@ umask 0077
 APP_DIR="${SEICHE_APP_DIR:-/home/seiche/app}"
 STATE_DIR="${SEICHE_MARKET_STATE_DIR:-/var/lib/seiche}"
 NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
+PALIMPSEST_CHINA_STATE_DIR="${SEICHE_PALIMPSEST_CHINA_STATE_DIR:-/var/lib/seiche-palimpsest-china}"
+PALIMPSEST_CHINA_AUDIT_BIN="${SEICHE_PALIMPSEST_CHINA_AUDIT_BIN:-/etc/seiche/libexec/seiche-palimpsest-china-activate.py}"
 API_DATA_DIR="${SEICHE_API_DATA_DIR:-$APP_DIR/backend/data}"
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
@@ -25,7 +27,9 @@ SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 GIT_BIN="${SEICHE_GIT_BIN:-git}"
 PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
+CMP_BIN="${SEICHE_CMP_BIN:-/usr/bin/cmp}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
+DURABILITY_REQUEST_PATH="${SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH:-/run/seiche-deploy/palimpsest-china-durability-request.json}"
 ALLOW_NON_ROOT_TEST="${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}"
 
 fail() {
@@ -59,6 +63,14 @@ else
         || fail "production Python runtime is fixed at /usr/bin/python3"
     [ "$NBS_STATE_DIR" = /var/lib/seiche-nbs ] \
         || fail "production NBS state root is fixed at /var/lib/seiche-nbs"
+    [ "$PALIMPSEST_CHINA_STATE_DIR" = /var/lib/seiche-palimpsest-china ] \
+        || fail "production Palimpsest China state root is fixed"
+    [ "$PALIMPSEST_CHINA_AUDIT_BIN" = \
+        /etc/seiche/libexec/seiche-palimpsest-china-activate.py ] \
+        || fail "production Palimpsest China audit launcher is fixed"
+    [ "$DURABILITY_REQUEST_PATH" = \
+        /run/seiche-deploy/palimpsest-china-durability-request.json ] \
+        || fail "production activation durability request path is fixed"
 fi
 [ -d "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ] \
     || fail "state directory must be a real directory"
@@ -72,6 +84,17 @@ esac
 if find "$NBS_STATE_DIR" -type l -print -quit | grep -q .; then
     fail "NBS state directory cannot contain symlinks"
 fi
+case "$PALIMPSEST_CHINA_STATE_DIR" in
+    /*) ;;
+    *) fail "Palimpsest China state directory must be absolute" ;;
+esac
+[ "$PALIMPSEST_CHINA_STATE_DIR" != "/" ] \
+    || fail "refusing a filesystem-root Palimpsest China state directory"
+[ -d "$PALIMPSEST_CHINA_STATE_DIR" ] && [ ! -L "$PALIMPSEST_CHINA_STATE_DIR" ] \
+    || fail "Palimpsest China state directory must be a real directory"
+[ -x "$PALIMPSEST_CHINA_AUDIT_BIN" ] && [ ! -L "$PALIMPSEST_CHINA_AUDIT_BIN" ] \
+    || fail "Palimpsest China audit launcher is missing or unsafe"
+[ -x "$CMP_BIN" ] || fail "cmp is unavailable"
 case "$API_DATA_DIR" in
     /*) ;;
     *) fail "API data directory must be absolute" ;;
@@ -115,7 +138,83 @@ query_counts() {
         --command "$COUNTS_SQL" | tr -d '[:space:]'
 }
 
-STAMP="${SEICHE_BACKUP_STAMP:-$($DATE_BIN -u +%Y%m%dT%H%M%SZ)}"
+DURABILITY_EXPECTED_ACTIVATION_ID=""
+DURABILITY_EXPECTED_TREE_SHA256=""
+DURABILITY_EXPECTED_RELEASE_SHA=""
+DURABILITY_EXPECTED_SNAPSHOT=""
+if [ -e "$DURABILITY_REQUEST_PATH" ] || [ -L "$DURABILITY_REQUEST_PATH" ]; then
+    mapfile -t DURABILITY_REQUEST_FIELDS < <(
+        "$PYTHON_BIN" -I -B - "$DURABILITY_REQUEST_PATH" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+path = Path(sys.argv[1])
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+try:
+    before = os.fstat(fd)
+    visible = path.lstat()
+    expected_uid = 0 if os.geteuid() == 0 else os.geteuid()
+    expected_gid = 0 if os.geteuid() == 0 else os.getegid()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_uid != expected_uid
+        or before.st_gid != expected_gid
+        or stat.S_IMODE(before.st_mode) != 0o400
+        or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        or not 1 <= before.st_size <= 4096
+    ):
+        raise ValueError("request metadata is unsafe")
+    body = os.read(fd, 4097)
+    after = os.fstat(fd)
+    identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_nlink, item.st_uid, item.st_gid, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+    if len(body) != before.st_size or identity(before) != identity(after):
+        raise ValueError("request changed while read")
+finally:
+    os.close(fd)
+value = json.loads(body)
+keys = {"schema", "activation_id", "tree_sha256", "release_sha", "snapshot_id", "requested_at"}
+canonical = json.dumps(value, allow_nan=False, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+if (
+    type(value) is not dict
+    or set(value) != keys
+    or body != canonical
+    or value["schema"] != "seiche.palimpsest-china-durability-request.v1"
+    or re.fullmatch(r"[0-9a-f]{64}", value["activation_id"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{64}", value["tree_sha256"] or "") is None
+    or re.fullmatch(r"[0-9a-f]{40}", value["release_sha"] or "") is None
+    or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", value["snapshot_id"] or "") is None
+    or re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value["requested_at"] or "") is None
+):
+    raise ValueError("request contract changed")
+print(value["activation_id"])
+print(value["tree_sha256"])
+print(value["release_sha"])
+print(value["snapshot_id"])
+PY
+    ) || fail "activation durability request is invalid"
+    [ "${#DURABILITY_REQUEST_FIELDS[@]}" -eq 4 ] \
+        || fail "activation durability request proof is incomplete"
+    DURABILITY_EXPECTED_ACTIVATION_ID=${DURABILITY_REQUEST_FIELDS[0]}
+    DURABILITY_EXPECTED_TREE_SHA256=${DURABILITY_REQUEST_FIELDS[1]}
+    DURABILITY_EXPECTED_RELEASE_SHA=${DURABILITY_REQUEST_FIELDS[2]}
+    DURABILITY_EXPECTED_SNAPSHOT=${DURABILITY_REQUEST_FIELDS[3]}
+fi
+
+if [ -n "$DURABILITY_EXPECTED_SNAPSHOT" ]; then
+    [ -z "${SEICHE_BACKUP_STAMP:-}" ] \
+        || [ "$SEICHE_BACKUP_STAMP" = "$DURABILITY_EXPECTED_SNAPSHOT" ] \
+        || fail "snapshot override conflicts with the activation durability request"
+    STAMP=$DURABILITY_EXPECTED_SNAPSHOT
+else
+    STAMP="${SEICHE_BACKUP_STAMP:-$($DATE_BIN -u +%Y%m%dT%H%M%SZ)}"
+fi
 case "$STAMP" in
     [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
     *) fail "snapshot stamp must be UTC basic format" ;;
@@ -127,6 +226,72 @@ cleanup() {
     [ -z "${STAGE:-}" ] || rm -rf -- "$STAGE"
 }
 trap cleanup EXIT
+
+validate_palimpsest_audit() {
+    local audit_path="$1"
+    "$PYTHON_BIN" -I -B - "$audit_path" "$PALIMPSEST_CHINA_STATE_DIR" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+expected_root = sys.argv[2]
+body = path.read_bytes()
+if not 1 <= len(body) <= 512 * 1024 or not body.endswith(b"\n"):
+    raise SystemExit("Palimpsest China state audit is empty, oversized, or unterminated")
+try:
+    value = json.loads(body)
+except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    raise SystemExit("Palimpsest China state audit is not strict JSON") from exc
+keys = {
+    "schema",
+    "state_root",
+    "tree_sha256",
+    "bundles",
+    "receipts",
+    "active_activation_id",
+    "pending_candidate_activation_id",
+}
+sha_re = re.compile(r"[0-9a-f]{64}")
+if type(value) is not dict or set(value) != keys:
+    raise SystemExit("Palimpsest China state audit fields changed")
+if (
+    value["schema"] != "seiche.palimpsest-china-activation-state.v1"
+    or value["state_root"] != expected_root
+    or sha_re.fullmatch(value["tree_sha256"] or "") is None
+    or type(value["bundles"]) is not list
+    or type(value["receipts"]) is not list
+    or value["bundles"] != sorted(set(value["bundles"]))
+    or value["receipts"] != sorted(set(value["receipts"]))
+    or any(sha_re.fullmatch(item or "") is None for item in value["bundles"])
+    or any(sha_re.fullmatch(item or "") is None for item in value["receipts"])
+    or any(
+        item is not None and sha_re.fullmatch(item or "") is None
+        for item in (
+            value["active_activation_id"],
+            value["pending_candidate_activation_id"],
+        )
+    )
+):
+    raise SystemExit("Palimpsest China state audit contract changed")
+canonical = (
+    json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    + b"\n"
+)
+if body != canonical:
+    raise SystemExit("Palimpsest China state audit is not canonical JSON")
+PY
+}
 
 COUNTS_BEFORE=$(query_counts)
 printf '%s' "$COUNTS_BEFORE" \
@@ -141,6 +306,33 @@ DUMP_BYTES=$(wc -c <"$STAGE/seiche.dump" | tr -d '[:space:]')
     || fail "database dump is implausibly small ($DUMP_BYTES bytes)"
 "$PG_RESTORE_BIN" --list <"$STAGE/seiche.dump" >/dev/null
 
+# The activation tree is a separate root-owned trust domain. Audit it through
+# the exact release-addressed launcher before and after archiving, then audit a
+# normalized scratch extraction. Three equal canonical receipts make a racing
+# activation fail closed without widening ownership of /var/lib/seiche.
+"$PALIMPSEST_CHINA_AUDIT_BIN" \
+    --audit-state "$PALIMPSEST_CHINA_STATE_DIR" 0 \
+    >"$STAGE/palimpsest-china-state.json"
+validate_palimpsest_audit "$STAGE/palimpsest-china-state.json"
+if [ -n "$DURABILITY_EXPECTED_ACTIVATION_ID" ]; then
+    "$PYTHON_BIN" -I -B - "$STAGE/palimpsest-china-state.json" \
+        "$DURABILITY_EXPECTED_ACTIVATION_ID" \
+        "$DURABILITY_EXPECTED_TREE_SHA256" <<'PY' \
+        || fail "snapshot does not contain the requested exact activation"
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_bytes())
+if (
+    value.get("active_activation_id") != sys.argv[2]
+    or value.get("tree_sha256") != sys.argv[3]
+    or value.get("pending_candidate_activation_id") is not None
+):
+    raise SystemExit(1)
+PY
+fi
+
 STATE_PARENT=$(dirname "$STATE_DIR")
 STATE_NAME=$(basename "$STATE_DIR")
 NBS_STATE_PARENT=$(dirname "$NBS_STATE_DIR")
@@ -152,6 +344,39 @@ NBS_STATE_NAME=$(basename "$NBS_STATE_DIR")
     --directory "$STATE_PARENT" "$STATE_NAME" \
     --directory "$NBS_STATE_PARENT" "$NBS_STATE_NAME"
 "$TAR_BIN" --list --gzip --file "$STAGE/var-lib-seiche.tgz" >/dev/null
+
+PALIMPSEST_CHINA_STATE_PARENT=$(dirname "$PALIMPSEST_CHINA_STATE_DIR")
+PALIMPSEST_CHINA_STATE_NAME=$(basename "$PALIMPSEST_CHINA_STATE_DIR")
+"$TAR_BIN" --create --gzip --file "$STAGE/palimpsest-china.tgz" \
+    --acls --xattrs --numeric-owner --one-file-system \
+    --directory "$PALIMPSEST_CHINA_STATE_PARENT" \
+    "$PALIMPSEST_CHINA_STATE_NAME"
+"$TAR_BIN" --list --gzip --file "$STAGE/palimpsest-china.tgz" >/dev/null
+PALIMPSEST_VERIFY_ROOT="$STAGE/palimpsest-verify"
+mkdir -m 0700 "$PALIMPSEST_VERIFY_ROOT"
+"$TAR_BIN" --extract --gzip --file "$STAGE/palimpsest-china.tgz" \
+    --directory "$PALIMPSEST_VERIFY_ROOT" \
+    --no-same-owner --no-same-permissions
+PALIMPSEST_RESTORED_ROOT="$PALIMPSEST_VERIFY_ROOT/$PALIMPSEST_CHINA_STATE_NAME"
+[ -d "$PALIMPSEST_RESTORED_ROOT" ] && [ ! -L "$PALIMPSEST_RESTORED_ROOT" ] \
+    || fail "Palimpsest China archive omitted its state root"
+"$PALIMPSEST_CHINA_AUDIT_BIN" \
+    --audit-state "$PALIMPSEST_RESTORED_ROOT" 1 \
+    >"$STAGE/palimpsest-china-restored-state.json"
+validate_palimpsest_audit "$STAGE/palimpsest-china-restored-state.json"
+"$CMP_BIN" -s "$STAGE/palimpsest-china-state.json" \
+    "$STAGE/palimpsest-china-restored-state.json" \
+    || fail "Palimpsest China archive changed immutable state"
+rm -rf -- "$PALIMPSEST_VERIFY_ROOT"
+rm -f -- "$STAGE/palimpsest-china-restored-state.json"
+"$PALIMPSEST_CHINA_AUDIT_BIN" \
+    --audit-state "$PALIMPSEST_CHINA_STATE_DIR" 0 \
+    >"$STAGE/palimpsest-china-live-after.json"
+validate_palimpsest_audit "$STAGE/palimpsest-china-live-after.json"
+"$CMP_BIN" -s "$STAGE/palimpsest-china-state.json" \
+    "$STAGE/palimpsest-china-live-after.json" \
+    || fail "Palimpsest China state changed during the snapshot"
+rm -f -- "$STAGE/palimpsest-china-live-after.json"
 
 # Copy the compatibility data directory, then replace the live SQLite files
 # with a transactionally consistent online backup.  Copying a database and its
@@ -199,9 +424,13 @@ if ! printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
     || fail "cannot bind the snapshot to a deployed commit"
+if [ -n "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
+        && [ "$DEPLOYED_SHA" != "$DURABILITY_EXPECTED_RELEASE_SHA" ]; then
+    fail "snapshot release differs from the activation durability request"
+fi
 printf '%s\n' "$DEPLOYED_SHA" >"$STAGE/deployed-sha.txt"
 printf '%s\n' \
-    "schema=seiche.market-backup.v3" \
+    "schema=seiche.market-backup.v4" \
     "created_at=$STAMP" \
     "database=$DATABASE_NAME" \
     "postgres_port=$POSTGRES_PORT" \
@@ -209,6 +438,9 @@ printf '%s\n' \
     "nbs_state_root=$NBS_STATE_DIR" \
     "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" \
     "nbs_full_store_audit_result=required_at_restore" \
+    "palimpsest_china_state_root=$PALIMPSEST_CHINA_STATE_DIR" \
+    "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1" \
+    "palimpsest_china_state_audit_result=required_at_restore" \
     "api_data_root=$API_DATA_DIR" \
     "critical_table_count_semantics=pre_dump_lower_bound" \
     "research_only=true" \
@@ -217,7 +449,8 @@ printf '%s\n' \
 
 (
     cd "$STAGE"
-    "$SHA256SUM_BIN" seiche.dump var-lib-seiche.tgz api-data.tgz table-counts.txt \
+    "$SHA256SUM_BIN" seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
+        palimpsest-china-state.json api-data.tgz table-counts.txt \
         deployed-sha.txt manifest.env >SHA256SUMS
     "$SHA256SUM_BIN" --check --strict SHA256SUMS >/dev/null
 )

@@ -7,7 +7,7 @@ creating a second writer plane. It combines three independent controls:
    locked canary;
 2. Railway PostgreSQL point-in-time recovery (PITR), the same three backup
    schedules, and a separately locked database canary; and
-3. a daily backup-v3 export that is restored in isolation and then stored in
+3. a daily backup-v4 export that is restored in isolation and then stored in
    external S3-compatible object storage under COMPLIANCE Object Lock.
 
 Railway documents volume backups, PostgreSQL PITR, and portable logical dumps
@@ -28,8 +28,9 @@ request inbox. For one valid request it:
 
 1. keeps the production API online;
 2. stops both Railway writer children;
-3. takes an online SQLite copy, archives market/NBS state, dumps PostgreSQL,
-   and commits the exact seven-file backup-v3 generation atomically;
+3. takes an online SQLite copy, archives market/NBS and Palimpsest China
+   activation state, dumps PostgreSQL, and commits the exact nine-file
+   backup-v4 generation atomically;
 4. restarts both writers and observes them alive; and
 5. publishes a content-bound immutable recovery receipt.
 
@@ -54,8 +55,21 @@ Scheduled jobs are inert until repository variable
 
 ## Protected environments and secrets
 
-Require human reviewers on all three environments. Add these secrets to the
-admin environment:
+Require human reviewers on `railway-stateful-recovery-admin`: it changes native
+backup schedules and creates/locks the bootstrap canaries. Keep the scheduled
+`railway-stateful-recovery-monitor` and `railway-stateful-recovery-export`
+environments restricted to `main`, but do **not** configure per-run required
+reviewers on either one. Their six-hour monitor and daily append-only export
+must start unattended so the workflow's 26-hour freshness bound remains
+enforceable; a queued environment review is not recovery evidence. The export
+lane can request a no-authority-change snapshot and append immutable evidence,
+but it cannot cut over traffic, grant writers, restore production, delete an
+object, or weaken retention.
+
+This automation exception does not extend to any mutable cutover, activation,
+writer-grant, reverse-transfer, or production-recovery environment. Those
+environments remain manually dispatched and required-reviewer gated. Add these
+secrets to the admin environment:
 
 - `RAILWAY_TOKEN`
 - `RAILWAY_PROJECT_ID`
@@ -142,17 +156,43 @@ The monitor runs at minute 17 every six hours. A portable export runs daily at
 backup, portable receipt, off-site receipt, PITR probe, volume threshold, or
 production identity is stale or invalid.
 
+Portable identity receipts are strict v3 contracts:
+
+- `seiche.railway-recovery-export-receipt.v3`; and
+- `seiche.railway-offsite-recovery-receipt.v3`.
+
+No v2 receipt is parsed as current evidence. Before pausing writers, the
+runtime recovers the activation-bound v3 candidate and the exact v3 shadow
+receipt named by that candidate. Shadow, candidate, live generation, exported
+backup audit, isolated reverse restore, recovery receipt, and off-site receipt
+must all carry the same closed `palimpsest_china_state` identity. Its fields are
+exactly `audit_schema`, `tree_sha256`, `active_activation_id`, and
+`pending_candidate_activation_id`; pending must be null. This equality is
+required even when inactive, and an active ID makes the no-fallback boundary
+explicit: no older bundle or prior activation may silently replace it.
+The production monitor downloads the bound shadow and candidate receipts again
+and rejects any schema downgrade or state mismatch before accepting the latest
+Railway/off-site pair.
+
+Immediately after deploying the v3 consumer, dispatch one `export-recovery`
+operation to establish a v3 recovery/off-site pair. That operation deliberately
+permits an absent prior proof, but does not accept a v2 proof. Scheduled and
+manual `monitor` operations remain fail closed until the v3 pair exists.
+
 ## Evidence contract
 
 Each successful export produces:
 
 - a canonical activation-bound request;
+- the exact v3 source shadow and activation-bound candidate receipts;
 - the immutable Railway recovery receipt;
-- the exact seven-member backup-v3 generation;
+- the exact nine-member backup-v4 generation, including the immutable
+  Palimpsest China state archive and canonical audit receipt;
 - a canonical reverse-restore proof containing NBS audit result, filesystem
-  tree digests, and four PostgreSQL counts/floors;
+  tree digests, the exact Palimpsest China state identity, and four PostgreSQL
+  counts/floors;
 - a canonical off-site receipt with each object's key, size, SHA-256, and
-  version ID; and
+  version ID plus the same Palimpsest China state identity; and
 - separate OIDC attestations for the Railway and off-site receipts.
 
 The large bundle is not uploaded as a GitHub Actions artifact. Locked external
@@ -179,9 +219,10 @@ contains only receipts, restore proof, and provider HEAD evidence.
 
 ## Reverse transfer boundary
 
-The daily proof establishes that the external backup-v3 bytes can rebuild the
-filesystem, NBS chain, SQLite database, and PostgreSQL tables on infrastructure
-outside the production Railway databases. It is not permission to fail over.
+The daily proof establishes that the external backup-v4 bytes can rebuild the
+filesystem, NBS chain, Palimpsest China bundles/receipts/markers, SQLite
+database, and PostgreSQL tables on infrastructure outside the production
+Railway databases. It is not permission to fail over.
 
 A real reverse transfer to Hetzner requires a new reviewed controller and a new
 authority receipt. The incident sequence must be:
@@ -206,7 +247,8 @@ grant, and receipt is an unsafe dual-writer attempt.
 ## Remaining state domain
 
 Phase 6 covers the API, market collectors, source worker, market/NBS files,
-SQLite, and PostgreSQL state moved by Phase 5. Phase 7 implements a separate
+Palimpsest China activation state, SQLite, and PostgreSQL state moved by Phase
+5. Phase 7 implements a separate
 snapshot/restore, authority, delivery-idempotency, update-offset, native-backup,
 and monitoring contract for `/var/lib/seiche-bot`; follow
 `RAILWAY-TELEGRAM.md`. Until its activation receipt and first production

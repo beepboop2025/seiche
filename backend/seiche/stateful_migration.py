@@ -1,4 +1,4 @@
-"""Fail-closed Railway shadow restore for Seiche backup-v3 snapshots.
+"""Fail-closed Railway shadow restore for Seiche backup-v4 snapshots.
 
 Phase 4 deliberately restores an immutable filesystem generation and a fresh
 PostgreSQL database while Hetzner remains the sole writer and public origin.
@@ -28,8 +28,9 @@ from typing import Any, Mapping, NamedTuple
 
 
 REQUEST_SCHEMA = "seiche.railway-stateful-shadow-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v1"
-BACKUP_SCHEMA = "seiche.market-backup.v3"
+RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v3"
+BACKUP_SCHEMA = "seiche.market-backup.v4"
+LEGACY_BACKUP_SCHEMA = "seiche.market-backup.v3"
 REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-shadow.yml"
 SOURCE_REF = "refs/heads/main"
@@ -39,6 +40,7 @@ SOURCE_BUNDLE = Path("/migration/source.bundle")
 REQUEST_PATH = Path("/migration/request.json")
 RUNTIME_UID = 10001
 RUNTIME_GID = 10001
+PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
 
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _SHA64_RE = re.compile(r"[0-9a-f]{64}")
@@ -48,6 +50,14 @@ _UUID_RE = re.compile(
 )
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _REGION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
+_PALIMPSEST_CHINA_STATE_KEYS = frozenset(
+    {
+        "audit_schema",
+        "tree_sha256",
+        "active_activation_id",
+        "pending_candidate_activation_id",
+    }
+)
 _REQUEST_KEYS = frozenset(
     {
         "schema",
@@ -71,9 +81,19 @@ _REQUEST_KEYS = frozenset(
         "requested_at",
     }
 )
+_LEGACY_BACKUP_MEMBERS = (
+    "seiche.dump",
+    "var-lib-seiche.tgz",
+    "api-data.tgz",
+    "table-counts.txt",
+    "deployed-sha.txt",
+    "manifest.env",
+)
 _BACKUP_MEMBERS = (
     "seiche.dump",
     "var-lib-seiche.tgz",
+    "palimpsest-china.tgz",
+    "palimpsest-china-state.json",
     "api-data.tgz",
     "table-counts.txt",
     "deployed-sha.txt",
@@ -95,8 +115,16 @@ _MANIFEST_KEYS = frozenset(
         "research_only",
         "can_publish",
         "can_execute",
+        "palimpsest_china_state_root",
+        "palimpsest_china_state_audit_contract",
+        "palimpsest_china_state_audit_result",
     }
 )
+_LEGACY_MANIFEST_KEYS = _MANIFEST_KEYS - {
+    "palimpsest_china_state_root",
+    "palimpsest_china_state_audit_contract",
+    "palimpsest_china_state_audit_result",
+}
 _COUNTS_SQL = (
     "SELECT (SELECT count(*) FROM canonical_observations)::text || '|' || "
     "(SELECT count(*) FROM collector_runs)::text || '|' || "
@@ -118,6 +146,8 @@ class BackupBundle(NamedTuple):
     member_sha256: Mapping[str, str]
     counts_floor: tuple[int, int, int, int]
     total_bytes: int
+    schema: str
+    palimpsest_china_state_audit: Mapping[str, Any] | None
 
 
 class RestoredDatabase(NamedTuple):
@@ -325,11 +355,15 @@ def _parse_manifest(body: bytes, *, snapshot_id: str) -> dict[str, str]:
         if key in manifest:
             raise MigrationContractError("backup manifest has duplicate fields")
         manifest[key] = value
-    if set(manifest) != _MANIFEST_KEYS:
+    schema = manifest.get("schema")
+    expected_keys = _MANIFEST_KEYS if schema == BACKUP_SCHEMA else _LEGACY_MANIFEST_KEYS
+    if (
+        schema not in {BACKUP_SCHEMA, LEGACY_BACKUP_SCHEMA}
+        or set(manifest) != expected_keys
+    ):
         raise MigrationContractError("backup manifest fields are invalid")
     if (
-        manifest["schema"] != BACKUP_SCHEMA
-        or manifest["created_at"] != snapshot_id
+        manifest["created_at"] != snapshot_id
         or manifest["database"] != "seiche"
         or re.fullmatch(r"[0-9]{1,5}", manifest["postgres_port"]) is None
         or manifest["state_root"] != "/var/lib/seiche"
@@ -343,6 +377,15 @@ def _parse_manifest(body: bytes, *, snapshot_id: str) -> dict[str, str]:
         or manifest["can_execute"] != "false"
     ):
         raise MigrationContractError("backup manifest contract is invalid")
+    if schema == BACKUP_SCHEMA and (
+        manifest["palimpsest_china_state_root"] != "/var/lib/seiche-palimpsest-china"
+        or manifest["palimpsest_china_state_audit_contract"]
+        != "seiche.palimpsest-china-activation-state.v1"
+        or manifest["palimpsest_china_state_audit_result"] != "required_at_restore"
+    ):
+        raise MigrationContractError(
+            "backup Palimpsest China state contract is invalid"
+        )
     return manifest
 
 
@@ -354,6 +397,91 @@ def _parse_counts(body: bytes) -> tuple[int, int, int, int]:
     if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\n", value) is None:
         raise MigrationContractError("backup table-count floor is invalid")
     return tuple(int(item) for item in value.strip().split("|"))  # type: ignore[return-value]
+
+
+def _parse_palimpsest_state_audit(body: bytes) -> dict[str, Any]:
+    value = _decode_canonical_json(body, label="Palimpsest China state audit")
+    keys = {
+        "schema",
+        "state_root",
+        "tree_sha256",
+        "bundles",
+        "receipts",
+        "active_activation_id",
+        "pending_candidate_activation_id",
+    }
+    if type(value) is not dict or set(value) != keys:
+        raise MigrationContractError("Palimpsest China state audit fields changed")
+    bundles = value["bundles"]
+    receipts = value["receipts"]
+    active = value["active_activation_id"]
+    pending = value["pending_candidate_activation_id"]
+    if (
+        value["schema"] != PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA
+        or value["state_root"] != "/var/lib/seiche-palimpsest-china"
+        or not isinstance(value["tree_sha256"], str)
+        or _SHA64_RE.fullmatch(value["tree_sha256"]) is None
+        or type(bundles) is not list
+        or type(receipts) is not list
+        or any(
+            not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None
+            for item in bundles
+        )
+        or any(
+            not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None
+            for item in receipts
+        )
+        or bundles != sorted(set(bundles))
+        or receipts != sorted(set(receipts))
+        or any(
+            item is not None
+            and (not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None)
+            for item in (active, pending)
+        )
+    ):
+        raise MigrationContractError("Palimpsest China state audit is invalid")
+    if pending is not None:
+        raise MigrationContractError(
+            "Palimpsest China state has an unfinished activation transaction"
+        )
+    return dict(value)
+
+
+def palimpsest_china_state_from_audit(
+    audit: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Project the closed, portable identity from one verified state audit."""
+
+    if not isinstance(audit, Mapping):
+        raise MigrationContractError("Palimpsest China state audit is unavailable")
+    state = {
+        "audit_schema": audit.get("schema"),
+        "tree_sha256": audit.get("tree_sha256"),
+        "active_activation_id": audit.get("active_activation_id"),
+        "pending_candidate_activation_id": audit.get("pending_candidate_activation_id"),
+    }
+    return validate_palimpsest_china_state(state)
+
+
+def validate_palimpsest_china_state(value: object) -> dict[str, Any]:
+    """Validate the exact cross-receipt Palimpsest China state identity."""
+
+    if not isinstance(value, dict) or set(value) != _PALIMPSEST_CHINA_STATE_KEYS:
+        raise MigrationContractError("Palimpsest China state identity fields changed")
+    tree = value.get("tree_sha256")
+    active = value.get("active_activation_id")
+    if (
+        value.get("audit_schema") != PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA
+        or not isinstance(tree, str)
+        or _SHA64_RE.fullmatch(tree) is None
+        or (
+            active is not None
+            and (not isinstance(active, str) or _SHA64_RE.fullmatch(active) is None)
+        )
+        or value.get("pending_candidate_activation_id") is not None
+    ):
+        raise MigrationContractError("Palimpsest China state identity is invalid")
+    return dict(value)
 
 
 def validate_bundle(
@@ -369,11 +497,24 @@ def validate_bundle(
         raise MigrationContractError("backup bundle is unavailable") from exc
     if not stat.S_ISDIR(root_metadata.st_mode) or root.is_symlink():
         raise MigrationContractError("backup bundle root is unsafe")
-    if entries != _ALL_BACKUP_MEMBERS:
+    snapshot_id = str(request["snapshot_id"])
+    manifest_path = root / "manifest.env"
+    _regular_file_metadata(manifest_path, maximum_bytes=4096)
+    manifest = _parse_manifest(
+        _stable_read(manifest_path, maximum_bytes=4096),
+        snapshot_id=snapshot_id,
+    )
+    backup_members = (
+        _BACKUP_MEMBERS
+        if manifest["schema"] == BACKUP_SCHEMA
+        else _LEGACY_BACKUP_MEMBERS
+    )
+    all_backup_members = frozenset((*backup_members, "SHA256SUMS"))
+    if entries != all_backup_members:
         raise MigrationContractError("backup bundle file set is not closed")
     members: dict[str, Path] = {}
     total_bytes = 0
-    for name in (*_BACKUP_MEMBERS, "SHA256SUMS"):
+    for name in (*backup_members, "SHA256SUMS"):
         path = root / name
         metadata = _regular_file_metadata(path, maximum_bytes=maximum_total_bytes)
         total_bytes += metadata.st_size
@@ -386,10 +527,10 @@ def validate_bundle(
         inventory_lines = inventory.decode("ascii").splitlines()
     except UnicodeDecodeError as exc:
         raise MigrationContractError("backup inventory is not ASCII") from exc
-    if len(inventory_lines) != len(_BACKUP_MEMBERS):
+    if len(inventory_lines) != len(backup_members):
         raise MigrationContractError("backup inventory length is invalid")
     digests: dict[str, str] = {}
-    for expected_name, line in zip(_BACKUP_MEMBERS, inventory_lines, strict=True):
+    for expected_name, line in zip(backup_members, inventory_lines, strict=True):
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9.-]+)", line)
         if match is None or match.group(2) != expected_name:
             raise MigrationContractError("backup inventory order is invalid")
@@ -398,11 +539,14 @@ def validate_bundle(
             raise MigrationContractError("backup member digest mismatch")
         digests[expected_name] = digest
 
-    snapshot_id = str(request["snapshot_id"])
-    _parse_manifest(
-        _stable_read(members["manifest.env"], maximum_bytes=4096),
-        snapshot_id=snapshot_id,
-    )
+    palimpsest_audit = None
+    if manifest["schema"] == BACKUP_SCHEMA:
+        palimpsest_audit = _parse_palimpsest_state_audit(
+            _stable_read(
+                members["palimpsest-china-state.json"],
+                maximum_bytes=512 * 1024,
+            )
+        )
     revision_body = _stable_read(members["deployed-sha.txt"], maximum_bytes=64)
     try:
         revision = revision_body.decode("ascii")
@@ -415,7 +559,7 @@ def validate_bundle(
     inventory_sha256 = _sha256_bytes(inventory)
     content = hashlib.sha256()
     content_bytes = 0
-    for name in _BACKUP_MEMBERS:
+    for name in backup_members:
         size = members[name].stat().st_size
         content_bytes += size
         content.update(name.encode("ascii") + b"\0")
@@ -439,6 +583,8 @@ def validate_bundle(
         member_sha256=digests,
         counts_floor=counts,
         total_bytes=content_bytes,
+        schema=manifest["schema"],
+        palimpsest_china_state_audit=palimpsest_audit,
     )
 
 
@@ -621,6 +767,7 @@ def restore_filesystem_generation(
 ) -> tuple[str, Mapping[str, str]]:
     state_stage = staging / "state-archive"
     api_stage = staging / "api-archive"
+    palimpsest_stage = staging / "palimpsest-china-archive"
     extract_validated_tar(
         bundle.root / "var-lib-seiche.tgz",
         state_stage,
@@ -631,6 +778,65 @@ def restore_filesystem_generation(
         api_stage,
         expected_roots=frozenset({"api-data"}),
     )
+    if bundle.schema == BACKUP_SCHEMA:
+        extract_validated_tar(
+            bundle.root / "palimpsest-china.tgz",
+            palimpsest_stage,
+            expected_roots=frozenset({"seiche-palimpsest-china"}),
+        )
+        palimpsest = palimpsest_stage / "seiche-palimpsest-china"
+        try:
+            from seiche.palimpsest_china_activation import audit_activation_state
+
+            palimpsest_audit = audit_activation_state(
+                palimpsest,
+                root_uid=os.geteuid(),
+                root_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
+                normalize_restored=True,
+                declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+            )
+        except Exception as exc:
+            raise MigrationContractError(
+                "restored Palimpsest China activation-state audit failed"
+            ) from exc
+        if palimpsest_audit != bundle.palimpsest_china_state_audit:
+            raise MigrationContractError(
+                "restored Palimpsest China activation state changed"
+            )
+    else:
+        palimpsest_stage.mkdir(mode=0o750)
+        palimpsest = palimpsest_stage / "seiche-palimpsest-china"
+        palimpsest.mkdir(mode=0o750)
+        (palimpsest / "receipts").mkdir(mode=0o700)
+        try:
+            from seiche.palimpsest_china_activation import audit_activation_state
+
+            palimpsest_audit = audit_activation_state(
+                palimpsest,
+                root_uid=os.geteuid(),
+                root_gid=os.getegid(),
+                api_uid=runtime_uid,
+                api_gid=runtime_gid,
+                normalize_restored=True,
+                declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+            )
+        except Exception as exc:
+            raise MigrationContractError(
+                "legacy Palimpsest China activation-state normalization failed"
+            ) from exc
+        if any(
+            (
+                palimpsest_audit["bundles"],
+                palimpsest_audit["receipts"],
+                palimpsest_audit["active_activation_id"],
+                palimpsest_audit["pending_candidate_activation_id"],
+            )
+        ):
+            raise MigrationContractError(
+                "legacy Palimpsest China activation state is not empty"
+            )
     market = state_stage / "seiche"
     nbs = state_stage / "seiche-nbs"
     api_data = api_stage / "api-data"
@@ -645,9 +851,14 @@ def restore_filesystem_generation(
     market.rename(generation / "market")
     nbs.rename(generation / "nbs")
     api_data.rename(generation / "api")
+    palimpsest.rename(generation / "palimpsest-china")
     shutil.rmtree(state_stage)
     shutil.rmtree(api_stage)
-    digests = {name: hash_tree(generation / name) for name in ("market", "nbs", "api")}
+    shutil.rmtree(palimpsest_stage)
+    digests = {
+        name: hash_tree(generation / name)
+        for name in ("market", "nbs", "api", "palimpsest-china")
+    }
     return nbs_result, digests
 
 
@@ -818,6 +1029,9 @@ def render_receipt(
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
+    palimpsest_china_state = palimpsest_china_state_from_audit(
+        bundle.palimpsest_china_state_audit
+    )
     return {
         "schema": RECEIPT_SCHEMA,
         "request": {
@@ -838,7 +1052,7 @@ def render_receipt(
             "workers_started": False,
         },
         "bundle": {
-            "schema": BACKUP_SCHEMA,
+            "schema": bundle.schema,
             "snapshot_id": bundle.snapshot_id,
             "source_revision": bundle.source_revision,
             "source_inventory_sha256": bundle.inventory_sha256,
@@ -858,7 +1072,16 @@ def render_receipt(
             "api_sqlite_quick_check": "pass",
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": nbs_audit_result,
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": (
+                "verified"
+                if bundle.schema == BACKUP_SCHEMA
+                else "legacy_absent_inactive"
+            ),
         },
+        "palimpsest_china_state": palimpsest_china_state,
         "railway": dict(railway),
         "timing": {
             "started_at": started_at,
@@ -883,6 +1106,7 @@ def validate_receipt_document(
         "bundle",
         "database",
         "filesystem",
+        "palimpsest_china_state",
         "railway",
         "timing",
         "research_only",
@@ -918,9 +1142,11 @@ def validate_receipt_document(
     }:
         raise MigrationContractError("shadow receipt authority is invalid")
     bundle = value.get("bundle")
+    bundle_schema = bundle.get("schema") if isinstance(bundle, dict) else None
+    expected_members = _BACKUP_MEMBERS
     if (
         not isinstance(bundle, dict)
-        or bundle.get("schema") != BACKUP_SCHEMA
+        or bundle_schema != BACKUP_SCHEMA
         or bundle.get("snapshot_id") != request["snapshot_id"]
         or bundle.get("source_revision") != request["source_revision"]
         or bundle.get("source_inventory_sha256") != request["source_inventory_sha256"]
@@ -929,7 +1155,7 @@ def validate_receipt_document(
         or not isinstance(bundle.get("total_bytes"), int)
         or bundle["total_bytes"] <= 0
         or not isinstance(bundle.get("member_sha256"), dict)
-        or set(bundle["member_sha256"]) != set(_BACKUP_MEMBERS)
+        or set(bundle["member_sha256"]) != set(expected_members)
         or any(
             _SHA64_RE.fullmatch(item) is None
             for item in bundle["member_sha256"].values()
@@ -983,6 +1209,8 @@ def validate_receipt_document(
             "api_sqlite_quick_check",
             "nbs_full_store_audit_contract",
             "nbs_full_store_audit_result",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_audit_result",
         }
         or filesystem.get("generation") != generation
         or filesystem.get("api_sqlite_quick_check") != "pass"
@@ -990,14 +1218,19 @@ def validate_receipt_document(
         != "seiche.nbs-full-store-audit.v1"
         or filesystem.get("nbs_full_store_audit_result")
         not in {"not_onboarded", "verified_head"}
+        or filesystem.get("palimpsest_china_state_audit_contract")
+        != "seiche.palimpsest-china-activation-state.v1"
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
         or not isinstance(filesystem.get("tree_sha256"), dict)
-        or set(filesystem["tree_sha256"]) != {"market", "nbs", "api"}
+        or set(filesystem["tree_sha256"])
+        != {"market", "nbs", "api", "palimpsest-china"}
         or any(
             _SHA64_RE.fullmatch(item) is None
             for item in filesystem["tree_sha256"].values()
         )
     ):
         raise MigrationContractError("shadow receipt filesystem is invalid")
+    validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     observed_railway = value.get("railway")
     if not isinstance(observed_railway, dict) or set(observed_railway) != {
         "deployment_id",
@@ -1075,15 +1308,17 @@ def _write_receipt(path: Path, document: Mapping[str, Any], *, gid: int) -> None
 def validate_receipted_generation(
     generation_path: Path,
     receipt: Mapping[str, Any],
+    *,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
 ) -> None:
     if not generation_path.is_dir() or generation_path.is_symlink():
         raise MigrationContractError("accepted shadow generation is missing")
     expected = receipt.get("filesystem", {}).get("tree_sha256")
-    if not isinstance(expected, dict) or set(expected) != {"market", "nbs", "api"}:
+    names = ("market", "nbs", "api", "palimpsest-china")
+    if not isinstance(expected, dict) or set(expected) != set(names):
         raise MigrationContractError("accepted shadow generation receipt is invalid")
-    observed = {
-        name: hash_tree(generation_path / name) for name in ("market", "nbs", "api")
-    }
+    observed = {name: hash_tree(generation_path / name) for name in names}
     if observed != expected:
         raise MigrationContractError("accepted shadow generation digest changed")
     _validate_sqlite(generation_path / "api" / "seiche.sqlite")
@@ -1092,6 +1327,86 @@ def validate_receipted_generation(
         != receipt["filesystem"]["nbs_full_store_audit_result"]
     ):
         raise MigrationContractError("accepted shadow NBS audit result changed")
+    try:
+        from seiche.palimpsest_china_activation import audit_activation_state
+
+        palimpsest_audit = audit_activation_state(
+            generation_path / "palimpsest-china",
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
+            declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+        )
+    except Exception as exc:
+        raise MigrationContractError(
+            "accepted shadow Palimpsest China audit failed"
+        ) from exc
+    audit_result = receipt["filesystem"]["palimpsest_china_state_audit_result"]
+    if audit_result != "verified":
+        raise MigrationContractError(
+            "accepted shadow Palimpsest China audit result is invalid"
+        )
+    observed_state = palimpsest_china_state_from_audit(palimpsest_audit)
+    expected_state = validate_palimpsest_china_state(
+        receipt.get("palimpsest_china_state")
+    )
+    if observed_state != expected_state:
+        raise MigrationContractError(
+            "accepted shadow Palimpsest China state identity changed"
+        )
+
+
+def palimpsest_runtime_environment(
+    state_root: Path,
+    *,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
+) -> dict[str, str]:
+    """Render runtime paths only from one fully audited restored state tree."""
+
+    try:
+        from seiche import palimpsest_china_activation as activation
+
+        audit = activation.audit_activation_state(
+            state_root,
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
+            declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+        )
+        paths = activation._activation_audit_paths(
+            state_root,
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
+        )
+        loaded = activation._read_active(
+            paths,
+            declared_receipts_dir=Path("/var/lib/seiche-palimpsest-china/receipts"),
+        )
+    except Exception as exc:
+        raise MigrationContractError(
+            "restored Palimpsest China runtime state is invalid"
+        ) from exc
+    if loaded is None:
+        if audit["active_activation_id"] is not None:
+            raise MigrationContractError(
+                "restored Palimpsest China active state is inconsistent"
+            )
+        return {}
+    active, _receipt = loaded
+    if audit["active_activation_id"] != active["activation_id"]:
+        raise MigrationContractError(
+            "restored Palimpsest China active identity is inconsistent"
+        )
+    bundle = state_root / active["bundle_id"]
+    return {
+        spec.environment: str(bundle / spec.filename)
+        for spec in activation._BUNDLE_FILE_SPECS
+    }
 
 
 def restore_shadow(
@@ -1105,6 +1420,10 @@ def restore_shadow(
     runtime_gid: int = RUNTIME_GID,
 ) -> tuple[dict[str, Any], str]:
     started_at = _iso_now()
+    if bundle.schema != BACKUP_SCHEMA or bundle.palimpsest_china_state_audit is None:
+        raise MigrationContractError(
+            "shadow receipt v3 requires the current Palimpsest-state backup contract"
+        )
     for path in (platform_root, bundle.root):
         if not path.is_absolute() or path == Path("/") or path.is_symlink():
             raise MigrationContractError("stateful migration path is unsafe")
@@ -1128,7 +1447,12 @@ def restore_shadow(
             request=request,
             railway=railway,
         )
-        validate_receipted_generation(generation_path, receipt)
+        validate_receipted_generation(
+            generation_path,
+            receipt,
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        )
         target_dsn = _target_dsn(base_dsn, receipt["database"]["name"])
         if inspect_postgres_counts(target_dsn) != tuple(
             receipt["database"]["critical_table_counts"]
@@ -1181,20 +1505,30 @@ def runtime_environment(
     *,
     database_dsn: str,
     receipt_path: Path,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
 ) -> dict[str, str]:
     generation = str(receipt["filesystem"]["generation"])
     root = PLATFORM_ROOT / "generations" / generation
+    from seiche import palimpsest_china_activation as activation
+
+    palimpsest_environment_names = {
+        spec.environment for spec in activation._BUNDLE_FILE_SPECS
+    }
     environment = {
         key: value
         for key, value in base.items()
         if key
-        not in {
-            "DATABASE_URL",
-            "RAILWAY_TOKEN",
-            "RAILWAY_API_TOKEN",
-            "PYTHONHOME",
-            "PYTHONPATH",
-        }
+        not in (
+            {
+                "DATABASE_URL",
+                "RAILWAY_TOKEN",
+                "RAILWAY_API_TOKEN",
+                "PYTHONHOME",
+                "PYTHONPATH",
+            }
+            | palimpsest_environment_names
+        )
     }
     environment.update(
         {
@@ -1225,6 +1559,13 @@ def runtime_environment(
             "SEICHE_COLLECTOR_HEARTBEAT_REQUIRED": "0",
             "SEICHE_SOURCE_HEARTBEAT_REQUIRED": "0",
         }
+    )
+    environment.update(
+        palimpsest_runtime_environment(
+            root / "palimpsest-china",
+            runtime_uid=runtime_uid,
+            runtime_gid=runtime_gid,
+        )
     )
     return environment
 
@@ -1257,6 +1598,7 @@ def validate_runtime_receipt(environment: Mapping[str, str]) -> dict[str, Any]:
         or value.get("authority", {}).get("workers_started") is not False
     ):
         raise MigrationContractError("Railway runtime receipt binding is invalid")
+    validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     return value
 
 
@@ -1334,6 +1676,8 @@ def run_shadow() -> int:
         platform_root=platform_root,
         base_dsn=base_dsn,
         railway=railway,
+        runtime_uid=RUNTIME_UID,
+        runtime_gid=RUNTIME_GID,
     )
     receipt_path = platform_root / "receipts" / f"{request['request_id']}.json"
     environment = runtime_environment(
@@ -1341,6 +1685,8 @@ def run_shadow() -> int:
         receipt,
         database_dsn=database_dsn,
         receipt_path=receipt_path,
+        runtime_uid=RUNTIME_UID,
+        runtime_gid=RUNTIME_GID,
     )
     validate_runtime_receipt(environment)
     print(

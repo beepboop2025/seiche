@@ -144,12 +144,16 @@ MAX_TOTAL_BYTES = 64 * 1024 * 1024
 RENAME_NOREPLACE = 1
 REQUIRED_MODES = {
     "backend/seiche/__init__.py": "100644",
+    "backend/seiche/china_economic_focus.py": "100644",
     "backend/seiche/nbs_intake.py": "100644",
     "backend/seiche/nbs_trust.py": "100644",
+    "backend/seiche/palimpsest_china_activation.py": "100644",
+    "backend/seiche/palimpsest_china_intake.py": "100644",
     "ops/Caddyfile": "100644",
     "ops/deploy/box-update.sh": "100644",
     "ops/deploy/install-caddy.sh": "100755",
     "ops/deploy/install-market-platform.sh": "100755",
+    "ops/deploy/install-palimpsest-china-activation.sh": "100755",
     "ops/deploy/install-release-poller.sh": "100755",
     "ops/deploy/release-allowed-signers": "100644",
     "ops/deploy/retire-legacy-update-units.sh": "100644",
@@ -171,6 +175,7 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-market-validation.timer": "100644",
     "ops/deploy/seiche-market-worker.service": "100644",
     "ops/deploy/seiche-nbs-intake.py": "100644",
+    "ops/deploy/seiche-palimpsest-china-activate.py": "100644",
     "ops/deploy/seiche-pull.service": "100644",
     "ops/deploy/seiche-release-poll.service": "100644",
     "ops/deploy/seiche-release-poll.sh": "100755",
@@ -351,8 +356,11 @@ try:
         "ops/deploy",
         "ops/Caddyfile",
         "backend/seiche/__init__.py",
+        "backend/seiche/china_economic_focus.py",
         "backend/seiche/nbs_intake.py",
         "backend/seiche/nbs_trust.py",
+        "backend/seiche/palimpsest_china_activation.py",
+        "backend/seiche/palimpsest_china_intake.py",
     )
     entries: list[tuple[str, str, str]] = []
     seen: set[str] = set()
@@ -382,8 +390,11 @@ try:
                 or path
                 in {
                     "backend/seiche/__init__.py",
+                    "backend/seiche/china_economic_focus.py",
                     "backend/seiche/nbs_intake.py",
                     "backend/seiche/nbs_trust.py",
+                    "backend/seiche/palimpsest_china_activation.py",
+                    "backend/seiche/palimpsest_china_intake.py",
                 }
             )
         ):
@@ -623,6 +634,13 @@ PREBUILT_IMPORT_RESULT=$PROMOTION_REQUEST_DIR/prebuilt-result.json
 PREBUILT_IMPORT_UNIT=seiche-snapshot-import.service
 DEPLOY_RUNTIME_DIR=/run/seiche-deploy
 DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
+PALIMPSEST_CHINA_TRANSACTION_LOCK=$DEPLOY_RUNTIME_DIR/palimpsest-china-transaction.lock
+PALIMPSEST_CHINA_ACTIVE_MARKER=/var/lib/seiche-palimpsest-china/active.json
+PALIMPSEST_CHINA_PENDING_MARKER=/var/lib/seiche-palimpsest-china/pending.json
+PALIMPSEST_CHINA_ENV=/etc/seiche/palimpsest-china.env
+PALIMPSEST_CHINA_DROPIN=/etc/systemd/system/seiche-api.service.d/palimpsest-china.conf
+PALIMPSEST_CHINA_ACTIVATION_LAUNCHER=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
+PALIMPSEST_CHINA_DURABILITY_ROOT=/var/lib/seiche-recovery-proof/palimpsest-china-durability
 SIGNED_ASSET_ROOT=""
 MARKET_MUTATION_LOCK=/run/lock/seiche-market-backup.lock
 MARKET_MUTATION_LOCK_HELD=""
@@ -663,6 +681,7 @@ if [ "$BOOTSTRAP_TEST_ONLY" = 1 ]; then
   APP=${SEICHE_BOOTSTRAP_TEST_REPO:?}
   DEPLOY_RUNTIME_DIR=${SEICHE_BOOTSTRAP_TEST_RUNTIME:?}
   DEPLOY_LOCK=$DEPLOY_RUNTIME_DIR/deploy.lock
+  PALIMPSEST_CHINA_TRANSACTION_LOCK=$DEPLOY_RUNTIME_DIR/palimpsest-china-transaction.lock
   BOOTSTRAP_ALLOWED_SIGNERS=${SEICHE_BOOTSTRAP_TEST_ALLOWED_SIGNERS:?}
   BOOTSTRAP_GIT_HOME=${SEICHE_BOOTSTRAP_TEST_GIT_HOME:?}
   BOOTSTRAP_PYTHON=${SEICHE_BOOTSTRAP_TEST_PYTHON:?}
@@ -814,9 +833,69 @@ then
   echo "FAIL: deploy runtime directory permissions are unsafe"
   exit 1
 fi
-exec 9>"$DEPLOY_LOCK"
-[ "$BOOTSTRAP_PORTABLE" = 1 ] || chown root:root "$DEPLOY_LOCK"
-chmod 0600 "$DEPLOY_LOCK"
+
+prepare_controller_lock() {
+  local path="$1" label="$2"
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    [ -f "$path" ] && [ ! -L "$path" ] || {
+      echo "FAIL: $label lock path is unsafe"
+      return 1
+    }
+    return 0
+  elif ! (umask 077; set -o noclobber; : >"$path") 2>/dev/null; then
+    [ -f "$path" ] && [ ! -L "$path" ] || {
+      echo "FAIL: $label lock could not be created safely"
+      return 1
+    }
+    return 0
+  fi
+  [ "$BOOTSTRAP_PORTABLE" = 1 ] || chown root:root "$path"
+  chmod 0600 "$path"
+}
+
+validate_controller_lock_fd() {
+  "$BOOTSTRAP_PYTHON" -I -B - "$1" "$2" \
+      "$BOOTSTRAP_EXPECTED_UID" "$BOOTSTRAP_EXPECTED_GID" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+path, descriptor_raw, uid_raw, gid_raw = sys.argv[1:]
+opened = os.fstat(int(descriptor_raw))
+visible = Path(path).lstat()
+if (
+    not stat.S_ISREG(opened.st_mode)
+    or opened.st_nlink != 1
+    or opened.st_uid != int(uid_raw)
+    or opened.st_gid != int(gid_raw)
+    or stat.S_IMODE(opened.st_mode) != 0o600
+    or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+):
+    raise SystemExit(1)
+PY
+}
+
+prepare_controller_lock "$PALIMPSEST_CHINA_TRANSACTION_LOCK" \
+  "Palimpsest China transaction"
+exec 10<>"$PALIMPSEST_CHINA_TRANSACTION_LOCK"
+validate_controller_lock_fd "$PALIMPSEST_CHINA_TRANSACTION_LOCK" 10 || {
+  echo "FAIL: Palimpsest China transaction lock changed identity"
+  exit 1
+}
+if [ "$BOOTSTRAP_PORTABLE" != 1 ] && ! flock --nonblock 10; then
+  echo "FAIL: a Palimpsest China activation durability transaction is still running"
+  exit 1
+fi
+
+# Global order is activation transaction -> deploy -> market -> activation.
+# The transaction FD survives for the complete release wrapper invocation.
+prepare_controller_lock "$DEPLOY_LOCK" deploy
+exec 9<>"$DEPLOY_LOCK"
+validate_controller_lock_fd "$DEPLOY_LOCK" 9 || {
+  echo "FAIL: deploy lock changed identity"
+  exit 1
+}
 if [ "$BOOTSTRAP_PORTABLE" != 1 ] && ! flock --nonblock 9; then
   echo "FAIL: another seiche deployment is still running"
   exit 1
@@ -829,6 +908,105 @@ valid_release_sha() {
 
 valid_activation_token() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
+}
+
+require_palimpsest_activation_durable() {
+  local surface="" status_path=""
+  if [ "$BOOTSTRAP_PORTABLE" = 1 ]; then
+    return 0
+  fi
+  for surface in \
+      "$PALIMPSEST_CHINA_ACTIVE_MARKER" \
+      "$PALIMPSEST_CHINA_PENDING_MARKER" \
+      "$PALIMPSEST_CHINA_ENV" \
+      "$PALIMPSEST_CHINA_DROPIN"; do
+    if [ -e "$surface" ] || [ -L "$surface" ]; then
+      break
+    fi
+    surface=""
+  done
+  [ -n "$surface" ] || return 0
+  if [ -L "$PALIMPSEST_CHINA_ACTIVATION_LAUNCHER" ] \
+      || [ ! -f "$PALIMPSEST_CHINA_ACTIVATION_LAUNCHER" ] \
+      || [ ! -x "$PALIMPSEST_CHINA_ACTIVATION_LAUNCHER" ]; then
+    echo "FAIL: live Palimpsest China activation has no trusted status launcher"
+    return 1
+  fi
+  status_path=$(mktemp "$DEPLOY_RUNTIME_DIR/.palimpsest-china-durability-status.XXXXXX") \
+    || return 1
+  chmod 0600 "$status_path"
+  if ! /usr/bin/env -i \
+      HOME=/root LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+      SEICHE_PALIMPSEST_CHINA_TRANSACTION_LOCK_FD=10 \
+      "$PALIMPSEST_CHINA_ACTIVATION_LAUNCHER" --durability-status \
+      >"$status_path"; then
+    rm -f -- "$status_path"
+    echo "FAIL: live Palimpsest China activation is not durably sealed; resume the exact activation before release"
+    return 1
+  fi
+  if ! "$BOOTSTRAP_PYTHON" -I -B - \
+      "$status_path" "$PALIMPSEST_CHINA_DURABILITY_ROOT" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+durability_root = Path(sys.argv[2])
+raw = path.read_bytes()
+if len(raw) > 4096:
+    raise SystemExit(1)
+try:
+    value = json.loads(raw)
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if type(value) is not dict:
+    raise SystemExit(1)
+canonical = json.dumps(
+    value,
+    ensure_ascii=False,
+    allow_nan=False,
+    sort_keys=True,
+    separators=(",", ":"),
+).encode("utf-8") + b"\n"
+if raw != canonical:
+    raise SystemExit(1)
+expected = {
+    "schema",
+    "status",
+    "activation_id",
+    "tree_sha256",
+    "durability_receipt_path",
+    "durability_receipt_sha256",
+}
+if set(value) != expected:
+    raise SystemExit(1)
+sha256 = re.compile(r"[0-9a-f]{64}").fullmatch
+activation_id = value["activation_id"]
+tree_sha256 = value["tree_sha256"]
+receipt_sha256 = value["durability_receipt_sha256"]
+if (
+    value["schema"] != "seiche.palimpsest-china-durability-status.v1"
+    or value["status"] != "activated_durable"
+    or type(activation_id) is not str
+    or sha256(activation_id) is None
+    or type(tree_sha256) is not str
+    or sha256(tree_sha256) is None
+    or type(receipt_sha256) is not str
+    or sha256(receipt_sha256) is None
+):
+    raise SystemExit(1)
+expected_path = durability_root / f"{activation_id}.{tree_sha256}.json"
+if value["durability_receipt_path"] != str(expected_path):
+    raise SystemExit(1)
+PY
+  then
+    rm -f -- "$status_path"
+    echo "FAIL: live Palimpsest China activation is not durably sealed; resume the exact activation before release"
+    return 1
+  fi
+  rm -f -- "$status_path"
+  echo "Palimpsest China activation: exact live durability seal verified"
 }
 
 verify_release_target_signature() {
@@ -1411,6 +1589,11 @@ write_promotion_request() {
   fi
 }
 
+# Refuse to move the application release out from under a provisional live
+# activation. The status child validates and reuses this wrapper's outer lock;
+# it cannot race a normal activation or mistake an older snapshot for current.
+require_palimpsest_activation_durable || exit 1
+
 # The sha whose code is actually RUNNING, written only after a healthy
 # restart. HEAD alone cannot answer that: a deploy killed between pull and
 # restart leaves HEAD==origin/main with the old process still serving, and
@@ -1600,6 +1783,8 @@ DATA_ARTIFACT_NAMES=(
   backup-paths-dropin
   restore-paths-dropin
   nbs-runtime-current-sha
+  palimpsest-china-activation-launcher
+  palimpsest-china-runtime-current-sha
 )
 DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
@@ -1617,6 +1802,8 @@ DATA_ARTIFACT_PATHS=(
   /etc/systemd/system/seiche-market-backup.service.d/paths.conf
   /etc/systemd/system/seiche-market-restore-check.service.d/paths.conf
   /opt/seiche-nbs-intake/current-sha
+  /etc/seiche/libexec/seiche-palimpsest-china-activate.py
+  /opt/seiche-palimpsest-china/current-sha
 )
 DATA_UNIT_ROLLBACK_DIR=""
 DATA_UNITS_MAY_HAVE_CHANGED=""

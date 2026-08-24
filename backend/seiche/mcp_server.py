@@ -66,7 +66,6 @@ from seiche.markets.world import (
     WORLD_MARKETS_SCHEMA,
     WORLD_MARKETS_SELECTORS,
     WORLD_MARKETS_STATUSES,
-    unavailable_world_markets,
 )
 from seiche.public_faults import safe_failure_envelope, sanitize_public_fault_payload
 
@@ -912,7 +911,7 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
     )
     snapshot = _get_completed_snapshot()
     if snapshot is None:
-        return unavailable_world_markets(
+        return context_views.unavailable_world_markets(
             selector=selector,
             china_macro_context=china_macro_context,
             china_economic_context=china_economic_context,

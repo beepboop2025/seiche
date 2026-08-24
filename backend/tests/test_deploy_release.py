@@ -17,6 +17,7 @@ import sys
 import tempfile
 import tomllib
 import re
+import selectors
 
 import pytest
 
@@ -45,8 +46,9 @@ SOURCE_WORKER = ROOT / "ops" / "deploy" / "seiche-source-worker.service"
 DATA_READINESS_SERVICE = ROOT / "ops" / "deploy" / "seiche-data-readiness.service"
 DATA_READINESS_TIMER = ROOT / "ops" / "deploy" / "seiche-data-readiness.timer"
 RECOVERY_SEAL = ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.sh"
-RECOVERY_SEAL_SERVICE = (
-    ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.service"
+RECOVERY_SEAL_SERVICE = ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.service"
+PALIMPSEST_CHINA_ACTIVATION_LAUNCHER = (
+    ROOT / "ops" / "deploy" / "seiche-palimpsest-china-activate.py"
 )
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
@@ -1930,9 +1932,7 @@ def test_forced_wrapper_queues_recovery_after_edge_convergence(
     calls = state / "calls.log"
     assert (calls.read_text().splitlines() if calls.exists() else []) == expected_calls
     for branch_start in (
-        wrapper.index(
-            'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
-        ),
+        wrapper.index('if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'),
         wrapper.index('if [ -n "$HEALTHY" ]'),
     ):
         edge = wrapper.index("deploy_caddy ||", branch_start)
@@ -1950,12 +1950,18 @@ def test_wrapper_defers_source_worker_until_after_strict_candidate_health():
     normal_branch = wrapper.index('HEALTHY=""', accepted_branch)
     accepted_body = wrapper[accepted_branch:normal_branch]
     assert "ensure_source_worker_ready" not in accepted_body
-    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in accepted_body
+    assert (
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
+        in accepted_body
+    )
 
     normal_body = wrapper[normal_branch:]
     before_cutover = normal_body[: normal_body.index('if [ -n "$HEALTHY" ]')]
     assert "ensure_source_worker_ready" not in before_cutover
-    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in before_cutover
+    assert (
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
+        in before_cutover
+    )
 
 
 def test_deploy_wrapper_warmup_timeout_contract():
@@ -2911,15 +2917,205 @@ def test_recovery_seal_proves_health_before_activating_readiness_timer() -> None
     final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)", timer)
     receipt = recovery.index('"schema": "seiche.release-recovery-receipt.v1"')
 
-    assert worker_start < proof < freshness < readiness < timer < final_identity < receipt
+    assert (
+        worker_start < proof < freshness < readiness < timer < final_identity < receipt
+    )
     assert "candidate_health_once" in recovery[freshness:timer]
+
+
+def test_recovery_seal_holds_the_outer_activation_lock_through_receipt_write() -> None:
+    recovery = RECOVERY_SEAL.read_text()
+    acquire = recovery.index('"$FLOCK" --exclusive 10')
+    identity = recovery.index("IDENTITY=$(load_release_identity)", acquire)
+    proof = recovery.index("run_recovery_proof_preflight", identity)
+    final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)", proof)
+    receipt = recovery.index('"schema": "seiche.release-recovery-receipt.v1"')
+
+    assert acquire < identity < proof < final_identity < receipt
+    assert "activation transaction -> deploy -> market -> activation" in recovery
+    assert recovery.count("SEICHE_PALIMPSEST_CHINA_TRANSACTION_LOCK_FD=10") == 2
+    assert "validate_activation_transaction_lock_fd 1" in recovery[acquire:identity]
+
+
+def test_recovery_outer_activation_lock_serializes_competing_sealers(
+    tmp_path: Path,
+) -> None:
+    recovery = RECOVERY_SEAL.read_text()
+    functions = recovery[
+        recovery.index("prepare_activation_transaction_lock() {") : recovery.index(
+            "# Global order is activation transaction"
+        )
+    ]
+    lock_root = tmp_path / "runtime"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(0o700)
+    fake_flock = _executable(
+        tmp_path / "flock",
+        """
+exec "$SEICHE_TEST_PYTHON" -c \
+  'import fcntl, sys; fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX)' "$@"
+""",
+    )
+    helper = tmp_path / "recovery-lock-probe.sh"
+    helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"PYTHON={shlex.quote(sys.executable)}\n"
+        f"FLOCK={shlex.quote(str(fake_flock))}\n"
+        f"PALIMPSEST_CHINA_TRANSACTION_LOCK={shlex.quote(str(lock_root / 'palimpsest-china-transaction.lock'))}\n"
+        f"TRANSACTION_LOCK_UID={os.getuid()}\n"
+        f"TRANSACTION_LOCK_GID={os.getgid()}\n"
+        "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        f"{functions}\n"
+        "prepare_activation_transaction_lock\n"
+        'exec 10<>"$PALIMPSEST_CHINA_TRANSACTION_LOCK"\n'
+        "validate_activation_transaction_lock_fd 0\n"
+        '"$FLOCK" --exclusive 10\n'
+        "validate_activation_transaction_lock_fd 1\n"
+        "printf 'acquired\\n'\n"
+        "IFS= read -r _release\n"
+    )
+    helper.chmod(0o755)
+    environment = os.environ | {"SEICHE_TEST_PYTHON": sys.executable}
+    first = subprocess.Popen(
+        ["bash", str(helper)],
+        env=environment,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    second: subprocess.Popen[str] | None = None
+    selector = selectors.DefaultSelector()
+    try:
+        assert first.stdout is not None
+        selector.register(first.stdout, selectors.EVENT_READ)
+        assert selector.select(timeout=5)
+        assert first.stdout.readline() == "acquired\n"
+        selector.unregister(first.stdout)
+        second = subprocess.Popen(
+            ["bash", str(helper)],
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert second.stdout is not None
+        selector.register(second.stdout, selectors.EVENT_READ)
+        assert selector.select(timeout=0.25) == []
+
+        assert first.stdin is not None
+        first.stdin.write("release\n")
+        first.stdin.flush()
+        assert first.wait(timeout=5) == 0
+        assert selector.select(timeout=5)
+        assert second.stdout.readline() == "acquired\n"
+        assert second.stdin is not None
+        second.stdin.write("release\n")
+        second.stdin.flush()
+        assert second.wait(timeout=5) == 0
+    finally:
+        selector.close()
+        for process in (first, second):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def test_palimpsest_activation_releases_inner_locks_before_durability_units() -> None:
+    launcher = PALIMPSEST_CHINA_ACTIVATION_LAUNCHER.read_text()
+    transaction = launcher.index("transaction_lock = _open_transaction_lock()")
+    deploy = launcher.index("deploy_lock = _open_deploy_lock()", transaction)
+    market = launcher.index("market_lock = _open_market_lock()", deploy)
+    activate = launcher.index("result = activation.activate_bundle(", market)
+    close_market = launcher.index("os.close(market_lock)", activate)
+    close_deploy = launcher.index("os.close(deploy_lock)", close_market)
+    durable = launcher.index("durability = _run_activation_durability", close_deploy)
+    backup = launcher.index("_start_unit(DURABILITY_UNITS[0])")
+    restore = launcher.index("_start_unit(DURABILITY_UNITS[1])", backup)
+    offsite = launcher.index("_start_unit(DURABILITY_UNITS[2])", restore)
+    final_audit = launcher.index(
+        "final_audit = activation.audit_activation_state", offsite
+    )
+    seal = launcher.index("activation.seal_activation_durability", final_audit)
+
+    assert (
+        transaction < deploy < market < activate < close_market < close_deploy < durable
+    )
+    assert backup < restore < offsite < final_audit < seal
+    assert "seiche.palimpsest-china-durability-request.v1" in launcher
+    assert "seiche.market-backup-restore-check.v5" in launcher
+    assert "seiche.market-offsite-backup-status.v4" in launcher
+    assert "live activation remains provisional" in launcher
+    durable_resume = launcher[
+        launcher.index('if status["status"] == "activated_durable":') : backup
+    ]
+    assert durable_resume.index("_remove_durability_request()") < durable_resume.index(
+        "return status"
+    )
+
+
+def test_release_refuses_to_advance_a_live_provisional_activation() -> None:
+    wrapper = DEPLOY_WRAPPER.read_text()
+    transaction = wrapper.index("flock --nonblock 10")
+    deploy = wrapper.index("flock --nonblock 9", transaction)
+    helper = wrapper.index("require_palimpsest_activation_durable()", deploy)
+    inherited = wrapper.index("SEICHE_PALIMPSEST_CHINA_TRANSACTION_LOCK_FD=10", helper)
+    status = wrapper.index(
+        '"$PALIMPSEST_CHINA_ACTIVATION_LAUNCHER" --durability-status', inherited
+    )
+    exact_status = wrapper.index('value["status"] != "activated_durable"', status)
+    call = wrapper.index(
+        "require_palimpsest_activation_durable || exit 1", exact_status
+    )
+    state = wrapper.index(
+        'install -d -o root -g root -m 0700 "$DEPLOY_STATE_DIR"', call
+    )
+    before = wrapper.index('BEFORE=$("$RUNUSER"', state)
+    fetch = wrapper.index("fetch -q origin main", before)
+
+    assert transaction < deploy < helper < inherited < status < exact_status < call
+    assert call < state < before < fetch
+    helper_body = wrapper[helper:call]
+    assert "seiche.palimpsest-china-durability-status.v1" in helper_body
+    assert "PALIMPSEST_CHINA_ACTIVE_MARKER" in helper_body
+    assert "PALIMPSEST_CHINA_PENDING_MARKER" in helper_body
+    assert "PALIMPSEST_CHINA_ENV" in helper_body
+    assert "PALIMPSEST_CHINA_DROPIN" in helper_body
+    assert "durability_receipt_sha256" in helper_body
+    assert "resume the exact activation before release" in helper_body
+
+
+def test_existing_recovery_seal_requires_current_durability_readiness() -> None:
+    recovery = RECOVERY_SEAL.read_text()
+    complete = recovery.index('if [ -n "$RECOVERY_ALREADY_COMPLETE" ]; then')
+    proof = recovery.index("run_recovery_proof_preflight", complete)
+    identity = recovery.index("assert_release_identity", proof)
+    success = recovery.index("already sealed and currently durable", identity)
+
+    assert complete < proof < identity < success
+    assert (
+        "existing recovery seal lacks current durability proof"
+        in recovery[complete:success]
+    )
+
+
+def test_durability_status_units_can_recreate_the_boot_lost_transaction_lock() -> None:
+    readiness = DATA_READINESS_SERVICE.read_text()
+    recovery = RECOVERY_SEAL_SERVICE.read_text()
+
+    for service in (readiness, recovery):
+        assert "RuntimeDirectory=seiche-deploy" in service
+        read_only = next(
+            line for line in service.splitlines() if line.startswith("ReadOnlyPaths=")
+        )
+        assert "/run/seiche-deploy" not in read_only.split("=")[1].split()
 
 
 def test_recovery_seal_restores_rails_before_waiting_for_controller_receipt() -> None:
     recovery = RECOVERY_SEAL.read_text()
-    absent_receipt = recovery.index(
-        'print(target, "-", "-", "awaiting-receipt")'
-    )
+    absent_receipt = recovery.index('print(target, "-", "-", "awaiting-receipt")')
     worker_start = recovery.index(
         '"$SYSTEMCTL" start \\\n    seiche-market-backfill.service seiche-market-worker.service'
     )
@@ -2930,7 +3126,10 @@ def test_recovery_seal_restores_rails_before_waiting_for_controller_receipt() ->
     final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)")
 
     assert absent_receipt < worker_start < backup < readiness_timer < final_identity
-    assert "recovery proof is ready but the immutable release receipt is pending" in recovery
+    assert (
+        "recovery proof is ready but the immutable release receipt is pending"
+        in recovery
+    )
 
 
 @pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
@@ -3245,8 +3444,11 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "/usr/bin/setpriv is required" in installer
     assert "ReadWritePaths=$BACKUP_DIR" in installer
     assert "ReadWritePaths=$STATE_DIR/validation" in installer
-    assert "ExecStart=/usr/bin/flock --wait 300" in backup
-    assert "seiche-market-backup.sh" in backup
+    assert (
+        "ExecStart=/etc/seiche/libexec/seiche-palimpsest-china-activate.py "
+        "--run-market-locked backup" in backup
+    )
+    assert "ExecStart=/usr/bin/flock" not in backup
     assert "mountpoint -q" in backup_script
     assert '"$CP_BIN" -R -- "$API_DATA_DIR/." "$API_STAGE/"' in backup_script
     assert "cp -a --" not in backup_script
@@ -3256,28 +3458,45 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
-    assert "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
-    assert "CAP_CHOWN" not in backup
+    assert (
+        "CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID"
+        in backup
+    )
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     backup_capabilities = next(
         line
         for line in backup.splitlines()
         if line.startswith("CapabilityBoundingSet=")
     )
-    assert "CAP_CHOWN" not in backup_capabilities
-    assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
+    assert "CAP_CHOWN" in backup_capabilities
+    assert (
+        "ReadWritePaths=/var/backups/seiche-market /run/lock "
+        "/run/seiche-deploy" in backup
+    )
+    assert "RuntimeDirectory=seiche-deploy" in backup
+    assert "RuntimeDirectoryMode=0700" in backup
+    assert "RuntimeDirectoryPreserve=yes" in backup
     assert (
         "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs "
-        "/var/lib/seiche-deploy" in backup
+        "/var/lib/seiche-palimpsest-china /var/lib/seiche-deploy" in backup
     )
     assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
     assert "RandomizedDelaySec=10m" in backup_timer
     assert "Persistent=true" in backup_timer
-    assert "ExecStart=/usr/bin/flock --wait 300" in restore
-    assert "seiche-market-restore-check.sh" in restore
+    assert (
+        "ExecStart=/etc/seiche/libexec/seiche-palimpsest-china-activate.py "
+        "--run-market-locked restore" in restore
+    )
+    assert "ExecStart=/usr/bin/flock" not in restore
     assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
-    assert "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock" in restore
+    assert (
+        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock "
+        "/run/seiche-deploy" in restore
+    )
+    assert "RuntimeDirectory=seiche-deploy" in restore
+    assert "RuntimeDirectoryMode=0700" in restore
+    assert "RuntimeDirectoryPreserve=yes" in restore
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
     assert "NoNewPrivileges=true" in restore
@@ -3315,7 +3534,7 @@ def test_restore_check_limits_setgid_recovery_to_its_private_write_boundary():
     assert "NoNewPrivileges=true" in service
     assert "ProtectSystem=strict" in service
     assert writable_directives == [
-        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock"
+        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock /run/seiche-deploy"
     ]
 
 
@@ -3917,13 +4136,24 @@ def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
     assert 'SEICHE_DEPLOYED_SHA="$DEPLOYED"' in wrapper
     assert "/home/seiche/.seiche-deployed-sha" not in wrapper
     assert "DEPLOYED=${SEICHE_DEPLOYED_SHA:-}" in BOX_UPDATE.read_text()
+    transaction_lock = wrapper.index("flock --nonblock 10")
     deploy_lock = wrapper.index("flock --nonblock 9")
+    assert transaction_lock < deploy_lock
+    assert (
+        "PALIMPSEST_CHINA_TRANSACTION_LOCK="
+        "$DEPLOY_RUNTIME_DIR/palimpsest-china-transaction.lock"
+    ) in wrapper[:transaction_lock]
+    assert 'exec 10<>"$PALIMPSEST_CHINA_TRANSACTION_LOCK"' in wrapper[:transaction_lock]
+    assert (
+        "activation transaction -> deploy -> market -> activation"
+        in wrapper[transaction_lock:deploy_lock]
+    )
     assert "DEPLOY_RUNTIME_DIR=/run/seiche-deploy" in wrapper[:deploy_lock]
     assert (
         'install -d -o root -g root -m 0700 "$DEPLOY_RUNTIME_DIR"'
         in wrapper[:deploy_lock]
     )
-    assert 'exec 9>"$DEPLOY_LOCK"' in wrapper[:deploy_lock]
+    assert 'exec 9<>"$DEPLOY_LOCK"' in wrapper[:deploy_lock]
     assert "another seiche deployment is still running" in wrapper
     assert deploy_lock < wrapper.index("# The sha whose code is actually RUNNING")
 
@@ -4031,9 +4261,7 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
     full_gate = poller.index('"$VENV/bin/python" -m pytest backend/tests -q', detached)
-    remote_gate = poller.index(
-        'install_remote_gate_receipt "$GATE_RECEIPT"', full_gate
-    )
+    remote_gate = poller.index('install_remote_gate_receipt "$GATE_RECEIPT"', full_gate)
     refetched = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', remote_gate
     )
@@ -4078,8 +4306,7 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
         < deployed
     )
     assert (
-        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"'
-        in poller
+        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"' in poller
     )
     assert 'if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then' in poller
     assert "local gate was not run automatically" in poller
@@ -4139,7 +4366,10 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     ]
     assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit
     assert "live, strictly healthy, and recovery sealed" in early_exit
-    assert "live cutover is complete; recovery sealing continues asynchronously" in early_exit
+    assert (
+        "live cutover is complete; recovery sealing continues asynchronously"
+        in early_exit
+    )
     assert "queue_recovery_seal" in early_exit
     assert "existing recovery receipt evidence is invalid" in early_exit
     receipt_decision = poller[receipt_pair:admission]
@@ -6253,7 +6483,9 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     for prefix, filename in routes.items():
         assert f"path \\\n        /palimpsest/{prefix}/{filename}" in block
         assert f"uri strip_prefix /palimpsest/{prefix}" in block
-    assert block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 4
+    assert (
+        block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 4
+    )
     assert block.count('header Cache-Control "no-store, no-transform"') == 4
     assert block.count('header Content-Disposition "inline"') == 4
     assert block.count("root * /var/lib/palimpsest/readings") == 4
