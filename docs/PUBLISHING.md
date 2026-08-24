@@ -72,6 +72,15 @@ listed here as a runbook rather than automated blind.
    tag. The owner receipt records the successful run URL, filenames, and both
    digests; a merely existing project page is insufficient.
 
+   The `publish-static` and full `publish` workflows deliberately stop before
+   their first public write while a release is staged on `main`. Their shared
+   `verify_catalog_publication.py` gate requires the externally pinned signer,
+   an annotated signed tag whose release-identity files match the checkout,
+   both exact PyPI bodies and SHA-256 receipts, a fault-free hosted runtime on
+   the same version, and matching public MCP discovery. After the runtime and
+   PyPI receipts are green, rerun the original exact-SHA static jobs; never
+   bypass this gate to advertise a package version that does not yet exist.
+
 5. **Confirm the Zenodo GitHub integration is enabled before releasing.** Sign
    in at <https://zenodo.org/account/settings/github/>, synchronize repositories,
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new

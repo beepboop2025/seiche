@@ -73,6 +73,13 @@
         "money_market_context",
         "world_markets_context"
       ],
+      "prompts": [
+        "is_now_dangerous",
+        "money_market_deep_dive",
+        "world_markets_briefing",
+        "cross_market_cash_pressure"
+      ],
+      "resourceTemplates": [],
       "representativeQueries": [
         "What is the current US dollar funding stress regime?",
         "What historical episodes most resemble today?",
@@ -88,6 +95,9 @@
         "schemaProfile": "MCP Registry 2025-12-11 server metadata",
         "experimentalServerCardConformance": false,
         "publicToolCount": 11,
+        "publicPromptCount": 4,
+        "publicResourceCount": 0,
+        "mcpDiscovery": "https://api.seiche.info/.well-known/mcp.json",
         "worldMarketsApi": "https://api.seiche.info/api/v2/world-markets",
         "worldMarketsPage": "https://seiche.info/markets/",
         "forexPage": "https://seiche.info/markets/forex/",

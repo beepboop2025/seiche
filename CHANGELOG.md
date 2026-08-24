@@ -21,6 +21,11 @@ they change a public contract, methodology, or release artifact.
 - Synchronized the hosted runtime, Python package, MCP server card, AI catalog,
   and citation metadata on the superseding `0.11.1` patch identity. The
   immutable `0.11.0` artifacts remain available as historical receipts.
+- Made both static publishers fail closed before their first public write until
+  the pinned signed tag, exact wheel and source-archive bytes, fault-free hosted
+  runtime, and matching MCP discovery record all exist.
+- Published the complete anonymous MCP inventory in the AI catalog: eleven
+  tools, four prompt templates, and an explicit zero-resource boundary.
 
 ## [0.11.0] - 2026-08-22
 
