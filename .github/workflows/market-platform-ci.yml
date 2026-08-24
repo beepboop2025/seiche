@@ -80,6 +80,7 @@ jobs:
           backend/tests/test_cfets_rights_boundary.py
           backend/tests/test_china_economic_focus.py
           backend/tests/test_palimpsest_china_intake.py
+          backend/tests/test_palimpsest_china_activation.py
           backend/tests/test_api_v2_markets.py
           backend/tests/test_mcp_server.py
           backend/tests/test_mcp_http.py

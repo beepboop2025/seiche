@@ -144,12 +144,16 @@ MAX_TOTAL_BYTES = 64 * 1024 * 1024
 RENAME_NOREPLACE = 1
 REQUIRED_MODES = {
     "backend/seiche/__init__.py": "100644",
+    "backend/seiche/china_economic_focus.py": "100644",
     "backend/seiche/nbs_intake.py": "100644",
     "backend/seiche/nbs_trust.py": "100644",
+    "backend/seiche/palimpsest_china_activation.py": "100644",
+    "backend/seiche/palimpsest_china_intake.py": "100644",
     "ops/Caddyfile": "100644",
     "ops/deploy/box-update.sh": "100644",
     "ops/deploy/install-caddy.sh": "100755",
     "ops/deploy/install-market-platform.sh": "100755",
+    "ops/deploy/install-palimpsest-china-activation.sh": "100755",
     "ops/deploy/install-release-poller.sh": "100755",
     "ops/deploy/release-allowed-signers": "100644",
     "ops/deploy/retire-legacy-update-units.sh": "100644",
@@ -171,6 +175,7 @@ REQUIRED_MODES = {
     "ops/deploy/seiche-market-validation.timer": "100644",
     "ops/deploy/seiche-market-worker.service": "100644",
     "ops/deploy/seiche-nbs-intake.py": "100644",
+    "ops/deploy/seiche-palimpsest-china-activate.py": "100644",
     "ops/deploy/seiche-pull.service": "100644",
     "ops/deploy/seiche-release-poll.service": "100644",
     "ops/deploy/seiche-release-poll.sh": "100755",
@@ -351,8 +356,11 @@ try:
         "ops/deploy",
         "ops/Caddyfile",
         "backend/seiche/__init__.py",
+        "backend/seiche/china_economic_focus.py",
         "backend/seiche/nbs_intake.py",
         "backend/seiche/nbs_trust.py",
+        "backend/seiche/palimpsest_china_activation.py",
+        "backend/seiche/palimpsest_china_intake.py",
     )
     entries: list[tuple[str, str, str]] = []
     seen: set[str] = set()
@@ -382,8 +390,11 @@ try:
                 or path
                 in {
                     "backend/seiche/__init__.py",
+                    "backend/seiche/china_economic_focus.py",
                     "backend/seiche/nbs_intake.py",
                     "backend/seiche/nbs_trust.py",
+                    "backend/seiche/palimpsest_china_activation.py",
+                    "backend/seiche/palimpsest_china_intake.py",
                 }
             )
         ):
@@ -1600,6 +1611,8 @@ DATA_ARTIFACT_NAMES=(
   backup-paths-dropin
   restore-paths-dropin
   nbs-runtime-current-sha
+  palimpsest-china-activation-launcher
+  palimpsest-china-runtime-current-sha
 )
 DATA_ARTIFACT_PATHS=(
   /etc/seiche/libexec/seiche-storage-preflight.py
@@ -1617,6 +1630,8 @@ DATA_ARTIFACT_PATHS=(
   /etc/systemd/system/seiche-market-backup.service.d/paths.conf
   /etc/systemd/system/seiche-market-restore-check.service.d/paths.conf
   /opt/seiche-nbs-intake/current-sha
+  /etc/seiche/libexec/seiche-palimpsest-china-activate.py
+  /opt/seiche-palimpsest-china/current-sha
 )
 DATA_UNIT_ROLLBACK_DIR=""
 DATA_UNITS_MAY_HAVE_CHANGED=""

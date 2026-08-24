@@ -181,6 +181,47 @@ CFETS and ChinaMoney value rows remain hard denied.
      --lineage-evidence "$SEICHE_PALIMPSEST_CHINA_LINEAGE_EVIDENCE_PATH"
    ```
 
+11. A signed Seiche release installs an inert root launcher at
+    `/etc/seiche/libexec/seiche-palimpsest-china-activate.py` and a matching
+    root-owned runtime at
+    `/opt/seiche-palimpsest-china/releases/<seiche-release-sha>/`. Installation
+    does not create the API environment/drop-in and does not confer authority.
+    Once the final hosted v3 handoff exists, its acceptance receipt has been
+    signed by a dedicated release-pinned offline key, and all eleven source
+    files are regular, single-link, root:root mode `0400` or `0600` beneath
+    root-owned non-writable traversal, a root operator invokes the launcher in
+    this exact order:
+
+    ```bash
+    /etc/seiche/libexec/seiche-palimpsest-china-activate.py \
+      "$SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_PRODUCER_COMMIT_EVIDENCE_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_PRODUCER_MAIN_EVIDENCE_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_HANDOFF_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_CHECKSUMS_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_LINEAGE_CHAIN_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_LINEAGE_EVIDENCE_PATH" \
+      "$SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH"
+    ```
+
+    The launcher serializes with the normal deploy lock, rechecks the exact
+    deployed SHA and its pinned SSH signature, installs a root:seiche `0750`
+    versioned bundle at `/var/lib/seiche-palimpsest-china/<bundle-id>/` with
+    exact single-link root:seiche `0440` files, and verifies it as the
+    unprivileged `seiche` user under an empty environment.
+    It writes only the dedicated `/etc/seiche/palimpsest-china.env` and API
+    drop-in, restarts the API, and requires both REST and MCP to serve all
+    eleven exact accepted hashes before committing a fsynced activation receipt
+    and atomic active marker. The receipt records separate REST and MCP
+    file-hash and signer commitments. A failed proof restores and re-proves the
+    prior configuration. A fsynced pending marker makes an interrupted
+    multi-file switch recoverable on the next locked run. Retained receipts
+    reject an older acceptance clock or producer workflow run. No path is
+    copied into `market.env`.
+
 Every load rechecks that the signed acceptance clock is not in the future and
 that the WDI rights decision has not expired. Exact immutable inputs are
 verified once per process and cached by all eleven runtime file identities; a

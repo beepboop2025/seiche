@@ -40,6 +40,7 @@ MARKET_RESTORE_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-restore-check
 MARKET_RESTORE_SCRIPT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-market-restore-check.sh"
 NBS_INTAKE_LAUNCHER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-nbs-intake.py"
 NBS_INTAKE_LAUNCHER_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-nbs-intake.py"
+PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE="$ASSET_ROOT/ops/deploy/install-palimpsest-china-activation.sh"
 STORAGE_PREFLIGHT_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-storage-preflight.service"
 STORAGE_PREFLIGHT_UNIT_DESTINATION=/etc/systemd/system/seiche-storage-preflight.service
 RELEASE_POLL_STORAGE_DROPIN_DIR=/etc/systemd/system/seiche-release-poll.service.d
@@ -112,7 +113,11 @@ required_paths = {
     "backend/seiche/__init__.py",
     "backend/seiche/nbs_intake.py",
     "backend/seiche/nbs_trust.py",
+    "backend/seiche/china_economic_focus.py",
+    "backend/seiche/palimpsest_china_activation.py",
+    "backend/seiche/palimpsest_china_intake.py",
     "ops/deploy/retire-legacy-update-units.sh",
+    "ops/deploy/install-palimpsest-china-activation.sh",
     "ops/deploy/seiche-data-readiness.service",
     "ops/deploy/seiche-data-readiness.sh",
     "ops/deploy/seiche-data-readiness.timer",
@@ -130,6 +135,7 @@ required_paths = {
     "ops/deploy/seiche-market-validation.timer",
     "ops/deploy/seiche-market-worker.service",
     "ops/deploy/seiche-nbs-intake.py",
+    "ops/deploy/seiche-palimpsest-china-activate.py",
     "ops/deploy/seiche-release-recovery-seal.service",
     "ops/deploy/seiche-release-recovery-seal.sh",
     "ops/deploy/seiche-railway-cutover-fence.sh",
@@ -1307,6 +1313,19 @@ PY
     exit 1
 }
 install_nbs_runtime
+
+# Install only the inert, release-addressed activation machinery. No Palimpsest
+# bundle, trust key, API environment, or service drop-in is created here.
+# Activation remains a separate root/operator ceremony after offline signing.
+[ -f "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE" ] \
+    && [ ! -L "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE" ] || {
+    echo "market platform: Palimpsest China activation installer is missing or unsafe" >&2
+    exit 1
+}
+/usr/bin/bash -n "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE"
+SEICHE_PRIVILEGED_ASSET_ROOT="$ASSET_ROOT" \
+SEICHE_RELEASE_TARGET_SHA="$RELEASE_TARGET" \
+    /usr/bin/bash "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE"
 
 # The release wrapper uses umask 0077 while it checks out an exact candidate.
 # Git therefore may materialize tracked executable files as seiche:seiche 0700.
