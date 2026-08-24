@@ -15,7 +15,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-from seiche import api, context_views
+from seiche import api, context_views, nbs_trust
 from seiche import mcp_server as mcp
 from seiche import palimpsest_china_intake as intake
 from seiche import palimpsest_china_acceptance_cli as acceptance_cli
@@ -484,6 +484,21 @@ def test_review_manifest_may_omit_run_but_cannot_be_signed_or_loaded(
             acceptance_path,
             attest_dir=signer[2],
             now=datetime(2026, 8, 24, 13, 0, tzinfo=UTC),
+        )
+
+
+def test_live_nbs_notary_key_cannot_authorize_palimpsest_acceptance() -> None:
+    assert nbs_trust.PRODUCTION_TRUSTED_PALIMPSEST_CHINA_OPERATOR_KEYS == frozenset()
+    assert nbs_trust.PRODUCTION_TRUSTED_OPERATOR_KEYS.isdisjoint(
+        nbs_trust.PRODUCTION_TRUSTED_PALIMPSEST_CHINA_OPERATOR_KEYS
+    )
+    live_nbs_key = next(iter(nbs_trust.PRODUCTION_TRUSTED_OPERATOR_KEYS))
+
+    with pytest.raises(ValueError, match="not trusted"):
+        nbs_trust.verify_trusted_palimpsest_china_signature(
+            b"palimpsest-owner-acceptance",
+            "0" * 128,
+            live_nbs_key,
         )
 
 

@@ -58,6 +58,9 @@ CFETS and ChinaMoney value rows remain hard denied.
    copy the private key to the application host.
 6. Assemble the receipt. Production uses the public keys pinned in
    `seiche.nbs_trust`; a protected `--attest-dir` is for non-hosted validation.
+   The live NBS notary key is explicitly outside this trust set. Until a
+   dedicated offline Palimpsest owner public key is added by a signed Seiche
+   release, production receipt assembly and loading fail closed by design.
 
    ```bash
    python -m seiche.palimpsest_china_acceptance_cli receipt \

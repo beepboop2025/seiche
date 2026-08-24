@@ -26,6 +26,11 @@ _MAX_TRUST_FILE_BYTES = _MAX_TRUSTED_OPERATOR_KEYS * 65
 PRODUCTION_TRUSTED_OPERATOR_KEYS = frozenset(
     {"8c2fead17b95e9bed153b7acea346202ebdb987467abcadcdf5799f9ca3e1510"}
 )
+# Palimpsest China acceptance is an offline-owner ceremony, while the NBS key
+# above is provisioned to the live notary host. Never let that online key cross
+# this trust boundary. A dedicated offline public key must be added by a later
+# signed release before production acceptance can succeed.
+PRODUCTION_TRUSTED_PALIMPSEST_CHINA_OPERATOR_KEYS: frozenset[str] = frozenset()
 
 
 def _open_directory_nofollow(path: Path) -> int:
@@ -138,19 +143,13 @@ def _explicit_trusted_operator_keys(
         os.close(directory_fd)
 
 
-def verify_trusted_ed25519_signature(
+def _verify_trusted_ed25519_signature(
     message: bytes,
     signature_hex: str,
     signer_public_key_hex: str,
     *,
-    attest_dir: str | os.PathLike[str] | None = None,
+    trusted_keys: frozenset[str],
 ) -> None:
-    """Verify a detached signature under a release-authenticated key policy.
-
-    Successful verification returns ``None``.  Malformed, untrusted, or
-    invalid input always raises ``ValueError``.
-    """
-
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -167,11 +166,6 @@ def verify_trusted_ed25519_signature(
     ):
         raise ValueError("Ed25519 signer key is malformed")
 
-    trusted_keys = (
-        PRODUCTION_TRUSTED_OPERATOR_KEYS
-        if attest_dir is None
-        else _explicit_trusted_operator_keys(attest_dir)
-    )
     if signer_public_key_hex not in trusted_keys:
         raise ValueError("Ed25519 signer key is not trusted")
     try:
@@ -183,7 +177,53 @@ def verify_trusted_ed25519_signature(
         raise ValueError("Ed25519 signature is invalid") from exc
 
 
+def verify_trusted_ed25519_signature(
+    message: bytes,
+    signature_hex: str,
+    signer_public_key_hex: str,
+    *,
+    attest_dir: str | os.PathLike[str] | None = None,
+) -> None:
+    """Verify an NBS signature under its release-authenticated key policy."""
+
+    trusted_keys = (
+        PRODUCTION_TRUSTED_OPERATOR_KEYS
+        if attest_dir is None
+        else _explicit_trusted_operator_keys(attest_dir)
+    )
+    _verify_trusted_ed25519_signature(
+        message,
+        signature_hex,
+        signer_public_key_hex,
+        trusted_keys=trusted_keys,
+    )
+
+
+def verify_trusted_palimpsest_china_signature(
+    message: bytes,
+    signature_hex: str,
+    signer_public_key_hex: str,
+    *,
+    attest_dir: str | os.PathLike[str] | None = None,
+) -> None:
+    """Verify an offline Palimpsest owner signature under a separate policy."""
+
+    trusted_keys = (
+        PRODUCTION_TRUSTED_PALIMPSEST_CHINA_OPERATOR_KEYS
+        if attest_dir is None
+        else _explicit_trusted_operator_keys(attest_dir)
+    )
+    _verify_trusted_ed25519_signature(
+        message,
+        signature_hex,
+        signer_public_key_hex,
+        trusted_keys=trusted_keys,
+    )
+
+
 __all__ = [
     "PRODUCTION_TRUSTED_OPERATOR_KEYS",
+    "PRODUCTION_TRUSTED_PALIMPSEST_CHINA_OPERATOR_KEYS",
     "verify_trusted_ed25519_signature",
+    "verify_trusted_palimpsest_china_signature",
 ]

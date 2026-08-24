@@ -27,7 +27,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
 from seiche.china_economic_focus import featured_series
-from seiche.nbs_trust import verify_trusted_ed25519_signature
+from seiche.nbs_trust import verify_trusted_palimpsest_china_signature
 
 EXPORT_SCHEMA = "palimpsest.china-economic-export.v1"
 LEGACY_MANIFEST_SCHEMA = "palimpsest.china-economic-export-manifest.v1"
@@ -1394,7 +1394,7 @@ def build_acceptance_receipt(
     if type(signature) is not str or _ED25519_SIGNATURE_RE.fullmatch(signature) is None:
         raise PalimpsestChinaIntakeError("acceptance signature is malformed")
     try:
-        verify_trusted_ed25519_signature(
+        verify_trusted_palimpsest_china_signature(
             encode_acceptance_claim(claim),
             signature,
             signer_key_id,
@@ -1501,7 +1501,7 @@ def _load_accepted_export_cached(
             "acceptance receipt artifact hash does not match"
         )
     try:
-        verify_trusted_ed25519_signature(
+        verify_trusted_palimpsest_china_signature(
             claim_bytes,
             signature,
             claim["signer_key_id"],
