@@ -111,7 +111,7 @@ Run from a root shell with no inherited application environment:
 
 The controller records unit prestate, stops/disables/runtime-masks the API,
 collectors, release controllers, alert evaluator, and historical updater/API
-names, creates exactly one new backup-v3 snapshot, runs its isolated restore
+names, creates exactly one new backup-v4 snapshot, runs its isolated restore
 proof, and writes:
 
 ```text
@@ -128,15 +128,16 @@ maintenance outage. Do not start any old unit manually.
 
 ## 3. Stage immutable final bytes
 
-Using the existing reviewed operator channel, copy the final snapshot's seven
+Using the existing reviewed operator channel, copy the final snapshot's nine
 files and the canonical fence to a private workstation. Verify the snapshot
 file set and both digests before upload.
 
 Upload each snapshot member without replacement:
 
 ```bash
-for member in seiche.dump var-lib-seiche.tgz api-data.tgz \
-  table-counts.txt deployed-sha.txt manifest.env SHA256SUMS; do
+for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
+  palimpsest-china-state.json api-data.tgz table-counts.txt deployed-sha.txt \
+  manifest.env SHA256SUMS; do
   railway volume files upload --volume REVIEWED_VOLUME_ID \
     "PRIVATE_FINAL_SNAPSHOT/$member" \
     "/inbox/FINAL_SNAPSHOT_ID/$member"

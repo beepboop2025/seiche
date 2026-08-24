@@ -98,10 +98,19 @@ def _activation_context(
                 f"cutover-{snapshot_id}-"
                 f"{str(request['source_content_set_sha256'])[:16]}"
             ),
-            "tree_sha256": {"market": "7" * 64, "nbs": "8" * 64, "api": "9" * 64},
+            "tree_sha256": {
+                "market": "7" * 64,
+                "nbs": "8" * 64,
+                "api": "9" * 64,
+                "palimpsest-china": "6" * 64,
+            },
             "api_sqlite_quick_check": "pass",
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": "verified_head",
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": "verified",
         },
         "railway": _railway(platform),
         "authority": {
@@ -132,8 +141,15 @@ def _activation_context(
         workers_started_at=_iso(now - timedelta(minutes=3)),
     )
     generation = platform / "generations" / str(candidate["filesystem"]["generation"])
-    for name in ("market/raw", "nbs/public/revisions", "api"):
+    for name in (
+        "market/raw",
+        "nbs/public/revisions",
+        "api",
+        "palimpsest-china/receipts",
+    ):
         (generation / name).mkdir(parents=True, exist_ok=True)
+    (generation / "palimpsest-china").chmod(0o750)
+    (generation / "palimpsest-china" / "receipts").chmod(0o700)
     (generation / "market" / "raw" / "sample.json").write_text("{}\n")
     (generation / "nbs" / "public" / "README.txt").write_text("verified\n")
     with sqlite3.connect(generation / "api" / "seiche.sqlite") as database:
@@ -235,7 +251,7 @@ def test_recovery_request_is_activation_bound_and_published_once(
         )
 
 
-def test_export_emits_backup_v3_and_seals_only_after_writer_restart(
+def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -274,6 +290,17 @@ def test_export_emits_backup_v3_and_seals_only_after_writer_restart(
         bundle_root / "api-data.tgz",
         expected_roots=frozenset({"api-data"}),
     )
+    migration.validate_tar_contract(
+        bundle_root / "palimpsest-china.tgz",
+        expected_roots=frozenset({"seiche-palimpsest-china"}),
+    )
+    audit = migration._decode_canonical_json(
+        (bundle_root / "palimpsest-china-state.json").read_bytes(),
+        label="test Palimpsest China audit",
+    )
+    assert audit["state_root"] == "/var/lib/seiche-palimpsest-china"
+    assert audit["active_activation_id"] is None
+    assert audit["pending_candidate_activation_id"] is None
 
     stopped_at = exported.started_at
     restarted_at = _iso(datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1))
@@ -306,6 +333,9 @@ def test_export_emits_backup_v3_and_seals_only_after_writer_restart(
         bundle_root=bundle_root,
     )
     assert validated["snapshot"]["backup_schema"] == migration.BACKUP_SCHEMA
+    assert validated["filesystem"]["palimpsest_china_state_audit_result"] == (
+        "verified"
+    )
 
     sealed_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=3)
     offsite_digests = {

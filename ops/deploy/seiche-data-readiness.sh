@@ -429,17 +429,25 @@ if secure_restore_receipt(restore_receipt):
             "schema",
             "checked_at",
             "snapshot",
+            "source_backup_schema",
             "deployed_sha",
             "critical_table_counts",
             "critical_table_count_floor",
             "nbs_full_store_audit_contract",
             "nbs_full_store_audit_result",
             "nbs_public_revision_store",
+            "palimpsest_china_state_archive_restore",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_tree_sha256",
+            "palimpsest_china_active_activation_id",
+            "palimpsest_china_pending_candidate_activation_id",
+            "palimpsest_china_bundle_count",
+            "palimpsest_china_receipt_count",
             *required_passes,
         }
         if set(fields) != required_fields:
             raise ValueError
-        if fields.get("schema") != "seiche.market-backup-restore-check.v4":
+        if fields.get("schema") != "seiche.market-backup-restore-check.v5":
             raise ValueError
         if any(fields.get(key) != value for key, value in required_passes.items()):
             raise ValueError
@@ -455,6 +463,45 @@ if secure_restore_receipt(restore_receipt):
         }:
             raise ValueError
         if fields.get("nbs_public_revision_store") != nbs_audit_result:
+            raise ValueError
+        if (
+            fields.get("palimpsest_china_state_audit_contract")
+            != "seiche.palimpsest-china-activation-state.v1"
+        ):
+            raise ValueError
+        source_backup_schema = fields.get("source_backup_schema")
+        palimpsest_result = fields.get("palimpsest_china_state_archive_restore")
+        palimpsest_tree = fields.get("palimpsest_china_state_tree_sha256")
+        active_id = fields.get("palimpsest_china_active_activation_id")
+        pending_id = fields.get("palimpsest_china_pending_candidate_activation_id")
+        if source_backup_schema == "seiche.market-backup.v3":
+            if (
+                palimpsest_result != "legacy_absent_inactive"
+                or palimpsest_tree != "absent"
+                or active_id != "none"
+                or pending_id != "none"
+                or fields.get("palimpsest_china_bundle_count") != "0"
+                or fields.get("palimpsest_china_receipt_count") != "0"
+            ):
+                raise ValueError
+        elif source_backup_schema == "seiche.market-backup.v4":
+            if (
+                palimpsest_result != "verified"
+                or re.fullmatch(r"[0-9a-f]{64}", palimpsest_tree or "") is None
+                or re.fullmatch(r"(?:none|[0-9a-f]{64})", active_id or "") is None
+                or re.fullmatch(r"(?:none|[0-9a-f]{64})", pending_id or "")
+                is None
+                or re.fullmatch(
+                    r"[0-9]+", fields.get("palimpsest_china_bundle_count", "")
+                )
+                is None
+                or re.fullmatch(
+                    r"[0-9]+", fields.get("palimpsest_china_receipt_count", "")
+                )
+                is None
+            ):
+                raise ValueError
+        else:
             raise ValueError
         if re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", fields.get("snapshot", "")) is None:
             raise ValueError
@@ -617,7 +664,7 @@ if not skip_offsite and offsite_env_exists:
                     "checksum_etag",
                     "remote_receipt_etag",
                 )
-                source_backup_contract = {
+                legacy_source_backup_contract = {
                     "source_backup_schema": "seiche.market-backup.v3",
                     "nbs_state_root": "/var/lib/seiche-nbs",
                     "nbs_full_store_audit_contract": (
@@ -625,10 +672,49 @@ if not skip_offsite and offsite_env_exists:
                     ),
                     "nbs_full_store_audit_result": "required_at_restore",
                 }
+                modern_source_backup_contract = {
+                    **legacy_source_backup_contract,
+                    "source_backup_schema": "seiche.market-backup.v4",
+                    "palimpsest_china_state_root": (
+                        "/var/lib/seiche-palimpsest-china"
+                    ),
+                    "palimpsest_china_state_audit_contract": (
+                        "seiche.palimpsest-china-activation-state.v1"
+                    ),
+                }
+                status_schema = status_document.get("schema")
+
+                def source_contract_valid(record: dict[str, object]) -> bool:
+                    if status_schema == "seiche.market-offsite-backup-status.v2":
+                        return all(
+                            record.get(field) == value
+                            for field, value in legacy_source_backup_contract.items()
+                        ) and not any(
+                            field.startswith("palimpsest_china_") for field in record
+                        )
+                    if status_schema != "seiche.market-offsite-backup-status.v3":
+                        return False
+                    return (
+                        all(
+                            record.get(field) == value
+                            for field, value in modern_source_backup_contract.items()
+                        )
+                        and re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(record.get("palimpsest_china_state_tree_sha256", "")),
+                        )
+                        is not None
+                        and record.get("palimpsest_china_state")
+                        in {"active", "inactive"}
+                    )
+
                 current_state = status_document.get("status")
                 valid = (
-                    status_document.get("schema")
-                    == "seiche.market-offsite-backup-status.v2"
+                    status_schema
+                    in {
+                        "seiche.market-offsite-backup-status.v2",
+                        "seiche.market-offsite-backup-status.v3",
+                    }
                     and current_state in {"running", "failed", "success"}
                     and status_document.get("provider")
                     == "hetzner-object-storage"
@@ -654,10 +740,7 @@ if not skip_offsite and offsite_env_exists:
                     is not None
                     and status_document.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
-                    and all(
-                        status_document.get(field) == value
-                        for field, value in source_backup_contract.items()
-                    )
+                    and source_contract_valid(status_document)
                     and status_document.get("restore_verified")
                     is (current_state == "success")
                     and success.get("restore_verified") is True
@@ -678,10 +761,7 @@ if not skip_offsite and offsite_env_exists:
                     == current_destination.get("region")
                     and success.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
-                    and all(
-                        success.get(field) == value
-                        for field, value in source_backup_contract.items()
-                    )
+                    and source_contract_valid(success)
                     and re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", snapshot_id or "")
                     is not None
                     and re.fullmatch(

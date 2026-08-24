@@ -7,7 +7,7 @@ creating a second writer plane. It combines three independent controls:
    locked canary;
 2. Railway PostgreSQL point-in-time recovery (PITR), the same three backup
    schedules, and a separately locked database canary; and
-3. a daily backup-v3 export that is restored in isolation and then stored in
+3. a daily backup-v4 export that is restored in isolation and then stored in
    external S3-compatible object storage under COMPLIANCE Object Lock.
 
 Railway documents volume backups, PostgreSQL PITR, and portable logical dumps
@@ -28,8 +28,9 @@ request inbox. For one valid request it:
 
 1. keeps the production API online;
 2. stops both Railway writer children;
-3. takes an online SQLite copy, archives market/NBS state, dumps PostgreSQL,
-   and commits the exact seven-file backup-v3 generation atomically;
+3. takes an online SQLite copy, archives market/NBS and Palimpsest China
+   activation state, dumps PostgreSQL, and commits the exact nine-file
+   backup-v4 generation atomically;
 4. restarts both writers and observes them alive; and
 5. publishes a content-bound immutable recovery receipt.
 
@@ -148,7 +149,8 @@ Each successful export produces:
 
 - a canonical activation-bound request;
 - the immutable Railway recovery receipt;
-- the exact seven-member backup-v3 generation;
+- the exact nine-member backup-v4 generation, including the immutable
+  Palimpsest China state archive and canonical audit receipt;
 - a canonical reverse-restore proof containing NBS audit result, filesystem
   tree digests, and four PostgreSQL counts/floors;
 - a canonical off-site receipt with each object's key, size, SHA-256, and
@@ -179,9 +181,10 @@ contains only receipts, restore proof, and provider HEAD evidence.
 
 ## Reverse transfer boundary
 
-The daily proof establishes that the external backup-v3 bytes can rebuild the
-filesystem, NBS chain, SQLite database, and PostgreSQL tables on infrastructure
-outside the production Railway databases. It is not permission to fail over.
+The daily proof establishes that the external backup-v4 bytes can rebuild the
+filesystem, NBS chain, Palimpsest China bundles/receipts/markers, SQLite
+database, and PostgreSQL tables on infrastructure outside the production
+Railway databases. It is not permission to fail over.
 
 A real reverse transfer to Hetzner requires a new reviewed controller and a new
 authority receipt. The incident sequence must be:
@@ -206,7 +209,8 @@ grant, and receipt is an unsafe dual-writer attempt.
 ## Remaining state domain
 
 Phase 6 covers the API, market collectors, source worker, market/NBS files,
-SQLite, and PostgreSQL state moved by Phase 5. Phase 7 implements a separate
+Palimpsest China activation state, SQLite, and PostgreSQL state moved by Phase
+5. Phase 7 implements a separate
 snapshot/restore, authority, delivery-idempotency, update-offset, native-backup,
 and monitoring contract for `/var/lib/seiche-bot`; follow
 `RAILWAY-TELEGRAM.md`. Until its activation receipt and first production

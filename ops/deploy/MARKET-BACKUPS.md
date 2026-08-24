@@ -43,17 +43,22 @@ Every run:
 1. asks the selected native PostgreSQL cluster for its live port instead of
    assuming `5432` or `5433`;
 2. writes a custom-format `pg_dump` of database `seiche`;
-3. archives `/var/lib/seiche` with numeric ownership, ACLs, and xattrs;
-4. copies the API/legacy data directory and replaces its live SQLite files
+3. archives `/var/lib/seiche` and `/var/lib/seiche-nbs` with numeric ownership,
+   ACLs, and xattrs;
+4. audits the separate root-controlled
+   `/var/lib/seiche-palimpsest-china` tree through the exact signed-release
+   launcher, archives it, normalizes and audits a scratch extraction, and
+   rejects any pre/archive/post audit disagreement;
+5. copies the API/legacy data directory and replaces its live SQLite files
    with a transactionally consistent online backup verified by
    `PRAGMA quick_check`;
-5. records a pre-dump lower bound for all four append-only/upsert-only market
+6. records a pre-dump lower bound for all four append-only/upsert-only market
    tables and the deployed Git SHA;
-6. validates all dump/archive catalogues, then writes research-only/no-
+7. validates all dump/archive catalogues, then writes research-only/no-
    authority metadata and a `SHA256SUMS` inventory;
-7. verifies that inventory, flushes the staged filesystem, and atomically renames the
+8. verifies that inventory, flushes the staged filesystem, and atomically renames the
    staging directory to `/var/backups/seiche-market/<UTC stamp>`; and
-8. only after that commit, removes timestamped local snapshots older than the
+9. only after that commit, removes timestamped local snapshots older than the
    configured retention (21 days by default).
 
 A failed run removes its hidden staging directory and cannot replace a prior
@@ -81,6 +86,12 @@ revision chain. An empty restricted/public store is recorded as
 `not_onboarded`; one fully verified matching head is recorded as
 `verified_head`. Any malformed member, invalid signature, missing predecessor,
 fork, restricted/public mismatch, or head mismatch fails the restore check.
+For a v4 snapshot it also extracts the sibling Palimpsest China archive,
+restores its exact root/group ownership and modes, reparses every immutable
+receipt/marker and all eleven files in every retained bundle, recomputes bundle
+and whole-tree identities, and requires the result to equal the canonical
+snapshot audit. A legacy v3 snapshot can produce only an explicitly empty,
+inactive Palimpsest China result.
 Temporary extraction happens inside that dedicated root-controlled directory.
 Every restored critical-table count must meet or exceed the recorded pre-dump
 floor before the filesystem scratch trees and scratch database are removed.
@@ -89,7 +100,7 @@ ordinary appends into false backup failures.
 
 The production `seiche` database and live state tree are never restore targets.
 A trap drops the scratch database after either success or failure. A successful
-check atomically records its v4 receipt at:
+check atomically records its v5 receipt at:
 
 ```text
 /var/lib/seiche-recovery-proof/backup-restore-check.status
@@ -104,6 +115,15 @@ preflight, the complete NBS commit, and strict postflight; the NBS store's own
 lock remains the inner revision-chain serializer. Backup/restore failures enter
 systemd's failed-unit state and use the production node's existing
 failure-alert handler.
+
+The backup and restore one-shots also share the release controller's
+`/run/seiche-deploy/deploy.lock` while invoking the sealed Palimpsest China
+audit launcher. Their root-only `RuntimeDirectory=seiche-deploy` survives
+one-shot exit and is recreated after boot. If the lock file itself was lost at
+boot, the launcher creates it with no-follow/exclusive semantics, fsyncs the
+new file and directory, validates root ownership, mode `0600`, link count and
+inode identity, then acquires it. A concurrent safe creator is reopened and
+validated; an unsafe replacement fails closed.
 
 Operator checks:
 
@@ -129,24 +149,27 @@ no longer complete; these are deliberately different signals.
   of clock skew, or contains collector/critical faults;
 - either collector heartbeat is missing or overdue;
 - the newest backup is older than 36 hours or implausibly future-dated;
-- the exact v4 restore receipt is missing, invalid, older than eight days,
-  future-dated, or does not record a strictly verified NBS full-store state;
+- the exact v5 restore receipt is missing, invalid, older than eight days,
+  future-dated, or does not record a strictly verified NBS full-store and
+  Palimpsest China activation-state archive;
 - a required service/timer is inactive, or a required timer is disabled for
   the next boot; or
 - block or inode use reaches 90 percent on a monitored filesystem.
 
-On a fresh host or the first v4 receipt rollout, installation does not enable the
+On a fresh host or the first v5 receipt rollout, installation does not enable the
 readiness timer immediately. It starts the source worker, runs a real backup,
 restores and checks that snapshot in isolation, executes readiness once without
 requiring its not-yet-active timer, and enables the timer only after that proof
 passes. Any failed stage leaves the timer disabled and the deployment nonzero.
 
-Restore receipt v4 is intentionally not backward compatible with v3. Version 3
-validated the NBS public revision chain but did not claim an exact audit of the
-full restricted/public recovery store. During the v4 receipt rollout the
-installer must produce a v3 snapshot and successful isolated restore before
-readiness can pass; an older v3 receipt is never silently promoted to the
-stronger claim.
+Restore receipt v5 is intentionally not backward compatible with v4. Version 4
+validated the full NBS restricted/public recovery store but did not bind the
+separate Palimpsest China activation-state archive. During the v5 receipt
+rollout the installer must produce a v4 snapshot and successful isolated
+restore before production readiness can pass; an older v4 receipt is never
+silently promoted to the stronger claim. The restore tool may inspect a legacy
+v3 snapshot only as empty/inactive compatibility, but that result cannot pass
+the current release-seal or cutover gates.
 
 Operator checks:
 
@@ -161,11 +184,12 @@ journalctl -u seiche-data-readiness.service -n 100 --no-pager
 The local snapshot and live filesystem evidence remain on one attached Volume.
 That protects the host root disk from capacity pressure, but loss or corruption
 of the Volume can still remove both. The optional off-node lane copies only a
-completed, checksum-valid v3 snapshot to private Hetzner Object Storage. That
-snapshot includes the full `/var/lib/seiche-nbs` recovery tree. Restricted raw
-and numeric evidence remains inside the authenticated ciphertext; offsite
-status and receipts expose only aggregate hashes, the fixed NBS state path, and
-the audit-policy labels described below.
+completed, checksum-valid v4 snapshot to private Hetzner Object Storage. That
+snapshot includes the full `/var/lib/seiche-nbs` recovery tree and the separate
+root-controlled `/var/lib/seiche-palimpsest-china` activation-state tree.
+Restricted raw and numeric evidence remains inside the authenticated
+ciphertext; offsite status and receipts expose only aggregate hashes, fixed
+state paths, and audit-policy labels.
 
 `seiche-market-offsite-backup.service`:
 
@@ -173,11 +197,15 @@ the audit-policy labels described below.
    `/run/lock/seiche-market-backup.lock` with the local producer and restore
    check while it selects the newest committed UTC snapshot; hidden stages,
    extra members, links, malformed manifests, or any checksum failure are
-   rejected. The closed manifest must be `seiche.market-backup.v3`, name the
+   rejected. The current closed manifest must be `seiche.market-backup.v4`, name the
    exact production NBS root `/var/lib/seiche-nbs`, require
    `seiche.nbs-full-store-audit.v1`, and record
-   `nbs_full_store_audit_result=required_at_restore`; legacy v2 snapshots are
-   not accepted;
+   `nbs_full_store_audit_result=required_at_restore`. It must also name
+   `/var/lib/seiche-palimpsest-china`, bind
+   `seiche.palimpsest-china-activation-state.v1`, and carry the exact canonical
+   audit receipt beside `palimpsest-china.tgz`. Legacy v3 snapshots remain
+   restore-compatible only as an explicitly empty, inactive China context;
+   v2 snapshots are not accepted;
 2. requires the snapshot's `deployed-sha.txt`, the application checkout, and
    `/var/lib/seiche-deploy/deployed-sha` to name the same 40-character commit,
    rejects a snapshot older than 36 hours, and does not upload a snapshot that
@@ -192,19 +220,21 @@ the audit-policy labels described below.
 6. captures each returned S3 VersionId and ETag, rejects anonymously readable
    objects, downloads the exact ciphertext version just uploaded, compares its
    SHA-256, authenticates and decrypts it into a private scratch directory,
-   then verifies every restored source hash and all four closed v3/NBS contract
-   claims again; and
+   then verifies every restored source hash, the closed v4/NBS contract, and
+   the Palimpsest China archive/audit identity again; and
 7. uploads `RECEIPT.json` last, captures and downloads that exact version
    byte-for-byte, and atomically commits root-only status at
    `/var/lib/seiche-offsite-backup/status.json`. Both records bind the source
-   backup schema, NBS state root, full-store audit contract, and
-   `required_at_restore` handoff. They do not claim `verified_head` and do not
-   publish NBS member inventories, head identifiers, or evidence values.
+   backup schema, NBS state root, full-store audit contract, Palimpsest China
+   state root, activation-state audit contract, exact tree digest, and active
+   versus inactive state. They do not claim `verified_head` and do not publish
+   NBS member inventories, Palimpsest bundle contents, or evidence values.
 
-The local record uses `seiche.market-offsite-backup-status.v2`; the immutable
-remote completion marker uses `seiche.market-offsite-backup-receipt.v2`.
-Version 1 success records cannot authorize recurring v3 uploads because they
-lack the mandatory source/NBS claims. A version 1 `running` record or failed
+The local record uses `seiche.market-offsite-backup-status.v3`; the immutable
+remote completion marker uses `seiche.market-offsite-backup-receipt.v3`.
+Version 2 success records remain readable only for legacy v3 snapshots and
+cannot authorize a v4 upload because they lack the Palimpsest China state
+commitments. A version 1 `running` record or failed
 record that reached receipt intent remains an unresolved boundary and still
 requires operator reconciliation.
 

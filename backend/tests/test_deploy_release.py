@@ -45,9 +45,7 @@ SOURCE_WORKER = ROOT / "ops" / "deploy" / "seiche-source-worker.service"
 DATA_READINESS_SERVICE = ROOT / "ops" / "deploy" / "seiche-data-readiness.service"
 DATA_READINESS_TIMER = ROOT / "ops" / "deploy" / "seiche-data-readiness.timer"
 RECOVERY_SEAL = ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.sh"
-RECOVERY_SEAL_SERVICE = (
-    ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.service"
-)
+RECOVERY_SEAL_SERVICE = ROOT / "ops" / "deploy" / "seiche-release-recovery-seal.service"
 PULL_UNIT = ROOT / "ops" / "deploy" / "seiche-pull.service"
 PROMOTION_UNIT = ROOT / "ops" / "deploy" / "seiche-snapshot-promote.service"
 LEGACY_UPDATE_RETIRER = ROOT / "ops" / "deploy" / "retire-legacy-update-units.sh"
@@ -1930,9 +1928,7 @@ def test_forced_wrapper_queues_recovery_after_edge_convergence(
     calls = state / "calls.log"
     assert (calls.read_text().splitlines() if calls.exists() else []) == expected_calls
     for branch_start in (
-        wrapper.index(
-            'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
-        ),
+        wrapper.index('if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'),
         wrapper.index('if [ -n "$HEALTHY" ]'),
     ):
         edge = wrapper.index("deploy_caddy ||", branch_start)
@@ -1950,12 +1946,18 @@ def test_wrapper_defers_source_worker_until_after_strict_candidate_health():
     normal_branch = wrapper.index('HEALTHY=""', accepted_branch)
     accepted_body = wrapper[accepted_branch:normal_branch]
     assert "ensure_source_worker_ready" not in accepted_body
-    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in accepted_body
+    assert (
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
+        in accepted_body
+    )
 
     normal_body = wrapper[normal_branch:]
     before_cutover = normal_body[: normal_body.index('if [ -n "$HEALTHY" ]')]
     assert "ensure_source_worker_ready" not in before_cutover
-    assert 'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"' in before_cutover
+    assert (
+        'candidate_health_wait "$API_FULL_REBUILD_WAIT_SECONDS" "$AFTER"'
+        in before_cutover
+    )
 
 
 def test_deploy_wrapper_warmup_timeout_contract():
@@ -2911,15 +2913,15 @@ def test_recovery_seal_proves_health_before_activating_readiness_timer() -> None
     final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)", timer)
     receipt = recovery.index('"schema": "seiche.release-recovery-receipt.v1"')
 
-    assert worker_start < proof < freshness < readiness < timer < final_identity < receipt
+    assert (
+        worker_start < proof < freshness < readiness < timer < final_identity < receipt
+    )
     assert "candidate_health_once" in recovery[freshness:timer]
 
 
 def test_recovery_seal_restores_rails_before_waiting_for_controller_receipt() -> None:
     recovery = RECOVERY_SEAL.read_text()
-    absent_receipt = recovery.index(
-        'print(target, "-", "-", "awaiting-receipt")'
-    )
+    absent_receipt = recovery.index('print(target, "-", "-", "awaiting-receipt")')
     worker_start = recovery.index(
         '"$SYSTEMCTL" start \\\n    seiche-market-backfill.service seiche-market-worker.service'
     )
@@ -2930,7 +2932,10 @@ def test_recovery_seal_restores_rails_before_waiting_for_controller_receipt() ->
     final_identity = recovery.index("FINAL_IDENTITY=$(load_release_identity)")
 
     assert absent_receipt < worker_start < backup < readiness_timer < final_identity
-    assert "recovery proof is ready but the immutable release receipt is pending" in recovery
+    assert (
+        "recovery proof is ready but the immutable release receipt is pending"
+        in recovery
+    )
 
 
 @pytest.mark.parametrize("script_path", [MARKET_INSTALLER])
@@ -3256,19 +3261,27 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "RestrictAddressFamilies=AF_UNIX" in backup
     assert "NoNewPrivileges=true" in backup
     assert "RestrictSUIDSGID=true" in backup
-    assert "CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID" in backup
-    assert "CAP_CHOWN" not in backup
+    assert (
+        "CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID"
+        in backup
+    )
     assert "AmbientCapabilities=CAP_SETGID CAP_SETUID" in backup
     backup_capabilities = next(
         line
         for line in backup.splitlines()
         if line.startswith("CapabilityBoundingSet=")
     )
-    assert "CAP_CHOWN" not in backup_capabilities
-    assert "ReadWritePaths=/var/backups/seiche-market /run/lock" in backup
+    assert "CAP_CHOWN" in backup_capabilities
+    assert (
+        "ReadWritePaths=/var/backups/seiche-market /run/lock "
+        "/run/seiche-deploy" in backup
+    )
+    assert "RuntimeDirectory=seiche-deploy" in backup
+    assert "RuntimeDirectoryMode=0700" in backup
+    assert "RuntimeDirectoryPreserve=yes" in backup
     assert (
         "ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs "
-        "/var/lib/seiche-deploy" in backup
+        "/var/lib/seiche-palimpsest-china /var/lib/seiche-deploy" in backup
     )
     assert "/var/lib/seiche-deploy/deployed-sha" in backup_script
     assert "OnCalendar=*-*-* 02:00:00 UTC" in backup_timer
@@ -3277,7 +3290,13 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "ExecStart=/usr/bin/flock --wait 300" in restore
     assert "seiche-market-restore-check.sh" in restore
     assert "ReadOnlyPaths=/home/seiche/app /var/backups/seiche-market" in restore
-    assert "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock" in restore
+    assert (
+        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock "
+        "/run/seiche-deploy" in restore
+    )
+    assert "RuntimeDirectory=seiche-deploy" in restore
+    assert "RuntimeDirectoryMode=0700" in restore
+    assert "RuntimeDirectoryPreserve=yes" in restore
     assert "CAP_CHOWN" in restore
     assert "CAP_DAC_OVERRIDE" in restore
     assert "NoNewPrivileges=true" in restore
@@ -3315,7 +3334,7 @@ def test_restore_check_limits_setgid_recovery_to_its_private_write_boundary():
     assert "NoNewPrivileges=true" in service
     assert "ProtectSystem=strict" in service
     assert writable_directives == [
-        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock"
+        "ReadWritePaths=/var/lib/seiche-recovery-proof /run/lock /run/seiche-deploy"
     ]
 
 
@@ -4031,9 +4050,7 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
         'as_service git -C "$APP_DIR" worktree add --detach "$CANDIDATE_DIR" "$TARGET"'
     )
     full_gate = poller.index('"$VENV/bin/python" -m pytest backend/tests -q', detached)
-    remote_gate = poller.index(
-        'install_remote_gate_receipt "$GATE_RECEIPT"', full_gate
-    )
+    remote_gate = poller.index('install_remote_gate_receipt "$GATE_RECEIPT"', full_gate)
     refetched = poller.index(
         'as_service git -C "$APP_DIR" fetch -q origin main', remote_gate
     )
@@ -4078,8 +4095,7 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
         < deployed
     )
     assert (
-        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"'
-        in poller
+        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"' in poller
     )
     assert 'if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then' in poller
     assert "local gate was not run automatically" in poller
@@ -4139,7 +4155,10 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     ]
     assert '[ "$RECEIPT_PAIR_STATUS" = 0 ]' in early_exit
     assert "live, strictly healthy, and recovery sealed" in early_exit
-    assert "live cutover is complete; recovery sealing continues asynchronously" in early_exit
+    assert (
+        "live cutover is complete; recovery sealing continues asynchronously"
+        in early_exit
+    )
     assert "queue_recovery_seal" in early_exit
     assert "existing recovery receipt evidence is invalid" in early_exit
     receipt_decision = poller[receipt_pair:admission]
@@ -6253,7 +6272,9 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     for prefix, filename in routes.items():
         assert f"path \\\n        /palimpsest/{prefix}/{filename}" in block
         assert f"uri strip_prefix /palimpsest/{prefix}" in block
-    assert block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 4
+    assert (
+        block.count('header Access-Control-Allow-Origin "https://palimpsest.info"') == 4
+    )
     assert block.count('header Cache-Control "no-store, no-transform"') == 4
     assert block.count('header Content-Disposition "inline"') == 4
     assert block.count("root * /var/lib/palimpsest/readings") == 4

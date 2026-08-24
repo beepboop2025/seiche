@@ -6,6 +6,8 @@ umask 0077
 BACKUP_DIR="${SEICHE_MARKET_BACKUP_DIR:-/var/backups/seiche-market}"
 NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"
 NBS_RUNTIME_ROOT="${SEICHE_NBS_RUNTIME_ROOT:-/opt/seiche-nbs-intake}"
+PALIMPSEST_CHINA_STATE_DIR="${SEICHE_PALIMPSEST_CHINA_STATE_DIR:-/var/lib/seiche-palimpsest-china}"
+PALIMPSEST_CHINA_AUDIT_BIN="${SEICHE_PALIMPSEST_CHINA_AUDIT_BIN:-/etc/seiche/libexec/seiche-palimpsest-china-activate.py}"
 STATUS_PATH="${SEICHE_RESTORE_STATUS_PATH:-/var/lib/seiche-recovery-proof/backup-restore-check.status}"
 DATABASE_NAME="${SEICHE_MARKET_DATABASE_NAME:-seiche}"
 POSTGRES_USER="${SEICHE_POSTGRES_OS_USER:-postgres}"
@@ -21,6 +23,7 @@ SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
 PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
+CMP_BIN="${SEICHE_CMP_BIN:-/usr/bin/cmp}"
 ALLOW_NON_ROOT_TEST="${SEICHE_ALLOW_NON_ROOT_BACKUP_TEST:-0}"
 
 fail() {
@@ -53,6 +56,11 @@ else
         || fail "production NBS state root is fixed at /var/lib/seiche-nbs"
     [ "$NBS_RUNTIME_ROOT" = /opt/seiche-nbs-intake ] \
         || fail "production NBS runtime is fixed at /opt/seiche-nbs-intake"
+    [ "$PALIMPSEST_CHINA_STATE_DIR" = /var/lib/seiche-palimpsest-china ] \
+        || fail "production Palimpsest China state root is fixed"
+    [ "$PALIMPSEST_CHINA_AUDIT_BIN" = \
+        /etc/seiche/libexec/seiche-palimpsest-china-activate.py ] \
+        || fail "production Palimpsest China audit launcher is fixed"
     [ "$PYTHON_BIN" = /usr/bin/python3 ] \
         || fail "production Python runtime is fixed at /usr/bin/python3"
 fi
@@ -64,6 +72,16 @@ case "$NBS_STATE_DIR" in
 esac
 [ "$NBS_STATE_DIR" != "/" ] || fail "refusing a filesystem-root NBS state directory"
 NBS_STATE_NAME=$(basename "$NBS_STATE_DIR")
+case "$PALIMPSEST_CHINA_STATE_DIR" in
+    /*) ;;
+    *) fail "Palimpsest China state directory must be absolute" ;;
+esac
+[ "$PALIMPSEST_CHINA_STATE_DIR" != "/" ] \
+    || fail "refusing a filesystem-root Palimpsest China state directory"
+PALIMPSEST_CHINA_STATE_NAME=$(basename "$PALIMPSEST_CHINA_STATE_DIR")
+[ -x "$PALIMPSEST_CHINA_AUDIT_BIN" ] && [ ! -L "$PALIMPSEST_CHINA_AUDIT_BIN" ] \
+    || fail "Palimpsest China audit launcher is missing or unsafe"
+[ -x "$CMP_BIN" ] || fail "cmp is unavailable"
 
 run_as_postgres() {
     local postgres_group="$POSTGRES_GROUP"
@@ -118,6 +136,8 @@ while IFS= read -r MANIFEST_LINE || [ -n "$MANIFEST_LINE" ]; do
     case "$MANIFEST_KEY" in
         schema|created_at|database|postgres_port|state_root|nbs_state_root|\
         nbs_full_store_audit_contract|nbs_full_store_audit_result|api_data_root|\
+        palimpsest_china_state_root|palimpsest_china_state_audit_contract|\
+        palimpsest_china_state_audit_result|\
         critical_table_count_semantics|research_only|can_publish|can_execute) ;;
         *) MANIFEST_VALID=0; continue ;;
     esac
@@ -142,9 +162,89 @@ safe_manifest_root() {
     return 0
 }
 
-[ "${#MANIFEST_FIELDS[@]}" -eq 13 ] || MANIFEST_VALID=0
-[ "${MANIFEST_FIELDS[schema]-}" = "seiche.market-backup.v3" ] \
-    || MANIFEST_VALID=0
+validate_palimpsest_audit() {
+    local audit_path="$1"
+    "$PYTHON_BIN" -I -B - "$audit_path" "$PALIMPSEST_CHINA_STATE_DIR" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+expected_root = sys.argv[2]
+body = path.read_bytes()
+if not 1 <= len(body) <= 512 * 1024 or not body.endswith(b"\n"):
+    raise SystemExit("Palimpsest China state audit is empty, oversized, or unterminated")
+try:
+    value = json.loads(body)
+except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    raise SystemExit("Palimpsest China state audit is not strict JSON") from exc
+keys = {
+    "schema",
+    "state_root",
+    "tree_sha256",
+    "bundles",
+    "receipts",
+    "active_activation_id",
+    "pending_candidate_activation_id",
+}
+sha_re = re.compile(r"[0-9a-f]{64}")
+if type(value) is not dict or set(value) != keys:
+    raise SystemExit("Palimpsest China state audit fields changed")
+if (
+    value["schema"] != "seiche.palimpsest-china-activation-state.v1"
+    or value["state_root"] != expected_root
+    or sha_re.fullmatch(value["tree_sha256"] or "") is None
+    or type(value["bundles"]) is not list
+    or type(value["receipts"]) is not list
+    or value["bundles"] != sorted(set(value["bundles"]))
+    or value["receipts"] != sorted(set(value["receipts"]))
+    or any(sha_re.fullmatch(item or "") is None for item in value["bundles"])
+    or any(sha_re.fullmatch(item or "") is None for item in value["receipts"])
+    or any(
+        item is not None and sha_re.fullmatch(item or "") is None
+        for item in (
+            value["active_activation_id"],
+            value["pending_candidate_activation_id"],
+        )
+    )
+):
+    raise SystemExit("Palimpsest China state audit contract changed")
+canonical = (
+    json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    + b"\n"
+)
+if body != canonical:
+    raise SystemExit("Palimpsest China state audit is not canonical JSON")
+PY
+}
+
+BACKUP_SCHEMA="${MANIFEST_FIELDS[schema]-}"
+case "$BACKUP_SCHEMA" in
+    seiche.market-backup.v3)
+        [ "${#MANIFEST_FIELDS[@]}" -eq 13 ] || MANIFEST_VALID=0
+        PALIMPSEST_CHINA_RESTORE_RESULT=legacy_absent_inactive
+        ;;
+    seiche.market-backup.v4)
+        [ "${#MANIFEST_FIELDS[@]}" -eq 16 ] || MANIFEST_VALID=0
+        [ "${MANIFEST_FIELDS[palimpsest_china_state_root]-}" = \
+            "$PALIMPSEST_CHINA_STATE_DIR" ] || MANIFEST_VALID=0
+        [ "${MANIFEST_FIELDS[palimpsest_china_state_audit_contract]-}" = \
+            "seiche.palimpsest-china-activation-state.v1" ] || MANIFEST_VALID=0
+        [ "${MANIFEST_FIELDS[palimpsest_china_state_audit_result]-}" = \
+            "required_at_restore" ] || MANIFEST_VALID=0
+        PALIMPSEST_CHINA_RESTORE_RESULT=verified
+        ;;
+    *) MANIFEST_VALID=0 ;;
+esac
 [ "${MANIFEST_FIELDS[created_at]-}" = "$SNAPSHOT_NAME" ] \
     || MANIFEST_VALID=0
 [ "${MANIFEST_FIELDS[database]-}" = "$DATABASE_NAME" ] \
@@ -168,8 +268,53 @@ safe_manifest_root "${MANIFEST_FIELDS[api_data_root]-}" || MANIFEST_VALID=0
 [ "${MANIFEST_FIELDS[can_execute]-}" = "false" ] || MANIFEST_VALID=0
 [ "$MANIFEST_VALID" -eq 1 ] || fail "snapshot manifest contract is invalid"
 
+if [ "$BACKUP_SCHEMA" = "seiche.market-backup.v4" ]; then
+    for MEMBER in palimpsest-china.tgz palimpsest-china-state.json; do
+        [ -f "$SNAPSHOT/$MEMBER" ] && [ ! -L "$SNAPSHOT/$MEMBER" ] \
+            || fail "snapshot member $MEMBER is missing or unsafe"
+    done
+    EXPECTED_INVENTORY=(
+        seiche.dump var-lib-seiche.tgz palimpsest-china.tgz
+        palimpsest-china-state.json api-data.tgz table-counts.txt
+        deployed-sha.txt manifest.env
+    )
+else
+    EXPECTED_INVENTORY=(
+        seiche.dump var-lib-seiche.tgz api-data.tgz table-counts.txt
+        deployed-sha.txt manifest.env
+    )
+fi
+"$PYTHON_BIN" -I -B - "$SNAPSHOT/SHA256SUMS" "${EXPECTED_INVENTORY[@]}" <<'PY'
+from __future__ import annotations
+
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+expected = list(sys.argv[2:])
+body = path.read_bytes()
+if not body or len(body) > 4096 or not body.endswith(b"\n"):
+    raise SystemExit("snapshot checksum inventory is malformed")
+try:
+    lines = body.decode("ascii").splitlines()
+except UnicodeDecodeError as exc:
+    raise SystemExit("snapshot checksum inventory is not ASCII") from exc
+observed = []
+for line in lines:
+    match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9.-]{0,127})", line)
+    if match is None:
+        raise SystemExit("snapshot checksum inventory line is malformed")
+    observed.append(match.group(2))
+if observed != expected or len(set(observed)) != len(observed):
+    raise SystemExit("snapshot checksum inventory subject set changed")
+PY
+
 "$TAR_BIN" --list --gzip --file "$SNAPSHOT/var-lib-seiche.tgz" >/dev/null
 "$TAR_BIN" --list --gzip --file "$SNAPSHOT/api-data.tgz" >/dev/null
+if [ "$BACKUP_SCHEMA" = "seiche.market-backup.v4" ]; then
+    "$TAR_BIN" --list --gzip --file "$SNAPSHOT/palimpsest-china.tgz" >/dev/null
+fi
 "$PG_RESTORE_BIN" --list <"$SNAPSHOT/seiche.dump" >/dev/null
 [ -x "$PYTHON_BIN" ] || fail "Python runtime is unavailable"
 
@@ -191,6 +336,7 @@ cleanup() {
     fi
     [ -z "${STATE_STAGE:-}" ] || rm -rf -- "$STATE_STAGE"
     [ -z "${API_STAGE:-}" ] || rm -rf -- "$API_STAGE"
+    [ -z "${PALIMPSEST_STAGE:-}" ] || rm -rf -- "$PALIMPSEST_STAGE"
     [ -z "${STATUS_STAGE:-}" ] || rm -f -- "$STATUS_STAGE"
 }
 trap cleanup EXIT
@@ -781,6 +927,58 @@ esac
 rm -rf -- "$STATE_STAGE"
 STATE_STAGE=""
 
+PALIMPSEST_CHINA_TREE_SHA256=absent
+PALIMPSEST_CHINA_ACTIVE_ACTIVATION_ID=none
+PALIMPSEST_CHINA_PENDING_CANDIDATE_ACTIVATION_ID=none
+PALIMPSEST_CHINA_BUNDLE_COUNT=0
+PALIMPSEST_CHINA_RECEIPT_COUNT=0
+if [ "$BACKUP_SCHEMA" = "seiche.market-backup.v4" ]; then
+    validate_palimpsest_audit "$SNAPSHOT/palimpsest-china-state.json"
+    PALIMPSEST_STAGE=$(mktemp -d \
+        "$STATUS_DIR/.backup-palimpsest-restore.XXXXXX")
+    "$TAR_BIN" --extract --gzip --file "$SNAPSHOT/palimpsest-china.tgz" \
+        --directory "$PALIMPSEST_STAGE" \
+        --no-same-owner --no-same-permissions
+    PALIMPSEST_RESTORED_ROOT="$PALIMPSEST_STAGE/$PALIMPSEST_CHINA_STATE_NAME"
+    [ -d "$PALIMPSEST_RESTORED_ROOT" ] && [ ! -L "$PALIMPSEST_RESTORED_ROOT" ] \
+        || fail "restored Palimpsest China archive has no safe state root"
+    "$PALIMPSEST_CHINA_AUDIT_BIN" \
+        --audit-state "$PALIMPSEST_RESTORED_ROOT" 1 \
+        >"$PALIMPSEST_STAGE/restored-state.json"
+    validate_palimpsest_audit "$PALIMPSEST_STAGE/restored-state.json"
+    "$CMP_BIN" -s "$SNAPSHOT/palimpsest-china-state.json" \
+        "$PALIMPSEST_STAGE/restored-state.json" \
+        || fail "restored Palimpsest China state differs from its snapshot receipt"
+    IFS='|' read -r PALIMPSEST_CHINA_TREE_SHA256 \
+        PALIMPSEST_CHINA_ACTIVE_ACTIVATION_ID \
+        PALIMPSEST_CHINA_PENDING_CANDIDATE_ACTIVATION_ID \
+        PALIMPSEST_CHINA_BUNDLE_COUNT PALIMPSEST_CHINA_RECEIPT_COUNT \
+        < <("$PYTHON_BIN" -I -B - \
+            "$PALIMPSEST_STAGE/restored-state.json" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+value = json.loads(Path(sys.argv[1]).read_bytes())
+print(
+    "|".join(
+        (
+            value["tree_sha256"],
+            value["active_activation_id"] or "none",
+            value["pending_candidate_activation_id"] or "none",
+            str(len(value["bundles"])),
+            str(len(value["receipts"])),
+        )
+    )
+)
+PY
+        )
+    rm -rf -- "$PALIMPSEST_STAGE"
+    PALIMPSEST_STAGE=""
+fi
+
 API_STAGE=$(mktemp -d "$STATUS_DIR/.backup-api-data-restore.XXXXXX")
 "$TAR_BIN" --extract --gzip --file "$SNAPSHOT/api-data.tgz" \
     --directory "$API_STAGE" --no-same-owner --no-same-permissions
@@ -830,9 +1028,10 @@ CREATED=""
 
 STATUS_STAGE=$(mktemp "$STATUS_DIR/.backup-restore-check.XXXXXX")
 printf '%s\n' \
-    "schema=seiche.market-backup-restore-check.v4" \
+    "schema=seiche.market-backup-restore-check.v5" \
     "checked_at=$($DATE_BIN -u +%Y-%m-%dT%H:%M:%SZ)" \
     "snapshot=$SNAPSHOT_NAME" \
+    "source_backup_schema=$BACKUP_SCHEMA" \
     "deployed_sha=$(tr -d '[:space:]' <"$SNAPSHOT/deployed-sha.txt")" \
     "critical_table_counts=$ACTUAL_COUNTS" \
     "critical_table_count_floor=$EXPECTED_COUNTS" \
@@ -841,6 +1040,13 @@ printf '%s\n' \
     "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1" \
     "nbs_full_store_audit_result=$NBS_FULL_STORE_AUDIT_RESULT" \
     "nbs_public_revision_store=$NBS_FULL_STORE_AUDIT_RESULT" \
+    "palimpsest_china_state_archive_restore=$PALIMPSEST_CHINA_RESTORE_RESULT" \
+    "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1" \
+    "palimpsest_china_state_tree_sha256=$PALIMPSEST_CHINA_TREE_SHA256" \
+    "palimpsest_china_active_activation_id=$PALIMPSEST_CHINA_ACTIVE_ACTIVATION_ID" \
+    "palimpsest_china_pending_candidate_activation_id=$PALIMPSEST_CHINA_PENDING_CANDIDATE_ACTIVATION_ID" \
+    "palimpsest_china_bundle_count=$PALIMPSEST_CHINA_BUNDLE_COUNT" \
+    "palimpsest_china_receipt_count=$PALIMPSEST_CHINA_RECEIPT_COUNT" \
     "api_data_archive_restore=pass" \
     "research_only=true" \
     "can_publish=false" \

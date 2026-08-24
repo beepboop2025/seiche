@@ -224,12 +224,15 @@ unencrypted at the archive layer, but its directory is root-only mode `0700`
 and every committed member is mode `0600`. Host access controls are therefore
 part of its custody boundary.
 
-The closed snapshot manifest is `seiche.market-backup.v3`. It binds
+The closed snapshot manifest is `seiche.market-backup.v4`. It binds
 `nbs_state_root=/var/lib/seiche-nbs`,
 `nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1`, and
-`nbs_full_store_audit_result=required_at_restore`. A v2 snapshot predates this
-recovery contract and cannot satisfy NBS disaster-recovery readiness merely by
-containing a public revisions directory.
+`nbs_full_store_audit_result=required_at_restore`, while separately binding the
+root-controlled `/var/lib/seiche-palimpsest-china` archive and its canonical
+activation-state audit. A v2 snapshot predates the NBS recovery contract and
+cannot satisfy disaster-recovery readiness merely by containing a public
+revisions directory. A legacy v3 snapshot can be restored only with an empty,
+inactive Palimpsest China state.
 
 The optional offsite lane encrypts the complete closed snapshot before upload;
 only ciphertext and a metadata-only receipt leave the host. Restricted raw and

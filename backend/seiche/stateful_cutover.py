@@ -30,7 +30,7 @@ from seiche import stateful_migration as migration
 
 FENCE_SCHEMA = "seiche.railway-authority-fence.v1"
 REQUEST_SCHEMA = "seiche.railway-stateful-cutover-request.v1"
-CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v1"
+CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v2"
 GRANT_SCHEMA = "seiche.railway-authority-grant.v1"
 ACTIVATION_RECEIPT_SCHEMA = "seiche.railway-activation-receipt.v1"
 PUBLIC_PROBE_SCHEMA = "seiche.railway-public-candidate-probe.v1"
@@ -438,6 +438,10 @@ def render_candidate_receipt(
             "api_sqlite_quick_check": "pass",
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": nbs_audit_result,
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": "verified",
         },
         "railway": dict(railway),
         "timing": {"started_at": started_at, "completed_at": completed_at},
@@ -552,14 +556,28 @@ def validate_candidate_receipt(
     filesystem = value.get("filesystem")
     if (
         not isinstance(filesystem, dict)
+        or set(filesystem)
+        != {
+            "generation",
+            "tree_sha256",
+            "api_sqlite_quick_check",
+            "nbs_full_store_audit_contract",
+            "nbs_full_store_audit_result",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_audit_result",
+        }
         or filesystem.get("generation") != _generation_name(request)
         or filesystem.get("api_sqlite_quick_check") != "pass"
         or filesystem.get("nbs_full_store_audit_contract")
         != "seiche.nbs-full-store-audit.v1"
         or filesystem.get("nbs_full_store_audit_result")
         not in {"not_onboarded", "verified_head"}
+        or filesystem.get("palimpsest_china_state_audit_contract")
+        != "seiche.palimpsest-china-activation-state.v1"
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
         or not isinstance(filesystem.get("tree_sha256"), dict)
-        or set(filesystem["tree_sha256"]) != {"market", "nbs", "api"}
+        or set(filesystem["tree_sha256"])
+        != {"market", "nbs", "api", "palimpsest-china"}
         or any(
             _SHA64_RE.fullmatch(str(item)) is None
             for item in filesystem["tree_sha256"].values()
@@ -621,6 +639,13 @@ def restore_candidate(
     runtime_uid: int = migration.RUNTIME_UID,
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> CutoverRestore:
+    if (
+        bundle.schema != migration.BACKUP_SCHEMA
+        or bundle.palimpsest_china_state_audit is None
+    ):
+        raise CutoverContractError(
+            "cutover requires the current Palimpsest-state backup contract"
+        )
     started_at = migration._iso_now()
     platform_root.mkdir(mode=0o750, parents=True, exist_ok=True)
     generations = platform_root / "generations"
@@ -730,17 +755,30 @@ def candidate_environment(
     root = restore.generation_path
     if root.name != generation or root.parent.name != "generations":
         raise CutoverContractError("candidate generation path is invalid")
+    try:
+        from seiche import palimpsest_china_activation as activation
+
+        palimpsest_environment_names = {
+            spec.environment for spec in activation._BUNDLE_FILE_SPECS
+        }
+    except Exception as exc:
+        raise CutoverContractError(
+            "candidate Palimpsest China runtime contract is unavailable"
+        ) from exc
     environment = {
         key: value
         for key, value in base.items()
         if key
-        not in {
-            "DATABASE_URL",
-            "RAILWAY_TOKEN",
-            "RAILWAY_API_TOKEN",
-            "PYTHONHOME",
-            "PYTHONPATH",
-        }
+        not in (
+            {
+                "DATABASE_URL",
+                "RAILWAY_TOKEN",
+                "RAILWAY_API_TOKEN",
+                "PYTHONHOME",
+                "PYTHONPATH",
+            }
+            | palimpsest_environment_names
+        )
     }
     environment.update(
         {
@@ -772,6 +810,12 @@ def candidate_environment(
             "SEICHE_SOURCE_HEARTBEAT_REQUIRED": "0",
         }
     )
+    try:
+        environment.update(
+            migration.palimpsest_runtime_environment(root / "palimpsest-china")
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     return environment
 
 

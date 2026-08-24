@@ -190,6 +190,8 @@ jobs:
               "SHA256SUMS",
               "seiche.dump",
               "var-lib-seiche.tgz",
+              "palimpsest-china.tgz",
+              "palimpsest-china-state.json",
               "api-data.tgz",
               "table-counts.txt",
               "deployed-sha.txt",
@@ -199,7 +201,8 @@ jobs:
               raise SystemExit("final snapshot file set is not closed")
           PY
           rm -f variables.json
-          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt; do
+          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt \
+            palimpsest-china-state.json; do
             railway volume files download --volume "$RAILWAY_VOLUME_ID" \
               "/inbox/$SNAPSHOT_ID/$member" "$CONTROL_ROOT/evidence/$member"
           done
@@ -244,6 +247,16 @@ jobs:
           counts = (root / "table-counts.txt").read_text(encoding="ascii")
           if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\n", counts) is None:
               raise SystemExit("snapshot count floor is invalid")
+          palimpsest = json.loads(
+              (root / "palimpsest-china-state.json").read_bytes()
+          )
+          if (
+              palimpsest.get("schema")
+              != "seiche.palimpsest-china-activation-state.v1"
+              or palimpsest.get("state_root")
+              != "/var/lib/seiche-palimpsest-china"
+          ):
+              raise SystemExit("snapshot Palimpsest China state proof is invalid")
           outputs = {
               "tree": fence["tree"],
               "inventory_sha256": snapshot["inventory_sha256"],

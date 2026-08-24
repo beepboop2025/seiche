@@ -588,18 +588,46 @@ required_passes = {
     "can_execute": "false",
 }
 required_fields = {
-    "schema", "checked_at", "snapshot", "deployed_sha",
+    "schema", "checked_at", "snapshot", "source_backup_schema", "deployed_sha",
     "critical_table_counts", "critical_table_count_floor",
     "nbs_full_store_audit_contract", "nbs_full_store_audit_result",
-    "nbs_public_revision_store", *required_passes,
+    "nbs_public_revision_store", "palimpsest_china_state_archive_restore",
+    "palimpsest_china_state_audit_contract",
+    "palimpsest_china_state_tree_sha256",
+    "palimpsest_china_active_activation_id",
+    "palimpsest_china_pending_candidate_activation_id",
+    "palimpsest_china_bundle_count", "palimpsest_china_receipt_count",
+    *required_passes,
 }
 if (
     set(fields) != required_fields
-    or fields.get("schema") != "seiche.market-backup-restore-check.v4"
+    or fields.get("schema") != "seiche.market-backup-restore-check.v5"
+    or fields.get("source_backup_schema") != "seiche.market-backup.v4"
     or fields.get("deployed_sha") != target
     or any(fields.get(key) != value for key, value in required_passes.items())
     or timestamp_re.fullmatch(fields.get("checked_at", "")) is None
     or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", fields.get("snapshot", ""))
+    is None
+    or fields.get("palimpsest_china_state_archive_restore") != "verified"
+    or fields.get("palimpsest_china_state_audit_contract")
+    != "seiche.palimpsest-china-activation-state.v1"
+    or re.fullmatch(
+        r"[0-9a-f]{64}", fields.get("palimpsest_china_state_tree_sha256", "")
+    )
+    is None
+    or re.fullmatch(
+        r"(?:none|[0-9a-f]{64})",
+        fields.get("palimpsest_china_active_activation_id", ""),
+    )
+    is None
+    or re.fullmatch(
+        r"(?:none|[0-9a-f]{64})",
+        fields.get("palimpsest_china_pending_candidate_activation_id", ""),
+    )
+    is None
+    or re.fullmatch(r"[0-9]+", fields.get("palimpsest_china_bundle_count", ""))
+    is None
+    or re.fullmatch(r"[0-9]+", fields.get("palimpsest_china_receipt_count", ""))
     is None
 ):
     raise SystemExit("restore receipt does not prove this release")

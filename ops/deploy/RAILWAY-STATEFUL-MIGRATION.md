@@ -1,6 +1,6 @@
 # Railway stateful migration (phase 4 shadow)
 
-Phase 4 restores one exact, committed `seiche.market-backup.v3` snapshot into
+Phase 4 restores one exact, committed `seiche.market-backup.v4` snapshot into
 Railway without moving production authority. Hetzner remains the sole writer,
 public origin, rollback target, and source of release and recovery evidence.
 The Railway service has no public domain and starts no collectors, workers,
@@ -8,19 +8,21 @@ publisher, Telegram bot, or execution surface. Its only child is a private,
 read-only-use API for health and compatibility probes.
 
 This is a migration rehearsal, not a cutover. A successful run proves that the
-four durable state domains can be reconstructed together:
+five durable state domains can be reconstructed together:
 
 1. PostgreSQL market metadata and snapshots;
 2. `/var/lib/seiche` market state and exports;
 3. `/var/lib/seiche-nbs` restricted and signed public evidence; and
-4. the API compatibility/SQLite tree.
+4. `/var/lib/seiche-palimpsest-china` immutable bundles, receipts, and
+   active/pending markers; and
+5. the API compatibility/SQLite tree.
 
 ## Topology and authority
 
 ```text
-Hetzner exact-SHA backup-v3 (authoritative, writers running)
+Hetzner exact-SHA backup-v4 (authoritative, writers running)
              |
-             | operator stages seven immutable files
+             | operator stages nine immutable files
              v
 Railway stateful-core service -- one volume at /var/lib/seiche-platform
              |
@@ -78,10 +80,10 @@ Under the shared backup lock, select one committed snapshot whose
 ```bash
 cd /var/backups/seiche-market/REVIEWED_UTC_SNAPSHOT
 sha256sum --check --strict SHA256SUMS
-test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 7
+test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 9
 ```
 
-Copy the seven files through the existing reviewed operator channel to a
+Copy the nine files through the existing reviewed operator channel to a
 private local directory. Do not stage from an unqualified off-site `latest`
 key: use the exact ciphertext VersionId and receipt if the off-site recovery
 path is the source.
@@ -95,8 +97,9 @@ railway link --project REVIEWED_PROJECT_ID \
   --environment REVIEWED_ENVIRONMENT_ID \
   --service REVIEWED_STATEFUL_SERVICE_ID
 
-for member in seiche.dump var-lib-seiche.tgz api-data.tgz \
-  table-counts.txt deployed-sha.txt manifest.env SHA256SUMS; do
+for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
+  palimpsest-china-state.json api-data.tgz table-counts.txt deployed-sha.txt \
+  manifest.env SHA256SUMS; do
   railway volume files upload \
     --volume REVIEWED_STATEFUL_VOLUME_ID \
     "REVIEWED_PRIVATE_SNAPSHOT_DIR/$member" \

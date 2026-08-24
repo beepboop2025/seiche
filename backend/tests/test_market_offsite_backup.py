@@ -32,18 +32,24 @@ def _executable(path: Path, body: str) -> Path:
 
 
 def _snapshot(
-    backup_root: Path, *, snapshot_id: str = SNAPSHOT_ID, extra: bool = False
+    backup_root: Path,
+    *,
+    snapshot_id: str = SNAPSHOT_ID,
+    extra: bool = False,
+    schema: str = "v4",
 ) -> Path:
     snapshot = backup_root / snapshot_id
     snapshot.mkdir(parents=True)
-    payloads = {
+    if schema not in {"v3", "v4"}:
+        raise AssertionError("unsupported test snapshot schema")
+    payloads: dict[str, bytes] = {
         "seiche.dump": b"postgres-custom-dump\n",
         "var-lib-seiche.tgz": b"state-archive\n",
         "api-data.tgz": b"api-data-archive\n",
         "table-counts.txt": b"11|12|13|14\n",
         "deployed-sha.txt": f"{REVISION}\n".encode(),
         "manifest.env": (
-            "schema=seiche.market-backup.v3\n"
+            f"schema=seiche.market-backup.{schema}\n"
             f"created_at={snapshot_id}\n"
             "database=seiche\n"
             "postgres_port=5433\n"
@@ -53,20 +59,47 @@ def _snapshot(
             "critical_table_count_semantics=pre_dump_lower_bound\n"
             "nbs_full_store_audit_contract=seiche.nbs-full-store-audit.v1\n"
             "nbs_full_store_audit_result=required_at_restore\n"
-            "research_only=true\n"
+            + (
+                "palimpsest_china_state_root=/var/lib/seiche-palimpsest-china\n"
+                "palimpsest_china_state_audit_contract="
+                "seiche.palimpsest-china-activation-state.v1\n"
+                "palimpsest_china_state_audit_result=required_at_restore\n"
+                if schema == "v4"
+                else ""
+            )
+            + "research_only=true\n"
             "can_publish=false\n"
             "can_execute=false\n"
         ).encode(),
     }
+    if schema == "v4":
+        audit = {
+            "schema": "seiche.palimpsest-china-activation-state.v1",
+            "state_root": "/var/lib/seiche-palimpsest-china",
+            "tree_sha256": "b" * 64,
+            "bundles": [],
+            "receipts": [],
+            "active_activation_id": None,
+            "pending_candidate_activation_id": None,
+        }
+        payloads["palimpsest-china.tgz"] = b"palimpsest-china-state-archive\n"
+        payloads["palimpsest-china-state.json"] = (
+            json.dumps(
+                audit,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+            + b"\n"
+        )
     for name, body in payloads.items():
         (snapshot / name).write_bytes(body)
-    inventory_names = (
-        "seiche.dump",
-        "var-lib-seiche.tgz",
-        "api-data.tgz",
-        "table-counts.txt",
-        "deployed-sha.txt",
-        "manifest.env",
+    inventory_names = ["seiche.dump", "var-lib-seiche.tgz"]
+    if schema == "v4":
+        inventory_names.extend(("palimpsest-china.tgz", "palimpsest-china-state.json"))
+    inventory_names.extend(
+        ("api-data.tgz", "table-counts.txt", "deployed-sha.txt", "manifest.env")
     )
     inventory = "".join(
         f"{hashlib.sha256(payloads[name]).hexdigest()}  {name}\n"
@@ -74,18 +107,16 @@ def _snapshot(
     )
     (snapshot / "SHA256SUMS").write_text(inventory)
     if extra:
-        (snapshot / "uncommitted.tmp").write_text("not part of v3\n")
+        (snapshot / "uncommitted.tmp").write_text("not part of the contract\n")
     return snapshot
 
 
 def _rewrite_inventory(snapshot: Path) -> None:
-    names = (
-        "seiche.dump",
-        "var-lib-seiche.tgz",
-        "api-data.tgz",
-        "table-counts.txt",
-        "deployed-sha.txt",
-        "manifest.env",
+    names = ["seiche.dump", "var-lib-seiche.tgz"]
+    if (snapshot / "palimpsest-china.tgz").exists():
+        names.extend(("palimpsest-china.tgz", "palimpsest-china-state.json"))
+    names.extend(
+        ("api-data.tgz", "table-counts.txt", "deployed-sha.txt", "manifest.env")
     )
     lines = []
     for name in names:
@@ -459,7 +490,7 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     status = json.loads(status_path.read_text())
-    assert status["schema"] == "seiche.market-offsite-backup-status.v2"
+    assert status["schema"] == "seiche.market-offsite-backup-status.v3"
     assert status["status"] == "success"
     assert status["restore_verified"] is True
     assert status["source_revision"] == REVISION
@@ -470,12 +501,21 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     assert status["last_success"]["key_id"] == "market-key-2026-08-v1"
     assert status["last_success"]["destination"]["id"] == ("hetzner-hel1-primary-v1")
     for record in (status, status["last_success"]):
-        assert record["source_backup_schema"] == "seiche.market-backup.v3"
+        assert record["source_backup_schema"] == "seiche.market-backup.v4"
         assert record["nbs_state_root"] == "/var/lib/seiche-nbs"
         assert (
             record["nbs_full_store_audit_contract"] == "seiche.nbs-full-store-audit.v1"
         )
         assert record["nbs_full_store_audit_result"] == "required_at_restore"
+        assert (
+            record["palimpsest_china_state_root"] == "/var/lib/seiche-palimpsest-china"
+        )
+        assert (
+            record["palimpsest_china_state_audit_contract"]
+            == "seiche.palimpsest-china-activation-state.v1"
+        )
+        assert record["palimpsest_china_state_tree_sha256"] == "b" * 64
+        assert record["palimpsest_china_state"] == "inactive"
     assert status["last_success"]["ciphertext_version_id"].startswith("version-")
     assert status["last_success"]["remote_receipt_version_id"].startswith("version-")
     assert status["remote_receipt_key"] == (
@@ -495,13 +535,20 @@ def test_canary_uploads_copy_only_and_commits_round_trip_receipt(tmp_path: Path)
     ]
     receipt_path = next(remote_root.rglob("RECEIPT.json"))
     receipt = json.loads(receipt_path.read_text())
-    assert receipt["schema"] == "seiche.market-offsite-backup-receipt.v2"
-    assert receipt["source_backup_schema"] == "seiche.market-backup.v3"
+    assert receipt["schema"] == "seiche.market-offsite-backup-receipt.v3"
+    assert receipt["source_backup_schema"] == "seiche.market-backup.v4"
     assert receipt["nbs_state_root"] == "/var/lib/seiche-nbs"
     assert receipt["nbs_full_store_audit_contract"] == "seiche.nbs-full-store-audit.v1"
     assert receipt["nbs_full_store_audit_result"] == "required_at_restore"
-    assert "closed-v3" in receipt["verification"]
-    assert "nbs-full-store-audit-required-at-restore" in receipt["verification"]
+    assert receipt["palimpsest_china_state_root"] == "/var/lib/seiche-palimpsest-china"
+    assert (
+        receipt["palimpsest_china_state_audit_contract"]
+        == "seiche.palimpsest-china-activation-state.v1"
+    )
+    assert receipt["palimpsest_china_state_tree_sha256"] == "b" * 64
+    assert receipt["palimpsest_china_state"] == "inactive"
+    assert "closed-source-hash" in receipt["verification"]
+    assert "palimpsest-state-audits-required-at-restore" in receipt["verification"]
     assert not {
         "nbs_revision_id",
         "nbs_public_head",
@@ -751,7 +798,7 @@ def test_legacy_v2_snapshot_cannot_masquerade_after_rehash(tmp_path: Path):
     result = _run(env)
 
     assert result.returncode != 0
-    assert "closed v3 contract" in result.stderr
+    assert "closed backup contract" in result.stderr
     assert not status_path.exists()
     assert not any(remote_root.iterdir())
     assert not _calls(calls_path)
@@ -766,7 +813,7 @@ def test_legacy_v2_snapshot_cannot_masquerade_after_rehash(tmp_path: Path):
         ("nbs_full_store_audit_result", "verified_head"),
     ),
 )
-def test_v3_snapshot_rejects_changed_nbs_audit_contract_before_network(
+def test_snapshot_rejects_changed_nbs_audit_contract_before_network(
     tmp_path: Path, field: str, value: str | None
 ):
     env, status_path, remote_root, calls_path = _layout(tmp_path)
@@ -779,7 +826,40 @@ def test_v3_snapshot_rejects_changed_nbs_audit_contract_before_network(
     result = _run(env)
 
     assert result.returncode != 0
-    assert "closed v3 contract" in result.stderr
+    assert "closed backup contract" in result.stderr
+    assert not status_path.exists()
+    assert not any(remote_root.iterdir())
+    assert not _calls(calls_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("palimpsest_china_state_root", None),
+        ("palimpsest_china_state_root", "/var/lib/seiche-palimpsest-alias"),
+        (
+            "palimpsest_china_state_audit_contract",
+            "seiche.palimpsest-china-activation-state.v2",
+        ),
+        ("palimpsest_china_state_audit_result", "verified"),
+    ),
+)
+def test_snapshot_rejects_changed_palimpsest_state_contract_before_network(
+    tmp_path: Path,
+    field: str,
+    value: str | None,
+) -> None:
+    env, status_path, remote_root, calls_path = _layout(tmp_path)
+    snapshot = Path(env["FAKE_SNAPSHOT_PATH"])
+    if value is None:
+        _rewrite_manifest_fields(snapshot, removals=frozenset({field}))
+    else:
+        _rewrite_manifest_fields(snapshot, replacements={field: value})
+
+    result = _run(env)
+
+    assert result.returncode != 0
+    assert "closed backup contract" in result.stderr
     assert not status_path.exists()
     assert not any(remote_root.iterdir())
     assert not _calls(calls_path)
@@ -817,7 +897,7 @@ def test_incomplete_snapshot_and_sha_mismatch_fail_before_network(tmp_path: Path
     )
     incomplete = _run(env)
     assert incomplete.returncode != 0
-    assert "closed v3 contract" in incomplete.stderr
+    assert "closed backup contract" in incomplete.stderr
     assert not status_path.exists()
     assert not any(remote_root.iterdir())
 

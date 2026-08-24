@@ -213,12 +213,24 @@ commit_final_snapshot() {
     || fail "restore receipt does not bind the final snapshot"
   grep -Fx "deployed_sha=$EXPECTED_SHA" "$RESTORE_STATUS" >/dev/null \
     || fail "restore receipt does not bind the final release"
-  grep -Fx 'schema=seiche.market-backup-restore-check.v4' "$RESTORE_STATUS" >/dev/null \
+  grep -Fx 'schema=seiche.market-backup-restore-check.v5' "$RESTORE_STATUS" >/dev/null \
     || fail "restore receipt schema is invalid"
+  grep -Fx 'source_backup_schema=seiche.market-backup.v4' \
+    "$RESTORE_STATUS" >/dev/null \
+    || fail "restore receipt did not bind the current backup schema"
+  grep -Fx 'palimpsest_china_state_archive_restore=verified' \
+    "$RESTORE_STATUS" >/dev/null \
+    || fail "restore receipt did not prove the Palimpsest China archive"
+  grep -Fx \
+    'palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1' \
+    "$RESTORE_STATUS" >/dev/null \
+    || fail "restore receipt did not bind the Palimpsest China audit contract"
   grep -Fx 'database_restore=pass' "$RESTORE_STATUS" >/dev/null \
-    && grep -Fx 'state_archive_restore=pass' "$RESTORE_STATUS" >/dev/null \
-    && grep -Fx 'api_data_archive_restore=pass' "$RESTORE_STATUS" >/dev/null \
-    || fail "restore receipt did not prove every state domain"
+    || fail "restore receipt did not prove the database"
+  grep -Fx 'state_archive_restore=pass' "$RESTORE_STATUS" >/dev/null \
+    || fail "restore receipt did not prove the state archive"
+  grep -Fx 'api_data_archive_restore=pass' "$RESTORE_STATUS" >/dev/null \
+    || fail "restore receipt did not prove the API data archive"
 }
 
 write_fence() {
@@ -262,6 +274,8 @@ snapshot = Path(snapshot_raw)
 members = (
     "seiche.dump",
     "var-lib-seiche.tgz",
+    "palimpsest-china.tgz",
+    "palimpsest-china-state.json",
     "api-data.tgz",
     "table-counts.txt",
     "deployed-sha.txt",
@@ -697,7 +711,8 @@ validate_configuration
 readonly OPERATION="$1"
 readonly EXPECTED_SHA="$2"
 [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "expected SHA is invalid"
-readonly STARTED_AT=$($DATE -u +%Y-%m-%dT%H:%M:%SZ)
+STARTED_AT=$($DATE -u +%Y-%m-%dT%H:%M:%SZ)
+readonly STARTED_AT
 exec 9>"$LOCK_PATH"
 "$FLOCK" --exclusive --nonblock 9 || fail "another cutover controller holds the lock"
 
