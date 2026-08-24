@@ -797,15 +797,18 @@ def restore_candidate(
         expected_palimpsest_china_state=palimpsest_china_state,
     )
     started_at = migration._iso_now()
-    platform_root.mkdir(mode=0o750, parents=True, exist_ok=True)
     generations = platform_root / "generations"
     receipts = platform_root / "cutover-receipts"
-    generations.mkdir(mode=0o750, exist_ok=True)
-    receipts.mkdir(mode=0o750, exist_ok=True)
-    for path in (platform_root, generations, receipts):
-        if path.is_symlink() or not path.is_dir():
-            raise CutoverContractError("cutover platform path is unsafe")
-        os.chown(path, os.geteuid(), runtime_gid)
+    try:
+        migration._prepare_shared_directory(
+            platform_root,
+            gid=runtime_gid,
+            parents=True,
+        )
+        migration._prepare_shared_directory(generations, gid=runtime_gid)
+        migration._prepare_shared_directory(receipts, gid=runtime_gid)
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     generation_name = _generation_name(request)
     generation_path = generations / generation_name
     receipt_path = receipts / f"{request['request_id']}.candidate.json"

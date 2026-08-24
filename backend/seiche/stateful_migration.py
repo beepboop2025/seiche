@@ -852,6 +852,7 @@ def restore_filesystem_generation(
     nbs.rename(generation / "nbs")
     api_data.rename(generation / "api")
     palimpsest.rename(generation / "palimpsest-china")
+    os.chmod(generation, 0o750)
     shutil.rmtree(state_stage)
     shutil.rmtree(api_stage)
     shutil.rmtree(palimpsest_stage)
@@ -1280,6 +1281,64 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _prepare_shared_directory(
+    path: Path,
+    *,
+    gid: int,
+    parents: bool = False,
+) -> None:
+    """Create or normalize one root-owned, group-traversable directory safely."""
+    try:
+        path.mkdir(mode=0o750, parents=parents, exist_ok=True)
+        before = path.lstat()
+    except OSError as exc:
+        raise MigrationContractError(
+            f"shared directory is unavailable: {path}"
+        ) from exc
+    if not stat.S_ISDIR(before.st_mode):
+        raise MigrationContractError(f"shared directory is unsafe: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise MigrationContractError(f"shared directory is unsafe: {path}") from exc
+    expected_uid = os.geteuid()
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+            before.st_dev,
+            before.st_ino,
+        ):
+            raise MigrationContractError(f"shared directory changed: {path}")
+        os.fchown(descriptor, expected_uid, gid)
+        os.fchmod(descriptor, 0o750)
+        os.fsync(descriptor)
+        final = os.fstat(descriptor)
+        if (
+            final.st_uid != expected_uid
+            or final.st_gid != gid
+            or stat.S_IMODE(final.st_mode) != 0o750
+        ):
+            raise MigrationContractError(f"shared directory mode is invalid: {path}")
+        after = path.lstat()
+        if (
+            (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+            or after.st_uid != expected_uid
+            or after.st_gid != gid
+            or stat.S_IMODE(after.st_mode) != 0o750
+        ):
+            raise MigrationContractError(f"shared directory changed: {path}")
+    except MigrationContractError:
+        raise
+    except OSError as exc:
+        raise MigrationContractError(
+            f"shared directory mutation failed: {path}"
+        ) from exc
+    finally:
+        os.close(descriptor)
+
+
 def _write_receipt(path: Path, document: Mapping[str, Any], *, gid: int) -> None:
     body = canonical_document(dict(document))
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
@@ -1427,14 +1486,11 @@ def restore_shadow(
     for path in (platform_root, bundle.root):
         if not path.is_absolute() or path == Path("/") or path.is_symlink():
             raise MigrationContractError("stateful migration path is unsafe")
-    platform_root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    _prepare_shared_directory(platform_root, gid=runtime_gid, parents=True)
     generations = platform_root / "generations"
     receipts = platform_root / "receipts"
-    generations.mkdir(mode=0o750, exist_ok=True)
-    receipts.mkdir(mode=0o750, exist_ok=True)
-    os.chown(platform_root, os.geteuid(), runtime_gid)
-    os.chown(generations, os.geteuid(), runtime_gid)
-    os.chown(receipts, os.geteuid(), runtime_gid)
+    _prepare_shared_directory(generations, gid=runtime_gid)
+    _prepare_shared_directory(receipts, gid=runtime_gid)
     generation_name = (
         f"{request['snapshot_id']}-{str(request['source_content_set_sha256'])[:16]}"
     )

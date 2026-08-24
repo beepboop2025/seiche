@@ -128,7 +128,13 @@ def _bundle_fixture(
     if schema == migration.BACKUP_SCHEMA:
         palimpsest = tmp_path / "palimpsest-state"
         palimpsest.mkdir(mode=0o750)
-        (palimpsest / "receipts").mkdir(mode=0o700)
+        # mkdir modes are filtered by the process umask.  Set the audited
+        # production modes explicitly so this fixture remains exact under the
+        # publish service's hardened 0077 umask.
+        palimpsest.chmod(0o750)
+        receipts = palimpsest / "receipts"
+        receipts.mkdir(mode=0o700)
+        receipts.chmod(0o700)
         audit = activation.audit_activation_state(
             palimpsest,
             root_uid=os.geteuid(),
@@ -190,13 +196,19 @@ def _active_palimpsest_state(
 ) -> tuple[Path, dict[str, object]]:
     state = tmp_path / "active-palimpsest-state"
     state.mkdir(mode=0o750)
-    (state / "receipts").mkdir(mode=0o700)
+    state.chmod(0o750)
+    receipts = state / "receipts"
+    receipts.mkdir(mode=0o700)
+    receipts.chmod(0o700)
     config = tmp_path / "active-palimpsest-config"
     config.mkdir(mode=0o750)
+    config.chmod(0o750)
     dropin = tmp_path / "active-palimpsest-systemd" / "seiche-api.service.d"
     dropin.mkdir(parents=True)
+    dropin.chmod(0o755)
     locks = tmp_path / "active-palimpsest-locks"
     locks.mkdir(mode=0o700)
+    locks.chmod(0o700)
     deploy_lock = locks / "deploy.lock"
     deploy_lock.write_bytes(b"lock\n")
     deploy_lock.chmod(0o600)
@@ -467,7 +479,7 @@ def test_active_palimpsest_state_restores_and_renders_exact_runtime_paths(
     for directory in (generation, restored_state, installed_bundle):
         metadata = directory.stat()
         assert metadata.st_gid == os.getegid()
-        assert stat.S_IMODE(metadata.st_mode) & 0o050 == 0o050
+        assert stat.S_IMODE(metadata.st_mode) == 0o750
     for value in environment.values():
         metadata = Path(value).stat()
         assert metadata.st_gid == os.getegid()
@@ -609,6 +621,81 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
         migration.validate_receipt_document(tampered, request=request)
 
 
+def test_shared_restore_directory_normalizes_exact_runtime_mode(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o700)
+    shared.chmod(0o700)
+
+    migration._prepare_shared_directory(shared, gid=os.getegid())
+
+    metadata = shared.stat()
+    assert metadata.st_uid == os.geteuid()
+    assert metadata.st_gid == os.getegid()
+    assert stat.S_IMODE(metadata.st_mode) == 0o750
+
+
+def test_shared_restore_directory_translates_mutation_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared = tmp_path / "shared"
+
+    def fail_chmod(_descriptor: int, _mode: int) -> None:
+        raise OSError("fixture mutation failure")
+
+    monkeypatch.setattr(migration.os, "fchmod", fail_chmod)
+    with pytest.raises(migration.MigrationContractError, match="mutation failed"):
+        migration._prepare_shared_directory(shared, gid=os.getegid())
+
+
+@pytest.mark.parametrize("name", ["generations", "receipts"])
+def test_shadow_restore_rejects_shared_directory_symlinks_without_mutating_target(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
+    bundle = migration.validate_bundle(root, request)
+    platform = tmp_path / "platform"
+    platform.mkdir()
+    target = tmp_path / f"outside-{name}"
+    target.mkdir(mode=0o700)
+    target.chmod(0o700)
+    sentinel = target / "sentinel"
+    sentinel.write_bytes(b"unchanged\n")
+    target_before = target.stat()
+    link = platform / name
+    link.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(migration.MigrationContractError, match="directory is unsafe"):
+        migration.restore_shadow(
+            request,
+            bundle,
+            platform_root=platform,
+            base_dsn="postgresql://unused",
+            railway=_railway_identity(),
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+    target_after = target.stat()
+    assert (
+        target_after.st_dev,
+        target_after.st_ino,
+        target_after.st_uid,
+        target_after.st_gid,
+        stat.S_IMODE(target_after.st_mode),
+    ) == (
+        target_before.st_dev,
+        target_before.st_ino,
+        target_before.st_uid,
+        target_before.st_gid,
+        0o700,
+    )
+    assert link.is_symlink()
+    assert link.readlink() == target
+    assert sentinel.read_bytes() == b"unchanged\n"
+
+
 def test_child_environment_uses_one_generation_and_drops_control_tokens(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -641,7 +728,10 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
     monkeypatch.setattr(migration, "PLATFORM_ROOT", platform)
     palimpsest = platform / "generations" / generation / "palimpsest-china"
     palimpsest.mkdir(parents=True, mode=0o750)
-    (palimpsest / "receipts").mkdir(mode=0o700)
+    palimpsest.chmod(0o750)
+    receipts = palimpsest / "receipts"
+    receipts.mkdir(mode=0o700)
+    receipts.chmod(0o700)
     environment = migration.runtime_environment(
         {
             "PORT": "8080",

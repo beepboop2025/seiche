@@ -197,6 +197,54 @@ def test_cutover_rejects_legacy_backup_before_creating_restore_state(
     assert not platform.exists()
 
 
+@pytest.mark.parametrize("name", ["generations", "cutover-receipts"])
+def test_cutover_rejects_shared_directory_symlinks_without_mutating_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    fence = _fence()
+    request = _request(fence)
+    platform = tmp_path / "platform"
+    platform.mkdir()
+    target = tmp_path / f"outside-{name}"
+    target.mkdir(mode=0o700)
+    target.chmod(0o700)
+    target_before = target.stat()
+    link = platform / name
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(cutover, "load_source_shadow_receipt", lambda *_a, **_k: {})
+
+    with pytest.raises(cutover.CutoverContractError, match="directory is unsafe"):
+        cutover.restore_candidate(
+            request,
+            fence,
+            _bundle(tmp_path, request),
+            platform_root=platform,
+            base_dsn="postgresql://unused",
+            railway=_railway(),
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+    target_after = target.stat()
+    assert (
+        target_after.st_dev,
+        target_after.st_ino,
+        target_after.st_uid,
+        target_after.st_gid,
+        target_after.st_mode,
+    ) == (
+        target_before.st_dev,
+        target_before.st_ino,
+        target_before.st_uid,
+        target_before.st_gid,
+        target_before.st_mode,
+    )
+    assert link.is_symlink()
+    assert link.readlink() == target
+
+
 def test_fence_requires_every_writer_inactive_disabled_and_masked() -> None:
     fence = _fence()
     validated = cutover.validate_fence(
