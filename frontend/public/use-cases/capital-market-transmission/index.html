@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data: https:; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
+  <title>Capital-market transmission research workflow | Seiche</title>
+  <meta name="description" content="Research how Treasury supply, rates, credit, volatility, dealer balance sheets and positioning can transmit into cash funding, institution risk and exit liquidity.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/use-cases/capital-market-transmission/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="stylesheet" href="/authority-actions.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/world-markets?section=capital_markets" title="Seiche capital-market transmission context">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/use-cases/capital-market-transmission/">
+  <meta property="og:title" content="Trace capital-market moves into cash demand">
+  <meta property="og:description" content="A bounded, falsifiable workflow from market repricing through positions, intermediaries, funding and exits.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@graph":[
+      {"@type":"BreadcrumbList","itemListElement":[
+        {"@type":"ListItem","position":1,"name":"Seiche","item":"https://seiche.info/"},
+        {"@type":"ListItem","position":2,"name":"Use cases","item":"https://seiche.info/use-cases"},
+        {"@type":"ListItem","position":3,"name":"Capital-market transmission","item":"https://seiche.info/use-cases/capital-market-transmission/"}
+      ]},
+      {
+        "@type":"WebPage",
+        "@id":"https://seiche.info/use-cases/capital-market-transmission/#page",
+        "url":"https://seiche.info/use-cases/capital-market-transmission/",
+        "name":"Capital-market transmission research workflow",
+        "description":"A bounded workflow for testing how public capital-market evidence may transmit into system funding, institution exposure and market exits.",
+        "datePublished":"2026-08-24",
+        "dateModified":"2026-08-24",
+        "isAccessibleForFree":true,
+        "about":["capital markets","Treasury supply","dealer balance sheet","credit spreads","futures positioning","funding liquidity"],
+        "mainEntity":{"@id":"https://seiche.info/use-cases/capital-market-transmission/#faq"}
+      },
+      {
+        "@type":"FAQPage",
+        "@id":"https://seiche.info/use-cases/capital-market-transmission/#faq",
+        "mainEntity":[
+          {"@type":"Question","name":"What does capital-market transmission mean here?","acceptedAnswer":{"@type":"Answer","text":"Capital-market transmission is the testable path from a public market repricing through positions and intermediary balance sheets into settlement, collateral, margin or other cash demands. Seiche treats that path as a hypothesis until eligible funding evidence confirms it."}},
+          {"@type":"Question","name":"Does Seiche cover every stock, bond and derivative?","acceptedAnswer":{"@type":"Answer","text":"No. Seiche publishes a bounded macro transmission layer over registered Treasury, credit, volatility, dealer, positioning and commodity source families. It is not a global security master, consolidated tape, fundamentals database, order book or execution venue."}},
+          {"@type":"Question","name":"Does co-movement prove that a capital-market move caused funding stress?","acceptedAnswer":{"@type":"Answer","text":"No. Timing and co-movement can identify a mechanism worth testing, but they do not prove causality. A responsible brief states the bridge, checks funding confirmation, publishes counterevidence and leaves unsupported links unresolved."}}
+        ]
+      }
+    ]
+  }
+  </script>
+  <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"534f08f7270a4f4f9a9a10f90d723ca7"}'></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the transmission workflow</a>
+  <header class="shell topbar"><a class="wordmark" href="/">SEI<span>CHE</span></a><nav aria-label="Primary"><a href="/use-cases">Use cases</a><a href="/markets/capital-markets/">Capital ledger</a><a href="/markets/">World markets</a><a href="/developers">API + MCP</a><a href="/methodology">Methods</a></nav></header>
+  <main id="main" class="shell">
+    <div class="breadcrumbs"><a href="/">Seiche</a> / <a href="/use-cases">use cases</a> / capital-market transmission</div>
+    <article>
+      <header class="hero">
+        <div>
+          <p class="kicker">Research workflow / capital markets</p>
+          <h1>A price move matters when it finds a balance sheet.</h1>
+          <p class="lede">Capital-market transmission research asks how Treasury supply, duration, credit, volatility, inventories or crowded positions could become cash demand. It does not call every repricing a funding shock, and it does not mistake a registered source family for a complete capital-market dataset.</p>
+          <div class="authority-actions" data-authority-actions data-product="Seiche" data-title="Capital-market transmission research workflow" data-description="A bounded workflow from market repricing to positions, intermediaries, funding confirmation and exits.">
+            <button type="button" data-authority-action="share_opened">Share workflow</button>
+            <button type="button" data-authority-action="citation_copied">Copy citation</button>
+            <button type="button" data-authority-action="link_copied">Copy attributed link</button>
+            <button type="button" data-authority-action="share_card_downloaded">Download citation card</button>
+            <a href="https://api.seiche.info/api/v2/world-markets?section=capital_markets" data-authority-action="source_data_opened">Open source JSON</a>
+            <span class="authority-actions__status" data-authority-status role="status"></span>
+          </div>
+        </div>
+        <aside class="receipt"><span class="label">Claim discipline</span><strong>trace, then test</strong><p>Market repricing is context. Positions locate exposure. Cash and funding evidence decide whether the proposed transmission appeared.</p></aside>
+      </header>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head"><div><span class="label">Direct answer</span><h2 id="answer-title">How to test capital-market transmission</h2></div><p>Build a chain whose links can fail independently.</p></div>
+        <div class="answer-block"><p><strong>Start with an exact observed market fact.</strong> Identify the yield, spread, volatility reference, auction, inventory or positioning report with its native unit and date. Then state the proposed financing bridge—settlement cash, repo, collateral, margin, dealer warehouse or commodity working capital—and test it against eligible funding observations.</p><p><strong>Route the last mile.</strong> LiquiLens can test institution-level balance-sheet exposure; Undertow can test crowding, provider fragility and exit context. Their outputs remain separate evidence, not confirmation that Seiche's mechanism is causal.</p></div>
+      </section>
+
+      <section aria-labelledby="chain-title">
+        <div class="section-head"><div><span class="label">Transmission chain</span><h2 id="chain-title">Five claims, five chances to abstain</h2></div><p>A good explanation identifies exactly which link is observed, derived or still unavailable.</p></div>
+        <div class="ledger">
+          <article><span class="status observed">1 · price</span><h3>Risk reprices</h3><p>Record the exact public yield, spread, volatility, auction or commodity observation.</p><code>what changed?</code></article>
+          <article><span class="status structural">2 · position</span><h3>Exposure is located</h3><p>Use dated dealer, custody or regulatory positioning evidence without claiming current holders.</p><code>who may carry it?</code></article>
+          <article><span class="status derived">3 · intermediary</span><h3>Balance sheet bridges</h3><p>State how inventory, leverage, settlement, collateral or margin could require cash.</p><code>why might it transmit?</code></article>
+          <article><span class="status observed">4 · funding</span><h3>Plumbing confirms</h3><p>Look for eligible changes in reserves, repo, facilities, spreads, volumes or distribution.</p><code>did cash respond?</code></article>
+          <article><span class="status unavailable">5 · exit</span><h3>Capacity is tested</h3><p>Use Undertow for depth and exit context; publish the countercase if the market absorbs the move.</p><code>could the position leave?</code></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="products-title">
+        <div class="section-head"><div><span class="label">Fleet handoffs</span><h2 id="products-title">Follow the mechanism across altitudes</h2></div><p>The route depends on the noun in the question: system, institution, market, or information environment.</p></div>
+        <div class="source-grid">
+          <a class="source" href="/markets/capital-markets/"><strong>Seiche · macro transmission</strong><span>Treasury supply and rates, credit, volatility, dealer evidence, official custody, positioning and funding confirmation.</span><code>seiche.info/markets/capital-markets/</code></a>
+          <a class="source" href="https://liquilens.in/use-cases/"><strong>LiquiLens · institution exposure</strong><span>Use when the bridge depends on a named bank or lender's funding structure and public filings.</span><code>liquilens.in/use-cases/</code></a>
+          <a class="source" href="https://liquilens-undertow.com/use-cases/"><strong>Undertow · exit capacity</strong><span>Use when leverage, crowding, provider concentration or position size may change liquidation conditions.</span><code>liquilens-undertow.com/use-cases/</code></a>
+          <a class="source" href="https://palimpsest.info/for-researchers.html"><strong>Palimpsest · record integrity</strong><span>Use for China-related questions where deletion, blocking or information availability changes what can be observed.</span><code>palimpsest.info/for-researchers.html</code></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head"><div><span class="label">REST + MCP</span><h2 id="api-title">Retrieve the bounded projection</h2></div><p>The selector limits payload and intent; it does not imply exhaustive security-level coverage.</p></div>
+        <div class="api-grid">
+          <div class="api"><strong>Capital-market REST section</strong><span>Returns the capital projection, status vocabulary, sources, methodology and canonical citation route.</span><code>curl 'https://api.seiche.info/api/v2/world-markets?section=capital_markets'</code></div>
+          <div class="api"><strong>Raw series catalog</strong><span>Use exact series routes and original publishers for numerical claims rather than citing the projection alone.</span><code>curl 'https://api.seiche.info/api/series/index.json'</code></div>
+          <div class="api"><strong>Public MCP context</strong><span>Ask for capital context, then retain every returned source and as-of clock in the synthesis.</span><code>world_markets_context(section="capital_markets")</code></div>
+          <div class="api"><strong>Fleet skill</strong><span>Install the public router; its bounded helper keeps every failed source as an explicit error state.</span><code>npx skills add beepboop2025/financial-evidence-skills --skill financial-evidence</code></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="claims-title">
+        <div class="section-head"><div><span class="label">Citation choices</span><h2 id="claims-title">Match the URL to the claim</h2></div><p>A raw value, a derived transform and a fleet synthesis need different citations.</p></div>
+        <div class="limitations">
+          <article class="limit"><strong><span class="status observed">observed</span> Raw market fact</strong><p>Cite the exact series or original publisher, unit, observation date and release clock.</p></article>
+          <article class="limit"><strong><span class="status derived">derived</span> Seiche interpretation</strong><p>Cite the capital-market page or API revision, generation time, evidence status and input clocks.</p></article>
+          <article class="limit"><strong><span class="status structural">structural</span> Registered source family</strong><p>Describe it as coverage metadata unless the response also supplies an eligible observation.</p></article>
+          <article class="limit"><strong><span class="status unavailable">unavailable</span> Unsupported bridge</strong><p>State which link failed. Do not fill it with a nearby series, zero, or a causal assertion.</p></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="faq-title">
+        <div class="section-head"><div><span class="label">Frequently asked questions</span><h2 id="faq-title">Transmission without overclaiming</h2></div><p>These visible answers match the structured FAQ.</p></div>
+        <div class="limitations">
+          <article class="limit"><strong>What does capital-market transmission mean here?</strong><p>Capital-market transmission is the testable path from a public market repricing through positions and intermediary balance sheets into settlement, collateral, margin or other cash demands. Seiche treats that path as a hypothesis until eligible funding evidence confirms it.</p></article>
+          <article class="limit"><strong>Does Seiche cover every stock, bond and derivative?</strong><p>No. Seiche publishes a bounded macro transmission layer over registered Treasury, credit, volatility, dealer, positioning and commodity source families. It is not a global security master, consolidated tape, fundamentals database, order book or execution venue.</p></article>
+          <article class="limit"><strong>Does co-movement prove that a capital-market move caused funding stress?</strong><p>No. Timing and co-movement can identify a mechanism worth testing, but they do not prove causality. A responsible brief states the bridge, checks funding confirmation, publishes counterevidence and leaves unsupported links unresolved.</p></article>
+        </div>
+      </section>
+    </article>
+  </main>
+  <footer><div class="shell"><span>Seiche · bounded public research, not investment advice or a trading system</span><span><a href="/use-cases">All use cases</a> · <a href="/product-card.json">Product card</a> · <a href="/llms.txt">llms.txt</a></span></div></footer>
+  <script src="/authority-actions.js" defer></script>
+</body>
+</html>

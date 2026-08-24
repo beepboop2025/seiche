@@ -46,7 +46,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     catalog = json.loads((PUBLIC / ".well-known" / "ai-catalog.json").read_text())
     assert catalog["specVersion"] == "1.0"
     assert catalog["host"]["displayName"] == "Seiche"
-    assert len(catalog["entries"]) == 5
+    assert len(catalog["entries"]) == 6
 
     identifiers = set()
     for entry in catalog["entries"]:
@@ -311,3 +311,37 @@ def test_proof_failure_is_labeled_as_withheld_evidence_not_engine_failure():
     ]
     assert "historical diagnostic withheld" in failure_branch
     assert "ENGINE DOWN" not in failure_branch
+
+
+def test_financial_evidence_router_is_external_pinned_and_china_complete():
+    revision = "34549a5bcc2a42c7760c04c95bd449f1d10a18fc"
+    catalog = json.loads(
+        (PUBLIC / ".well-known" / "ai-catalog.json").read_text()
+    )
+    router = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"]
+        == "urn:air:seiche.info:workflow:financial-evidence"
+    )
+    assert router["version"] == revision
+    assert router["url"] == (
+        "https://raw.githubusercontent.com/beepboop2025/"
+        f"financial-evidence-skills/{revision}/financial-evidence/SKILL.md"
+    )
+    assert router["metadata"]["skillSha256"].startswith("sha256:")
+    assert router["metadata"]["fetcherSha256"].startswith("sha256:")
+    assert ".agents/skills/financial-evidence" not in json.dumps(catalog)
+
+    card = json.loads((PUBLIC / "product-card.json").read_text())
+    assert card["updated"] == "2026-08-24"
+    assert "financial-evidence-skills" in card["access"][
+        "financial_evidence_skill"
+    ]
+
+    china = (
+        PUBLIC / "use-cases" / "china-economy-evidence" / "index.html"
+    ).read_text()
+    assert "revision-safe public economic observations" in china
+    assert "Far Basin model-entry gate" in china
+    assert "never enters Seiche's market composite or model features" not in china

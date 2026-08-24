@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data: https:; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'">
+  <title>Money-market research workflow with public evidence | Seiche</title>
+  <meta name="description" content="A reproducible public-data workflow for repo, overnight rates, reserves, Treasury cash and cross-market funding research using Seiche, LiquiLens and Undertow.">
+  <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large">
+  <link rel="canonical" href="https://seiche.info/use-cases/money-market-research/">
+  <link rel="stylesheet" href="/markets/markets.css">
+  <link rel="stylesheet" href="/authority-actions.css">
+  <link rel="alternate" type="application/json" href="https://api.seiche.info/api/v2/money-markets" title="Seiche global money-market context">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#050608">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Seiche">
+  <meta property="og:url" content="https://seiche.info/use-cases/money-market-research/">
+  <meta property="og:title" content="Money-market research with the evidence clocks attached">
+  <meta property="og:description" content="A practical workflow for moving from overnight observations to system funding, institution risk and market-liquidity handoffs.">
+  <meta property="og:image" content="https://seiche.info/og2.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {"@type":"ListItem","position":1,"name":"Seiche","item":"https://seiche.info/"},
+          {"@type":"ListItem","position":2,"name":"Use cases","item":"https://seiche.info/use-cases"},
+          {"@type":"ListItem","position":3,"name":"Money-market research","item":"https://seiche.info/use-cases/money-market-research/"}
+        ]
+      },
+      {
+        "@type": "WebPage",
+        "@id": "https://seiche.info/use-cases/money-market-research/#page",
+        "url": "https://seiche.info/use-cases/money-market-research/",
+        "name": "Money-market research workflow with public evidence",
+        "description": "A reproducible workflow for researching money-market funding with public observations, native clocks, product handoffs and explicit evidence gaps.",
+        "datePublished": "2026-08-24",
+        "dateModified": "2026-08-24",
+        "isAccessibleForFree": true,
+        "about": ["money markets","repo","overnight rates","bank reserves","Treasury cash","funding liquidity"],
+        "mainEntity": {"@id":"https://seiche.info/use-cases/money-market-research/#faq"}
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://seiche.info/use-cases/money-market-research/#faq",
+        "mainEntity": [
+          {"@type":"Question","name":"Which product should I use for money-market research?","acceptedAnswer":{"@type":"Answer","text":"Start with Seiche for system funding, repo, reserves, Treasury cash and local benchmark context. Use LiquiLens only when the question moves to a named financial institution, and Undertow when it moves to market depth, crowding or position-sized exit liquidity."}},
+          {"@type":"Question","name":"Does a missing money-market observation mean the market is calm?","acceptedAnswer":{"@type":"Answer","text":"No. A missing, stale, restricted or ineligible observation is an evidence gap. Seiche keeps that state visible and does not replace it with zero, a policy rate or a calm score."}},
+          {"@type":"Question","name":"Can Seiche recommend a money-market trade?","acceptedAnswer":{"@type":"Answer","text":"No. Seiche publishes research evidence and derived context. It does not provide investment advice, recommend instruments, quote executable prices or guarantee that a funding condition will produce a market outcome."}}
+        ]
+      }
+    ]
+  }
+  </script>
+  <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"534f08f7270a4f4f9a9a10f90d723ca7"}'></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the money-market workflow</a>
+  <header class="shell topbar">
+    <a class="wordmark" href="/">SEI<span>CHE</span></a>
+    <nav aria-label="Primary"><a href="/use-cases">Use cases</a><a href="/money-markets/">Evidence map</a><a href="/markets/">World markets</a><a href="/developers">API + MCP</a><a href="/methodology">Methods</a></nav>
+  </header>
+  <main id="main" class="shell">
+    <div class="breadcrumbs"><a href="/">Seiche</a> / <a href="/use-cases">use cases</a> / money-market research</div>
+    <article>
+      <header class="hero">
+        <div>
+          <p class="kicker">Research workflow / money markets</p>
+          <h1>The overnight rate is an observation, not a diagnosis.</h1>
+          <p class="lede">A defensible money-market brief preserves the benchmark, venue, distribution, volume, source and observation clock before interpreting stress. Seiche owns the system-funding layer; LiquiLens and Undertow take over only when the question becomes institution-specific or execution-specific.</p>
+          <div class="authority-actions" data-authority-actions data-product="Seiche" data-title="Money-market research workflow with public evidence" data-description="A source-clocked workflow for repo, reserves, Treasury cash and funding-liquidity research.">
+            <button type="button" data-authority-action="share_opened">Share workflow</button>
+            <button type="button" data-authority-action="citation_copied">Copy citation</button>
+            <button type="button" data-authority-action="link_copied">Copy attributed link</button>
+            <button type="button" data-authority-action="share_card_downloaded">Download citation card</button>
+            <a href="https://api.seiche.info/api/v2/money-markets" data-authority-action="source_data_opened">Open source JSON</a>
+            <span class="authority-actions__status" data-authority-status role="status"></span>
+          </div>
+        </div>
+        <aside class="receipt"><span class="label">Research boundary</span><strong>system first</strong><p>No single repo print, policy rate or composite proves funding stress. Missing evidence remains missing.</p></aside>
+      </header>
+
+      <section aria-labelledby="answer-title">
+        <div class="section-head"><div><span class="label">Direct answer</span><h2 id="answer-title">How to research a money market</h2></div><p>Begin with the local benchmark and its native clock, test it against the relevant system-cash ledger, then route the exposure and exit questions to the products built for them.</p></div>
+        <div class="answer-block"><p><strong>Use Seiche to establish the funding state.</strong> Retrieve the local benchmark only where rights permit, attach its source and as-of time, and compare like with like inside that market's own history. Then examine reserves, facilities, Treasury cash, volumes and distributions. A market pack's registration or discovery record is not itself an observation.</p><p><strong>Split the downstream question.</strong> LiquiLens addresses which institution's balance sheet may be exposed; Undertow addresses whether depth and exit capacity are deteriorating. Neither handoff turns correlation into causality.</p></div>
+      </section>
+
+      <section aria-labelledby="workflow-title">
+        <div class="section-head"><div><span class="label">Four-stage workflow</span><h2 id="workflow-title">From fixing to falsifier</h2></div><p>Each stage can stop with unavailable evidence. The workflow does not force a verdict.</p></div>
+        <div class="ledger">
+          <article><span class="status observed">1 · observe</span><h3>Identify the market</h3><p>Record benchmark, venue, unit, publisher, observation date and release time.</p><code>what was actually printed?</code></article>
+          <article><span class="status structural">2 · qualify</span><h3>Check rights and cadence</h3><p>Distinguish redistributable values from derived-only, policy-only and unavailable rows.</p><code>may it be used and compared?</code></article>
+          <article><span class="status derived">3 · interpret</span><h3>Test system cash</h3><p>Read repo beside reserves, facilities, Treasury cash, volumes and relevant spreads.</p><code>did plumbing confirm?</code></article>
+          <article><span class="status derived">4 · route</span><h3>Locate the exposure</h3><p>Move named-institution questions to LiquiLens and depth or exit questions to Undertow.</p><code>who carries it; can it exit?</code></article>
+          <article><span class="status unavailable">5 · falsify</span><h3>Publish disagreement</h3><p>Keep calm components, stale inputs and missing markets beside the proposed mechanism.</p><code>what would make this wrong?</code></article>
+        </div>
+      </section>
+
+      <section aria-labelledby="routes-title">
+        <div class="section-head"><div><span class="label">Product routing</span><h2 id="routes-title">One question per evidence owner</h2></div><p>The products share a lab, not an interchangeable score.</p></div>
+        <div class="source-grid">
+          <a class="source" href="/money-markets/"><strong>Seiche · system funding</strong><span>Repo, reserves, Treasury cash, facilities, native-frequency market packs and explicit gaps.</span><code>seiche.info/money-markets/</code></a>
+          <a class="source" href="https://liquilens.in/use-cases/"><strong>LiquiLens · institution risk</strong><span>Use after the funding mechanism is stated and the question names a bank or lender.</span><code>liquilens.in/use-cases/</code></a>
+          <a class="source" href="https://liquilens-undertow.com/use-cases/"><strong>Undertow · market liquidity</strong><span>Use for provider fragility, crowding, depth and position-sized exit context.</span><code>liquilens-undertow.com/use-cases/</code></a>
+          <a class="source" href="https://palimpsest.info/china/"><strong>Palimpsest · China information context</strong><span>Add only when the research depends on information controls, deletion or the public record's availability.</span><code>palimpsest.info/china/</code></a>
+        </div>
+      </section>
+
+      <section aria-labelledby="api-title">
+        <div class="section-head"><div><span class="label">REST + MCP</span><h2 id="api-title">Give software the same boundaries</h2></div><p>Both routes are read-only and public. Query current state; do not copy a static receipt into a live claim.</p></div>
+        <div class="api-grid">
+          <div class="api"><strong>Global money-market REST context</strong><span>Returns registered packs, metric availability, sources, clocks and evidence states without request-time scraping.</span><code>curl 'https://api.seiche.info/api/v2/money-markets'</code></div>
+          <div class="api"><strong>USD money-market desk</strong><span>Use for the deeper institutional USD view across rates, volumes, facilities and funding components.</span><code>curl 'https://api.seiche.info/api/money-markets'</code></div>
+          <div class="api"><strong>Public MCP context</strong><span>Ask for a chartless section and retain source and freshness fields in the answer.</span><code>money_market_context(section="all")</code></div>
+          <div class="api"><strong>Fleet skill</strong><span>Install the public router, then fetch a bounded packet that preserves each product response and every error separately.</span><code>npx skills add beepboop2025/financial-evidence-skills --skill financial-evidence</code></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="clocks-title">
+        <div class="section-head"><div><span class="label">Clock discipline</span><h2 id="clocks-title">Do not make weekly evidence daily</h2></div><p>A synthesis is only as current as the component used for that claim.</p></div>
+        <dl class="clock-list">
+          <div><dt>observation time</dt><dd>When the benchmark or stock applies economically.</dd></div>
+          <div><dt>publication time</dt><dd>When the original publisher made that observation available.</dd></div>
+          <div><dt>knowledge time</dt><dd>When Seiche captured or learned the record; this is not the observation date.</dd></div>
+          <div><dt>retrieval time</dt><dd>When the researcher fetched the API response; preserve it for reproducibility.</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="faq-title">
+        <div class="section-head"><div><span class="label">Frequently asked questions</span><h2 id="faq-title">Money-market scope, plainly</h2></div><p>These visible answers match the structured FAQ.</p></div>
+        <div class="limitations">
+          <article class="limit"><strong>Which product should I use for money-market research?</strong><p>Start with Seiche for system funding, repo, reserves, Treasury cash and local benchmark context. Use LiquiLens only when the question moves to a named financial institution, and Undertow when it moves to market depth, crowding or position-sized exit liquidity.</p></article>
+          <article class="limit"><strong>Does a missing money-market observation mean the market is calm?</strong><p>No. A missing, stale, restricted or ineligible observation is an evidence gap. Seiche keeps that state visible and does not replace it with zero, a policy rate or a calm score.</p></article>
+          <article class="limit"><strong>Can Seiche recommend a money-market trade?</strong><p>No. Seiche publishes research evidence and derived context. It does not provide investment advice, recommend instruments, quote executable prices or guarantee that a funding condition will produce a market outcome.</p></article>
+        </div>
+      </section>
+    </article>
+  </main>
+  <footer><div class="shell"><span>Seiche · public research, not investment advice</span><span><a href="/use-cases">All use cases</a> · <a href="/product-card.json">Product card</a> · <a href="/llms.txt">llms.txt</a></span></div></footer>
+  <script src="/authority-actions.js" defer></script>
+</body>
+</html>

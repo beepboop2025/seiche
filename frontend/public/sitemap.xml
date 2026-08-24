@@ -17,6 +17,24 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://seiche.info/use-cases/money-market-research/</loc>
+    <lastmod>2026-08-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://seiche.info/use-cases/capital-market-transmission/</loc>
+    <lastmod>2026-08-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://seiche.info/use-cases/china-economy-evidence/</loc>
+    <lastmod>2026-08-24</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
     <loc>https://seiche.info/guide</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>

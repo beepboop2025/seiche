@@ -93,6 +93,11 @@
         "forexPage": "https://seiche.info/markets/forex/",
         "capitalMarketsPage": "https://seiche.info/markets/capital-markets/",
         "chinaMacroPage": "https://seiche.info/markets/china-macro/",
+        "moneyMarketResearchWorkflow": "https://seiche.info/use-cases/money-market-research/",
+        "capitalMarketTransmissionWorkflow": "https://seiche.info/use-cases/capital-market-transmission/",
+        "chinaEconomyEvidenceWorkflow": "https://seiche.info/use-cases/china-economy-evidence/",
+        "financialEvidenceSkill": "https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence",
+        "palimpsest": "https://palimpsest.info/",
         "articleJsonFeed": "https://seiche.info/articles/feed.json",
         "telegramBot": "https://t.me/seiche_desk_bot",
         "telegramChannel": "https://t.me/LiquidityLabDesk"
@@ -228,11 +233,62 @@
         "forexPage": "https://seiche.info/markets/forex/",
         "capitalMarketsPage": "https://seiche.info/markets/capital-markets/",
         "chinaMacroPage": "https://seiche.info/markets/china-macro/",
+        "moneyMarketResearchWorkflow": "https://seiche.info/use-cases/money-market-research/",
+        "capitalMarketTransmissionWorkflow": "https://seiche.info/use-cases/capital-market-transmission/",
+        "chinaEconomyEvidenceWorkflow": "https://seiche.info/use-cases/china-economy-evidence/",
+        "palimpsestChinaObservatory": "https://palimpsest.info/china/",
         "forexReferenceSeries": 22,
         "chinaMacroSeriesIdentities": 4,
         "chinaMacroValuesPublished": false,
         "requestTimeCollection": false,
         "exhaustiveCoverage": false
+      }
+    },
+    {
+      "identifier": "urn:air:seiche.info:workflow:financial-evidence",
+      "displayName": "Liquidity Lab Financial Evidence Agent Skill",
+      "type": "text/markdown",
+      "url": "https://raw.githubusercontent.com/beepboop2025/financial-evidence-skills/34549a5bcc2a42c7760c04c95bd449f1d10a18fc/financial-evidence/SKILL.md",
+      "description": "A portable Agent Skill that routes money-market, capital-market, China-economy, financial-institution-risk and market-liquidity research across Seiche, LiquiLens, Undertow and Palimpsest while preserving source rights, evidence classes and distinct clocks.",
+      "tags": [
+        "Agent Skill",
+        "financial evidence",
+        "money markets",
+        "capital markets",
+        "China economy",
+        "bank risk",
+        "market liquidity",
+        "provenance"
+      ],
+      "capabilities": [
+        "cross-product intent routing",
+        "bounded no-auth JSON retrieval",
+        "source and error emission",
+        "observation, publication, knowledge and retrieval clock preservation",
+        "rights-aware citation guidance",
+        "explicit missingness without zero substitution"
+      ],
+      "representativeQueries": [
+        "Build a sourced money-market research packet and route any institution or exit questions to the correct product.",
+        "Trace a capital-market repricing into funding, bank and market-liquidity evidence without claiming causality.",
+        "Research China's economy while keeping official macro metadata and information-control evidence separate.",
+        "Which Liquidity Lab product should answer a bank-risk or market-liquidity question?",
+        "Fetch bounded public JSON for money-market, capital-market and China-economy topics without treating failed sources as zero."
+      ],
+      "version": "34549a5bcc2a42c7760c04c95bd449f1d10a18fc",
+      "updatedAt": "2026-08-24T08:29:38Z",
+      "metadata": {
+        "authentication": "none",
+        "access": "public-read-only",
+        "skillSource": "https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence",
+        "fetcher": "https://raw.githubusercontent.com/beepboop2025/financial-evidence-skills/34549a5bcc2a42c7760c04c95bd449f1d10a18fc/financial-evidence/scripts/fetch_evidence.py",
+        "skillSha256": "sha256:091fc3c3bb4577e2481cfc52e9977e1c83fc114b085544c584b6ae5bf2b302ae",
+        "fetcherSha256": "sha256:79ad7a9c269ceefc86a77f98e3ed827a39e66a0d45a95535ce761fd4936a3ff2",
+        "moneyMarketWorkflow": "https://seiche.info/use-cases/money-market-research/",
+        "capitalMarketWorkflow": "https://seiche.info/use-cases/capital-market-transmission/",
+        "chinaEconomyWorkflow": "https://seiche.info/use-cases/china-economy-evidence/",
+        "products": "Seiche, LiquiLens, Undertow, Palimpsest",
+        "tradingOrAdvice": false
       }
     },
     {

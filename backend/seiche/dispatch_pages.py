@@ -51,6 +51,9 @@ BASE_URLS = [
     ("/", "daily", "1.0"),
     ("/developers", "monthly", "0.9"),
     ("/use-cases", "monthly", "0.9"),
+    ("/use-cases/money-market-research/", "monthly", "0.9"),
+    ("/use-cases/capital-market-transmission/", "monthly", "0.9"),
+    ("/use-cases/china-economy-evidence/", "monthly", "0.9"),
     ("/guide", "monthly", "0.8"),
     ("/methodology", "monthly", "0.8"),
     ("/skeptic", "monthly", "0.8"),
@@ -74,6 +77,9 @@ BASE_URLS = [
 # Editorial market pages have their own reviewed publication clocks. Keep
 # those dates stable when the sitemap is rebuilt after a newer daily dispatch.
 BASE_LASTMODS = {
+    "/use-cases/money-market-research/": "2026-08-24",
+    "/use-cases/capital-market-transmission/": "2026-08-24",
+    "/use-cases/china-economy-evidence/": "2026-08-24",
     "/markets/": "2026-08-22",
     "/markets/forex/": "2026-08-21",
     "/markets/capital-markets/": "2026-08-21",
@@ -786,6 +792,7 @@ same product; the callable contract remains the MCP server above.
 
 - [LiquiLens](https://liquilens.in/): the institution layer, ranking which banks and lenders should feel funding stress first
 - [Undertow](https://liquilens-undertow.com/): the market layer, mapping liquidity fragility and estimated exit cost at position size
+- [Palimpsest](https://palimpsest.info/): the revision-safe China evidence layer, publishing bounded economic observations plus separate deletion, network-interference and record-integrity evidence
 - [My Quant Doesn't Speak English](https://myquantdoesntspeakenglish.com/): the editorial wire containing every Seiche, LiquiLens and Undertow dispatch, plus original investigations
 
 ## Docs
@@ -794,6 +801,10 @@ same product; the callable contract remains the MCP server above.
 - [API + MCP quickstart]({SITE}/developers): connect an agent or make the first public API call in under a minute
 - [OpenAPI 3.1 contract](https://api.seiche.info/api/openapi.json): import the intentionally public REST surface without exposing subscriber or operator routes
 - [Selection guide]({SITE}/use-cases): when to use Seiche, when not to, how it differs from LiquiLens and Undertow, and how to cite it
+- [Money-market research workflow]({SITE}/use-cases/money-market-research/): move from an exact benchmark through rights, native clocks and system cash before routing institution and exit questions
+- [Capital-market transmission workflow]({SITE}/use-cases/capital-market-transmission/): trace price, position, intermediary and funding links without treating co-movement as causality
+- [China economy evidence workflow]({SITE}/use-cases/china-economy-evidence/): use Palimpsest for revision-safe public observations and Seiche for structural macro identity, rights and transmission context
+- [Financial-evidence Agent Skill](https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence): route research across Seiche, LiquiLens, Undertow and Palimpsest and fetch bounded no-auth JSON with explicit source errors
 - [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract
 - [Forex reference ledger]({SITE}/markets/forex/): 22 public H.10 bilateral reference series, three dollar indexes, exact quote conventions and explicit missing instruments
 - [Capital-markets transmission projection]({SITE}/markets/capital-markets/): a bounded derived macro-capital projection over registered Treasury, credit, volatility, dealer, positioning and commodity source families

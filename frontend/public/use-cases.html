@@ -26,7 +26,7 @@
     "@id": "https://seiche.info/use-cases#page",
     "url": "https://seiche.info/use-cases",
     "name": "When to use Seiche for money, foreign-exchange and capital-market evidence",
-    "dateModified": "2026-08-21",
+    "dateModified": "2026-08-24",
     "isPartOf": { "@id": "https://seiche.info/#website" },
     "about": { "@id": "https://seiche.info/#software" },
     "mainEntity": {
@@ -93,7 +93,17 @@
         <tr><td>How do money, FX and capital-market pressures connect?</td><td><strong>Seiche World Markets</strong></td><td>A cache-only evidence map with source clocks, status vocabulary and canonical citations.</td></tr>
         <tr><td>Which financial institution is drifting toward failure?</td><td><a href="https://liquilens.in/use-cases/">LiquiLens</a></td><td>Institution-level public filings, funding structure, supervisory thresholds and validation records.</td></tr>
         <tr><td>Will market liquidity still be there at my exit size?</td><td><a href="https://liquilens-undertow.com/use-cases/">Undertow</a></td><td>Cross-market provider fragility, concentration, order-book depth and exit cost.</td></tr>
+        <tr><td>What do revision-safe China observations and information controls show?</td><td><a href="https://palimpsest.info/china/">Palimpsest</a></td><td>Bounded economic observations plus separate network, deletion, erasure and record-integrity evidence. Seiche supplies structural macro and transmission context.</td></tr>
       </tbody></table>
+    </section>
+    <section>
+      <h2>Evidence workflows by research intent</h2>
+      <p class="answer">These guides start with the question a researcher or agent is trying to answer, then route each sub-question to the product with the matching evidence contract.</p>
+      <div class="grid">
+        <article class="card fit"><h3><a href="/use-cases/money-market-research/">Money-market research</a></h3><p>Move from an exact overnight benchmark through source rights, native clocks and system cash before handing institution risk to LiquiLens or exits to Undertow.</p></article>
+        <article class="card fit"><h3><a href="/use-cases/capital-market-transmission/">Capital-market transmission</a></h3><p>Trace Treasury, credit, volatility, dealer and positioning evidence into a testable funding mechanism without treating co-movement as causality.</p></article>
+        <article class="card fit"><h3><a href="/use-cases/china-economy-evidence/">China economy evidence</a></h3><p>Keep official series identity, restricted observations, capture provenance and Palimpsest information-control evidence in separate ledgers.</p></article>
+      </div>
     </section>
     <section>
       <h2>Which world-market contract should I use?</h2>
@@ -109,7 +119,7 @@
     <section>
       <h2>How can software or an AI agent use Seiche?</h2>
       <p class="answer">The hosted MCP endpoint is <code>https://api.seiche.info/mcp</code>. Eleven public tools, including <code>latest_article</code>, the chartless section-selectable <code>money_market_context</code>, and the bounded money/FX/capital-markets <code>world_markets_context</code>, require no token; five additional tools require a bearer token. Full-text syndication is at <code>https://seiche.info/articles/feed.json</code>. The REST catalog is at <code>https://api.seiche.info/api</code>; use <code>/api/gauge</code> for the compact regime, <code>/api/money-markets</code> for the full USD desk, <code>/api/v2/money-markets</code> for the global Atlas, and <code>/api/v2/world-markets</code> for the cache-only world-markets envelope. Responses include timestamps, evidence statuses and source-health information.</p>
-      <div class="cta"><a href="/developers">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
+      <div class="cta"><a href="/developers">Open the quickstart</a><a href="/product-card.json">Read the product card</a><a href="https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence">Use the financial-evidence skill</a><a href="https://github.com/beepboop2025/seiche">Inspect the source</a></div>
     </section>
     <section>
       <h2>How should Seiche be cited?</h2>
@@ -138,7 +148,7 @@
       <p class="answer">Use the regime as an entry point, then inspect the components, freshness and recorded misses. A trustworthy funding monitor should show disagreement, stale inputs and unavailable evidence rather than compressing them into false certainty.</p>
     </section>
   </main>
-  <footer>Updated 21 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
+  <footer>Updated 24 August 2026 · Public research, not investment advice · <a href="/llms.txt">llms.txt</a> · <a href="/product-card.json">product-card.json</a></footer>
   <script src="/authority-actions.js" defer></script>
 </body>
 </html>
