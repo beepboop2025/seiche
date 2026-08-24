@@ -30,7 +30,7 @@ from seiche import stateful_migration as migration
 
 FENCE_SCHEMA = "seiche.railway-authority-fence.v1"
 REQUEST_SCHEMA = "seiche.railway-stateful-cutover-request.v1"
-CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v1"
+CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v3"
 GRANT_SCHEMA = "seiche.railway-authority-grant.v1"
 ACTIVATION_RECEIPT_SCHEMA = "seiche.railway-activation-receipt.v1"
 PUBLIC_PROBE_SCHEMA = "seiche.railway-public-candidate-probe.v1"
@@ -111,6 +111,22 @@ _REQUEST_KEYS = frozenset(
         "source_writers_frozen",
         "public_traffic_enabled",
         "requested_at",
+    }
+)
+_SHADOW_RECEIPT_KEYS = frozenset(
+    {
+        "schema",
+        "request",
+        "authority",
+        "bundle",
+        "database",
+        "filesystem",
+        "palimpsest_china_state",
+        "railway",
+        "timing",
+        "research_only",
+        "can_publish",
+        "can_execute",
     }
 )
 _ACTIVATION_KEYS = frozenset(
@@ -397,6 +413,12 @@ def render_candidate_receipt(
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
+    try:
+        palimpsest_china_state = migration.palimpsest_china_state_from_audit(
+            bundle.palimpsest_china_state_audit
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     return {
         "schema": CANDIDATE_RECEIPT_SCHEMA,
         "request": {
@@ -404,6 +426,7 @@ def render_candidate_receipt(
             "sha256": _digest(_canonical(request)),
             "commit": request["commit"],
             "tree": request["tree"],
+            "source_shadow_receipt_sha256": request["source_shadow_receipt_sha256"],
         },
         "authority": {
             "mode": "cutover_candidate",
@@ -438,7 +461,12 @@ def render_candidate_receipt(
             "api_sqlite_quick_check": "pass",
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": nbs_audit_result,
+            "palimpsest_china_state_audit_contract": (
+                "seiche.palimpsest-china-activation-state.v1"
+            ),
+            "palimpsest_china_state_audit_result": "verified",
         },
+        "palimpsest_china_state": palimpsest_china_state,
         "railway": dict(railway),
         "timing": {"started_at": started_at, "completed_at": completed_at},
         "research_only": True,
@@ -462,6 +490,7 @@ def validate_candidate_receipt(
         "bundle",
         "database",
         "filesystem",
+        "palimpsest_china_state",
         "railway",
         "timing",
         "research_only",
@@ -480,6 +509,7 @@ def validate_candidate_receipt(
             "sha256": _digest(_canonical(request)),
             "commit": request["commit"],
             "tree": request["tree"],
+            "source_shadow_receipt_sha256": request["source_shadow_receipt_sha256"],
         }
         or value.get("authority")
         != {
@@ -552,20 +582,38 @@ def validate_candidate_receipt(
     filesystem = value.get("filesystem")
     if (
         not isinstance(filesystem, dict)
+        or set(filesystem)
+        != {
+            "generation",
+            "tree_sha256",
+            "api_sqlite_quick_check",
+            "nbs_full_store_audit_contract",
+            "nbs_full_store_audit_result",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_audit_result",
+        }
         or filesystem.get("generation") != _generation_name(request)
         or filesystem.get("api_sqlite_quick_check") != "pass"
         or filesystem.get("nbs_full_store_audit_contract")
         != "seiche.nbs-full-store-audit.v1"
         or filesystem.get("nbs_full_store_audit_result")
         not in {"not_onboarded", "verified_head"}
+        or filesystem.get("palimpsest_china_state_audit_contract")
+        != "seiche.palimpsest-china-activation-state.v1"
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
         or not isinstance(filesystem.get("tree_sha256"), dict)
-        or set(filesystem["tree_sha256"]) != {"market", "nbs", "api"}
+        or set(filesystem["tree_sha256"])
+        != {"market", "nbs", "api", "palimpsest-china"}
         or any(
             _SHA64_RE.fullmatch(str(item)) is None
             for item in filesystem["tree_sha256"].values()
         )
     ):
         raise CutoverContractError("candidate receipt filesystem is invalid")
+    try:
+        migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     observed_railway = value.get("railway")
     if not isinstance(observed_railway, dict) or set(observed_railway) != {
         "deployment_id",
@@ -610,6 +658,115 @@ def validate_candidate_receipt(
     return dict(value)
 
 
+def validate_source_shadow_receipt(
+    value: object,
+    *,
+    request: Mapping[str, Any],
+    expected_palimpsest_china_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _SHADOW_RECEIPT_KEYS:
+        raise CutoverContractError("source shadow receipt fields are invalid")
+    shadow_request = value.get("request")
+    if (
+        value.get("schema") != migration.RECEIPT_SCHEMA
+        or _digest(_canonical(value)) != request["source_shadow_receipt_sha256"]
+        or not isinstance(shadow_request, dict)
+        or set(shadow_request)
+        != {
+            "id",
+            "sha256",
+            "commit",
+            "tree",
+            "source_archive_sha256",
+            "source_bundle_sha256",
+            "source_release_receipt_sha256",
+            "source_recovery_receipt_sha256",
+        }
+        or shadow_request.get("commit") != request["commit"]
+        or value.get("authority")
+        != {
+            "mode": "shadow",
+            "source": "hetzner",
+            "source_writers_frozen": False,
+            "public_traffic_enabled": False,
+            "workers_started": False,
+        }
+        or value.get("research_only") is not True
+        or value.get("can_publish") is not False
+        or value.get("can_execute") is not False
+    ):
+        raise CutoverContractError("source shadow receipt binding is invalid")
+    for name in (
+        "id",
+        "sha256",
+        "source_archive_sha256",
+        "source_bundle_sha256",
+        "source_release_receipt_sha256",
+        "source_recovery_receipt_sha256",
+    ):
+        if (
+            not isinstance(shadow_request.get(name), str)
+            or _SHA64_RE.fullmatch(shadow_request[name]) is None
+        ):
+            raise CutoverContractError(f"source shadow request {name} is invalid")
+    for name in ("commit", "tree"):
+        if (
+            not isinstance(shadow_request.get(name), str)
+            or _SHA40_RE.fullmatch(shadow_request[name]) is None
+        ):
+            raise CutoverContractError(f"source shadow request {name} is invalid")
+    try:
+        shadow_state = migration.validate_palimpsest_china_state(
+            value.get("palimpsest_china_state")
+        )
+        expected_state = migration.validate_palimpsest_china_state(
+            expected_palimpsest_china_state
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
+    if shadow_state != expected_state:
+        raise CutoverContractError("cutover Palimpsest China state differs from shadow")
+    return dict(value)
+
+
+def load_source_shadow_receipt(
+    platform_root: Path,
+    *,
+    request: Mapping[str, Any],
+    expected_palimpsest_china_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    receipts = platform_root / "receipts"
+    if not receipts.is_dir() or receipts.is_symlink():
+        raise CutoverContractError("source shadow receipt directory is unsafe")
+    entries = sorted(receipts.iterdir(), key=lambda path: path.name)
+    if len(entries) > 1024:
+        raise CutoverContractError("source shadow receipt directory is unbounded")
+    matches: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in entries:
+        if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
+            raise CutoverContractError("source shadow receipt directory is not closed")
+        try:
+            body = migration._stable_read(path, maximum_bytes=256 * 1024)
+            value = migration._decode_canonical_json(body, label="shadow receipt")
+        except migration.MigrationContractError as exc:
+            raise CutoverContractError(str(exc)) from exc
+        total_bytes += len(body)
+        if total_bytes > 64 * 1024 * 1024:
+            raise CutoverContractError(
+                "source shadow receipt directory exceeds capacity"
+            )
+        if _digest(body) == request["source_shadow_receipt_sha256"]:
+            matches.append(value)
+    if len(matches) != 1:
+        raise CutoverContractError("source shadow receipt is not unique")
+    return validate_source_shadow_receipt(
+        matches[0],
+        request=request,
+        expected_palimpsest_china_state=expected_palimpsest_china_state,
+    )
+
+
 def restore_candidate(
     request: Mapping[str, Any],
     fence: Mapping[str, Any],
@@ -621,6 +778,24 @@ def restore_candidate(
     runtime_uid: int = migration.RUNTIME_UID,
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> CutoverRestore:
+    if (
+        bundle.schema != migration.BACKUP_SCHEMA
+        or bundle.palimpsest_china_state_audit is None
+    ):
+        raise CutoverContractError(
+            "cutover requires the current Palimpsest-state backup contract"
+        )
+    try:
+        palimpsest_china_state = migration.palimpsest_china_state_from_audit(
+            bundle.palimpsest_china_state_audit
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
+    load_source_shadow_receipt(
+        platform_root,
+        request=request,
+        expected_palimpsest_china_state=palimpsest_china_state,
+    )
     started_at = migration._iso_now()
     platform_root.mkdir(mode=0o750, parents=True, exist_ok=True)
     generations = platform_root / "generations"
@@ -643,7 +818,12 @@ def restore_candidate(
                 fence=fence,
                 railway=railway,
             )
-            migration.validate_receipted_generation(generation_path, receipt)
+            migration.validate_receipted_generation(
+                generation_path,
+                receipt,
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
+            )
             dsn = migration._target_dsn(base_dsn, receipt["database"]["name"])
             if migration.inspect_postgres_counts(dsn) != tuple(
                 receipt["database"]["critical_table_counts"]
@@ -724,23 +904,38 @@ def candidate_environment(
     restore: CutoverRestore,
     *,
     edge_token: str,
+    runtime_uid: int = migration.RUNTIME_UID,
+    runtime_gid: int = migration.RUNTIME_GID,
 ) -> dict[str, str]:
     receipt = restore.receipt
     generation = str(receipt["filesystem"]["generation"])
     root = restore.generation_path
     if root.name != generation or root.parent.name != "generations":
         raise CutoverContractError("candidate generation path is invalid")
+    try:
+        from seiche import palimpsest_china_activation as activation
+
+        palimpsest_environment_names = {
+            spec.environment for spec in activation._BUNDLE_FILE_SPECS
+        }
+    except Exception as exc:
+        raise CutoverContractError(
+            "candidate Palimpsest China runtime contract is unavailable"
+        ) from exc
     environment = {
         key: value
         for key, value in base.items()
         if key
-        not in {
-            "DATABASE_URL",
-            "RAILWAY_TOKEN",
-            "RAILWAY_API_TOKEN",
-            "PYTHONHOME",
-            "PYTHONPATH",
-        }
+        not in (
+            {
+                "DATABASE_URL",
+                "RAILWAY_TOKEN",
+                "RAILWAY_API_TOKEN",
+                "PYTHONHOME",
+                "PYTHONPATH",
+            }
+            | palimpsest_environment_names
+        )
     }
     environment.update(
         {
@@ -772,6 +967,16 @@ def candidate_environment(
             "SEICHE_SOURCE_HEARTBEAT_REQUIRED": "0",
         }
     )
+    try:
+        environment.update(
+            migration.palimpsest_runtime_environment(
+                root / "palimpsest-china",
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
+            )
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     return environment
 
 
@@ -802,6 +1007,10 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
         or value.get("authority", {}).get("railway_writers_started") is not False
     ):
         raise CutoverContractError("Railway candidate receipt binding is invalid")
+    try:
+        migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     if edge_token_sha256(
         environment.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     ) != environment.get("SEICHE_RAILWAY_EDGE_TOKEN_SHA256"):
@@ -1401,7 +1610,12 @@ def _serve_production(
                 break
             writers_stopped_at = migration._iso_now()
             try:
-                exported = recovery.export_snapshot(production, request)
+                exported = recovery.export_snapshot(
+                    production,
+                    request,
+                    runtime_uid=migration.RUNTIME_UID,
+                    runtime_gid=migration.RUNTIME_GID,
+                )
             except Exception as exc:  # noqa: BLE001 - retain production, retry on restart
                 if stopping:
                     break
@@ -1703,12 +1917,16 @@ def run(
         platform_root=platform_root,
         base_dsn=base_dsn,
         railway=railway,
+        runtime_uid=migration.RUNTIME_UID,
+        runtime_gid=migration.RUNTIME_GID,
     )
     edge_token = os.environ.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     environment = candidate_environment(
         os.environ,
         restore,
         edge_token=edge_token,
+        runtime_uid=migration.RUNTIME_UID,
+        runtime_gid=migration.RUNTIME_GID,
     )
     validate_candidate_runtime(environment)
     _prepare_authority_directory(grant_path.parent)

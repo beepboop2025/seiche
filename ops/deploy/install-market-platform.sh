@@ -40,6 +40,7 @@ MARKET_RESTORE_SCRIPT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-market-restore-check
 MARKET_RESTORE_SCRIPT_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-market-restore-check.sh"
 NBS_INTAKE_LAUNCHER_SOURCE="$ASSET_ROOT/ops/deploy/seiche-nbs-intake.py"
 NBS_INTAKE_LAUNCHER_INSTALLED="$STORAGE_PREFLIGHT_INSTALL_DIR/seiche-nbs-intake.py"
+PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE="$ASSET_ROOT/ops/deploy/install-palimpsest-china-activation.sh"
 STORAGE_PREFLIGHT_UNIT_SOURCE="$ASSET_ROOT/ops/deploy/seiche-storage-preflight.service"
 STORAGE_PREFLIGHT_UNIT_DESTINATION=/etc/systemd/system/seiche-storage-preflight.service
 RELEASE_POLL_STORAGE_DROPIN_DIR=/etc/systemd/system/seiche-release-poll.service.d
@@ -112,7 +113,11 @@ required_paths = {
     "backend/seiche/__init__.py",
     "backend/seiche/nbs_intake.py",
     "backend/seiche/nbs_trust.py",
+    "backend/seiche/china_economic_focus.py",
+    "backend/seiche/palimpsest_china_activation.py",
+    "backend/seiche/palimpsest_china_intake.py",
     "ops/deploy/retire-legacy-update-units.sh",
+    "ops/deploy/install-palimpsest-china-activation.sh",
     "ops/deploy/seiche-data-readiness.service",
     "ops/deploy/seiche-data-readiness.sh",
     "ops/deploy/seiche-data-readiness.timer",
@@ -130,6 +135,7 @@ required_paths = {
     "ops/deploy/seiche-market-validation.timer",
     "ops/deploy/seiche-market-worker.service",
     "ops/deploy/seiche-nbs-intake.py",
+    "ops/deploy/seiche-palimpsest-china-activate.py",
     "ops/deploy/seiche-release-recovery-seal.service",
     "ops/deploy/seiche-release-recovery-seal.sh",
     "ops/deploy/seiche-railway-cutover-fence.sh",
@@ -1308,6 +1314,19 @@ PY
 }
 install_nbs_runtime
 
+# Install only the inert, release-addressed activation machinery. No Palimpsest
+# bundle, trust key, API environment, or service drop-in is created here.
+# Activation remains a separate root/operator ceremony after offline signing.
+[ -f "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE" ] \
+    && [ ! -L "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE" ] || {
+    echo "market platform: Palimpsest China activation installer is missing or unsafe" >&2
+    exit 1
+}
+/usr/bin/bash -n "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE"
+SEICHE_PRIVILEGED_ASSET_ROOT="$ASSET_ROOT" \
+SEICHE_RELEASE_TARGET_SHA="$RELEASE_TARGET" \
+    /usr/bin/bash "$PALIMPSEST_CHINA_ACTIVATION_INSTALLER_SOURCE"
+
 # The release wrapper uses umask 0077 while it checks out an exact candidate.
 # Git therefore may materialize tracked executable files as seiche:seiche 0700.
 # Capability-free root services cannot rely on root's DAC override to read
@@ -2007,12 +2026,14 @@ cat >"$BACKUP_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
+Environment=SEICHE_PALIMPSEST_CHINA_STATE_DIR=/var/lib/seiche-palimpsest-china
+Environment=SEICHE_PALIMPSEST_CHINA_AUDIT_BIN=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 Environment=SEICHE_API_DATA_DIR=$API_DATA_DIR
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 ReadOnlyPaths=
-ReadOnlyPaths=$APP_DIR $STATE_DIR $NBS_STATE_DIR $API_DATA_DIR
+ReadOnlyPaths=$APP_DIR $STATE_DIR $NBS_STATE_DIR /var/lib/seiche-palimpsest-china $API_DATA_DIR /var/lib/seiche-deploy
 ReadWritePaths=
-ReadWritePaths=$BACKUP_DIR /run/lock
+ReadWritePaths=$BACKUP_DIR /run/lock /run/seiche-deploy
 EOF
 chmod 0644 "$BACKUP_STAGE"
 mv -f "$BACKUP_STAGE" \
@@ -2027,12 +2048,14 @@ cat >"$RESTORE_STAGE" <<EOF
 Environment=SEICHE_APP_DIR=$APP_DIR
 Environment=SEICHE_MARKET_STATE_DIR=$STATE_DIR
 Environment=SEICHE_NBS_STATE_DIR=$NBS_STATE_DIR
+Environment=SEICHE_PALIMPSEST_CHINA_STATE_DIR=/var/lib/seiche-palimpsest-china
+Environment=SEICHE_PALIMPSEST_CHINA_AUDIT_BIN=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 Environment=SEICHE_MARKET_BACKUP_DIR=$BACKUP_DIR
 Environment=SEICHE_RESTORE_STATUS_PATH=$RESTORE_STATUS_PATH
 ReadOnlyPaths=
 ReadOnlyPaths=$APP_DIR $BACKUP_DIR
 ReadWritePaths=
-ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock
+ReadWritePaths=$RECOVERY_PROOF_DIR /run/lock /run/seiche-deploy
 EOF
 chmod 0644 "$RESTORE_STAGE"
 mv -f "$RESTORE_STAGE" \
@@ -2199,6 +2222,7 @@ offsite_canary_receipt_is_valid() {
     /usr/bin/python3 -I -B - \
         "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" <<'PY'
 import json
+import re
 import sys
 
 env_path, status_path = sys.argv[1:]
@@ -2220,9 +2244,58 @@ resolved_status = (
     )
 )
 valid = (
-    status.get("schema") == "seiche.market-offsite-backup-status.v2"
+    status.get("schema")
+        in {
+            "seiche.market-offsite-backup-status.v2",
+            "seiche.market-offsite-backup-status.v3",
+            "seiche.market-offsite-backup-status.v4",
+        }
     and resolved_status
-    and status.get("source_backup_schema") == "seiche.market-backup.v3"
+    and (
+        (
+            status.get("schema") == "seiche.market-offsite-backup-status.v2"
+            and status.get("source_backup_schema") == "seiche.market-backup.v3"
+            and not any(key.startswith("palimpsest_china_") for key in status)
+        )
+        or (
+            status.get("schema") in {
+                "seiche.market-offsite-backup-status.v3",
+                "seiche.market-offsite-backup-status.v4",
+            }
+            and status.get("source_backup_schema") == "seiche.market-backup.v4"
+            and status.get("palimpsest_china_state_root")
+                == "/var/lib/seiche-palimpsest-china"
+            and status.get("palimpsest_china_state_audit_contract")
+                == "seiche.palimpsest-china-activation-state.v1"
+            and re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(status.get("palimpsest_china_state_tree_sha256", "")),
+            ) is not None
+            and status.get("palimpsest_china_state") in {"active", "inactive"}
+            and (
+                status.get("schema") != "seiche.market-offsite-backup-status.v4"
+                or (
+                    status.get("mode") in {"canary", "scheduled"}
+                    and (
+                        status.get("palimpsest_china_active_activation_id") is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(status.get("palimpsest_china_active_activation_id", "")),
+                        ) is not None
+                    )
+                    and status.get("palimpsest_china_pending_candidate_activation_id")
+                    is None
+                    and (
+                        status.get("status") != "success"
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(status.get("remote_receipt_sha256", "")),
+                        ) is not None
+                    )
+                )
+            )
+        )
+    )
     and status.get("nbs_state_root") == "/var/lib/seiche-nbs"
     and status.get("nbs_full_store_audit_contract")
         == "seiche.nbs-full-store-audit.v1"
@@ -2235,7 +2308,48 @@ valid = (
     and status.get("object_lock") == {"days": 90, "mode": "COMPLIANCE"}
     and isinstance(success, dict)
     and success.get("restore_verified") is True
-    and success.get("source_backup_schema") == "seiche.market-backup.v3"
+    and (
+        (
+            status.get("schema") == "seiche.market-offsite-backup-status.v2"
+            and success.get("source_backup_schema") == "seiche.market-backup.v3"
+            and not any(key.startswith("palimpsest_china_") for key in success)
+        )
+        or (
+            status.get("schema") in {
+                "seiche.market-offsite-backup-status.v3",
+                "seiche.market-offsite-backup-status.v4",
+            }
+            and success.get("source_backup_schema") == "seiche.market-backup.v4"
+            and success.get("palimpsest_china_state_root")
+                == "/var/lib/seiche-palimpsest-china"
+            and success.get("palimpsest_china_state_audit_contract")
+                == "seiche.palimpsest-china-activation-state.v1"
+            and re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(success.get("palimpsest_china_state_tree_sha256", "")),
+            ) is not None
+            and success.get("palimpsest_china_state") in {"active", "inactive"}
+            and (
+                status.get("schema") != "seiche.market-offsite-backup-status.v4"
+                or (
+                    success.get("mode") == status.get("mode")
+                    and (
+                        success.get("palimpsest_china_active_activation_id") is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(success.get("palimpsest_china_active_activation_id", "")),
+                        ) is not None
+                    )
+                    and success.get("palimpsest_china_pending_candidate_activation_id")
+                    is None
+                    and re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(success.get("remote_receipt_sha256", "")),
+                    ) is not None
+                )
+            )
+        )
+    )
     and success.get("nbs_state_root") == "/var/lib/seiche-nbs"
     and success.get("nbs_full_store_audit_contract")
         == "seiche.nbs-full-store-audit.v1"

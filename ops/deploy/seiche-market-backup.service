@@ -3,15 +3,18 @@ Description=Commit a verified local Seiche market-data snapshot
 Requires=seiche-storage-preflight.service
 After=postgresql.service seiche-storage-preflight.service
 Wants=postgresql.service
-RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
+RequiresMountsFor=/var/lib/seiche /var/lib/seiche-nbs /var/lib/seiche-palimpsest-china /var/backups/seiche-market
 OnFailure=undertow-failure-alert@%n.service
 
 [Service]
 Type=oneshot
 User=root
 Group=root
+RuntimeDirectory=seiche-deploy
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 EnvironmentFile=/etc/seiche/market.env
-ExecStart=/usr/bin/flock --wait 300 /run/lock/seiche-market-backup.lock /usr/bin/bash /etc/seiche/libexec/seiche-market-backup.sh
+ExecStart=/etc/seiche/libexec/seiche-palimpsest-china-activate.py --run-market-locked backup
 TimeoutStartSec=2h
 CPUQuota=50%
 CPUWeight=5
@@ -24,7 +27,7 @@ TasksMax=64
 UMask=0077
 
 NoNewPrivileges=true
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_SETGID CAP_SETUID
 # Preserve only the credential-transition capabilities across flock and bash.
 AmbientCapabilities=CAP_SETGID CAP_SETUID
 PrivateTmp=true
@@ -46,5 +49,5 @@ RestrictNamespaces=true
 RemoveIPC=true
 RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native
-ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs /var/lib/seiche-deploy
-ReadWritePaths=/var/backups/seiche-market /run/lock
+ReadOnlyPaths=/home/seiche/app /var/lib/seiche /var/lib/seiche-nbs /var/lib/seiche-palimpsest-china /var/lib/seiche-deploy
+ReadWritePaths=/var/backups/seiche-market /run/lock /run/seiche-deploy

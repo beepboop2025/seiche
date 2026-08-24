@@ -11,7 +11,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from seiche.markets.world import project_world_markets
+from seiche.markets.world import (
+    project_world_markets,
+    unavailable_world_markets as project_unavailable_world_markets,
+)
 from seiche.nbs_intake import (
     NBSMacroContext,
     load_public_context_from_public_dir,
@@ -246,13 +249,54 @@ def world_markets(
     publication, and tests share the exact same evidence/status semantics.
     """
 
-    return project_world_markets(
+    projected = project_world_markets(
         snapshot,
         selector=selector,
         evaluation_asof=evaluation_asof,
         china_macro_context=china_macro_context,
         china_economic_context=china_economic_context,
     )
+    return _with_palimpsest_publication_status(projected)
+
+
+def unavailable_world_markets(
+    *,
+    selector: str,
+    reason: str,
+    china_macro_context: NBSMacroContext | None = None,
+    china_economic_context: PalimpsestChinaEconomicContext | None = None,
+) -> dict[str, Any]:
+    """Apply the same activation label to cold-cache REST and MCP output."""
+
+    projected = project_unavailable_world_markets(
+        selector=selector,
+        reason=reason,
+        china_macro_context=china_macro_context,
+        china_economic_context=china_economic_context,
+    )
+    return _with_palimpsest_publication_status(projected)
+
+
+def _with_palimpsest_publication_status(
+    projected: dict[str, Any],
+) -> dict[str, Any]:
+    publication_status = os.getenv(
+        "SEICHE_PALIMPSEST_CHINA_PUBLICATION_STATUS", ""
+    ).strip()
+    if publication_status not in {"", "provisional"}:
+        raise PalimpsestChinaIntakeError(
+            "Palimpsest China publication status must remain provisional"
+        )
+    # The exact-parent v1 activation environment predates the explicit status
+    # variable. During its locked one-way migration, the new API can restart
+    # before the v2 marker is committed. Fail closed at the served projection:
+    # every successfully loaded Palimpsest context is provisional regardless
+    # of whether the legacy or v2 environment launched this process.
+    china = projected.get("china_macro")
+    economic = china.get("economic_context") if isinstance(china, dict) else None
+    if isinstance(economic, dict):
+        economic["publication_status"] = "provisional"
+    return projected
 
 
 def public_china_macro_context() -> NBSMacroContext | None:
@@ -277,6 +321,18 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
     names = {
         "manifest": "SEICHE_PALIMPSEST_CHINA_MANIFEST_PATH",
         "artifact": "SEICHE_PALIMPSEST_CHINA_ARTIFACT_PATH",
+        "input_ledger": "SEICHE_PALIMPSEST_CHINA_INPUT_LEDGER_PATH",
+        "availability": "SEICHE_PALIMPSEST_CHINA_AVAILABILITY_PATH",
+        "producer_commit_evidence": (
+            "SEICHE_PALIMPSEST_CHINA_PRODUCER_COMMIT_EVIDENCE_PATH"
+        ),
+        "producer_main_evidence": (
+            "SEICHE_PALIMPSEST_CHINA_PRODUCER_MAIN_EVIDENCE_PATH"
+        ),
+        "handoff": "SEICHE_PALIMPSEST_CHINA_HANDOFF_PATH",
+        "checksums": "SEICHE_PALIMPSEST_CHINA_CHECKSUMS_PATH",
+        "lineage_chain": "SEICHE_PALIMPSEST_CHINA_LINEAGE_CHAIN_PATH",
+        "lineage_evidence": "SEICHE_PALIMPSEST_CHINA_LINEAGE_EVIDENCE_PATH",
         "acceptance": "SEICHE_PALIMPSEST_CHINA_ACCEPTANCE_PATH",
     }
     configured = {key: os.getenv(name, "").strip() for key, name in names.items()}
@@ -292,4 +348,12 @@ def public_china_economic_context() -> PalimpsestChinaEconomicContext | None:
         configured["manifest"],
         configured["artifact"],
         configured["acceptance"],
+        input_ledger_path=configured["input_ledger"],
+        availability_path=configured["availability"],
+        producer_commit_evidence_path=configured["producer_commit_evidence"],
+        producer_main_evidence_path=configured["producer_main_evidence"],
+        handoff_path=configured["handoff"],
+        checksums_path=configured["checksums"],
+        lineage_chain_path=configured["lineage_chain"],
+        lineage_evidence_path=configured["lineage_evidence"],
     )

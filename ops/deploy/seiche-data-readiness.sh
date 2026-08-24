@@ -15,6 +15,7 @@ RESTORE_RECEIPT="${SEICHE_DATA_READINESS_RESTORE_RECEIPT:-/var/lib/seiche-recove
 DEPLOYED_SHA_PATH="${SEICHE_DATA_READINESS_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
 OFFSITE_ENV_FILE="${SEICHE_DATA_READINESS_OFFSITE_ENV_FILE:-/etc/seiche/offsite-backup.env}"
 OFFSITE_STATUS_PATH="${SEICHE_DATA_READINESS_OFFSITE_STATUS_PATH:-/var/lib/seiche-offsite-backup/status.json}"
+ACTIVATION_STATUS_BIN="${SEICHE_DATA_READINESS_ACTIVATION_STATUS_BIN:-/etc/seiche/libexec/seiche-palimpsest-china-activate.py}"
 RECEIPT_UID="${SEICHE_DATA_READINESS_RECEIPT_UID:-0}"
 RECEIPT_GROUP="${SEICHE_DATA_READINESS_RECEIPT_GROUP:-seiche}"
 OFFSITE_UID="${SEICHE_DATA_READINESS_OFFSITE_UID:-0}"
@@ -47,7 +48,8 @@ if [ "$EUID" -eq 0 ]; then
         || [ "${SEICHE_SYSTEMCTL_BIN+x}" = x ] \
         || [ "${SEICHE_DF_BIN+x}" = x ] \
         || [ "${SEICHE_MKTEMP_BIN+x}" = x ] \
-        || [ "${SEICHE_RM_BIN+x}" = x ]; then
+        || [ "${SEICHE_RM_BIN+x}" = x ] \
+        || [ "${SEICHE_DATA_READINESS_ACTIVATION_STATUS_BIN+x}" = x ]; then
         configuration_invalid
     fi
     CURL_BIN=/usr/bin/curl
@@ -56,6 +58,7 @@ if [ "$EUID" -eq 0 ]; then
     DF_BIN=/usr/bin/df
     MKTEMP_BIN=/usr/bin/mktemp
     RM_BIN=/usr/bin/rm
+    ACTIVATION_STATUS_BIN=/etc/seiche/libexec/seiche-palimpsest-china-activate.py
 else
     [ "${SEICHE_ALLOW_NON_ROOT_READINESS_TEST:-}" = 1 ] \
         || configuration_invalid
@@ -65,11 +68,14 @@ else
     DF_BIN="${SEICHE_DF_BIN:-}"
     MKTEMP_BIN="${SEICHE_MKTEMP_BIN:-}"
     RM_BIN="${SEICHE_RM_BIN:-}"
+    ACTIVATION_STATUS_BIN="${SEICHE_DATA_READINESS_ACTIVATION_STATUS_BIN:-}"
 fi
-readonly CURL_BIN PYTHON_BIN SYSTEMCTL_BIN DF_BIN MKTEMP_BIN RM_BIN
+readonly CURL_BIN PYTHON_BIN SYSTEMCTL_BIN DF_BIN MKTEMP_BIN RM_BIN \
+    ACTIVATION_STATUS_BIN
 
 FAILURES=()
 HEALTH_FILE=""
+ACTIVATION_STATUS_FILE=""
 
 add_failure() {
     local existing
@@ -82,6 +88,9 @@ add_failure() {
 finish() {
     if [ -n "$HEALTH_FILE" ]; then
         "$RM_BIN" -f -- "$HEALTH_FILE" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$ACTIVATION_STATUS_FILE" ]; then
+        "$RM_BIN" -f -- "$ACTIVATION_STATUS_FILE" >/dev/null 2>&1 || true
     fi
 }
 trap finish EXIT
@@ -166,7 +175,8 @@ fi
 
 if [ ! -x "$CURL_BIN" ] || [ ! -x "$PYTHON_BIN" ] \
     || [ ! -x "$SYSTEMCTL_BIN" ] || [ ! -x "$DF_BIN" ] \
-    || [ ! -x "$MKTEMP_BIN" ] || [ ! -x "$RM_BIN" ]; then
+    || [ ! -x "$MKTEMP_BIN" ] || [ ! -x "$RM_BIN" ] \
+    || [ ! -x "$ACTIVATION_STATUS_BIN" ]; then
     add_failure "required command unavailable"
     CONFIG_VALID=0
 fi
@@ -188,6 +198,19 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
         HEALTH_AVAILABLE=1
     fi
 
+    ACTIVATION_STATUS_AVAILABLE=0
+    ACTIVATION_STATUS_FILE=$(
+        "$MKTEMP_BIN" "${TMPDIR:-/tmp}/seiche-activation-durability.XXXXXX" \
+            2>/dev/null
+    ) || ACTIVATION_STATUS_FILE=""
+    if [ -z "$ACTIVATION_STATUS_FILE" ] \
+        || ! "$ACTIVATION_STATUS_BIN" --durability-status \
+            >"$ACTIVATION_STATUS_FILE" 2>/dev/null; then
+        add_failure "Palimpsest China durability status unavailable"
+    else
+        ACTIVATION_STATUS_AVAILABLE=1
+    fi
+
     VALIDATION_OUTPUT=$(
         "$PYTHON_BIN" -I -B - "$HEALTH_FILE" "$HEALTH_AVAILABLE" "$BACKUP_DIR" \
             "$BACKUP_ARTIFACT" "$RESTORE_RECEIPT" "$DEPLOYED_SHA_PATH" \
@@ -195,11 +218,14 @@ if [ "$CONFIG_VALID" -eq 1 ]; then
             "$MAX_GENERATED_AGE" "$MAX_BACKUP_AGE" "$MAX_RESTORE_AGE" \
             "$MAX_OFFSITE_AGE" "$MAX_FUTURE_SKEW" "$NOW_EPOCH" \
             "$OFFSITE_ENV_FILE" "$OFFSITE_STATUS_PATH" \
-            "$OFFSITE_UID" "$OFFSITE_GID" "$SKIP_OFFSITE" 2>/dev/null <<'PY'
+            "$OFFSITE_UID" "$OFFSITE_GID" "$SKIP_OFFSITE" \
+            "$ACTIVATION_STATUS_FILE" "$ACTIVATION_STATUS_AVAILABLE" \
+            2>/dev/null <<'PY'
 from __future__ import annotations
 
 from datetime import UTC, datetime
 import grp
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -228,6 +254,8 @@ import time
     offsite_uid_raw,
     offsite_gid_raw,
     skip_offsite_raw,
+    activation_status_raw,
+    activation_status_available_raw,
 ) = sys.argv[1:]
 health_available = health_available_raw == "1"
 max_generated = int(max_generated_raw)
@@ -240,6 +268,7 @@ receipt_uid = int(receipt_uid_raw)
 offsite_uid = int(offsite_uid_raw)
 offsite_gid = int(offsite_gid_raw)
 skip_offsite = skip_offsite_raw == "1"
+activation_status_available = activation_status_available_raw == "1"
 reasons: list[str] = []
 
 
@@ -262,6 +291,316 @@ def timestamp(value: object) -> float | None:
         return parsed.astimezone(UTC).timestamp()
     except (OverflowError, OSError, ValueError):
         return None
+
+
+RESTORE_FIELDS = {
+    "schema",
+    "checked_at",
+    "snapshot",
+    "source_backup_schema",
+    "deployed_sha",
+    "critical_table_counts",
+    "critical_table_count_floor",
+    "nbs_full_store_audit_contract",
+    "nbs_full_store_audit_result",
+    "nbs_public_revision_store",
+    "palimpsest_china_state_archive_restore",
+    "palimpsest_china_state_audit_contract",
+    "palimpsest_china_state_tree_sha256",
+    "palimpsest_china_active_activation_id",
+    "palimpsest_china_pending_candidate_activation_id",
+    "palimpsest_china_bundle_count",
+    "palimpsest_china_receipt_count",
+    "database_restore",
+    "state_archive_restore",
+    "api_data_archive_restore",
+    "research_only",
+    "can_publish",
+    "can_execute",
+}
+
+
+def status_fields(body: bytes) -> dict[str, str]:
+    if not body.endswith(b"\n") or not 1 <= len(body) <= 16 * 1024:
+        raise ValueError
+    fields: dict[str, str] = {}
+    for line in body.decode("ascii", "strict").splitlines():
+        if line.count("=") != 1:
+            raise ValueError
+        key, value = line.split("=", 1)
+        if not key or key in fields:
+            raise ValueError
+        fields[key] = value
+    if set(fields) != RESTORE_FIELDS:
+        raise ValueError
+    return fields
+
+
+live_activation_id: str | None = None
+live_activation_tree: str | None = None
+durability_receipt: dict[str, object] | None = None
+if activation_status_available:
+    try:
+        status_body = Path(activation_status_raw).read_bytes()
+        if not 1 <= len(status_body) <= 64 * 1024:
+            raise ValueError
+        status_value = json.loads(status_body)
+        status_keys = {
+            "schema",
+            "status",
+            "activation_id",
+            "tree_sha256",
+            "durability_receipt_path",
+            "durability_receipt_sha256",
+        }
+        canonical_status = (
+            json.dumps(
+                status_value,
+                allow_nan=False,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            + b"\n"
+        )
+        if (
+            type(status_value) is not dict
+            or set(status_value) != status_keys
+            or status_body != canonical_status
+            or status_value.get("schema")
+            != "seiche.palimpsest-china-durability-status.v1"
+            or status_value.get("status")
+            not in {"inactive", "provisional", "activated_durable"}
+        ):
+            raise ValueError
+        if status_value["status"] == "inactive":
+            if any(status_value.get(key) is not None for key in status_keys - {"schema", "status"}):
+                raise ValueError
+        else:
+            live_activation_id = status_value.get("activation_id")
+            live_activation_tree = status_value.get("tree_sha256")
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", live_activation_id or "") is None
+                or re.fullmatch(r"[0-9a-f]{64}", live_activation_tree or "") is None
+            ):
+                raise ValueError
+            if status_value["status"] == "provisional":
+                if (
+                    status_value.get("durability_receipt_path") is not None
+                    or status_value.get("durability_receipt_sha256") is not None
+                ):
+                    raise ValueError
+                add("Palimpsest China activation is provisional")
+            else:
+                receipt_path = Path(status_value.get("durability_receipt_path", ""))
+                receipt_digest = status_value.get("durability_receipt_sha256")
+                expected_parent = Path(
+                    "/var/lib/seiche-recovery-proof/palimpsest-china-durability"
+                )
+                if offsite_uid != 0:
+                    # Host-free fixtures isolate the same closed contract.
+                    expected_parent = receipt_path.parent
+                receipt_metadata = receipt_path.lstat()
+                parent_metadata = receipt_path.parent.lstat()
+                receipt_body = receipt_path.read_bytes()
+                durability_receipt = json.loads(receipt_body)
+                if type(durability_receipt) is not dict:
+                    raise ValueError
+                durability_keys = {
+                    "schema",
+                    "status",
+                    "activation_id",
+                    "bundle_id",
+                    "release_sha",
+                    "active_marker_sha256",
+                    "activation_receipt_sha256",
+                    "activation_state_audit_sha256",
+                    "activation_state_tree_sha256",
+                    "local_backup_snapshot",
+                    "local_backup_inventory_sha256",
+                    "local_restore_schema",
+                    "local_restore_activation_id",
+                    "local_restore_tree_sha256",
+                    "local_restore_checked_at",
+                    "local_restore_receipt",
+                    "local_restore_receipt_sha256",
+                    "offsite_status_schema",
+                    "offsite_snapshot",
+                    "offsite_activation_id",
+                    "offsite_tree_sha256",
+                    "offsite_attempt_id",
+                    "offsite_remote_receipt_key",
+                    "offsite_remote_receipt_sha256",
+                    "offsite_verified_at",
+                    "completed_at",
+                }
+                canonical_receipt = (
+                    json.dumps(
+                        durability_receipt,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                    + b"\n"
+                )
+                embedded_restore = durability_receipt.get("local_restore_receipt")
+                if not isinstance(embedded_restore, str):
+                    raise ValueError
+                embedded_restore_body = embedded_restore.encode("ascii", "strict")
+                sealed_restore = status_fields(embedded_restore_body)
+                sealed_snapshot = durability_receipt.get("local_backup_snapshot")
+                sealed_attempt = durability_receipt.get("offsite_attempt_id")
+                sealed_remote_key = durability_receipt.get(
+                    "offsite_remote_receipt_key"
+                )
+                expected_remote_suffix = (
+                    f"/snapshots/{sealed_snapshot}/attempts/{sealed_attempt}/"
+                    "RECEIPT.json"
+                )
+                sealed_local_clock = timestamp(
+                    durability_receipt.get("local_restore_checked_at")
+                )
+                sealed_offsite_clock = timestamp(
+                    durability_receipt.get("offsite_verified_at")
+                )
+                sealed_completed_clock = timestamp(
+                    durability_receipt.get("completed_at")
+                )
+                sha_fields = {
+                    "activation_id",
+                    "bundle_id",
+                    "active_marker_sha256",
+                    "activation_receipt_sha256",
+                    "activation_state_audit_sha256",
+                    "activation_state_tree_sha256",
+                    "local_backup_inventory_sha256",
+                    "local_restore_activation_id",
+                    "local_restore_tree_sha256",
+                    "local_restore_receipt_sha256",
+                    "offsite_activation_id",
+                    "offsite_tree_sha256",
+                    "offsite_remote_receipt_sha256",
+                }
+                if (
+                    receipt_path.parent != expected_parent
+                    or not stat.S_ISDIR(parent_metadata.st_mode)
+                    or parent_metadata.st_uid != offsite_uid
+                    or parent_metadata.st_gid != offsite_gid
+                    or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+                    or not stat.S_ISREG(receipt_metadata.st_mode)
+                    or receipt_metadata.st_uid != offsite_uid
+                    or receipt_metadata.st_gid != offsite_gid
+                    or stat.S_IMODE(receipt_metadata.st_mode) != 0o400
+                    or receipt_metadata.st_nlink != 1
+                    or not 1 <= len(receipt_body) <= 64 * 1024
+                    or re.fullmatch(r"[0-9a-f]{64}", receipt_digest or "") is None
+                    or hashlib.sha256(receipt_body).hexdigest() != receipt_digest
+                    or set(durability_receipt) != durability_keys
+                    or receipt_body != canonical_receipt
+                    or durability_receipt.get("schema")
+                    != "seiche.palimpsest-china-activation-durability.v1"
+                    or durability_receipt.get("status") != "activated_durable"
+                    or any(
+                        re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(durability_receipt.get(field, "")),
+                        )
+                        is None
+                        for field in sha_fields
+                    )
+                    or re.fullmatch(
+                        r"[0-9a-f]{40}",
+                        str(durability_receipt.get("release_sha", "")),
+                    )
+                    is None
+                    or durability_receipt.get("activation_id") != live_activation_id
+                    or durability_receipt.get("activation_state_tree_sha256")
+                    != live_activation_tree
+                    or durability_receipt.get("local_restore_schema")
+                    != "seiche.market-backup-restore-check.v5"
+                    or durability_receipt.get("local_restore_activation_id")
+                    != live_activation_id
+                    or durability_receipt.get("local_restore_tree_sha256")
+                    != live_activation_tree
+                    or durability_receipt.get("offsite_status_schema")
+                    != "seiche.market-offsite-backup-status.v4"
+                    or durability_receipt.get("offsite_activation_id")
+                    != live_activation_id
+                    or durability_receipt.get("offsite_tree_sha256")
+                    != live_activation_tree
+                    or durability_receipt.get("offsite_snapshot") != sealed_snapshot
+                    or re.fullmatch(
+                        r"20[0-9]{6}T[0-9]{6}Z", str(sealed_snapshot)
+                    )
+                    is None
+                    or re.fullmatch(
+                        r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", str(sealed_attempt)
+                    )
+                    is None
+                    or not isinstance(sealed_remote_key, str)
+                    or not sealed_remote_key.endswith(expected_remote_suffix)
+                    or "/canary/" in sealed_remote_key
+                    or hashlib.sha256(embedded_restore_body).hexdigest()
+                    != durability_receipt.get("local_restore_receipt_sha256")
+                    or sealed_restore.get("schema")
+                    != "seiche.market-backup-restore-check.v5"
+                    or sealed_restore.get("snapshot") != sealed_snapshot
+                    or sealed_restore.get("source_backup_schema")
+                    != "seiche.market-backup.v4"
+                    or sealed_restore.get("deployed_sha")
+                    != durability_receipt.get("release_sha")
+                    or sealed_restore.get("palimpsest_china_state_archive_restore")
+                    != "verified"
+                    or sealed_restore.get("palimpsest_china_state_audit_contract")
+                    != "seiche.palimpsest-china-activation-state.v1"
+                    or sealed_restore.get("palimpsest_china_state_tree_sha256")
+                    != live_activation_tree
+                    or sealed_restore.get("palimpsest_china_active_activation_id")
+                    != live_activation_id
+                    or sealed_restore.get(
+                        "palimpsest_china_pending_candidate_activation_id"
+                    )
+                    != "none"
+                    or sealed_restore.get("checked_at")
+                    != durability_receipt.get("local_restore_checked_at")
+                    or sealed_restore.get("database_restore") != "pass"
+                    or sealed_restore.get("state_archive_restore") != "pass"
+                    or sealed_restore.get("api_data_archive_restore") != "pass"
+                    or sealed_restore.get("research_only") != "true"
+                    or sealed_restore.get("can_publish") != "false"
+                    or sealed_restore.get("can_execute") != "false"
+                    or sealed_restore.get("nbs_full_store_audit_contract")
+                    != "seiche.nbs-full-store-audit.v1"
+                    or sealed_restore.get("nbs_full_store_audit_result")
+                    != sealed_restore.get("nbs_public_revision_store")
+                    or sealed_restore.get("nbs_full_store_audit_result")
+                    not in {"not_onboarded", "verified_head"}
+                    or re.fullmatch(
+                        r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+",
+                        sealed_restore.get("critical_table_counts", ""),
+                    )
+                    is None
+                    or re.fullmatch(
+                        r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+",
+                        sealed_restore.get("critical_table_count_floor", ""),
+                    )
+                    is None
+                    or sealed_local_clock is None
+                    or sealed_offsite_clock is None
+                    or sealed_completed_clock is None
+                    or not (
+                        sealed_local_clock
+                        <= sealed_offsite_clock
+                        <= sealed_completed_clock
+                    )
+                    or receipt_path.name
+                    != f"{live_activation_id}.{live_activation_tree}.json"
+                ):
+                    raise ValueError
+    except (OSError, UnicodeError, ValueError, TypeError):
+        durability_receipt = None
+        add("Palimpsest China durability status invalid")
 
 
 if health_available:
@@ -407,12 +746,15 @@ elif now - backup_epoch > max_backup:
 
 restore_receipt = Path(restore_receipt_raw)
 checked_at: float | None = None
+restore_fields: dict[str, str] | None = None
+restore_receipt_sha256: str | None = None
 if secure_restore_receipt(restore_receipt):
     try:
         if restore_receipt.stat().st_size > 64 * 1024:
             raise ValueError
+        restore_body = restore_receipt.read_bytes()
         fields: dict[str, str] = {}
-        for line in restore_receipt.read_text(encoding="utf-8").splitlines():
+        for line in restore_body.decode("utf-8").splitlines():
             key, separator, value = line.partition("=")
             if not separator or not key or key in fields:
                 raise ValueError
@@ -429,17 +771,25 @@ if secure_restore_receipt(restore_receipt):
             "schema",
             "checked_at",
             "snapshot",
+            "source_backup_schema",
             "deployed_sha",
             "critical_table_counts",
             "critical_table_count_floor",
             "nbs_full_store_audit_contract",
             "nbs_full_store_audit_result",
             "nbs_public_revision_store",
+            "palimpsest_china_state_archive_restore",
+            "palimpsest_china_state_audit_contract",
+            "palimpsest_china_state_tree_sha256",
+            "palimpsest_china_active_activation_id",
+            "palimpsest_china_pending_candidate_activation_id",
+            "palimpsest_china_bundle_count",
+            "palimpsest_china_receipt_count",
             *required_passes,
         }
         if set(fields) != required_fields:
             raise ValueError
-        if fields.get("schema") != "seiche.market-backup-restore-check.v4":
+        if fields.get("schema") != "seiche.market-backup-restore-check.v5":
             raise ValueError
         if any(fields.get(key) != value for key, value in required_passes.items()):
             raise ValueError
@@ -456,6 +806,45 @@ if secure_restore_receipt(restore_receipt):
             raise ValueError
         if fields.get("nbs_public_revision_store") != nbs_audit_result:
             raise ValueError
+        if (
+            fields.get("palimpsest_china_state_audit_contract")
+            != "seiche.palimpsest-china-activation-state.v1"
+        ):
+            raise ValueError
+        source_backup_schema = fields.get("source_backup_schema")
+        palimpsest_result = fields.get("palimpsest_china_state_archive_restore")
+        palimpsest_tree = fields.get("palimpsest_china_state_tree_sha256")
+        active_id = fields.get("palimpsest_china_active_activation_id")
+        pending_id = fields.get("palimpsest_china_pending_candidate_activation_id")
+        if source_backup_schema == "seiche.market-backup.v3":
+            if (
+                palimpsest_result != "legacy_absent_inactive"
+                or palimpsest_tree != "absent"
+                or active_id != "none"
+                or pending_id != "none"
+                or fields.get("palimpsest_china_bundle_count") != "0"
+                or fields.get("palimpsest_china_receipt_count") != "0"
+            ):
+                raise ValueError
+        elif source_backup_schema == "seiche.market-backup.v4":
+            if (
+                palimpsest_result != "verified"
+                or re.fullmatch(r"[0-9a-f]{64}", palimpsest_tree or "") is None
+                or re.fullmatch(r"(?:none|[0-9a-f]{64})", active_id or "") is None
+                or re.fullmatch(r"(?:none|[0-9a-f]{64})", pending_id or "")
+                is None
+                or re.fullmatch(
+                    r"[0-9]+", fields.get("palimpsest_china_bundle_count", "")
+                )
+                is None
+                or re.fullmatch(
+                    r"[0-9]+", fields.get("palimpsest_china_receipt_count", "")
+                )
+                is None
+            ):
+                raise ValueError
+        else:
+            raise ValueError
         if re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", fields.get("snapshot", "")) is None:
             raise ValueError
         if re.fullmatch(r"[0-9a-f]{40}", fields.get("deployed_sha", "")) is None:
@@ -466,6 +855,8 @@ if secure_restore_receipt(restore_receipt):
         if re.fullmatch(count_shape, fields.get("critical_table_count_floor", "")) is None:
             raise ValueError
         checked_at = timestamp(fields.get("checked_at"))
+        restore_fields = fields
+        restore_receipt_sha256 = hashlib.sha256(restore_body).hexdigest()
         if (
             current_deployed_sha is not None
             and fields["deployed_sha"] != current_deployed_sha
@@ -473,12 +864,60 @@ if secure_restore_receipt(restore_receipt):
             add("restore receipt belongs to a different release")
     except (OSError, UnicodeError, ValueError):
         checked_at = None
+        restore_fields = None
+        restore_receipt_sha256 = None
 if checked_at is None:
     add("restore receipt missing or invalid")
 elif checked_at > now + max_future_skew:
     add("restore receipt timestamp is in the future")
 elif now - checked_at > max_restore:
     add("restore receipt stale")
+
+if live_activation_id is not None and durability_receipt is not None:
+    if (
+        restore_fields is None
+        or restore_fields.get("source_backup_schema") != "seiche.market-backup.v4"
+        or restore_fields.get("palimpsest_china_state_archive_restore") != "verified"
+        or restore_fields.get("palimpsest_china_active_activation_id")
+        != live_activation_id
+        or restore_fields.get("palimpsest_china_state_tree_sha256")
+        != live_activation_tree
+        or restore_fields.get("palimpsest_china_pending_candidate_activation_id")
+        != "none"
+    ):
+        add("Palimpsest China restore proof does not match the live activation")
+    # The immutable durability receipt embeds the exact activation-time v5
+    # restore bytes. Local snapshot retention may later remove that historical
+    # directory; current readiness is carried by a non-regressed v5 successor.
+    try:
+        sealed_snapshot = durability_receipt.get("local_backup_snapshot")
+        sealed_restore_digest = durability_receipt.get("local_restore_receipt_sha256")
+        sealed_restore_id = durability_receipt.get("local_restore_activation_id")
+        sealed_restore_tree = durability_receipt.get("local_restore_tree_sha256")
+        sealed_restore_clock = timestamp(
+            durability_receipt.get("local_restore_checked_at")
+        )
+        current_restore_snapshot = (
+            restore_fields.get("snapshot") if restore_fields is not None else None
+        )
+        if (
+            re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", str(sealed_snapshot)) is None
+            or re.fullmatch(r"[0-9a-f]{64}", str(sealed_restore_digest)) is None
+            or sealed_restore_id != live_activation_id
+            or sealed_restore_tree != live_activation_tree
+            or sealed_restore_clock is None
+            or checked_at is None
+            or checked_at < sealed_restore_clock
+            or not isinstance(current_restore_snapshot, str)
+            or current_restore_snapshot < str(sealed_snapshot)
+            or (
+                current_restore_snapshot == sealed_snapshot
+                and restore_receipt_sha256 != sealed_restore_digest
+            )
+        ):
+            raise ValueError
+    except (OSError, UnicodeError, ValueError, TypeError):
+        add("Palimpsest China sealed local restore proof is unavailable")
 
 
 def secure_private_file(path: Path) -> bool:
@@ -517,6 +956,86 @@ def bounded_version(value: object) -> bool:
 
 offsite_env = Path(offsite_env_raw)
 offsite_status = Path(offsite_status_raw)
+if live_activation_id is not None and durability_receipt is not None:
+    try:
+        if (
+            not secure_status_file(offsite_status)
+            or offsite_status.stat().st_size > 256 * 1024
+        ):
+            raise ValueError
+        exact_offsite = json.loads(offsite_status.read_text(encoding="utf-8"))
+        if type(exact_offsite) is not dict:
+            raise ValueError
+        exact_success = exact_offsite.get("last_success")
+        if type(exact_success) is not dict:
+            raise ValueError
+        exact_snapshot = exact_success.get("snapshot_id")
+        exact_attempt = exact_success.get("attempt_id")
+        exact_key = exact_success.get("remote_receipt_key")
+        exact_digest = exact_success.get("remote_receipt_sha256")
+        exact_verified_clock = timestamp(exact_success.get("verified_at"))
+        sealed_snapshot = durability_receipt.get("offsite_snapshot")
+        sealed_attempt = durability_receipt.get("offsite_attempt_id")
+        sealed_key = durability_receipt.get("offsite_remote_receipt_key")
+        sealed_digest = durability_receipt.get("offsite_remote_receipt_sha256")
+        sealed_verified_clock = timestamp(
+            durability_receipt.get("offsite_verified_at")
+        )
+        expected_key = (
+            f"{exact_success.get('prefix')}/snapshots/{exact_snapshot}/attempts/"
+            f"{exact_attempt}/RECEIPT.json"
+        )
+        if (
+            exact_success.get("palimpsest_china_active_activation_id")
+            != live_activation_id
+            or exact_success.get("palimpsest_china_state_tree_sha256")
+            != live_activation_tree
+            or exact_success.get("palimpsest_china_pending_candidate_activation_id")
+            is not None
+        ):
+            raise ValueError
+        if (
+            exact_offsite.get("schema")
+            != "seiche.market-offsite-backup-status.v4"
+            or exact_offsite.get("status") not in {"running", "failed", "success"}
+            or exact_success.get("mode") != "scheduled"
+            or exact_success.get("restore_verified") is not True
+            or re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", exact_snapshot or "")
+            is None
+            or re.fullmatch(
+                r"20[0-9]{6}T[0-9]{6}Z-[0-9]+", exact_attempt or ""
+            )
+            is None
+            or exact_key != expected_key
+            or re.fullmatch(r"[0-9a-f]{64}", exact_digest or "") is None
+            or durability_receipt.get("offsite_status_schema")
+            != "seiche.market-offsite-backup-status.v4"
+            or durability_receipt.get("offsite_activation_id")
+            != live_activation_id
+            or durability_receipt.get("offsite_tree_sha256")
+            != live_activation_tree
+            or re.fullmatch(
+                r"[0-9a-f]{64}",
+                str(durability_receipt.get("offsite_remote_receipt_sha256", "")),
+            )
+            is None
+            or exact_verified_clock is None
+            or sealed_verified_clock is None
+            or exact_verified_clock < sealed_verified_clock
+            or not isinstance(exact_snapshot, str)
+            or exact_snapshot < str(sealed_snapshot)
+            or (
+                exact_snapshot == sealed_snapshot
+                and (
+                    exact_attempt != sealed_attempt
+                    or exact_key != sealed_key
+                    or exact_digest != sealed_digest
+                )
+            )
+        ):
+            raise ValueError
+    except (OSError, UnicodeError, ValueError, TypeError):
+        add("Palimpsest China offsite proof does not match the live activation")
 try:
     offsite_env_exists = offsite_env.exists() or offsite_env.is_symlink()
 except OSError:
@@ -617,7 +1136,7 @@ if not skip_offsite and offsite_env_exists:
                     "checksum_etag",
                     "remote_receipt_etag",
                 )
-                source_backup_contract = {
+                legacy_source_backup_contract = {
                     "source_backup_schema": "seiche.market-backup.v3",
                     "nbs_state_root": "/var/lib/seiche-nbs",
                     "nbs_full_store_audit_contract": (
@@ -625,10 +1144,81 @@ if not skip_offsite and offsite_env_exists:
                     ),
                     "nbs_full_store_audit_result": "required_at_restore",
                 }
+                modern_source_backup_contract = {
+                    **legacy_source_backup_contract,
+                    "source_backup_schema": "seiche.market-backup.v4",
+                    "palimpsest_china_state_root": (
+                        "/var/lib/seiche-palimpsest-china"
+                    ),
+                    "palimpsest_china_state_audit_contract": (
+                        "seiche.palimpsest-china-activation-state.v1"
+                    ),
+                }
+                status_schema = status_document.get("schema")
+
+                def source_contract_valid(
+                    record: dict[str, object], *, completed: bool
+                ) -> bool:
+                    if status_schema == "seiche.market-offsite-backup-status.v2":
+                        return all(
+                            record.get(field) == value
+                            for field, value in legacy_source_backup_contract.items()
+                        ) and not any(
+                            field.startswith("palimpsest_china_") for field in record
+                        )
+                    if status_schema not in {
+                        "seiche.market-offsite-backup-status.v3",
+                        "seiche.market-offsite-backup-status.v4",
+                    }:
+                        return False
+                    base_valid = (
+                        all(
+                            record.get(field) == value
+                            for field, value in modern_source_backup_contract.items()
+                        )
+                        and re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(record.get("palimpsest_china_state_tree_sha256", "")),
+                        )
+                        is not None
+                        and record.get("palimpsest_china_state")
+                        in {"active", "inactive"}
+                    )
+                    if status_schema == "seiche.market-offsite-backup-status.v3":
+                        return base_valid
+                    identity_valid = base_valid and (
+                        record.get("palimpsest_china_active_activation_id") is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(record.get("palimpsest_china_active_activation_id", "")),
+                        )
+                        is not None
+                    ) and (
+                        record.get("palimpsest_china_pending_candidate_activation_id")
+                        is None
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(record.get("palimpsest_china_pending_candidate_activation_id", "")),
+                        )
+                        is not None
+                    )
+                    return identity_valid and (
+                        not completed
+                        or re.fullmatch(
+                            r"[0-9a-f]{64}",
+                            str(record.get("remote_receipt_sha256", "")),
+                        )
+                        is not None
+                    )
+
                 current_state = status_document.get("status")
                 valid = (
-                    status_document.get("schema")
-                    == "seiche.market-offsite-backup-status.v2"
+                    status_schema
+                    in {
+                        "seiche.market-offsite-backup-status.v2",
+                        "seiche.market-offsite-backup-status.v3",
+                        "seiche.market-offsite-backup-status.v4",
+                    }
                     and current_state in {"running", "failed", "success"}
                     and status_document.get("provider")
                     == "hetzner-object-storage"
@@ -654,9 +1244,9 @@ if not skip_offsite and offsite_env_exists:
                     is not None
                     and status_document.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
-                    and all(
-                        status_document.get(field) == value
-                        for field, value in source_backup_contract.items()
+                    and source_contract_valid(
+                        status_document,
+                        completed=current_state == "success",
                     )
                     and status_document.get("restore_verified")
                     is (current_state == "success")
@@ -678,10 +1268,7 @@ if not skip_offsite and offsite_env_exists:
                     == current_destination.get("region")
                     and success.get("object_lock")
                     == {"mode": "COMPLIANCE", "days": 90}
-                    and all(
-                        success.get(field) == value
-                        for field, value in source_backup_contract.items()
-                    )
+                    and source_contract_valid(success, completed=True)
                     and re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", snapshot_id or "")
                     is not None
                     and re.fullmatch(
@@ -715,6 +1302,14 @@ if not skip_offsite and offsite_env_exists:
                         and re.fullmatch(r'"[A-Fa-f0-9-]{16,128}"', success[field])
                         is not None
                         for field in etag_fields
+                    )
+                    and (
+                        status_schema != "seiche.market-offsite-backup-status.v4"
+                        or (
+                            status_document.get("mode") == "scheduled"
+                            and success.get("mode") == "scheduled"
+                            and receipt_key == scheduled_receipt
+                        )
                     )
                 )
                 verified_at = timestamp(success.get("verified_at"))
@@ -752,6 +1347,11 @@ PY
                 "restore receipt belongs to a different release"|\
                 "restore receipt timestamp is in the future"|\
                 "restore receipt stale"|\
+                "Palimpsest China activation is provisional"|\
+                "Palimpsest China durability status invalid"|\
+                "Palimpsest China restore proof does not match the live activation"|\
+                "Palimpsest China sealed local restore proof is unavailable"|\
+                "Palimpsest China offsite proof does not match the live activation"|\
                 "offsite backup configuration invalid"|\
                 "offsite backup proof missing or invalid"|\
                 "offsite backup proof timestamp is in the future"|\

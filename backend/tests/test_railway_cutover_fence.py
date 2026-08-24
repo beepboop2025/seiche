@@ -85,6 +85,10 @@ if command == "start":
         members = {{
             "seiche.dump": b"postgres-dump\\n",
             "var-lib-seiche.tgz": b"state-archive\\n",
+            "palimpsest-china.tgz": b"palimpsest-china-state-archive\\n",
+            "palimpsest-china-state.json": (
+                b'{{"schema":"seiche.palimpsest-china-activation-state.v1"}}\\n'
+            ),
             "api-data.tgz": b"api-archive\\n",
             "table-counts.txt": b"10|20|30|40\\n",
             "deployed-sha.txt": (os.environ["FAKE_EXPECTED_SHA"] + "\\n").encode(),
@@ -98,11 +102,14 @@ if command == "start":
         (snapshot / "SHA256SUMS").write_text("\\n".join(inventory) + "\\n", encoding="ascii")
     elif unit == "seiche-market-restore-check.service":
         Path(os.environ["FAKE_RESTORE_STATUS"]).write_text(
-            "schema=seiche.market-backup-restore-check.v4\\n"
+            "schema=seiche.market-backup-restore-check.v5\\n"
             "snapshot=20260823T031000Z\\n"
+            "source_backup_schema=seiche.market-backup.v4\\n"
             f"deployed_sha={{os.environ['FAKE_EXPECTED_SHA']}}\\n"
             "database_restore=pass\\n"
             "state_archive_restore=pass\\n"
+            "palimpsest_china_state_archive_restore=verified\\n"
+            "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1\\n"
             "api_data_archive_restore=pass\\n",
             encoding="utf-8",
         )
@@ -151,7 +158,7 @@ def _fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     )
     fake_date = _executable(
         root / "date",
-        "#!/bin/sh\ncase \"$*\" in\n"
+        '#!/bin/sh\ncase "$*" in\n'
         "  *'-d +4 hours'*) printf '%s\\n' '2026-08-23T07:00:00Z' ;;\n"
         "  *) printf '%s\\n' '2026-08-23T03:00:00Z' ;;\n"
         "esac\n",
@@ -181,7 +188,9 @@ def _fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     return environment, state_dir, systemctl_state
 
 
-def _run(environment: dict[str, str], *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    environment: dict[str, str], *arguments: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(SCRIPT), *arguments],
         env=environment,
@@ -376,7 +385,9 @@ print("200", end="")
     assert not edge_env.exists()
     assert not dropin.exists()
 
-    (state_dir / "activation-ack.json").write_bytes(_canonical({"authority": "railway"}))
+    (state_dir / "activation-ack.json").write_bytes(
+        _canonical({"authority": "railway"})
+    )
     refused = subprocess.run(
         ["bash", str(EDGE_SCRIPT), "local"],
         env=rollback_environment,

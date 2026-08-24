@@ -10,7 +10,7 @@ retrying host-local service. None of these phases gives Railway a production
 credential or a stateful production role.
 
 Phase 4 adds an isolated stateful shadow on one Railway volume plus Railway
-PostgreSQL. It restores exact backup-v3 bytes and serves private compatibility
+PostgreSQL. It restores exact backup-v4 bytes and serves private compatibility
 health only. Hetzner remains the sole writer, public origin, and rollback
 authority; Phase 4 contains no cutover path. See
 [RAILWAY-STATEFUL-MIGRATION.md](RAILWAY-STATEFUL-MIGRATION.md).
@@ -74,10 +74,10 @@ release-bound backup + isolated restore + readiness
         v
 immutable recovery receipt -> fully recovery sealed
 
-committed exact-SHA backup-v3 + live/recovery receipt digests
+committed exact-SHA backup-v4 + live/recovery receipt digests
         |
         v
-operator stages a closed seven-file snapshot on an isolated Railway volume
+operator stages a closed nine-file snapshot on an isolated Railway volume
         |
         v
 Railway restores filesystem generations + generation-specific PostgreSQL
@@ -192,13 +192,15 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   bundle, proves their exact commit/tree/byte identity, and keeps the source
   worktree read-only. The root supervisor alone can restore the mounted volume;
   it starts only the API child as uid/gid 10001.
-- `seiche.stateful_migration` accepts only the seven-file backup-v3 contract,
+- `seiche.stateful_migration` accepts the nine-file backup-v4 contract (and
+  legacy v3 only as an empty, inactive Palimpsest China state),
   rejects links, traversal, archive aliases, device members, oversized content,
   and unstable files, then performs SQLite, full NBS, PostgreSQL, and count-floor
   verification before writing a receipt.
 - Every accepted filesystem and database has a content-derived generation
-  name. Restart reuse re-hashes all three trees, repeats SQLite/NBS checks, and
-  requires unchanged PostgreSQL counts. A receipt cannot authorize drift.
+  name. Restart reuse re-hashes all four trees, repeats SQLite/NBS/Palimpsest
+  activation-state checks, and requires unchanged PostgreSQL counts. A receipt
+  cannot authorize drift.
 - The service has no public domain, worker, publisher, collector, bot, Hetzner
   credential, or production control plane. Its `/healthz` is deployment
   admission and private compatibility evidence, not a public availability SLO.
@@ -393,7 +395,7 @@ health, receipt, and rollback checks. Its v2 receipt is visibly marked
   activate it until three Phase 4 canaries and Phase 6 recovery controls
   are green.
 - Phase 6 adds separately protected native-backup administration, six-hour
-  production/PITR/volume monitoring, and a daily activation-bound backup-v3
+  production/PITR/volume monitoring, and a daily activation-bound backup-v4
   export. Each export pauses only Railway writers, keeps reads online, restores
   the portable bytes in isolation, and seals them outside Railway under
   COMPLIANCE Object Lock. Native-backup bootstrap and a non-production external
