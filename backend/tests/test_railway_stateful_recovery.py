@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -14,6 +15,7 @@ import pytest
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
 from seiche import stateful_recovery as recovery
+from seiche import palimpsest_china_activation as palimpsest_activation
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -69,6 +71,8 @@ def _activation_context(
             "id": request["request_id"],
             "sha256": "3" * 64,
             "commit": request["commit"],
+            "tree": "b" * 40,
+            "source_shadow_receipt_sha256": "2" * 64,
         },
         "fence": {
             "sha256": "4" * 64,
@@ -128,18 +132,6 @@ def _activation_context(
         "can_publish": False,
         "can_execute": False,
     }
-    token = "edge-token-" + "x" * 32
-    grant = {
-        "public_base_url": "https://api.seiche.info",
-        "public_probe_sha256": "1" * 64,
-        "activated_at": _iso(now - timedelta(minutes=4)),
-    }
-    activation = cutover.render_activation_receipt(
-        candidate,
-        grant,
-        worker_commands=cutover.worker_commands(),
-        workers_started_at=_iso(now - timedelta(minutes=3)),
-    )
     generation = platform / "generations" / str(candidate["filesystem"]["generation"])
     for name in (
         "market/raw",
@@ -155,15 +147,78 @@ def _activation_context(
     with sqlite3.connect(generation / "api" / "seiche.sqlite") as database:
         database.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
         database.execute("INSERT INTO sample(value) VALUES ('ready')")
+    palimpsest_audit = palimpsest_activation.audit_activation_state(
+        generation / "palimpsest-china",
+        root_uid=os.geteuid(),
+        root_gid=os.getegid(),
+        api_uid=os.geteuid(),
+        api_gid=os.getegid(),
+        declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+    )
+    candidate["palimpsest_china_state"] = migration.palimpsest_china_state_from_audit(
+        palimpsest_audit
+    )
+    shadow = {
+        "schema": migration.RECEIPT_SCHEMA,
+        "request": {
+            "id": "1" * 64,
+            "sha256": "2" * 64,
+            "commit": request["commit"],
+            "tree": "b" * 40,
+            "source_archive_sha256": "3" * 64,
+            "source_bundle_sha256": "4" * 64,
+            "source_release_receipt_sha256": "5" * 64,
+            "source_recovery_receipt_sha256": "6" * 64,
+        },
+        "authority": {
+            "mode": "shadow",
+            "source": "hetzner",
+            "source_writers_frozen": False,
+            "public_traffic_enabled": False,
+            "workers_started": False,
+        },
+        "bundle": {},
+        "database": {},
+        "filesystem": {},
+        "palimpsest_china_state": candidate["palimpsest_china_state"],
+        "railway": {},
+        "timing": {},
+        "research_only": True,
+        "can_publish": False,
+        "can_execute": False,
+    }
+    shadow_body = migration.canonical_document(shadow)
+    candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
+        shadow_body
+    ).hexdigest()
+    shadow_receipts = platform / "receipts"
+    shadow_receipts.mkdir(parents=True)
+    (shadow_receipts / ("e" * 64 + ".json")).write_bytes(shadow_body)
+    token = "edge-token-" + "x" * 32
+    grant = {
+        "public_base_url": "https://api.seiche.info",
+        "public_probe_sha256": "1" * 64,
+        "activated_at": _iso(now - timedelta(minutes=4)),
+    }
+    activation = cutover.render_activation_receipt(
+        candidate,
+        grant,
+        worker_commands=cutover.worker_commands(),
+        workers_started_at=_iso(now - timedelta(minutes=3)),
+    )
     activation_path = (
         platform / "cutover-receipts" / (f"{request['request_id']}.activation.json")
     )
     activation_path.parent.mkdir(parents=True)
+    candidate_path = (
+        platform / "cutover-receipts" / (f"{request['request_id']}.candidate.json")
+    )
+    candidate_path.write_bytes(migration.canonical_document(candidate))
     activation_path.write_bytes(migration.canonical_document(activation))
     restore = cutover.CutoverRestore(
         candidate,
         "postgresql://generation-only",
-        platform / "cutover-receipts" / f"{request['request_id']}.candidate.json",
+        candidate_path,
         generation,
     )
     base = {
@@ -329,10 +384,16 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
         "writers_paused_for_export": True,
         "writers_restarted": True,
     }
+    candidate = json.loads(
+        Path(environment["SEICHE_RAILWAY_CANDIDATE_RECEIPT_PATH"]).read_bytes()
+    )
+    shadow = json.loads(next((platform / "receipts").iterdir()).read_bytes())
     validated = recovery.validate_receipt(
         receipt,
         request=request,
         activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
         railway=_railway(platform),
         bundle_root=bundle_root,
     )
@@ -340,10 +401,72 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     assert validated["filesystem"]["palimpsest_china_state_audit_result"] == (
         "verified"
     )
+    replacements = {
+        "audit_schema": "seiche.palimpsest-china-activation-state.v0",
+        "tree_sha256": "0" * 64,
+        "active_activation_id": "0" * 64,
+        "pending_candidate_activation_id": "0" * 64,
+    }
+    for field, replacement in replacements.items():
+        tampered_shadow = copy.deepcopy(shadow)
+        tampered_shadow["palimpsest_china_state"][field] = replacement
+        rebound_candidate = copy.deepcopy(candidate)
+        rebound_candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
+            migration.canonical_document(tampered_shadow)
+        ).hexdigest()
+        with pytest.raises(
+            recovery.RecoveryContractError,
+            match="Palimpsest China",
+        ):
+            recovery.validate_shadow_chain(
+                tampered_shadow,
+                candidate_receipt=rebound_candidate,
+            )
+    downgraded_shadow = copy.deepcopy(shadow)
+    downgraded_shadow["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+    rebound_candidate = copy.deepcopy(candidate)
+    rebound_candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
+        migration.canonical_document(downgraded_shadow)
+    ).hexdigest()
+    with pytest.raises(recovery.RecoveryContractError, match="binding"):
+        recovery.validate_shadow_chain(
+            downgraded_shadow,
+            candidate_receipt=rebound_candidate,
+        )
+    for field, replacement in replacements.items():
+        tampered_receipt = copy.deepcopy(receipt)
+        tampered_receipt["palimpsest_china_state"][field] = replacement
+        with pytest.raises(
+            recovery.RecoveryContractError,
+            match="Palimpsest China",
+        ):
+            recovery.validate_receipt(
+                tampered_receipt,
+                request=request,
+                activation_receipt=activation,
+                candidate_receipt=candidate,
+                shadow_receipt=shadow,
+                railway=_railway(platform),
+                bundle_root=bundle_root,
+            )
+    downgraded_receipt = copy.deepcopy(receipt)
+    downgraded_receipt["schema"] = "seiche.railway-recovery-export-receipt.v2"
+    with pytest.raises(recovery.RecoveryContractError, match="binding"):
+        recovery.validate_receipt(
+            downgraded_receipt,
+            request=request,
+            activation_receipt=activation,
+            candidate_receipt=candidate,
+            shadow_receipt=shadow,
+            railway=_railway(platform),
+            bundle_root=bundle_root,
+        )
 
     sealed_at = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=3)
     offsite_digests = {
         "activation-receipt.json": receipt["activation_receipt_sha256"],
+        "candidate-receipt.json": receipt["candidate_receipt_sha256"],
+        "shadow-receipt.json": receipt["shadow_receipt_sha256"],
         "request.json": receipt["request_sha256"],
         "recovery-receipt.json": hashlib.sha256(
             migration.canonical_document(receipt)
@@ -362,6 +485,7 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
         "snapshot_id": request["snapshot_id"],
         "recovery_receipt_sha256": offsite_digests["recovery-receipt.json"],
         "reverse_restore_proof_sha256": offsite_digests["proof/reverse-restore.json"],
+        "palimpsest_china_state": receipt["palimpsest_china_state"],
         "bucket": "seiche-recovery-evidence",
         "prefix": "seiche/recovery",
         "object_lock_mode": "COMPLIANCE",
@@ -389,6 +513,26 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
         )
         == offsite
     )
+    for field, replacement in replacements.items():
+        tampered_state = copy.deepcopy(offsite)
+        tampered_state["palimpsest_china_state"][field] = replacement
+        with pytest.raises(
+            recovery.RecoveryContractError,
+            match="Palimpsest China",
+        ):
+            recovery.validate_offsite_receipt(
+                tampered_state,
+                recovery_receipt=receipt,
+                now=sealed_at,
+            )
+    downgraded_offsite = copy.deepcopy(offsite)
+    downgraded_offsite["schema"] = "seiche.railway-offsite-recovery-receipt.v2"
+    with pytest.raises(recovery.RecoveryContractError, match="binding"):
+        recovery.validate_offsite_receipt(
+            downgraded_offsite,
+            recovery_receipt=receipt,
+            now=sealed_at,
+        )
     tampered = copy.deepcopy(offsite)
     tampered["objects"]["seiche.dump"]["version_id"] = ""
     with pytest.raises(recovery.RecoveryContractError, match="object proof"):
@@ -419,6 +563,49 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     )
     assert resumed_path == receipt_path
     assert resumed_receipt == receipt
+
+
+def test_recovery_export_rejects_active_candidate_state_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    platform, environment, activation = _activation_context(tmp_path, monkeypatch)
+    candidate_path = Path(environment["SEICHE_RAILWAY_CANDIDATE_RECEIPT_PATH"])
+    candidate = json.loads(candidate_path.read_bytes())
+    candidate["palimpsest_china_state"]["active_activation_id"] = "a" * 64
+    shadow_path = next((platform / "receipts").iterdir())
+    shadow = json.loads(shadow_path.read_bytes())
+    shadow["palimpsest_china_state"]["active_activation_id"] = "a" * 64
+    shadow_body = migration.canonical_document(shadow)
+    shadow_path.write_bytes(shadow_body)
+    candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
+        shadow_body
+    ).hexdigest()
+    candidate_body = migration.canonical_document(candidate)
+    candidate_path.write_bytes(candidate_body)
+    candidate_digest = hashlib.sha256(candidate_body).hexdigest()
+    environment["SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256"] = candidate_digest
+    activation["candidate_receipt_sha256"] = candidate_digest
+    activation_path = Path(environment["SEICHE_RAILWAY_ACTIVATION_RECEIPT_PATH"])
+    activation_body = migration.canonical_document(activation)
+    activation_path.write_bytes(activation_body)
+    environment["SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256"] = hashlib.sha256(
+        activation_body
+    ).hexdigest()
+    request = _request(activation, now=datetime.now(UTC).replace(microsecond=0))
+
+    monkeypatch.setattr(migration, "_audit_nbs", lambda _root: "verified_head")
+    with pytest.raises(
+        recovery.RecoveryContractError,
+        match="differs from cutover candidate",
+    ):
+        recovery.export_snapshot(
+            environment,
+            request,
+            platform_root=platform,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
 
 
 def test_recovery_restore_probe_propagates_production_runtime_identity(
@@ -664,6 +851,12 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "--checksum-mode ENABLED" in text
     assert "api-continuity.failed" in text
     assert "seiche.railway-reverse-restore-proof.v1" in text
+    assert "seiche.railway-offsite-recovery-receipt.v3" in text
+    assert '"palimpsest_china_state": receipt["palimpsest_china_state"]' in text
+    assert '"palimpsest_china_state": recovery["palimpsest_china_state"]' in text
+    assert text.count("--candidate candidate-receipt.json") == 3
+    assert text.count("--shadow shadow-receipt.json") == 3
+    assert "candidate-receipt.json shadow-receipt.json" in text
     assert "seiche.railway-offsite-preflight-receipt.v1" in text
     assert text.count("actions/attest-build-provenance@") == 3
     assert (

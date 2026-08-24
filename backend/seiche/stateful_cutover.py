@@ -30,7 +30,7 @@ from seiche import stateful_migration as migration
 
 FENCE_SCHEMA = "seiche.railway-authority-fence.v1"
 REQUEST_SCHEMA = "seiche.railway-stateful-cutover-request.v1"
-CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v2"
+CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v3"
 GRANT_SCHEMA = "seiche.railway-authority-grant.v1"
 ACTIVATION_RECEIPT_SCHEMA = "seiche.railway-activation-receipt.v1"
 PUBLIC_PROBE_SCHEMA = "seiche.railway-public-candidate-probe.v1"
@@ -111,6 +111,22 @@ _REQUEST_KEYS = frozenset(
         "source_writers_frozen",
         "public_traffic_enabled",
         "requested_at",
+    }
+)
+_SHADOW_RECEIPT_KEYS = frozenset(
+    {
+        "schema",
+        "request",
+        "authority",
+        "bundle",
+        "database",
+        "filesystem",
+        "palimpsest_china_state",
+        "railway",
+        "timing",
+        "research_only",
+        "can_publish",
+        "can_execute",
     }
 )
 _ACTIVATION_KEYS = frozenset(
@@ -397,6 +413,12 @@ def render_candidate_receipt(
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
+    try:
+        palimpsest_china_state = migration.palimpsest_china_state_from_audit(
+            bundle.palimpsest_china_state_audit
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     return {
         "schema": CANDIDATE_RECEIPT_SCHEMA,
         "request": {
@@ -404,6 +426,7 @@ def render_candidate_receipt(
             "sha256": _digest(_canonical(request)),
             "commit": request["commit"],
             "tree": request["tree"],
+            "source_shadow_receipt_sha256": request["source_shadow_receipt_sha256"],
         },
         "authority": {
             "mode": "cutover_candidate",
@@ -443,6 +466,7 @@ def render_candidate_receipt(
             ),
             "palimpsest_china_state_audit_result": "verified",
         },
+        "palimpsest_china_state": palimpsest_china_state,
         "railway": dict(railway),
         "timing": {"started_at": started_at, "completed_at": completed_at},
         "research_only": True,
@@ -466,6 +490,7 @@ def validate_candidate_receipt(
         "bundle",
         "database",
         "filesystem",
+        "palimpsest_china_state",
         "railway",
         "timing",
         "research_only",
@@ -484,6 +509,7 @@ def validate_candidate_receipt(
             "sha256": _digest(_canonical(request)),
             "commit": request["commit"],
             "tree": request["tree"],
+            "source_shadow_receipt_sha256": request["source_shadow_receipt_sha256"],
         }
         or value.get("authority")
         != {
@@ -584,6 +610,10 @@ def validate_candidate_receipt(
         )
     ):
         raise CutoverContractError("candidate receipt filesystem is invalid")
+    try:
+        migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     observed_railway = value.get("railway")
     if not isinstance(observed_railway, dict) or set(observed_railway) != {
         "deployment_id",
@@ -628,6 +658,115 @@ def validate_candidate_receipt(
     return dict(value)
 
 
+def validate_source_shadow_receipt(
+    value: object,
+    *,
+    request: Mapping[str, Any],
+    expected_palimpsest_china_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _SHADOW_RECEIPT_KEYS:
+        raise CutoverContractError("source shadow receipt fields are invalid")
+    shadow_request = value.get("request")
+    if (
+        value.get("schema") != migration.RECEIPT_SCHEMA
+        or _digest(_canonical(value)) != request["source_shadow_receipt_sha256"]
+        or not isinstance(shadow_request, dict)
+        or set(shadow_request)
+        != {
+            "id",
+            "sha256",
+            "commit",
+            "tree",
+            "source_archive_sha256",
+            "source_bundle_sha256",
+            "source_release_receipt_sha256",
+            "source_recovery_receipt_sha256",
+        }
+        or shadow_request.get("commit") != request["commit"]
+        or value.get("authority")
+        != {
+            "mode": "shadow",
+            "source": "hetzner",
+            "source_writers_frozen": False,
+            "public_traffic_enabled": False,
+            "workers_started": False,
+        }
+        or value.get("research_only") is not True
+        or value.get("can_publish") is not False
+        or value.get("can_execute") is not False
+    ):
+        raise CutoverContractError("source shadow receipt binding is invalid")
+    for name in (
+        "id",
+        "sha256",
+        "source_archive_sha256",
+        "source_bundle_sha256",
+        "source_release_receipt_sha256",
+        "source_recovery_receipt_sha256",
+    ):
+        if (
+            not isinstance(shadow_request.get(name), str)
+            or _SHA64_RE.fullmatch(shadow_request[name]) is None
+        ):
+            raise CutoverContractError(f"source shadow request {name} is invalid")
+    for name in ("commit", "tree"):
+        if (
+            not isinstance(shadow_request.get(name), str)
+            or _SHA40_RE.fullmatch(shadow_request[name]) is None
+        ):
+            raise CutoverContractError(f"source shadow request {name} is invalid")
+    try:
+        shadow_state = migration.validate_palimpsest_china_state(
+            value.get("palimpsest_china_state")
+        )
+        expected_state = migration.validate_palimpsest_china_state(
+            expected_palimpsest_china_state
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
+    if shadow_state != expected_state:
+        raise CutoverContractError("cutover Palimpsest China state differs from shadow")
+    return dict(value)
+
+
+def load_source_shadow_receipt(
+    platform_root: Path,
+    *,
+    request: Mapping[str, Any],
+    expected_palimpsest_china_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    receipts = platform_root / "receipts"
+    if not receipts.is_dir() or receipts.is_symlink():
+        raise CutoverContractError("source shadow receipt directory is unsafe")
+    entries = sorted(receipts.iterdir(), key=lambda path: path.name)
+    if len(entries) > 1024:
+        raise CutoverContractError("source shadow receipt directory is unbounded")
+    matches: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in entries:
+        if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
+            raise CutoverContractError("source shadow receipt directory is not closed")
+        try:
+            body = migration._stable_read(path, maximum_bytes=256 * 1024)
+            value = migration._decode_canonical_json(body, label="shadow receipt")
+        except migration.MigrationContractError as exc:
+            raise CutoverContractError(str(exc)) from exc
+        total_bytes += len(body)
+        if total_bytes > 64 * 1024 * 1024:
+            raise CutoverContractError(
+                "source shadow receipt directory exceeds capacity"
+            )
+        if _digest(body) == request["source_shadow_receipt_sha256"]:
+            matches.append(value)
+    if len(matches) != 1:
+        raise CutoverContractError("source shadow receipt is not unique")
+    return validate_source_shadow_receipt(
+        matches[0],
+        request=request,
+        expected_palimpsest_china_state=expected_palimpsest_china_state,
+    )
+
+
 def restore_candidate(
     request: Mapping[str, Any],
     fence: Mapping[str, Any],
@@ -646,6 +785,17 @@ def restore_candidate(
         raise CutoverContractError(
             "cutover requires the current Palimpsest-state backup contract"
         )
+    try:
+        palimpsest_china_state = migration.palimpsest_china_state_from_audit(
+            bundle.palimpsest_china_state_audit
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
+    load_source_shadow_receipt(
+        platform_root,
+        request=request,
+        expected_palimpsest_china_state=palimpsest_china_state,
+    )
     started_at = migration._iso_now()
     platform_root.mkdir(mode=0o750, parents=True, exist_ok=True)
     generations = platform_root / "generations"
@@ -857,6 +1007,10 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
         or value.get("authority", {}).get("railway_writers_started") is not False
     ):
         raise CutoverContractError("Railway candidate receipt binding is invalid")
+    try:
+        migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     if edge_token_sha256(
         environment.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     ) != environment.get("SEICHE_RAILWAY_EDGE_TOKEN_SHA256"):

@@ -592,6 +592,13 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
         request=request,
         railway=_railway_identity(),
     )
+    assert validated["schema"] == "seiche.railway-stateful-shadow-receipt.v3"
+    assert validated["palimpsest_china_state"] == {
+        "audit_schema": migration.PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA,
+        "tree_sha256": bundle.palimpsest_china_state_audit["tree_sha256"],
+        "active_activation_id": None,
+        "pending_candidate_activation_id": None,
+    }
     assert validated["authority"]["mode"] == "shadow"
     assert validated["authority"]["workers_started"] is False
     assert "secret" not in migration.canonical_document(validated).decode()
@@ -735,6 +742,95 @@ def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
             runtime_uid=os.geteuid(),
             runtime_gid=os.getegid(),
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("audit_schema", "seiche.palimpsest-china-activation-state.v0"),
+        ("tree_sha256", "0" * 64),
+        ("active_activation_id", "0" * 64),
+        ("pending_candidate_activation_id", "0" * 64),
+    ),
+)
+def test_shadow_receipt_v3_binds_exact_active_palimpsest_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    replacement: str,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
+    state, _activated = _active_palimpsest_state(tmp_path, monkeypatch)
+    _replace_bundle_palimpsest_state(root, state, request)
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "identity-staging"
+    staging.mkdir()
+    nbs_result, digests = migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    receipt = migration.render_receipt(
+        request,
+        bundle,
+        migration.RestoredDatabase(
+            migration.derive_database_name(
+                bundle.snapshot_id,
+                bundle.content_set_sha256,
+            ),
+            "postgresql://runtime-only",
+            bundle.counts_floor,
+        ),
+        generation_name=f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}",
+        generation_digests=digests,
+        nbs_audit_result=nbs_result,
+        railway=_railway_identity(),
+        started_at="2026-08-23T02:00:00Z",
+        completed_at="2026-08-23T02:03:00Z",
+    )
+    assert receipt["schema"] == "seiche.railway-stateful-shadow-receipt.v3"
+    assert receipt["palimpsest_china_state"]["active_activation_id"] is not None
+    assert receipt["palimpsest_china_state"]["pending_candidate_activation_id"] is None
+
+    tampered = json.loads(json.dumps(receipt))
+    tampered["palimpsest_china_state"][field] = replacement
+    with pytest.raises(migration.MigrationContractError, match="Palimpsest China"):
+        migration.validate_receipted_generation(
+            staging / "generation",
+            tampered,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+def test_shadow_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
+    bundle = migration.validate_bundle(root, request)
+    receipt = migration.render_receipt(
+        request,
+        bundle,
+        migration.RestoredDatabase(
+            migration.derive_database_name(
+                bundle.snapshot_id,
+                bundle.content_set_sha256,
+            ),
+            "postgresql://runtime-only",
+            bundle.counts_floor,
+        ),
+        generation_name=f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}",
+        generation_digests={
+            name: "1" * 64 for name in ("market", "nbs", "api", "palimpsest-china")
+        },
+        nbs_audit_result="not_onboarded",
+        railway=_railway_identity(),
+        started_at="2026-08-23T02:00:00Z",
+        completed_at="2026-08-23T02:03:00Z",
+    )
+    receipt["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+
+    with pytest.raises(migration.MigrationContractError, match="policy"):
+        migration.validate_receipt_document(receipt, request=request)
 
 
 def test_receipt_writer_handles_partial_os_writes(

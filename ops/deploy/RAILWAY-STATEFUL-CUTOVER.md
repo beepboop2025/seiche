@@ -166,11 +166,24 @@ restored filesystem/database generation, table floors, and direct authenticated
 origin response. It starts only an unprivileged API. Mutation methods return
 503, and requests without the token return 404.
 
+The candidate receipt is exactly
+`seiche.railway-cutover-candidate-receipt.v3`; v2 is not a fallback. Its closed
+`palimpsest_china_state` object records the audit schema, semantic tree digest,
+active activation ID, and null pending candidate ID from the final backup-v4
+audit. The candidate request also exposes the exact source shadow-receipt
+SHA-256. The workflow must recover that one canonical v3 shadow receipt and
+require its four-field state identity to equal the final candidate before any
+cutover proof is accepted. Candidate restart/reuse independently re-audits the
+restored tree with the Railway uid/gid 10001 reader and refuses any tree or
+activation-ID drift.
+
 Record from the green artifact and attestation:
 
 - request ID;
 - exact Railway deployment UUID; and
 - candidate receipt SHA-256.
+- exact source shadow-receipt SHA-256 and the shared Palimpsest China state
+  identity.
 
 ## 5. Switch the public edge while both writer planes are fenced
 

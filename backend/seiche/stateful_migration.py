@@ -28,7 +28,7 @@ from typing import Any, Mapping, NamedTuple
 
 
 REQUEST_SCHEMA = "seiche.railway-stateful-shadow-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v2"
+RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v3"
 BACKUP_SCHEMA = "seiche.market-backup.v4"
 LEGACY_BACKUP_SCHEMA = "seiche.market-backup.v3"
 REPOSITORY = "beepboop2025/seiche"
@@ -40,6 +40,7 @@ SOURCE_BUNDLE = Path("/migration/source.bundle")
 REQUEST_PATH = Path("/migration/request.json")
 RUNTIME_UID = 10001
 RUNTIME_GID = 10001
+PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
 
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _SHA64_RE = re.compile(r"[0-9a-f]{64}")
@@ -49,6 +50,14 @@ _UUID_RE = re.compile(
 )
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _REGION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
+_PALIMPSEST_CHINA_STATE_KEYS = frozenset(
+    {
+        "audit_schema",
+        "tree_sha256",
+        "active_activation_id",
+        "pending_candidate_activation_id",
+    }
+)
 _REQUEST_KEYS = frozenset(
     {
         "schema",
@@ -405,25 +414,73 @@ def _parse_palimpsest_state_audit(body: bytes) -> dict[str, Any]:
         raise MigrationContractError("Palimpsest China state audit fields changed")
     bundles = value["bundles"]
     receipts = value["receipts"]
+    active = value["active_activation_id"]
+    pending = value["pending_candidate_activation_id"]
     if (
-        value["schema"] != "seiche.palimpsest-china-activation-state.v1"
+        value["schema"] != PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA
         or value["state_root"] != "/var/lib/seiche-palimpsest-china"
-        or _SHA64_RE.fullmatch(value["tree_sha256"] or "") is None
+        or not isinstance(value["tree_sha256"], str)
+        or _SHA64_RE.fullmatch(value["tree_sha256"]) is None
         or type(bundles) is not list
         or type(receipts) is not list
+        or any(
+            not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None
+            for item in bundles
+        )
+        or any(
+            not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None
+            for item in receipts
+        )
         or bundles != sorted(set(bundles))
         or receipts != sorted(set(receipts))
-        or any(_SHA64_RE.fullmatch(item or "") is None for item in bundles)
-        or any(_SHA64_RE.fullmatch(item or "") is None for item in receipts)
         or any(
-            item is not None and _SHA64_RE.fullmatch(item or "") is None
-            for item in (
-                value["active_activation_id"],
-                value["pending_candidate_activation_id"],
-            )
+            item is not None
+            and (not isinstance(item, str) or _SHA64_RE.fullmatch(item) is None)
+            for item in (active, pending)
         )
     ):
         raise MigrationContractError("Palimpsest China state audit is invalid")
+    if pending is not None:
+        raise MigrationContractError(
+            "Palimpsest China state has an unfinished activation transaction"
+        )
+    return dict(value)
+
+
+def palimpsest_china_state_from_audit(
+    audit: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Project the closed, portable identity from one verified state audit."""
+
+    if not isinstance(audit, Mapping):
+        raise MigrationContractError("Palimpsest China state audit is unavailable")
+    state = {
+        "audit_schema": audit.get("schema"),
+        "tree_sha256": audit.get("tree_sha256"),
+        "active_activation_id": audit.get("active_activation_id"),
+        "pending_candidate_activation_id": audit.get("pending_candidate_activation_id"),
+    }
+    return validate_palimpsest_china_state(state)
+
+
+def validate_palimpsest_china_state(value: object) -> dict[str, Any]:
+    """Validate the exact cross-receipt Palimpsest China state identity."""
+
+    if not isinstance(value, dict) or set(value) != _PALIMPSEST_CHINA_STATE_KEYS:
+        raise MigrationContractError("Palimpsest China state identity fields changed")
+    tree = value.get("tree_sha256")
+    active = value.get("active_activation_id")
+    if (
+        value.get("audit_schema") != PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA
+        or not isinstance(tree, str)
+        or _SHA64_RE.fullmatch(tree) is None
+        or (
+            active is not None
+            and (not isinstance(active, str) or _SHA64_RE.fullmatch(active) is None)
+        )
+        or value.get("pending_candidate_activation_id") is not None
+    ):
+        raise MigrationContractError("Palimpsest China state identity is invalid")
     return dict(value)
 
 
@@ -972,6 +1029,9 @@ def render_receipt(
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
+    palimpsest_china_state = palimpsest_china_state_from_audit(
+        bundle.palimpsest_china_state_audit
+    )
     return {
         "schema": RECEIPT_SCHEMA,
         "request": {
@@ -1021,6 +1081,7 @@ def render_receipt(
                 else "legacy_absent_inactive"
             ),
         },
+        "palimpsest_china_state": palimpsest_china_state,
         "railway": dict(railway),
         "timing": {
             "started_at": started_at,
@@ -1045,6 +1106,7 @@ def validate_receipt_document(
         "bundle",
         "database",
         "filesystem",
+        "palimpsest_china_state",
         "railway",
         "timing",
         "research_only",
@@ -1081,12 +1143,10 @@ def validate_receipt_document(
         raise MigrationContractError("shadow receipt authority is invalid")
     bundle = value.get("bundle")
     bundle_schema = bundle.get("schema") if isinstance(bundle, dict) else None
-    expected_members = (
-        _BACKUP_MEMBERS if bundle_schema == BACKUP_SCHEMA else _LEGACY_BACKUP_MEMBERS
-    )
+    expected_members = _BACKUP_MEMBERS
     if (
         not isinstance(bundle, dict)
-        or bundle_schema not in {BACKUP_SCHEMA, LEGACY_BACKUP_SCHEMA}
+        or bundle_schema != BACKUP_SCHEMA
         or bundle.get("snapshot_id") != request["snapshot_id"]
         or bundle.get("source_revision") != request["source_revision"]
         or bundle.get("source_inventory_sha256") != request["source_inventory_sha256"]
@@ -1160,8 +1220,7 @@ def validate_receipt_document(
         not in {"not_onboarded", "verified_head"}
         or filesystem.get("palimpsest_china_state_audit_contract")
         != "seiche.palimpsest-china-activation-state.v1"
-        or filesystem.get("palimpsest_china_state_audit_result")
-        != ("verified" if bundle_schema == BACKUP_SCHEMA else "legacy_absent_inactive")
+        or filesystem.get("palimpsest_china_state_audit_result") != "verified"
         or not isinstance(filesystem.get("tree_sha256"), dict)
         or set(filesystem["tree_sha256"])
         != {"market", "nbs", "api", "palimpsest-china"}
@@ -1171,6 +1230,7 @@ def validate_receipt_document(
         )
     ):
         raise MigrationContractError("shadow receipt filesystem is invalid")
+    validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     observed_railway = value.get("railway")
     if not isinstance(observed_railway, dict) or set(observed_railway) != {
         "deployment_id",
@@ -1283,16 +1343,17 @@ def validate_receipted_generation(
             "accepted shadow Palimpsest China audit failed"
         ) from exc
     audit_result = receipt["filesystem"]["palimpsest_china_state_audit_result"]
-    if audit_result == "legacy_absent_inactive" and any(
-        (
-            palimpsest_audit["bundles"],
-            palimpsest_audit["receipts"],
-            palimpsest_audit["active_activation_id"],
-            palimpsest_audit["pending_candidate_activation_id"],
-        )
-    ):
+    if audit_result != "verified":
         raise MigrationContractError(
-            "legacy shadow Palimpsest China state is not empty and inactive"
+            "accepted shadow Palimpsest China audit result is invalid"
+        )
+    observed_state = palimpsest_china_state_from_audit(palimpsest_audit)
+    expected_state = validate_palimpsest_china_state(
+        receipt.get("palimpsest_china_state")
+    )
+    if observed_state != expected_state:
+        raise MigrationContractError(
+            "accepted shadow Palimpsest China state identity changed"
         )
 
 
@@ -1359,6 +1420,10 @@ def restore_shadow(
     runtime_gid: int = RUNTIME_GID,
 ) -> tuple[dict[str, Any], str]:
     started_at = _iso_now()
+    if bundle.schema != BACKUP_SCHEMA or bundle.palimpsest_china_state_audit is None:
+        raise MigrationContractError(
+            "shadow receipt v3 requires the current Palimpsest-state backup contract"
+        )
     for path in (platform_root, bundle.root):
         if not path.is_absolute() or path == Path("/") or path.is_symlink():
             raise MigrationContractError("stateful migration path is unsafe")
@@ -1533,6 +1598,7 @@ def validate_runtime_receipt(environment: Mapping[str, str]) -> dict[str, Any]:
         or value.get("authority", {}).get("workers_started") is not False
     ):
         raise MigrationContractError("Railway runtime receipt binding is invalid")
+    validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     return value
 
 

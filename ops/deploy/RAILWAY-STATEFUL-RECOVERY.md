@@ -143,18 +143,43 @@ The monitor runs at minute 17 every six hours. A portable export runs daily at
 backup, portable receipt, off-site receipt, PITR probe, volume threshold, or
 production identity is stale or invalid.
 
+Portable identity receipts are strict v3 contracts:
+
+- `seiche.railway-recovery-export-receipt.v3`; and
+- `seiche.railway-offsite-recovery-receipt.v3`.
+
+No v2 receipt is parsed as current evidence. Before pausing writers, the
+runtime recovers the activation-bound v3 candidate and the exact v3 shadow
+receipt named by that candidate. Shadow, candidate, live generation, exported
+backup audit, isolated reverse restore, recovery receipt, and off-site receipt
+must all carry the same closed `palimpsest_china_state` identity. Its fields are
+exactly `audit_schema`, `tree_sha256`, `active_activation_id`, and
+`pending_candidate_activation_id`; pending must be null. This equality is
+required even when inactive, and an active ID makes the no-fallback boundary
+explicit: no older bundle or prior activation may silently replace it.
+The production monitor downloads the bound shadow and candidate receipts again
+and rejects any schema downgrade or state mismatch before accepting the latest
+Railway/off-site pair.
+
+Immediately after deploying the v3 consumer, dispatch one `export-recovery`
+operation to establish a v3 recovery/off-site pair. That operation deliberately
+permits an absent prior proof, but does not accept a v2 proof. Scheduled and
+manual `monitor` operations remain fail closed until the v3 pair exists.
+
 ## Evidence contract
 
 Each successful export produces:
 
 - a canonical activation-bound request;
+- the exact v3 source shadow and activation-bound candidate receipts;
 - the immutable Railway recovery receipt;
 - the exact nine-member backup-v4 generation, including the immutable
   Palimpsest China state archive and canonical audit receipt;
 - a canonical reverse-restore proof containing NBS audit result, filesystem
-  tree digests, and four PostgreSQL counts/floors;
+  tree digests, the exact Palimpsest China state identity, and four PostgreSQL
+  counts/floors;
 - a canonical off-site receipt with each object's key, size, SHA-256, and
-  version ID; and
+  version ID plus the same Palimpsest China state identity; and
 - separate OIDC attestations for the Railway and off-site receipts.
 
 The large bundle is not uploaded as a GitHub Actions artifact. Locked external

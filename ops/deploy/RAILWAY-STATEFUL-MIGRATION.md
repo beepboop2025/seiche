@@ -145,6 +145,18 @@ Completion requires all workflow steps green and an attestation for the
 downloaded canonical receipt. A Railway `SUCCESS`, a green health check, or an
 uploaded artifact alone is insufficient.
 
+The shadow receipt contract is
+`seiche.railway-stateful-shadow-receipt.v3`; v2 receipts are deliberately not
+accepted. It contains one closed `palimpsest_china_state` identity with exactly
+`audit_schema`, `tree_sha256`, `active_activation_id`, and
+`pending_candidate_activation_id`. Those values come from the canonical
+backup-v4 audit, not filenames or mutable configuration. The pending identity
+must be null. On creation, restart, and reuse, Railway re-audits the restored
+tree as the configured uid/gid 10001 reader and requires the semantic tree and
+active activation ID to remain byte-for-byte equal to the receipt. The
+independent filesystem-tree digest remains a separate whole-tree integrity
+bound; neither digest substitutes for the other.
+
 ## Repeat and reconcile
 
 The request ID and filesystem/database generation names are content-addressed.
@@ -170,6 +182,7 @@ three runs have:
 - database counts at or above their floors;
 - no Railway public domain and no Railway writer;
 - successful restart/reuse validation of the receipted generation; and
+- a v3 Palimpsest China identity with no pending activation transaction; and
 - an operator-reviewed rollback and authority-fencing rehearsal.
 
 Phase 5 uses a bounded maintenance freeze, one final snapshot, a content-bound

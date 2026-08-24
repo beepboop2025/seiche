@@ -15,6 +15,7 @@ from fastapi import Response
 from starlette.requests import Request
 
 from seiche import api
+from seiche import palimpsest_china_activation as palimpsest_activation
 from seiche import stateful_cutover as cutover
 from seiche import stateful_entrypoint
 from seiche import stateful_migration as migration
@@ -260,6 +261,13 @@ def test_candidate_receipt_has_no_writer_and_cannot_publish(tmp_path: Path) -> N
         fence=fence,
         railway=_railway(),
     )
+    assert validated["schema"] == "seiche.railway-cutover-candidate-receipt.v3"
+    assert validated["palimpsest_china_state"] == {
+        "audit_schema": migration.PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA,
+        "tree_sha256": "5" * 64,
+        "active_activation_id": None,
+        "pending_candidate_activation_id": None,
+    }
     assert validated["authority"] == {
         "mode": "cutover_candidate",
         "source": "none",
@@ -268,6 +276,159 @@ def test_candidate_receipt_has_no_writer_and_cannot_publish(tmp_path: Path) -> N
         "public_traffic_enabled": False,
     }
     assert validated["can_publish"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("audit_schema", "seiche.palimpsest-china-activation-state.v0"),
+        ("tree_sha256", "0" * 64),
+        ("active_activation_id", "0" * 64),
+        ("pending_candidate_activation_id", "0" * 64),
+    ),
+)
+def test_candidate_receipt_v3_binds_exact_active_palimpsest_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    replacement: str,
+) -> None:
+    _fence_value, _request_value, receipt = _candidate(tmp_path)
+    audit = {
+        "schema": migration.PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA,
+        "state_root": "/var/lib/seiche-palimpsest-china",
+        "tree_sha256": "5" * 64,
+        "bundles": ["b" * 64],
+        "receipts": ["a" * 64],
+        "active_activation_id": "a" * 64,
+        "pending_candidate_activation_id": None,
+    }
+    receipt["palimpsest_china_state"] = migration.palimpsest_china_state_from_audit(
+        audit
+    )
+    generation = tmp_path / "candidate-generation"
+    for name in ("market", "nbs", "api", "palimpsest-china"):
+        (generation / name).mkdir(parents=True)
+    monkeypatch.setattr(
+        migration,
+        "hash_tree",
+        lambda path: receipt["filesystem"]["tree_sha256"][path.name],
+    )
+    monkeypatch.setattr(migration, "_validate_sqlite", lambda _path: None)
+    monkeypatch.setattr(migration, "_audit_nbs", lambda _path: "verified_head")
+    monkeypatch.setattr(
+        palimpsest_activation,
+        "audit_activation_state",
+        lambda *_args, **_kwargs: audit,
+    )
+    migration.validate_receipted_generation(
+        generation,
+        receipt,
+        runtime_uid=10_001,
+        runtime_gid=10_001,
+    )
+
+    tampered = copy.deepcopy(receipt)
+    tampered["palimpsest_china_state"][field] = replacement
+    with pytest.raises(migration.MigrationContractError, match="Palimpsest China"):
+        migration.validate_receipted_generation(
+            generation,
+            tampered,
+            runtime_uid=10_001,
+            runtime_gid=10_001,
+        )
+
+
+def test_candidate_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
+    fence, request, receipt = _candidate(tmp_path)
+    receipt["schema"] = "seiche.railway-cutover-candidate-receipt.v2"
+
+    with pytest.raises(cutover.CutoverContractError, match="authority"):
+        cutover.validate_candidate_receipt(
+            receipt,
+            request=request,
+            fence=fence,
+        )
+
+
+def test_cutover_requires_exact_v3_shadow_state_before_restore(tmp_path: Path) -> None:
+    _fence_value, request, candidate = _candidate(tmp_path)
+    state = copy.deepcopy(candidate["palimpsest_china_state"])
+    state["active_activation_id"] = "a" * 64
+    shadow = {
+        "schema": migration.RECEIPT_SCHEMA,
+        "request": {
+            "id": "1" * 64,
+            "sha256": "2" * 64,
+            "commit": request["commit"],
+            "tree": "b" * 40,
+            "source_archive_sha256": "3" * 64,
+            "source_bundle_sha256": "4" * 64,
+            "source_release_receipt_sha256": "5" * 64,
+            "source_recovery_receipt_sha256": "6" * 64,
+        },
+        "authority": {
+            "mode": "shadow",
+            "source": "hetzner",
+            "source_writers_frozen": False,
+            "public_traffic_enabled": False,
+            "workers_started": False,
+        },
+        "bundle": {},
+        "database": {},
+        "filesystem": {},
+        "palimpsest_china_state": state,
+        "railway": {},
+        "timing": {},
+        "research_only": True,
+        "can_publish": False,
+        "can_execute": False,
+    }
+    body = migration.canonical_document(shadow)
+    request["source_shadow_receipt_sha256"] = hashlib.sha256(body).hexdigest()
+    receipts = tmp_path / "platform" / "receipts"
+    receipts.mkdir(parents=True)
+    (receipts / ("f" * 64 + ".json")).write_bytes(body)
+
+    validated = cutover.load_source_shadow_receipt(
+        tmp_path / "platform",
+        request=request,
+        expected_palimpsest_china_state=state,
+    )
+    assert validated["palimpsest_china_state"] == state
+
+    replacements = {
+        "audit_schema": "seiche.palimpsest-china-activation-state.v0",
+        "tree_sha256": "0" * 64,
+        "active_activation_id": "0" * 64,
+        "pending_candidate_activation_id": "0" * 64,
+    }
+    for field, replacement in replacements.items():
+        tampered = copy.deepcopy(shadow)
+        tampered["palimpsest_china_state"][field] = replacement
+        rebound = dict(request)
+        rebound["source_shadow_receipt_sha256"] = hashlib.sha256(
+            migration.canonical_document(tampered)
+        ).hexdigest()
+        with pytest.raises(cutover.CutoverContractError, match="Palimpsest China"):
+            cutover.validate_source_shadow_receipt(
+                tampered,
+                request=rebound,
+                expected_palimpsest_china_state=state,
+            )
+
+    downgraded = copy.deepcopy(shadow)
+    downgraded["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+    rebound = dict(request)
+    rebound["source_shadow_receipt_sha256"] = hashlib.sha256(
+        migration.canonical_document(downgraded)
+    ).hexdigest()
+    with pytest.raises(cutover.CutoverContractError, match="binding"):
+        cutover.validate_source_shadow_receipt(
+            downgraded,
+            request=rebound,
+            expected_palimpsest_china_state=state,
+        )
 
 
 def test_edge_token_is_constant_time_bound_and_candidate_posts_fail_closed(
