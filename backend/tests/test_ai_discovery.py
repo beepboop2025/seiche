@@ -329,8 +329,12 @@ def test_financial_evidence_router_is_external_pinned_and_china_complete():
         "https://raw.githubusercontent.com/beepboop2025/"
         f"financial-evidence-skills/{revision}/financial-evidence/SKILL.md"
     )
-    assert router["metadata"]["skillSha256"].startswith("sha256:")
-    assert router["metadata"]["fetcherSha256"].startswith("sha256:")
+    assert router["metadata"]["skillSha256"] == (
+        "sha256:091fc3c3bb4577e2481cfc52e9977e1c83fc114b085544c584b6ae5bf2b302ae"
+    )
+    assert router["metadata"]["fetcherSha256"] == (
+        "sha256:79ad7a9c269ceefc86a77f98e3ed827a39e66a0d45a95535ce761fd4936a3ff2"
+    )
     assert ".agents/skills/financial-evidence" not in json.dumps(catalog)
 
     card = json.loads((PUBLIC / "product-card.json").read_text())
