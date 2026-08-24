@@ -1,0 +1,119 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-24-september-2019-showed-how-calendar-pressure-can-expose-a-funding-fault-b",
+  "product": "seiche",
+  "slug": "2026-08-24-september-2019-showed-how-calendar-pressure-can-expose-a-funding-fault-b",
+  "date": "2026-08-24",
+  "article_type": "historical_replay",
+  "editorial_class": "desk_brief",
+  "topic": "Sep 2019 repo spike (SOFR 5.25%, GC 10%)",
+  "headline": "September 2019 showed how calendar pressure can expose a funding fault before risk markets react",
+  "dek": "This is a historical replay, not breaking news or a forecast. Today’s tape did not clear the full-story gate: Seiche’s strain reading is led by the dated reserve path while overnight cash pricing still signals abundance.",
+  "canonical_url": "https://seiche.info/articles/2026-08-24-september-2019-showed-how-calendar-pressure-can-expose-a-funding-fault-b/",
+  "published_at": "2026-08-24T11:14:05Z",
+  "evidence_as_of": "2026-08-21",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-24-daily",
+  "historical_episode": {
+    "episode": "Sep 2019 repo spike (SOFR 5.25%, GC 10%)",
+    "date": "2019-09-17",
+    "lead_days": 2,
+    "similarity": 0.581,
+    "analog_end_date": "2019-09-05",
+    "max_move_5bd_bp": -1.0,
+    "event_within_5bd": false
+  },
+  "newsworthiness": {
+    "score": 25,
+    "decision": "desk_brief",
+    "factors": {
+      "fresh_observed_print": 0,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 0,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1071,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:fbe16a797caad1962e65e4f9e71676fa60743af4dd5f6e935eacc6c62e6275e7",
+    "memory_fingerprint": "sha256:83bc9dcdef0580f10bd01c029c031e857c0c8fd7e36474d5e9d8a9cfbdbc7c4d",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 4,
+    "dossier_sha256": "d749cf571cd7a8476e1e8b9d5c48d1dbf039c6b5212ab85fde4293a48f2290e6",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Reframed the piece as a historical replay and stated that the current tape did not clear the full-story gate.",
+      "Removed unsupported extrapolation and separated observed plumbing, accounting data, and reserve-path scenarios.",
+      "Strengthened the counter-case so calm overnight pricing and unused backstop capacity can falsify the thesis.",
+      "Made the August settlement sequence an observable test and retained methodology, clock, model, and product-boundary limits.",
+      "Removed the rejected reserve-gap precision and retained the dossier’s rounded reserve-demand claim.",
+      "Preserved the historical-replay framing and explicit full-story-gate failure.",
+      "Strengthened the counter-case and made settlement-related plumbing confirmation the observable test.",
+      "Retained source, methodology, clock, model, and product-boundary limits.",
+      "Removed standalone date-number references implicated by the gate while retaining the dossier’s as-of boundaries in prose.",
+      "Preserved the historical-replay framing and explicit full-story-gate failure.",
+      "Kept the counter-case capable of falsifying the structural warning through observed overnight pricing and backstop use.",
+      "Retained required sections, research boundary, source limits, and permitted source links."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:fbe16a797caad1962e65e4f9e71676fa60743af4dd5f6e935eacc6c62e6275e7",
+      "memory_fingerprint": "sha256:83bc9dcdef0580f10bd01c029c031e857c0c8fd7e36474d5e9d8a9cfbdbc7c4d",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
