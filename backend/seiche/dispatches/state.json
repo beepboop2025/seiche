@@ -1,10 +1,11 @@
 {
-  "date": "2026-08-24",
+  "date": "2026-08-25",
   "reported_prev": {
     "2y Treasury constant maturity yield": "2026-08-20"
   },
   "reported": {
-    "2y Treasury constant maturity yield": "2026-08-20"
+    "2y Treasury constant maturity yield": "2026-08-21",
+    "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
   "letter_prev": {
     "regime": "STRAIN",
@@ -31,7 +32,7 @@
   },
   "letter": {
     "regime": "STRAIN",
-    "value": 45.1,
+    "value": 45.2,
     "decomp": {
       "weather": 11.0,
       "kink": 7.4,
@@ -41,15 +42,15 @@
       "undertow": 2.8,
       "confession": 2.7,
       "warehouse": 2.4,
-      "tails": 2.0,
+      "tails": 2.2,
       "auctions": 1.0,
       "hydrophone": 0.0
     },
     "crunch": {
       "date": "2026-08-27",
-      "worst_case_b": 2894.8,
-      "settlement_b": 266.0
+      "worst_case_b": 2896.7,
+      "settlement_b": 95.0
     },
-    "tell": 23.3
+    "tell": 30.5
   }
 }
