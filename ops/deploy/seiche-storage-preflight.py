@@ -392,7 +392,61 @@ def _source_major_minor(path: Path) -> str:
     return f"{os.major(metadata.st_rdev)}:{os.minor(metadata.st_rdev)}"
 
 
-def _probe_write_and_fsync(path: Path, directory: int) -> None:
+def _write_and_fsync_probe(descriptor: int) -> None:
+    payload = b"seiche-storage-preflight-v3\n"
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written < 1:
+            raise OSError(errno.EIO, "short write")
+        offset += written
+    os.fsync(descriptor)
+
+
+def _probe_write_and_fsync(
+    path: Path,
+    directory: int,
+    *,
+    require_anonymous: bool,
+) -> None:
+    # The production roots are archived live. A named create/unlink here changes
+    # their directory timestamps and can make a concurrent fail-closed tar
+    # reject an otherwise stable snapshot. O_TMPFILE proves allocation, write,
+    # file fsync, and directory fsync through the authenticated descriptor
+    # without changing that namespace. The named fallback is test-only on
+    # platforms without Linux anonymous temporary inodes.
+    anonymous_flag = getattr(os, "O_TMPFILE", 0)
+    if anonymous_flag:
+        try:
+            descriptor = os.open(
+                ".",
+                anonymous_flag | os.O_WRONLY | os.O_CLOEXEC,
+                0o600,
+                dir_fd=directory,
+            )
+        except OSError as exc:
+            unsupported = {
+                errno.EINVAL,
+                errno.EISDIR,
+                errno.ENOSYS,
+                getattr(errno, "EOPNOTSUPP", 95),
+                getattr(errno, "ENOTSUP", 95),
+            }
+            if exc.errno not in unsupported:
+                _fail(f"write/fsync probe failed for {path}: {exc.strerror or exc}")
+        else:
+            try:
+                _write_and_fsync_probe(descriptor)
+                os.fsync(directory)
+            except OSError as exc:
+                _fail(f"write/fsync probe failed for {path}: {exc.strerror or exc}")
+            finally:
+                os.close(descriptor)
+            return
+
+    if require_anonymous:
+        _fail(f"namespace-stable write/fsync probe is unavailable for {path}")
+
     probe_name = f".seiche-storage-preflight.{os.getpid()}.{secrets.token_hex(8)}"
     descriptor: int | None = None
     try:
@@ -402,14 +456,7 @@ def _probe_write_and_fsync(path: Path, directory: int) -> None:
             0o600,
             dir_fd=directory,
         )
-        payload = b"seiche-storage-preflight-v2\n"
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written < 1:
-                raise OSError(errno.EIO, "short write")
-            offset += written
-        os.fsync(descriptor)
+        _write_and_fsync_probe(descriptor)
         os.close(descriptor)
         descriptor = None
         os.unlink(probe_name, dir_fd=directory)
@@ -549,7 +596,11 @@ def verify_storage(
             _canonical_directory(path, label)
             if label == "NBS path":
                 _verify_nbs_root_metadata(descriptors[label], require_root=require_root)
-            _probe_write_and_fsync(path, descriptors[label])
+            _probe_write_and_fsync(
+                path,
+                descriptors[label],
+                require_anonymous=require_root,
+            )
 
         # A retained descriptor makes each probe safe, while this final live
         # check prevents a detached/replaced visible mount from being reported

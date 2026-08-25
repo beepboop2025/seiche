@@ -26,8 +26,11 @@ release poller. It fails closed unless all of the following are true:
   Volume directories;
 - the NBS bind root is owned by `root:seiche` with exact mode `0750`;
 - available blocks and inodes meet the configured floors; and
-- a create, write, file fsync, unlink, and directory fsync succeeds through
-  all three guarded paths.
+- an anonymous temporary inode can be allocated, written, and file-fsynced
+  through each authenticated guarded-path descriptor, and each directory can
+  be fsynced. Production refuses a named-file fallback: the five-minute probe
+  must not change directory metadata while a live fail-closed backup is
+  archiving the same roots.
 
 Every consumer requires the guarded mounts directly or through its mandatory
 dependency on this all-three-path preflight. The preflight is intentionally a

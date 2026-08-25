@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import errno
 import importlib.util
 import os
 from pathlib import Path
@@ -741,9 +742,15 @@ def test_capacity_gate_precedes_durable_probes_through_all_three_paths(
         events.append(("capacity", mount_path))
         return SimpleNamespace(f_bavail=10, f_favail=10)
 
-    def probe(path: Path, descriptor: int) -> None:
+    def probe(
+        path: Path,
+        descriptor: int,
+        *,
+        require_anonymous: bool,
+    ) -> None:
         metadata = os.fstat(descriptor)
         assert (metadata.st_dev, metadata.st_ino) == guarded_identities[path]
+        assert require_anonymous is False
         events.append(("probe", path))
 
     monkeypatch.setattr(storage.os, "fstatvfs", capacity)
@@ -771,7 +778,12 @@ def test_durable_probe_retains_authenticated_nbs_descriptor_if_path_redirects(
     original_probe = storage._probe_write_and_fsync
     observed_nbs_identity: tuple[int, int] | None = None
 
-    def redirect_before_nbs_probe(path: Path, descriptor: int) -> None:
+    def redirect_before_nbs_probe(
+        path: Path,
+        descriptor: int,
+        *,
+        require_anonymous: bool,
+    ) -> None:
         nonlocal observed_nbs_identity
         if path == state_path:
             nbs_path.rename(detached_nbs)
@@ -780,7 +792,11 @@ def test_durable_probe_retains_authenticated_nbs_descriptor_if_path_redirects(
         if path == fallback_nbs:
             metadata = os.fstat(descriptor)
             observed_nbs_identity = (metadata.st_dev, metadata.st_ino)
-        original_probe(path, descriptor)
+        original_probe(
+            path,
+            descriptor,
+            require_anonymous=require_anonymous,
+        )
 
     monkeypatch.setattr(storage, "_mount_for_path", _mount_lookup(config, major_minor))
     monkeypatch.setattr(storage, "_source_major_minor", lambda _path: major_minor)
@@ -812,6 +828,208 @@ def test_fsync_failure_is_cleaned_and_reported(
     assert not list(state_path.glob(".seiche-storage-preflight.*"))
     assert not list(nbs_path.glob(".seiche-storage-preflight.*"))
     assert not list(backup_path.glob(".seiche-storage-preflight.*"))
+
+
+def test_production_probe_requires_namespace_stable_temporary_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory_path = tmp_path / "state"
+    directory_path.mkdir()
+    directory = os.open(directory_path, os.O_RDONLY | os.O_DIRECTORY)
+    monkeypatch.setattr(storage.os, "O_TMPFILE", 0, raising=False)
+    try:
+        with pytest.raises(
+            storage.PreflightError,
+            match="namespace-stable write/fsync probe is unavailable",
+        ):
+            storage._probe_write_and_fsync(
+                directory_path,
+                directory,
+                require_anonymous=True,
+            )
+    finally:
+        os.close(directory)
+    assert not list(directory_path.iterdir())
+
+
+def test_unsupported_anonymous_probe_never_falls_back_in_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory_path = tmp_path / "state"
+    directory_path.mkdir()
+    directory = os.open(directory_path, os.O_RDONLY | os.O_DIRECTORY)
+    calls: list[str] = []
+
+    def unsupported(
+        path: str,
+        _flags: int,
+        _mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        assert dir_fd == directory
+        calls.append(path)
+        raise OSError(errno.EOPNOTSUPP, "anonymous inode unsupported")
+
+    monkeypatch.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
+    monkeypatch.setattr(storage.os, "open", unsupported)
+    try:
+        with pytest.raises(
+            storage.PreflightError,
+            match="namespace-stable write/fsync probe is unavailable",
+        ):
+            storage._probe_write_and_fsync(
+                directory_path,
+                directory,
+                require_anonymous=True,
+            )
+    finally:
+        os.close(directory)
+    assert calls == ["."]
+    assert not list(directory_path.iterdir())
+
+
+def test_nonproduction_probe_can_use_named_portability_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory_path = tmp_path / "state"
+    directory_path.mkdir()
+    directory = os.open(directory_path, os.O_RDONLY | os.O_DIRECTORY)
+    real_open = os.open
+    calls: list[str] = []
+
+    def unsupported_once(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        calls.append(path)
+        if path == ".":
+            raise OSError(errno.EOPNOTSUPP, "anonymous inode unsupported")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
+    monkeypatch.setattr(storage.os, "open", unsupported_once)
+    try:
+        storage._probe_write_and_fsync(
+            directory_path,
+            directory,
+            require_anonymous=False,
+        )
+    finally:
+        os.close(directory)
+    assert calls[0] == "."
+    assert calls[1].startswith(".seiche-storage-preflight.")
+    assert not list(directory_path.iterdir())
+
+
+@pytest.mark.parametrize("failure", [errno.ENOSPC, errno.EROFS])
+def test_anonymous_probe_hard_io_errors_never_fall_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: int,
+) -> None:
+    calls: list[str] = []
+
+    def fail_open(
+        path: str,
+        _flags: int,
+        _mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        assert dir_fd == 71
+        calls.append(path)
+        raise OSError(failure, os.strerror(failure))
+
+    monkeypatch.setattr(storage.os, "O_TMPFILE", 0o20000000, raising=False)
+    monkeypatch.setattr(storage.os, "open", fail_open)
+    with pytest.raises(storage.PreflightError, match="write/fsync probe failed"):
+        storage._probe_write_and_fsync(
+            tmp_path / "state",
+            71,
+            require_anonymous=False,
+        )
+    assert calls == ["."]
+
+
+def test_anonymous_probe_writes_syncs_and_closes_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[object] = []
+    anonymous_flag = 0o20000000
+
+    def open_anonymous(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        events.append(("open", path, flags, mode, dir_fd))
+        return 83
+
+    def write(descriptor: int, payload: bytes) -> int:
+        events.append(("write", descriptor, payload))
+        return len(payload)
+
+    monkeypatch.setattr(storage.os, "O_TMPFILE", anonymous_flag, raising=False)
+    monkeypatch.setattr(storage.os, "open", open_anonymous)
+    monkeypatch.setattr(storage.os, "write", write)
+    monkeypatch.setattr(
+        storage.os, "fsync", lambda descriptor: events.append(("fsync", descriptor))
+    )
+    monkeypatch.setattr(
+        storage.os, "close", lambda descriptor: events.append(("close", descriptor))
+    )
+
+    storage._probe_write_and_fsync(
+        tmp_path / "state",
+        71,
+        require_anonymous=True,
+    )
+
+    opened = events[0]
+    assert opened == (
+        "open",
+        ".",
+        anonymous_flag | os.O_WRONLY | os.O_CLOEXEC,
+        0o600,
+        71,
+    )
+    assert events[1] == ("write", 83, b"seiche-storage-preflight-v3\n")
+    assert events[2:] == [("fsync", 83), ("fsync", 71), ("close", 83)]
+
+
+def test_anonymous_probe_preserves_archived_directory_namespace(
+    tmp_path: Path,
+) -> None:
+    if not getattr(storage.os, "O_TMPFILE", 0):
+        pytest.skip("O_TMPFILE is unavailable on this platform")
+    directory_path = tmp_path / "state"
+    directory_path.mkdir()
+    directory = os.open(directory_path, os.O_RDONLY | os.O_DIRECTORY)
+    before = os.fstat(directory)
+    try:
+        try:
+            storage._probe_write_and_fsync(
+                directory_path,
+                directory,
+                require_anonymous=True,
+            )
+        except storage.PreflightError as exc:
+            if "namespace-stable write/fsync probe is unavailable" in str(exc):
+                pytest.skip("test filesystem does not support O_TMPFILE")
+            raise
+        after = os.fstat(directory)
+    finally:
+        os.close(directory)
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ctime_ns == before.st_ctime_ns
+    assert not list(directory_path.iterdir())
 
 
 def test_every_durable_data_consumer_is_mount_guarded() -> None:
