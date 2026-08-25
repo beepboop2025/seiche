@@ -953,7 +953,11 @@ class WorkflowContracts(unittest.TestCase):
             "Verify exact bytes against a third pristine signed archive",
             "Record the exact verified distribution identity and digests",
             "Rehash bytes and reconcile any existing immutable PyPI subset",
+            "Stage an isolated copy of the exact verified upload bytes",
             "Poll PyPI for the exact complete immutable inventory",
+            "packages-dir: publish-dist",
+            "isolated publish inventory differs",
+            "local distribution inventory changed after upload",
             "skip-existing: true",
             "foreign or duplicate PyPI file",
             "existing PyPI file is yanked",
@@ -1018,6 +1022,7 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn(
             "if: steps.pypi_state.outputs.needs_upload == 'true'", publish_job
         )
+        self.assertNotIn("packages-dir: dist", publish_job)
         self.assertNotIn(
             "name: seiche-pypi-candidate-${{ github.run_attempt }}", workflow
         )
@@ -1036,6 +1041,10 @@ class WorkflowContracts(unittest.TestCase):
         )
         self.assertLess(
             publish_job.index("Rehash bytes and reconcile"),
+            publish_job.index("Stage an isolated copy"),
+        )
+        self.assertLess(
+            publish_job.index("Stage an isolated copy"),
             publish_job.index("Publish to PyPI"),
         )
         self.assertLess(
