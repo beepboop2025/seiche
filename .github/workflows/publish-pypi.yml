@@ -453,11 +453,44 @@ jobs:
               output.write(f"needs_upload={str(seen != set(expected)).lower()}\n")
           PY
 
+      - name: Stage an isolated copy of the exact verified upload bytes
+        if: steps.pypi_state.outputs.needs_upload == 'true'
+        run: |
+          mkdir publish-dist
+          cp -- \
+            "dist/$EXPECTED_WHEEL_NAME" \
+            "dist/$EXPECTED_SDIST_NAME" \
+            publish-dist/
+          python3 -I -S - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import stat
+
+          expected = {
+              os.environ["EXPECTED_WHEEL_NAME"]: os.environ["EXPECTED_WHEEL_SHA256"],
+              os.environ["EXPECTED_SDIST_NAME"]: os.environ["EXPECTED_SDIST_SHA256"],
+          }
+          publish_dist = Path("publish-dist")
+          if publish_dist.is_symlink() or not stat.S_ISDIR(
+              publish_dist.lstat().st_mode
+          ):
+              raise SystemExit("isolated publish directory is unsafe")
+          entries = list(publish_dist.iterdir())
+          if {entry.name for entry in entries} != set(expected):
+              raise SystemExit("isolated publish inventory differs")
+          for path in entries:
+              if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+                  raise SystemExit(f"unsafe isolated publish entry: {path}")
+              if hashlib.sha256(path.read_bytes()).hexdigest() != expected[path.name]:
+                  raise SystemExit(f"isolated publish copy differs: {path.name}")
+          PY
+
       - name: Publish to PyPI (trusted publishing)
         if: steps.pypi_state.outputs.needs_upload == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
-          packages-dir: dist
+          packages-dir: publish-dist
           skip-existing: true
 
       - name: Poll PyPI for the exact complete immutable inventory
