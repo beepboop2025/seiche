@@ -1,0 +1,106 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-26-dollar-funding-strain-is-on-the-calendar-not-yet-in-the-overnight-price",
+  "product": "seiche",
+  "slug": "2026-08-26-dollar-funding-strain-is-on-the-calendar-not-yet-in-the-overnight-price",
+  "date": "2026-08-26",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "Dollar-funding strain is on the calendar, not yet in the overnight price",
+  "dek": "Seiche’s board reads 45.2, STRAIN, because dated Treasury settlements meet reserves below a modelled demand-curve kink. But SOFR remains below IORB and the Standing Repo Facility is unused: the structural warning has not become a cash-price break.",
+  "canonical_url": "https://seiche.info/articles/2026-08-26-dollar-funding-strain-is-on-the-calendar-not-yet-in-the-overnight-price/",
+  "published_at": "2026-08-26T11:21:42Z",
+  "evidence_as_of": "2026-08-25",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-26-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1165,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:82d75a1d67e9b3df0ab4a1f969c9d5b5e3c6c6005718c8b3beb2b3d90d685561",
+    "memory_fingerprint": "sha256:bb8fb053464b8777a906a8656e21892a37fad5ad1477b2a91e848ae34e89ff57",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "fadc9a8371b5cae98ec042e199d7aba5709e999e9b88efe18f03471c11718f7b",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the lede around the distinction between dated structural pressure and unconfirmed overnight scarcity.",
+      "Made the counter-case capable of falsifying the thesis by centring SOFR relative to IORB and zero facility use.",
+      "Converted the next test into observable settlement-date conditions.",
+      "Removed unsupported investment-advice language and preserved model, scenario, and product boundaries.",
+      "Replaced the rejected reserve-gap figure with the dossier’s stated $768B estimate.",
+      "Retained the distinction between dated structural pressure and unconfirmed overnight scarcity.",
+      "Preserved observable settlement-date falsification conditions, model limits, and product research boundaries."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:82d75a1d67e9b3df0ab4a1f969c9d5b5e3c6c6005718c8b3beb2b3d90d685561",
+      "memory_fingerprint": "sha256:bb8fb053464b8777a906a8656e21892a37fad5ad1477b2a91e848ae34e89ff57",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}
