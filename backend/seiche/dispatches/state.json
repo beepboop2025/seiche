@@ -1,37 +1,15 @@
 {
-  "date": "2026-08-26",
+  "date": "2026-08-27",
   "reported_prev": {
-    "2y Treasury constant maturity yield": "2026-08-21",
-    "Sri Lankan rupees per USD (H.10)": "2026-08-21"
-  },
-  "reported": {
     "2y Treasury constant maturity yield": "2026-08-24",
     "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
-  "letter_prev": {
-    "regime": "STRAIN",
-    "value": 45.2,
-    "decomp": {
-      "weather": 11.0,
-      "kink": 7.4,
-      "resonance": 6.7,
-      "rvxray": 6.1,
-      "buffers": 3.0,
-      "undertow": 2.8,
-      "confession": 2.7,
-      "warehouse": 2.4,
-      "tails": 2.2,
-      "auctions": 1.0,
-      "hydrophone": 0.0
-    },
-    "crunch": {
-      "date": "2026-08-27",
-      "worst_case_b": 2896.7,
-      "settlement_b": 95.0
-    },
-    "tell": 30.5
+  "reported": {
+    "SRF accepted": "2026-08-27",
+    "Sri Lankan rupees per USD (H.10)": "2026-08-21",
+    "2y Treasury constant maturity yield": "2026-08-26"
   },
-  "letter": {
+  "letter_prev": {
     "regime": "STRAIN",
     "value": 45.2,
     "decomp": {
@@ -53,5 +31,28 @@
       "settlement_b": 114.0
     },
     "tell": 29.5
+  },
+  "letter": {
+    "regime": "EROSION",
+    "value": 45.0,
+    "decomp": {
+      "weather": 11.0,
+      "kink": 7.3,
+      "resonance": 6.7,
+      "rvxray": 6.1,
+      "buffers": 3.0,
+      "undertow": 2.8,
+      "confession": 2.6,
+      "warehouse": 2.4,
+      "tails": 2.0,
+      "auctions": 1.1,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-31",
+      "worst_case_b": 2881.6,
+      "settlement_b": null
+    },
+    "tell": 31.7
   }
 }
