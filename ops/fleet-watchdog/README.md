@@ -26,6 +26,7 @@ days of journal held zero startup banners — nothing to scrape.
 | state-file mtime (`offset.json`) | the poll loop stopped turning |
 | `systemctl is-active` | the unit died outright |
 | JSON-RPC `initialize` on each MCP remote | the remote is up but not speaking MCP, or the path stopped routing to it |
+| LiquiLens `GET /api/public-signals/rails` | the rails pack is approaching its public hold, unavailable, stale, future-dated, malformed, or unreachable |
 | Mac heartbeat mtime + exact `nyx=1` line | the NYX host stopped checking in, or checked in while the bridge was down |
 
 Both Telegram methods are read-only and neither touches `getUpdates`, so
@@ -79,6 +80,13 @@ server behind.
   ignored and the next usable bot is picked.
 - **Two consecutive bad runs before alerting**, so one network blip stays quiet.
 - **One alert per hour per bot**, plus an explicit `🟢 recovered` message.
+- The LiquiLens rails probe is preventive: it uses the UTC date encoded by
+  `as_of` and alerts at `age_days >= 2`, before the API withholds a pack at
+  age 4 (`age_days > 3`). It also fails closed on a non-200 response, non-object JSON,
+  missing/non-canonical/future `as_of`, non-boolean status fields,
+  `available=false`, or `stale=true`. The probe is a read-only GET and its
+  alert goes only to the configured owner chat; it never posts to a public
+  channel.
 - NYX cannot report its own worst failure — laptop asleep, offline or logged
   out. So the Mac *checks in* every 5 min via `fleet-mac-heartbeat.sh` (a
   LaunchAgent). The box requires both a fresh mtime and exactly one `nyx=1`
@@ -159,7 +167,11 @@ fleet):
   "mcp_remotes": [
     { "name": "mcp-alpha", "url": "https://api.example.com/mcp", "alert_via": "beta-bot" },
     { "name": "mcp-beta",  "url": "https://api.example.com/beta/mcp" }
-  ]
+  ],
+  "liquilens_rails": {
+    "url": "https://api.liquilens.in/api/public-signals/rails",
+    "alert_via": "beta-bot"
+  }
 }
 ```
 
@@ -174,15 +186,21 @@ Fields:
 | `bots[].alert_via` | optional; unit whose token sends this bot's alerts. Defaults to `default_alert_via`, and never to the bot itself |
 | `mcp_remotes[].name` | label used in alerts and state |
 | `mcp_remotes[].url` | the streamable-HTTP MCP endpoint |
+| `liquilens_rails.url` | the public LiquiLens rails JSON endpoint; use `https://api.liquilens.in/api/public-signals/rails` |
+| `liquilens_rails.alert_via` | optional bot unit that sends the private owner alert; the state/alert label is fixed as `liquilens-rails` |
 | `default_alert_via` | fallback sender for anything without `alert_via`, including the Mac heartbeat |
 
 Point `FLEET_WATCHDOG_CONFIG` elsewhere to test against a scratch file.
 
+`liquilens_rails` is a safe, non-secret config key: its values are a public URL
+and an existing sender unit name. Do not place credentials or signed query
+parameters in the URL.
+
 Without a chat id the run exits **non-zero** rather than probing mutely, so a
 missing `EnvironmentFile` shows up as a `failed` unit in the journal instead of
 a green run that could never have paged anyone. A config that parses to no bots
-and no remotes exits non-zero for the same reason. A single malformed *entry*
-is skipped with a note; it does not take the run down.
+and no remotes and has no rails probe exits non-zero for the same reason. A
+single malformed *entry* is skipped with a note; it does not take the run down.
 
 ## Install
 

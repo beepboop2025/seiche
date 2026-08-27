@@ -41,6 +41,10 @@ _GOOD = {
          "state": "/var/lib/b/offset.json"},
     ],
     "mcp_remotes": [{"name": "mcp-a", "url": "https://example.test/mcp"}],
+    "liquilens_rails": {
+        "url": "https://api.liquilens.in/api/public-signals/rails",
+        "alert_via": "beta-bot",
+    },
 }
 
 
@@ -64,6 +68,8 @@ def test_config_round_trips(tmp_path):
     assert cfg.bots[1].state == "/var/lib/b/offset.json"
     assert cfg.bots[0].state is None
     assert [r.name for r in cfg.remotes] == ["mcp-a"]
+    assert cfg.rails.url.endswith("/api/public-signals/rails")
+    assert cfg.rails.via == "beta-bot"
 
 
 @pytest.mark.parametrize("payload", ["[]", "null", "not json at all", '{"bots": 3}'])
@@ -83,6 +89,12 @@ def test_one_bad_entry_does_not_drop_the_good_ones(tmp_path):
 def test_missing_config_file_is_survivable(tmp_path):
     cfg = wd.load_config(str(tmp_path / "absent.json"))
     assert cfg.bots == [] and cfg.remotes == []
+
+
+@pytest.mark.parametrize("entry", [[], {}, {"url": ""}, "not an object"])
+def test_malformed_rails_probe_is_not_enabled(tmp_path, entry):
+    cfg = wd.load_config(_write(tmp_path, {"liquilens_rails": entry}))
+    assert cfg.rails is None
 
 
 def test_alert_never_routes_through_the_thing_being_reported(tmp_path):
@@ -172,6 +184,119 @@ def test_an_error_message_containing_the_word_result_is_not_healthy():
 def test_html_from_a_misroute_is_reported():
     problems = wd._verdict(_URL, "<html><body>welcome to nginx</body></html>")
     assert problems and "wrong service" in problems[0]
+
+
+# ---- LiquiLens rails freshness ----------------------------------------------
+
+_RAILS = wd.RailsProbe(
+    "https://api.liquilens.in/api/public-signals/rails", "alpha-bot")
+_RAILS_TODAY = wd.date(2026, 8, 27)
+
+
+class _JSONResponse:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+        self.read_size = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, size):
+        self.read_size = size
+        return self.payload[:size]
+
+
+def _rails_problems(monkeypatch, payload):
+    monkeypatch.setattr(wd, "_fetch_json_object",
+                        lambda url: (payload, None))
+    return wd.check_liquilens_rails(_RAILS, _RAILS_TODAY)
+
+
+def test_rails_http_failure_is_unhealthy(monkeypatch):
+    def unavailable(request, timeout):
+        raise wd.urllib.error.HTTPError(
+            request.full_url, 503, "unavailable", {}, None)
+
+    monkeypatch.setattr(wd._OPENER, "open", unavailable)
+    assert wd.check_liquilens_rails(_RAILS, _RAILS_TODAY) == [
+        "HTTP 503 from rails endpoint"]
+
+
+def test_rails_fetch_is_a_bounded_read_only_json_get(monkeypatch):
+    response = _JSONResponse(json.dumps({
+        "available": True, "stale": False, "as_of": "2026-08-27",
+    }).encode())
+    captured = {}
+
+    def open_probe(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return response
+
+    monkeypatch.setattr(wd._OPENER, "open", open_probe)
+
+    assert wd.check_liquilens_rails(_RAILS, _RAILS_TODAY) == []
+    assert captured["request"].get_method() == "GET"
+    assert captured["request"].data is None
+    assert captured["request"].get_header("Accept") == "application/json"
+    assert captured["timeout"] == wd.TIMEOUT
+    assert response.read_size == wd.RAILS_READ_MAX + 1
+
+
+@pytest.mark.parametrize(("body", "problem"), [
+    (b"[]", "not an object"),
+    (b"not json", "not valid UTF-8 JSON"),
+])
+def test_rails_transport_rejects_wrong_json_shape(monkeypatch, body, problem):
+    monkeypatch.setattr(wd._OPENER, "open",
+                        lambda request, timeout: _JSONResponse(body))
+    assert problem in wd.check_liquilens_rails(_RAILS, _RAILS_TODAY)[0]
+
+
+@pytest.mark.parametrize(("payload", "problem"), [
+    ({"available": False, "stale": False, "as_of": "2026-08-27"},
+     "available=false"),
+    ({"available": True, "stale": True, "as_of": "2026-08-27"},
+     "stale=true"),
+    ({"available": "yes", "stale": False, "as_of": "2026-08-27"},
+     "available is missing or not boolean"),
+    ({"available": True, "stale": "no", "as_of": "2026-08-27"},
+     "stale is missing or not boolean"),
+    ({"available": True, "stale": False},
+     "as_of is missing or invalid"),
+    ({"available": True, "stale": False, "as_of": "20260827"},
+     "as_of is missing or invalid"),
+])
+def test_rails_status_and_shape_fail_closed(monkeypatch, payload, problem):
+    assert any(problem in item for item in _rails_problems(monkeypatch, payload))
+
+
+def test_rails_future_as_of_is_unhealthy(monkeypatch):
+    problems = _rails_problems(monkeypatch, {
+        "available": True, "stale": False, "as_of": "2026-08-28",
+    })
+    assert len(problems) == 1
+    assert "future" in problems[0] and "UTC day 2026-08-27" in problems[0]
+
+
+@pytest.mark.parametrize(("as_of", "healthy"), [
+    ("2026-08-27", True),
+    ("2026-08-26", True),
+    ("2026-08-25", False),
+    ("2026-08-20", False),
+])
+def test_rails_warns_at_two_utc_days_not_after_public_hold(
+        monkeypatch, as_of, healthy):
+    problems = _rails_problems(monkeypatch, {
+        "available": True, "stale": False, "as_of": as_of,
+    })
+    assert (problems == []) is healthy
+    if not healthy:
+        assert "age_days=" in problems[0]
 
 
 # ---- bounded read -----------------------------------------------------------
@@ -404,6 +529,42 @@ def test_a_single_remote_outage_still_names_that_remote(monkeypatch, tmp_path):
 
     assert wd.main() == 0
     assert len(sent) == 1 and "mcp-a" in sent[0]
+
+
+def test_rails_probe_uses_shared_debounce_and_recovery(monkeypatch, tmp_path):
+    sent = []
+    monkeypatch.setattr(wd, "OWNER_CHAT", "123")
+    monkeypatch.setattr(wd, "CONFIG_PATH", _write(tmp_path, {
+        "default_alert_via": "alpha-bot",
+        "bots": [{"unit": "alpha-bot", "env": str(tmp_path / "a.env"),
+                  "var": "A"}],
+        "liquilens_rails": {
+            "url": "https://api.liquilens.in/api/public-signals/rails",
+        },
+    }))
+    monkeypatch.setattr(wd, "STATE_PATH", str(tmp_path / "state.json"))
+    _heartbeat(tmp_path, monkeypatch)
+    monkeypatch.setattr(wd, "check", lambda bot: [])
+    monkeypatch.setattr(wd, "notify",
+                        lambda cfg, via, text: sent.append((via, text)) or True)
+    results = iter([
+        ["rails evidence age_days=2"],
+        ["rails evidence age_days=2"],
+        [],
+    ])
+    monkeypatch.setattr(wd, "check_liquilens_rails",
+                        lambda probe, current_day: next(results))
+
+    assert wd.main() == 0
+    assert sent == []  # first bad run is debounced
+    assert wd.main() == 0
+    assert sent == [("alpha-bot",
+                     "🔴 liquilens-rails: rails evidence age_days=2")]
+    assert wd.main() == 0
+    assert sent[-1] == ("alpha-bot", "🟢 liquilens-rails: recovered")
+
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["liquilens-rails"]["fails"] == 0
 
 
 def test_a_corrupt_state_entry_does_not_stop_the_run(monkeypatch, tmp_path):

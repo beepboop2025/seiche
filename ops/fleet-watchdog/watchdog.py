@@ -30,6 +30,7 @@ stdlib only, runs as root from a systemd timer.
 from __future__ import annotations
 
 import collections
+from datetime import date, datetime, timezone
 import json
 import os
 import ssl
@@ -56,6 +57,15 @@ REALERT_S = 3600
 # pending_update_count above this means the poller is not draining its queue.
 PENDING_MAX = 25
 
+# Warn two UTC date steps before LiquiLens withholds a rails pack at age 4
+# (the product's 3-day SLA rejects only age > 3).  This is a prevention
+# threshold, not the publication SLA: age 2 is already a watchdog problem
+# even while the endpoint still serves the evidence.
+RAILS_WARN_AGE_DAYS = 2
+# The public board is intentionally detailed.  Bound it generously so a
+# misrouted or unbounded response cannot consume arbitrary memory.
+RAILS_READ_MAX = 8 * 1024 * 1024
+
 # Mac-hosted bots report in by touching this file over ssh; if the Mac is
 # asleep, offline or logged out, nothing touches it and the box notices.
 MAC_HEARTBEAT = "/var/lib/fleet-watchdog/mac.heartbeat"
@@ -67,9 +77,11 @@ MAC_HEARTBEAT_MAX_BYTES = 64
 #   bots         unit name, env file, token variable, optional state file whose
 #                mtime proves the poll loop turns, and the unit to alert through
 #   mcp_remotes  display name, URL, and the unit to alert through
+#   liquilens_rails  public rails URL and the unit to alert through
 Bot = collections.namedtuple("Bot", "unit env var state via")
 Remote = collections.namedtuple("Remote", "name url via")
-Config = collections.namedtuple("Config", "bots remotes default_via")
+RailsProbe = collections.namedtuple("RailsProbe", "url via")
+Config = collections.namedtuple("Config", "bots remotes rails default_via")
 
 # The MCP remotes have the bots' exact failure mode (process up, unit active,
 # answering nothing) for a less forgiving audience. An agent that gets one bad
@@ -154,8 +166,17 @@ def load_config(path: str | None = None) -> Config:
             continue
         remotes.append(Remote(str(e["name"]), str(e["url"]), e.get("alert_via") or ""))
 
+    rails = None
+    rails_entry = raw.get("liquilens_rails")
+    if rails_entry is not None:
+        if not (isinstance(rails_entry, dict) and rails_entry.get("url")):
+            print("config liquilens_rails needs url, skipped")
+        else:
+            rails = RailsProbe(str(rails_entry["url"]),
+                               str(rails_entry.get("alert_via") or ""))
+
     default_via = str(raw.get("default_alert_via") or "")
-    return Config(bots, remotes, default_via)
+    return Config(bots, remotes, rails, default_via)
 
 
 def pick_via(name: str, configured: str, cfg: Config) -> str:
@@ -410,6 +431,92 @@ def _verdict(url: str, payload: str) -> list[str]:
     return ["initialize result lacks serverInfo, may not be an MCP server"]
 
 
+def _fetch_json_object(url: str) -> tuple[dict | None, str | None]:
+    """GET one bounded JSON object without following redirects.
+
+    This is deliberately separate from the freshness verdict: transport and
+    JSON-shape failures are one class of evidence outage, while the caller
+    owns the UTC clock and product-specific status contract.
+    """
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json",
+        "User-Agent": MCP_UA,
+    })
+    try:
+        with _OPENER.open(req, timeout=TIMEOUT) as response:
+            status_code = getattr(response, "status", None)
+            if status_code is None:
+                status_code = response.getcode()
+            if status_code != 200:
+                return None, f"HTTP {status_code} from rails endpoint"
+            raw = response.read(RAILS_READ_MAX + 1)
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP {exc.code} from rails endpoint"
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        detail = type(reason).__name__ if reason is not None else type(exc).__name__
+        return None, f"rails endpoint unreachable ({detail})"
+    except Exception as exc:
+        return None, f"rails endpoint probe failed ({type(exc).__name__})"
+
+    if len(raw) > RAILS_READ_MAX:
+        return None, f"rails response exceeds {RAILS_READ_MAX} byte limit"
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None, "rails response is not valid UTF-8 JSON"
+    if not isinstance(payload, dict):
+        return None, "rails response JSON is not an object"
+    return payload, None
+
+
+def check_liquilens_rails(probe: RailsProbe,
+                           current_day: date | None = None) -> list[str]:
+    """Fail before the rails pack reaches LiquiLens's public hold.
+
+    ``as_of`` is interpreted against a UTC date supplied by the caller (or the
+    current UTC date), never local time and never an age claimed by the remote.
+    Missing or contradictory availability fields fail closed: absence of
+    evidence must not be reported as healthy.
+    """
+    payload, transport_problem = _fetch_json_object(probe.url)
+    if transport_problem:
+        return [transport_problem]
+
+    problems: list[str] = []
+    available = payload.get("available")
+    if type(available) is not bool:
+        problems.append("rails response available is missing or not boolean")
+    elif not available:
+        problems.append("rails response says available=false")
+
+    stale = payload.get("stale")
+    if type(stale) is not bool:
+        problems.append("rails response stale is missing or not boolean")
+    elif stale:
+        problems.append("rails response says stale=true")
+
+    as_of_raw = payload.get("as_of")
+    try:
+        as_of = date.fromisoformat(as_of_raw)
+        if as_of.isoformat() != as_of_raw:
+            raise ValueError("as_of is not canonical")
+    except (TypeError, ValueError):
+        problems.append("rails response as_of is missing or invalid (expected YYYY-MM-DD)")
+        return problems
+
+    today = current_day or datetime.now(timezone.utc).date()
+    age_days = (today - as_of).days
+    if age_days < 0:
+        problems.append(f"rails as_of {as_of_raw} is in the future "
+                        f"(UTC day {today.isoformat()})")
+    elif age_days >= RAILS_WARN_AGE_DAYS:
+        problems.append(f"rails evidence age_days={age_days} at UTC day "
+                        f"{today.isoformat()} (as_of {as_of_raw}; warn at "
+                        f">={RAILS_WARN_AGE_DAYS})")
+    return problems
+
+
 def notify(cfg: Config, via_unit: str, text: str) -> bool:
     for bot in cfg.bots:
         if bot.unit != via_unit:
@@ -536,8 +643,8 @@ def main() -> int:
         print("FLEET_OWNER_CHAT unset, alerts cannot be delivered")
         return 1
     cfg = load_config()
-    if not cfg.bots and not cfg.remotes:
-        print(f"no bots or MCP remotes configured in {CONFIG_PATH}")
+    if not cfg.bots and not cfg.remotes and cfg.rails is None:
+        print(f"no bots, MCP remotes or rails probe configured in {CONFIG_PATH}")
         return 1
 
     state = load_state()
@@ -550,6 +657,15 @@ def main() -> int:
     # one NYX alarm, sharing the same debounce/re-alert history.
     checks.append(("mac-bots", pick_via("mac-bots", "", cfg),
                    guarded("mac-bots", lambda: check_mac_heartbeat(now))))
+
+    if cfg.rails is not None:
+        rails_day = datetime.fromtimestamp(now, timezone.utc).date()
+        checks.append((
+            "liquilens-rails",
+            pick_via("liquilens-rails", cfg.rails.via, cfg),
+            guarded("liquilens-rails", lambda: check_liquilens_rails(
+                cfg.rails, rails_day)),
+        ))
 
     mcp_checks = [(r.name, pick_via(r.name, r.via, cfg),
                    guarded(r.name, lambda r=r: check_mcp(r.url)))
