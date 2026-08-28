@@ -6470,7 +6470,7 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     caddy = CADDYFILE.read_text()
     block = caddy[
         caddy.index("# Palimpsest exposes four additional") : caddy.index(
-            "# ScamShield publishes one atomic"
+            "# Palimpsest exposes one signature-admitted"
         )
     ]
     routes = {
@@ -6491,6 +6491,42 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     assert block.count("root * /var/lib/palimpsest/readings") == 4
     assert block.count("file_server") == 4
     assert "handle_path /palimpsest/" not in block
+    assert "reverse_proxy" not in block
+
+
+def test_palimpsest_evidence_lake_metrics_edge_is_an_exact_atomic_generation():
+    caddy = CADDYFILE.read_text()
+    block = caddy[
+        caddy.index("# Palimpsest exposes one signature-admitted") : caddy.index(
+            "# ScamShield publishes one atomic"
+        )
+    ]
+    matcher = (
+        "@palimpsest_evidence_lake_metrics {\n"
+        "        method GET HEAD\n"
+        "        path "
+        "/palimpsest/evidence-lake-metrics/evidence-lake-metrics-latest.json "
+        "/palimpsest/evidence-lake-metrics/"
+        "evidence-lake-metrics-producer-receipt.json\n"
+        "    }"
+    )
+
+    assert matcher in block
+    assert block.count("method GET HEAD") == 1
+    assert block.count("path /palimpsest/evidence-lake-metrics/") == 1
+    assert "path /palimpsest/evidence-lake-metrics/*" not in block
+    assert "handle_path /palimpsest/evidence-lake-metrics" not in block
+    assert "uri strip_prefix /palimpsest/evidence-lake-metrics" in block
+    assert (
+        block.count("root * /var/lib/palimpsest/evidence-lake-metrics/current") == 1
+    )
+    assert 'header Access-Control-Allow-Origin "https://palimpsest.info"' in block
+    assert 'header Cache-Control "no-store, no-transform"' in block
+    assert 'header Content-Disposition "inline"' in block
+    assert 'header X-Content-Type-Options "nosniff"' in block
+    assert block.count("file_server") == 1
+    assert "root * /var/lib/palimpsest/readings" not in block
+    assert "browse" not in block
     assert "reverse_proxy" not in block
 
 
