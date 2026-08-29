@@ -41,6 +41,7 @@ const Dispatches = lazy(() => import("./tabs/Dispatches"));
 const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
+const Corpus = lazy(() => import("./tabs/Corpus"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
 const Physics = lazy(() => import("./tabs/Physics"));
 const Helm = lazy(() => import("./tabs/Helm"));
@@ -73,7 +74,7 @@ const Account = lazy(() => import("./tabs/Account"));
 // inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "CORPUS", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -453,6 +454,7 @@ function AppInner() {
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
           {tab === "MONEY MARKETS" && <MoneyMarkets snap={snap} />}
+          {tab === "CORPUS" && <Corpus />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}
           {tab === "SUPPLY" && <Supply snap={snap} />}
           {tab === "FORECAST" && <Forecast snap={snap} />}

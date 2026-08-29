@@ -228,6 +228,42 @@ API_CATALOG = {
             ],
         },
         {
+            "anchor": "https://api.seiche.info/api/v2/corpus",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/#corpus",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+                    "type": "application/json",
+                }
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/healthz",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/api/v2/corpus/mcp",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/#corpus",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
             "anchor": "https://api.seiche.info/undertow/x402/",
             "service-desc": [
                 {
@@ -987,6 +1023,25 @@ def api_index() -> dict[str, Any]:
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
+        "corpus": {
+            "catalog": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+            "datasets": "https://api.seiche.info/api/v2/corpus/v1/datasets",
+            "bis_flows_for_seiche": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/flows?product=seiche"
+            ),
+            "seiche_markets": (
+                "https://api.seiche.info/api/v2/corpus/v1/seiche/markets"
+            ),
+            "seiche_exports": (
+                "https://api.seiche.info/api/v2/corpus/v1/seiche/exports"
+            ),
+            "mcp": "https://api.seiche.info/api/v2/corpus/mcp",
+            "boundary": (
+                "Discovery and public research evidence only. Catalog classes are "
+                "not model, training, scoring, execution, or redistribution permission; "
+                "restricted exports retain download=null."
+            ),
+        },
         "rest": {
             "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",

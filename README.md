@@ -57,6 +57,7 @@ ledger status. The auditable source of truth is
 | **MCP directories** | Official Registry, Glama, Smithery, and eight additional live indexes ([dated inventory](distribution/MCP_DIRECTORIES.md)) | 11 live records; claim/freshness gaps tracked |
 | **Research notebooks** | Commit-pinned, hash-checking direct-OFR workflow ([notebook](notebooks/seiche_direct_ofr_research.ipynb)) | Usable in repo |
 | **Python / R / JavaScript** | Zero-secret world-markets API clients with evidence-contract checks ([clients](clients/)) | Usable in repo |
+| **Structured market corpus** | Rights-aware dataset receipts, BIS flows, Seiche partitions, public API and MCP ([contract](docs/MARKET_CORPUS.md)) | Live canonical gateway; protected exports remain restricted |
 | **Docker** | Distroless, non-root, read-only Compose image and signed GHCR publication workflow ([guide](docs/DISTRIBUTION.md)) | Built and tested locally; GHCR prepared |
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
@@ -187,6 +188,14 @@ visible as unavailable; a policy rate or restricted input is never relabelled as
 live traded benchmark).
 
 ## Public world-market contracts
+
+The separate structured corpus is available at
+**[`/api/v2/corpus`](https://api.seiche.info/api/v2/corpus)** and in the UI at
+**[`#corpus`](https://seiche.info/#corpus)**. It is a discovery and provenance
+surface, not an analytics input: Seiche request handlers do not fetch it, and a
+receipt's `data_class` or `license_review` never grants model, training, scoring,
+execution or redistribution permission. See
+[`docs/MARKET_CORPUS.md`](docs/MARKET_CORPUS.md) for endpoints and invariants.
 
 - **`GET /api/v2/world-markets`** returns the versioned
   `seiche.world-markets.v1` projection of an already completed snapshot. It

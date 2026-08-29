@@ -8,6 +8,8 @@ from seiche.api import API_CATALOG, API_CATALOG_MEDIA_TYPE, API_CATALOG_URL, app
 EXPECTED_ANCHORS = {
     "https://api.seiche.info/api",
     "https://api.seiche.info/mcp",
+    "https://api.seiche.info/api/v2/corpus",
+    "https://api.seiche.info/api/v2/corpus/mcp",
     "https://api.seiche.info/undertow/x402/",
     "https://api.seiche.info/undertow/mcp",
     "https://api.seiche.info/riptide/",
@@ -82,6 +84,18 @@ def test_origin_catalog_media_hints_match_live_representations():
     assert entries["https://api.seiche.info/api"]["service-desc"] == [
         {
             "href": "https://api.seiche.info/api/openapi.json",
+            "type": "application/json",
+        }
+    ]
+    assert entries["https://api.seiche.info/api/v2/corpus"]["service-meta"] == [
+        {
+            "href": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+            "type": "application/json",
+        }
+    ]
+    assert entries["https://api.seiche.info/api/v2/corpus"]["status"] == [
+        {
+            "href": "https://api.seiche.info/api/v2/corpus/healthz",
             "type": "application/json",
         }
     ]
