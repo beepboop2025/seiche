@@ -172,6 +172,200 @@ app = FastAPI(
 )
 
 
+API_CATALOG_URL = "https://api.seiche.info/.well-known/api-catalog"
+API_CATALOG_MEDIA_TYPE = (
+    'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"'
+)
+API_CATALOG = {
+    "linkset": [
+        {
+            "anchor": "https://api.seiche.info/api",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/api/openapi.json",
+                    "type": "application/vnd.oai.openapi+json",
+                }
+            ],
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://seiche.info/.well-known/ai-catalog.json",
+                    "type": "application/ai-catalog+json",
+                }
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/api/health",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/mcp",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fseiche/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": "https://seiche.info/.well-known/ai-catalog.json",
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/undertow/x402/",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/openapi.json",
+                    "type": "application/vnd.oai.openapi+json",
+                }
+            ],
+            "service-doc": [
+                {
+                    "href": "https://liquilens-undertow.com/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/.well-known/x402",
+                    "type": "application/json",
+                },
+                {
+                    "href": (
+                        "https://liquilens-undertow.com/.well-known/ai-catalog.json"
+                    ),
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/health",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/undertow/mcp",
+            "service-doc": [
+                {
+                    "href": "https://liquilens-undertow.com/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fundertow/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": (
+                        "https://liquilens-undertow.com/.well-known/ai-catalog.json"
+                    ),
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/riptide/",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/riptide/openapi.json",
+                    "type": "application/vnd.oai.openapi+json",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Friptide/versions/latest"
+                    ),
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/riptide/mcp",
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Friptide/versions/latest"
+                    ),
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/palimpsest/mcp",
+            "service-doc": [
+                {
+                    "href": "https://palimpsest.info/developers.html",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fpalimpsest/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": "https://palimpsest.info/.well-known/ai-catalog.json",
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+        },
+    ]
+}
+
+
+@app.api_route(
+    "/.well-known/api-catalog",
+    methods=["GET", "HEAD", "OPTIONS"],
+    include_in_schema=False,
+)
+def api_catalog(request: Request) -> Response:
+    """Publish RFC 9727 discovery for every API sharing this origin."""
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Expose-Headers": "Link",
+        "Allow": "GET, HEAD, OPTIONS",
+        "Cache-Control": "public, max-age=300",
+        "Content-Type": API_CATALOG_MEDIA_TYPE,
+        "Link": (
+            f'<{API_CATALOG_URL}>; rel="api-catalog"; type="application/linkset+json"'
+        ),
+        "X-Content-Type-Options": "nosniff",
+    }
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=headers)
+    if request.method == "HEAD":
+        return Response(status_code=200, headers=headers)
+    return JSONResponse(API_CATALOG, headers=headers)
+
+
 @app.get("/.well-known/mcp.json", include_in_schema=False)
 def mcp_directory_discovery(response: Response) -> dict[str, Any]:
     """Publish the same-origin discovery document required by MCPub.
