@@ -183,7 +183,7 @@ API_CATALOG = {
             "service-desc": [
                 {
                     "href": "https://api.seiche.info/api/openapi.json",
-                    "type": "application/vnd.oai.openapi+json",
+                    "type": "application/json",
                 }
             ],
             "service-doc": [
@@ -195,7 +195,7 @@ API_CATALOG = {
             "service-meta": [
                 {
                     "href": "https://seiche.info/.well-known/ai-catalog.json",
-                    "type": "application/ai-catalog+json",
+                    "type": "application/json",
                 }
             ],
             "status": [
@@ -223,7 +223,7 @@ API_CATALOG = {
                 },
                 {
                     "href": "https://seiche.info/.well-known/ai-catalog.json",
-                    "type": "application/ai-catalog+json",
+                    "type": "application/json",
                 },
             ],
         },
@@ -232,7 +232,7 @@ API_CATALOG = {
             "service-desc": [
                 {
                     "href": "https://api.seiche.info/undertow/x402/openapi.json",
-                    "type": "application/vnd.oai.openapi+json",
+                    "type": "application/json",
                 }
             ],
             "service-doc": [
@@ -289,7 +289,7 @@ API_CATALOG = {
             "service-desc": [
                 {
                     "href": "https://api.seiche.info/riptide/openapi.json",
-                    "type": "application/vnd.oai.openapi+json",
+                    "type": "application/json",
                 }
             ],
             "service-meta": [
@@ -332,7 +332,7 @@ API_CATALOG = {
                 },
                 {
                     "href": "https://palimpsest.info/.well-known/ai-catalog.json",
-                    "type": "application/ai-catalog+json",
+                    "type": "application/json",
                 },
             ],
         },

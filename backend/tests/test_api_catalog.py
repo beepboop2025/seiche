@@ -74,3 +74,26 @@ def test_origin_catalog_does_not_invent_agent_protocols_or_flatten_products():
     assert "agent-card" not in serialized
     assert "a2a" not in serialized
     assert "composite" not in serialized
+
+
+def test_origin_catalog_media_hints_match_live_representations():
+    entries = {entry["anchor"]: entry for entry in API_CATALOG["linkset"]}
+
+    assert entries["https://api.seiche.info/api"]["service-desc"] == [
+        {
+            "href": "https://api.seiche.info/api/openapi.json",
+            "type": "application/json",
+        }
+    ]
+    assert (
+        entries["https://api.seiche.info/undertow/x402/"]["service-desc"][0]["type"]
+        == "application/json"
+    )
+    assert (
+        entries["https://api.seiche.info/riptide/"]["service-desc"][0]["type"]
+        == "application/json"
+    )
+    assert (
+        entries["https://api.seiche.info/palimpsest/mcp"]["service-meta"][1]["type"]
+        == "application/json"
+    )
