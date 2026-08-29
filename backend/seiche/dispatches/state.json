@@ -1,9 +1,8 @@
 {
-  "date": "2026-08-28",
+  "date": "2026-08-29",
   "reported_prev": {
-    "SRF accepted": "2026-08-27",
-    "Sri Lankan rupees per USD (H.10)": "2026-08-21",
-    "2y Treasury constant maturity yield": "2026-08-26"
+    "SRF accepted": "2026-08-28",
+    "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
   "reported": {
     "SRF accepted": "2026-08-28",
@@ -11,12 +10,12 @@
   },
   "letter_prev": {
     "regime": "EROSION",
-    "value": 45.0,
+    "value": 44.9,
     "decomp": {
       "weather": 11.0,
       "kink": 7.3,
       "resonance": 6.7,
-      "rvxray": 6.1,
+      "rvxray": 6.0,
       "buffers": 3.0,
       "undertow": 2.8,
       "confession": 2.6,
@@ -27,10 +26,10 @@
     },
     "crunch": {
       "date": "2026-08-31",
-      "worst_case_b": 2881.6,
+      "worst_case_b": 2893.5,
       "settlement_b": null
     },
-    "tell": 31.7
+    "tell": 38.1
   },
   "letter": {
     "regime": "EROSION",
