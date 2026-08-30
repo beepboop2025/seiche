@@ -732,7 +732,7 @@ def test_both_static_publishers_gate_before_their_first_public_write():
 def test_full_publish_refuses_stale_mirror_and_canonical_writes():
     workflow = (ROOT / ".github/workflows/publish.yml").read_text()
     fetch = (
-        'git fetch --no-tags origin \\\n'
+        "git fetch --no-tags origin \\\n"
         '            "+refs/heads/main:refs/remotes/origin/main"'
     )
     mirror_guard = "Refuse a stale full-site publish"
