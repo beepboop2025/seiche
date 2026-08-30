@@ -15,6 +15,7 @@ import Gauge from "./motion/Gauge";
 import Odo from "./motion/Odo";
 import LivePulse from "./motion/LivePulse";
 import { useChangeFlash } from "./motion/useLive";
+import { tabSharePath } from "./shareRoutes";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const Basin = lazy(() => import("./Basin"));
@@ -334,6 +335,7 @@ function AppInner() {
     : compositeCoverage === null
       ? "dependent views may be degraded"
       : `dependent views may be degraded; composite coverage remains ${compositeCoverage.toFixed(1)}%`;
+  const tabCardPath = tabSharePath(tab);
 
   if (descending) {
     return (
@@ -449,7 +451,12 @@ function AppInner() {
       )}
 
       <Suspense fallback={<TabSkeleton />}>
-        <div className="tabview" key={tab}>
+        <div
+          className="tabview"
+          key={tab}
+          data-share-path={tabCardPath ?? undefined}
+          data-share-disabled={tabCardPath ? undefined : "true"}
+        >
           {tab === "TODAY" && <Today snap={snap} live={live} />}
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}

@@ -27,19 +27,19 @@ RESULT_SCHEMA = "seiche.railway-gate-result.v1"
 REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 SOURCE_REF = "refs/heads/main"
-INSTALL_COMMAND = "python -m pip install -q ./backend[dev,collectors]"
-TEST_COMMAND = (
-    "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+INSTALL_COMMAND = (
+    "python -m pip install -q ./backend[dev,collectors] && "
+    "python -m pip install --disable-pip-version-check --only-binary=:all: "
+    "--require-hashes -r ops/requirements-social-cards.txt"
 )
+TEST_COMMAND = "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
     "sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
 )
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
-UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REGION_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 REQUEST_KEYS = {
@@ -65,12 +65,7 @@ def fail(message: str) -> NoReturn:
 
 
 def utc_now() -> str:
-    return (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def file_sha256(path: Path) -> str:
@@ -360,9 +355,9 @@ def build_result(
 
 
 def canonical_json(payload: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
 
 
 def serve(result: bytes) -> NoReturn:

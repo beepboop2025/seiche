@@ -1,6 +1,7 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import Chart, { type ChartSeries } from "../Chart";
 import { Any, Fault, fmt } from "../lib";
+import { worldMarketSharePath } from "../shareRoutes";
 import "../styles-estuary.css";
 
 const C = {
@@ -452,9 +453,9 @@ export default function Estuary({ snap }: { snap: Any }) {
       <section className="est-tape" aria-labelledby="est-tape-title">
         <div className="est-section-head"><div><span className="est-kicker">OBSERVED TAPE</span><h2 id="est-tape-title">Four views, four honest clocks</h2></div><p>Each chart stays in one interpretable unit. Monthly physical breadth never masquerades as a daily print.</p></div>
         <div className="est-chart-grid">
-          <article><header><h3>Dollar regimes</h3><span>DAILY</span></header><Chart rows={charts.dollar?.rows ?? []} series={DOLLAR_SERIES} height={230} yLabel="Fed dollar indexes · Jan 2006 = 100" source="Federal Reserve H.10 via FRED" asOf={e.fx?.broad?.asof} note="A rise means a stronger dollar against the relevant trade-weighted currency set." /></article>
+          <article><header><h3>Dollar regimes</h3><span>DAILY</span></header><Chart rows={charts.dollar?.rows ?? []} series={DOLLAR_SERIES} height={230} yLabel="Fed dollar indexes · Jan 2006 = 100" source="Federal Reserve H.10 via FRED" asOf={e.fx?.broad?.asof} note="A rise means a stronger dollar against the relevant trade-weighted currency set." sharePath={worldMarketSharePath("forex")} /></article>
           <article><header><h3>Physical-market breadth</h3><span>MONTHLY COMPARISON</span></header><Chart rows={charts.materials?.rows ?? []} series={MATERIAL_SERIES} height={230} yLabel="each series indexed to 100 in-window" source="EIA + IMF via FRED" note="Daily energy is sampled to month-end to compare with monthly IMF benchmarks. This chart is not the daily Passage." /></article>
-          <article><header><h3>Funding landing zones</h3><span>DAILY</span></header><Chart rows={charts.funding?.rows ?? []} series={FUNDING_SERIES} height={230} yLabel="spread · basis points" source="NY Fed + Federal Reserve via FRED" note="CP uses 3m AA commercial paper minus 3m Treasury on actual CP print dates." /></article>
+          <article><header><h3>Funding landing zones</h3><span>DAILY</span></header><Chart rows={charts.funding?.rows ?? []} series={FUNDING_SERIES} height={230} yLabel="spread · basis points" source="NY Fed + Federal Reserve via FRED" note="CP uses 3m AA commercial paper minus 3m Treasury on actual CP print dates." sharePath={worldMarketSharePath("money-markets")} /></article>
           <article><header><h3>Daily upstream vs funding</h3><span>DAILY PROXY</span></header><Chart rows={pressureRows} series={PRESSURE_SERIES} height={230} yLabel="pressure percentile · 0–100" source="Seiche from H.10 / EIA / Fed" note={charts.daily_gap?.note} /></article>
           <article className="wide"><header><h3>The daily gap</h3><span>UPSTREAM − FUNDING</span></header><Chart rows={gapRows} series={GAP_SERIES} height={210} yLabel="passage gap · points" refLine={{ value: 0, color: C.muted, label: "in sync" }} source="Seiche daily proxy" note="Positive = upstream ahead; negative = funding ahead. The headline also carries slower monthly materials breadth and can differ." /></article>
         </div>

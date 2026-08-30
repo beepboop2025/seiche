@@ -95,6 +95,14 @@ jobs:
             pip install -e "./backend[collectors]"
           fi
 
+      - name: Install hash-locked social-card renderer
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --only-binary=:all:
+          --require-hashes
+          -r ops/requirements-social-cards.txt
+
       - name: Engine tests (publish gates on green)
         if: steps.publish-gate.outputs.run-full-suite == 'true'
         run: |
@@ -175,6 +183,7 @@ jobs:
           cd frontend
           npm ci
           npm run test:oil-funding
+          npm run test:share-routes
           npm run build
 
       # The SPA shell ships an empty <div id="root">, so anything that does not
@@ -189,6 +198,14 @@ jobs:
       # shell is the bug, so a missing snapshot stops the publish.
       - name: Prerender the no-JS home page
         run: python -m seiche.prerender frontend/dist
+
+      # A URL fragment never reaches a link unfurler. Build real /views/ paths
+      # and content-addressed 1200x630 images from the exact sealed snapshot,
+      # then upgrade root, market, dispatch and article metadata in dist/. This
+      # module is read-only over exported/cached evidence: no collection or
+      # model fitting is permitted in the social-card path.
+      - name: Build contextual social cards
+        run: python -m seiche.social_cards frontend/dist
 
       - name: Fetch the exact declared release tag
         run: |

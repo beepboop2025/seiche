@@ -60,6 +60,13 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install market platform
         run: pip install -e "./backend[dev,collectors,postgres]"
+      - name: Install hash-locked social-card test renderer
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --only-binary=:all:
+          --require-hashes
+          -r ops/requirements-social-cards.txt
       - name: Run market architecture and PostgreSQL contracts
         run: >-
           umask 0077 &&
@@ -92,6 +99,7 @@ jobs:
           backend/tests/test_world_model_delivery.py
           backend/tests/test_fleet_watchdog.py
           backend/tests/test_fleet_mac_heartbeat.py
+          backend/tests/test_social_cards.py
       - name: Run Railway release, snapshot, stateful, and Telegram contracts
         run: >-
           python -m pytest -q

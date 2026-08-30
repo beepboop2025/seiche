@@ -4,6 +4,59 @@ Everything in the repo is ready (`server.json`, PyPI ownership proof in
 `backend/README.md`). What remains needs credentials or a live deploy, so it's
 listed here as a runbook rather than automated blind.
 
+## Contextual link cards
+
+The full static publisher runs `python -m seiche.social_cards frontend/dist`
+after the snapshot export, Vite build and no-JavaScript prerender. It creates
+real crawlable paths under `/views/` for the composite board, every bounded
+world-markets selector, the finite registered money-market packs and the
+headline series present in the sealed snapshot. Generic cards and charts on
+every other finite public tab inherit a tab-specific `/views/tabs/<tab>/`
+fallback; exact series, market and selector routes declared closer to the
+shared data take precedence. Each view receives a unique, content-addressed
+1200x630 PNG and complete Open Graph/Twitter metadata. The same pass upgrades
+the root, market aliases, daily dispatches and articles.
+
+This is deliberately a publish-time projection. It reads only the sealed
+`data/overview.json` and the reviewed money-market coverage receipt; it never
+collects data, opens the canonical observation store, or fits a model while a
+card is generated or read. Missing, stale, restricted and source-fault states
+remain visible and never become zero or calm. The aggregate board labels its
+clock `SNAPSHOT GENERATED`; it does not relabel a fresh rebuild as the oldest
+component's evidence clock. Individual series and world-market projections
+keep their own evidence-as-of clock when the sealed payload supplies one.
+
+Frontend share actions use the same owned paths: dispatches resolve to their
+clean detail URL, registered money markets to the selected market ID, exact
+headline readings to `/views/series/<id>/`, and bounded world-market charts to
+their matching selector. Multi-series analyses use the owning tab's sealed
+summary instead of a fabricated single-series reading. The generated manifest
+keeps `share_route_contract.fragment_only_gaps` empty, and the frontend route
+test proves no exposed public share action hands an unfurler a `/#...` URL.
+
+Three surfaces deliberately expose no share action. CORPUS is an unbounded,
+rights-aware remote registry; TIME MACHINE is an arbitrary request-time replay
+rather than a sealed publication input; ACCOUNT contains private viewer and
+credential state. Their reasons are recorded under
+`share_route_contract.non_shareable_surfaces`. Article detail pages already
+carry unique cards; the article archive remains an archive-level page, not a
+fabricated article selection.
+
+Pillow is not part of the signed Seiche package identity. Static and full-suite
+CI lanes install the reviewed CPython 3.12 Linux wheel from
+`ops/requirements-social-cards.txt` with `--only-binary=:all:` and
+`--require-hashes` before collecting the card tests or invoking the renderer.
+This keeps `backend/pyproject.toml` identical to the signed `v0.11.1` release
+while retaining a fail-closed, reproducible image toolchain.
+
+The shared corpus is an explicit gap in the finite publisher. Dataset IDs are
+unbounded and the corpus lives behind a separate rights-aware service, so
+Seiche does not eagerly copy or pre-render every dataset receipt. Any future
+on-demand corpus card endpoint must be cache-only and must preserve status,
+license review, evidence class, event/knowledge clocks, `restricted`,
+`unavailable`, stale state and `download: null`. The generated
+`/share/cards/manifest.json` records this boundary for deploy verification.
+
 ## Release prerequisites
 
 1. **Pin the release signer outside the release commit.** Configure the
