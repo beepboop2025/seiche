@@ -1,6 +1,7 @@
 import { P } from "../palette";
 import Chart from "../Chart";
 import { Any, fmt, Fault, Method, ordinal } from "../lib";
+import { worldMarketSharePath } from "../shareRoutes";
 
 const HARBOR_COLORS: Record<string, string> = {
   "EURO AREA": P.accentSoft,
@@ -28,7 +29,7 @@ function HarborsCard({ h }: { h: Any }) {
     color: HARBOR_COLORS[l] ?? P.faint,
   }));
   return (
-    <div className="card span12">
+    <div className="card span12" data-share-path={worldMarketSharePath("money-markets")}>
       <h2>Harbors — World Money Markets</h2>
       <div className="sub">
         each national money market read at its own water line — overnight anchor, currency, and whether
@@ -78,6 +79,7 @@ function HarborsCard({ h }: { h: Any }) {
               refLine={{ value: 100, color: P.ghost, label: "1y ago" }}
               yLabel="local per USD, 1y ago = 100 (up = weaker)"
               height={180}
+              sharePath={worldMarketSharePath("forex")}
             />
           )}
         </div>
@@ -342,7 +344,7 @@ function StraitCard({ headline, tails, harbors }: { headline: Any; tails: Any; h
   const rupeeWeaker = fx?.chg_60d_pct != null && fx.chg_60d_pct > 0;
 
   return (
-    <div className="card span12">
+    <div className="card span12" data-share-path={worldMarketSharePath("summary")}>
       <h2>New York and Mumbai, side by side</h2>
       <div className="sub">
         the dial that moves first, and the currency that hears it · everything below is free public data
@@ -418,7 +420,7 @@ export default function Global({ snap }: { snap: Any }) {
   return (
     <div className="grid">
       {strait}
-      <div className="card span12">
+      <div className="card span12" data-share-path={worldMarketSharePath("summary")}>
         <h2>Global Basin Coupling</h2>
         <div className="sub">
           the dollar system as connected bodies of water — when the basins synchronize, one tide moves

@@ -33,7 +33,9 @@ RUN test "$(uname -m)" = x86_64 \
 
 WORKDIR /build
 ADD source.tar /build/
-RUN python -m pip install -q "./backend[dev,collectors]"
+RUN python -m pip install -q "./backend[dev,collectors]" \
+    && python -m pip install --disable-pip-version-check --only-binary=:all: \
+      --require-hashes -r ops/requirements-social-cards.txt
 
 FROM gate-build AS gate-runtime
 

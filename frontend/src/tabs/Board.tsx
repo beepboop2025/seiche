@@ -12,8 +12,11 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { Any, AsOf, Decomp, fmt, Num, ordinal as ord, ordinalSuffix as suffix, Roll, stalenessChip, usePrefersReducedMotion } from "../lib";
 import { useDepth } from "../depth";
 import { API_BASE } from "../apiBase";
+import ShareBar from "../ShareBar";
+import { composeTextCard } from "../share";
 import WeekAhead from "../WeekAhead";
 import { rvMetricQualityLabel, rvQualityLabel } from "../rvxrayQuality";
+import { boardSharePath, seriesSharePath, stableShareUrl } from "../shareRoutes";
 import "../styles-board.css";
 
 /* ---------- tiny SVG line helper (ports the exploration's path scaler) ---- */
@@ -84,11 +87,11 @@ function Surface({ tell, headline }: { tell: Any; headline: Any }) {
             <span className="unit">{suffix(m)} pctl</span>
           </div>
         </div>
-        <div>
+        <div data-share-path={seriesSharePath("vix")}>
           <div className="dive-lbl">VIX</div>
           <div className="dive-mid">{fmt(headline?.vix?.value, 2)}</div>
         </div>
-        <div>
+        <div data-share-path={seriesSharePath("hy_oas_pct")}>
           <div className="dive-lbl">HY OAS</div>
           <div className="dive-mid">{fmt(headline?.hy_oas_pct?.value, 2, "%")}</div>
         </div>
@@ -134,9 +137,9 @@ function TellBracket({ tell }: { tell: Any }) {
   );
 }
 
-function RateCell({ k, v, note, color }: { k: string; v: string; note: string; color?: string }) {
+function RateCell({ k, v, note, color, sharePath }: { k: string; v: string; note: string; color?: string; sharePath?: string }) {
   return (
-    <div style={{ padding: "10px 14px 10px 0" }}>
+    <div style={{ padding: "10px 14px 10px 0" }} data-share-path={sharePath}>
       <div style={{ fontSize: 10.5, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--faint)" }}>{k}</div>
       <div style={{ fontSize: 22, fontWeight: 500, color: color ?? "var(--text)", marginTop: 2 }}>{v}</div>
       <div style={{ fontSize: 10, color: "var(--ghost)", marginTop: 1 }}>{note}</div>
@@ -155,21 +158,33 @@ function Rates({ headline, tails }: { headline: Any; tails: Any }) {
     <div className="dive-layer" style={{ animationDelay: "0.16s" }}>
       <Kicker k="Rates · the waterline" sub="the administered corridor and where secured funding clears inside it" />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", marginTop: 12 }}>
-        <RateCell k="SOFR" v={fmt(headline?.sofr_pct?.value, 2, "%")} note={headline?.sofr_pct?.asof?.slice(5) ?? ""} />
-        <RateCell k="EFFR" v={fmt(headline?.effr_pct?.value, 2, "%")} note={headline?.effr_pct?.asof?.slice(5) ?? ""} />
-        <RateCell k="IORB" v={fmt(headline?.iorb_pct?.value, 2, "%")} note={headline?.iorb_pct?.asof?.slice(5) ?? ""} />
+        <RateCell k="SOFR" v={fmt(headline?.sofr_pct?.value, 2, "%")} note={headline?.sofr_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("sofr_pct")} />
+        <RateCell k="EFFR" v={fmt(headline?.effr_pct?.value, 2, "%")} note={headline?.effr_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("effr_pct")} />
+        <RateCell k="IORB" v={fmt(headline?.iorb_pct?.value, 2, "%")} note={headline?.iorb_pct?.asof?.slice(5) ?? ""} sharePath={seriesSharePath("iorb_pct")} />
         <RateCell k="SOFR−IORB" v={spreadBp == null ? "—" : `${signed(spreadBp)}bp`} color={spreadColor}
-          note={spreadBp == null ? "" : `P50 basis · ${spreadBp <= 0 ? "soft floor" : "above the floor"}`} />
+          note={spreadBp == null ? "" : `P50 basis · ${spreadBp <= 0 ? "soft floor" : "above the floor"}`} sharePath={seriesSharePath("sofr_iorb_bp")} />
         <RateCell k="Tail z" v={fmt(tails?.ok ? tails.tail_index_z : null, 2)} note="P99−P50 blend" />
       </div>
       {sp && (
-        <svg viewBox="0 0 880 96" style={{ width: "100%", height: "auto", display: "block", marginTop: 4, overflow: "visible" }}>
-          <line x1={0} x2={880} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
-          <path d={sp.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--dim)" strokeWidth={1.3}
-            style={{ animationDelay: "0.3s" }} />
-          <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB · P50 basis (tails engine daily series — not the tape's same-day print), two years · bp</text>
-          <text x={880} y={94} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>last {signed(spreadBp)}bp</text>
-        </svg>
+        <>
+          <svg data-share-path={seriesSharePath("sofr_iorb_bp")} viewBox="0 0 880 96" style={{ width: "100%", height: "auto", display: "block", marginTop: 4, overflow: "visible" }}>
+            <line x1={0} x2={880} y1={zeroY} y2={zeroY} stroke="rgba(233,233,237,0.14)" strokeDasharray="3 4" />
+            <path d={sp.paths[0]} pathLength={1} className="draw" fill="none" stroke="var(--dim)" strokeWidth={1.3}
+              style={{ animationDelay: "0.3s" }} />
+            <text x={0} y={94} fill="var(--ghost)" fontSize={9.5}>SOFR−IORB · P50 basis (tails engine daily series — not the tape's same-day print), two years · bp</text>
+            <text x={880} y={94} textAnchor="end" fill="var(--ghost)" fontSize={9.5}>last {signed(spreadBp)}bp</text>
+          </svg>
+          <ShareBar
+            compose={() => Promise.resolve(composeTextCard({
+              title: "SOFR minus IORB",
+              kicker: "published series · basis points",
+              body: `Current P50-basis reading ${signed(spreadBp)}bp. Tails-engine daily series, not the tape's same-day print.`,
+              link: stableShareUrl(seriesSharePath("sofr_iorb_bp")),
+            }))}
+            title={() => "SOFR minus IORB"}
+            link={() => stableShareUrl(seriesSharePath("sofr_iorb_bp"))}
+          />
+        </>
       )}
     </div>
   );
@@ -535,7 +550,7 @@ function Glance({ snap, onDescend }: { snap: Any; onDescend: () => void }) {
   const gen = snap.generated_at;
   const spreadBp = e.tails?.ok ? e.tails.spread?.sofr_iorb_bp : null;
   return (
-    <div className="glance">
+    <div className="glance" data-share-path={boardSharePath()}>
       <Verdict composite={c} tell={tell} kink={kink} />
       <GlanceDecomp composite={c} history={deep.history} />
       <TellBracket tell={tell} />
@@ -613,7 +628,7 @@ export default function Board({ snap, live }: { snap: Any; live: boolean }) {
   );
 
   return (
-    <div className="dive">
+    <div className="dive" data-share-path={boardSharePath()}>
       <div className="dive-gauge">
         <div className="dive-gauge-rail">
           {STATIONS.map((s, i) => (

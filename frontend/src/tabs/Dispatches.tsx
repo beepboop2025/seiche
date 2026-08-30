@@ -4,6 +4,7 @@ import { API_BASE } from "../apiBase";
 import ShareBar from "../ShareBar";
 import Subscribe from "../Subscribe";
 import { composeTextCard } from "../share";
+import { dispatchSharePath, stableShareUrl } from "../shareRoutes";
 import "../styles-editorial.css";
 
 type Index = { slug: string; title: string; date: string; summary: string; tag?: string }[];
@@ -74,6 +75,7 @@ export default function Dispatches() {
                 body: meta.summary,
               }))}
               title={() => meta.title}
+              link={() => stableShareUrl(dispatchSharePath(slug))}
             />
           </div>
         )}

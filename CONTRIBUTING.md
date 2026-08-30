@@ -37,6 +37,8 @@ Seiche requires Python 3.12 or newer. From the repository root:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e './backend[dev,collectors]'
+.venv/bin/python -m pip install --only-binary=:all: --require-hashes \
+  -r ops/requirements-social-cards.txt
 .venv/bin/python -m pytest backend/tests -q
 ```
 

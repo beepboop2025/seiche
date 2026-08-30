@@ -4327,7 +4327,11 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     assert 'SEICHE_EXPECTED_TARGET_SHA="$target"' in wrapper_handoff
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
-    assert gate_slice.count("run_candidate_gate_stage") == 3
+    assert gate_slice.count("run_candidate_gate_stage") == 4
+    assert "candidate social-card test dependency installation" in gate_slice
+    assert "ops/requirements-social-cards.txt" in gate_slice
+    assert "--only-binary=:all:" in gate_slice
+    assert "--require-hashes" in gate_slice
     assert "-o faulthandler_timeout=300" in gate_slice
     assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
@@ -4613,7 +4617,12 @@ def _release_receipt_pair(
         "started_at": started,
         "completed_at": completed,
         "conclusion": "success",
-        "install_command": "python -m pip install -q -e ./backend[dev,collectors]",
+        "install_command": (
+            "python -m pip install -q -e ./backend[dev,collectors] && "
+            "python -m pip install --disable-pip-version-check "
+            "--only-binary=:all: --require-hashes "
+            "-r ops/requirements-social-cards.txt"
+        ),
         "test_command": (
             "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
         ),
@@ -6517,9 +6526,7 @@ def test_palimpsest_evidence_lake_metrics_edge_is_an_exact_atomic_generation():
     assert "path /palimpsest/evidence-lake-metrics/*" not in block
     assert "handle_path /palimpsest/evidence-lake-metrics" not in block
     assert "uri strip_prefix /palimpsest/evidence-lake-metrics" in block
-    assert (
-        block.count("root * /var/lib/palimpsest/evidence-lake-metrics/current") == 1
-    )
+    assert block.count("root * /var/lib/palimpsest/evidence-lake-metrics/current") == 1
     assert 'header Access-Control-Allow-Origin "https://palimpsest.info"' in block
     assert 'header Cache-Control "no-store, no-transform"' in block
     assert 'header Content-Disposition "inline"' in block

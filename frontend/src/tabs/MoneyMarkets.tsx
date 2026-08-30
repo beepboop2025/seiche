@@ -3,6 +3,7 @@ import { API_BASE } from "../apiBase";
 import { authHeaders } from "../auth";
 import Chart from "../Chart";
 import { P } from "../palette";
+import { moneyMarketSharePath } from "../shareRoutes";
 import "../styles-money-markets.css";
 
 type UnknownRecord = Record<string, unknown>;
@@ -1569,7 +1570,10 @@ export default function MoneyMarkets({ snap }: Props) {
       : "Global clearing systems";
 
   return (
-    <div className={`mm-shell mm-shell--${view}`}>
+    <div
+      className={`mm-shell mm-shell--${view}`}
+      data-share-path={moneyMarketSharePath(selected?.market_id || "overview")}
+    >
       <header className="mm-hero">
         <div className="mm-hero__index" aria-hidden="true">CASH / MM</div>
         <div className="mm-hero__copy">

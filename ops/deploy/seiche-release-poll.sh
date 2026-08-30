@@ -47,8 +47,8 @@ ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
 SUPERSESSION_POLL_SECONDS="${SEICHE_CONTROL_SUPERSESSION_POLL_SECONDS:-15}"
 SUPERSESSION_CHECK_TIMEOUT_SECONDS="${SEICHE_CONTROL_SUPERSESSION_CHECK_TIMEOUT_SECONDS:-30}"
 RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.timer}"
-INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
-REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors]"
+INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
+REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
 REMOTE_GATE_REPOSITORY="beepboop2025/seiche"
 REMOTE_GATE_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
@@ -1572,6 +1572,12 @@ if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then
     "candidate dependency install failed or timed out" \
     "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
     "$CANDIDATE_DIR/backend[dev,collectors]"
+  run_candidate_gate_stage \
+    "candidate social-card test dependency installation" \
+    "candidate social-card dependency install failed or timed out" \
+    "$TIMEOUT" -k 30 300 "$VENV/bin/python" -m pip install \
+    --disable-pip-version-check --only-binary=:all: --require-hashes \
+    -r "$CANDIDATE_DIR/ops/requirements-social-cards.txt"
   # The candidate shell receives its values only through positional arguments.
   # shellcheck disable=SC2016
   run_candidate_gate_stage \
