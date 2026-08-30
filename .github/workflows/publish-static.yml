@@ -47,18 +47,55 @@ jobs:
           print(json.loads(Path("server.json").read_text())["version"])
           PY
           )"
+          corpus_version="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("frontend/public/.well-known/ai-catalog.json").read_text())
+          matches = [
+              entry for entry in catalog["entries"]
+              if entry.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Market Atlas catalog entry is not unique")
+          print(matches[0]["version"])
+          PY
+          )"
+          corpus_receipt_tag="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("frontend/public/.well-known/ai-catalog.json").read_text())
+          matches = [
+              entry for entry in catalog["entries"]
+              if entry.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Market Atlas catalog entry is not unique")
+          receipt = json.loads(matches[0]["metadata"]["publicationReceipt"])
+          print(receipt["tag"])
+          PY
+          )"
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$corpus_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$corpus_receipt_tag" =~ ^market-corpus-receipt-corpus-[0-9a-f]{16}-r[1-9][0-9]*$ ]]
           git fetch --force --no-tags origin \
-            "+refs/tags/v${version}:refs/tags/v${version}"
+            "+refs/tags/v${version}:refs/tags/v${version}" \
+            "+refs/tags/market-corpus-v${corpus_version}:refs/tags/market-corpus-v${corpus_version}" \
+            "+refs/tags/${corpus_receipt_tag}:refs/tags/${corpus_receipt_tag}"
 
       - name: Gate catalog on the signed release, runtime, and PyPI receipts
         env:
           RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
-        run: >-
-          python -I -S ops/release/verify_catalog_publication.py
-          --root .
-          --expected-sha "$GITHUB_SHA"
-          --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+        run: |
+          set -euo pipefail
+          verifier="${RUNNER_TEMP}/verify_catalog_publication.py"
+          git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py" >"$verifier"
+          test "$(git hash-object "$verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_catalog_publication.py")"
+          python -I -S "$verifier" \
+            --root . \
+            --expected-sha "$GITHUB_SHA" \
+            --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
 
       - name: Push static files to the live site repo
         env:

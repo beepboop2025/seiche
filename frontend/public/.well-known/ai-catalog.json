@@ -177,7 +177,8 @@
         "health": "https://api.seiche.info/api/v2/corpus/healthz?deep=true",
         "availabilityClaim": "declared_endpoint_verify_with_corpus_health",
         "humanPage": "https://seiche.info/#corpus",
-        "requestTimeMonolithScan": false
+        "requestTimeMonolithScan": false,
+        "publicationReceipt": "{\"bisAggregateRows\":76342888,\"bisApiOnly\":1,\"bisBulkFlat\":27,\"bisFlows\":29,\"bisRegistryOnly\":1,\"engineAttempts\":1118,\"engineDatasets\":1122,\"engineRecoveredObjects\":8,\"engineVerifiedObjects\":1110,\"indexArtifactId\":\"liquilens-engine-public-index-v1:corpus-8767ecfcf4f3ca6b:c8edf7f4e33f57970ed985c9306bb8708b8cbcfe61db57d2b29c4907456d7f44\",\"indexSha256\":\"c8edf7f4e33f57970ed985c9306bb8708b8cbcfe61db57d2b29c4907456d7f44\",\"inventorySha256\":\"ec90c487fbfc4f1409ca1919fb5265b32097299c513ee40ebc9b19db4dcc0b45\",\"releaseId\":\"corpus-8767ecfcf4f3ca6b\",\"schemaVersion\":\"1.0.0\",\"tag\":\"market-corpus-receipt-corpus-8767ecfcf4f3ca6b-r2\"}"
       }
     },
     {
