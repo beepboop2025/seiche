@@ -182,8 +182,7 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm run test:oil-funding
-          npm run test:share-routes
+          npm test
           npm run build
 
       # The SPA shell ships an empty <div id="root">, so anything that does not

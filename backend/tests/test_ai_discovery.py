@@ -46,7 +46,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     catalog = json.loads((PUBLIC / ".well-known" / "ai-catalog.json").read_text())
     assert catalog["specVersion"] == "1.0"
     assert catalog["host"]["displayName"] == "Seiche"
-    assert len(catalog["entries"]) == 6
+    assert len(catalog["entries"]) == 7
 
     identifiers = set()
     for entry in catalog["entries"]:
@@ -93,6 +93,34 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]
+    corpus_mcp = next(
+        entry
+        for entry in catalog["entries"]
+        if entry["identifier"] == "urn:air:seiche.info:mcp:market-corpus"
+    )
+    assert corpus_mcp["data"]["remotes"] == [
+        {
+            "type": "streamable-http",
+            "url": "https://api.seiche.info/api/v2/corpus/mcp",
+        }
+    ]
+    assert "repository" not in corpus_mcp["data"]
+    assert "bis_records" in corpus_mcp["capabilities"]
+    assert "bis_flow_manifest" in corpus_mcp["capabilities"]
+    assert "inspect_dataset" in corpus_mcp["capabilities"]
+    assert "corpus_health" in corpus_mcp["capabilities"]
+    assert len(corpus_mcp["capabilities"]) == 9
+    assert corpus_mcp["metadata"]["requestTimeMonolithScan"] is False
+    assert corpus_mcp["metadata"]["availabilityClaim"] == (
+        "declared_endpoint_verify_with_corpus_health"
+    )
+    corpus_claims = json.dumps(corpus_mcp).lower()
+    assert corpus_mcp.get("status") not in {"active", "live"}
+    assert corpus_mcp["metadata"].get("status") not in {"active", "live"}
+    assert "live gateway" not in corpus_claims
+    assert corpus_mcp["metadata"]["publicToolCount"] == len(
+        corpus_mcp["capabilities"]
+    )
     world = next(
         entry
         for entry in catalog["entries"]
@@ -207,6 +235,8 @@ def test_generated_discovery_indexes_include_the_selection_surface():
         "https://seiche.info/product-card.json",
         "https://seiche.info/money-markets/",
         "https://seiche.info/money-markets/catalog.json",
+        "https://seiche.info/#corpus",
+        "https://api.seiche.info/api/v2/corpus",
         "https://seiche.info/datasets/direct-ofr/",
         "https://seiche.info/datasets/direct-ofr/catalog.jsonld",
     ):

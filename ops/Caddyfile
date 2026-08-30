@@ -359,6 +359,55 @@ api.seiche.info {
     # no-op in production because Seiche is free — the licence gate lives in
     # the app, where it deploys through the normal chain.)
     #
+    # The origin-wide RFC 9727 catalog is an exact application route. Send all
+    # methods to Seiche so FastAPI can return its profiled GET/HEAD/OPTIONS
+    # representation and an explicit 405 for mutations instead of an edge 404.
+    @origin_api_catalog path /.well-known/api-catalog
+    handle @origin_api_catalog {
+        import seiche_stateful_upstream
+    }
+
+    # Complete, rights-aware market corpus. The read-only gateway owns
+    # pagination and rights filtering; Caddy owns TLS and redacted access logs.
+    # These handlers must precede @public because that matcher also contains
+    # /api/v2/* and otherwise sends corpus requests to the Seiche application.
+    @market_corpus_read {
+        method GET HEAD
+        path /api/v2/corpus /api/v2/corpus/*
+    }
+    handle @market_corpus_read {
+        header Access-Control-Allow-Origin "*"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /api/v2/corpus
+        reverse_proxy 127.0.0.1:8801 {
+            header_down -Access-Control-Allow-Origin
+            header_down -X-Content-Type-Options
+            transport http {
+                max_conns_per_host 24
+            }
+        }
+    }
+    @market_corpus_mcp {
+        method POST
+        path /api/v2/corpus/mcp
+    }
+    handle @market_corpus_mcp {
+        request_body {
+            max_size 64KiB
+        }
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Content-Type, Mcp-Session-Id, MCP-Protocol-Version"
+        header X-Content-Type-Options "nosniff"
+        uri strip_prefix /api/v2/corpus
+        reverse_proxy 127.0.0.1:8801 {
+            header_down -Access-Control-Allow-Origin
+            header_down -X-Content-Type-Options
+            transport http {
+                max_conns_per_host 24
+            }
+        }
+    }
+
     # The signed world-model delivery is deliberately outside @public. It is
     # one bearer-gated machine-to-machine path and returns opaque publisher
     # bytes; the Railway consumer, not Seiche, verifies Ed25519 authority.

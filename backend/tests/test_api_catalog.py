@@ -45,6 +45,7 @@ def test_origin_catalog_has_profiled_cors_read_contract():
         head = client.head("/.well-known/api-catalog")
         options = client.options("/.well-known/api-catalog")
         mutation = client.post("/.well-known/api-catalog")
+        deletion = client.delete("/.well-known/api-catalog")
 
     assert response.status_code == 200
     assert response.json() == API_CATALOG
@@ -68,6 +69,8 @@ def test_origin_catalog_has_profiled_cors_read_contract():
         "HEAD",
         "OPTIONS",
     }
+    assert deletion.status_code == 405
+    assert deletion.headers["allow"] == "GET, HEAD, OPTIONS"
 
 
 def test_origin_catalog_does_not_invent_agent_protocols_or_flatten_products():

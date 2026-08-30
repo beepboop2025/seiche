@@ -624,6 +624,30 @@ def test_market_series_uses_sql_page_cursor_and_fails_closed_on_evidence(
     ]
 
 
+def test_market_series_instruments_publish_honest_source_references(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "source-reference-v2.sqlite")
+
+    us = api.market_series_v2("US-USD", _request(), Response())
+    sofr = next(
+        item
+        for item in us["instruments"]
+        if item["instrument_id"] == "US.NYFED.SOFR_MEDIAN"
+    )
+    assert sofr["publisher"] == "Federal Reserve Bank of New York"
+    assert sofr["source_url"] == (
+        "https://markets.newyorkfed.org/static/docs/markets-api.html"
+    )
+
+    india = api.market_series_v2("IN-INR", _request(), Response())
+    treps = next(
+        item for item in india["instruments"] if item["instrument_id"] == "IN.CCIL.TREPS"
+    )
+    assert treps["publisher"] == "Clearing Corporation of India Limited"
+    assert treps["source_url"] is None
+
+
 def test_market_series_omits_pack_prohibited_rows_and_all_row_metadata(
     tmp_path, monkeypatch
 ) -> None:

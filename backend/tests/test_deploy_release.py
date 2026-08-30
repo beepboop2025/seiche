@@ -1083,7 +1083,22 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
     assert "{$SEICHE_API_UPSTREAM:127.0.0.1:8787}" in snippet
     assert "{$SEICHE_RAILWAY_EDGE_TOKEN:local-edge-token-unused}" in snippet
     assert "header_up Host {upstream_hostport}" in snippet
-    assert caddy.count("import seiche_stateful_upstream") == 4
+    importer_handlers: list[str] = []
+    current_handler: str | None = None
+    for line in caddy.splitlines():
+        match = re.fullmatch(r"\s*handle (@[a-z0-9_]+) \{", line)
+        if match is not None:
+            current_handler = match.group(1)
+        if line.strip() == "import seiche_stateful_upstream":
+            assert current_handler is not None
+            importer_handlers.append(current_handler)
+    assert importer_handlers == [
+        "@origin_api_catalog",
+        "@event_analysis",
+        "@public",
+        "@login",
+        "@mcp",
+    ]
     private_delivery = caddy[
         caddy.index("@world_model_delivery {") : caddy.index(
             "@world_model_delivery_non_get"
@@ -1285,6 +1300,18 @@ case "$url" in
         type=application/json
         body='{{"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json","servers":[{{"name":"io.github.beepboop2025/seiche","url":"https://api.seiche.info/mcp"}}]}}'
         ;;
+    */.well-known/api-catalog)
+        type='application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"'
+        body='{{"linkset":[{{"anchor":"https://api.seiche.info/api/v2/corpus"}}]}}'
+        ;;
+    */api/v2/corpus/healthz)
+        type=application/json
+        body='{{"service":"liquilens-market-corpus","status":"ok"}}'
+        ;;
+    */api/v2/corpus/v1/catalog)
+        type=application/json
+        body='{{"service":"liquilens-market-corpus","corpora":{{}}}}'
+        ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
     */riptide/openapi.json)
@@ -1400,6 +1427,18 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         assert (
             f"GET|/.well-known/mcp.json|200|application/json|{identity}" in definitions
         )
+    assert (
+        "GET|/.well-known/api-catalog|200|application/linkset+json|"
+        '"anchor":"https://api.seiche.info/api/v2/corpus"'
+    ) in definitions
+    assert (
+        "GET|/api/v2/corpus/healthz|200|application/json|"
+        '"service":"liquilens-market-corpus"'
+    ) in definitions
+    assert (
+        'GET|/api/v2/corpus/v1/catalog|200|application/json|"corpora":{'
+        in definitions
+    )
     assert ('GET|/riptide/|200|application/json|"name": "riptide"') in definitions
     assert (
         'GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"'
@@ -1430,6 +1469,9 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
     assert "https://edge.invalid/.well-known/mcp.json" in calls.read_text()
+    assert "https://edge.invalid/.well-known/api-catalog" in calls.read_text()
+    assert "https://edge.invalid/api/v2/corpus/healthz" in calls.read_text()
+    assert "https://edge.invalid/api/v2/corpus/v1/catalog" in calls.read_text()
     for route in palimpsest_host_routes:
         assert f"https://edge.invalid{route}" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
@@ -3804,6 +3846,41 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
     assert "/latest" not in relay_installer
     assert 'echo "$TOKEN"' not in relay_installer
     assert "setfacl" not in relay_installer
+
+
+def test_market_corpus_edge_precedes_the_broad_seiche_api_matcher():
+    caddy = CADDYFILE.read_text()
+    prefix = "/api/v2/corpus"
+    read_matcher = caddy.index("@market_corpus_read {")
+    read_handler = caddy.index("handle @market_corpus_read {")
+    mcp_matcher = caddy.index("@market_corpus_mcp {")
+    mcp_handler = caddy.index("handle @market_corpus_mcp {")
+    public_matcher = caddy.index("@public {")
+    corpus_edge = caddy[read_matcher:public_matcher]
+
+    assert read_matcher < read_handler < mcp_matcher < mcp_handler < public_matcher
+    assert f"path {prefix} {prefix}/*" in corpus_edge
+    assert "method GET HEAD" in corpus_edge
+    assert f"path {prefix}/mcp" in corpus_edge
+    assert "method POST" in corpus_edge
+    assert corpus_edge.count(f"uri strip_prefix {prefix}") == 2
+    assert corpus_edge.count("reverse_proxy 127.0.0.1:8801") == 2
+    assert "max_size 64KiB" in corpus_edge
+    assert "/api/v2/*" not in corpus_edge
+
+
+def test_origin_api_catalog_reaches_fastapi_for_405_semantics():
+    caddy = CADDYFILE.read_text()
+    catalog_matcher = caddy.index("@origin_api_catalog path")
+    catalog_handler = caddy.index("handle @origin_api_catalog {")
+    corpus_matcher = caddy.index("@market_corpus_read {")
+    block = caddy[catalog_matcher:corpus_matcher]
+
+    assert catalog_matcher < catalog_handler < corpus_matcher
+    assert "@origin_api_catalog path /.well-known/api-catalog" in block
+    assert "method " not in block
+    assert "import seiche_stateful_upstream" in block
+    assert "respond " not in block
 
 
 def test_release_health_capability_is_loopback_only():
