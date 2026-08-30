@@ -7,6 +7,7 @@ import {
   bisValue,
   filterBisFlows,
   filterBisRecords,
+  isBisBulkUnavailable,
   mergeBisPages,
   normalizeBisPage,
   type BisDomain,
@@ -102,6 +103,12 @@ function evidenceClassName(value: BisEvidenceClass): string {
   return "corpus-status--unavailable";
 }
 
+function flowAvailabilityLabel(value: string | undefined): string {
+  if (value === "api-only") return "API-only";
+  if (value === "registry-only") return "registry-only";
+  return value?.replaceAll("-", " ") ?? "non-bulk";
+}
+
 function periodLabel(row: BisRecord): string {
   for (const field of ["source_period", "label", "period", "time_period", "TIME_PERIOD", "value"]) {
     const value = row.period[field];
@@ -173,6 +180,8 @@ export default function BisFlowExplorer({ flows, knowledgeTime, generatedAt }: P
   const visibleRows = state.status === "ready"
     ? filterBisRecords(state.page.records, rowQuery)
     : [];
+  const bulkUnavailable = state.status === "ready"
+    && isBisBulkUnavailable(state.page, selectedFlow?.availability);
 
   const loadMore = async () => {
     if (state.status !== "ready" || !state.page.next_cursor || loadingMore) return;
@@ -314,13 +323,26 @@ export default function BisFlowExplorer({ flows, knowledgeTime, generatedAt }: P
                 </div>
               )}
 
-              <label className="bis-row-search">
+              {bulkUnavailable && (
+                <div className="bis-unavailable" role="status">
+                  <strong>NO BULK SNAPSHOT</strong>
+                  <p>
+                    <code>{state.page.flow_id}</code> is registered as {flowAvailabilityLabel(selectedFlow?.availability)}.
+                    Its records browser returned an unavailable state with no bulk-served snapshot; count 0 is not a zero market observation.
+                    {state.page.complete_snapshot === false
+                      ? " Snapshot completeness is explicitly false."
+                      : " Snapshot completeness is not reported."}
+                  </p>
+                </div>
+              )}
+
+              {!bulkUnavailable && <label className="bis-row-search">
                 Search loaded full records
                 <input value={rowQuery} onChange={(event) => setRowQuery(event.target.value)} placeholder="series, country, sector, currency, value…" />
-                <small>{visibleRows.length} of {state.page.records.length} loaded records shown</small>
-              </label>
+                <small>{visibleRows.length} of {state.page.count} loaded records shown</small>
+              </label>}
 
-              <div className="corpus-table-wrap" role="region" aria-label="BIS full-record ledger" tabIndex={0}>
+              {!bulkUnavailable && <div className="corpus-table-wrap" role="region" aria-label="BIS full-record ledger" tabIndex={0}>
                 <table className="corpus-table bis-observation-table bis-record-table">
                   <caption>Exact published value text is retained. Event, publication, ingestion, and revision clocks remain separate.</caption>
                   <thead><tr><th>Series + dimensions</th><th>Value + period</th><th>Evidence clocks</th><th>Revision + source</th></tr></thead>
@@ -387,15 +409,16 @@ export default function BisFlowExplorer({ flows, knowledgeTime, generatedAt }: P
                     })}
                   </tbody>
                 </table>
-              </div>
-              {visibleRows.length === 0 && <p className="bis-empty">No loaded record matches this search. Clear the search or load another page.</p>}
-              <footer className="corpus-pagination">
+              </div>}
+              {!bulkUnavailable && visibleRows.length === 0 && state.page.records.length > 0 && <p className="bis-empty">No loaded record matches this search. Clear the search or load another page.</p>}
+              {!bulkUnavailable && state.page.records.length === 0 && <p className="bis-empty">This bulk response contains no records. No zero value was inferred.</p>}
+              {!bulkUnavailable && <footer className="corpus-pagination">
                 <span>response generated {shortClock(state.page.generated_at)}</span>
                 {state.page.next_cursor
                   ? <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load next immutable shard page"}</button>
                   : <span>end of flow snapshot</span>}
-              </footer>
-              {pageError && <p className="corpus-page-error" role="status">{pageError}</p>}
+              </footer>}
+              {!bulkUnavailable && pageError && <p className="corpus-page-error" role="status">{pageError}</p>}
             </>
           )}
         </div>

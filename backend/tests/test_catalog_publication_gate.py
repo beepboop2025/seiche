@@ -115,7 +115,7 @@ def _market_receipts():
                     "artifact_id": index_artifact_id,
                     "index_sha256": index_sha256,
                     "attempt_count": signed["engineAttempts"],
-                    "object_count": signed["engineDatasets"],
+                    "object_count": signed["engineVerifiedObjects"],
                     "recovered_object_count": signed["engineRecoveredObjects"],
                     "unresolved_object_count": 0,
                 },
@@ -489,15 +489,17 @@ def test_market_corpus_real_schema_separates_dataset_and_verified_counts():
     health, catalog, discovery, tools = _market_receipts()
 
     assert health["checks"]["deep"]["datasets"] == 1122
-    assert health["checks"]["deep"]["engine_index"]["object_count"] == 1122
+    assert health["checks"]["deep"]["engine_index"]["object_count"] == 1110
     assert catalog["corpora"]["liquilens_engine"]["datasets"] == 1122
     assert catalog["corpora"]["liquilens_engine"]["verified_objects"] == 1110
     _verify_market(health, catalog, discovery, tools)
 
-    health["checks"]["deep"]["datasets"] = 1110
-    health["checks"]["deep"]["engine_index"]["object_count"] = 1110
-    with pytest.raises(gate.PublicationGateError, match="not deeply healthy"):
-        _verify_market(health, catalog, discovery, tools)
+    for datasets, object_count in ((1110, 1122), (1122, 1122), (1110, 1110)):
+        drifted = copy.deepcopy(health)
+        drifted["checks"]["deep"]["datasets"] = datasets
+        drifted["checks"]["deep"]["engine_index"]["object_count"] = object_count
+        with pytest.raises(gate.PublicationGateError, match="not deeply healthy"):
+            _verify_market(drifted, catalog, discovery, tools)
 
 
 @pytest.mark.parametrize(

@@ -75,6 +75,16 @@ export interface SeriesCoverage {
   unavailable_observations: number;
 }
 
+export interface MarketFault {
+  source: string;
+  status: string;
+  category: string;
+  detail: string;
+  market_id: string;
+  finished_at: string | null;
+  next_due: string | null;
+}
+
 export interface MarketSeries {
   schema: string | null;
   status: string;
@@ -95,6 +105,7 @@ export interface MarketSeries {
   observations: MarketObservation[];
   stale_input_count: number;
   fault_count: number;
+  faults: MarketFault[];
   next_cursor: string | null;
 }
 
@@ -152,14 +163,19 @@ function stringList(value: unknown): string[] {
   return value.map(text).filter((item): item is string => item !== null);
 }
 
-function count(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
+function exactNonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value;
 }
 
-function nonNegativeInteger(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : 0;
+function requiredArray(row: JsonRecord, key: string, label: string): unknown[] {
+  const value = row[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value;
 }
 
 function optionalValue(value: unknown): string | number | null {
@@ -193,8 +209,8 @@ function normalizeCatalogItem(value: unknown): MarketCatalogItem | null {
     event_cutoff: text(row.event_cutoff),
     knowledge_cutoff: text(row.knowledge_cutoff),
     evidence_eligibility: eligibility(row.evidence_eligibility),
-    stale_input_count: count(row.stale_inputs),
-    fault_count: count(row.faults),
+    stale_input_count: requiredArray(row, "stale_inputs", `Market ${marketId} stale_inputs`).length,
+    fault_count: requiredArray(row, "faults", `Market ${marketId} faults`).length,
   };
 }
 
@@ -207,12 +223,16 @@ export function normalizeMarketCatalog(value: unknown): MarketCatalog {
     .map(normalizeCatalogItem)
     .filter((item): item is MarketCatalogItem => item !== null)
     .sort((left, right) => left.display_name.localeCompare(right.display_name));
-  if (markets.length === 0) {
-    throw new Error("Market catalog returned no usable market definitions.");
+  if (markets.length === 0 || markets.length !== root.markets.length) {
+    throw new Error("Market catalog returned malformed or no market definitions.");
+  }
+  const declaredCount = exactNonNegativeInteger(root.count, "Market catalog count");
+  if (declaredCount !== markets.length) {
+    throw new Error("Market catalog count differs from its market definitions.");
   }
   return {
     schema: text(root.schema),
-    count: nonNegativeInteger(root.count) || markets.length,
+    count: declaredCount,
     collection_policy: text(root.collection_policy),
     markets,
   };
@@ -243,13 +263,17 @@ function normalizeInstrument(value: unknown): MarketInstrument | null {
   };
 }
 
-function normalizeObservation(value: unknown): MarketObservation | null {
+function normalizeObservation(value: unknown, expectedMarketId: string): MarketObservation | null {
   const row = record(value);
   const instrumentId = text(row?.instrument_id);
   const eventTime = text(row?.event_time);
-  if (!row || !instrumentId || !eventTime) return null;
+  const marketId = text(row?.market_id);
+  if (!row || !instrumentId || !eventTime || !marketId) return null;
+  if (marketId !== expectedMarketId) {
+    throw new Error(`Market observation identity mismatch: expected ${expectedMarketId}, received ${marketId}.`);
+  }
   return {
-    market_id: textOr(row.market_id, "market unavailable"),
+    market_id: marketId,
     monetary_area_id: text(row.monetary_area_id),
     jurisdiction_codes: stringList(row.jurisdiction_codes),
     currency: textOr(row.currency, "—"),
@@ -285,11 +309,38 @@ function normalizeCoverage(value: unknown): SeriesCoverage | null {
   if (!row || !role) return null;
   return {
     semantic_role: role,
-    observations: nonNegativeInteger(row.observations),
+    observations: exactNonNegativeInteger(row.observations, `Coverage ${role} observations`),
     event_start: text(row.event_start),
     event_end: text(row.event_end),
     latest_knowledge_time: text(row.latest_knowledge_time),
-    unavailable_observations: nonNegativeInteger(row.unavailable_observations),
+    unavailable_observations: exactNonNegativeInteger(
+      row.unavailable_observations,
+      `Coverage ${role} unavailable_observations`,
+    ),
+  };
+}
+
+function normalizeFault(value: unknown, expectedMarketId: string): MarketFault {
+  const row = record(value);
+  const marketId = text(row?.market_id);
+  const source = text(row?.source);
+  const status = text(row?.status);
+  const category = text(row?.category);
+  const detail = text(row?.detail);
+  if (!row || !marketId || !source || !status || !category || !detail) {
+    throw new Error(`Market ${expectedMarketId} returned a malformed source fault.`);
+  }
+  if (marketId !== expectedMarketId) {
+    throw new Error(`Market fault identity mismatch: expected ${expectedMarketId}, received ${marketId}.`);
+  }
+  return {
+    source,
+    status,
+    category,
+    detail,
+    market_id: marketId,
+    finished_at: text(row.finished_at),
+    next_due: text(row.next_due),
   };
 }
 
@@ -308,13 +359,30 @@ export function normalizeMarketSeries(
   const instruments = root.instruments
     .map(normalizeInstrument)
     .filter((item): item is MarketInstrument => item !== null);
+  if (instruments.length !== root.instruments.length) {
+    throw new Error(`Market ${marketId} returned a malformed instrument definition.`);
+  }
   const observations = mergeObservationPages(
     [],
     root.observations
-      .map(normalizeObservation)
+      .map((item) => normalizeObservation(item, marketId))
       .filter((item): item is MarketObservation => item !== null),
   );
+  if (observations.length !== root.observations.length) {
+    throw new Error(`Market ${marketId} returned a malformed or duplicate observation.`);
+  }
   const parsedEligibility = eligibility(root.evidence_eligibility);
+  const coverageRows = requiredArray(root, "data_coverage", `Market ${marketId} data_coverage`);
+  const dataCoverage = coverageRows
+    .map(normalizeCoverage)
+    .filter((item): item is SeriesCoverage => item !== null);
+  if (dataCoverage.length !== coverageRows.length) {
+    throw new Error(`Market ${marketId} returned malformed coverage metadata.`);
+  }
+  const staleInputs = requiredArray(root, "stale_inputs", `Market ${marketId} stale_inputs`);
+  const faults = requiredArray(root, "faults", `Market ${marketId} faults`).map(
+    (item) => normalizeFault(item, marketId),
+  );
   return {
     schema: text(root.schema),
     status: textOr(root.status, "UNAVAILABLE"),
@@ -333,17 +401,40 @@ export function normalizeMarketSeries(
       eligible: false,
       reasons: ["Evidence eligibility was not reported by the API."],
     },
-    data_coverage: Array.isArray(root.data_coverage)
-      ? root.data_coverage
-          .map(normalizeCoverage)
-          .filter((item): item is SeriesCoverage => item !== null)
-      : [],
+    data_coverage: dataCoverage,
     instruments,
     observations,
-    stale_input_count: count(root.stale_inputs),
-    fault_count: count(root.faults),
+    stale_input_count: staleInputs.length,
+    fault_count: faults.length,
+    faults,
     next_cursor: text(root.next_cursor),
   };
+}
+
+export function assertCompatibleMarketSeriesPage(
+  current: MarketSeries,
+  older: MarketSeries,
+): void {
+  const invariant = (page: MarketSeries) => ({
+    schema: page.schema,
+    status: page.status,
+    market_id: page.market_id,
+    monetary_area_id: page.monetary_area_id,
+    jurisdiction_codes: page.jurisdiction_codes,
+    currency: page.currency,
+    policy_regime: page.policy_regime,
+    support_status: page.support_status,
+    calibration_id: page.calibration_id,
+    coverage_scope: page.coverage_scope,
+    readiness_scope: page.readiness_scope,
+    evidence_eligibility: page.evidence_eligibility,
+    instruments: page.instruments,
+    stale_input_count: page.stale_input_count,
+    faults: page.faults,
+  });
+  if (JSON.stringify(invariant(current)) !== JSON.stringify(invariant(older))) {
+    throw new Error("Older market page changed identity, rights, instruments, or source state.");
+  }
 }
 
 export function numericValue(value: unknown): number | null {
@@ -411,8 +502,11 @@ export function filterInstruments(
         instrument.semantic_role,
         instrument.canonical_unit,
         instrument.source_adapter,
+        instrument.publisher,
+        instrument.source_url,
         instrument.connector_classification,
         instrument.redistribution_status,
+        instrument.expected_cadence,
         instrument.availability,
       ],
       query,
@@ -434,9 +528,15 @@ export function filterObservations(
         [
           observation.instrument_id,
           observation.semantic_role,
+          observation.value === null ? null : String(observation.value),
+          observation.value_status,
+          observation.currency,
           observation.source,
           observation.revision_id,
           observation.canonical_unit,
+          observation.event_time,
+          observation.source_publication_time,
+          observation.knowledge_time,
           observation.connector_classification,
           observation.redistribution_status,
           observation.quality,

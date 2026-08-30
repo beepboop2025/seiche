@@ -784,8 +784,7 @@ def verify_market_corpus_receipts(
         and deep_engine.get("artifact_id") == signed["indexArtifactId"]
         and deep_engine.get("index_sha256") == signed["indexSha256"]
         and _exact_int(deep_engine.get("attempt_count"), signed["engineAttempts"])
-        and _exact_int(deep_engine.get("object_count"), signed["engineDatasets"])
-        and deep_engine.get("object_count") == deep.get("datasets")
+        and _exact_int(deep_engine.get("object_count"), signed["engineVerifiedObjects"])
         and _exact_int(
             deep_engine.get("recovered_object_count"),
             signed["engineRecoveredObjects"],
@@ -813,8 +812,8 @@ def verify_market_corpus_receipts(
         and isinstance(engine, dict)
         and _exact_int(engine.get("datasets"), signed["engineDatasets"])
         and engine.get("datasets") == deep.get("datasets")
-        and engine.get("datasets") == deep_engine.get("object_count")
         and _exact_int(engine.get("verified_objects"), signed["engineVerifiedObjects"])
+        and engine.get("verified_objects") == deep_engine.get("object_count")
         and _exact_int(engine.get("attempts"), signed["engineAttempts"])
         and _exact_int(
             engine.get("successful_attempts"), signed["engineVerifiedObjects"]

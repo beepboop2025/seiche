@@ -79,6 +79,8 @@ export interface BisPage {
   flow_id: string;
   evidence_class: BisEvidenceClass;
   rights: BisRights;
+  count: number;
+  complete_snapshot: boolean | null;
   next_cursor: string | null;
   records: BisRecord[];
 }
@@ -120,6 +122,19 @@ function optionalText(value: unknown): string | null {
 function requiredInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value)) throw new Error(`BIS ${field} is invalid`);
   return value as number;
+}
+
+function requiredCount(value: unknown, field: string): number {
+  const count = requiredInteger(value, field);
+  if (count < 0) throw new Error(`BIS ${field} is invalid`);
+  return count;
+}
+
+function nullableBoolean(value: unknown, field: string): boolean | null {
+  if (value !== null && typeof value !== "boolean") {
+    throw new Error(`BIS ${field} is invalid`);
+  }
+  return value;
 }
 
 function stringMap(value: unknown, field: string): Record<string, string> {
@@ -230,6 +245,9 @@ export function normalizeBisPage(value: unknown, expectedFlowId: string): BisPag
   const flowId = requiredText(page.flow_id, "page flow_id");
   if (flowId !== expectedFlowId) throw new Error("BIS response belongs to another flow");
   if (!Array.isArray(page.records)) throw new Error("BIS records are missing");
+  const records = page.records.map((row) => normalizeRecord(row, flowId));
+  const count = requiredCount(page.count, "count");
+  if (count !== records.length) throw new Error("BIS count does not match the response records");
   return {
     schema_version: requiredText(page.schema_version, "schema_version"),
     generated_at: optionalText(page.generated_at),
@@ -241,9 +259,21 @@ export function normalizeBisPage(value: unknown, expectedFlowId: string): BisPag
     flow_id: flowId,
     evidence_class: normalizeBisEvidence(page.evidence_class),
     rights: normalizeRights(page.rights),
+    count,
+    complete_snapshot: nullableBoolean(page.complete_snapshot, "complete_snapshot"),
     next_cursor: optionalText(page.next_cursor),
-    records: page.records.map((row) => normalizeRecord(row, flowId)),
+    records,
   };
+}
+
+export function isBisBulkUnavailable(
+  page: BisPage,
+  _availability: string | undefined,
+): boolean {
+  return page.evidence_class === "unavailable"
+    && page.serving_generated_at === null
+    && page.count === 0
+    && page.records.length === 0;
 }
 
 export function bisDomain(flow: BisFlowRecord): BisDomain {
@@ -294,13 +324,18 @@ export function mergeBisPages(current: BisPage, incoming: BisPage): BisPage {
     incoming.artifact_sha256 !== current.artifact_sha256
     || incoming.serving_generated_at !== current.serving_generated_at
     || incoming.artifact_knowledge_time !== current.artifact_knowledge_time
+    || incoming.complete_snapshot !== current.complete_snapshot
   ) {
     throw new Error("BIS pagination snapshot changed; reload the flow");
   }
   const seen = new Set(current.records.map((row) => row.logical_id));
   const duplicate = incoming.records.find((row) => seen.has(row.logical_id));
   if (duplicate) throw new Error("BIS pagination repeated a logical record");
-  return { ...incoming, records: [...current.records, ...incoming.records] };
+  return {
+    ...incoming,
+    count: current.count + incoming.count,
+    records: [...current.records, ...incoming.records],
+  };
 }
 
 export function bisValue(row: BisRecord): string {

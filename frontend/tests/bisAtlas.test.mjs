@@ -85,6 +85,8 @@ function page(records, overrides = {}) {
       knowledge_time: "2026-08-11T00:00:00Z",
       public_values: true,
     },
+    count: records.length,
+    complete_snapshot: false,
     next_cursor: "opaque-cursor",
     records,
     ...overrides,
@@ -137,6 +139,7 @@ test("pagination binds flow and immutable artifact identity", () => {
   const second = model.normalizeBisPage(page([record(2)], { next_cursor: null }), "WS_GLI");
   const merged = model.mergeBisPages(first, second);
   assert.deepEqual(merged.records.map((row) => row.logical_id), [record(1).logical_id, record(2).logical_id]);
+  assert.equal(merged.count, 2);
   assert.equal(merged.next_cursor, null);
 
   const changed = model.normalizeBisPage(
@@ -145,6 +148,80 @@ test("pagination binds flow and immutable artifact identity", () => {
   );
   assert.throws(() => model.mergeBisPages(first, changed), /snapshot changed/);
   assert.throws(() => model.mergeBisPages(first, first), /repeated a logical record/);
+});
+
+test("API-only and registry-only flows preserve explicit unavailable snapshot semantics", () => {
+  const apiOnly = model.normalizeBisPage(
+    page([], {
+      flow_id: "BIS_REL_CAL",
+      evidence_class: "unavailable",
+      count: 0,
+      complete_snapshot: false,
+      serving_generated_at: null,
+    }),
+    "BIS_REL_CAL",
+  );
+  assert.equal(apiOnly.count, 0);
+  assert.equal(apiOnly.complete_snapshot, false);
+  assert.equal(model.isBisBulkUnavailable(apiOnly, "api-only"), true);
+
+  const registryOnly = model.normalizeBisPage(
+    page([], {
+      flow_id: "WS_NA_SEC_C3",
+      evidence_class: "unavailable",
+      artifact_generated_at: null,
+      artifact_knowledge_time: null,
+      artifact_sha256: null,
+      serving_generated_at: null,
+      rights: {
+        usage_class: "unavailable",
+        license_url: null,
+        commercial_training_eligible: false,
+        knowledge_time: null,
+        public_values: false,
+      },
+      count: 0,
+      complete_snapshot: null,
+      next_cursor: null,
+    }),
+    "WS_NA_SEC_C3",
+  );
+  assert.equal(registryOnly.complete_snapshot, null);
+  assert.equal(model.isBisBulkUnavailable(registryOnly, "registry-only"), true);
+
+  for (const completeSnapshot of [true, false]) {
+    const bulkMaterializing = model.normalizeBisPage(
+      page([], {
+        evidence_class: "unavailable",
+        serving_generated_at: null,
+        count: 0,
+        complete_snapshot: completeSnapshot,
+        next_cursor: null,
+      }),
+      "WS_GLI",
+    );
+    assert.equal(model.isBisBulkUnavailable(bulkMaterializing, "bulk-flat"), true);
+  }
+});
+
+test("page count and snapshot completeness fail closed without changing observed search emptiness", () => {
+  assert.throws(
+    () => model.normalizeBisPage(page([record()], { count: 0 }), "WS_GLI"),
+    /count does not match/,
+  );
+  assert.throws(
+    () => model.normalizeBisPage(page([], { complete_snapshot: "unknown" }), "WS_GLI"),
+    /complete_snapshot/,
+  );
+  const observed = model.normalizeBisPage(page([record()]), "WS_GLI");
+  assert.equal(model.isBisBulkUnavailable(observed, "bulk-flat"), false);
+  assert.deepEqual(model.filterBisRecords(observed.records, "not-present"), []);
+  const observedEmpty = model.normalizeBisPage(page([], {
+    evidence_class: "observed",
+    count: 0,
+    next_cursor: null,
+  }), "WS_GLI");
+  assert.equal(model.isBisBulkUnavailable(observedEmpty, "bulk-flat"), false);
 });
 
 test("mixed-flow, non-finite, and unknown evidence fail closed", () => {
@@ -174,4 +251,7 @@ test("explorer calls full records and declares race and selection semantics", ()
   assert.match(explorerSource, /artifact_sha256/);
   assert.match(explorerSource, /source\.capture_knowledge_time/);
   assert.match(explorerSource, /"source_period"/);
+  assert.match(explorerSource, /NO BULK SNAPSHOT/);
+  assert.match(explorerSource, /count 0 is not a zero market observation/);
+  assert.match(explorerSource, /isBisBulkUnavailable/);
 });

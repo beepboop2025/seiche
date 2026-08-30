@@ -9,6 +9,7 @@ import {
 import { API_BASE } from "../apiBase";
 import {
   atlasStateTone,
+  assertCompatibleMarketSeriesPage,
   buildPlotModel,
   canonicalUnitLabel,
   filterInstruments,
@@ -455,6 +456,7 @@ export default function MarketSeriesExplorer() {
         controller.signal,
       );
       const olderPage = normalizeMarketSeries(payload, expectedMarketId);
+      assertCompatibleMarketSeriesPage(series.data, olderPage);
       if (controller.signal.aborted) return;
       setSeries((current) => {
         if (current.status !== "ready" || current.data.market_id !== expectedMarketId) return current;
@@ -599,6 +601,23 @@ export default function MarketSeriesExplorer() {
                   <div><strong>Stale observations remain visible</strong><span>{availabilityCounts.get("STALE") ?? seriesData.stale_input_count} current instrument states require age caution.</span></div>
                 </div>
               ) : null}
+              {seriesData.faults.map((fault) => (
+                <div
+                  className="ma-notice ma-notice--error"
+                  key={[fault.source, fault.category, fault.finished_at].join("|")}
+                >
+                  <div>
+                    <strong>{fault.source} · {fault.category.replaceAll("_", " ")}</strong>
+                    <span>{fault.detail}</span>
+                    <small>
+                      {fault.next_due
+                        ? `Next collection attempt ${formatUtc(fault.next_due)}`
+                        : `Finished ${formatUtc(fault.finished_at)}`}
+                    </small>
+                  </div>
+                  <Status value={fault.status} />
+                </div>
+              ))}
             </div>
 
             <section className="ma-workbench" aria-labelledby="ma-filters-title">

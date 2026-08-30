@@ -126,6 +126,31 @@ test("cursor pages deduplicate immutable identities and become globally chronolo
   assert.deepEqual(merged.map((row) => row.revision_id), ["old", "boundary", "new"]);
 });
 
+test("series rejects cross-market observations and pagination metadata drift", () => {
+  assert.throws(
+    () => atlas.normalizeMarketSeries(seriesPayload({
+      observations: [observation({ market_id: "EA-EUR" })],
+    }), "US-USD"),
+    /observation identity mismatch/,
+  );
+
+  const current = atlas.normalizeMarketSeries(seriesPayload(), "US-USD");
+  const older = atlas.normalizeMarketSeries(seriesPayload({
+    event_cutoff: "2026-08-20T00:00:00Z",
+    knowledge_cutoff: "2026-08-20T12:00:00Z",
+    observations: [observation({ event_time: "2026-08-20T00:00:00Z" })],
+  }), "US-USD");
+  assert.doesNotThrow(() => atlas.assertCompatibleMarketSeriesPage(current, older));
+
+  const changedRights = atlas.normalizeMarketSeries(seriesPayload({
+    evidence_eligibility: { eligible: false, reasons: ["rights changed"] },
+  }), "US-USD");
+  assert.throws(
+    () => atlas.assertCompatibleMarketSeriesPage(current, changedRights),
+    /changed identity, rights, instruments, or source state/,
+  );
+});
+
 test("the plot chooses the latest loaded knowledge vintage for each event", () => {
   const event = "2026-08-28T00:00:00Z";
   const rows = [
@@ -196,12 +221,39 @@ test("catalog normalization rejects a missing contract and sorts usable markets"
     schema: "seiche.markets.v2",
     count: 2,
     markets: [
-      { market_id: "US-USD", display_name: "United States", currency: "USD" },
-      { market_id: "EA-EUR", display_name: "Euro area", currency: "EUR" },
+      { market_id: "US-USD", display_name: "United States", currency: "USD", stale_inputs: [], faults: [] },
+      { market_id: "EA-EUR", display_name: "Euro area", currency: "EUR", stale_inputs: [], faults: [] },
     ],
   });
 
   assert.deepEqual(catalog.markets.map((market) => market.market_id), ["EA-EUR", "US-USD"]);
+});
+
+test("series keeps sanitized source faults visible and rejects false-zero metadata", () => {
+  const normalized = atlas.normalizeMarketSeries(seriesPayload({
+    faults: [{
+      source: "hkma_official",
+      status: "FAILED",
+      category: "HTTP_ERROR",
+      detail: "official source returned an HTTP error",
+      market_id: "US-USD",
+      finished_at: "2026-08-29T20:06:28Z",
+      next_due: "2026-08-30T20:05:08Z",
+    }],
+  }), "US-USD");
+  assert.equal(normalized.fault_count, 1);
+  assert.equal(normalized.faults[0].category, "HTTP_ERROR");
+  assert.throws(
+    () => atlas.normalizeMarketSeries(seriesPayload({ faults: undefined }), "US-USD"),
+    /faults must be an array/,
+  );
+  assert.throws(
+    () => atlas.normalizeMarketCatalog({
+      count: 0,
+      markets: [{ market_id: "US-USD", stale_inputs: [], faults: [] }],
+    }),
+    /count differs/,
+  );
 });
 
 test("unit labels keep canonical scale visible", () => {
