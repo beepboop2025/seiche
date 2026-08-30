@@ -729,6 +729,28 @@ def test_both_static_publishers_gate_before_their_first_public_write():
     assert "--published-catalog" not in fast
 
 
+def test_full_publish_refuses_stale_mirror_and_canonical_writes():
+    workflow = (ROOT / ".github/workflows/publish.yml").read_text()
+    fetch = (
+        'git fetch --no-tags origin \\\n'
+        '            "+refs/heads/main:refs/remotes/origin/main"'
+    )
+    mirror_guard = "Refuse a stale full-site publish"
+    mirror_write = "Publish to GitHub Pages (seiche-site)"
+    canonical_guard = "Re-prove current main before canonical deploy"
+    canonical_write = "Deploy to canonical Cloudflare Pages"
+
+    assert workflow.count(fetch) == 2
+    current_main = (
+        "current_main=\"$(git rev-parse 'refs/remotes/origin/main^{commit}')\""
+    )
+    assert workflow.count(current_main) == 2
+    assert workflow.count('if [ "$current_main" != "$GITHUB_SHA" ]; then') == 2
+    assert workflow.index(mirror_guard) < workflow.index(mirror_write)
+    assert workflow.index(mirror_write) < workflow.index(canonical_guard)
+    assert workflow.index(canonical_guard) < workflow.index(canonical_write)
+
+
 def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
     with pytest.raises(gate.PublicationGateError, match="SHA is malformed"):
         gate.verify_signed_release(

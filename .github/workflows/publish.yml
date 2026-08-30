@@ -267,6 +267,21 @@ jobs:
             --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT" \
             --published-catalog frontend/dist/.well-known/ai-catalog.json
 
+      # A scheduled or queued build can finish after a newer main commit. The
+      # evidence can still be internally valid while its UI is obsolete, so
+      # bind the external write to the current canonical branch immediately
+      # before touching the durable mirror.
+      - name: Refuse a stale full-site publish
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          current_main="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            echo "::error title=Stale full-site publish refused::$GITHUB_SHA is not current origin/main ($current_main)"
+            exit 1
+          fi
+
       # Primary 24/7 publish: push the built site + snapshot to the PUBLIC
       # seiche-site repo (GitHub Pages) — no tokens beyond the deploy key,
       # no user hands, survives forever on the free tier.
@@ -305,6 +320,20 @@ jobs:
             echo "::error title=Cloudflare Pages deploy blocked::CLOUDFLARE_API_TOKEN is required because seiche.info and its reviewed response headers are the canonical public surface. Setup: ops/cloudflare/README.md."
             exit 1
           fi
+
+      # Recheck after the mirror write. A main push during that short window
+      # must not let this older run become the canonical Cloudflare deployment.
+      - name: Re-prove current main before canonical deploy
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          current_main="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            echo "::error title=Stale canonical deploy refused::$GITHUB_SHA is not current origin/main ($current_main)"
+            exit 1
+          fi
+
       - name: Deploy to canonical Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:

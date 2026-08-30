@@ -1484,6 +1484,68 @@ def _open_url(spec: CardSpec) -> str:
     return spec.canonical_url
 
 
+def refresh_root(site_dir: Path) -> dict[str, Any]:
+    """Refresh only the root card and metadata from an already sealed site.
+
+    The static UI fast path needs the current root card after replacing the
+    Vite shell, but it must not rebuild contextual views, aliases, dispatches,
+    articles, the sitemap, or the full card manifest.  This deliberately small
+    entry point reads the mirror's existing snapshot and changes exactly the
+    root document plus one content-addressed image.
+    """
+
+    site_dir = Path(site_dir)
+    snapshot_path = site_dir / "data" / "overview.json"
+    root_path = site_dir / "index.html"
+    for path in (snapshot_path, root_path):
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(
+                "social cards root refresh requires regular, non-symlink "
+                f"publication files: {path}"
+            )
+
+    snapshot = json.loads(snapshot_path.read_text())
+    if not isinstance(snapshot, Mapping):
+        raise SystemExit("social cards: overview.json is not an object")
+    before = root_path.read_text()
+    if (
+        before.count("<!--prerender:meta-->") != 1
+        or before.count("<!--/prerender:meta-->") != 1
+    ):
+        raise SystemExit(
+            "social cards root refresh requires exactly one prerender metadata block"
+        )
+    no_script = re.findall(r"<noscript\b[^>]*>.*?</noscript>", before, re.DOTALL)
+    if len(no_script) != 1 or len(no_script[0].encode()) < 1024:
+        raise SystemExit(
+            "social cards root refresh requires one substantial no-JS evidence block"
+        )
+
+    root_spec = _board_spec(snapshot, canonical_url=f"{SITE}/", identifier="home")
+    root_image, root_file, root_digest = _emit_image(site_dir, root_spec)
+    after = patch_page_metadata(before, root_spec, root_image)
+    if before.partition("</head>")[2] != after.partition("</head>")[2]:
+        raise SystemExit("social cards root refresh changed the document body")
+    if (
+        after.count("<!--prerender:meta-->") != 1
+        or after.count("<!--social-cards:meta-->") != 1
+    ):
+        raise SystemExit("social cards root refresh lost publication metadata markers")
+    root_path.write_text(after)
+    return {
+        "schema": "seiche.social-cards.root.v1",
+        "snapshot_generated_at": snapshot.get("generated_at"),
+        "image": root_image,
+        "image_sha256_prefix": root_digest,
+        "touched": [
+            "index.html",
+            root_file.relative_to(site_dir).as_posix(),
+        ],
+        "request_time_collection": False,
+        "request_time_model_fitting": False,
+    }
+
+
 def build(site_dir: Path) -> dict[str, Any]:
     """Build every contextual card and return the written publication manifest."""
 
@@ -1629,8 +1691,14 @@ def build(site_dir: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) == 2 and args[0] == "--root-only":
+        receipt = refresh_root(Path(args[1]))
+        print(json.dumps(receipt, sort_keys=True))
+        return 0
     if len(args) != 1:
-        raise SystemExit("usage: python -m seiche.social_cards <built-site-dir>")
+        raise SystemExit(
+            "usage: python -m seiche.social_cards [--root-only] <built-site-dir>"
+        )
     manifest = build(Path(args[0]))
     print(
         "social cards: "

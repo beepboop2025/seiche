@@ -10,6 +10,7 @@ import struct
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
 from PIL import ImageDraw
 
 from seiche import social_cards
@@ -357,6 +358,79 @@ def test_build_emits_real_views_unique_editorial_cards_and_fail_closed_states(
     assert "pricing.. Status" not in forex_view
     assert "pricing. Status" in forex_view
     assert (site / "share" / "cards" / "manifest.json").exists()
+
+
+def test_root_refresh_changes_only_root_and_one_content_addressed_card(
+    tmp_path: Path, fake_snap: dict
+) -> None:
+    site = _built_site(tmp_path, fake_snap)
+    root = site / "index.html"
+    no_js = "sealed market evidence " * 100
+    root.write_text(
+        root.read_text()
+        .replace(
+            "</head>",
+            "<!--prerender:meta-->\n"
+            '<meta property="article:modified_time" content="2026-08-30T00:00:00Z">\n'
+            "<!--/prerender:meta-->\n</head>",
+        )
+        .replace(
+            "</body>",
+            f"<noscript>{no_js}</noscript></body>",
+        )
+    )
+    sentinel_paths = (
+        site / "views" / "sentinel.txt",
+        site / "share" / "cards" / "manifest.json",
+    )
+    for path in sentinel_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"preserve {path.name}")
+
+    before = {
+        path.relative_to(site): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in site.rglob("*")
+        if path.is_file()
+    }
+    receipt = social_cards.refresh_root(site)
+    after = {
+        path.relative_to(site): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in site.rglob("*")
+        if path.is_file()
+    }
+
+    modified = {path for path in before if before[path] != after[path]}
+    created = set(after) - set(before)
+    assert modified == {Path("index.html")}
+    assert len(created) == 1
+    card = created.pop()
+    assert re.fullmatch(r"share/cards/board/home\.[0-9a-f]{16}\.png", card.as_posix())
+    assert receipt == {
+        "schema": "seiche.social-cards.root.v1",
+        "snapshot_generated_at": fake_snap["generated_at"],
+        "image": f"https://seiche.info/{card.as_posix()}",
+        "image_sha256_prefix": card.stem.rsplit(".", 1)[1],
+        "touched": ["index.html", card.as_posix()],
+        "request_time_collection": False,
+        "request_time_model_fitting": False,
+    }
+    document = root.read_text()
+    assert document.count("<!--prerender:meta-->") == 1
+    assert document.count("<!--social-cards:meta-->") == 1
+    assert f"<noscript>{no_js}</noscript>" in document
+    assert 'content="1200"' in document
+    assert 'content="630"' in document
+    assert receipt["image"] in document
+    assert not (set(before) - set(after))
+
+
+def test_root_refresh_fails_closed_without_prerendered_evidence(
+    tmp_path: Path, fake_snap: dict
+) -> None:
+    site = _built_site(tmp_path, fake_snap)
+    with pytest.raises(SystemExit, match="prerender metadata block"):
+        social_cards.refresh_root(site)
+    assert not (site / "share").exists()
 
 
 def test_social_card_toolchain_is_hash_locked_before_every_full_suite() -> None:
