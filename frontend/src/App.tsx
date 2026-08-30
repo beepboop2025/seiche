@@ -69,13 +69,14 @@ const Account = lazy(() => import("./tabs/Account"));
 // DISPATCHES sits second because the frozen letters are the public record of
 // what the desk said before outcomes arrived.
 // MONEY MARKETS follows the core board as the native-frequency global cash
-// desk. GLOBAL, FX×MATERIALS and OIL×FUNDING then carry offshore-dollar
+// desk. CORPUS is promoted beside it as the drill-down from registered lake to
+// exact canonical observation. GLOBAL, FX×MATERIALS and OIL×FUNDING then carry offshore-dollar
 // coupling, the physical-cash transmission channel and the barrel's
 // bidirectional funding loop as context surfaces, never hidden composite
 // inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "CORPUS", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "CORPUS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -403,9 +404,10 @@ function AppInner() {
             <a
               href={`#${t.toLowerCase()}`}
               className={t === tab ? "active" : ""}
+              aria-current={t === tab ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); goTab(t); }}
             >
-              {t}
+              {t === "CORPUS" ? "MARKET ATLAS" : t}
             </a>
             {t === "BOARD" && (
               <a href="/use-cases" aria-label="Seiche use cases and selection guide">

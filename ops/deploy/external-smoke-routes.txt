@@ -37,6 +37,9 @@ GET|/api/subscribe|200|application/json|"gates_nothing":true
 GET|/.well-known/mcp.json|200|application/json|"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json"
 GET|/.well-known/mcp.json|200|application/json|"name":"io.github.beepboop2025/seiche"
 GET|/.well-known/mcp.json|200|application/json|"url":"https://api.seiche.info/mcp"
+GET|/.well-known/api-catalog|200|application/linkset+json|"anchor":"https://api.seiche.info/api/v2/corpus"
+GET|/api/v2/corpus/healthz|200|application/json|"service":"liquilens-market-corpus"
+GET|/api/v2/corpus/v1/catalog|200|application/json|"corpora":{
 GET|/mcp|200|text/event-stream|stateless
 GET|/riptide/|200|application/json|"name": "riptide"
 GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"

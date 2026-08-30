@@ -68,7 +68,10 @@ from seiche.domain.observation import (
 )
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.base import CapabilityStatus, PackSupportStatus
-from seiche.markets.atlas import build_global_money_market_atlas
+from seiche.markets.atlas import (
+    build_global_money_market_atlas,
+    market_source_reference,
+)
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
@@ -378,7 +381,7 @@ API_CATALOG = {
 
 @app.api_route(
     "/.well-known/api-catalog",
-    methods=["GET", "HEAD", "OPTIONS"],
+    methods=["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
     include_in_schema=False,
 )
 def api_catalog(request: Request) -> Response:
@@ -399,6 +402,10 @@ def api_catalog(request: Request) -> Response:
         return Response(status_code=204, headers=headers)
     if request.method == "HEAD":
         return Response(status_code=200, headers=headers)
+    if request.method != "GET":
+        return JSONResponse(
+            {"detail": "Method Not Allowed"}, status_code=405, headers=headers
+        )
     return JSONResponse(API_CATALOG, headers=headers)
 
 
@@ -434,7 +441,25 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
                 "status": "active",
-            }
+            },
+            {
+                "name": "io.github.beepboop2025/seiche-market-corpus",
+                "title": "Seiche Market Atlas — structured evidence corpus",
+                "description": (
+                    "Rights-aware dataset receipts, bounded BIS records and "
+                    "canonical Seiche market discovery with explicit evidence clocks."
+                ),
+                "version": "1.0.0",
+                "transport": "streamable-http",
+                "url": "https://api.seiche.info/api/v2/corpus/mcp",
+                "authentication": {
+                    "type": "none",
+                    "scope": "public read-only discovery and rights-approved records",
+                },
+                "documentation": "https://seiche.info/#corpus",
+                "availability": "declared_endpoint_verify_with_corpus_health",
+                "health": "https://api.seiche.info/api/v2/corpus/healthz?deep=true",
+            },
         ],
     }
 
@@ -1028,6 +1053,16 @@ def api_index() -> dict[str, Any]:
             "datasets": "https://api.seiche.info/api/v2/corpus/v1/datasets",
             "bis_flows_for_seiche": (
                 "https://api.seiche.info/api/v2/corpus/v1/bis/flows?product=seiche"
+            ),
+            "bis_records": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/records"
+                "?flow_id=WS_GLI&limit=100"
+            ),
+            "bis_flow_manifest": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/flows/WS_GLI/manifest"
+            ),
+            "canonical_market_series": (
+                "https://api.seiche.info/api/v2/markets/US-USD/series?n=200"
             ),
             "seiche_markets": (
                 "https://api.seiche.info/api/v2/corpus/v1/seiche/markets"
@@ -1954,6 +1989,7 @@ def market_series_v2(
         adapter = pack.adapter_map[instrument.source_adapter_id]
         if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
             continue
+        source_reference = market_source_reference(adapter.adapter_id)
         instruments.append(
             {
                 "instrument_id": instrument.instrument_id,
@@ -1961,6 +1997,8 @@ def market_series_v2(
                 "semantic_role": instrument.semantic_role.value,
                 "canonical_unit": instrument.canonical_unit.value,
                 "source_adapter": adapter.adapter_id,
+                "publisher": source_reference["publisher"],
+                "source_url": source_reference["source_url"],
                 "connector_classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,

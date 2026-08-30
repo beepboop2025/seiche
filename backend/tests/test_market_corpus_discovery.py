@@ -13,6 +13,11 @@ def test_api_index_projects_the_canonical_corpus_contract() -> None:
         "catalog": f"{CORPUS_ROOT}/v1/catalog",
         "datasets": f"{CORPUS_ROOT}/v1/datasets",
         "bis_flows_for_seiche": f"{CORPUS_ROOT}/v1/bis/flows?product=seiche",
+        "bis_records": f"{CORPUS_ROOT}/v1/bis/records?flow_id=WS_GLI&limit=100",
+        "bis_flow_manifest": f"{CORPUS_ROOT}/v1/bis/flows/WS_GLI/manifest",
+        "canonical_market_series": (
+            "https://api.seiche.info/api/v2/markets/US-USD/series?n=200"
+        ),
         "seiche_markets": f"{CORPUS_ROOT}/v1/seiche/markets",
         "seiche_exports": f"{CORPUS_ROOT}/v1/seiche/exports",
         "mcp": f"{CORPUS_ROOT}/mcp",

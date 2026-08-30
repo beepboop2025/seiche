@@ -753,6 +753,18 @@ quotes, order books, forward/basis curves, options surfaces, complete security
 masters and redistribution-restricted feeds remain explicit gaps. The cache-only
 machine twin is https://api.seiche.info/api/v2/world-markets.
 
+The live Market Atlas is at {SITE}/#corpus. It drills from each canonical
+market and instrument into exact observations, source/publication/knowledge
+clocks, revisions, quality, staleness and redistribution state. The same view
+opens the independently operated Hetzner evidence lake at
+https://api.seiche.info/api/v2/corpus: versioned dataset receipts, normalized
+BIS flows and full records, revision runs, observed Seiche partitions and
+protected exports. Full BIS rows use bounded immutable serving shards and
+snapshot-bound cursors; no request scans a multi-million-row gzip monolith.
+Discovery never grants model, training, scoring, execution or redistribution
+permission, and corpus rows do not enter Seiche analytics merely because they
+are inspectable.
+
 China macro evidence is at {SITE}/markets/china-macro/. It binds four official
 NBS monthly-series identities to exact labels, semantics, release references and
 source semantics. Its structural catalog is unsigned; only a restricted response
@@ -806,6 +818,8 @@ same product; the callable contract remains the MCP server above.
 - [China economy evidence workflow]({SITE}/use-cases/china-economy-evidence/): use Palimpsest for revision-safe public observations and Seiche for structural macro identity, rights and transmission context
 - [Financial-evidence Agent Skill](https://github.com/beepboop2025/financial-evidence-skills/tree/main/financial-evidence): route research across Seiche, LiquiLens, Undertow and Palimpsest and fetch bounded no-auth JSON with explicit source errors
 - [World markets evidence atlas]({SITE}/markets/): money, forex and capital markets joined by one provenance, clock, rights and evidence-status contract
+- [Market Atlas]({SITE}/#corpus): canonical instruments and observations joined to the rights-aware Hetzner dataset and BIS corpus, with bounded record pagination and explicit clocks
+- [Market corpus API](https://api.seiche.info/api/v2/corpus): dataset receipts, BIS flows and full normalized records, revision runs, Seiche lake partitions, exports and a separate MCP transport
 - [Forex reference ledger]({SITE}/markets/forex/): 22 public H.10 bilateral reference series, three dollar indexes, exact quote conventions and explicit missing instruments
 - [Capital-markets transmission projection]({SITE}/markets/capital-markets/): a bounded derived macro-capital projection over registered Treasury, credit, volatility, dealer, positioning and commodity source families
 - [China macro evidence catalog]({SITE}/markets/china-macro/): four exact NBS series identities; the structural catalog is unsigned, while only a restricted response adds verified Seiche owner-attested provenance; no values are redistributed

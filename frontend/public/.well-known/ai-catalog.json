@@ -114,6 +114,73 @@
       }
     },
     {
+      "identifier": "urn:air:seiche.info:mcp:market-corpus",
+      "displayName": "Seiche Market Atlas Corpus MCP Server",
+      "type": "application/json",
+      "data": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.beepboop2025/seiche-market-corpus",
+        "title": "Seiche Market Atlas — structured evidence corpus",
+        "description": "Rights-aware attested evidence objects, structural inspection, bounded full-fidelity BIS records, revisions and canonical Seiche market discovery with explicit evidence clocks.",
+        "version": "1.0.0",
+        "websiteUrl": "https://seiche.info/#corpus",
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://api.seiche.info/api/v2/corpus/mcp"
+          }
+        ]
+      },
+      "description": "Public, read-only discovery and rights-approved record access across the Hetzner market evidence lake. Verified unique objects are bound to an immutable public index; structural profiles disclose shape without leaking values, and restricted collections remain metadata-only.",
+      "tags": [
+        "market data corpus",
+        "BIS statistics",
+        "money markets",
+        "foreign exchange",
+        "capital markets",
+        "dataset provenance",
+        "revision history",
+        "evidence clocks"
+      ],
+      "capabilities": [
+        "corpus_catalog",
+        "list_datasets",
+        "inspect_dataset",
+        "bis_observations",
+        "bis_records",
+        "bis_flow_manifest",
+        "seiche_markets",
+        "seiche_observations",
+        "corpus_health"
+      ],
+      "prompts": [],
+      "resourceTemplates": [],
+      "representativeQueries": [
+        "Which money, forex and capital-market datasets are registered, and what rights and evidence classes apply?",
+        "Inspect one immutable dataset object, its structural profile, hashes and publication boundary.",
+        "Page through the full normalized BIS global-liquidity records without mixing source generations.",
+        "Show the series key, dimensions, event time, knowledge time, revision and source attribution for a BIS record.",
+        "Which Seiche canonical market partitions and protected exports are currently present?"
+      ],
+      "version": "1.0.0",
+      "updatedAt": "2026-08-30T14:30:00Z",
+      "metadata": {
+        "authentication": "none",
+        "access": "public-read-only-rights-gated",
+        "schemaProfile": "MCP Registry 2025-12-11 server metadata",
+        "experimentalServerCardConformance": false,
+        "publicToolCount": 9,
+        "publicPromptCount": 0,
+        "publicResourceCount": 0,
+        "mcpDiscovery": "https://api.seiche.info/.well-known/mcp.json",
+        "catalog": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+        "health": "https://api.seiche.info/api/v2/corpus/healthz?deep=true",
+        "availabilityClaim": "declared_endpoint_verify_with_corpus_health",
+        "humanPage": "https://seiche.info/#corpus",
+        "requestTimeMonolithScan": false
+      }
+    },
+    {
       "identifier": "urn:air:seiche.info:openapi:funding-stress",
       "displayName": "Seiche Public REST API",
       "type": "application/vnd.oai.openapi+json",

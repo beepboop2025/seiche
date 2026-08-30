@@ -148,6 +148,13 @@ jobs:
             clients/python/test_world_markets_client.py
           python distribution/datasets/stage.py --validate-only
 
+      - name: Test and build every frontend contract
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       - name: Lint distribution scripts outside the backend package
         run: |
           ruff check --no-cache \

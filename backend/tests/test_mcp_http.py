@@ -158,7 +158,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert document["canonicalCatalog"] == (
         "https://seiche.info/.well-known/ai-catalog.json"
     )
-    assert len(document["servers"]) == 1
+    assert len(document["servers"]) == 2
     server = document["servers"][0]
     assert server["name"] == "io.github.beepboop2025/seiche"
     assert server["version"] == api.assemble.VERSION
@@ -169,6 +169,20 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
         "scope": "eleven anonymous public evidence tools",
     }
     assert "tools" not in server
+    corpus = document["servers"][1]
+    assert corpus["name"] == "io.github.beepboop2025/seiche-market-corpus"
+    assert corpus["url"] == "https://api.seiche.info/api/v2/corpus/mcp"
+    assert corpus["authentication"] == {
+        "type": "none",
+        "scope": "public read-only discovery and rights-approved records",
+    }
+    assert corpus["availability"] == "declared_endpoint_verify_with_corpus_health"
+    assert corpus["health"] == (
+        "https://api.seiche.info/api/v2/corpus/healthz?deep=true"
+    )
+    assert corpus.get("status") not in {"active", "live"}
+    assert "repository" not in corpus
+    assert "tools" not in corpus
 
     caddy = (Path(__file__).resolve().parents[2] / "ops" / "Caddyfile").read_text(
         encoding="utf-8"
