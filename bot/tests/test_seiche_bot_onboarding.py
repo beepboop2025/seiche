@@ -67,13 +67,16 @@ def test_setup_registers_name_commands_and_descriptions(monkeypatch, capsys):
         "ask",
         "letter",
         "tandem",
+        "atlas",
         "china",
         "where",
+        "privacy",
+        "delete_me",
         "help",
         "start",
         "stop",
     ]
-    assert 8 <= len(names) <= 10
+    assert 8 <= len(names) <= 14
     assert any(
         command == {"command": "help",
                     "description": "Full command list and desk guide"}
@@ -182,6 +185,39 @@ def test_help_is_explicit_and_keeps_the_liquidity_lab_path(monkeypatch):
     )
 
 
+def test_atlas_is_a_zero_fetch_doorway_to_public_pages_and_api(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        bot,
+        "api_get",
+        lambda *_args, **_kwargs: pytest.fail(
+            "the Atlas doorway must not fetch or reconstruct market rows"
+        ),
+    )
+    monkeypatch.setattr(
+        bot,
+        "send",
+        lambda chat_id, text, keyboard=None:
+            sent.append((chat_id, text, keyboard)) or {"ok": True},
+    )
+
+    bot.handle(5150, "/atlas", "private")
+
+    assert len(sent) == 1
+    assert "Global Money Market Atlas" in sent[0][1]
+    assert "restricted row stays unavailable" in sent[0][1]
+    urls = {
+        button["url"]
+        for row in sent[0][2]
+        for button in row
+        if "url" in button
+    }
+    assert bot.MARKET_ATLAS_URL in urls
+    assert bot.FOREX_ATLAS_URL in urls
+    assert bot.CAPITAL_MARKETS_ATLAS_URL in urls
+    assert bot.MONEY_MARKETS_API_URL in urls
+
+
 def test_stop_names_every_delivery_class_it_disables(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(bot, "STATE_DIR", str(tmp_path))
@@ -200,6 +236,91 @@ def test_stop_names_every_delivery_class_it_disables(tmp_path, monkeypatch):
     assert "daily letter" in text
     assert "state-change alerts" in text
     assert "6161" not in bot.load_state("subscribers.json", {})
+
+
+def test_delete_me_removes_every_attributable_record_and_preserves_other_bytes(
+        tmp_path, monkeypatch):
+    sent = []
+    chat_id = 6161
+    actor = bot._actor_hash(chat_id)
+    other_actor = bot._actor_hash(7171)
+    monkeypatch.setattr(bot, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        bot,
+        "send",
+        lambda cid, text, keyboard=None:
+            sent.append((cid, text, keyboard)) or {"ok": True},
+    )
+    bot.save_state("subscribers.json", {
+        str(chat_id): {"since": "target"},
+        "7171": {"since": "other"},
+    })
+    bot.save_state("ask_rate.json", {str(chat_id): [1.0], "7171": [2.0]})
+    bot.save_state("start_attribution.json", {
+        actor: {"since": "target"},
+        other_actor: {"since": "other"},
+    })
+    kept_lead = b'{"chat_id":7171,"ref":"other"}\nnot-json\n'
+    (tmp_path / "leads.jsonl").write_bytes(
+        b'{"chat_id":6161,"ref":"one"}\n'
+        b'{"chat_id":"6161","ref":"two"}\n'
+        + kept_lead
+    )
+    kept_event = (
+        json.dumps({"actor": other_actor, "event": "start"}).encode() +
+        b"\nbroken-event\n"
+    )
+    (tmp_path / "events.jsonl").write_bytes(
+        json.dumps({"actor": actor, "event": "start"}).encode() +
+        b"\n" + kept_event
+    )
+
+    bot.handle(chat_id, "/delete_me", "private")
+
+    assert bot.load_state("subscribers.json", {}) == {
+        "7171": {"since": "other"},
+    }
+    assert bot.load_state("ask_rate.json", {}) == {"7171": [2.0]}
+    assert bot.load_state("start_attribution.json", {}) == {
+        other_actor: {"since": "other"},
+    }
+    assert (tmp_path / "leads.jsonl").read_bytes() == kept_lead
+    assert (tmp_path / "events.jsonl").read_bytes() == kept_event
+    assert "subscriptions=1" in sent[-1][1]
+    assert "rate_limits=1" in sent[-1][1]
+    assert "attribution=1" in sent[-1][1]
+    assert "referrals=2" in sent[-1][1]
+    assert "analytics=1" in sent[-1][1]
+
+    bot.handle(chat_id, "/delete_me", "private")
+    assert all(f"{label}=0" in sent[-1][1] for label in (
+        "subscriptions", "rate_limits", "attribution", "referrals",
+        "analytics",
+    ))
+
+
+def test_delete_me_is_private_only_and_privacy_names_external_copies(
+        tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(bot, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        bot,
+        "send",
+        lambda cid, text, keyboard=None:
+            sent.append((cid, text, keyboard)) or {"ok": True},
+    )
+    bot.save_state("subscribers.json", {"8080": {"since": "kept"}})
+
+    bot.handle(8080, "/delete_me", "group")
+    assert bot.load_state("subscribers.json", {}) == {
+        "8080": {"since": "kept"},
+    }
+    assert sent[-1][1] == bot.PRIVATE_SUBSCRIPTION_PROMPT
+
+    bot.handle(8080, "/privacy", "private")
+    assert "api.seiche.info" in sent[-1][1]
+    assert "Telegram" in sent[-1][1]
+    assert "/delete_me" in sent[-1][1]
 
 
 def test_channel_footer_displays_the_same_destination_as_its_button(monkeypatch):

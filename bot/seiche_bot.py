@@ -22,6 +22,8 @@ Modes
 
 Commands
   /start /stop     privately follow / unfollow the letter, alerts and news
+  /privacy         what this bot stores and where questions travel
+  /delete_me       delete this private chat's bot-owned records
   /now             the gauge right now: regime, composite, the Tell
   /snap            the forwardable card: meter, trend, next turn (monospace)
   /odds            forward event odds (Navigator, with its caveats out loud)
@@ -79,6 +81,10 @@ LL_API = os.environ.get("LIQUILENS_API", "https://api.liquilens.in/api").rstrip(
 UT_API = os.environ.get("UNDERTOW_API", "https://api.seiche.info/undertow").rstrip("/")
 SITE = "https://seiche.info"
 ARTICLE_FEED_URL = f"{SITE}/articles/feed.json"
+MARKET_ATLAS_URL = f"{SITE}/markets/"
+FOREX_ATLAS_URL = f"{MARKET_ATLAS_URL}forex/"
+CAPITAL_MARKETS_ATLAS_URL = f"{MARKET_ATLAS_URL}capital-markets/"
+MONEY_MARKETS_API_URL = f"{API}/api/v2/money-markets"
 STATE_DIR = os.environ.get("SEICHE_BOT_STATE", "/var/lib/seiche-bot")
 TG = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -148,6 +154,7 @@ ASK_PER_CHAT_WINDOW_S = 60
 REF_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ACTIVATION_COMMANDS = frozenset({
     "/now", "/snap", "/ask", "/letter", "/tandem",
+    "/atlas",
 })
 RETENTION_TRACK_DAYS = 30
 
@@ -1710,6 +1717,17 @@ WHERE_CARD = (
 )
 
 
+ATLAS_CARD = (
+    "🗺 <b>Global Money Market Atlas</b>\n\n"
+    "A public map of money, foreign-exchange, and capital-market plumbing. "
+    "Open the crawlable market pages for place and instrument context, or "
+    "use the bounded JSON API for agent workflows.\n\n"
+    "The Atlas preserves source, clock, coverage, and rights boundaries. A "
+    "missing or restricted row stays unavailable; Telegram never reconstructs "
+    "or substitutes it. Research context only, not investment advice."
+)
+
+
 HELP = (
     "🌊 <b>Seiche</b> — public US dollar-funding desk, from free public data.\n\n"
     "/now — the gauge: regime, composite, the Tell\n"
@@ -1717,8 +1735,11 @@ HELP = (
     "/ask &lt;question&gt; — desk assistant, grounded in the live board\n"
     "/letter — today's dispatch\n"
     "/tandem — labeled Seiche and LiquiLens reads (not a joint score)\n"
+    "/atlas — Global Money Market Atlas pages and bounded API\n"
     "/china — China macro evidence identities (metadata only; no values)\n"
     "/where — the three public desks\n"
+    "/privacy — what this bot stores and where questions travel\n"
+    "/delete_me — delete this private chat's bot-owned records\n"
     "/help — this list\n"
     "/start — follow the 11:30 UTC letter + state-change alerts\n"
     "/stop — unsubscribe in DM\n\n"
@@ -1726,6 +1747,21 @@ HELP = (
     "@seiche_desk_bot in any other chat to drop the live gauge card there.\n\n"
     "Free public good: no paywall, no sign-in. Institutions are "
     "@LiquiLens_bot's desk."
+)
+
+
+PRIVACY = (
+    "🔐 <b>Privacy and deletion</b>\n\n"
+    "For delivery, this bot stores your Telegram chat ID and follow time. "
+    "It also keeps a one-minute /ask rate-limit window, first-touch and "
+    "activation attribution under a keyed pseudonymous actor, and referral "
+    "or growth-event rows. Ordinary message text is not written to these "
+    "bot state files.\n\n"
+    "/ask sends up to 600 characters of your question to api.seiche.info in "
+    "the request URL, so it may appear in that service's operational HTTP "
+    "logs. /delete_me removes every bot-state record attributable to this "
+    "private chat; it cannot remove API-server logs or copies Telegram keeps "
+    "under its own terms. /stop only ends future deliveries."
 )
 
 
@@ -1909,7 +1945,9 @@ def keyboard_for(cmd: str) -> list | None:
     if cmd == "/help":
         return [[_btn("🌡 Full gauge", "/now"),
                  _btn("📰 Today's article", "/article")],
-                [_btn("🇨🇳 China evidence", "/china"),
+                [_btn("🗺 Market Atlas", "/atlas"),
+                 _btn("🇨🇳 China evidence", "/china")],
+                [
                  _btn("📨 Fixed-order letter", "/letter")], LAB_ROW]
     if cmd == "/now":
         return [[_btn("\U0001f4c9 Odds", "/odds"), _btn("\U0001f504 Turns", "/turns"),
@@ -1937,6 +1975,15 @@ def keyboard_for(cmd: str) -> list | None:
         return [[{"text": "🇨🇳 China evidence page", "url": CHINA_TOPIC_URL}],
                 [_btn("\U0001f321 Gauge now", "/now"),
                  _btn("\U0001f4e4 Share", "/share")], FLEET_ROW]
+    if cmd == "/atlas":
+        return [
+            [{"text": "🗺 Open Market Atlas", "url": MARKET_ATLAS_URL}],
+            [{"text": "💱 Foreign exchange", "url": FOREX_ATLAS_URL},
+             {"text": "🏛 Capital markets", "url": CAPITAL_MARKETS_ATLAS_URL}],
+            [{"text": "{} Bounded JSON API", "url": MONEY_MARKETS_API_URL}],
+            [_btn("🇨🇳 China evidence", "/china"),
+             _btn("🌡 Gauge now", "/now")],
+        ]
     if cmd == "/share":
         return [[{"text": "\U0001f4e4 Share Seiche", "url": SHARE_URL}],
                 LAB_ROW, FLEET_ROW]
@@ -2019,6 +2066,83 @@ def record_lead(chat_id: int, ref: str) -> None:
         fh.write(json.dumps({"ts": utcnow().isoformat(timespec="seconds"),
                              "chat_id": chat_id, "ref": ref},
                             sort_keys=True) + "\n")
+
+
+def _delete_mapping_key(name: str, key: str) -> int:
+    """Remove one attributable key without repairing malformed state."""
+    path = _state_path(name)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return 0
+    if not isinstance(state, dict) or key not in state:
+        return 0
+    state.pop(key)
+    save_state(name, state)
+    return 1
+
+
+def _delete_jsonl_rows(name: str, matches) -> int:
+    """Atomically filter attributable rows and preserve every other byte."""
+    path = _state_path(name)
+    try:
+        with open(path, "rb") as fh:
+            rows = fh.readlines()
+    except FileNotFoundError:
+        return 0
+
+    removed = 0
+    kept: list[bytes] = []
+    for raw_row in rows:
+        try:
+            row = json.loads(raw_row)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            kept.append(raw_row)
+            continue
+        if isinstance(row, dict) and matches(row):
+            removed += 1
+        else:
+            kept.append(raw_row)
+    if not removed:
+        return 0
+
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    try:
+        for raw_row in kept:
+            os.write(fd, raw_row)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    return removed
+
+
+def delete_chat_data(chat_id: int) -> dict[str, int]:
+    """Delete every bot-owned record that can be tied to this private chat."""
+    key = str(chat_id)
+    actor = _actor_hash(chat_id)
+
+    def lead_matches(row: dict) -> bool:
+        stored = row.get("chat_id")
+        return (
+            isinstance(stored, (int, str))
+            and not isinstance(stored, bool)
+            and str(stored) == key
+        )
+
+    return {
+        "subscriber_records": _delete_mapping_key("subscribers.json", key),
+        "rate_limit_records": _delete_mapping_key("ask_rate.json", key),
+        "attribution_records": _delete_mapping_key(
+            "start_attribution.json", actor
+        ),
+        "referral_records": _delete_jsonl_rows("leads.jsonl", lead_matches),
+        "analytics_records": _delete_jsonl_rows(
+            "events.jsonl", lambda row: row.get("actor") == actor
+        ),
+    }
 
 
 def _record_first_open(chat_id: int, ref: str = "") -> bool:
@@ -2146,7 +2270,7 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     # A shared chat has one chat_id but many people who can issue commands.
     # Subscription mutations therefore belong in a one-person private chat;
     # read-only desk commands continue through the normal group path below.
-    if cmd in ("/start", "/stop") and chat_type != "private":
+    if cmd in ("/start", "/stop", "/delete_me") and chat_type != "private":
         send(chat_id, PRIVATE_SUBSCRIPTION_PROMPT,
              PRIVATE_SUBSCRIPTION_KEYBOARD)
         return
@@ -2175,6 +2299,21 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
         send(chat_id, "Unsubscribed. This stops the daily letter and "
                       "state-change alerts. /start follows the letter again "
                       "any time.")
+    elif cmd == "/privacy":
+        send(chat_id, PRIVACY, keyboard_for("/privacy"))
+    elif cmd == "/delete_me":
+        removed = delete_chat_data(chat_id)
+        send(
+            chat_id,
+            "Deleted this bot's stored records for this private chat: "
+            f"subscriptions={removed['subscriber_records']}, "
+            f"rate_limits={removed['rate_limit_records']}, "
+            f"attribution={removed['attribution_records']}, "
+            f"referrals={removed['referral_records']}, "
+            f"analytics={removed['analytics_records']}. Telegram and the "
+            "Seiche API may retain their own message or request-log copies.",
+            keyboard_for("/privacy"),
+        )
     elif cmd == "/help":
         send(chat_id, HELP, keyboard_for("/help"))
     elif cmd == "/now":
@@ -2209,6 +2348,8 @@ def handle(chat_id: int, text: str, chat_type: str = "private") -> None:
     elif cmd == "/estuary":
         send(chat_id, fmt_estuary(api_get("/api/estuary")),
              keyboard_for("/estuary"))
+    elif cmd == "/atlas":
+        send(chat_id, ATLAS_CARD, keyboard_for("/atlas"))
     elif cmd == "/china":
         send(chat_id,
              fmt_china_macro(
@@ -2503,8 +2644,11 @@ BOT_COMMANDS = [
     {"command": "ask", "description": "Desk assistant: /ask why STRAIN?"},
     {"command": "letter", "description": "Today's dispatch"},
     {"command": "tandem", "description": "Labeled Seiche and LiquiLens reads"},
+    {"command": "atlas", "description": "Global Money Market Atlas pages and API"},
     {"command": "china", "description": "China macro evidence identities; no values"},
     {"command": "where", "description": "The three public desks"},
+    {"command": "privacy", "description": "What the bot stores and where questions travel"},
+    {"command": "delete_me", "description": "Delete your attributable bot records"},
     {"command": "help", "description": "Full command list and desk guide"},
     {"command": "start", "description": "Follow privately: daily 11:30 UTC letter + state-change alerts"},
     {"command": "stop", "description": "Unsubscribe in private chat"},
