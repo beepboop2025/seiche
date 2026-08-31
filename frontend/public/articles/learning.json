@@ -1,8 +1,38 @@
 {
   "schema": "editorial.learning-feed.v1",
   "product": "seiche",
-  "generated_at": "2026-08-30T15:13:20Z",
+  "generated_at": "2026-08-31T17:58:11Z",
   "articles": [
+    {
+      "schema": "editorial.learning-article.v1",
+      "id": "seiche:article:2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price",
+      "product": "seiche",
+      "slug": "2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price",
+      "article_type": "current_analysis",
+      "headline": "Dollar-funding warning shifts to the calendar as plumbing outruns price signals",
+      "dek": "Seiche’s board reads STRAIN, but the case is prospective rather than a live cash squeeze: dated reserve pressure leads while SOFR remains below IORB.",
+      "canonical_url": "https://seiche.info/articles/2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price/",
+      "published_at": "2026-08-31T17:58:11Z",
+      "evidence_as_of": "2026-08-31",
+      "body_markdown": "The material change is the widening gap between plumbing and market pricing. The Tell is +44.1 percentile points: plumbing is at the 58th percentile and market stress at the 14th percentile, as of 2026-08-28.\n\nThat places Seiche’s composite at 45.1, or STRAIN. The claim is deliberately narrow. Known calendar pressure may reduce apparent reserve capacity before secured overnight pricing confirms scarcity. The dated reserve path contributes 11.0 points to the composite, its largest contribution. Overnight cash pricing still signals abundance.\n\n## The mechanism or historical setup\n\nThe proposed channel runs from scheduled cash movements and reserve balances through balance-sheet intermediation into secured overnight pricing and facility demand, and then into broader market liquidity. The reserve-demand measure says reserves are below its fitted kink as of 2026-08-26, with an R-squared of 0.62. That is a structural sensitivity measure, not a precise scarcity threshold or proof of a current shortage.\n\nThe calendar provides the forcing: month-end, a $137B auction settlement on 2026-09-03, and a corporate-tax date on 2026-09-15 while reserves sit below the estimated kink. The weather component is saturated.\n\nThe closest historical comparison is the March 2020 dash-for-cash. The engine’s comparison is context, not a forecast or a publication-vintage backtest. The bounded lesson is that funding monitors can show whether pressure is propagating through intermediation; they cannot establish that an outside shock will occur.\n\n## Quantified evidence with as-of context\n\nReserves fell $10.4B on the week to $2,925B as of 2026-08-26. The ledger records a $17.9B release from the foreign RRP pool, $14.9B absorbed by the residual, and a $14.8B balance-sheet contraction. Six legs sum to the reserve change, but $22.9B of the balance sheet, or 0.34% of assets, remains in the unnamed residual. That unresolved residual limits a definitive explanation of the movement.\n\nForeign official activity does not establish an official-sector exit. Over 13 weeks, foreign officials reduced Fed custody Treasuries by $64.4B while foreign RRP parking rose by $56.4B. Seiche characterizes this as a parking rotation, with an official-sector footprint of $2,971B.\n\nThe forward path is the concern, rather than an observed spot print. Seiche’s worst-case reserve path reaches $2,893.5B at month-end, $2,883.6B around the 2026-09-03 settlement, and $2,844.8B on 2026-09-15. These are Seiche scenarios, not observed reserves and not forecasts of a market outcome.\n\nThe pooled five-business-day event read is 6.2%. It does not turn the calendar into a near-term prediction: its own model evidence says probability levels do not beat climatology and should be used for ranking and alerting rather than as literal odds.\n\n## The strongest counter-case\n\nThe counter-case can defeat the thesis. SOFR was 0.9bp below IORB as of 2026-08-26, an abundance signal rather than a scarcity print. Standing Repo Facility take-up was $0.00B as of 2026-08-31, so the backstop was not being tested in size.\n\nBroader market evidence is also calm. Market stress was at the 14th percentile of its own history as of 2026-08-28. The month-end next-turn measure was severity 1, on a scale from 1 calm to 5 extreme, and published its naive 2.5bp estimate rather than its 10.4bp model estimate.\n\nThis is not merely a caveat. If the dated drains pass without sustained deterioration in SOFR relative to IORB, material facility demand, or a rise in market stress, the reserve-kink estimate is not identifying a binding constraint in current conditions. Banks may have more usable balance-sheet capacity than the structural signal implies. In that event, the STRAIN label is a failed warning, not an early success.\n\n## A falsifiable next test\n\nThe $137B settlement on 2026-09-03 is the first observable test. The calendar-led thesis loses force if that settlement and the subsequent 2026-09-15 pressure date pass while SOFR remains below or around IORB, Standing Repo Facility take-up remains at $0.00B, and market stress remains low.\n\nThe thesis gains credibility only if dated pressure is accompanied by confirmation in actual plumbing: a sustained adverse move in SOFR relative to IORB, meaningful backstop use, or a marked deterioration from the current low-stress market reading. A lower scenario reserve balance alone does not confirm a realized funding constraint.\n\n## Follow the pressure chain\n\nThe chain begins with reserve balances and scheduled settlements. It becomes a funding-capacity problem only if it passes through intermediary balance sheets into secured overnight pricing and facility demand, then reaches wider market liquidity.\n\nThat chain currently breaks at confirmation. Reserve and calendar evidence create the warning; SOFR, facility use, and market stress have not transmitted it. The present conclusion is conditional: the system appears more exposed to known dates than the quiet cash tape implies, but dollar funding is not shown to be tight today.\n\n## Sources, method, and limits\n\nRead the published [daily dispatch](https://seiche.info/dispatches/2026-08-31-daily), [data overview](https://seiche.info/data/overview.json), [series index](https://api.seiche.info/api/series/index.json), [methodology](https://seiche.info/methodology), [dispatch archive](https://seiche.info/dispatches/), and [Seiche’s data home](https://seiche.info/data/overview.json). The composite is a Seiche derivation, not an observed market price. Confidence measures agreement across independent signals, not the probability of a market outcome. Source-publication time is not collected uniformly; event, desk-knowledge, and publication clocks remain separate.\n\n**Research boundary:** Seiche covers system dollar-funding capacity. Institution and lender balance-sheet risk belongs with [LiquiLens](https://liquilens.in/). Market liquidity, crowding, and exit capacity belong with [Undertow](https://liquilens-undertow.com/). Related context-only readings never enter the composite or a model feature.\n\nResearch and market data, not investment advice.\n",
+      "word_count": 895,
+      "evidence_fingerprint": "76da7500978838562e77a25091a345aadae0355b13c017fcaebe8a5110198721",
+      "generation_mode": "model_assisted",
+      "quality_gate": {
+        "status": "PASS",
+        "checks": [
+          "depth",
+          "structure",
+          "lede",
+          "countercase",
+          "sources",
+          "funnel",
+          "numeric_grounding",
+          "link_grounding",
+          "boundaries"
+        ]
+      }
+    },
     {
       "schema": "editorial.learning-article.v1",
       "id": "seiche:article:2026-08-30-a-tax-date-squeeze-showed-how-calendar-drains-can-outrun-an-abundant-cas",

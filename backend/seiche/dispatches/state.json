@@ -1,11 +1,10 @@
 {
-  "date": "2026-08-30",
+  "date": "2026-08-31",
   "reported_prev": {
     "SRF accepted": "2026-08-28",
     "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
   "reported": {
-    "SRF accepted": "2026-08-28",
     "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
   "letter_prev": {
@@ -32,8 +31,8 @@
     "tell": 38.1
   },
   "letter": {
-    "regime": "EROSION",
-    "value": 44.9,
+    "regime": "STRAIN",
+    "value": 45.1,
     "decomp": {
       "weather": 11.0,
       "kink": 7.3,
@@ -43,8 +42,8 @@
       "undertow": 2.8,
       "confession": 2.6,
       "warehouse": 2.4,
-      "tails": 2.0,
-      "auctions": 1.1,
+      "tails": 2.1,
+      "auctions": 1.3,
       "hydrophone": 0.0
     },
     "crunch": {
@@ -52,6 +51,6 @@
       "worst_case_b": 2893.5,
       "settlement_b": null
     },
-    "tell": 38.1
+    "tell": 44.1
   }
 }
