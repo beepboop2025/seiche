@@ -660,6 +660,8 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "--deployment" in deployment_wait
     assert "if ! railway logs" in result_extraction
     assert "--deployment" in result_extraction
+    assert '--lines 1000 >"${RUNNER_TEMP}/railway-gate.log"' in result_extraction
+    assert "--lines 10000" not in result_extraction
     assert "Railway log poll $_attempt/60 failed; retrying" in result_extraction
     assert "marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1='" in workflow
     assert "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" in dockerfile

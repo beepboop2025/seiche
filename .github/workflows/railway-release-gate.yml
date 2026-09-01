@@ -358,7 +358,7 @@ jobs:
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
               --deployment \
-              --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"; then
+              --lines 1000 >"${RUNNER_TEMP}/railway-gate.log"; then
               echo "Railway log poll $_attempt/60 failed; retrying" >&2
               sleep 5
               continue
