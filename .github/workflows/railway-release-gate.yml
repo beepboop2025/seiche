@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Build the canonical exact-source Railway request
@@ -85,6 +85,8 @@ jobs:
           [[ "$tree" =~ ^[0-9a-f]{40}$ ]]
           mkdir -p "$UPLOAD_ROOT"
           git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
+          git bundle verify "$UPLOAD_ROOT/source.bundle"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]]
           request_id=$(printf '%s\n' \
@@ -123,7 +125,18 @@ jobs:
               encoding="utf-8",
           )
           PY
-          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 5
+          required_uploads=(
+            Dockerfile
+            gate-request.json
+            railway.json
+            run-gate.py
+            source.bundle
+            source.tar
+          )
+          for name in "${required_uploads[@]}"; do
+            test -f "$UPLOAD_ROOT/$name"
+          done
+          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 6
           {
             echo "target=$GITHUB_SHA"
             echo "tree=$tree"

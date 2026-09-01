@@ -203,6 +203,75 @@ def test_runner_verifies_every_extracted_tracked_file(runner, tmp_path):
     )
 
 
+def test_runner_binds_read_only_git_commit_and_tree(runner, tmp_path):
+    source_root = tmp_path / "workspace"
+    source_root.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(source_root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(source_root), "config", "user.name", "Gate Fixture"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_root),
+            "config",
+            "user.email",
+            "gate-fixture@example.invalid",
+        ],
+        check=True,
+    )
+    tracked = source_root / "backend" / "tests" / "test_exact.py"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("def test_exact():\n    assert True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source_root), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source_root), "commit", "--quiet", "-m", "fixture"],
+        check=True,
+    )
+    tracked.write_text("def test_exact():\n    assert 1 == 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source_root), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source_root), "commit", "--quiet", "-m", "second"],
+        check=True,
+    )
+    commit = subprocess.check_output(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    parent = subprocess.check_output(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD^"], text=True
+    ).strip()
+    subprocess.run(["chmod", "-R", "a-w", str(source_root)], check=True)
+    try:
+        runner.verify_git_identity(
+            source_root,
+            {"commit": commit, "tree": tree},
+            expected_uid=runner.os.getuid(),
+        )
+        with pytest.raises(SystemExit):
+            runner.verify_git_identity(
+                source_root,
+                {"commit": commit, "tree": "f" * 40},
+                expected_uid=runner.os.getuid(),
+            )
+        subprocess.run(["chmod", "-R", "u+w", str(source_root)], check=True)
+        parent_object = source_root / ".git" / "objects" / parent[:2] / parent[2:]
+        parent_object.unlink()
+        subprocess.run(["chmod", "-R", "a-w", str(source_root)], check=True)
+        with pytest.raises(SystemExit):
+            runner.verify_git_identity(
+                source_root,
+                {"commit": commit, "tree": tree},
+                expected_uid=runner.os.getuid(),
+            )
+    finally:
+        subprocess.run(["chmod", "-R", "u+w", str(source_root)], check=True)
+
+
 def test_runner_rechecks_tracked_bytes_after_tests(runner, tmp_path):
     archive, source_root, tracked = _source_fixture(tmp_path)
     tracked.chmod(0o644)
@@ -517,6 +586,14 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert '"restartPolicyType": "NEVER"' in workflow
     assert '"domains": {"customDomains": [], "serviceDomains": []}' in workflow
     assert "exact Railway deployment ignored the runtime contract" in workflow
+    assert 'git bundle create "$UPLOAD_ROOT/source.bundle" HEAD' in workflow
+    assert 'git bundle verify "$UPLOAD_ROOT/source.bundle"' in workflow
+    assert "fetch-depth: 0" in workflow
+    assert 'test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 6' in workflow
+    assert "COPY source.tar source.bundle gate-request.json run-gate.py /gate/" in dockerfile
+    assert "git clone --quiet /gate/source.bundle /workspace" in dockerfile
+    assert "git config --system --add safe.directory /workspace" in dockerfile
+    assert "ADD source.tar /workspace/" not in dockerfile
     assert "if ! railway deployment list" in deployment_wait
     assert "Railway status poll $_attempt/360 failed; retrying" in deployment_wait
     assert "if ! railway logs" in result_extraction

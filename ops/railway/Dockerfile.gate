@@ -39,21 +39,20 @@ RUN python -m pip install -q "./backend[dev,collectors]" \
 
 FROM gate-build AS gate-runtime
 
-WORKDIR /workspace
-
-# The workflow creates source.tar with `git archive` from the exact main SHA.
-# Install from one extracted tree above, then test a second clean extraction.
-# The test tree stays root-owned and read-only; dependencies/build hooks cannot
-# add an untracked pytest control file before admission.
-COPY source.tar /gate/source.tar
-ADD source.tar /workspace/
-
-COPY gate-request.json /gate/request.json
-COPY run-gate.py /gate/run-gate.py
-RUN chmod 0444 /gate/source.tar /gate/request.json /gate/run-gate.py \
+# The archive remains the canonical byte inventory. A one-commit Git bundle
+# supplies the matching immutable commit object required by Seiche's runtime
+# release-identity check; the runner independently binds HEAD/tree/archive.
+WORKDIR /gate
+COPY source.tar source.bundle gate-request.json run-gate.py /gate/
+RUN git clone --quiet /gate/source.bundle /workspace \
+    && git config --system --add safe.directory /workspace \
+    && chmod 0555 /gate \
+    && chmod 0444 /gate/source.tar /gate/source.bundle \
+      /gate/request.json /gate/run-gate.py \
     && chmod -R a-w /workspace \
     && { test -e /usr/bin/python3 || ln -s /usr/local/bin/python /usr/bin/python3; }
 
+WORKDIR /workspace
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["python", "/gate/run-gate.py"]

@@ -37,6 +37,7 @@ RUNTIME_ROOT = Path("/tmp/seiche-railway-gate-runtime")
 PYTEST_CACHE_DIR = RUNTIME_ROOT / "pytest-cache"
 RUNTIME_DATA_DIR = RUNTIME_ROOT / "data"
 VALIDATION_DIR = RUNTIME_DATA_DIR / "market-validation"
+GIT = Path("/usr/bin/git")
 PYTEST_ARGUMENTS = (
     "-P",
     "-m",
@@ -205,6 +206,74 @@ def verify_extracted_source(
         # first test file as proof if a future archive omits directory entries.
         if not any(path.parts[:2] == ("backend", "tests") for path in seen):
             fail("source archive contains no backend test suite")
+
+
+def verify_git_identity(
+    source_root: Path,
+    request: Mapping[str, str],
+    *,
+    expected_uid: int = 0,
+) -> None:
+    """Bind the read-only worktree's real commit and tree to the request."""
+
+    try:
+        canonical_source = source_root.resolve(strict=True)
+        git_metadata = canonical_source / ".git"
+        for candidate in (git_metadata, *git_metadata.rglob("*")):
+            info = candidate.lstat()
+            if (
+                (not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode))
+                or info.st_uid != expected_uid
+                or stat.S_IMODE(info.st_mode) & 0o222
+            ):
+                fail("verified Git metadata is writable or has unsafe metadata")
+    except OSError as exc:
+        fail(f"verified Git metadata cannot be inspected safely: {exc}")
+
+    integrity = subprocess.run(
+        [
+            str(GIT),
+            "-c",
+            f"safe.directory={canonical_source}",
+            "-C",
+            str(canonical_source),
+            "fsck",
+            "--full",
+            "--strict",
+            "--no-progress",
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if integrity.returncode != 0:
+        fail("verified Git object graph is incomplete or corrupt")
+
+    observed: dict[str, str] = {}
+    for key, revision in (("commit", "HEAD^{commit}"), ("tree", "HEAD^{tree}")):
+        result = subprocess.run(
+            [
+                str(GIT),
+                "-c",
+                f"safe.directory={canonical_source}",
+                "-C",
+                str(canonical_source),
+                "rev-parse",
+                "--verify",
+                revision,
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        value = result.stdout.strip()
+        if result.returncode != 0 or SHA1_RE.fullmatch(value) is None:
+            fail(f"verified Git {key} cannot be resolved")
+        observed[key] = value
+    if observed != {"commit": request["commit"], "tree": request["tree"]}:
+        fail("verified Git commit/tree differs from the canonical request")
 
 
 def validate_runtime_identity() -> None:
@@ -484,9 +553,11 @@ def main() -> NoReturn:
         fail("extracted exact-source tree is missing")
     validate_runtime_identity()
     request = load_request(request_path, archive_path)
+    verify_git_identity(source_root, request)
     verify_extracted_source(archive_path, source_root)
     tests, started_at, completed_at = run_tests(source_root)
     verify_extracted_source(archive_path, source_root)
+    verify_git_identity(source_root, request)
     payload = build_result(request, tests, started_at, completed_at, os.environ)
     result = canonical_json(payload)
     encoded = base64.b64encode(result).decode("ascii")

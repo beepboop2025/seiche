@@ -103,7 +103,8 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   image deliberately includes Git, OpenSSH, systemd-analyze, util-linux and
   procps because the full deploy-contract suite invokes those host tools.
 - `ops/railway/run-gate.py` re-hashes the source archive, proves `seiche`
-  imports from the verified `/workspace/backend` tree, and runs exactly
+  imports from the verified `/workspace/backend` tree, binds the read-only Git
+  bundle's exact commit/tree to that archive, and runs exactly
   `PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache`.
   The private external cache, database root, and validation root preserve the
   read-only source invariant. The runner proves both import and data-root
