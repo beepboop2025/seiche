@@ -1042,6 +1042,8 @@ jobs:
             --source-digest "$REVISION"
             --format json
           )
+          # gh 2.98 requires a non-empty token before --bundle-from-oci. This
+          # fixed non-secret sentinel has no API authority and fails closed if used.
           env -u GITHUB_TOKEN \
             GH_TOKEN=public-oci-bundle-verification-no-api \
             DOCKER_CONFIG="$anonymous_docker_config" \

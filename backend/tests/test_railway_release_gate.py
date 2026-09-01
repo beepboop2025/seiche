@@ -431,6 +431,7 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert '[[ "$EXPECTED_ACTIONS_DIGEST" =~ ^[0-9a-f]{64}$ ]]' in workflow
     assert "GH_TOKEN=public-oci-bundle-verification-no-api" in workflow
     assert "env -u GH_TOKEN -u GITHUB_TOKEN" not in workflow
+    assert "${{ github.token }}" not in workflow
     assert 'EXPECTED_ACTIONS_DIGEST" =~ ^sha256:' not in workflow
     assert "snapshot.debian.org/archive/debian/20250929T000000Z" in dockerfile
     assert "snapshot.debian.org/archive/debian/20250814T000000Z" not in dockerfile

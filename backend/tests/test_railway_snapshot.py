@@ -528,6 +528,7 @@ def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -
     )
     assert "GH_TOKEN=public-oci-bundle-verification-no-api" in workflow
     assert "env -u GH_TOKEN -u GITHUB_TOKEN" not in workflow
+    assert "${{ github.token }}" not in workflow
     assert "install_remote_snapshot_receipt" in poller
     assert "seiche.release-receipt.v3" in poller
     assert "snapshot_receipt_sha256" in poller

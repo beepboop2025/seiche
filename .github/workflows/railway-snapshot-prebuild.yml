@@ -694,6 +694,8 @@ jobs:
             "$reference" >"${RUNNER_TEMP}/public-snapshot.json"
           echo "${SNAPSHOT_SHA256}  ${RUNNER_TEMP}/public-snapshot.json" |
             sha256sum --check --strict
+          # gh 2.98 requires a non-empty token before --bundle-from-oci. This
+          # fixed non-secret sentinel has no API authority and fails closed if used.
           env -u GITHUB_TOKEN \
             GH_TOKEN=public-oci-bundle-verification-no-api \
             DOCKER_CONFIG="$anonymous" \
