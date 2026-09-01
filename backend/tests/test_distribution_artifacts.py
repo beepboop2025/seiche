@@ -540,7 +540,10 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn("permissions: {}", prove_job)
         self.assertNotIn("actions/checkout@", prove_job)
         self.assertNotIn("docker/login-action@", prove_job)
-        self.assertIn("env -u GH_TOKEN -u GITHUB_TOKEN", prove_job)
+        self.assertIn(
+            "GH_TOKEN=public-oci-bundle-verification-no-api", prove_job
+        )
+        self.assertNotIn("env -u GH_TOKEN -u GITHUB_TOKEN", prove_job)
         self.assertIn("retention-days: 30", build_job)
 
     def test_distribution_ci_covers_every_public_distribution_surface(self) -> None:

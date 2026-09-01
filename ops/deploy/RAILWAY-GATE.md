@@ -110,7 +110,8 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   successful before the suite is green.
 - `ops/deploy/seiche-remote-gate-verify.py` resolves the SHA tag to an immutable
   OCI digest, validates the one-layer artifact, runs `gh attestation verify`
-  anonymously with exact workflow/source constraints, recreates the local Git
+  with a fixed non-secret CLI-preflight sentinel and an empty Docker credential
+  store under exact workflow/source constraints, recreates the local Git
   archive digest, and renders `seiche.release-receipt.v2`.
 - `ops/deploy/seiche-release-poll.sh` defaults to that remote verifier. The
   release receipt continues to hash the root-owned gate receipt, preserving the

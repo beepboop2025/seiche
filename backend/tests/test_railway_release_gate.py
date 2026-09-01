@@ -317,6 +317,17 @@ def test_host_requires_exact_canonical_receipt_bytes(verifier):
         verifier.load_canonical_receipt(b'{"value": 1, "schema": "fixture"}\n')
 
 
+def test_host_public_verifier_has_no_registry_or_api_credential(verifier, tmp_path):
+    environment = verifier.anonymous_environment(tmp_path)
+
+    assert environment["GH_TOKEN"] == verifier.PUBLIC_OCI_GH_TOKEN
+    assert environment["GH_TOKEN"] == "public-oci-bundle-verification-no-api"
+    assert "GITHUB_TOKEN" not in environment
+    assert json.loads(
+        (Path(environment["DOCKER_CONFIG"]) / "config.json").read_text()
+    ) == {"auths": {}}
+
+
 def test_railway_configuration_preflight_is_first_and_fails_with_names_only():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     preflight = _workflow_step(workflow, PREFLIGHT_NAME)
@@ -418,6 +429,8 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert 'set(payload) != {"deploymentId", "logsUrl"}' in workflow
     assert '--source-digest "$TARGET"' in workflow
     assert '[[ "$EXPECTED_ACTIONS_DIGEST" =~ ^[0-9a-f]{64}$ ]]' in workflow
+    assert "GH_TOKEN=public-oci-bundle-verification-no-api" in workflow
+    assert "env -u GH_TOKEN -u GITHUB_TOKEN" not in workflow
     assert 'EXPECTED_ACTIONS_DIGEST" =~ ^sha256:' not in workflow
     assert "snapshot.debian.org/archive/debian/20250929T000000Z" in dockerfile
     assert "snapshot.debian.org/archive/debian/20250814T000000Z" not in dockerfile

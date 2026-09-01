@@ -694,7 +694,9 @@ jobs:
             "$reference" >"${RUNNER_TEMP}/public-snapshot.json"
           echo "${SNAPSHOT_SHA256}  ${RUNNER_TEMP}/public-snapshot.json" |
             sha256sum --check --strict
-          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous" \
+          env -u GITHUB_TOKEN \
+            GH_TOKEN=public-oci-bundle-verification-no-api \
+            DOCKER_CONFIG="$anonymous" \
             gh attestation verify "oci://$reference" \
               --bundle-from-oci \
               --repo beepboop2025/seiche \

@@ -25,6 +25,7 @@ SOURCE_REF = "refs/heads/main"
 ARTIFACT_REPOSITORY = "ghcr.io/beepboop2025/seiche-release-gates"
 ARTIFACT_TYPE = "application/vnd.seiche.railway-gate-result.v1"
 RECEIPT_MEDIA_TYPE = "application/vnd.seiche.railway-gate-result.v1+json"
+PUBLIC_OCI_GH_TOKEN = "public-oci-bundle-verification-no-api"
 INSTALL_COMMAND = (
     "python -m pip install -q ./backend[dev,collectors] && "
     "python -m pip install --disable-pip-version-check --only-binary=:all: "
@@ -195,6 +196,10 @@ def anonymous_environment(root: Path) -> dict[str, str]:
         "LC_ALL": "C",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "DOCKER_CONFIG": str(docker_config),
+        # gh requires a non-empty token before any attestation subcommand,
+        # including --bundle-from-oci. This fixed non-secret value has no API
+        # authority; the empty Docker config still forces public OCI retrieval.
+        "GH_TOKEN": PUBLIC_OCI_GH_TOKEN,
     }
 
 

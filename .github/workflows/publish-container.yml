@@ -1042,16 +1042,22 @@ jobs:
             --source-digest "$REVISION"
             --format json
           )
-          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+          env -u GITHUB_TOKEN \
+            GH_TOKEN=public-oci-bundle-verification-no-api \
+            DOCKER_CONFIG="$anonymous_docker_config" \
             gh attestation verify "oci://$IMAGE_NAME@$ROOT_DIGEST" \
               "${verify_common[@]}" \
               > "${RUNNER_TEMP}/anonymous-root-provenance.json"
-          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+          env -u GITHUB_TOKEN \
+            GH_TOKEN=public-oci-bundle-verification-no-api \
+            DOCKER_CONFIG="$anonymous_docker_config" \
             gh attestation verify "oci://$IMAGE_NAME@$AMD_DIGEST" \
               "${verify_common[@]}" \
               --predicate-type https://cyclonedx.org/bom \
               > "${RUNNER_TEMP}/anonymous-amd64-sbom.json"
-          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous_docker_config" \
+          env -u GITHUB_TOKEN \
+            GH_TOKEN=public-oci-bundle-verification-no-api \
+            DOCKER_CONFIG="$anonymous_docker_config" \
             gh attestation verify "oci://$IMAGE_NAME@$ARM_DIGEST" \
               "${verify_common[@]}" \
               --predicate-type https://cyclonedx.org/bom \
