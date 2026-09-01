@@ -21,6 +21,15 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "market-platform-ci.yml"
 POLLER = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
 RAILWAY_CONFIG = ROOT / "ops" / "railway" / "railway.gate.json"
 RAILWAY_DOCKERFILE = ROOT / "ops" / "railway" / "Dockerfile.gate"
+PINNED_PYTHON_DOCKERFILES = tuple(
+    ROOT / "ops" / "railway" / name
+    for name in (
+        "Dockerfile.gate",
+        "Dockerfile.snapshot",
+        "Dockerfile.stateful",
+        "Dockerfile.telegram",
+    )
+)
 PREFLIGHT_NAME = "Preflight required Railway configuration"
 
 
@@ -149,15 +158,18 @@ def _remote_result(runner, monkeypatch, tmp_path: Path) -> dict[str, object]:
     )
 
 
-def test_runner_binds_request_archive_and_railway_identity(runner, monkeypatch, tmp_path):
+def test_runner_binds_request_archive_and_railway_identity(
+    runner, monkeypatch, tmp_path
+):
     result = _remote_result(runner, monkeypatch, tmp_path)
 
     assert result["schema"] == "seiche.railway-gate-result.v1"
     assert result["commit"] == "a" * 40
     assert result["tree"] == "b" * 40
-    assert result["railway_deployment_id"] == _railway_environment()[
-        "RAILWAY_DEPLOYMENT_ID"
-    ]
+    assert (
+        result["railway_deployment_id"]
+        == _railway_environment()["RAILWAY_DEPLOYMENT_ID"]
+    )
     assert result["tests"] == {
         "passed": 2785,
         "skipped": 1,
@@ -235,9 +247,7 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     assert environment["PATH"] == "/usr/local/bin:/usr/bin:/bin"
 
 
-def test_host_wraps_only_exact_remote_result(
-    runner, verifier, monkeypatch, tmp_path
-):
+def test_host_wraps_only_exact_remote_result(runner, verifier, monkeypatch, tmp_path):
     remote = _remote_result(runner, monkeypatch, tmp_path)
     source_digest = str(remote["source_archive_sha256"])
 
@@ -256,9 +266,7 @@ def test_host_wraps_only_exact_remote_result(
     assert local["schema"] == "seiche.release-receipt.v2"
     assert local["gate_provider"] == "railway"
     assert local["remote"]["artifact_digest"] == "sha256:" + "e" * 64
-    assert local["remote"]["railway_deployment_id"] == remote[
-        "railway_deployment_id"
-    ]
+    assert local["remote"]["railway_deployment_id"] == remote["railway_deployment_id"]
 
 
 @pytest.mark.parametrize("tamper", ("commit", "tree", "source", "extra"))
@@ -286,9 +294,7 @@ def test_host_fails_closed_on_remote_receipt_tampering(
 
 
 def test_host_defers_only_a_recognized_missing_exact_sha_artifact(verifier):
-    assert verifier.missing_artifact_error(
-        "request failed: not found [http 404]:"
-    )
+    assert verifier.missing_artifact_error("request failed: not found [http 404]:")
     assert verifier.missing_artifact_error("registry: manifest unknown")
     assert not verifier.missing_artifact_error("unauthorized")
     assert not verifier.missing_artifact_error("dial tcp: network unreachable")
@@ -386,26 +392,39 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     dockerfile = RAILWAY_DOCKERFILE.read_text(encoding="utf-8")
     config = json.loads(RAILWAY_CONFIG.read_text(encoding="utf-8"))
 
-    assert 'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"' in poller
+    assert (
+        'LOCAL_GATE_BREAK_GLASS="${SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS:-0}"' in poller
+    )
     assert 'if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then' in poller
     assert 'install_remote_gate_receipt "$GATE_RECEIPT"' in poller
     assert "local gate was not run automatically" in poller
     assert "is still pending; production unchanged" in poller
     assert "REMOTE_GATE_PENDING_MAX_SECONDS" in poller
     assert "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1" in poller
-    assert workflow.count(
-        "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
-    ) >= 1
+    assert (
+        workflow.count(
+            "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+        )
+        >= 1
+    )
     assert "actions/attest-build-provenance@" in workflow
     assert 'railway up "$UPLOAD_ROOT" --path-as-root --detach --json' in workflow
     assert 'set(payload) != {"deploymentId", "logsUrl"}' in workflow
-    assert "--source-digest \"$TARGET\"" in workflow
+    assert '--source-digest "$TARGET"' in workflow
     assert '[[ "$EXPECTED_ACTIONS_DIGEST" =~ ^[0-9a-f]{64}$ ]]' in workflow
     assert 'EXPECTED_ACTIONS_DIGEST" =~ ^sha256:' not in workflow
-    assert "snapshot.debian.org/archive/debian/20250814T000000Z" in dockerfile
+    assert "snapshot.debian.org/archive/debian/20250929T000000Z" in dockerfile
+    assert "snapshot.debian.org/archive/debian/20250814T000000Z" not in dockerfile
+    assert "serviceInstanceUpdate" not in workflow
+    assert "serviceInstance(serviceId:" in workflow
+    assert '"healthcheckPath": "/healthz"' in workflow
+    assert '"restartPolicyType": "NEVER"' in workflow
+    assert '"domains": {"customDomains": [], "serviceDomains": []}' in workflow
+    assert "exact Railway deployment ignored the runtime contract" in workflow
+    assert "marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1='" in workflow
     assert "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" in dockerfile
     assert 'test "$(uname -m)" = x86_64' in dockerfile
-    assert "python -m pip install -q \"./backend[dev,collectors]\"" in dockerfile
+    assert 'python -m pip install -q "./backend[dev,collectors]"' in dockerfile
     assert "chmod -R a-w /workspace" in dockerfile
     assert "pip install -q -e" not in dockerfile
     assert config["deploy"] == {
@@ -413,3 +432,12 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
         "healthcheckTimeout": 3600,
         "restartPolicyType": "NEVER",
     }
+
+
+@pytest.mark.parametrize("dockerfile_path", PINNED_PYTHON_DOCKERFILES)
+def test_python_railway_images_share_the_base_image_package_epoch(
+    dockerfile_path: Path,
+) -> None:
+    dockerfile = dockerfile_path.read_text(encoding="utf-8")
+    assert dockerfile.count("20250929T000000Z") == 2
+    assert "20250814T000000Z" not in dockerfile

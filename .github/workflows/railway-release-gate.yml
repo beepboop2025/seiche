@@ -133,14 +133,14 @@ jobs:
 
       - name: Install the checksum-pinned Railway CLI
         run: |
-          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          archive="${RUNNER_TEMP}/railway-v5.44.1-linux-amd64.tar.gz"
           tool_dir="${RUNNER_TEMP}/railway-tools"
           mkdir -p "$tool_dir"
           curl --fail --silent --show-error --location \
             --proto '=https' --tlsv1.2 \
-            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            'https://github.com/railwayapp/cli/releases/download/v5.44.1/railway-v5.44.1-x86_64-unknown-linux-gnu.tar.gz' \
             --output "$archive"
-          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+          echo 'd3197e0868576e90fc1926795014c398fdfd8a8b006be07eb3e8e5215ee0a3ca  '"$archive" |
             sha256sum --check --strict
           test "$(tar -tzf "$archive")" = railway
           tar -xzf "$archive" -C "$tool_dir" railway
@@ -148,6 +148,43 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           export PATH="$tool_dir:$PATH"
           railway --version
+
+      - name: Verify the Railway runtime contract
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          query_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+          }, separators=(",", ":")))
+          PY
+          )
+          railway api \
+            'query Runtime($serviceId: String!, $environmentId: String!) { serviceInstance(serviceId: $serviceId, environmentId: $environmentId) { healthcheckPath healthcheckTimeout restartPolicyType domains { customDomains { domain targetPort } serviceDomains { domain targetPort } } } }' \
+            --variables "$query_variables" >"${RUNNER_TEMP}/railway-runtime.json"
+          RUNTIME_PATH="${RUNNER_TEMP}/railway-runtime.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runtime = json.loads(Path(os.environ["RUNTIME_PATH"]).read_text())
+          expected = {
+              "healthcheckPath": "/healthz",
+              "healthcheckTimeout": 3600,
+              "restartPolicyType": "NEVER",
+              "domains": {"customDomains": [], "serviceDomains": []},
+          }
+          if runtime != {"data": {"serviceInstance": expected}}:
+              raise SystemExit("Railway runtime contract differs from bootstrap")
+          PY
 
       - name: Upload the exact request to the dedicated Railway gate service
         id: deploy
@@ -223,7 +260,26 @@ jobs:
           ]
           if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
               raise SystemExit("exact Railway deployment disappeared")
-          print(matches[0]["status"].upper())
+          deployment = matches[0]
+          status = deployment["status"].upper()
+          if status == "SUCCESS":
+              try:
+                  runtime = deployment["meta"]["serviceManifest"]["deploy"]
+              except (KeyError, TypeError):
+                  raise SystemExit(
+                      "exact Railway deployment has no effective runtime metadata"
+                  ) from None
+              expected = {
+                  "healthcheckPath": "/healthz",
+                  "healthcheckTimeout": 3600,
+                  "restartPolicyType": "NEVER",
+              }
+              observed = {key: runtime.get(key) for key in expected}
+              if observed != expected:
+                  raise SystemExit(
+                      "exact Railway deployment ignored the runtime contract"
+                  )
+          print(status)
           PY
             )
             case "$status" in
@@ -254,11 +310,22 @@ jobs:
           EXPECTED_REQUEST_ID: ${{ steps.request.outputs.request_id }}
         run: |
           set -euo pipefail
-          railway logs "$DEPLOYMENT_ID" \
-            --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"
+          marker_count=0
+          for _attempt in $(seq 1 60); do
+            railway logs "$DEPLOYMENT_ID" \
+              --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"
+            marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1=' \
+              "${RUNNER_TEMP}/railway-gate.log" || true)
+            case "$marker_count" in
+              1) break ;;
+              0) sleep 5 ;;
+              *) echo "Railway emitted repeated gate receipt markers" >&2; exit 1 ;;
+            esac
+          done
+          test "$marker_count" -eq 1
           LOG_PATH="${RUNNER_TEMP}/railway-gate.log" \
             RECEIPT_PATH="${RUNNER_TEMP}/gate.json" \
             python3 -I -S - <<'PY'

@@ -70,6 +70,7 @@ jobs:
         id: request
         env:
           UPLOAD_ROOT: ${{ runner.temp }}/railway-snapshot-upload
+          RESULT_TOKEN_PATH: ${{ runner.temp }}/railway-snapshot-result-token
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = beepboop2025/seiche
@@ -84,6 +85,30 @@ jobs:
           git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]]
+          RESULT_TOKEN_PATH="$RESULT_TOKEN_PATH" python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+          import secrets
+
+          Path(os.environ["RESULT_TOKEN_PATH"]).write_text(
+              secrets.token_hex(32), encoding="ascii"
+          )
+          PY
+          chmod 0600 "$RESULT_TOKEN_PATH"
+          result_token_sha256=$(sha256sum "$RESULT_TOKEN_PATH" | awk '{print $1}')
+          [[ "$result_token_sha256" =~ ^[0-9a-f]{64}$ ]]
+          result_token_expires_at=$(python3 -I -S - <<'PY'
+          from datetime import UTC, datetime, timedelta
+
+          print(
+              (datetime.now(UTC) + timedelta(minutes=90))
+              .replace(microsecond=0)
+              .isoformat()
+              .replace("+00:00", "Z")
+          )
+          PY
+          )
+          [[ "$result_token_expires_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
           request_id=$(printf '%s\n' \
             "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$GITHUB_SHA:snapshot" |
             sha256sum | awk '{print $1}')
@@ -93,6 +118,8 @@ jobs:
           cp ops/railway/railway.snapshot.json "$UPLOAD_ROOT/railway.json"
           TARGET="$GITHUB_SHA" TREE="$tree" \
             SOURCE_ARCHIVE_SHA256="$source_archive_sha256" \
+            RESULT_TOKEN_SHA256="$result_token_sha256" \
+            RESULT_TOKEN_EXPIRES_AT="$result_token_expires_at" \
             REQUEST_ID="$request_id" \
             REQUEST_PATH="$UPLOAD_ROOT/snapshot-request.json" \
             python3 -I -S - <<'PY'
@@ -112,6 +139,8 @@ jobs:
               "tree": os.environ["TREE"],
               "source_archive_sha256": os.environ["SOURCE_ARCHIVE_SHA256"],
               "request_id": os.environ["REQUEST_ID"],
+              "result_token_expires_at": os.environ["RESULT_TOKEN_EXPIRES_AT"],
+              "result_token_sha256": os.environ["RESULT_TOKEN_SHA256"],
               "runner_image": os.environ["RUNNER_IMAGE"],
               "install_command": os.environ["INSTALL_COMMAND"],
               "build_command": os.environ["BUILD_COMMAND"],
@@ -131,14 +160,14 @@ jobs:
 
       - name: Install the checksum-pinned Railway CLI
         run: |
-          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          archive="${RUNNER_TEMP}/railway-v5.44.1-linux-amd64.tar.gz"
           tool_dir="${RUNNER_TEMP}/railway-tools"
           mkdir -p "$tool_dir"
           curl --fail --silent --show-error --location \
             --proto '=https' --tlsv1.2 \
-            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            'https://github.com/railwayapp/cli/releases/download/v5.44.1/railway-v5.44.1-x86_64-unknown-linux-gnu.tar.gz' \
             --output "$archive"
-          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+          echo 'd3197e0868576e90fc1926795014c398fdfd8a8b006be07eb3e8e5215ee0a3ca  '"$archive" |
             sha256sum --check --strict
           test "$(tar -tzf "$archive")" = railway
           tar -xzf "$archive" -C "$tool_dir" railway
@@ -146,6 +175,70 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           export PATH="$tool_dir:$PATH"
           railway --version
+
+      - name: Verify the Railway runtime contract
+        id: runtime
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SNAPSHOT_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          query_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+          }, separators=(",", ":")))
+          PY
+          )
+          railway api \
+            'query Runtime($serviceId: String!, $environmentId: String!) { serviceInstance(serviceId: $serviceId, environmentId: $environmentId) { healthcheckPath healthcheckTimeout restartPolicyType domains { customDomains { domain targetPort } serviceDomains { domain targetPort } } } }' \
+            --variables "$query_variables" >"${RUNNER_TEMP}/railway-runtime.json"
+          RUNTIME_PATH="${RUNNER_TEMP}/railway-runtime.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          runtime = json.loads(Path(os.environ["RUNTIME_PATH"]).read_text())
+          expected = {
+              "healthcheckPath": "/healthz",
+              "healthcheckTimeout": 3600,
+              "restartPolicyType": "NEVER",
+          }
+          try:
+              instance = runtime["data"]["serviceInstance"]
+              domains = instance["domains"]
+              custom_domains = domains["customDomains"]
+              service_domains = domains["serviceDomains"]
+          except (KeyError, TypeError):
+              raise SystemExit("Railway runtime contract response is malformed") from None
+          observed = {key: instance.get(key) for key in expected}
+          if observed != expected:
+              raise SystemExit("Railway runtime contract differs from bootstrap")
+          if custom_domains != [] or not isinstance(service_domains, list):
+              raise SystemExit("Railway snapshot service has an unexpected domain")
+          if len(service_domains) != 1 or set(service_domains[0]) != {
+              "domain", "targetPort"
+          }:
+              raise SystemExit("Railway snapshot service domain is not unique")
+          domain = service_domains[0]["domain"]
+          if (
+              not isinstance(domain, str)
+              or re.fullmatch(
+                  r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.up\.railway\.app",
+                  domain,
+              ) is None
+              or service_domains[0]["targetPort"] != 8080
+          ):
+              raise SystemExit("Railway snapshot service domain is invalid")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"snapshot_origin=https://{domain}\n")
+          PY
 
       - name: Upload the exact request to the snapshot builder service
         id: deploy
@@ -221,7 +314,26 @@ jobs:
           ]
           if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
               raise SystemExit("exact Railway deployment disappeared")
-          print(matches[0]["status"].upper())
+          deployment = matches[0]
+          status = deployment["status"].upper()
+          if status == "SUCCESS":
+              try:
+                  runtime = deployment["meta"]["serviceManifest"]["deploy"]
+              except (KeyError, TypeError):
+                  raise SystemExit(
+                      "exact Railway deployment has no effective runtime metadata"
+                  ) from None
+              expected = {
+                  "healthcheckPath": "/healthz",
+                  "healthcheckTimeout": 3600,
+                  "restartPolicyType": "NEVER",
+              }
+              observed = {key: runtime.get(key) for key in expected}
+              if observed != expected:
+                  raise SystemExit(
+                      "exact Railway deployment ignored the runtime contract"
+                  )
+          print(status)
           PY
             )
             case "$status" in
@@ -250,21 +362,160 @@ jobs:
           TREE: ${{ steps.request.outputs.tree }}
           SOURCE_ARCHIVE_SHA256: ${{ steps.request.outputs.source_archive_sha256 }}
           EXPECTED_REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          RESULT_TOKEN_PATH: ${{ runner.temp }}/railway-snapshot-result-token
+          RAILWAY_SNAPSHOT_ORIGIN: ${{ steps.runtime.outputs.snapshot_origin }}
         run: |
           set -euo pipefail
-          railway ssh \
-            --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            -- cat /result/snapshot-result.json \
-            >"${RUNNER_TEMP}/snapshot.json"
-          SNAPSHOT_PATH="${RUNNER_TEMP}/snapshot.json" python3 -I -S - <<'PY'
-          import importlib.util
+          token=$(cat "$RESULT_TOKEN_PATH")
+          [[ "$token" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RAILWAY_SNAPSHOT_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
+          umask 077
+          auth_header="${RUNNER_TEMP}/snapshot-authorization-header"
+          printf 'Authorization: Bearer %s\n' "$token" >"$auth_header"
+          unset token
+          expected_health="${RUNNER_TEMP}/snapshot-expected-health.json"
+          EXPECTED_HEALTH_PATH="$expected_health" \
+            EXPECTED_REQUEST_ID="$EXPECTED_REQUEST_ID" \
+            DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
           import json
           import os
           from pathlib import Path
 
+          health = {
+              "railway_deployment_id": os.environ["DEPLOYMENT_ID"],
+              "request_id": os.environ["EXPECTED_REQUEST_ID"],
+              "status": "snapshot_complete",
+          }
+          Path(os.environ["EXPECTED_HEALTH_PATH"]).write_text(
+              json.dumps(health, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          health_ready=0
+          health_code=000
+          for _attempt in $(seq 1 60); do
+            rm -f "${RUNNER_TEMP}/snapshot-health.json"
+            set +e
+            health_code=$(curl --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 \
+              --output "${RUNNER_TEMP}/snapshot-health.json" \
+              --write-out '%{http_code}' \
+              "$RAILWAY_SNAPSHOT_ORIGIN/healthz")
+            health_status=$?
+            set -e
+            if [ "$health_status" -eq 0 ] && [ "$health_code" = 200 ] && \
+              cmp -s "${RUNNER_TEMP}/snapshot-health.json" "$expected_health"; then
+              health_ready=1
+              break
+            fi
+            case "$health_code" in
+              000|200|404|502|503) ;;
+              *) echo "snapshot health returned unexpected HTTP $health_code" >&2; exit 1 ;;
+            esac
+            sleep 5
+          done
+          test "$health_ready" -eq 1
+          set +e
+          unauthenticated_code=$(curl --silent --show-error \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --output "${RUNNER_TEMP}/snapshot-unauthenticated.json" \
+            --write-out '%{http_code}' \
+            "$RAILWAY_SNAPSHOT_ORIGIN/snapshot-result.json")
+          unauthenticated_status=$?
+          set -e
+          test "$unauthenticated_status" -eq 0
+          test "$unauthenticated_code" = 404
+          UNAUTHENTICATED_PATH="${RUNNER_TEMP}/snapshot-unauthenticated.json" \
+            python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+
+          if Path(os.environ["UNAUTHENTICATED_PATH"]).read_bytes() != (
+              b'{"error":"not_found"}\n'
+          ):
+              raise SystemExit("snapshot result is not closed without its bearer")
+          PY
+          part="${RUNNER_TEMP}/snapshot.json.part"
+          result_ready=0
+          http_code=000
+          for _attempt in $(seq 1 60); do
+            rm -f "$part" "${RUNNER_TEMP}/snapshot-headers.txt"
+            set +e
+            http_code=$(curl --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 \
+              --max-filesize 67239936 \
+              --header 'Accept-Encoding: identity' \
+              --header "@$auth_header" \
+              --dump-header "${RUNNER_TEMP}/snapshot-headers.txt" \
+              --output "$part" --write-out '%{http_code}' \
+              "$RAILWAY_SNAPSHOT_ORIGIN/snapshot-result.json")
+            curl_status=$?
+            set -e
+            if [ "$curl_status" -eq 0 ] && [ "$http_code" = 200 ]; then
+              result_ready=1
+              break
+            fi
+            if [ "$http_code" = 200 ]; then
+              echo "authenticated snapshot transfer failed with curl $curl_status" >&2
+              exit 1
+            fi
+            case "$http_code" in
+              000|404|502|503) sleep 5 ;;
+              *) echo "authenticated snapshot result returned HTTP $http_code" >&2; exit 1 ;;
+            esac
+          done
+          if [ "$result_ready" -ne 1 ]; then
+            echo "selected Railway snapshot never reached its stable origin" >&2
+            railway logs "$DEPLOYMENT_ID" --service "$RAILWAY_SERVICE_ID" \
+              --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" --lines 200 || true
+            exit 1
+          fi
+          mv "$part" "${RUNNER_TEMP}/snapshot.json"
+          SNAPSHOT_PATH="${RUNNER_TEMP}/snapshot.json" \
+            HEADERS_PATH="${RUNNER_TEMP}/snapshot-headers.txt" \
+            python3 -I -S - <<'PY'
+          import hashlib
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import re
+
           body = Path(os.environ["SNAPSHOT_PATH"]).read_bytes()
+          header_blocks = [
+              block for block in re.split(
+                  r"\r?\n\r?\n", Path(os.environ["HEADERS_PATH"]).read_text()
+              )
+              if block.startswith("HTTP/")
+          ]
+          if not header_blocks:
+              raise SystemExit("snapshot response has no HTTP header block")
+          lines = header_blocks[-1].splitlines()
+          if not re.fullmatch(r"HTTP/\S+ 200(?: .*)?", lines[0]):
+              raise SystemExit("snapshot response status line is invalid")
+          headers = {}
+          for line in lines[1:]:
+              name, separator, value = line.partition(":")
+              if separator != ":":
+                  raise SystemExit("snapshot response headers are malformed")
+              headers.setdefault(name.lower(), []).append(value.strip())
+          expected_headers = {
+              "cache-control": "no-store",
+              "content-encoding": "identity",
+              "content-length": str(len(body)),
+              "content-type": (
+                  "application/vnd.seiche.railway-snapshot-result.v1+json"
+              ),
+              "etag": f'"sha256:{hashlib.sha256(body).hexdigest()}"',
+              "x-content-type-options": "nosniff",
+          }
+          for name, expected in expected_headers.items():
+              if headers.get(name) != [expected]:
+                  raise SystemExit(f"snapshot response {name} is invalid")
           verifier_path = Path("ops/deploy/seiche-remote-snapshot-verify.py")
           spec = importlib.util.spec_from_file_location(
               "seiche_remote_snapshot_verify", verifier_path

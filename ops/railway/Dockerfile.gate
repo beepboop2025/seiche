@@ -9,8 +9,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 # contract suite invokes Git, ssh-keygen, systemd-analyze, setpriv/flock, ps and
 # curl; python:slim deliberately omits those host-contract tools.
 RUN printf '%s\n' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250814T000000Z bookworm main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250814T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250929T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250929T000000Z bookworm-security main' \
       > /etc/apt/sources.list \
     && find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -type f -delete \
     && apt-get update \
