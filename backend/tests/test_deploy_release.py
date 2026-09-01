@@ -6166,6 +6166,7 @@ def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
     assert "/var/lib/seiche-nbs" in writable_paths
     assert "/var/lib/seiche-deploy" in writable_paths
     assert "/opt/seiche-nbs-intake" in writable_paths
+    assert "/opt/seiche-palimpsest-china" in writable_paths
 
     # Allowing that one setgid collaboration directory does not reopen the
     # controller's host namespace or privilege-escalation surfaces.
