@@ -389,6 +389,12 @@ def test_railway_configuration_preflight_is_first_and_fails_with_names_only():
 def test_controller_defaults_remote_and_never_falls_back_automatically():
     poller = POLLER.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    deployment_wait = _workflow_step(
+        workflow, "Wait for Railway to finish the full gate"
+    )
+    result_extraction = _workflow_step(
+        workflow, "Extract and independently validate the exact Railway result"
+    )
     dockerfile = RAILWAY_DOCKERFILE.read_text(encoding="utf-8")
     config = json.loads(RAILWAY_CONFIG.read_text(encoding="utf-8"))
 
@@ -421,6 +427,10 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert '"restartPolicyType": "NEVER"' in workflow
     assert '"domains": {"customDomains": [], "serviceDomains": []}' in workflow
     assert "exact Railway deployment ignored the runtime contract" in workflow
+    assert "if ! railway deployment list" in deployment_wait
+    assert "Railway status poll $_attempt/360 failed; retrying" in deployment_wait
+    assert "if ! railway logs" in result_extraction
+    assert "Railway log poll $_attempt/60 failed; retrying" in result_extraction
     assert "marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1='" in workflow
     assert "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" in dockerfile
     assert 'test "$(uname -m)" = x86_64' in dockerfile

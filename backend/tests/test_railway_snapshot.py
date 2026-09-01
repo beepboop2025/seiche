@@ -477,6 +477,9 @@ def test_railway_configuration_preflight_is_first_and_fails_with_names_only() ->
 def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     runtime_contract = _workflow_step(workflow, "Verify the Railway runtime contract")
+    deployment_wait = _workflow_step(
+        workflow, "Wait for Railway to finish the snapshot"
+    )
     extraction = _workflow_step(
         workflow, "Extract and independently validate the exact Railway snapshot"
     )
@@ -500,6 +503,8 @@ def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -
     assert "${{ vars.RAILWAY_SNAPSHOT_ORIGIN }}" not in workflow
     assert "serviceDomains" in runtime_contract
     assert "snapshot_origin=https://" in runtime_contract
+    assert "if ! railway deployment list" in deployment_wait
+    assert "Railway status poll $_attempt/360 failed; retrying" in deployment_wait
     assert (
         "RAILWAY_SNAPSHOT_ORIGIN: ${{ steps.runtime.outputs.snapshot_origin }}"
         in extraction
