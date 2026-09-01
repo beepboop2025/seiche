@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -35,11 +36,9 @@ RUN_GID = 65532
 MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
-UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REGION_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
-TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
+TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)")
 REQUEST_KEYS = {
     "schema",
     "repository",
@@ -49,6 +48,8 @@ REQUEST_KEYS = {
     "tree",
     "source_archive_sha256",
     "request_id",
+    "result_token_expires_at",
+    "result_token_sha256",
     "runner_image",
     "install_command",
     "build_command",
@@ -118,6 +119,18 @@ def load_request(path: Path, source_archive: Path) -> dict[str, str]:
         fail("request source archive digest is invalid")
     if SHA256_RE.fullmatch(payload["request_id"]) is None:
         fail("request id is invalid")
+    if SHA256_RE.fullmatch(payload["result_token_sha256"]) is None:
+        fail("request result token digest is invalid")
+    try:
+        result_token_expires_at = datetime.fromisoformat(
+            payload["result_token_expires_at"].replace("Z", "+00:00")
+        )
+    except ValueError:
+        fail("request result token expiry is invalid")
+    if TIMESTAMP_RE.fullmatch(
+        payload["result_token_expires_at"]
+    ) is None or result_token_expires_at.utcoffset() != UTC.utcoffset(None):
+        fail("request result token expiry is invalid")
     if file_sha256(source_archive) != payload["source_archive_sha256"]:
         fail("source archive bytes do not match the request")
     return payload
@@ -264,7 +277,10 @@ def run_builder() -> tuple[dict[str, object], str, str]:
         payload = json.loads(process.stdout)
     except (UnicodeError, json.JSONDecodeError) as exc:
         fail(f"snapshot builder returned invalid JSON: {exc}")
-    if not isinstance(payload, dict) or process.stdout != canonical_value(payload) + b"\n":
+    if (
+        not isinstance(payload, dict)
+        or process.stdout != canonical_value(payload) + b"\n"
+    ):
         fail("snapshot builder output is not one canonical JSON document")
     return payload, started_at, completed_at
 
@@ -292,7 +308,10 @@ def railway_identity(environment: Mapping[str, str]) -> dict[str, str]:
 
 def validate_payload(payload: Mapping[str, object]) -> dict[str, object]:
     generated_at = payload.get("generated_at")
-    if not isinstance(generated_at, str) or TIMESTAMP_RE.fullmatch(generated_at) is None:
+    if (
+        not isinstance(generated_at, str)
+        or TIMESTAMP_RE.fullmatch(generated_at) is None
+    ):
         fail("snapshot generated_at is invalid")
     provenance = payload.get("provenance")
     if isinstance(provenance, (list, dict)):
@@ -348,24 +367,79 @@ def build_result(
     }
 
 
-def serve(result: bytes) -> NoReturn:
+def result_request_authorized(
+    path: str,
+    authorization: str | None,
+    expected_token_sha256: str,
+    expires_at: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Authenticate the one exact result route without retaining the token."""
+
+    if path != "/snapshot-result.json" or not isinstance(authorization, str):
+        return False
+    scheme, separator, token = authorization.partition(" ")
+    if scheme != "Bearer" or separator != " " or SHA256_RE.fullmatch(token) is None:
+        return False
+    if TIMESTAMP_RE.fullmatch(expires_at) is None:
+        return False
     try:
-        port = int(os.environ.get("PORT", "8080"))
+        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
     except ValueError:
-        fail("PORT is invalid")
-    if not 1 <= port <= 65535:
-        fail("PORT is outside the valid range")
+        return False
+    observed_at = datetime.now(UTC) if now is None else now.astimezone(UTC)
+    if (
+        expiry.tzinfo is None
+        or expiry.utcoffset() != UTC.utcoffset(None)
+        or expiry <= observed_at
+    ):
+        return False
+    observed = hashlib.sha256(token.encode("ascii")).hexdigest()
+    return hmac.compare_digest(observed, expected_token_sha256)
+
+
+def build_http_handler(
+    result: bytes,
+    result_token_sha256: str,
+    result_token_expires_at: str,
+    health: bytes,
+) -> type[BaseHTTPRequestHandler]:
+    """Build the closed result handler around one immutable deployment proof."""
+
+    result_etag = f'"sha256:{hashlib.sha256(result).hexdigest()}"'
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/healthz":
-                body = b'{"status":"snapshot_complete"}\n'
+                body = health
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+            elif self.path == "/snapshot-result.json":
+                if not result_request_authorized(
+                    self.path,
+                    self.headers.get("Authorization"),
+                    result_token_sha256,
+                    result_token_expires_at,
+                ):
+                    body = b'{"error":"not_found"}\n'
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json")
+                else:
+                    body = result
+                    self.send_response(200)
+                    self.send_header(
+                        "Content-Type",
+                        "application/vnd.seiche.railway-snapshot-result.v1+json",
+                    )
+                    self.send_header("Content-Encoding", "identity")
+                    self.send_header("ETag", result_etag)
             else:
                 body = b'{"error":"not_found"}\n'
                 self.send_response(404)
                 self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -373,8 +447,30 @@ def serve(result: bytes) -> NoReturn:
         def log_message(self, _format: str, *_arguments: object) -> None:
             return
 
-    print(f"railway snapshot: complete; serving health on port {port}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    return Handler
+
+
+def serve(
+    result: bytes,
+    result_token_sha256: str,
+    result_token_expires_at: str,
+    health: bytes,
+) -> NoReturn:
+    try:
+        port = int(os.environ.get("PORT", "8080"))
+    except ValueError:
+        fail("PORT is invalid")
+    if not 1 <= port <= 65535:
+        fail("PORT is outside the valid range")
+
+    print(f"railway snapshot: complete; serving proof on port {port}", flush=True)
+    handler = build_http_handler(
+        result,
+        result_token_sha256,
+        result_token_expires_at,
+        health,
+    )
+    ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()
     raise AssertionError("HTTP server returned unexpectedly")
 
 
@@ -392,19 +488,30 @@ def main() -> NoReturn:
     verify_extracted_source(archive_path, source_root)
     payload, started_at, completed_at = run_builder()
     verify_extracted_source(archive_path, source_root)
-    result = canonical_document(
-        build_result(request, payload, started_at, completed_at, os.environ)
+    result_payload = build_result(
+        request, payload, started_at, completed_at, os.environ
     )
+    result = canonical_document(result_payload)
     if len(result) > MAX_PAYLOAD_BYTES + 128 * 1024:
         fail("canonical snapshot result is oversized")
     result_path.write_bytes(result)
     result_path.chmod(0o444)
     print(
-        "SEICHE_RAILWAY_SNAPSHOT_RESULT_SHA256="
-        f"{hashlib.sha256(result).hexdigest()}",
+        f"SEICHE_RAILWAY_SNAPSHOT_RESULT_SHA256={hashlib.sha256(result).hexdigest()}",
         flush=True,
     )
-    serve(result)
+    serve(
+        result,
+        request["result_token_sha256"],
+        request["result_token_expires_at"],
+        canonical_document(
+            {
+                "railway_deployment_id": result_payload["railway_deployment_id"],
+                "request_id": request["request_id"],
+                "status": "snapshot_complete",
+            }
+        ),
+    )
 
 
 if __name__ == "__main__":
