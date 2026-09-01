@@ -295,11 +295,16 @@ jobs:
         run: |
           set -euo pipefail
           for _attempt in $(seq 1 360); do
-            railway deployment list \
+            rm -f "${RUNNER_TEMP}/deployments-status.json"
+            if ! railway deployment list \
               --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --limit 100 --json >"${RUNNER_TEMP}/deployments-status.json"
+              --limit 100 --json >"${RUNNER_TEMP}/deployments-status.json"; then
+              echo "Railway status poll $_attempt/360 failed; retrying" >&2
+              sleep 10
+              continue
+            fi
             status=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" \
               STATUS_PATH="${RUNNER_TEMP}/deployments-status.json" \
               python3 -I -S - <<'PY'
