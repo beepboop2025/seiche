@@ -33,10 +33,12 @@ INSTALL_COMMAND = (
 )
 SOURCE_ROOT = Path("/workspace")
 SOURCE_BACKEND = SOURCE_ROOT / "backend"
-RUNTIME_ROOT = Path("/tmp/seiche-railway-gate-runtime")
+RUNTIME_ROOT = Path("/var/lib/seiche-railway-gate-runtime")
 PYTEST_CACHE_DIR = RUNTIME_ROOT / "pytest-cache"
 RUNTIME_DATA_DIR = RUNTIME_ROOT / "data"
+RUNTIME_TMP_DIR = RUNTIME_ROOT / "tmp"
 VALIDATION_DIR = RUNTIME_DATA_DIR / "market-validation"
+XDG_CACHE_DIR = RUNTIME_ROOT / "xdg-cache"
 GIT = Path("/usr/bin/git")
 PYTEST_ARGUMENTS = (
     "-P",
@@ -51,6 +53,8 @@ PYTEST_ARGUMENTS = (
     f"cache_dir={PYTEST_CACHE_DIR}",
 )
 TEST_COMMAND = (
+    f"HOME={RUNTIME_ROOT} "
+    f"TMPDIR={RUNTIME_TMP_DIR} "
     f"PYTHONPATH={SOURCE_BACKEND} "
     f"SEICHE_RUNTIME_DATA_DIR={RUNTIME_DATA_DIR} "
     f"SEICHE_VALIDATION_DIR={VALIDATION_DIR} "
@@ -284,6 +288,31 @@ def validate_runtime_identity() -> None:
         )
 
 
+def validate_runtime_ancestry(path: Path) -> None:
+    """Require every runtime path component to have a trusted owner and mode."""
+
+    if not path.is_absolute():
+        fail(f"test runtime path is not absolute: {path}")
+    runner_identity = (os.getuid(), os.getgid())
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except OSError as exc:
+            fail(f"test runtime ancestry cannot be inspected safely: {exc}")
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or not (
+                metadata.st_uid == 0
+                or (metadata.st_uid, metadata.st_gid) == runner_identity
+            )
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            fail(f"test runtime ancestry has unsafe metadata: {current}")
+
+
 def build_test_environment(
     source_root: Path,
     *,
@@ -294,12 +323,15 @@ def build_test_environment(
         source_backend = (canonical_source / "backend").resolve(strict=True)
         if source_backend.parent != canonical_source or not source_backend.is_dir():
             fail("verified source backend is not a canonical directory")
-        runtime_root.mkdir(mode=0o700)
+        runtime_root.mkdir(mode=0o700, exist_ok=True)
         pytest_cache = runtime_root / "pytest-cache"
         runtime_data = runtime_root / "data"
-        pytest_cache.mkdir(mode=0o700)
-        runtime_data.mkdir(mode=0o700)
-        for path in (runtime_root, pytest_cache, runtime_data):
+        runtime_tmp = runtime_root / "tmp"
+        xdg_cache = runtime_root / "xdg-cache"
+        for path in (pytest_cache, runtime_data, runtime_tmp, xdg_cache):
+            path.mkdir(mode=0o700, exist_ok=True)
+        for path in (runtime_root, pytest_cache, runtime_data, runtime_tmp, xdg_cache):
+            validate_runtime_ancestry(path)
             info = path.lstat()
             if (
                 not stat.S_ISDIR(info.st_mode)
@@ -321,9 +353,9 @@ def build_test_environment(
         "PYTHONUNBUFFERED": "1",
         "SEICHE_RUNTIME_DATA_DIR": str(runtime_data),
         "SEICHE_VALIDATION_DIR": str(runtime_data / "market-validation"),
-        "TMPDIR": "/tmp",
+        "TMPDIR": str(runtime_tmp),
         "TZ": "UTC",
-        "XDG_CACHE_HOME": str(runtime_root / "xdg-cache"),
+        "XDG_CACHE_HOME": str(xdg_cache),
     }
 
 
@@ -334,16 +366,21 @@ def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> Non
         strict=True
     )
     expected_data = Path(environment["SEICHE_RUNTIME_DATA_DIR"]).resolve(strict=True)
+    expected_home = Path(environment["HOME"]).resolve(strict=True)
+    expected_tmp = Path(environment["TMPDIR"]).resolve(strict=True)
+    if expected_tmp != expected_home / "tmp":
+        fail("test interpreter temporary directory is outside the runtime root")
     result = subprocess.run(
         [
             sys.executable,
             "-P",
             "-c",
             (
-                "import json; from pathlib import Path; import seiche; "
+                "import json; from pathlib import Path; import tempfile; import seiche; "
                 "from seiche.config import DATA_DIR; "
                 "print(json.dumps({'data_dir': str(DATA_DIR.resolve()), "
-                "'module': str(Path(seiche.__file__).resolve())}, "
+                "'module': str(Path(seiche.__file__).resolve()), "
+                "'temp_dir': str(Path(tempfile.gettempdir()).resolve())}, "
                 "sort_keys=True, separators=(',', ':')))"
             ),
         ],
@@ -358,7 +395,11 @@ def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> Non
         observed = json.loads(result.stdout) if result.returncode == 0 else None
     except json.JSONDecodeError:
         observed = None
-    if observed != {"data_dir": str(expected_data), "module": str(expected_module)}:
+    if observed != {
+        "data_dir": str(expected_data),
+        "module": str(expected_module),
+        "temp_dir": str(expected_tmp),
+    }:
         fail("test interpreter did not bind the verified source and runtime data")
 
 

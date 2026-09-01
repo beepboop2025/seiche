@@ -39,7 +39,7 @@ RUN python -m pip install -q "./backend[dev,collectors]" \
 
 FROM gate-build AS gate-runtime
 
-# The archive remains the canonical byte inventory. A one-commit Git bundle
+# The archive remains the canonical byte inventory. A full-history Git bundle
 # supplies the matching immutable commit object required by Seiche's runtime
 # release-identity check; the runner independently binds HEAD/tree/archive.
 WORKDIR /gate
@@ -48,6 +48,8 @@ COPY gate-request.json /gate/request.json
 COPY run-gate.py /gate/run-gate.py
 RUN git clone --quiet /gate/source.bundle /workspace \
     && git config --system --add safe.directory /workspace \
+    && install -d -o 65532 -g 65532 -m 0700 \
+      /var/lib/seiche-railway-gate-runtime \
     && chmod 0555 /gate \
     && chmod 0444 /gate/source.tar /gate/source.bundle \
       /gate/request.json /gate/run-gate.py \

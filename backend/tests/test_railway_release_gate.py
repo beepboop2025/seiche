@@ -6,9 +6,12 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import pwd
 import subprocess
 import tarfile
+import tempfile
 
 import pytest
 
@@ -85,6 +88,18 @@ def runner():
 @pytest.fixture(scope="module")
 def verifier():
     return _load(VERIFIER_PATH, "seiche_remote_gate_verifier")
+
+
+@pytest.fixture
+def safe_runtime_root():
+    account_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".seiche-railway-gate-test-",
+        dir=account_home,
+    ) as raw_root:
+        root = Path(raw_root)
+        root.chmod(0o700)
+        yield root
 
 
 def _request(runner, archive: Path) -> dict[str, str]:
@@ -298,7 +313,7 @@ def test_runner_parses_pytest_subtests_success_suffix(runner):
 
 
 def test_runner_refuses_root_or_service_environment_pytest_overrides(
-    runner, monkeypatch, tmp_path
+    runner, monkeypatch, tmp_path, safe_runtime_root
 ):
     actual_uid = runner.os.getuid()
     actual_gid = runner.os.getgid()
@@ -324,7 +339,8 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
         'DATA_DIR = Path(os.environ["SEICHE_RUNTIME_DATA_DIR"])\n',
         encoding="utf-8",
     )
-    runtime_root = tmp_path / "runtime"
+    runtime_root = safe_runtime_root / "runtime"
+    runtime_root.mkdir(mode=0o700)
 
     environment = runner.build_test_environment(
         source_root,
@@ -336,6 +352,7 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     assert environment["PYTHONPATH"] == str(source_root / "backend")
     assert environment["PYTHONSAFEPATH"] == "1"
     assert environment["HOME"] == str(runtime_root)
+    assert environment["TMPDIR"] == str(runtime_root / "tmp")
     assert environment["XDG_CACHE_HOME"] == str(runtime_root / "xdg-cache")
     assert environment["SEICHE_RUNTIME_DATA_DIR"] == str(runtime_root / "data")
     assert environment["SEICHE_VALIDATION_DIR"] == str(
@@ -344,6 +361,8 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     assert runtime_root.stat().st_mode & 0o777 == 0o700
     assert (runtime_root / "pytest-cache").stat().st_mode & 0o777 == 0o700
     assert (runtime_root / "data").stat().st_mode & 0o777 == 0o700
+    assert (runtime_root / "tmp").stat().st_mode & 0o777 == 0o700
+    assert (runtime_root / "xdg-cache").stat().st_mode & 0o777 == 0o700
     runner.verify_test_import(source_root, environment)
 
     poison = tmp_path / "poison" / "seiche"
@@ -354,18 +373,37 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
             source_root,
             environment | {"PYTHONPATH": str(poison.parent)},
         )
+    with pytest.raises(SystemExit):
+        runner.verify_test_import(
+            source_root,
+            environment | {"TMPDIR": "/tmp"},
+        )
+
+    unsafe_parent = safe_runtime_root / "unsafe-parent"
+    unsafe_parent.mkdir(mode=0o777)
+    unsafe_parent.chmod(0o777)
+    try:
+        with pytest.raises(SystemExit):
+            runner.build_test_environment(
+                source_root,
+                runtime_root=unsafe_parent / "runtime",
+            )
+    finally:
+        unsafe_parent.chmod(0o700)
 
 
 def test_runner_records_the_exact_source_and_external_runtime_contract(
     runner, verifier
 ):
     expected = (
+        "HOME=/var/lib/seiche-railway-gate-runtime "
+        "TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp "
         "PYTHONPATH=/workspace/backend "
-        "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
-        "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+        "SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data "
+        "SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation "
         "python -P -m pytest backend/tests -q "
         "--memray -o faulthandler_timeout=300 "
-        "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+        "-o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache"
     )
 
     assert runner.TEST_COMMAND == expected
@@ -380,7 +418,7 @@ def test_runner_records_the_exact_source_and_external_runtime_contract(
         "-o",
         "faulthandler_timeout=300",
         "-o",
-        "cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache",
+        "cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache",
     )
 
 
@@ -557,12 +595,14 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "REMOTE_GATE_PENDING_MAX_SECONDS" in poller
     assert "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1" in poller
     remote_test_command = (
+        "HOME=/var/lib/seiche-railway-gate-runtime "
+        "TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp "
         "PYTHONPATH=/workspace/backend "
-        "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
-        "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+        "SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data "
+        "SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation "
         "python -P -m pytest backend/tests -q "
         "--memray -o faulthandler_timeout=300 "
-        "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+        "-o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache"
     )
     assert workflow.count(remote_test_command) >= 1
     assert f'REMOTE_GATE_TEST_COMMAND="{remote_test_command}"' in poller
@@ -596,6 +636,8 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "COPY gate-request.json /gate/request.json" in dockerfile
     assert "COPY run-gate.py /gate/run-gate.py" in dockerfile
     assert "COPY source.tar source.bundle gate-request.json run-gate.py /gate/" not in dockerfile
+    assert "install -d -o 65532 -g 65532 -m 0700" in dockerfile
+    assert "/var/lib/seiche-railway-gate-runtime" in dockerfile
     assert 'SEICHE_GATE_REQUEST", "/gate/request.json"' in runner_source
     assert "git clone --quiet /gate/source.bundle /workspace" in dockerfile
     assert "git config --system --add safe.directory /workspace" in dockerfile

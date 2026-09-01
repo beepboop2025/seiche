@@ -32,12 +32,14 @@ INSTALL_COMMAND = (
     "--require-hashes -r ops/requirements-social-cards.txt"
 )
 TEST_COMMAND = (
+    "HOME=/var/lib/seiche-railway-gate-runtime "
+    "TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp "
     "PYTHONPATH=/workspace/backend "
-    "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
-    "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+    "SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data "
+    "SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation "
     "python -P -m pytest backend/tests -q --memray "
     "-o faulthandler_timeout=300 "
-    "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+    "-o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache"
 )
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
