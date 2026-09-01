@@ -111,7 +111,10 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   identity before it records the Railway deployment/project/environment/service
   IDs, test counts, Python version, and dependency snapshot digest, then exposes
   `/healthz` only after the gate is complete. Railway therefore cannot mark the
-  deployment successful before the suite is green.
+  deployment successful before the suite is green. While health remains closed,
+  Actions polls deployment-only logs for an explicit fail-closed runner marker,
+  so a failed suite is reported promptly instead of waiting out Railway's full
+  health-check window.
 - `ops/deploy/seiche-remote-gate-verify.py` resolves the SHA tag to an immutable
   OCI digest, validates the one-layer artifact, runs `gh attestation verify`
   with a fixed non-secret CLI-preflight sentinel and an empty Docker credential

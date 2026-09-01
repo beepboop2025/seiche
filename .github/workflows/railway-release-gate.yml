@@ -306,10 +306,32 @@ jobs:
                 echo "Railway gate deployment ended in $status" >&2
                 railway logs "$DEPLOYMENT_ID" --service "$RAILWAY_SERVICE_ID" \
                   --project "$RAILWAY_PROJECT_ID" \
-                  --environment "$RAILWAY_ENVIRONMENT_ID" --lines 1000 || true
+                  --environment "$RAILWAY_ENVIRONMENT_ID" \
+                  --deployment --lines 1000 || true
                 exit 1
                 ;;
-              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED) sleep 10 ;;
+              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED)
+                if ((_attempt % 6 == 0)); then
+                  rm -f "${RUNNER_TEMP}/railway-deployment.log"
+                  if railway logs "$DEPLOYMENT_ID" \
+                    --project "$RAILWAY_PROJECT_ID" \
+                    --service "$RAILWAY_SERVICE_ID" \
+                    --environment "$RAILWAY_ENVIRONMENT_ID" \
+                    --deployment --lines 1000 \
+                    >"${RUNNER_TEMP}/railway-deployment.log"; then
+                    if grep -qx 'SEICHE_RAILWAY_GATE_FAILURE_V1=1' \
+                      "${RUNNER_TEMP}/railway-deployment.log"; then
+                      echo "Railway gate runner emitted its failure marker" >&2
+                      sed -n '1,1000p' \
+                        "${RUNNER_TEMP}/railway-deployment.log" >&2
+                      exit 1
+                    fi
+                  else
+                    echo "Railway deployment log poll failed; status polling continues" >&2
+                  fi
+                fi
+                sleep 10
+                ;;
               *) echo "unknown Railway deployment state: $status" >&2; exit 1 ;;
             esac
           done
@@ -335,6 +357,7 @@ jobs:
               --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment \
               --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"; then
               echo "Railway log poll $_attempt/60 failed; retrying" >&2
               sleep 5

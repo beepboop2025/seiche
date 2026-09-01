@@ -8,7 +8,6 @@ import io
 import json
 import os
 from pathlib import Path
-import pwd
 import subprocess
 import tarfile
 import tempfile
@@ -92,7 +91,7 @@ def verifier():
 
 @pytest.fixture
 def safe_runtime_root():
-    account_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=True)
+    account_home = Path(os.environ["HOME"]).resolve(strict=True)
     with tempfile.TemporaryDirectory(
         prefix=".seiche-railway-gate-test-",
         dir=account_home,
@@ -100,6 +99,17 @@ def safe_runtime_root():
         root = Path(raw_root)
         root.chmod(0o700)
         yield root
+
+
+def test_runner_emits_machine_readable_failure_marker(runner, capsys):
+    with pytest.raises(SystemExit) as failure:
+        runner.fail("fixture failure")
+
+    assert failure.value.code == 1
+    assert capsys.readouterr().err == (
+        "SEICHE_RAILWAY_GATE_FAILURE_V1=1\n"
+        "railway gate: fixture failure\n"
+    )
 
 
 def _request(runner, archive: Path) -> dict[str, str]:
@@ -644,7 +654,12 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "ADD source.tar /workspace/" not in dockerfile
     assert "if ! railway deployment list" in deployment_wait
     assert "Railway status poll $_attempt/360 failed; retrying" in deployment_wait
+    assert "if ((_attempt % 6 == 0)); then" in deployment_wait
+    assert "SEICHE_RAILWAY_GATE_FAILURE_V1=1" in runner_source
+    assert "Railway gate runner emitted its failure marker" in deployment_wait
+    assert "--deployment" in deployment_wait
     assert "if ! railway logs" in result_extraction
+    assert "--deployment" in result_extraction
     assert "Railway log poll $_attempt/60 failed; retrying" in result_extraction
     assert "marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1='" in workflow
     assert "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" in dockerfile

@@ -84,9 +84,11 @@ REQUEST_KEYS = {
 }
 RUN_UID = 65532
 RUN_GID = 65532
+FAILURE_MARKER = "SEICHE_RAILWAY_GATE_FAILURE_V1=1"
 
 
 def fail(message: str) -> NoReturn:
+    print(FAILURE_MARKER, file=sys.stderr, flush=True)
     print(f"railway gate: {message}", file=sys.stderr, flush=True)
     raise SystemExit(1)
 
