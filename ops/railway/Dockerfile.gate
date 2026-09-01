@@ -43,7 +43,9 @@ FROM gate-build AS gate-runtime
 # supplies the matching immutable commit object required by Seiche's runtime
 # release-identity check; the runner independently binds HEAD/tree/archive.
 WORKDIR /gate
-COPY source.tar source.bundle gate-request.json run-gate.py /gate/
+COPY source.tar source.bundle /gate/
+COPY gate-request.json /gate/request.json
+COPY run-gate.py /gate/run-gate.py
 RUN git clone --quiet /gate/source.bundle /workspace \
     && git config --system --add safe.directory /workspace \
     && chmod 0555 /gate \

@@ -25,6 +25,7 @@ POLLER_PATH = ROOT / "ops" / "deploy" / "seiche-release-poll.sh"
 WRAPPER_PATH = ROOT / "ops" / "deploy" / "seiche-deploy-wrapper.sh"
 INSTALLER_PATH = ROOT / "ops" / "deploy" / "install-market-platform.sh"
 IMPORT_UNIT_PATH = ROOT / "ops" / "deploy" / "seiche-snapshot-import.service"
+RAILWAY_DOCKERFILE_PATH = ROOT / "ops" / "railway" / "Dockerfile.snapshot"
 PREFLIGHT_NAME = "Preflight required Railway configuration"
 
 
@@ -476,6 +477,8 @@ def test_railway_configuration_preflight_is_first_and_fails_with_names_only() ->
 
 def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    dockerfile = RAILWAY_DOCKERFILE_PATH.read_text(encoding="utf-8")
+    runner_source = RUNNER_PATH.read_text(encoding="utf-8")
     runtime_contract = _workflow_step(workflow, "Verify the Railway runtime contract")
     deployment_wait = _workflow_step(
         workflow, "Wait for Railway to finish the snapshot"
@@ -499,6 +502,9 @@ def test_phase_two_controller_uses_parallel_attested_prebuild_and_local_seal() -
     assert "exact Railway deployment ignored the runtime contract" in workflow
     assert "result_token_sha256" in workflow
     assert "result_token_expires_at" in workflow
+    assert 'REQUEST_PATH="$UPLOAD_ROOT/snapshot-request.json"' in workflow
+    assert "COPY snapshot-request.json /gate/request.json" in dockerfile
+    assert 'SEICHE_SNAPSHOT_REQUEST", "/gate/request.json"' in runner_source
     assert "RAILWAY_SNAPSHOT_ORIGIN" in workflow
     assert "${{ vars.RAILWAY_SNAPSHOT_ORIGIN }}" not in workflow
     assert "serviceDomains" in runtime_contract

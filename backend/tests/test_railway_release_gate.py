@@ -537,6 +537,7 @@ def test_railway_configuration_preflight_is_first_and_fails_with_names_only():
 def test_controller_defaults_remote_and_never_falls_back_automatically():
     poller = POLLER.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    runner_source = RUNNER_PATH.read_text(encoding="utf-8")
     deployment_wait = _workflow_step(
         workflow, "Wait for Railway to finish the full gate"
     )
@@ -590,7 +591,12 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert 'git bundle verify "$UPLOAD_ROOT/source.bundle"' in workflow
     assert "fetch-depth: 0" in workflow
     assert 'test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 6' in workflow
-    assert "COPY source.tar source.bundle gate-request.json run-gate.py /gate/" in dockerfile
+    assert 'REQUEST_PATH="$UPLOAD_ROOT/gate-request.json"' in workflow
+    assert "COPY source.tar source.bundle /gate/" in dockerfile
+    assert "COPY gate-request.json /gate/request.json" in dockerfile
+    assert "COPY run-gate.py /gate/run-gate.py" in dockerfile
+    assert "COPY source.tar source.bundle gate-request.json run-gate.py /gate/" not in dockerfile
+    assert 'SEICHE_GATE_REQUEST", "/gate/request.json"' in runner_source
     assert "git clone --quiet /gate/source.bundle /workspace" in dockerfile
     assert "git config --system --add safe.directory /workspace" in dockerfile
     assert "ADD source.tar /workspace/" not in dockerfile
