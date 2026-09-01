@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,6 +16,7 @@ from seiche.collectors import (
     CollectorRunStatus,
     CollectorSupervisor,
     FileRawCaptureSink,
+    ParquetPartitionSink,
 )
 from seiche.domain.observation import evidence_sha256
 from seiche.sources.base import (
@@ -512,3 +516,35 @@ def test_raw_capture_publication_is_atomic_and_concurrency_safe(
     assert paths[0] == paths[1]
     assert open(paths[0], "rb").read() == payload
     assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_parquet_parts_remain_group_readable_under_restrictive_umask(
+    tmp_path,
+) -> None:
+    now = datetime(2026, 8, 31, 20, tzinfo=UTC)
+
+    class _Observation:
+        market_id = "IN-INR"
+        knowledge_time = now
+        event_time = now
+
+        @staticmethod
+        def to_record() -> dict[str, object]:
+            return {"jurisdiction_codes": ("IN",), "value": "1"}
+
+    batch = ObservationBatch(
+        market_id="IN-INR",
+        adapter_id="rbi_official",
+        captured_at=now,
+        observations=(_Observation(),),
+    )
+    previous_umask = os.umask(0o077)
+    try:
+        [output] = ParquetPartitionSink(tmp_path).write(batch)
+    finally:
+        os.umask(previous_umask)
+
+    mode = stat.S_IMODE(Path(output).stat().st_mode)
+    assert mode == 0o640
+    assert mode & stat.S_IRGRP
+    assert collectors_module.pd.read_parquet(output).iloc[0]["value"] == "1"

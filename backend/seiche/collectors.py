@@ -225,8 +225,11 @@ class ParquetPartitionSink:
                 suffix=".tmp",
                 dir=directory,
             )
-            os.close(descriptor)
             try:
+                try:
+                    os.fchmod(descriptor, 0o640)
+                finally:
+                    os.close(descriptor)
                 frame.to_parquet(temporary, index=False)
                 try:
                     os.link(temporary, target)
