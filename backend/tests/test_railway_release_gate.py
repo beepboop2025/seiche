@@ -229,8 +229,10 @@ def test_runner_parses_pytest_subtests_success_suffix(runner):
 
 
 def test_runner_refuses_root_or_service_environment_pytest_overrides(
-    runner, monkeypatch
+    runner, monkeypatch, tmp_path
 ):
+    actual_uid = runner.os.getuid()
+    actual_gid = runner.os.getgid()
     monkeypatch.setattr(runner.os, "getuid", lambda: 0)
     monkeypatch.setattr(runner.os, "getgid", lambda: 0)
     with pytest.raises(SystemExit):
@@ -238,13 +240,64 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     monkeypatch.setattr(runner.os, "getuid", lambda: runner.RUN_UID)
     monkeypatch.setattr(runner.os, "getgid", lambda: runner.RUN_GID)
     runner.validate_runtime_identity()
+    monkeypatch.setattr(runner.os, "getuid", lambda: actual_uid)
+    monkeypatch.setattr(runner.os, "getgid", lambda: actual_gid)
 
     monkeypatch.setenv("PYTEST_ADDOPTS", "-k one_test")
     monkeypatch.setenv("PYTEST_PLUGINS", "hostile_plugin")
-    environment = runner.build_test_environment()
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "ambient-pythonpath"))
+    source_root = tmp_path / "workspace"
+    source_package = source_root / "backend" / "seiche"
+    source_package.mkdir(parents=True)
+    (source_package / "__init__.py").write_text("", encoding="utf-8")
+    runtime_root = tmp_path / "runtime"
+
+    environment = runner.build_test_environment(
+        source_root,
+        runtime_root=runtime_root,
+    )
     assert "PYTEST_ADDOPTS" not in environment
     assert "PYTEST_PLUGINS" not in environment
     assert environment["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+    assert environment["PYTHONPATH"] == str(source_root / "backend")
+    assert environment["PYTHONSAFEPATH"] == "1"
+    assert environment["HOME"] == str(runtime_root)
+    assert environment["XDG_CACHE_HOME"] == str(runtime_root / "xdg-cache")
+    assert runtime_root.stat().st_mode & 0o777 == 0o700
+    assert (runtime_root / "pytest-cache").stat().st_mode & 0o777 == 0o700
+    runner.verify_test_import(source_root, environment)
+
+    poison = tmp_path / "poison" / "seiche"
+    poison.mkdir(parents=True)
+    (poison / "__init__.py").write_text("", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        runner.verify_test_import(
+            source_root,
+            environment | {"PYTHONPATH": str(poison.parent)},
+        )
+
+
+def test_runner_records_the_exact_source_and_external_cache_contract(runner, verifier):
+    expected = (
+        "PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q "
+        "--memray -o faulthandler_timeout=300 "
+        "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+    )
+
+    assert runner.TEST_COMMAND == expected
+    assert verifier.TEST_COMMAND == expected
+    assert tuple(runner.PYTEST_ARGUMENTS) == (
+        "-P",
+        "-m",
+        "pytest",
+        "backend/tests",
+        "-q",
+        "--memray",
+        "-o",
+        "faulthandler_timeout=300",
+        "-o",
+        "cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache",
+    )
 
 
 def test_host_wraps_only_exact_remote_result(runner, verifier, monkeypatch, tmp_path):
@@ -418,11 +471,16 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "is still pending; production unchanged" in poller
     assert "REMOTE_GATE_PENDING_MAX_SECONDS" in poller
     assert "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1" in poller
+    remote_test_command = (
+        "PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q "
+        "--memray -o faulthandler_timeout=300 "
+        "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+    )
+    assert workflow.count(remote_test_command) >= 1
+    assert f'REMOTE_GATE_TEST_COMMAND="{remote_test_command}"' in poller
     assert (
-        workflow.count(
-            "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
-        )
-        >= 1
+        'TEST_COMMAND="python -m pytest backend/tests -q --memray '
+        '-o faulthandler_timeout=300"' in poller
     )
     assert "actions/attest-build-provenance@" in workflow
     assert 'railway up "$UPLOAD_ROOT" --path-as-root --detach --json' in workflow

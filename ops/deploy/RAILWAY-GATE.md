@@ -102,12 +102,14 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   runs the tests against a second clean, root-owned, read-only extraction. The
   image deliberately includes Git, OpenSSH, systemd-analyze, util-linux and
   procps because the full deploy-contract suite invokes those host tools.
-- `ops/railway/run-gate.py` re-hashes the source archive, runs exactly
-  `python -m pytest backend/tests -q --memray -o faulthandler_timeout=300`,
-  records the Railway deployment/project/environment/service IDs, test counts,
-  Python version, and dependency snapshot digest, then exposes `/healthz` only
-  after the gate is complete. Railway therefore cannot mark the deployment
-  successful before the suite is green.
+- `ops/railway/run-gate.py` re-hashes the source archive, proves `seiche`
+  imports from the verified `/workspace/backend` tree, and runs exactly
+  `PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache`.
+  The external private cache preserves the read-only source invariant. The
+  runner records the Railway deployment/project/environment/service IDs, test
+  counts, Python version, and dependency snapshot digest, then exposes
+  `/healthz` only after the gate is complete. Railway therefore cannot mark the
+  deployment successful before the suite is green.
 - `ops/deploy/seiche-remote-gate-verify.py` resolves the SHA tag to an immutable
   OCI digest, validates the one-layer artifact, runs `gh attestation verify`
   with a fixed non-secret CLI-preflight sentinel and an empty Docker credential

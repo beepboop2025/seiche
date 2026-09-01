@@ -18,7 +18,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 from typing import NoReturn
 
 
@@ -32,7 +31,23 @@ INSTALL_COMMAND = (
     "python -m pip install --disable-pip-version-check --only-binary=:all: "
     "--require-hashes -r ops/requirements-social-cards.txt"
 )
-TEST_COMMAND = "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+SOURCE_ROOT = Path("/workspace")
+SOURCE_BACKEND = SOURCE_ROOT / "backend"
+RUNTIME_ROOT = Path("/tmp/seiche-railway-gate-runtime")
+PYTEST_CACHE_DIR = RUNTIME_ROOT / "pytest-cache"
+PYTEST_ARGUMENTS = (
+    "-P",
+    "-m",
+    "pytest",
+    "backend/tests",
+    "-q",
+    "--memray",
+    "-o",
+    "faulthandler_timeout=300",
+    "-o",
+    f"cache_dir={PYTEST_CACHE_DIR}",
+)
+TEST_COMMAND = f"PYTHONPATH={SOURCE_BACKEND} python {' '.join(PYTEST_ARGUMENTS)}"
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
     "sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
@@ -193,20 +208,70 @@ def validate_runtime_identity() -> None:
         )
 
 
-def build_test_environment() -> dict[str, str]:
-    private_home = tempfile.mkdtemp(prefix="seiche-railway-gate-", dir="/tmp")
+def build_test_environment(
+    source_root: Path,
+    *,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> dict[str, str]:
+    try:
+        canonical_source = source_root.resolve(strict=True)
+        source_backend = (canonical_source / "backend").resolve(strict=True)
+        if source_backend.parent != canonical_source or not source_backend.is_dir():
+            fail("verified source backend is not a canonical directory")
+        runtime_root.mkdir(mode=0o700)
+        pytest_cache = runtime_root / "pytest-cache"
+        pytest_cache.mkdir(mode=0o700)
+        for path in (runtime_root, pytest_cache):
+            info = path.lstat()
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                fail(f"test runtime directory has unsafe metadata: {path}")
+    except OSError as exc:
+        fail(f"test runtime directory cannot be prepared safely: {exc}")
     return {
-        "HOME": private_home,
+        "HOME": str(runtime_root),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",
+        "PYTHONPATH": str(source_backend),
+        "PYTHONSAFEPATH": "1",
         "PYTHONUNBUFFERED": "1",
         "TMPDIR": "/tmp",
         "TZ": "UTC",
-        "XDG_CACHE_HOME": f"{private_home}/.cache",
+        "XDG_CACHE_HOME": str(runtime_root / "xdg-cache"),
     }
+
+
+def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> None:
+    """Fail before the long suite unless `seiche` comes from the verified tree."""
+
+    expected = (source_root / "backend" / "seiche" / "__init__.py").resolve(
+        strict=True
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            (
+                "from pathlib import Path; import seiche; "
+                "print(Path(seiche.__file__).resolve())"
+            ),
+        ],
+        check=False,
+        cwd=source_root,
+        env=dict(environment),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0 or result.stdout.strip() != str(expected):
+        fail("test interpreter did not import seiche from the verified source tree")
 
 
 def dependency_snapshot_sha256() -> str:
@@ -261,21 +326,16 @@ def parse_pytest_summary(output: str) -> dict[str, int | float]:
 
 
 def run_tests(source_root: Path) -> tuple[dict[str, int | float], str, str]:
+    if source_root != SOURCE_ROOT:
+        fail("test source root does not match the reviewed runtime contract")
     started_at = utc_now()
-    command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "backend/tests",
-        "-q",
-        "--memray",
-        "-o",
-        "faulthandler_timeout=300",
-    ]
+    environment = build_test_environment(source_root)
+    verify_test_import(source_root, environment)
+    command = [sys.executable, *PYTEST_ARGUMENTS]
     process = subprocess.Popen(
         command,
         cwd=source_root,
-        env=build_test_environment(),
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -400,7 +460,7 @@ def serve(result: bytes) -> NoReturn:
 def main() -> NoReturn:
     request_path = Path(os.environ.get("SEICHE_GATE_REQUEST", "/gate/request.json"))
     archive_path = Path(os.environ.get("SEICHE_GATE_ARCHIVE", "/gate/source.tar"))
-    source_root = Path(os.environ.get("SEICHE_GATE_SOURCE_ROOT", "/workspace"))
+    source_root = SOURCE_ROOT
     if not source_root.is_dir() or not (source_root / "backend" / "tests").is_dir():
         fail("extracted exact-source tree is missing")
     validate_runtime_identity()

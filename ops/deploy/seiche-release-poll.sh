@@ -50,6 +50,7 @@ RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.tim
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+REMOTE_GATE_TEST_COMMAND="PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
 REMOTE_GATE_REPOSITORY="beepboop2025/seiche"
 REMOTE_GATE_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 REMOTE_GATE_ARTIFACT_REPOSITORY="ghcr.io/beepboop2025/seiche-release-gates"
@@ -433,6 +434,7 @@ validate_receipt() {
   local snapshot_digest="${6:-}"
   "$SYSTEM_PYTHON" - "$path" "$kind" "$commit" "$tree" \
     "$INSTALL_COMMAND" "$REMOTE_GATE_INSTALL_COMMAND" "$TEST_COMMAND" \
+    "$REMOTE_GATE_TEST_COMMAND" \
     "$gate_digest" "$snapshot_digest" \
     "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" \
     "$REMOTE_GATE_REPOSITORY" "$REMOTE_GATE_WORKFLOW" \
@@ -451,6 +453,7 @@ import sys
     install_command,
     remote_install_command,
     test_command,
+    remote_test_command,
     gate_digest,
     snapshot_digest,
     expected_uid,
@@ -573,7 +576,9 @@ try:
         assert payload["install_command"] == (
             remote_install_command if provider == "railway" else install_command
         )
-        assert payload["test_command"] == test_command
+        assert payload["test_command"] == (
+            remote_test_command if provider == "railway" else test_command
+        )
         if provider == "local-break-glass":
             assert payload["break_glass"] == {
                 "acknowledgement": "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1"
