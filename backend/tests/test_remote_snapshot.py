@@ -177,6 +177,7 @@ def test_host_import_reseals_and_stages_exact_prebuilt_payload(
     ).astimezone(UTC)
     receipt = _release_receipt(fake_snap)
     calls = []
+    seeded = []
     monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: release_sha)
     monkeypatch.setattr(
         assemble, "_seal_release_evidence", lambda payload: receipt if payload is fake_snap else None
@@ -191,14 +192,65 @@ def test_host_import_reseals_and_stages_exact_prebuilt_payload(
         "verify_pending_snapshot",
         lambda sha, token: (sha, token) == (release_sha, "8" * 64),
     )
+    monkeypatch.setattr(
+        assemble,
+        "seed_prebuilt_deep_cache",
+        lambda payload: seeded.append(payload),
+    )
 
     assert remote_snapshot_import.stage_artifact(artifact, now=generated) == "8" * 64
     assert calls == [(fake_snap, receipt)]
+    assert seeded == [fake_snap]
 
     tampered = json.loads(json.dumps(artifact))
     tampered["payload"]["version"] += "-digest-tamper"
     with pytest.raises(ValueError, match="payload digest"):
         remote_snapshot_import.stage_artifact(tampered, now=generated)
+    assert seeded == [fake_snap], "tampered artifacts must fail before cache seeding"
+
+
+def test_verified_prebuild_seeds_exact_sofr_day_without_regressing_newer_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_snap: dict,
+) -> None:
+    payload = json.loads(json.dumps(fake_snap))
+    payload["version"] = assemble.VERSION_LABEL
+    payload["provenance"] = [
+        {
+            "source": "fred",
+            "mnemonic": "SOFR",
+            "asof": "2026-07-09",
+        }
+    ]
+    payload["deep"]["modelcourt"] = {"ok": True, "verdict": "live-ledger"}
+    writes: list[tuple[str, dict]] = []
+    monkeypatch.setattr(assemble.store, "load_blob", lambda _key: None)
+    monkeypatch.setattr(
+        assemble.store,
+        "save_blob",
+        lambda key, value: writes.append((key, value)),
+    )
+
+    expected_key = f"deep:{assemble.VERSION}:2026-07-09"
+    assert assemble.seed_prebuilt_deep_cache(payload) == expected_key
+    assert [key for key, _value in writes] == [expected_key]
+    seeded = writes[0][1]
+    assert "modelcourt" not in seeded
+    assert seeded["_computed_at"] == "2026-07-10T00:00:00+00:00"
+    assert isinstance(seeded["_all_ok"], bool)
+
+    newer = {
+        "ok": True,
+        "_all_ok": True,
+        "_computed_at": "2026-07-10T00:01:00+00:00",
+    }
+    monkeypatch.setattr(assemble.store, "load_blob", lambda _key: newer)
+    assert assemble.seed_prebuilt_deep_cache(payload) == expected_key
+    assert len(writes) == 1, "an older prebuild must not replace newer host work"
+
+    payload["version"] = "0.10.0 stale-schema"
+    assert assemble.seed_prebuilt_deep_cache(payload) is None
+    assert len(writes) == 1, "a mismatched schema must not enter the current cache"
 
 
 def test_import_requires_exact_canonical_artifact_bytes(fake_snap: dict) -> None:

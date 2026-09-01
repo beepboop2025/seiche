@@ -192,6 +192,11 @@ def stage_artifact(
         raise RuntimeError("prebuilt snapshot could not be staged locally")
     if not assemble.verify_pending_snapshot(release_sha, handoff_id):
         raise RuntimeError("prebuilt snapshot handoff failed local verification")
+    # Seed only the already-verified public deep layer. This prevents the
+    # canonical host from repeating Railway's expensive walk-forward work on
+    # the same data-day; a missing/degraded SOFR boundary safely falls back to
+    # the normal local build.
+    assemble.seed_prebuilt_deep_cache(payload)
     return handoff_id
 
 

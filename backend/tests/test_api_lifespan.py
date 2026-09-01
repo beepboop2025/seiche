@@ -8,7 +8,7 @@ from seiche import api
 
 
 @pytest.mark.asyncio
-async def test_keep_warm_coalesces_builds_and_retries_one_minute_after_completion(
+async def test_keep_warm_coalesces_builds_and_budgets_the_next_completion(
     monkeypatch,
 ) -> None:
     calls: list[str] = []
@@ -31,7 +31,7 @@ async def test_keep_warm_coalesces_builds_and_retries_one_minute_after_completio
         await api._keep_warm()
 
     assert calls == ["refresh"]
-    assert delays == [60]
+    assert delays == [240]
 
 
 @pytest.mark.asyncio

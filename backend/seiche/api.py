@@ -114,12 +114,14 @@ async def _keep_warm() -> None:
     log = logging.getLogger("seiche.api")
     while True:
         started = monotonic()
+        completed = False
         try:
             # Schedule a real build, but accept one that another owner finishes
-            # after this request begins.  Starting the next cycle one minute
-            # after completion leaves the rest of the 15-minute freshness
-            # window for the heavy analytics build.
+            # after this request begins. The delay below budgets the next
+            # completion inside the 15-minute freshness window from the
+            # duration of this cycle.
             await assemble.refresh_snapshot()
+            completed = True
         except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
             log.exception("background board refresh failed; retrying next cycle")
         elapsed = max(0.0, monotonic() - started)
@@ -131,7 +133,16 @@ async def _keep_warm() -> None:
                 _REFRESH_BUILD_BUDGET_S,
                 assemble.CACHE_MIN * 60,
             )
-        await asyncio.sleep(_REFRESH_INTERVAL_S)
+        # Target completions, not starts, inside the freshness horizon.  A
+        # quick build earns a longer quiet period; a slow or failed build gets
+        # the one-minute retry floor.  This avoids keeping the shared host at
+        # full scientific-library CPU between otherwise healthy rebuilds.
+        delay = (
+            max(_REFRESH_INTERVAL_S, _REFRESH_BUILD_BUDGET_S - elapsed)
+            if completed
+            else _REFRESH_INTERVAL_S
+        )
+        await asyncio.sleep(delay)
 
 
 @asynccontextmanager

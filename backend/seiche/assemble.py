@@ -1319,6 +1319,92 @@ def _bind_deep_history_boundary(deep: dict, evidence: dict | None = None) -> dic
     return deep
 
 
+def seed_prebuilt_deep_cache(payload: dict) -> str | None:
+    """Reuse a verified Railway deep layer for its exact SOFR data-day.
+
+    ``remote_snapshot_import`` calls this only after the artifact digest,
+    release identity, rights boundary, local market seal, and pending handoff
+    have all passed. The public payload has already consumed every private
+    intermediate needed by the Stack, so it is equivalent to the JSON blob
+    that ``_deep_layer`` normally saves after a local build.
+
+    A snapshot without a unique official SOFR date simply cannot seed this
+    optimization; it remains a valid degraded snapshot and the host computes
+    the deep layer normally.
+    """
+    deep = payload.get("deep")
+    provenance = payload.get("provenance")
+    if (
+        payload.get("version") != VERSION_LABEL
+        or not isinstance(deep, dict)
+        or not isinstance(provenance, (dict, list))
+    ):
+        return None
+
+    rows = provenance.values() if isinstance(provenance, dict) else provenance
+    sofr_dates = {
+        row.get("asof")
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("source") == "fred"
+        and row.get("mnemonic") == "SOFR"
+        and isinstance(row.get("asof"), str)
+    }
+    if len(sofr_dates) != 1:
+        return None
+    data_day = next(iter(sofr_dates))
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", data_day) is None:
+        return None
+    try:
+        from datetime import date, datetime, timezone
+
+        date.fromisoformat(data_day)
+        computed_at = datetime.fromisoformat(
+            str(payload.get("generated_at", "")).replace("Z", "+00:00")
+        )
+        if computed_at.tzinfo is None or computed_at.utcoffset() is None:
+            return None
+        computed_at = computed_at.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+    cache_key = f"deep:{VERSION}:{data_day}"
+    cached = store.load_blob(cache_key)
+    if isinstance(cached, dict) and not _snapshot_contains_restricted_cfets(
+        {"deep": cached}
+    ):
+        try:
+            cached_at = datetime.fromisoformat(
+                str(cached.get("_computed_at", "")).replace("Z", "+00:00")
+            )
+            if (
+                cached_at.tzinfo is not None
+                and cached_at.utcoffset() is not None
+                and cached_at.astimezone(timezone.utc) >= computed_at
+            ):
+                return cache_key
+        except (TypeError, ValueError):
+            pass
+
+    # The payload is JSON-safe by artifact contract, so a canonical JSON
+    # round-trip gives the cache its own object graph without accepting pickle
+    # or another executable serialization format from the remote builder.
+    seeded = json.loads(json.dumps(deep, ensure_ascii=False, allow_nan=False))
+    # Model Court is deliberately recomputed outside the day cache from the
+    # current as-published odds ledger on every board build.
+    seeded.pop("modelcourt", None)
+    seeded["_all_ok"] = all(
+        isinstance(value, dict) and value.get("ok")
+        for key, value in seeded.items()
+        if key not in ("ok", "historical_evidence")
+        and not str(key).startswith("_")
+    )
+    seeded["_computed_at"] = computed_at.isoformat()
+    _assert_snapshot_rights({"deep": seeded})
+    store.save_blob(cache_key, seeded)
+    return cache_key
+
+
 def _deep_layer(src: dict, drv: dict, engines: dict, faults: list[dict]) -> dict:
     spread = drv["spread_bp"]
     if spread.empty:

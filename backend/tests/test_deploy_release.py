@@ -4150,6 +4150,13 @@ def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
     assert "systemctl enable seiche-snapshot-promote.service" not in installer
     api_dropin = installer[installer.index('cat >"$DROPIN"') :]
     assert "EnvironmentFile=-$ENV_DIR/release.env" in api_dropin
+    for variable in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        assert api_dropin.count(f"Environment={variable}=1") == 1
 
 
 def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
