@@ -35,6 +35,8 @@ SOURCE_ROOT = Path("/workspace")
 SOURCE_BACKEND = SOURCE_ROOT / "backend"
 RUNTIME_ROOT = Path("/tmp/seiche-railway-gate-runtime")
 PYTEST_CACHE_DIR = RUNTIME_ROOT / "pytest-cache"
+RUNTIME_DATA_DIR = RUNTIME_ROOT / "data"
+VALIDATION_DIR = RUNTIME_DATA_DIR / "market-validation"
 PYTEST_ARGUMENTS = (
     "-P",
     "-m",
@@ -47,7 +49,12 @@ PYTEST_ARGUMENTS = (
     "-o",
     f"cache_dir={PYTEST_CACHE_DIR}",
 )
-TEST_COMMAND = f"PYTHONPATH={SOURCE_BACKEND} python {' '.join(PYTEST_ARGUMENTS)}"
+TEST_COMMAND = (
+    f"PYTHONPATH={SOURCE_BACKEND} "
+    f"SEICHE_RUNTIME_DATA_DIR={RUNTIME_DATA_DIR} "
+    f"SEICHE_VALIDATION_DIR={VALIDATION_DIR} "
+    f"python {' '.join(PYTEST_ARGUMENTS)}"
+)
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
     "sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7"
@@ -220,8 +227,10 @@ def build_test_environment(
             fail("verified source backend is not a canonical directory")
         runtime_root.mkdir(mode=0o700)
         pytest_cache = runtime_root / "pytest-cache"
+        runtime_data = runtime_root / "data"
         pytest_cache.mkdir(mode=0o700)
-        for path in (runtime_root, pytest_cache):
+        runtime_data.mkdir(mode=0o700)
+        for path in (runtime_root, pytest_cache, runtime_data):
             info = path.lstat()
             if (
                 not stat.S_ISDIR(info.st_mode)
@@ -241,6 +250,8 @@ def build_test_environment(
         "PYTHONPATH": str(source_backend),
         "PYTHONSAFEPATH": "1",
         "PYTHONUNBUFFERED": "1",
+        "SEICHE_RUNTIME_DATA_DIR": str(runtime_data),
+        "SEICHE_VALIDATION_DIR": str(runtime_data / "market-validation"),
         "TMPDIR": "/tmp",
         "TZ": "UTC",
         "XDG_CACHE_HOME": str(runtime_root / "xdg-cache"),
@@ -250,17 +261,21 @@ def build_test_environment(
 def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> None:
     """Fail before the long suite unless `seiche` comes from the verified tree."""
 
-    expected = (source_root / "backend" / "seiche" / "__init__.py").resolve(
+    expected_module = (source_root / "backend" / "seiche" / "__init__.py").resolve(
         strict=True
     )
+    expected_data = Path(environment["SEICHE_RUNTIME_DATA_DIR"]).resolve(strict=True)
     result = subprocess.run(
         [
             sys.executable,
             "-P",
             "-c",
             (
-                "from pathlib import Path; import seiche; "
-                "print(Path(seiche.__file__).resolve())"
+                "import json; from pathlib import Path; import seiche; "
+                "from seiche.config import DATA_DIR; "
+                "print(json.dumps({'data_dir': str(DATA_DIR.resolve()), "
+                "'module': str(Path(seiche.__file__).resolve())}, "
+                "sort_keys=True, separators=(',', ':')))"
             ),
         ],
         check=False,
@@ -270,8 +285,12 @@ def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> Non
         stderr=subprocess.PIPE,
         text=True,
     )
-    if result.returncode != 0 or result.stdout.strip() != str(expected):
-        fail("test interpreter did not import seiche from the verified source tree")
+    try:
+        observed = json.loads(result.stdout) if result.returncode == 0 else None
+    except json.JSONDecodeError:
+        observed = None
+    if observed != {"data_dir": str(expected_data), "module": str(expected_module)}:
+        fail("test interpreter did not bind the verified source and runtime data")
 
 
 def dependency_snapshot_sha256() -> str:

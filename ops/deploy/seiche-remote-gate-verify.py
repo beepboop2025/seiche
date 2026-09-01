@@ -32,7 +32,10 @@ INSTALL_COMMAND = (
     "--require-hashes -r ops/requirements-social-cards.txt"
 )
 TEST_COMMAND = (
-    "PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q --memray "
+    "PYTHONPATH=/workspace/backend "
+    "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
+    "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+    "python -P -m pytest backend/tests -q --memray "
     "-o faulthandler_timeout=300 "
     "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
 )

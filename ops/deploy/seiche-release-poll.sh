@@ -50,7 +50,7 @@ RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.tim
 INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
-REMOTE_GATE_TEST_COMMAND="PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
+REMOTE_GATE_TEST_COMMAND="PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
 REMOTE_GATE_REPOSITORY="beepboop2025/seiche"
 REMOTE_GATE_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 REMOTE_GATE_ARTIFACT_REPOSITORY="ghcr.io/beepboop2025/seiche-release-gates"

@@ -104,10 +104,11 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   procps because the full deploy-contract suite invokes those host tools.
 - `ops/railway/run-gate.py` re-hashes the source archive, proves `seiche`
   imports from the verified `/workspace/backend` tree, and runs exactly
-  `PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache`.
-  The external private cache preserves the read-only source invariant. The
-  runner records the Railway deployment/project/environment/service IDs, test
-  counts, Python version, and dependency snapshot digest, then exposes
+  `PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache`.
+  The private external cache, database root, and validation root preserve the
+  read-only source invariant. The runner proves both import and data-root
+  identity before it records the Railway deployment/project/environment/service
+  IDs, test counts, Python version, and dependency snapshot digest, then exposes
   `/healthz` only after the gate is complete. Railway therefore cannot mark the
   deployment successful before the suite is green.
 - `ops/deploy/seiche-remote-gate-verify.py` resolves the SHA tag to an immutable

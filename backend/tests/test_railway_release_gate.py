@@ -250,6 +250,11 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     source_package = source_root / "backend" / "seiche"
     source_package.mkdir(parents=True)
     (source_package / "__init__.py").write_text("", encoding="utf-8")
+    (source_package / "config.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        'DATA_DIR = Path(os.environ["SEICHE_RUNTIME_DATA_DIR"])\n',
+        encoding="utf-8",
+    )
     runtime_root = tmp_path / "runtime"
 
     environment = runner.build_test_environment(
@@ -263,8 +268,13 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
     assert environment["PYTHONSAFEPATH"] == "1"
     assert environment["HOME"] == str(runtime_root)
     assert environment["XDG_CACHE_HOME"] == str(runtime_root / "xdg-cache")
+    assert environment["SEICHE_RUNTIME_DATA_DIR"] == str(runtime_root / "data")
+    assert environment["SEICHE_VALIDATION_DIR"] == str(
+        runtime_root / "data" / "market-validation"
+    )
     assert runtime_root.stat().st_mode & 0o777 == 0o700
     assert (runtime_root / "pytest-cache").stat().st_mode & 0o777 == 0o700
+    assert (runtime_root / "data").stat().st_mode & 0o777 == 0o700
     runner.verify_test_import(source_root, environment)
 
     poison = tmp_path / "poison" / "seiche"
@@ -277,9 +287,14 @@ def test_runner_refuses_root_or_service_environment_pytest_overrides(
         )
 
 
-def test_runner_records_the_exact_source_and_external_cache_contract(runner, verifier):
+def test_runner_records_the_exact_source_and_external_runtime_contract(
+    runner, verifier
+):
     expected = (
-        "PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q "
+        "PYTHONPATH=/workspace/backend "
+        "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
+        "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+        "python -P -m pytest backend/tests -q "
         "--memray -o faulthandler_timeout=300 "
         "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
     )
@@ -472,7 +487,10 @@ def test_controller_defaults_remote_and_never_falls_back_automatically():
     assert "REMOTE_GATE_PENDING_MAX_SECONDS" in poller
     assert "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1" in poller
     remote_test_command = (
-        "PYTHONPATH=/workspace/backend python -P -m pytest backend/tests -q "
+        "PYTHONPATH=/workspace/backend "
+        "SEICHE_RUNTIME_DATA_DIR=/tmp/seiche-railway-gate-runtime/data "
+        "SEICHE_VALIDATION_DIR=/tmp/seiche-railway-gate-runtime/data/market-validation "
+        "python -P -m pytest backend/tests -q "
         "--memray -o faulthandler_timeout=300 "
         "-o cache_dir=/tmp/seiche-railway-gate-runtime/pytest-cache"
     )
