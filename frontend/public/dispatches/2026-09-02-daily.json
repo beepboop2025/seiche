@@ -1,0 +1,168 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-09-02-daily",
+  "product": "seiche",
+  "slug": "2026-09-02-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-09-02-daily",
+  "headline": "ON RRP take-up wakes to 0.72 $B overnight: 3.6 sigma on a near-zero base, not a large flow",
+  "dek": "The board reads 45 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.0%; plumbing leads market pricing by +31 percentile points. The index is -0.4 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "full_story",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-09-02T14:57:42Z",
+  "clocks": {
+    "event_time": "2026-09-01T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-09-02T14:57:42Z",
+    "publication_time": "2026-09-02T14:57:42Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "fresh_longitudinal_delta",
+      "regime_transition",
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 55,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 20,
+      "cross_signal_divergence_change": 0,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": -20
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 44.7 in EROSION.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 44.7,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh ON RRP take-up print entered the mover set.",
+      "metric": {
+        "label": "ON RRP take-up",
+        "value": null,
+        "unit": "$B",
+        "robust_z": 3.65,
+        "as_of": "2026-09-01"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh ON RRP take-up, referee history print entered the mover set.",
+      "metric": {
+        "label": "ON RRP take-up, referee history",
+        "value": null,
+        "unit": "$B",
+        "robust_z": 3.65,
+        "as_of": "2026-09-01"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh DVP repo total volume (preliminary) print entered the mover set.",
+      "metric": {
+        "label": "DVP repo total volume (preliminary)",
+        "value": null,
+        "unit": "$B",
+        "robust_z": 5.15,
+        "as_of": "2026-08-31"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-09-02",
+        "backtestable": false,
+        "status_note": "ACCRUING — 57/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 0.31,
+            "unit": "score",
+            "as_of": "2026-09-02",
+            "observations": 57,
+            "change_vs_prior_10_median": -1.06
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 111.0,
+            "unit": "terms/day",
+            "as_of": "2026-09-02",
+            "observations": 57,
+            "change_vs_prior_10_median": 1.0
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 18.0,
+            "unit": "0-100",
+            "as_of": "2026-08-11",
+            "observations": 37,
+            "change_vs_prior_10_median": -1.0
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 0.9bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-08-26",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-09-02",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 29th percentile of its own history.",
+      "asof": "2026-09-01",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature.",
+    "Collection fault: {'source': 'eia', 'detail': 'collector failed', 'category': 'INTERNAL_ERROR', 'status': 'FAILED'}",
+    "Collection fault: {'source': 'eia', 'detail': 'collector failed', 'category': 'INTERNAL_ERROR', 'status': 'FAILED'}"
+  ],
+  "claim_fingerprint": "c9a4c8d808206f03ade9578bdd01aaa5adea7c0c46da4a685f8589b3730b145e"
+}
