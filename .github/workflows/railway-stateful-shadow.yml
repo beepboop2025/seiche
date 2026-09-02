@@ -169,15 +169,13 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           "$tool_dir/railway" --version
 
-      - name: Prove the isolated service, volume, database, and staged snapshot
+      - name: Prove the isolated service, volume, and database prerequisites
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
           RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
-          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
-          EXPECTED_INVENTORY_SHA256: ${{ inputs.source_inventory_sha256 }}
           CONTROL_ROOT: ${{ runner.temp }}/railway-stateful-control
         run: |
           set -euo pipefail
@@ -187,8 +185,8 @@ jobs:
             "$RAILWAY_VOLUME_ID"; do
             test -n "$value"
           done
-          mkdir -p "$CONTROL_ROOT/link" "$CONTROL_ROOT/metadata"
-          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/link" "$CONTROL_ROOT/metadata"
+          mkdir -p "$CONTROL_ROOT/link"
+          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/link"
           cd "$CONTROL_ROOT/link"
           railway link --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
@@ -238,50 +236,6 @@ jobs:
             "SEICHE_RAILWAY_VOLUME_ID=$RAILWAY_VOLUME_ID" \
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
-
-          for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt \
-            palimpsest-china-state.json; do
-            railway volume files download \
-              --volume "$RAILWAY_VOLUME_ID" \
-              "/inbox/$SNAPSHOT_ID/$member" \
-              "$CONTROL_ROOT/metadata/$member"
-          done
-          chmod go-w "$CONTROL_ROOT"/metadata/*
-          SNAPSHOT_ID="$SNAPSHOT_ID" TARGET="$GITHUB_SHA" \
-            EXPECTED_INVENTORY_SHA256="$EXPECTED_INVENTORY_SHA256" \
-            METADATA_ROOT="$CONTROL_ROOT/metadata" python3 -I -S - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          import re
-
-          root = Path(os.environ["METADATA_ROOT"])
-          inventory = (root / "SHA256SUMS").read_bytes()
-          if hashlib.sha256(inventory).hexdigest() != os.environ[
-              "EXPECTED_INVENTORY_SHA256"
-          ]:
-              raise SystemExit("staged snapshot inventory digest differs")
-          revision = (root / "deployed-sha.txt").read_text(encoding="ascii")
-          if revision != os.environ["TARGET"] + "\n":
-              raise SystemExit("staged snapshot belongs to another release")
-          manifest = (root / "manifest.env").read_text(encoding="utf-8")
-          if f"created_at={os.environ['SNAPSHOT_ID']}\n" not in manifest:
-              raise SystemExit("staged snapshot manifest identity differs")
-          counts = (root / "table-counts.txt").read_text(encoding="ascii")
-          if re.fullmatch(r"[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\n", counts) is None:
-              raise SystemExit("staged snapshot count floor is invalid")
-          palimpsest = json.loads(
-              (root / "palimpsest-china-state.json").read_bytes()
-          )
-          if (
-              palimpsest.get("schema")
-              != "seiche.palimpsest-china-activation-state.v1"
-              or palimpsest.get("state_root")
-              != "/var/lib/seiche-palimpsest-china"
-          ):
-              raise SystemExit("staged Palimpsest China state proof is invalid")
-          PY
 
       - name: Deploy the exact shadow runtime
         id: deploy
@@ -365,7 +319,100 @@ jobs:
           done
           test "$status" = SUCCESS
 
-      - name: Retrieve and independently validate the immutable shadow receipt
+      - name: Prove the exact healthy Railway deployment
+        id: initial_runtime
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          query_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "deploymentId": os.environ["DEPLOYMENT_ID"],
+          }, separators=(",", ":")))
+          PY
+          )
+          # GraphQL variable names are literal, not shell expansions.
+          # shellcheck disable=SC2016
+          railway api \
+            'query Runtime($serviceId: String!, $environmentId: String!, $deploymentId: String!) { serviceInstance(serviceId: $serviceId, environmentId: $environmentId) { healthcheckPath healthcheckTimeout restartPolicyType domains { customDomains { domain targetPort } serviceDomains { domain targetPort } } latestDeployment { id status instances { id status } } activeDeployments { id status instances { id status } } } deployment(id: $deploymentId) { id projectId environmentId serviceId status instances { id status } } }' \
+            --variables "$query_variables" \
+            >"${RUNNER_TEMP}/stateful-runtime-initial.json"
+          RUNTIME_PATH="${RUNNER_TEMP}/stateful-runtime-initial.json" \
+            DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+            RAILWAY_PROJECT_ID="$RAILWAY_PROJECT_ID" \
+            RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          value = json.loads(Path(os.environ["RUNTIME_PATH"]).read_text())
+          try:
+              service = value["data"]["serviceInstance"]
+              deployment = value["data"]["deployment"]
+          except (KeyError, TypeError):
+              raise SystemExit("exact Railway runtime response is malformed") from None
+          manifest = {
+              "healthcheckPath": "/healthz",
+              "healthcheckTimeout": 3600,
+              "restartPolicyType": "NEVER",
+              "domains": {"customDomains": [], "serviceDomains": []},
+          }
+          if {key: service.get(key) for key in manifest} != manifest:
+              raise SystemExit("exact Railway service manifest differs")
+          identity = {
+              "id": os.environ["DEPLOYMENT_ID"],
+              "projectId": os.environ["RAILWAY_PROJECT_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+          }
+          if {key: deployment.get(key) for key in identity} != identity:
+              raise SystemExit("exact Railway deployment identity differs")
+          active = service.get("activeDeployments")
+          latest = service.get("latestDeployment")
+          candidates = [deployment, latest]
+          if not isinstance(active, list) or len(active) != 1:
+              raise SystemExit("Railway service does not have one active deployment")
+          candidates.extend(active)
+          instance_ids = set()
+          for candidate in candidates:
+              if (
+                  not isinstance(candidate, dict)
+                  or candidate.get("id") != os.environ["DEPLOYMENT_ID"]
+                  or candidate.get("status") != "SUCCESS"
+                  or not isinstance(candidate.get("instances"), list)
+                  or len(candidate["instances"]) != 1
+                  or candidate["instances"][0].get("status") != "RUNNING"
+              ):
+                  raise SystemExit("exact Railway deployment is not singly RUNNING")
+              instance_id = candidate["instances"][0].get("id")
+              if not isinstance(instance_id, str) or re.fullmatch(
+                  r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+                  r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                  instance_id,
+              ) is None:
+                  raise SystemExit("Railway deployment instance ID is invalid")
+              instance_ids.add(instance_id)
+          if len(instance_ids) != 1:
+              raise SystemExit("Railway deployment instance identity is inconsistent")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"replica_id={instance_ids.pop()}\n")
+          PY
+
+      - name: Reconstruct and independently validate the created receipt
         id: evidence
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -376,15 +423,53 @@ jobs:
           RAILWAY_VOLUME_NAME: ${{ secrets.RAILWAY_STATEFUL_VOLUME_NAME }}
           RAILWAY_REPLICA_REGION: ${{ secrets.RAILWAY_STATEFUL_REGION }}
           RAILWAY_DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          RAILWAY_REPLICA_ID: ${{ steps.initial_runtime.outputs.replica_id }}
           REQUEST_ID: ${{ steps.request.outputs.request_id }}
           UPLOAD_ROOT: ${{ steps.request.outputs.upload_root }}
         run: |
           set -euo pipefail
           receipt="${RUNNER_TEMP}/railway-stateful-shadow-receipt.json"
-          railway ssh --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
-            cat "/var/lib/seiche-platform/receipts/$REQUEST_ID.json" >"$receipt"
+          log_path="${RUNNER_TEMP}/railway-stateful-shadow-created.ndjson"
+          marker_count=0
+          for _attempt in $(seq 1 60); do
+            rm -f "$log_path"
+            if ! railway logs "$RAILWAY_DEPLOYMENT_ID" \
+              --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment --json --lines 1000 >"$log_path"; then
+              echo "Railway exact-deployment log poll $_attempt/60 failed" >&2
+              sleep 5
+              continue
+            fi
+            marker_count=$(grep -c \
+              'SEICHE_RAILWAY_STATEFUL_SHADOW_RESULT_V1=' "$log_path" || true)
+            case "$marker_count" in
+              0) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+          test "$marker_count" -ge 1
+          PYTHONPATH=backend LOG_PATH="$log_path" RECEIPT_PATH="$receipt" \
+            REQUEST_ID="$REQUEST_ID" \
+            RAILWAY_DEPLOYMENT_ID="$RAILWAY_DEPLOYMENT_ID" \
+            RAILWAY_REPLICA_ID="$RAILWAY_REPLICA_ID" \
+            python3 -B - <<'PY'
+          import os
+          from pathlib import Path
+
+          from seiche.stateful_migration import extract_log_results
+
+          results = extract_log_results(
+              Path(os.environ["LOG_PATH"]).read_bytes(),
+              expected_request_id=os.environ["REQUEST_ID"],
+              expected_deployment_id=os.environ["RAILWAY_DEPLOYMENT_ID"],
+              expected_replicas={"created": os.environ["RAILWAY_REPLICA_ID"]},
+          )
+          Path(os.environ["RECEIPT_PATH"]).write_bytes(
+              results["created"].receipt_body
+          )
+          PY
           PYTHONPATH=backend python3 -B -m seiche.stateful_migration \
             verify-receipt \
             --request "$UPLOAD_ROOT/request.json" \
@@ -398,18 +483,237 @@ jobs:
           echo "receipt_path=${RUNNER_TEMP}/shadow-receipt.json" >>"$GITHUB_OUTPUT"
           echo "receipt_sha256=$receipt_sha256" >>"$GITHUB_OUTPUT"
 
-      - name: Prove health through the exact active Railway instance
+      - name: Restart the same deployment and prove exact receipt reuse
+        id: restart_proof
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
         run: |
           set -euo pipefail
-          railway ssh --project "$RAILWAY_PROJECT_ID" \
+          restart_not_before=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+          restart_json=$(railway restart --project "$RAILWAY_PROJECT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" -- \
-            python -c 'import json,os,urllib.request; value=json.load(urllib.request.urlopen("http://127.0.0.1:"+os.environ["PORT"]+"/healthz", timeout=10)); assert value.get("status")=="ready" and value.get("mode")=="shadow"'
+            --environment "$RAILWAY_ENVIRONMENT_ID" --yes --json)
+          RESTART_JSON="$restart_json" \
+            RAILWAY_DEPLOYMENT_ID="$RAILWAY_DEPLOYMENT_ID" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+
+          value = json.loads(os.environ["RESTART_JSON"])
+          if value != {"id": os.environ["RAILWAY_DEPLOYMENT_ID"]}:
+              raise SystemExit("Railway restarted a different deployment")
+          PY
+
+          log_path="${RUNNER_TEMP}/railway-stateful-shadow-reused.ndjson"
+          marker_count=0
+          for _attempt in $(seq 1 120); do
+            rm -f "$log_path"
+            if ! railway logs "$RAILWAY_DEPLOYMENT_ID" \
+              --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment --json --lines 1000 >"$log_path"; then
+              echo "Railway restart log poll $_attempt/120 failed" >&2
+              sleep 5
+              continue
+            fi
+            marker_count=$(grep -c \
+              'SEICHE_RAILWAY_STATEFUL_SHADOW_RESULT_V1=' "$log_path" || true)
+            case "$marker_count" in
+              0|1) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+          test "$marker_count" -ge 2
+          echo "restart_not_before=$restart_not_before" >>"$GITHUB_OUTPUT"
+          echo "log_path=$log_path" >>"$GITHUB_OUTPUT"
+
+      - name: Prove the reused runtime is singly RUNNING
+        id: reused_runtime
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -euo pipefail
+          query_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" \
+            DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "deploymentId": os.environ["DEPLOYMENT_ID"],
+          }, separators=(",", ":")))
+          PY
+          )
+          ready=false
+          for _attempt in $(seq 1 60); do
+            # GraphQL variable names are literal, not shell expansions.
+            # shellcheck disable=SC2016
+            if ! railway api \
+              'query Runtime($serviceId: String!, $environmentId: String!, $deploymentId: String!) { serviceInstance(serviceId: $serviceId, environmentId: $environmentId) { healthcheckPath healthcheckTimeout restartPolicyType domains { customDomains { domain targetPort } serviceDomains { domain targetPort } } latestDeployment { id status instances { id status } } activeDeployments { id status instances { id status } } } deployment(id: $deploymentId) { id projectId environmentId serviceId status instances { id status } } }' \
+              --variables "$query_variables" \
+              >"${RUNNER_TEMP}/stateful-runtime-reused.json"; then
+              sleep 5
+              continue
+            fi
+            state=$(RUNTIME_PATH="${RUNNER_TEMP}/stateful-runtime-reused.json" \
+              DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              RAILWAY_PROJECT_ID="$RAILWAY_PROJECT_ID" \
+              RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+              RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" \
+              python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["RUNTIME_PATH"]).read_text())
+          try:
+              service = value["data"]["serviceInstance"]
+              deployment = value["data"]["deployment"]
+          except (KeyError, TypeError):
+              raise SystemExit("reused Railway runtime response is malformed") from None
+          manifest = {
+              "healthcheckPath": "/healthz",
+              "healthcheckTimeout": 3600,
+              "restartPolicyType": "NEVER",
+              "domains": {"customDomains": [], "serviceDomains": []},
+          }
+          if {key: service.get(key) for key in manifest} != manifest:
+              raise SystemExit("reused Railway service manifest differs")
+          identity = {
+              "id": os.environ["DEPLOYMENT_ID"],
+              "projectId": os.environ["RAILWAY_PROJECT_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+          }
+          if {key: deployment.get(key) for key in identity} != identity:
+              raise SystemExit("reused Railway deployment identity differs")
+          latest = service.get("latestDeployment")
+          active = service.get("activeDeployments")
+          if not isinstance(latest, dict) or latest.get("id") != identity["id"]:
+              raise SystemExit("another Railway deployment became latest")
+          if not isinstance(active, list):
+              raise SystemExit("Railway active-deployment response is malformed")
+          if any(item.get("id") != identity["id"] for item in active):
+              raise SystemExit("another Railway deployment became active")
+          candidates = [deployment, latest, *active]
+          terminal = {"CRASHED", "EXITED", "REMOVED", "REMOVING", "STOPPED"}
+          if any(item.get("status") in terminal for item in candidates):
+              raise SystemExit("reused Railway deployment entered a terminal state")
+          if len(active) != 1:
+              print("WAIT")
+          elif all(
+              item.get("status") == "SUCCESS"
+              and isinstance(item.get("instances"), list)
+              and len(item["instances"]) == 1
+              and item["instances"][0].get("status") == "RUNNING"
+              for item in candidates
+          ):
+              instance_ids = {
+                  item["instances"][0].get("id") for item in candidates
+              }
+              if len(instance_ids) != 1 or not all(instance_ids):
+                  raise SystemExit("reused Railway instance identity is inconsistent")
+              instance_id = instance_ids.pop()
+              print(f"READY:{instance_id}")
+          else:
+              print("WAIT")
+          PY
+            )
+            if [[ "$state" = READY:* ]]; then
+              replica_id=${state#READY:}
+              ready=true
+              break
+            fi
+            test "$state" = WAIT
+            sleep 5
+          done
+          test "$ready" = true
+          [[ "$replica_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          echo "replica_id=$replica_id" >>"$GITHUB_OUTPUT"
+
+      - name: Validate the byte-identical reused receipt
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+          RAILWAY_DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          CREATED_REPLICA_ID: ${{ steps.initial_runtime.outputs.replica_id }}
+          REUSED_REPLICA_ID: ${{ steps.reused_runtime.outputs.replica_id }}
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          RECEIPT_PATH: ${{ steps.evidence.outputs.receipt_path }}
+          EXPECTED_RECEIPT_SHA256: ${{ steps.evidence.outputs.receipt_sha256 }}
+          RESTART_NOT_BEFORE: ${{ steps.restart_proof.outputs.restart_not_before }}
+          LOG_PATH: ${{ steps.restart_proof.outputs.log_path }}
+          RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_VOLUME_NAME: ${{ secrets.RAILWAY_STATEFUL_VOLUME_NAME }}
+          RAILWAY_REPLICA_REGION: ${{ secrets.RAILWAY_STATEFUL_REGION }}
+          UPLOAD_ROOT: ${{ steps.request.outputs.upload_root }}
+        run: |
+          set -euo pipefail
+          rm -f "$LOG_PATH"
+          railway logs "$RAILWAY_DEPLOYMENT_ID" \
+            --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --deployment --json --lines 1000 >"$LOG_PATH"
+          PYTHONPATH=backend python3 -B - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          from seiche.stateful_migration import (
+              extract_log_results,
+              rfc3339_utc_nanoseconds,
+          )
+
+          results = extract_log_results(
+              Path(os.environ["LOG_PATH"]).read_bytes(),
+              expected_request_id=os.environ["REQUEST_ID"],
+              expected_deployment_id=os.environ["RAILWAY_DEPLOYMENT_ID"],
+              expected_replicas={
+                  "created": os.environ["CREATED_REPLICA_ID"],
+                  "reused": os.environ["REUSED_REPLICA_ID"],
+              },
+          )
+          retained = Path(os.environ["RECEIPT_PATH"]).read_bytes()
+          if (
+              results["created"].receipt_body != retained
+              or results["reused"].receipt_body != retained
+              or results["created"].receipt_sha256
+              != os.environ["EXPECTED_RECEIPT_SHA256"]
+              or results["reused"].receipt_sha256
+              != os.environ["EXPECTED_RECEIPT_SHA256"]
+              or hashlib.sha256(retained).hexdigest()
+              != os.environ["EXPECTED_RECEIPT_SHA256"]
+          ):
+              raise SystemExit("restart/reuse receipt bytes differ")
+          boundary = rfc3339_utc_nanoseconds(
+              os.environ["RESTART_NOT_BEFORE"],
+              label="restart not-before boundary",
+          )
+          if results["reused"].logged_at_unix_ns <= boundary:
+              raise SystemExit("reused receipt marker predates the restart boundary")
+          PY
+          PYTHONPATH=backend python3 -B -m seiche.stateful_migration \
+            verify-receipt \
+            --request "$UPLOAD_ROOT/request.json" \
+            --source-archive "$UPLOAD_ROOT/source.tar" \
+            --source-bundle "$UPLOAD_ROOT/source.bundle" \
+            --receipt "$RECEIPT_PATH" >"${RUNNER_TEMP}/reused-receipt.sha256"
+          test "$(cat "${RUNNER_TEMP}/reused-receipt.sha256")" = \
+            "$EXPECTED_RECEIPT_SHA256"
 
       - name: Retain the private canonical migration evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

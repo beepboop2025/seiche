@@ -70,6 +70,9 @@ API credential, Telegram token, GitHub token, or DNS credential. Railway's own
 PostgreSQL reference is the sole database secret available to the root restore
 supervisor; the supervisor removes the control `DATABASE_URL` before starting
 the unprivileged API and supplies only the generation-specific database URL.
+Do not add a Railway SSH private key to GitHub: Railway user/workspace SSH keys
+are broader than this project, and the protected workflow neither opens SSH nor
+reads volume files. The project token is its only Railway credential.
 
 ## Select and stage a snapshot
 
@@ -107,6 +110,11 @@ for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
 done
 ```
 
+This staging command is a manual operator action using the operator's reviewed
+Railway access. It is deliberately outside GitHub Actions. Keep the private
+source directory until the run is accepted so a failed or incomplete inbox can
+be reconciled without granting CI broader filesystem access.
+
 Compute the workflow inputs from those exact local bytes. The content-set
 digest is SHA-256 over, in `SHA256SUMS` order, each ASCII filename, NUL, member
 digest, NUL, decimal byte length, and newline. This is the same closed
@@ -130,21 +138,40 @@ The workflow then:
 
 1. creates canonical source archive, Git bundle, and shadow request bytes;
 2. proves the exact isolated service/volume, absent public domain, private
-   PostgreSQL reference, and staged metadata;
-3. uploads the pinned stateful image and waits for that exact deployment;
-4. validates every snapshot member and tar path before extraction;
+   PostgreSQL reference, and staging prerequisites;
+3. uploads the pinned stateful image, waits for that exact deployment, and
+   proves its `/healthz` manifest and one exact `RUNNING` instance;
+4. has the runtime validate every staged snapshot member and tar path before
+   extraction; CI never downloads or lists volume files;
 5. runs SQLite `PRAGMA quick_check`, the strict full NBS store audit, a fresh
    generation-specific PostgreSQL restore, and four table-count floors;
 6. writes a canonical, immutable, group-readable shadow receipt;
 7. starts only the API as uid/gid 10001, with control tokens removed and the
    stateful pre-activation read-only guard enabled;
-8. retrieves and independently validates the receipt, probes `/healthz`
-   through the exact active instance, retains private evidence for 90 days,
-   and OIDC-attests those exact receipt bytes.
+8. emits one bounded, opaque, single-line log envelope only after the runtime
+   has revalidated that canonical receipt;
+9. retrieves exact-deployment JSON logs with the project token, reconstructs
+   the exact receipt bytes, and runs the independent receipt verifier;
+10. restarts that same deployment, requires exactly one `reused` envelope whose
+    Railway log timestamp is after the recorded restart boundary, and requires
+    its receipt bytes and digest to be identical to the created result; and
+11. re-proves the exact deployment is `SUCCESS`, has one `RUNNING` instance,
+    retains the private evidence for 90 days, and OIDC-attests those exact
+    canonical receipt bytes.
+
+The log envelope is base64 transport, not encryption. Its closed receipt
+schema is designed to contain no database URL, token, key, or other secret;
+deployment logs and retained artifacts must still be treated as private
+migration evidence. Any future receipt field that could contain a secret must
+be rejected before this transport is extended. The extractor is bounded and
+fails closed on malformed or truncated encoding, duplicate lifecycle markers,
+an unexpected lifecycle, stale request/deployment/replica identities, a
+non-canonical receipt, or a restart marker at or before the local not-before
+boundary.
 
 Completion requires all workflow steps green and an attestation for the
-downloaded canonical receipt. A Railway `SUCCESS`, a green health check, or an
-uploaded artifact alone is insufficient.
+reconstructed canonical receipt. A Railway `SUCCESS`, a green health check, a
+log marker, or an uploaded artifact alone is insufficient.
 
 The shadow receipt contract is
 `seiche.railway-stateful-shadow-receipt.v4`; v3 receipts are deliberately not
@@ -191,7 +218,11 @@ mutation still fails restart/reuse validation.
 The request ID and filesystem/database generation names are content-addressed.
 Redeploying the same accepted request re-hashes the filesystem, reruns SQLite
 and NBS verification, and requires unchanged PostgreSQL counts before serving.
-Any mutation fails closed.
+The Phase 4 workflow exercises this reuse path with `railway restart`; Railway
+may preserve the deployment and replica IDs, so restart proof comes from the
+same deployment's later Railway log timestamp plus the unique `reused`
+lifecycle envelope, not from assuming an ID must change. Any mutation fails
+closed.
 
 Never delete or overwrite an inbox, generation, database, or receipt merely to
 make a retry pass. A failed run that created an unreceipted generation is an
@@ -210,7 +241,8 @@ three runs have:
 - closed backup and strict NBS proof;
 - database counts at or above their floors;
 - no Railway public domain and no Railway writer;
-- successful restart/reuse validation of the receipted generation; and
+- successful exact-deployment restart/reuse validation with one later
+  `reused` marker and byte-identical canonical receipt; and
 - a v4 shadow receipt carrying the closed Palimpsest China identity, restored
   Agent Room audit, and no pending activation transaction; and
 - an operator-reviewed rollback and authority-fencing rehearsal.

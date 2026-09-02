@@ -9,6 +9,7 @@ deployment, while this runtime owns only validation, restore, and evidence.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -28,6 +29,8 @@ from typing import Any, Mapping, NamedTuple
 
 REQUEST_SCHEMA = "seiche.railway-stateful-shadow-request.v1"
 RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v4"
+LOG_RESULT_SCHEMA = "seiche.railway-stateful-shadow-log-result.v1"
+LOG_RESULT_MARKER = "SEICHE_RAILWAY_STATEFUL_SHADOW_RESULT_V1="
 BACKUP_SCHEMA = "seiche.market-backup.v4"
 LEGACY_BACKUP_SCHEMA = "seiche.market-backup.v3"
 AGENT_ROOM_RESTORE_AUDIT_SCHEMA = "seiche.agent-room.restore-audit.v1"
@@ -41,6 +44,9 @@ SOURCE_BUNDLE = Path("/migration/source.bundle")
 REQUEST_PATH = Path("/migration/request.json")
 RUNTIME_UID = 10001
 RUNTIME_GID = 10001
+MAX_LOG_RECEIPT_BYTES = 16 * 1024
+MAX_LOG_RESULT_BYTES = 24 * 1024
+MAX_DEPLOYMENT_LOG_BYTES = 8 * 1024 * 1024
 PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA = "seiche.palimpsest-china-activation-state.v1"
 
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
@@ -50,6 +56,10 @@ _UUID_RE = re.compile(
 )
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _REGION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
+_RFC3339_UTC_RE = re.compile(
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.([0-9]{1,9}))?Z"
+)
 _PALIMPSEST_CHINA_STATE_KEYS = frozenset(
     {
         "audit_schema",
@@ -156,6 +166,18 @@ class RestoredDatabase(NamedTuple):
     counts: tuple[int, int, int, int]
 
 
+class ShadowLogResult(NamedTuple):
+    lifecycle: str
+    request_id: str
+    deployment_id: str
+    replica_id: str
+    logged_at: str
+    logged_at_unix_ns: int
+    runtime_started_at: str
+    receipt_sha256: str
+    receipt_body: bytes
+
+
 def canonical_document(value: object) -> bytes:
     return (
         json.dumps(
@@ -167,6 +189,227 @@ def canonical_document(value: object) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def rfc3339_utc_nanoseconds(value: object, *, label: str) -> int:
+    """Parse a Railway RFC3339 UTC timestamp without losing nanoseconds."""
+
+    if not isinstance(value, str):
+        raise MigrationContractError(f"{label} is not a timestamp")
+    match = _RFC3339_UTC_RE.fullmatch(value)
+    if match is None:
+        raise MigrationContractError(f"{label} is not canonical RFC3339 UTC")
+    try:
+        seconds = int(
+            datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S")
+            .replace(tzinfo=UTC)
+            .timestamp()
+        )
+    except ValueError as exc:
+        raise MigrationContractError(f"{label} is invalid") from exc
+    fraction = (match.group(2) or "").ljust(9, "0")
+    return seconds * 1_000_000_000 + int(fraction or "0")
+
+
+def render_log_result(
+    receipt: Mapping[str, Any],
+    *,
+    lifecycle: str,
+    environment: Mapping[str, str],
+    runtime_started_at: str,
+) -> str:
+    """Render one bounded, opaque result line for project-token log retrieval."""
+
+    if lifecycle not in {"created", "reused"}:
+        raise MigrationContractError("shadow log lifecycle is invalid")
+    deployment_id = environment.get("RAILWAY_DEPLOYMENT_ID", "")
+    replica_id = environment.get("RAILWAY_REPLICA_ID", "")
+    if (
+        _UUID_RE.fullmatch(deployment_id) is None
+        or _UUID_RE.fullmatch(replica_id) is None
+    ):
+        raise MigrationContractError("shadow log Railway identity is invalid")
+    canonical_started_at = (
+        _utc_timestamp(runtime_started_at, label="shadow runtime started_at")
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    if canonical_started_at != runtime_started_at:
+        raise MigrationContractError("shadow runtime started_at is not canonical")
+
+    request = receipt.get("request")
+    railway = receipt.get("railway")
+    if (
+        not isinstance(request, dict)
+        or _SHA64_RE.fullmatch(str(request.get("id", ""))) is None
+        or not isinstance(railway, dict)
+        or railway.get("deployment_id") != deployment_id
+    ):
+        raise MigrationContractError("shadow log receipt binding is invalid")
+    receipt_body = canonical_document(dict(receipt))
+    if not receipt_body or len(receipt_body) > MAX_LOG_RECEIPT_BYTES:
+        raise MigrationContractError("shadow receipt exceeds the log transport bound")
+    receipt_sha256 = _sha256_bytes(receipt_body)
+    envelope = {
+        "schema": LOG_RESULT_SCHEMA,
+        "lifecycle": lifecycle,
+        "request_id": request["id"],
+        "deployment_id": deployment_id,
+        "replica_id": replica_id,
+        "runtime_started_at": runtime_started_at,
+        "receipt_sha256": receipt_sha256,
+        "receipt": dict(receipt),
+    }
+    encoded = base64.b64encode(canonical_document(envelope)).decode("ascii")
+    marker = LOG_RESULT_MARKER + encoded
+    if len(marker.encode("ascii")) > MAX_LOG_RESULT_BYTES:
+        raise MigrationContractError("shadow log result exceeds the transport bound")
+    return marker
+
+
+def extract_log_results(
+    body: bytes,
+    *,
+    expected_request_id: str,
+    expected_deployment_id: str,
+    expected_replicas: Mapping[str, str],
+) -> dict[str, ShadowLogResult]:
+    """Extract an exact lifecycle set from Railway CLI JSON deployment logs."""
+
+    if not body or len(body) > MAX_DEPLOYMENT_LOG_BYTES:
+        raise MigrationContractError("Railway deployment log size is invalid")
+    if (
+        _SHA64_RE.fullmatch(expected_request_id) is None
+        or _UUID_RE.fullmatch(expected_deployment_id) is None
+        or not expected_replicas
+        or set(expected_replicas) not in ({"created"}, {"created", "reused"})
+        or any(
+            _UUID_RE.fullmatch(value) is None for value in expected_replicas.values()
+        )
+    ):
+        raise MigrationContractError("expected shadow log identity is invalid")
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise MigrationContractError("Railway deployment logs are not UTF-8") from exc
+
+    results: dict[str, ShadowLogResult] = {}
+    for line in text.splitlines():
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise MigrationContractError(
+                "Railway deployment log line is not JSON"
+            ) from exc
+        if not isinstance(record, dict) or not isinstance(record.get("message"), str):
+            raise MigrationContractError("Railway deployment log record is invalid")
+        message = record["message"]
+        if LOG_RESULT_MARKER not in message:
+            continue
+        if not message.startswith(LOG_RESULT_MARKER):
+            raise MigrationContractError("shadow log result framing is invalid")
+        logged_at = record.get("timestamp")
+        if not isinstance(logged_at, str):
+            raise MigrationContractError("Railway shadow log timestamp is absent")
+        logged_at_unix_ns = rfc3339_utc_nanoseconds(
+            logged_at,
+            label="Railway shadow log timestamp",
+        )
+        encoded = message.removeprefix(LOG_RESULT_MARKER)
+        if (
+            not encoded
+            or len(message.encode("utf-8")) > MAX_LOG_RESULT_BYTES
+            or re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", encoded) is None
+        ):
+            raise MigrationContractError("shadow log result encoding is invalid")
+        try:
+            envelope_body = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise MigrationContractError(
+                "shadow log result is truncated or malformed"
+            ) from exc
+        if base64.b64encode(envelope_body).decode("ascii") != encoded:
+            raise MigrationContractError("shadow log result encoding is not canonical")
+        envelope = _decode_canonical_json(envelope_body, label="shadow log result")
+        if (
+            set(envelope)
+            != {
+                "schema",
+                "lifecycle",
+                "request_id",
+                "deployment_id",
+                "replica_id",
+                "runtime_started_at",
+                "receipt_sha256",
+                "receipt",
+            }
+            or envelope.get("schema") != LOG_RESULT_SCHEMA
+        ):
+            raise MigrationContractError("shadow log result fields are invalid")
+        lifecycle = envelope.get("lifecycle")
+        if lifecycle not in expected_replicas:
+            raise MigrationContractError(
+                "shadow log result lifecycle is stale or unexpected"
+            )
+        if lifecycle in results:
+            raise MigrationContractError("shadow log result lifecycle is duplicated")
+        if (
+            envelope.get("request_id") != expected_request_id
+            or envelope.get("deployment_id") != expected_deployment_id
+            or envelope.get("replica_id") != expected_replicas[lifecycle]
+        ):
+            raise MigrationContractError(
+                "shadow log result identity is stale or unexpected"
+            )
+        canonical_started_at = (
+            _utc_timestamp(
+                envelope.get("runtime_started_at"),
+                label="shadow log runtime started_at",
+            )
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        if canonical_started_at != envelope.get("runtime_started_at"):
+            raise MigrationContractError(
+                "shadow log runtime started_at is not canonical"
+            )
+        receipt = envelope.get("receipt")
+        if not isinstance(receipt, dict):
+            raise MigrationContractError("shadow log receipt is invalid")
+        receipt_request = receipt.get("request")
+        receipt_railway = receipt.get("railway")
+        if not isinstance(receipt_request, dict) or not isinstance(
+            receipt_railway, dict
+        ):
+            raise MigrationContractError("shadow log receipt identity is invalid")
+        receipt_body = canonical_document(receipt)
+        if not receipt_body or len(receipt_body) > MAX_LOG_RECEIPT_BYTES:
+            raise MigrationContractError("shadow log receipt size is invalid")
+        receipt_sha256 = _sha256_bytes(receipt_body)
+        if (
+            envelope.get("receipt_sha256") != receipt_sha256
+            or receipt_request.get("id") != expected_request_id
+            or receipt_railway.get("deployment_id") != expected_deployment_id
+        ):
+            raise MigrationContractError(
+                "shadow log receipt digest or identity is invalid"
+            )
+        results[lifecycle] = ShadowLogResult(
+            lifecycle=lifecycle,
+            request_id=expected_request_id,
+            deployment_id=expected_deployment_id,
+            replica_id=expected_replicas[lifecycle],
+            logged_at=logged_at,
+            logged_at_unix_ns=logged_at_unix_ns,
+            runtime_started_at=canonical_started_at,
+            receipt_sha256=receipt_sha256,
+            receipt_body=receipt_body,
+        )
+    if set(results) != set(expected_replicas):
+        raise MigrationContractError("shadow log result lifecycle set is incomplete")
+    return results
 
 
 def _sha256_bytes(body: bytes) -> str:
@@ -1873,7 +2116,7 @@ def restore_shadow(
     railway: Mapping[str, str],
     runtime_uid: int = RUNTIME_UID,
     runtime_gid: int = RUNTIME_GID,
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, str]:
     started_at = _iso_now()
     if bundle.schema != BACKUP_SCHEMA or bundle.palimpsest_china_state_audit is None:
         raise MigrationContractError(
@@ -1910,7 +2153,7 @@ def restore_shadow(
             receipt["database"]["critical_table_counts"]
         ):
             raise MigrationContractError("accepted shadow PostgreSQL counts changed")
-        return receipt, target_dsn
+        return receipt, target_dsn, "reused"
     if generation_path.exists() or generation_path.is_symlink():
         raise MigrationContractError(
             "unreceipted shadow generation needs reconciliation"
@@ -1948,7 +2191,7 @@ def restore_shadow(
         )
         validate_receipt_document(receipt, request=request, railway=railway)
         _write_receipt(receipt_path, receipt, gid=runtime_gid)
-        return receipt, database.dsn
+        return receipt, database.dsn, "created"
     finally:
         if staging.is_dir() and not staging.is_symlink():
             shutil.rmtree(staging)
@@ -2131,6 +2374,7 @@ def supervise_shadow(environment: Mapping[str, str]) -> int:
 
 
 def run_shadow() -> int:
+    runtime_started_at = _iso_now()
     if os.geteuid() != 0 or os.getegid() != 0:
         raise MigrationContractError("stateful migration supervisor must start as root")
     request = load_request(REQUEST_PATH, SOURCE_ARCHIVE, SOURCE_BUNDLE)
@@ -2144,7 +2388,7 @@ def run_shadow() -> int:
     base_dsn = os.getenv("DATABASE_URL", "").strip()
     if not base_dsn:
         raise MigrationContractError("Railway PostgreSQL URL is absent")
-    receipt, database_dsn = restore_shadow(
+    receipt, database_dsn, lifecycle = restore_shadow(
         request,
         bundle,
         platform_root=platform_root,
@@ -2162,9 +2406,14 @@ def run_shadow() -> int:
         runtime_uid=RUNTIME_UID,
         runtime_gid=RUNTIME_GID,
     )
-    validate_runtime_receipt(environment)
+    validated_receipt = validate_runtime_receipt(environment)
     print(
-        "seiche Railway shadow: restore verified; Hetzner remains sole authority",
+        render_log_result(
+            validated_receipt,
+            lifecycle=lifecycle,
+            environment=os.environ,
+            runtime_started_at=runtime_started_at,
+        ),
         flush=True,
     )
     return supervise_shadow(environment)
