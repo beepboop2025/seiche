@@ -90,15 +90,16 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → eleven tools, named so you can check this against the
+- **Anonymous** (no token) → twelve tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
-  `fx_materials_passage`, `world_markets_context`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
+  `fx_materials_passage`, `world_markets_context`, `trade_safety_risk_context`,
+  plus `latest_article`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, granular USD
   money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
   per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same eleven plus the five that read the
+- **Subscriber** (bearer token) → the same twelve plus the five that read the
   derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
   `desk_brief`, `ask_desk`. At your tier's quota.
 
@@ -270,6 +271,7 @@ recorded in the `provisions` table for audit.
 |------|-----------------|---------|
 | `latest_article` | Exact full-text daily editorial, evidence clock and passing publication receipt | public |
 | `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | public |
+| `trade_safety_risk_context` | Deterministic cache-only regime, index, coverage, source staleness counts, and conservative clocks; metadata-only derived context that does not evaluate attestations or grant execution authority | public |
 | `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
@@ -299,7 +301,7 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche's eleven evidence tools are a permanent free public good. Five
+Seiche's twelve evidence tools are a permanent free public good. Five
 compute-heavy tools are separately account-gated to cover operator cost. The
 codebase also carries a dormant
 [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
@@ -338,7 +340,7 @@ contract and mandatory activation checklist are documented in
 ## Public vs. full surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same eleven the hosted endpoint gives an anonymous caller, so a local run and a
+the same twelve the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -349,6 +351,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 |---|---|---|
 | `latest_article` | yes | the exact published editorial; no downstream regeneration |
 | `funding_stress_now` | yes | the conclusion, which is the free good |
+| `trade_safety_risk_context` | yes | a cache-only, rights-rechecked context envelope for external order guards; never execution authority |
 | `historical_analogs` | yes | precedent from the public record |
 | `proof_backtest` | yes | the track record, misses included |
 | `data_health` | yes | you should be able to check freshness before trusting a number |

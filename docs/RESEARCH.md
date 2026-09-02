@@ -99,7 +99,7 @@ in the code:
 
 ## What Seiche does not do
 
-- No paywall on the public evidence terminal: eleven contextual tools remain
+- No paywall on the public evidence terminal: twelve contextual tools remain
   anonymous and free. Compute-heavy forecast, replay, positioning, prose and LLM
   tools may require an account so their operator cost does not narrow the public
   surface.

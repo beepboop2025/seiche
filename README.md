@@ -64,7 +64,7 @@ ledger status. The auditable source of truth is
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
 | **PyPI** | Python package and stdio MCP server (`pip install seiche`) | 0.11.0 verified; signed 0.11.1 ownership-marker patch prepared |
 
-Eleven evidence tools remain anonymous and free. Five compute-heavy tools are
+Twelve evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
@@ -318,7 +318,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Eleven tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Twelve tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -333,6 +333,7 @@ The copy-paste quickstart and live tool runner are at
 |---|---|
 | `latest_article` | today's exact full-text editorial with its evidence clock and publication receipt |
 | `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |
+| `trade_safety_risk_context` | deterministic cache-only regime/index/coverage/clocks for order guards; context-only and never execution authority |
 | `historical_analogs` | the closest days in the record, and what followed them |
 | `proof_backtest` | the track record with its misses and its confidence intervals |
 | `data_health` | freshness and provenance for every input, before you trust a reading |
@@ -446,7 +447,7 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The eleven-tool public evidence surface needs no account and does not depend on
+The twelve-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
 Five compute-heavy forecast, replay, positioning, prose and LLM tools are
 account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus

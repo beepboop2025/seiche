@@ -98,7 +98,7 @@ export default function Account() {
       <div className="card span6">
         <h2>API access</h2>
         <div className="sub">
-          The public API and eleven public MCP tools need no key. Your bearer token identifies you for
+          The public API and twelve public MCP tools need no key. Your bearer token identifies you for
           alert preferences and authenticated refreshes; when subscriber access is provisioned, it also
           authenticates five additional hosted MCP tools. Keep it private; it lasts 30 days.
         </div>

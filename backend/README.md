@@ -18,6 +18,7 @@ a real-time quote service, execution venue, or investment adviser.
 - Developer guide and tool runner: [seiche.info/developers](https://seiche.info/developers)
 - Source and full documentation: [github.com/beepboop2025/seiche](https://github.com/beepboop2025/seiche)
 - Hosted MCP server: `https://api.seiche.info/mcp`
+- Cache-only Trade Safety context: `https://api.seiche.info/api/trade-safety/risk-context`
 
 ## Install and run
 
@@ -55,10 +56,17 @@ Or connect an MCP-capable client directly to the public Streamable HTTP server:
 https://api.seiche.info/mcp
 ```
 
-Eleven evidence/context tools are anonymous: the current funding-stress read,
-historical analogs, public backtest, data health, crypto record, institutional
-flows, oil/funding, FX/materials, US money markets, world markets, and the latest
-article. Five higher-cost forecast, replay, positioning, prose, and LLM tools
+The public `trade_safety_risk_context` tool returns only the last completed
+Seiche regime, index, coverage, source-status counts, and conservative clocks.
+It is metadata-only derived context, never an executable or real-money-eligible
+claim, and does not inspect the attestation ledger. Stream attestations are
+verified separately and never confer per-order execution authority.
+
+Twelve evidence/context tools are anonymous: the current funding-stress read,
+cache-only Trade Safety context, historical analogs, public backtest, data
+health, crypto record, institutional flows, oil/funding, FX/materials, US money
+markets, world markets, and the latest article. Five higher-cost forecast,
+replay, positioning, prose, and LLM tools
 require an account and are omitted from anonymous `tools/list` responses.
 
 The canonical registry ownership marker is:

@@ -11,6 +11,21 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+### Added
+
+- Added a deterministic `seiche.risk-context.v1` REST/MCP projection for Trade
+  Safety integrations. It reads only a completed cache, repeats rights and
+  clock validation, and carries regime, index, coverage, staleness counts, and
+  conservative snapshot/evidence clocks.
+
+### Security
+
+- Kept the Trade Safety projection metadata-only, derived, non-executable, and
+  ineligible for real-money use. It performs no request-time collection,
+  fitting, network, notary, or broker work. It does not inspect the attestation
+  ledger or treat a separately verified stream attestation as per-order
+  execution authority.
+
 ## [0.11.1] - 2026-08-24
 
 ### Fixed

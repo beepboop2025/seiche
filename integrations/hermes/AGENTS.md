@@ -50,7 +50,8 @@ staring at dashboards.
 
 ## Tool map (Seiche MCP server)
 
-Public (eleven anonymous tools): `latest_article`, `funding_stress_now`,
+Public (twelve anonymous tools): `latest_article`, `funding_stress_now`,
+`trade_safety_risk_context`,
 `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record` (the Wrecks table: crypto episodes vs the board,
 transmission vs specificity stated honestly), `institutional_flows`,

@@ -23,12 +23,12 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the eleven tools flagged ``is_public`` in
+Surface: the *public* surface is the twelve tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
 ``fx_materials_passage``, ``money_market_context`` and
-``world_markets_context``. That is the published
+``world_markets_context``, plus ``trade_safety_risk_context``. That is the published
 editorial, the conclusion, the precedent, the honest record, the freshness of
 the inputs, granular USD money-market evidence, and cross-market transmission
 context; it is free to everyone with no token. The *full* surface adds the five
@@ -931,6 +931,23 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
     )
 
 
+def tool_trade_safety_risk_context(args: dict, _public: bool) -> Any:
+    """Serve the deterministic, cache-only, non-executable risk projection."""
+
+    if not isinstance(args, dict):
+        raise ToolError("arguments must be an object")
+    if args:
+        raise ToolError(
+            "unknown argument(s): " + ", ".join(sorted(str(key) for key in args))
+        )
+    from seiche import trade_safety
+
+    return trade_safety.project(
+        _get_completed_snapshot(),
+        evaluation_at=datetime.now(UTC).replace(microsecond=0),
+    )
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError(
@@ -989,6 +1006,19 @@ TOOLS: dict[str, tuple] = {
         "sheet, or liquidity conditions.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_stress_now,
+        True,
+    ),
+    "trade_safety_risk_context": (
+        "Cache-only Seiche context for trade-safety guards",
+        "A deterministic, bounded projection of the last completed Seiche board: "
+        "funding regime, 0-100 stress index, coverage, source staleness counts, "
+        "snapshot clock, and conservative evidence clock. It repeats the rights "
+        "check and never collects, fits, calls a network source, reads a notary "
+        "ledger, or contacts a broker. This is metadata-only derived context, "
+        "not order-bound, non-executable, never real-money eligible, and it does "
+        "not evaluate stream attestations or treat them as per-order authority.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_trade_safety_risk_context,
         True,
     ),
     "money_market_context": (
@@ -1453,6 +1483,159 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
         (
             ("as_of", "headline", "composite", "tell", "faults", "version", "reading"),
             {},
+        ),
+    ),
+    "trade_safety_risk_context": _output_schema(
+        "Cache-only Seiche risk context with fail-closed execution boundaries.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "status": {
+                "type": "string",
+                "enum": ["available", "unavailable", "FAILED"],
+            },
+            "reason": _STRING_OR_NULL,
+            "state": {"type": "string", "enum": ["context_only", "unavailable"]},
+            "evidence_class": {"type": "string", "enum": ["derived", "unavailable"]},
+            "rights_status": {"const": "metadata_only"},
+            "context_only": {"const": True},
+            "executable": {"const": False},
+            "executable_quote": {"const": False},
+            "real_money_eligible": {"const": False},
+            "can_authorize_order": {"const": False},
+            "projection_mode": {"const": "cache_only"},
+            "request_time_collection": {"const": False},
+            "request_time_model_fitting": {"const": False},
+            "request_time_network": {"const": False},
+            "request_time_notary": {"const": False},
+            "request_time_broker": {"const": False},
+            "attestation_state": {"const": "not_evaluated"},
+            "source_url": {"type": "string"},
+            "source_snapshot_version": _STRING_OR_NULL,
+            "regime": {"type": ["string", "null"]},
+            "stress_index": _NUMBER_OR_NULL,
+            "coverage_pct": _NUMBER_OR_NULL,
+            "fault_count": {"type": ["integer", "null"]},
+            "staleness": {
+                "type": "object",
+                "required": ["fresh", "aging", "stale", "dead", "unknown", "total"],
+                "properties": {
+                    state: {"type": "integer", "minimum": 0}
+                    for state in ("fresh", "aging", "stale", "dead", "unknown", "total")
+                },
+                "additionalProperties": False,
+            },
+            "clocks": {
+                "type": "object",
+                "required": [
+                    "snapshot_generated_at",
+                    "evidence_as_of",
+                    "evaluated_at",
+                    "snapshot_age_seconds",
+                    "evidence_age_seconds",
+                    "basis",
+                ],
+                "properties": {
+                    "snapshot_generated_at": _STRING_OR_NULL,
+                    "evidence_as_of": _STRING_OR_NULL,
+                    "evaluated_at": _STRING_OR_NULL,
+                    "snapshot_age_seconds": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "evidence_age_seconds": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "basis": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "attestation": {
+                "type": "object",
+                "required": [
+                    "status",
+                    "ed25519_status",
+                    "ots_status",
+                    "bitcoin_anchor_claimed",
+                    "ledger_read",
+                    "reason",
+                    "disclosure",
+                ],
+                "properties": {
+                    "status": {"const": "not_evaluated"},
+                    "ed25519_status": {"const": "not_evaluated"},
+                    "ots_status": {"const": "not_evaluated"},
+                    "bitcoin_anchor_claimed": {"const": False},
+                    "ledger_read": {"const": False},
+                    "reason": {
+                        "const": "attestation_ledger_not_evaluated_by_this_projection"
+                    },
+                    "disclosure": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "limitations": {"type": "array", "items": {"type": "string"}},
+            "disclaimer": {"type": "string"},
+            "projection_sha256": {"type": "string"},
+            "canonicalization": {"type": "string"},
+        },
+        (
+            (
+                "ok",
+                "schema",
+                "status",
+                "state",
+                "evidence_class",
+                "rights_status",
+                "context_only",
+                "executable",
+                "executable_quote",
+                "real_money_eligible",
+                "can_authorize_order",
+                "projection_mode",
+                "attestation_state",
+                "source_snapshot_version",
+                "regime",
+                "stress_index",
+                "coverage_pct",
+                "staleness",
+                "clocks",
+                "attestation",
+                "limitations",
+                "projection_sha256",
+                "canonicalization",
+            ),
+            {
+                "ok": True,
+                "schema": "seiche.risk-context.v1",
+                "status": "available",
+                "state": "context_only",
+                "evidence_class": "derived",
+            },
+        ),
+        (
+            (
+                "ok",
+                "schema",
+                "status",
+                "reason",
+                "state",
+                "evidence_class",
+                "rights_status",
+                "context_only",
+                "real_money_eligible",
+                "attestation_state",
+                "projection_sha256",
+                "canonicalization",
+            ),
+            {
+                "ok": False,
+                "schema": "seiche.risk-context.v1",
+                "status": "unavailable",
+                "state": "unavailable",
+                "evidence_class": "unavailable",
+            },
         ),
     ),
     "money_market_context": _output_schema(

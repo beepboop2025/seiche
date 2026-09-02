@@ -39,14 +39,15 @@ DOCS = [
 ]
 
 
-def test_the_surface_is_eleven_tools():
+def test_the_surface_is_twelve_tools():
     """A guard on the guard: if this number moves, every sentence below moves
     with it, and someone has to decide that deliberately."""
-    assert len(PUBLIC) == 11, sorted(PUBLIC)
+    assert len(PUBLIC) == 12, sorted(PUBLIC)
     assert len(GATED) == 5, sorted(GATED)
     assert PUBLIC == {
         "latest_article",
-        "funding_stress_now", "historical_analogs", "proof_backtest",
+        "funding_stress_now", "trade_safety_risk_context",
+        "historical_analogs", "proof_backtest",
         "data_health", "crypto_stress_record", "institutional_flows",
         "oil_funding_context", "fx_materials_passage", "money_market_context",
         "world_markets_context",
@@ -64,7 +65,7 @@ def test_hermes_persona_tool_map_is_exactly_the_runtime_surface():
     """The persona is operational input, so an obsolete map is a runtime bug."""
     text = (REPO / "integrations" / "hermes" / "AGENTS.md").read_text()
     match = re.search(
-        r"Public \(eleven anonymous tools\):(.*?)\nSubscriber \(five",
+        r"Public \(twelve anonymous tools\):(.*?)\nSubscriber \(five",
         text,
         re.DOTALL,
     )

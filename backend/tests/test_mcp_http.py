@@ -166,7 +166,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "eleven anonymous public evidence tools",
+        "scope": "twelve anonymous public evidence tools",
     }
     assert "tools" not in server
     corpus = document["servers"][1]
@@ -228,7 +228,7 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
-    assert payload["mcp"]["authentication"] == "none for the eleven public tools"
+    assert payload["mcp"]["authentication"] == "none for the twelve public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
@@ -422,6 +422,7 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
     )
     public_good = (
         "funding_stress_now",
+        "trade_safety_risk_context",
         "historical_analogs",
         "proof_backtest",
         "data_health",
@@ -510,6 +511,7 @@ def test_anonymous_sees_only_public_tools(client):
     assert names == {
         "latest_article",
         "funding_stress_now",
+        "trade_safety_risk_context",
         "historical_analogs",
         "proof_backtest",
         "data_health",
@@ -536,7 +538,7 @@ def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
     tools = response.json()["result"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 11
+    assert len(tools) == 12
     for tool in tools:
         assert tool["outputSchema"]["type"] == "object"
         assert tool["annotations"] == {

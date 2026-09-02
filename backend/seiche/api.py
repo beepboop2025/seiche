@@ -45,6 +45,7 @@ from seiche import (
     public_view,
     store,
     subscribe as subscribe_list,
+    trade_safety,
     usage,
     world_model_delivery,
     x402,
@@ -447,7 +448,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "eleven anonymous public evidence tools",
+                    "scope": "twelve anonymous public evidence tools",
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -1055,7 +1056,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the eleven public tools",
+            "authentication": "none for the twelve public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -1094,6 +1095,7 @@ def api_index() -> dict[str, Any]:
             "small_gauge": "/api/gauge",
             "market_catalog_v2": "/api/v2/markets",
             "world_markets_v2": "/api/v2/world-markets",
+            "trade_safety_risk_context": "/api/trade-safety/risk-context",
             "china_macro_page": "https://seiche.info/markets/china-macro/",
             "global_money_markets_v2": "/api/v2/money-markets",
             "market_coverage_v2": "/api/v2/coverage",
@@ -1482,6 +1484,43 @@ def _public_openapi_document() -> dict[str, Any]:
                                     },
                                     "additionalProperties": True,
                                 }
+                            }
+                        },
+                    },
+                },
+            },
+        },
+        "/api/trade-safety/risk-context": {
+            "get": {
+                "operationId": "getTradeSafetyRiskContext",
+                "summary": "Read cache-only Seiche context for trade-safety guards",
+                "description": (
+                    "Projects only a completed cached or persisted Seiche board. "
+                    "The request never collects, fits, reads an attestation ledger, "
+                    "calls a network source or broker, or authorizes an order. The "
+                    "response is metadata-only derived context, is never real-money "
+                    "eligible, preserves stale/dead/unknown source counts, and does "
+                    "not read or evaluate the attestation ledger. A separately "
+                    "verified stream attestation is never per-order authority."
+                ),
+                "responses": {
+                    "200": {
+                        "description": "Completed context projection",
+                        "content": {
+                            "application/json": {
+                                "schema": mcp_server.OUTPUT_SCHEMAS[
+                                    "trade_safety_risk_context"
+                                ]
+                            }
+                        },
+                    },
+                    "503": {
+                        "description": "Completed context is unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": mcp_server.OUTPUT_SCHEMAS[
+                                    "trade_safety_risk_context"
+                                ]
                             }
                         },
                     },
@@ -2268,6 +2307,29 @@ def world_markets_v2(response: Response, section: str = "all"):
         china_macro_context=china_macro_context,
         china_economic_context=china_economic_context,
     )
+
+
+@app.get("/api/trade-safety/risk-context")
+def trade_safety_risk_context(response: Response):
+    """Read a fail-closed, non-executable projection of completed Seiche state."""
+
+    payload = trade_safety.project(
+        mcp_server._get_completed_snapshot(),
+        evaluation_at=datetime.now(UTC).replace(microsecond=0),
+    )
+    if payload["status"] != "available":
+        return JSONResponse(
+            status_code=503,
+            content=payload,
+            headers={
+                "Cache-Control": "no-store",
+                "Retry-After": "30",
+                "X-Seiche-Execution-Authority": "none",
+            },
+        )
+    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=90"
+    response.headers["X-Seiche-Execution-Authority"] = "none"
+    return payload
 
 
 @app.get("/api/v2/coverage")

@@ -202,6 +202,7 @@ def test_ask_desk_does_not_proxy_liquilens_into_public_tools() -> None:
     public = {name for name, tool in mcp_server.TOOLS.items() if tool[4]}
     assert "ask_desk" not in public
     assert not any("liquilens" in name for name in mcp_server.TOOLS)
-    assert len(public) == 11
+    assert len(public) == 12
     assert "money_market_context" in public
     assert "world_markets_context" in public
+    assert "trade_safety_risk_context" in public

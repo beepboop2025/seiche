@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "plugin": "Seiche",
   "mcp_url": "https://api.seiche.info/mcp",
-  "surface": "anonymous_public_eleven_tools",
+  "surface": "anonymous_public_twelve_tools",
   "test_cases": [
     {
       "id": "positive-current-funding-and-freshness",
