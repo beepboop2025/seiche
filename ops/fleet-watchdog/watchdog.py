@@ -30,15 +30,16 @@ stdlib only, runs as root from a systemd timer.
 from __future__ import annotations
 
 import collections
-from datetime import date, datetime, timezone
 import json
 import os
+import re
 import ssl
 import stat
 import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import date, datetime, timezone
 
 STATE_PATH = "/var/lib/fleet-watchdog/state.json"
 # Never hardcode the operator's chat id: this file lives in a public repo.
@@ -66,11 +67,30 @@ RAILS_WARN_AGE_DAYS = 2
 # misrouted or unbounded response cannot consume arbitrary memory.
 RAILS_READ_MAX = 8 * 1024 * 1024
 
+# Maintenance receipts are deliberately tiny and contain no command output.
+# A strict cap prevents a compromised producer from turning the root watchdog
+# into an unbounded file reader.
+MAINTENANCE_READ_MAX = 32 * 1024
+MAINTENANCE_CLOCK_SKEW_S = 1
+# The producer runs every 15 minutes with AccuracySec=1m. Its deadline is one
+# complete scheduler window inside the nominal 24-hour package-to-enforcement
+# SLO, so a first detection cannot consume time that elapsed before the scan.
+MAINTENANCE_DEBT_DEADLINE_S = (23 * 60 * 60) + (44 * 60)
+MAINTENANCE_REASON_MAX = 240
+_SAFE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}\Z")
+_SAFE_UNIT = re.compile(r"[A-Za-z0-9_.:@-]{1,200}\Z")
+_SHA1 = re.compile(r"[0-9a-f]{40}\Z")
+_BOOT_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12}\Z"
+)
+
 # Mac-hosted bots report in by touching this file over ssh; if the Mac is
 # asleep, offline or logged out, nothing touches it and the box notices.
 MAC_HEARTBEAT = "/var/lib/fleet-watchdog/mac.heartbeat"
 MAC_STALE_S = 3600
 MAC_HEARTBEAT_MAX_BYTES = 64
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 
 # What gets probed comes from CONFIG_PATH, never from here. The shape:
 #
@@ -78,10 +98,18 @@ MAC_HEARTBEAT_MAX_BYTES = 64
 #                mtime proves the poll loop turns, and the unit to alert through
 #   mcp_remotes  display name, URL, and the unit to alert through
 #   liquilens_rails  public rails URL and the unit to alert through
+#   maintenance_status  one receipt-backed maintenance-debt probe
 Bot = collections.namedtuple("Bot", "unit env var state via")
 Remote = collections.namedtuple("Remote", "name url via")
 RailsProbe = collections.namedtuple("RailsProbe", "url via")
-Config = collections.namedtuple("Config", "bots remotes rails default_via")
+MaintenanceProbe = collections.namedtuple(
+    "MaintenanceProbe",
+    "name status_file debt_file service_unit timer_unit monitored_unit "
+    "max_age_seconds via",
+)
+Config = collections.namedtuple(
+    "Config", "bots remotes rails maintenance default_via config_problems"
+)
 
 # The MCP remotes have the bots' exact failure mode (process up, unit active,
 # answering nothing) for a less forgiving audience. An agent that gets one bad
@@ -175,8 +203,66 @@ def load_config(path: str | None = None) -> Config:
             rails = RailsProbe(str(rails_entry["url"]),
                                str(rails_entry.get("alert_via") or ""))
 
+    maintenance = None
+    config_problems: list[str] = []
+    maintenance_entry = raw.get("maintenance_status")
+    if maintenance_entry is not None:
+        required = (
+            "name", "status_file", "debt_file", "service_unit",
+            "timer_unit", "monitored_unit", "max_age_seconds",
+        )
+        valid = isinstance(maintenance_entry, dict)
+        if valid:
+            valid = all(key in maintenance_entry for key in required)
+        if valid:
+            name = maintenance_entry["name"]
+            status_file = maintenance_entry["status_file"]
+            debt_file = maintenance_entry["debt_file"]
+            service_unit = maintenance_entry["service_unit"]
+            timer_unit = maintenance_entry["timer_unit"]
+            monitored_unit = maintenance_entry["monitored_unit"]
+            max_age = maintenance_entry["max_age_seconds"]
+            via = maintenance_entry.get("alert_via", "")
+            valid = (
+                isinstance(name, str)
+                and _SAFE_NAME.fullmatch(name) is not None
+                and isinstance(status_file, str)
+                and os.path.isabs(status_file)
+                and os.path.basename(status_file) == "status.json"
+                and isinstance(debt_file, str)
+                and os.path.isabs(debt_file)
+                and os.path.basename(debt_file) == "restart-debt.json"
+                and status_file != debt_file
+                and os.path.dirname(status_file) == os.path.dirname(debt_file)
+                and isinstance(service_unit, str)
+                and _SAFE_UNIT.fullmatch(service_unit) is not None
+                and service_unit.endswith(".service")
+                and isinstance(timer_unit, str)
+                and _SAFE_UNIT.fullmatch(timer_unit) is not None
+                and timer_unit.endswith(".timer")
+                and isinstance(monitored_unit, str)
+                and _SAFE_UNIT.fullmatch(monitored_unit) is not None
+                and monitored_unit.endswith(".service")
+                and type(max_age) is int
+                and 60 <= max_age <= 86400
+                and isinstance(via, str)
+                and (not via or _SAFE_UNIT.fullmatch(via) is not None)
+            )
+        if valid:
+            maintenance = MaintenanceProbe(
+                name, status_file, debt_file, service_unit, timer_unit,
+                monitored_unit, max_age, via,
+            )
+        else:
+            # Do not echo the private value. A malformed opt-in must become a
+            # pageable synthetic check rather than silently disabling itself.
+            config_problems.append("maintenance_status configuration is invalid")
+            print("config maintenance_status is invalid, check will fail closed")
+
     default_via = str(raw.get("default_alert_via") or "")
-    return Config(bots, remotes, rails, default_via)
+    return Config(
+        bots, remotes, rails, maintenance, default_via, config_problems,
+    )
 
 
 def pick_via(name: str, configured: str, cfg: Config) -> str:
@@ -226,11 +312,492 @@ def api(token: str, method: str) -> dict:
 
 def unit_active(unit: str) -> bool:
     try:
-        out = subprocess.run(["systemctl", "is-active", unit],
-                             capture_output=True, text=True, timeout=15)
+        out = subprocess.run(
+            ["systemctl", "is-active", unit],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
         return out.stdout.strip() == "active"
     except Exception:
         return False
+
+
+def _read_safe_json(path: str, label: str,
+                    missing_ok: bool = False) -> tuple[dict | None, str | None]:
+    """Read one producer receipt without following or racing its directory.
+
+    The maintenance producer and this watchdog both run as root. Requiring a
+    root-private directory, an exact 0600 regular file and one link prevents a
+    less-privileged process from forging health or swapping the object between
+    validation and read. Error text deliberately omits the private path and
+    payload.
+    """
+    parent = os.path.dirname(path)
+    name = os.path.basename(path)
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    if not getattr(os, "O_NOFOLLOW", 0):
+        return None, f"{label} cannot be opened safely"
+    try:
+        directory_fd = os.open(parent, directory_flags)
+    except FileNotFoundError:
+        if missing_ok:
+            return None, None
+        return None, f"{label} directory is missing"
+    except OSError:
+        return None, f"{label} directory is unreadable or unsafe"
+
+    try:
+        directory_info = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(directory_info.st_mode)
+            or directory_info.st_uid != os.geteuid()
+            or stat.S_IMODE(directory_info.st_mode) != 0o700
+        ):
+            return None, f"{label} directory ownership or mode is unsafe"
+
+        file_flags = (
+            os.O_RDONLY
+            | os.O_NOFOLLOW
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        try:
+            fd = os.open(name, file_flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            if missing_ok:
+                return None, None
+            return None, f"{label} is missing"
+        except OSError:
+            return None, f"{label} is unreadable or unsafe"
+
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_nlink != 1
+            ):
+                return None, f"{label} ownership, mode or file type is unsafe"
+            if info.st_size > MAINTENANCE_READ_MAX:
+                return None, f"{label} exceeds its size limit"
+
+            chunks = []
+            remaining = MAINTENANCE_READ_MAX + 1
+            while remaining:
+                chunk = os.read(fd, min(8192, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+        except OSError:
+            return None, f"{label} could not be read safely"
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+    if len(raw) > MAINTENANCE_READ_MAX:
+        return None, f"{label} exceeds its size limit"
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None, f"{label} is not valid UTF-8 JSON"
+    if not isinstance(payload, dict):
+        return None, f"{label} JSON is not an object"
+    return payload, None
+
+
+def _systemd_properties(unit: str, properties: tuple[str, ...]) -> dict | None:
+    """Read selected systemd properties without invoking a shell."""
+    command = ["systemctl", "show", unit, "--no-pager"]
+    command.extend(f"--property={name}" for name in properties)
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    values = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+    if any(name not in values for name in properties):
+        return None
+    return values
+
+
+def _current_boot_id() -> str | None:
+    try:
+        with open(BOOT_ID_PATH, encoding="ascii") as source:
+            value = source.read(64).strip()
+    except (OSError, UnicodeError):
+        return None
+    return value if _BOOT_ID.fullmatch(value) else None
+
+
+def _utc_epoch(value) -> float:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError("expected canonical UTC timestamp")
+    parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    if parsed.tzinfo != timezone.utc:
+        raise ValueError("expected UTC timestamp")
+    if parsed.isoformat().replace("+00:00", "Z") != value:
+        raise ValueError("timestamp is not canonical")
+    return parsed.timestamp()
+
+
+def _valid_int(value) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _validate_debt_marker(payload: dict, probe: MaintenanceProbe,
+                          now: float) -> tuple[dict | None, list[str]]:
+    required = (
+        "schema", "unit", "first_seen_utc", "first_seen_epoch",
+        "deadline_utc", "deadline_epoch", "boot_id",
+        "active_enter_timestamp_monotonic", "source_sha",
+    )
+    if any(key not in payload for key in required):
+        return None, ["maintenance debt marker is missing required fields"]
+    if (
+        payload["schema"] != "liquilens-runner-restart-debt.v1"
+        or payload["unit"] != probe.monitored_unit
+        or not _valid_int(payload["first_seen_epoch"])
+        or not _valid_int(payload["deadline_epoch"])
+        or not _valid_int(payload["active_enter_timestamp_monotonic"])
+        or not isinstance(payload["boot_id"], str)
+        or _BOOT_ID.fullmatch(payload["boot_id"]) is None
+        or not isinstance(payload["source_sha"], str)
+        or _SHA1.fullmatch(payload["source_sha"]) is None
+    ):
+        return None, ["maintenance debt marker identity or types are invalid"]
+    reason = payload.get("reason")
+    if reason is not None and (
+        not isinstance(reason, str)
+        or not reason
+        or len(reason) > MAINTENANCE_REASON_MAX
+    ):
+        return None, ["maintenance debt marker reason is invalid"]
+    try:
+        first_timestamp = _utc_epoch(payload["first_seen_utc"])
+        deadline_timestamp = _utc_epoch(payload["deadline_utc"])
+    except (TypeError, ValueError, OverflowError):
+        return None, ["maintenance debt marker clocks are invalid"]
+    if (
+        abs(first_timestamp - payload["first_seen_epoch"])
+        > MAINTENANCE_CLOCK_SKEW_S
+        or abs(deadline_timestamp - payload["deadline_epoch"])
+        > MAINTENANCE_CLOCK_SKEW_S
+        or (
+            payload["deadline_epoch"] - payload["first_seen_epoch"]
+            != MAINTENANCE_DEBT_DEADLINE_S
+        )
+        or payload["first_seen_epoch"] > now + MAINTENANCE_CLOCK_SKEW_S
+    ):
+        return None, ["maintenance debt marker clocks are inconsistent"]
+    return payload, []
+
+
+def _validate_maintenance_status(payload: dict, probe: MaintenanceProbe,
+                                 now: float) -> tuple[dict | None, list[str]]:
+    required = (
+        "schema", "unit", "checked_at_utc", "checked_at_epoch", "result",
+        "debt_state", "first_seen_utc", "first_seen_epoch",
+        "deadline_utc", "deadline_epoch", "debt_age_seconds", "boot_id",
+        "active_state", "sub_state", "active_enter_timestamp_monotonic",
+        "source_sha", "reason",
+    )
+    if any(key not in payload for key in required):
+        return None, ["maintenance status is missing required fields"]
+    if (
+        payload["schema"] != "liquilens-runner-maintenance-status.v1"
+        or payload["unit"] != probe.monitored_unit
+        or not _valid_int(payload["checked_at_epoch"])
+        or not isinstance(payload["result"], str)
+        or payload["result"] not in {"clean", "debt", "error"}
+        or not isinstance(payload["debt_state"], str)
+        or payload["debt_state"] not in {"clear", "pending", "overdue", "error"}
+    ):
+        return None, ["maintenance status identity or types are invalid"]
+    reason = payload["reason"]
+    if (
+        not isinstance(reason, str)
+        or not reason
+        or len(reason) > MAINTENANCE_REASON_MAX
+    ):
+        return None, ["maintenance status reason is invalid"]
+
+    # An error receipt remains valuable even if the failed evidence boundary
+    # is the one that would have supplied provenance or service identity. Clean
+    # and debt receipts, however, must carry the complete binding.
+    boot_id = payload["boot_id"]
+    source_sha = payload["source_sha"]
+    active_state = payload["active_state"]
+    sub_state = payload["sub_state"]
+    generation = payload["active_enter_timestamp_monotonic"]
+    nullable_identity_valid = (
+        (
+            boot_id is None
+            or (
+                isinstance(boot_id, str)
+                and _BOOT_ID.fullmatch(boot_id) is not None
+            )
+        )
+        and (
+            source_sha is None
+            or (
+                isinstance(source_sha, str)
+                and _SHA1.fullmatch(source_sha) is not None
+            )
+        )
+        and (
+            (active_state is None and sub_state is None and generation is None)
+            or (
+                isinstance(active_state, str)
+                and isinstance(sub_state, str)
+                and _valid_int(generation)
+            )
+        )
+    )
+    if not nullable_identity_valid:
+        return None, ["maintenance status identity or types are invalid"]
+    if payload["result"] != "error" and (
+        boot_id is None or source_sha is None or generation is None
+    ):
+        return None, ["maintenance status identity or types are invalid"]
+    try:
+        checked_timestamp = _utc_epoch(payload["checked_at_utc"])
+    except (TypeError, ValueError, OverflowError):
+        return None, ["maintenance status checked clock is invalid"]
+    if (
+        abs(checked_timestamp - payload["checked_at_epoch"])
+        > MAINTENANCE_CLOCK_SKEW_S
+        or payload["checked_at_epoch"] > now + MAINTENANCE_CLOCK_SKEW_S
+    ):
+        return None, ["maintenance status checked clock is inconsistent"]
+    if now - payload["checked_at_epoch"] > probe.max_age_seconds:
+        return None, ["maintenance checker status is stale"]
+
+    timing = (
+        payload["first_seen_utc"], payload["first_seen_epoch"],
+        payload["deadline_utc"], payload["deadline_epoch"],
+    )
+    if payload["result"] == "clean":
+        if (
+            payload["debt_state"] != "clear"
+            or payload["debt_age_seconds"] is not None
+            or any(v is not None for v in timing)
+        ):
+            return None, ["clean maintenance status carries debt metadata"]
+    elif payload["result"] == "debt":
+        if payload["debt_state"] not in {"pending", "overdue"}:
+            return None, ["maintenance debt status has an invalid state"]
+        marker_shape = {
+            "schema": "liquilens-runner-restart-debt.v1",
+            "unit": payload["unit"],
+            "first_seen_utc": payload["first_seen_utc"],
+            "first_seen_epoch": payload["first_seen_epoch"],
+            "deadline_utc": payload["deadline_utc"],
+            "deadline_epoch": payload["deadline_epoch"],
+            "boot_id": payload["boot_id"],
+            "active_enter_timestamp_monotonic": payload[
+                "active_enter_timestamp_monotonic"
+            ],
+            "source_sha": payload["source_sha"],
+        }
+        _, timing_problems = _validate_debt_marker(marker_shape, probe, now)
+        if timing_problems:
+            return None, ["maintenance debt status clocks are invalid"]
+        expected_age = payload["checked_at_epoch"] - payload["first_seen_epoch"]
+        if (
+            not _valid_int(payload["debt_age_seconds"])
+            or payload["debt_age_seconds"] != expected_age
+        ):
+            return None, ["maintenance debt status age is invalid"]
+        expected_state = (
+            "overdue"
+            if payload["checked_at_epoch"] >= payload["deadline_epoch"]
+            else "pending"
+        )
+        if payload["debt_state"] != expected_state:
+            return None, ["maintenance debt status age classification is invalid"]
+    else:
+        if payload["debt_state"] != "error":
+            return None, ["maintenance error status has an invalid debt state"]
+        if all(value is None for value in timing):
+            if payload["debt_age_seconds"] is not None:
+                return None, ["maintenance error status age is invalid"]
+        elif all(value is not None for value in timing):
+            marker_shape = {
+                "schema": "liquilens-runner-restart-debt.v1",
+                "unit": payload["unit"],
+                "first_seen_utc": payload["first_seen_utc"],
+                "first_seen_epoch": payload["first_seen_epoch"],
+                "deadline_utc": payload["deadline_utc"],
+                "deadline_epoch": payload["deadline_epoch"],
+                "boot_id": payload["boot_id"],
+                "active_enter_timestamp_monotonic": payload[
+                    "active_enter_timestamp_monotonic"
+                ],
+                "source_sha": payload["source_sha"],
+            }
+            _, timing_problems = _validate_debt_marker(
+                marker_shape, probe, now,
+            )
+            if timing_problems:
+                return None, ["maintenance error status debt clocks are invalid"]
+            expected_age = (
+                payload["checked_at_epoch"] - payload["first_seen_epoch"]
+            )
+            if (
+                not _valid_int(payload["debt_age_seconds"])
+                or payload["debt_age_seconds"] != expected_age
+            ):
+                return None, ["maintenance error status age is invalid"]
+        else:
+            return None, ["maintenance error status debt metadata is incomplete"]
+
+    return payload, []
+
+
+def check_maintenance_status(probe: MaintenanceProbe,
+                             now: float | None = None) -> list[str]:
+    """Check the runner-maintenance producer without executing needrestart."""
+    now = time.time() if now is None else now
+    problems: list[str] = []
+
+    timer = _systemd_properties(
+        probe.timer_unit,
+        ("LoadState", "ActiveState", "SubState", "UnitFileState"),
+    )
+    if timer is None:
+        problems.append("maintenance timer state is unavailable")
+    elif (
+        timer["LoadState"] != "loaded"
+        or timer["ActiveState"] != "active"
+        or timer["SubState"] != "waiting"
+        or timer["UnitFileState"] != "enabled"
+    ):
+        problems.append("maintenance timer is not enabled and waiting")
+
+    checker = _systemd_properties(
+        probe.service_unit,
+        ("LoadState", "ActiveState", "SubState", "Result", "ExecMainStatus"),
+    )
+    if checker is None:
+        problems.append("maintenance checker state is unavailable")
+    elif checker["LoadState"] != "loaded":
+        problems.append("maintenance checker is not loaded")
+    elif checker["ActiveState"] == "activating":
+        pass
+    elif not (
+        checker["ActiveState"] == "inactive"
+        and checker["SubState"] == "dead"
+        and checker["Result"] == "success"
+        and checker["ExecMainStatus"] == "0"
+    ):
+        problems.append("maintenance checker last execution did not succeed")
+
+    runner = _systemd_properties(
+        probe.monitored_unit,
+        ("LoadState", "ActiveState", "SubState", "ActiveEnterTimestampMonotonic"),
+    )
+    if runner is None:
+        problems.append("monitored runner state is unavailable")
+    elif not (
+        runner["LoadState"] == "loaded"
+        and runner["ActiveState"] == "active"
+        and runner["SubState"] == "running"
+    ):
+        problems.append("monitored runner is not active and running")
+
+    status_payload, status_read_problem = _read_safe_json(
+        probe.status_file, "maintenance status",
+    )
+    status = None
+    if status_read_problem:
+        problems.append(status_read_problem)
+    else:
+        status, status_problems = _validate_maintenance_status(
+            status_payload, probe, now,
+        )
+        problems.extend(status_problems)
+
+    debt_payload, debt_read_problem = _read_safe_json(
+        probe.debt_file, "maintenance debt marker", missing_ok=True,
+    )
+    debt = None
+    if debt_read_problem:
+        problems.append(debt_read_problem)
+    elif debt_payload is not None:
+        debt, debt_problems = _validate_debt_marker(debt_payload, probe, now)
+        problems.extend(debt_problems)
+
+    if status is not None:
+        current_boot = _current_boot_id()
+        if current_boot is None:
+            problems.append("current boot identity is unavailable")
+        elif (
+            status["boot_id"] is not None
+            and status["boot_id"] != current_boot
+        ):
+            problems.append("maintenance status belongs to a previous boot")
+        if runner is not None:
+            generation = runner.get("ActiveEnterTimestampMonotonic", "")
+            if not generation.isdigit():
+                problems.append("monitored runner generation is unavailable")
+            elif (
+                status["active_enter_timestamp_monotonic"] is not None
+                and int(generation)
+                != status["active_enter_timestamp_monotonic"]
+            ):
+                problems.append(
+                    "maintenance status does not match the runner generation"
+                )
+        if status["result"] != "error" and (
+            status["active_state"] != "active"
+            or status["sub_state"] != "running"
+        ):
+            problems.append("maintenance scan did not observe a running runner")
+        if status["result"] == "error":
+            problems.append("maintenance checker reported a scan error")
+        elif status["result"] == "debt" and debt is None:
+            problems.append("maintenance status reports debt without a valid marker")
+        elif status["result"] == "clean" and debt is not None:
+            problems.append("maintenance status is clean while a debt marker remains")
+
+    if debt is not None:
+        if (
+            status is not None
+            and status["result"] in {"debt", "error"}
+            and status["first_seen_epoch"] is not None
+            and (
+                status["first_seen_epoch"] != debt["first_seen_epoch"]
+                or status["deadline_epoch"] != debt["deadline_epoch"]
+                or status["first_seen_utc"] != debt["first_seen_utc"]
+                or status["deadline_utc"] != debt["deadline_utc"]
+            )
+        ):
+            problems.append("maintenance status and debt marker disagree")
+        if now >= debt["deadline_epoch"]:
+            problems.append("runner restart maintenance debt is overdue")
+        else:
+            problems.append("runner restart maintenance debt is pending")
+
+    # Stable order with no duplicate text keeps alert state deterministic.
+    return list(dict.fromkeys(problems))
 
 
 def check(bot: Bot) -> list[str]:
@@ -643,8 +1210,17 @@ def main() -> int:
         print("FLEET_OWNER_CHAT unset, alerts cannot be delivered")
         return 1
     cfg = load_config()
-    if not cfg.bots and not cfg.remotes and cfg.rails is None:
-        print(f"no bots, MCP remotes or rails probe configured in {CONFIG_PATH}")
+    if (
+        not cfg.bots
+        and not cfg.remotes
+        and cfg.rails is None
+        and cfg.maintenance is None
+        and not cfg.config_problems
+    ):
+        print(
+            "no bots, MCP remotes, rails or maintenance probe configured in "
+            f"{CONFIG_PATH}"
+        )
         return 1
 
     state = load_state()
@@ -652,6 +1228,13 @@ def main() -> int:
     # name, unit to alert through, problems
     checks = [(b.unit, pick_via(b.unit, b.via, cfg), guarded(b.unit, lambda b=b: check(b)))
               for b in cfg.bots]
+
+    if cfg.config_problems:
+        checks.append((
+            "watchdog-config",
+            pick_via("watchdog-config", "", cfg),
+            list(cfg.config_problems),
+        ))
 
     # Keep the established state key: payload failures and stale check-ins are
     # one NYX alarm, sharing the same debounce/re-alert history.
@@ -665,6 +1248,15 @@ def main() -> int:
             pick_via("liquilens-rails", cfg.rails.via, cfg),
             guarded("liquilens-rails", lambda: check_liquilens_rails(
                 cfg.rails, rails_day)),
+        ))
+
+    if cfg.maintenance is not None:
+        checks.append((
+            cfg.maintenance.name,
+            pick_via(cfg.maintenance.name, cfg.maintenance.via, cfg),
+            guarded(cfg.maintenance.name, lambda: check_maintenance_status(
+                cfg.maintenance, now,
+            )),
         ))
 
     mcp_checks = [(r.name, pick_via(r.name, r.via, cfg),

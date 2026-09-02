@@ -27,6 +27,7 @@ days of journal held zero startup banners — nothing to scrape.
 | `systemctl is-active` | the unit died outright |
 | JSON-RPC `initialize` on each MCP remote | the remote is up but not speaking MCP, or the path stopped routing to it |
 | LiquiLens `GET /api/public-signals/rails` | the rails pack is approaching its public hold, unavailable, stale, future-dated, malformed, or unreachable |
+| LiquiLens runner-maintenance receipt, marker and systemd units | a deferred runner restart, overdue maintenance debt, failed/stale checker, disabled timer, or stopped runner |
 | Mac heartbeat mtime + exact `nyx=1` line | the NYX host stopped checking in, or checked in while the bridge was down |
 
 Both Telegram methods are read-only and neither touches `getUpdates`, so
@@ -87,6 +88,16 @@ server behind.
   `available=false`, or `stale=true`. The probe is a read-only GET and its
   alert goes only to the configured owner chat; it never posts to a public
   channel.
+- The runner-maintenance probe does not execute `needrestart`. A separate
+  LiquiLens-owned 15-minute checker produces a root-private status receipt and
+  retains an active debt marker until a clean scan plus a proven runner restart
+  resolves it. Its 23-hour-44-minute deadline reserves one full 15-minute timer
+  interval plus `AccuracySec=1m` inside the nominal 24-hour
+  package-to-enforcement SLO. The watchdog independently requires an enabled/waiting timer, a
+  successful expected-inactive oneshot, a running repository runner, and a
+  fresh receipt bound to the current boot and runner generation. Missing,
+  malformed, future-dated, stale, unsafe, or contradictory evidence fails
+  closed through the ordinary private debounce/recovery path.
 - NYX cannot report its own worst failure — laptop asleep, offline or logged
   out. So the Mac *checks in* every 5 min via `fleet-mac-heartbeat.sh` (a
   LaunchAgent). The box requires both a fresh mtime and exactly one `nyx=1`
@@ -171,6 +182,15 @@ fleet):
   "liquilens_rails": {
     "url": "https://api.liquilens.in/api/public-signals/rails",
     "alert_via": "beta-bot"
+  },
+  "maintenance_status": {
+    "name": "liquilens-runner-restart-debt",
+    "status_file": "/var/lib/liquilens-runner-maintenance/status.json",
+    "debt_file": "/var/lib/liquilens-runner-maintenance/restart-debt.json",
+    "service_unit": "liquilens-runner-restart-debt.service",
+    "timer_unit": "liquilens-runner-restart-debt.timer",
+    "monitored_unit": "actions.runner.beepboop2025-LiquiLens.hetzner-cpx32.service",
+    "max_age_seconds": 1200
   }
 }
 ```
@@ -188,6 +208,14 @@ Fields:
 | `mcp_remotes[].url` | the streamable-HTTP MCP endpoint |
 | `liquilens_rails.url` | the public LiquiLens rails JSON endpoint; use `https://api.liquilens.in/api/public-signals/rails` |
 | `liquilens_rails.alert_via` | optional bot unit that sends the private owner alert; the state/alert label is fixed as `liquilens-rails` |
+| `maintenance_status.name` | bounded state/alert label; the installed value is `liquilens-runner-restart-debt` |
+| `maintenance_status.status_file` | root-owned mode-0600 v1 status receipt in a root-owned mode-0700 directory |
+| `maintenance_status.debt_file` | optional active v1 debt marker beside the status receipt; its presence is always unhealthy |
+| `maintenance_status.service_unit` | timer-triggered checker oneshot; healthy steady state is `inactive/dead`, `Result=success`, exit 0 |
+| `maintenance_status.timer_unit` | checker timer, which must be `enabled` and `active/waiting` |
+| `maintenance_status.monitored_unit` | exact runner unit whose active/running state and generation bind the receipt |
+| `maintenance_status.max_age_seconds` | bounded receipt age; 1200 seconds leaves four minutes beyond the checker's 15-minute interval plus one-minute accuracy window, while detecting a missed run sooner than a two-interval threshold |
+| `maintenance_status.alert_via` | optional private sender override; omitted by the installer so the existing default route is preserved |
 | `default_alert_via` | fallback sender for anything without `alert_via`, including the Mac heartbeat |
 
 Point `FLEET_WATCHDOG_CONFIG` elsewhere to test against a scratch file.
@@ -196,24 +224,64 @@ Point `FLEET_WATCHDOG_CONFIG` elsewhere to test against a scratch file.
 and an existing sender unit name. Do not place credentials or signed query
 parameters in the URL.
 
+The maintenance receipts contain only schema identifiers, the exact runner
+unit, a bounded reason, UTC/epoch clocks, a derived debt age, boot and systemd
+generation IDs, and a source SHA. A clean receipt carries a null debt age; a
+debt receipt, or an error receipt that could load the immutable marker, carries
+the exact nonnegative `checked_at_epoch - first_seen_epoch`. They must never
+contain command output, environment values, tokens, URLs or process arguments.
+The watchdog opens them relative to a bound directory descriptor with
+`O_NOFOLLOW`, enforces owner/mode/type/link and size limits, and never includes
+their payload or reason text in an alert.
+
 Without a chat id the run exits **non-zero** rather than probing mutely, so a
 missing `EnvironmentFile` shows up as a `failed` unit in the journal instead of
-a green run that could never have paged anyone. A config that parses to no bots
-and no remotes and has no rails probe exits non-zero for the same reason. A
-single malformed *entry* is skipped with a note; it does not take the run down.
+a green run that could never have paged anyone. A config that parses to no bots,
+remotes, rails probe or maintenance probe exits non-zero for the same reason.
+A malformed bot/remote entry is skipped with a note; a malformed opted-in
+`maintenance_status` becomes a synthetic `watchdog-config` failure so the new
+coverage cannot silently disappear.
 
 ## Install
 
+Install only from a clean canonical Seiche Git worktree checked out at the
+reviewed exact SHA, after the LiquiLens maintenance checker has completed its
+first valid scan:
+
 ```bash
-scp watchdog.py root@box:/opt/fleet-watchdog/watchdog.py
-scp fleet-watchdog.{service,timer} root@box:/etc/systemd/system/
-# /etc/fleet-watchdog.env and /etc/fleet-watchdog.json must already exist,
-# see Configuration above; without them the unit exits non-zero on purpose.
-ssh root@box 'systemctl daemon-reload && systemctl enable --now fleet-watchdog.timer'
+sudo ops/fleet-watchdog/install.sh --check \
+  --source-sha <exact-40-hex-Seiche-commit>
+sudo ops/fleet-watchdog/install.sh --install \
+  --source-sha <exact-40-hex-Seiche-commit>
 ```
 
+The installer refuses a noncanonical origin, dirty worktree, or `HEAD` that is
+not the supplied SHA. It materializes `watchdog.py` from the commit object into
+a root-private candidate and installs only those pinned bytes, rather than
+trusting a mutable adjacent file. It never ships or reconstructs the private
+config. It locks the transaction, reads the exact current root-owned
+`/etc/fleet-watchdog.json`, and
+either adds the one exact `maintenance_status` object or proves it is already
+identical. It deep-compares every pre-existing key/value, records the config
+preimage hash, stops the timer, waits for the oneshot reader to finish, then
+checks the preimage again before atomic replacement. A differing existing
+maintenance object or any concurrent script/config change aborts before
+mutation.
+
+The current script and config are captured inside a new root-only staging
+release. Any failed install restores those exact bytes and the timer's prior
+enabled/active state. A successful install runs one real oneshot and atomically
+promotes a prepared `fleet-watchdog-release.v2` receipt under
+`/var/lib/fleet-watchdog/releases/<source-sha>/`. Only after the timer's exact
+prior state is restored does it add `release-commit.json`, which binds the
+receipt hash and source SHA. A directory without that commit marker is failed
+or incomplete recovery evidence, never a canonical successful release. The
+receipt contains hashes, modes, source identity, timer state and
+verification—not configuration values. Never restore an older release's
+private config over the current fleet map.
+
 The box runs a **copy** at `/opt/fleet-watchdog/watchdog.py`. Editing this repo
-changes nothing in production until that scp runs.
+changes nothing in production until the guarded installer runs.
 
 Mac side:
 
