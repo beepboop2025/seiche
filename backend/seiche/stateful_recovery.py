@@ -28,18 +28,22 @@ from typing import Any, Mapping, NamedTuple
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
 
-REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v1"
+REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v2"
 RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v4"
 OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v3"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml"
 CONFIRMATION = "EXPORT_WITHOUT_AUTHORITY_CHANGE"
 REQUEST_MAX_AGE = timedelta(minutes=30)
 REQUEST_FUTURE_SKEW = timedelta(minutes=5)
+DOWNLOAD_MAX_AGE = timedelta(hours=2)
 MAX_SHADOW_RECEIPTS = 1024
 MAX_SHADOW_RECEIPT_BYTES = 64 * 1024 * 1024
+MAX_RECOVERY_EVIDENCE_DIRECTORIES = 4096
+MAX_RECOVERY_EVIDENCE_STAGES = 8
 
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
+_SHA64_RE = re.compile(r"[0-9a-f]{64}")
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-" r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
@@ -54,6 +58,8 @@ _REQUEST_KEYS = frozenset(
         "request_id",
         "snapshot_id",
         "requested_at",
+        "download_bearer_sha256",
+        "download_expires_at",
         "confirmation",
     }
 )
@@ -209,6 +215,10 @@ def validate_request(
         value.get("activation_receipt_sha256"),
         label="activation receipt digest",
     )
+    _validate_digest(
+        value.get("download_bearer_sha256"),
+        label="recovery download capability digest",
+    )
     if (
         not isinstance(value.get("commit"), str)
         or _SHA40_RE.fullmatch(value["commit"]) is None
@@ -220,6 +230,10 @@ def validate_request(
     if not isinstance(snapshot_id, str) or _SNAPSHOT_RE.fullmatch(snapshot_id) is None:
         raise RecoveryContractError("recovery snapshot identity is invalid")
     requested_at = _utc(value.get("requested_at"), label="recovery requested_at")
+    download_expires_at = _utc(
+        value.get("download_expires_at"),
+        label="recovery download expires_at",
+    )
     snapshot_at = datetime.strptime(snapshot_id, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
     observed = now or datetime.now(UTC)
     if observed.tzinfo is None or observed.utcoffset() is None:
@@ -227,6 +241,8 @@ def validate_request(
     observed = observed.astimezone(UTC).replace(microsecond=0)
     if abs(requested_at - snapshot_at) > timedelta(minutes=5):
         raise RecoveryContractError("recovery request is not bound to its snapshot")
+    if not requested_at < download_expires_at <= requested_at + DOWNLOAD_MAX_AGE:
+        raise RecoveryContractError("recovery download lifetime is invalid")
     if requested_at > observed + REQUEST_FUTURE_SKEW or (
         require_fresh and requested_at < observed - REQUEST_MAX_AGE
     ):
@@ -490,6 +506,7 @@ def publish_request(
     *,
     platform_root: Path | None = None,
     now: datetime | None = None,
+    require_fresh: bool = True,
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> dict[str, Any]:
     try:
@@ -497,7 +514,12 @@ def publish_request(
     except migration.MigrationContractError as exc:
         raise RecoveryContractError(str(exc)) from exc
     _activation_body, activation = activation_context(environment)
-    request = validate_request(value, activation_receipt=activation, now=now)
+    request = validate_request(
+        value,
+        activation_receipt=activation,
+        now=now,
+        require_fresh=require_fresh,
+    )
     root = platform_root or migration.PLATFORM_ROOT
     requests = root / "recovery-requests"
     cutover._prepare_authority_directory(requests, runtime_gid=runtime_gid)
@@ -510,11 +532,375 @@ def publish_request(
     return request
 
 
+def publish_offsite_receipt(
+    body: bytes,
+    *,
+    recovery_request_sha256: str,
+    recovery_receipt_sha256: str,
+    environment: Mapping[str, str],
+    platform_root: Path | None = None,
+    now: datetime | None = None,
+    require_fresh: bool = True,
+    runtime_gid: int = migration.RUNTIME_GID,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Revalidate and immutably pair one signed off-site acknowledgment."""
+
+    _validate_digest(recovery_request_sha256, label="recovery request digest")
+    _validate_digest(recovery_receipt_sha256, label="recovery receipt digest")
+    try:
+        value = migration._decode_canonical_json(body, label="off-site receipt")
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
+    request_id = _validate_digest(
+        value.get("request_id"),
+        label="off-site request id",
+    )
+    root = platform_root or migration.PLATFORM_ROOT
+    request_body, request_value = _load_canonical(
+        root / "recovery-requests" / f"{request_id}.json",
+        label="recovery request",
+        maximum_bytes=32 * 1024,
+    )
+    _activation_body, activation = activation_context(environment)
+    request = validate_request(
+        request_value,
+        activation_receipt=activation,
+        require_fresh=False,
+    )
+    if _digest(request_body) != recovery_request_sha256:
+        raise RecoveryContractError("off-site recovery request digest differs")
+    candidate_body, candidate = candidate_context(
+        environment,
+        activation_receipt=activation,
+    )
+    _shadow_body, shadow = shadow_context(
+        candidate_receipt=candidate,
+        platform_root=root,
+    )
+    receipt_path = (
+        root
+        / "recovery-receipts"
+        / f"{request['snapshot_id']}-{request_id}.json"
+    )
+    receipt_body, receipt_value = _load_canonical(
+        receipt_path,
+        label="recovery receipt",
+        maximum_bytes=256 * 1024,
+    )
+    receipt = validate_receipt(
+        receipt_value,
+        request=request,
+        activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
+        railway=migration.railway_identity(environment),
+    )
+    if (
+        _digest(receipt_body) != recovery_receipt_sha256
+        or value.get("recovery_receipt_sha256") != recovery_receipt_sha256
+        or _digest(candidate_body) != receipt["candidate_receipt_sha256"]
+    ):
+        raise RecoveryContractError("off-site recovery receipt digest differs")
+    offsite = validate_offsite_receipt(
+        value,
+        recovery_receipt=receipt,
+        now=now,
+        require_fresh=require_fresh,
+    )
+    destination_root = root / "recovery-offsite-receipts"
+    cutover._prepare_authority_directory(
+        destination_root,
+        runtime_gid=runtime_gid,
+    )
+    name = f"{request['snapshot_id']}-{request_id}.json"
+    destination = destination_root / name
+    lifecycle = "reused" if destination.exists() or destination.is_symlink() else "created"
+    cutover._publish_immutable_authority_file(
+        destination_root,
+        name,
+        body,
+        runtime_gid=runtime_gid,
+    )
+    paired = {
+        "schema": "seiche.railway-recovery-offsite-paired-evidence.v1",
+        "request_id": request_id,
+        "recovery_receipt_sha256": recovery_receipt_sha256,
+        "offsite_receipt_sha256": _digest(body),
+        "recovery_receipt": receipt,
+        "offsite_receipt": offsite,
+    }
+    return offsite, lifecycle, paired
+
+
+def receipted_request_context(
+    environment: Mapping[str, str],
+    request: Mapping[str, Any],
+    *,
+    platform_root: Path | None = None,
+    runtime_gid: int = migration.RUNTIME_GID,
+) -> dict[str, Any] | None:
+    root = platform_root or migration.PLATFORM_ROOT
+    path = (
+        root
+        / "recovery-receipts"
+        / f"{request['snapshot_id']}-{request['request_id']}.json"
+    )
+    if not path.exists() and not path.is_symlink():
+        return None
+    activation_body, activation = activation_context(environment)
+    candidate_body, candidate = candidate_context(
+        environment,
+        activation_receipt=activation,
+    )
+    shadow_body, shadow = shadow_context(
+        candidate_receipt=candidate,
+        platform_root=root,
+    )
+    receipt_body, value = _load_canonical(
+        path,
+        label="recovery receipt",
+        maximum_bytes=256 * 1024,
+    )
+    receipt = validate_receipt(
+        value,
+        request=request,
+        activation_receipt=activation,
+        candidate_receipt=candidate,
+        shadow_receipt=shadow,
+        railway=migration.railway_identity(environment),
+    )
+    _publish_recovery_evidence(
+        root,
+        str(request["request_id"]),
+        {
+            "activation-receipt.json": activation_body,
+            "candidate-receipt.json": candidate_body,
+            "shadow-receipt.json": shadow_body,
+            "request.json": _canonical(request),
+            "recovery-receipt.json": receipt_body,
+        },
+        runtime_gid=runtime_gid,
+    )
+    return receipt
+
+
+def promote_control_commands(
+    environment: Mapping[str, str],
+    *,
+    platform_root: Path | None = None,
+    runtime_started_at: str | None = None,
+    runtime_gid: int = migration.RUNTIME_GID,
+) -> dict[str, Any]:
+    if environment.get("SEICHE_RAILWAY_CONTROL_ENABLED") != "1":
+        return {}
+    from seiche import stateful_control
+
+    root = platform_root or migration.PLATFORM_ROOT
+    proposals = stateful_control.pending_commands(
+        environment,
+        operations=frozenset(
+            {
+                stateful_control.RECOVERY_EXPORT_OPERATION,
+                stateful_control.OFFSITE_ACKNOWLEDGMENT_OPERATION,
+            }
+        ),
+        platform_root=root,
+        runtime_gid=runtime_gid,
+    )
+    order = {
+        stateful_control.RECOVERY_EXPORT_OPERATION: 0,
+        stateful_control.OFFSITE_ACKNOWLEDGMENT_OPERATION: 1,
+    }
+    claimed_exports: dict[str, Any] = {}
+    for proposal in sorted(
+        proposals,
+        key=lambda item: (order[item.command.operation], item.command.command_id),
+    ):
+        payload = proposal.command.document["payload"]
+        if proposal.command.operation == stateful_control.RECOVERY_EXPORT_OPERATION:
+            request = publish_request(
+                migration.canonical_document(payload["request"]),
+                environment,
+                platform_root=root,
+                require_fresh=False,
+                runtime_gid=runtime_gid,
+            )
+            existing = receipted_request_context(
+                environment,
+                request,
+                platform_root=root,
+                runtime_gid=runtime_gid,
+            )
+            if existing is not None:
+                stateful_control.seal_command(
+                    proposal,
+                    platform_root=root,
+                    runtime_gid=runtime_gid,
+                )
+                print(
+                    stateful_control.render_log_result(
+                        existing,
+                        kind="recovery_created",
+                        lifecycle="reused",
+                        request_id=proposal.command.request_id,
+                        environment=environment,
+                        runtime_started_at=runtime_started_at or _iso_now(),
+                    ),
+                    flush=True,
+                )
+            else:
+                claimed_exports[proposal.command.request_id] = proposal
+        else:
+            _offsite, lifecycle, paired = publish_offsite_receipt(
+                migration.canonical_document(payload["offsite_receipt"]),
+                recovery_request_sha256=payload["recovery_request_sha256"],
+                recovery_receipt_sha256=payload["recovery_receipt_sha256"],
+                environment=environment,
+                platform_root=root,
+                require_fresh=False,
+                runtime_gid=runtime_gid,
+            )
+            stateful_control.seal_command(
+                proposal,
+                platform_root=root,
+                runtime_gid=runtime_gid,
+            )
+            print(
+                stateful_control.render_log_result(
+                    paired,
+                    kind="recovery_offsite_paired",
+                    lifecycle=lifecycle,
+                    request_id=proposal.command.request_id,
+                    environment=environment,
+                    runtime_started_at=runtime_started_at or _iso_now(),
+                ),
+                flush=True,
+            )
+    return claimed_exports
+
+
+def reemit_latest_recovery_results(
+    environment: Mapping[str, str],
+    *,
+    platform_root: Path | None = None,
+    runtime_started_at: str | None = None,
+    runtime_gid: int = migration.RUNTIME_GID,
+) -> None:
+    """Repair evidence and re-emit the newest durable result after restart."""
+
+    if environment.get("SEICHE_RAILWAY_CONTROL_ENABLED") != "1":
+        return
+    from seiche import stateful_control
+
+    root = platform_root or migration.PLATFORM_ROOT
+    processing = stateful_control.processing_commands_root(root)
+    if processing.exists() and tuple(processing.iterdir()):
+        return
+    requests_root = root / "recovery-requests"
+    receipts_root = root / "recovery-receipts"
+    if not requests_root.is_dir() or not receipts_root.is_dir():
+        return
+    activation_body, activation = activation_context(environment)
+    candidates: list[tuple[datetime, str, dict[str, Any], bytes]] = []
+    request_paths = tuple(requests_root.iterdir())
+    if len(request_paths) > MAX_RECOVERY_EVIDENCE_DIRECTORIES:
+        raise RecoveryContractError("recovery request directory exceeds capacity")
+    for path in request_paths:
+        if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
+            raise RecoveryContractError("recovery request directory is not closed")
+        body, value = _load_canonical(
+            path,
+            label="recovery request",
+            maximum_bytes=32 * 1024,
+        )
+        request = validate_request(
+            value,
+            activation_receipt=activation,
+            require_fresh=False,
+        )
+        receipt_path = (
+            receipts_root
+            / f"{request['snapshot_id']}-{request['request_id']}.json"
+        )
+        if receipt_path.is_file() and not receipt_path.is_symlink():
+            candidates.append(
+                (
+                    _utc(request["requested_at"], label="recovery requested_at"),
+                    str(request["request_id"]),
+                    request,
+                    body,
+                )
+            )
+    if not candidates:
+        return
+    _requested_at, request_id, request, request_body = max(
+        candidates,
+        key=lambda item: (item[0], item[1]),
+    )
+    receipt = receipted_request_context(
+        environment,
+        request,
+        platform_root=root,
+        runtime_gid=runtime_gid,
+    )
+    if receipt is None:
+        raise RecoveryContractError("durable recovery receipt disappeared")
+    print(
+        stateful_control.render_log_result(
+            receipt,
+            kind="recovery_created",
+            lifecycle="reused",
+            request_id=request_id,
+            environment=environment,
+            runtime_started_at=runtime_started_at or _iso_now(),
+        ),
+        flush=True,
+    )
+    offsite_path = (
+        root
+        / "recovery-offsite-receipts"
+        / f"{request['snapshot_id']}-{request_id}.json"
+    )
+    if not offsite_path.exists() and not offsite_path.is_symlink():
+        return
+    offsite_body, _offsite_value = _load_canonical(
+        offsite_path,
+        label="off-site receipt",
+        maximum_bytes=256 * 1024,
+    )
+    receipt_body, _receipt_value = _load_canonical(
+        receipts_root / f"{request['snapshot_id']}-{request_id}.json",
+        label="recovery receipt",
+        maximum_bytes=256 * 1024,
+    )
+    _offsite, _lifecycle, paired = publish_offsite_receipt(
+        offsite_body,
+        recovery_request_sha256=_digest(request_body),
+        recovery_receipt_sha256=_digest(receipt_body),
+        environment=environment,
+        platform_root=root,
+        require_fresh=False,
+        runtime_gid=runtime_gid,
+    )
+    print(
+        stateful_control.render_log_result(
+            paired,
+            kind="recovery_offsite_paired",
+            lifecycle="reused",
+            request_id=request_id,
+            environment=environment,
+            runtime_started_at=runtime_started_at or _iso_now(),
+        ),
+        flush=True,
+    )
+
+
 def next_pending_request(
     environment: Mapping[str, str],
     *,
     platform_root: Path | None = None,
     now: datetime | None = None,
+    claimed_request_ids: frozenset[str] = frozenset(),
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> dict[str, Any] | None:
     root = platform_root or migration.PLATFORM_ROOT
@@ -523,6 +909,8 @@ def next_pending_request(
     cutover._prepare_authority_directory(requests, runtime_gid=runtime_gid)
     cutover._prepare_authority_directory(receipts, runtime_gid=runtime_gid)
     _activation_body, activation = activation_context(environment)
+    if any(_SHA64_RE.fullmatch(item) is None for item in claimed_request_ids):
+        raise RecoveryContractError("claimed recovery request identity is invalid")
     for path in sorted(requests.iterdir(), key=lambda item: item.name):
         if re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None:
             raise RecoveryContractError("recovery request directory is not closed")
@@ -542,8 +930,10 @@ def next_pending_request(
         if receipt_path.exists() or receipt_path.is_symlink():
             continue
         observed = now or datetime.now(UTC)
-        if _utc(request["requested_at"], label="recovery requested_at") < (
-            observed.astimezone(UTC).replace(microsecond=0) - REQUEST_MAX_AGE
+        if (
+            request_id not in claimed_request_ids
+            and _utc(request["requested_at"], label="recovery requested_at")
+            < observed.astimezone(UTC).replace(microsecond=0) - REQUEST_MAX_AGE
         ):
             continue
         return request
@@ -825,6 +1215,83 @@ def _restored_filesystem_identity(
             shutil.rmtree(scratch)
 
 
+def _seal_recovery_generation(
+    path: Path,
+    *,
+    runtime_gid: int,
+    root_uid: int | None = None,
+) -> None:
+    expected_uid = os.geteuid() if root_uid is None else root_uid
+    try:
+        entries = tuple(path.iterdir())
+    except OSError as exc:
+        raise RecoveryContractError("recovery generation is unavailable") from exc
+    if {item.name for item in entries} != set(migration._ALL_BACKUP_MEMBERS):
+        raise RecoveryContractError("recovery generation members are not closed")
+    for member in entries:
+        metadata = member.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise RecoveryContractError("recovery generation member is unsafe")
+        try:
+            os.chown(member, expected_uid, runtime_gid, follow_symlinks=False)
+            os.chmod(member, 0o440, follow_symlinks=False)
+        except OSError as exc:
+            raise RecoveryContractError(
+                "recovery generation member could not be sealed"
+            ) from exc
+        sealed = member.lstat()
+        if (
+            sealed.st_uid != expected_uid
+            or sealed.st_gid != runtime_gid
+            or stat.S_IMODE(sealed.st_mode) != 0o440
+        ):
+            raise RecoveryContractError("recovery generation member seal differs")
+    try:
+        os.chown(path, expected_uid, runtime_gid, follow_symlinks=False)
+        os.chmod(path, 0o550, follow_symlinks=False)
+    except OSError as exc:
+        raise RecoveryContractError("recovery generation could not be sealed") from exc
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != runtime_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o550
+    ):
+        raise RecoveryContractError("recovery generation seal differs")
+    migration._fsync_directory(path)
+
+
+def _validate_recovery_generation_permissions(
+    path: Path,
+    *,
+    runtime_gid: int,
+    root_uid: int | None = None,
+) -> None:
+    expected_uid = os.geteuid() if root_uid is None else root_uid
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != runtime_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o550
+    ):
+        raise RecoveryContractError("recovery generation permissions are unsafe")
+    entries = tuple(path.iterdir())
+    if {item.name for item in entries} != set(migration._ALL_BACKUP_MEMBERS):
+        raise RecoveryContractError("recovery generation members are not closed")
+    for member in entries:
+        metadata = member.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != runtime_gid
+            or stat.S_IMODE(metadata.st_mode) != 0o440
+        ):
+            raise RecoveryContractError("recovery generation member is unsafe")
+
+
 def export_snapshot(
     environment: Mapping[str, str],
     request: Mapping[str, Any],
@@ -849,11 +1316,17 @@ def export_snapshot(
     validated = validate_request(request, activation_receipt=activation)
     snapshot_id = str(validated["snapshot_id"])
     snapshots = root / "recovery-snapshots"
-    snapshots.mkdir(mode=0o750, parents=True, exist_ok=True)
-    if snapshots.is_symlink() or not snapshots.is_dir():
-        raise RecoveryContractError("recovery snapshot root is unsafe")
+    try:
+        migration._prepare_shared_directory(
+            snapshots,
+            gid=runtime_gid,
+            parents=True,
+        )
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
     final = snapshots / snapshot_id
     if final.exists() or final.is_symlink():
+        _validate_recovery_generation_permissions(final, runtime_gid=runtime_gid)
         started_at = _iso_now()
         bundle = _bundle_identity(
             final,
@@ -1020,6 +1493,7 @@ def export_snapshot(
             raise RecoveryContractError(
                 "recovery archive restore proof differs from staged state"
             )
+        _seal_recovery_generation(stage, runtime_gid=runtime_gid)
         stage.rename(final)
         migration._fsync_directory(snapshots)
         stage = None
@@ -1436,6 +1910,188 @@ def validate_offsite_receipt(
     return dict(value)
 
 
+def _publish_recovery_evidence(
+    root: Path,
+    request_id: str,
+    bodies: Mapping[str, bytes],
+    *,
+    runtime_gid: int,
+) -> Path:
+    expected_names = {
+        "activation-receipt.json",
+        "candidate-receipt.json",
+        "shadow-receipt.json",
+        "request.json",
+        "recovery-receipt.json",
+    }
+    if set(bodies) != expected_names or _SHA64_RE.fullmatch(request_id) is None:
+        raise RecoveryContractError("recovery evidence set is invalid")
+    evidence_root = root / "recovery-evidence"
+    cutover._prepare_authority_directory(evidence_root, runtime_gid=runtime_gid)
+    root_entries = tuple(evidence_root.iterdir())
+    stages = [item for item in root_entries if item.name.startswith(".")]
+    finals = [item for item in root_entries if not item.name.startswith(".")]
+    if (
+        len(stages) > MAX_RECOVERY_EVIDENCE_STAGES
+        or len(finals) > MAX_RECOVERY_EVIDENCE_DIRECTORIES
+        or any(_SHA64_RE.fullmatch(item.name) is None for item in finals)
+    ):
+        raise RecoveryContractError("recovery evidence root is not closed")
+    for stage in stages:
+        _remove_recovery_evidence_stage(
+            stage,
+            expected_names=expected_names,
+            runtime_gid=runtime_gid,
+        )
+    destination = evidence_root / request_id
+    if destination.exists() or destination.is_symlink():
+        _validate_recovery_evidence_directory(
+            destination,
+            bodies=bodies,
+            runtime_gid=runtime_gid,
+        )
+        return destination
+    stage = Path(tempfile.mkdtemp(prefix=f".{request_id}.", dir=evidence_root))
+    try:
+        os.chown(stage, os.geteuid(), runtime_gid)
+        os.chmod(stage, 0o750)
+        for name, body in bodies.items():
+            _write_recovery_evidence_stage_member(
+                stage / name,
+                body,
+                runtime_gid=runtime_gid,
+            )
+        os.chmod(stage, 0o550)
+        migration._fsync_directory(stage)
+        _validate_recovery_evidence_directory(
+            stage,
+            bodies=bodies,
+            runtime_gid=runtime_gid,
+        )
+        try:
+            stage.rename(destination)
+        except OSError:
+            if not destination.exists() or destination.is_symlink():
+                raise
+            _validate_recovery_evidence_directory(
+                destination,
+                bodies=bodies,
+                runtime_gid=runtime_gid,
+            )
+            _remove_recovery_evidence_stage(
+                stage,
+                expected_names=expected_names,
+                runtime_gid=runtime_gid,
+            )
+        migration._fsync_directory(evidence_root)
+    except BaseException:
+        if stage.exists() and not stage.is_symlink():
+            _remove_recovery_evidence_stage(
+                stage,
+                expected_names=expected_names,
+                runtime_gid=runtime_gid,
+            )
+        raise
+    return destination
+
+
+def _write_recovery_evidence_stage_member(
+    path: Path,
+    body: bytes,
+    *,
+    runtime_gid: int,
+) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        written = 0
+        while written < len(body):
+            count = os.write(descriptor, body[written:])
+            if count <= 0:
+                raise OSError("recovery evidence write made no progress")
+            written += count
+        os.fchown(descriptor, os.geteuid(), runtime_gid)
+        os.fchmod(descriptor, 0o440)
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise RecoveryContractError("recovery evidence could not be staged") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _validate_recovery_evidence_directory(
+    path: Path,
+    *,
+    bodies: Mapping[str, bytes],
+    runtime_gid: int,
+) -> None:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid != runtime_gid
+        or stat.S_IMODE(metadata.st_mode) != 0o550
+    ):
+        raise RecoveryContractError("recovery evidence directory is unsafe")
+    entries = tuple(path.iterdir())
+    if {item.name for item in entries} != set(bodies):
+        raise RecoveryContractError("recovery evidence directory is not closed")
+    for name, body in bodies.items():
+        member = path / name
+        member_metadata = member.lstat()
+        if (
+            not stat.S_ISREG(member_metadata.st_mode)
+            or member_metadata.st_nlink != 1
+            or member_metadata.st_uid != os.geteuid()
+            or member_metadata.st_gid != runtime_gid
+            or stat.S_IMODE(member_metadata.st_mode) != 0o440
+        ):
+            raise RecoveryContractError("recovery evidence member is unsafe")
+        try:
+            existing = migration._stable_read(member, maximum_bytes=256 * 1024)
+        except migration.MigrationContractError as exc:
+            raise RecoveryContractError(str(exc)) from exc
+        if existing != body:
+            raise RecoveryContractError("immutable recovery evidence differs")
+
+
+def _remove_recovery_evidence_stage(
+    path: Path,
+    *,
+    expected_names: set[str],
+    runtime_gid: int,
+) -> None:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_gid not in {os.getegid(), runtime_gid}
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or re.fullmatch(r"\.[0-9a-f]{64}\.[A-Za-z0-9_-]+", path.name) is None
+    ):
+        raise RecoveryContractError("recovery evidence stage is unsafe")
+    entries = tuple(path.iterdir())
+    if len(entries) > len(expected_names):
+        raise RecoveryContractError("recovery evidence stage exceeds capacity")
+    for entry in entries:
+        member = entry.lstat()
+        if (
+            not stat.S_ISREG(member.st_mode)
+            or member.st_nlink != 1
+            or member.st_uid != os.geteuid()
+            or member.st_gid not in {os.getegid(), runtime_gid}
+            or entry.name not in expected_names
+        ):
+            raise RecoveryContractError("recovery evidence stage member is unsafe")
+    for entry in entries:
+        entry.unlink()
+    path.rmdir()
+    migration._fsync_directory(path.parent)
+
+
 def finalize_receipt(
     environment: Mapping[str, str],
     request: Mapping[str, Any],
@@ -1448,12 +2104,12 @@ def finalize_receipt(
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> tuple[Path, dict[str, Any]]:
     root = platform_root or migration.PLATFORM_ROOT
-    _activation_body, activation = activation_context(environment)
-    _candidate_body, candidate = candidate_context(
+    activation_body, activation = activation_context(environment)
+    candidate_body, candidate = candidate_context(
         environment,
         activation_receipt=activation,
     )
-    _shadow_body, shadow = shadow_context(
+    shadow_body, shadow = shadow_context(
         candidate_receipt=candidate,
         platform_root=root,
     )
@@ -1482,7 +2138,7 @@ def finalize_receipt(
     cutover._prepare_authority_directory(receipts, runtime_gid=runtime_gid)
     path = receipts / (f"{request['snapshot_id']}-{request['request_id']}.json")
     if path.exists() or path.is_symlink():
-        _body, existing = _load_canonical(
+        receipt_body, existing = _load_canonical(
             path,
             label="recovery receipt",
             maximum_bytes=256 * 1024,
@@ -1496,8 +2152,32 @@ def finalize_receipt(
             railway=railway,
             bundle_root=export.bundle.root,
         )
+        _publish_recovery_evidence(
+            root,
+            str(request["request_id"]),
+            {
+                "activation-receipt.json": activation_body,
+                "candidate-receipt.json": candidate_body,
+                "shadow-receipt.json": shadow_body,
+                "request.json": _canonical(request),
+                "recovery-receipt.json": receipt_body,
+            },
+            runtime_gid=runtime_gid,
+        )
         return path, existing
     migration._write_receipt(path, receipt, gid=runtime_gid)
+    _publish_recovery_evidence(
+        root,
+        str(request["request_id"]),
+        {
+            "activation-receipt.json": activation_body,
+            "candidate-receipt.json": candidate_body,
+            "shadow-receipt.json": shadow_body,
+            "request.json": _canonical(request),
+            "recovery-receipt.json": _canonical(receipt),
+        },
+        runtime_gid=runtime_gid,
+    )
     return path, receipt
 
 

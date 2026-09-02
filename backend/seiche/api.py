@@ -44,6 +44,7 @@ from seiche import (
     methodology,
     provisioning,
     public_view,
+    stateful_control,
     store,
     subscribe as subscribe_list,
     trade_safety,
@@ -202,6 +203,17 @@ app = FastAPI(
     openapi_url=None if _PROD else "/openapi.json",
     lifespan=_lifespan,
 )
+
+_RAILWAY_CONTROL_COMMAND_PATH = "/api/internal/v1/railway-control/commands"
+_RAILWAY_CONTROL_RECOVERY_PREFIX = "/api/internal/v1/railway-control/recovery/"
+
+
+def _railway_control_enabled() -> bool:
+    return (
+        os.getenv("SEICHE_RAILWAY_CONTROL_ENABLED", "") == "1"
+        and os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
+        in {"cutover_candidate", "production"}
+    )
 
 
 API_CATALOG_URL = "https://api.seiche.info/.well-known/api-catalog"
@@ -577,7 +589,16 @@ async def _railway_cutover_edge_guard(request: Request, call_next):
             content={"detail": "not found"},
             headers={"Cache-Control": "no-store"},
         )
-    if mode == "cutover_candidate" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+    signed_control_post = (
+        _railway_control_enabled()
+        and request.url.path == _RAILWAY_CONTROL_COMMAND_PATH
+        and request.method == "POST"
+    )
+    if (
+        mode == "cutover_candidate"
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and not signed_control_post
+    ):
         return JSONResponse(
             status_code=503,
             content={"status": "cutover_candidate_read_only"},
@@ -3181,6 +3202,141 @@ async def pit(n: int = 400, _ident: dict | None = Depends(require_board)):
     import json as _json
 
     return {"records": [_json.loads(p) for _, p in reversed(rows)]}
+
+
+def _railway_control_not_found() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "not found"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _railway_control_origin_allowed(request: Request) -> bool:
+    if not _railway_control_enabled():
+        return False
+    from seiche.stateful_cutover import EDGE_HEADER, edge_request_allowed
+
+    expected_host = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+    observed_host = request.headers.get("host", "")
+    return (
+        bool(expected_host)
+        and expected_host == expected_host.lower()
+        and re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+            r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+",
+            expected_host,
+        )
+        is not None
+        and observed_host == expected_host
+        and edge_request_allowed(
+            request.headers.get(EDGE_HEADER),
+            os.getenv("SEICHE_RAILWAY_EDGE_TOKEN", ""),
+        )
+    )
+
+
+async def _bounded_control_body(request: Request) -> bytes:
+    content_length = request.headers.get("content-length")
+    if (
+        request.headers.get("content-type") != "application/json"
+        or content_length is None
+        or not content_length.isdigit()
+        or not 1 <= int(content_length) <= stateful_control.MAX_COMMAND_BYTES
+    ):
+        raise stateful_control.ControlContractError("control request is invalid")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > stateful_control.MAX_COMMAND_BYTES:
+            raise stateful_control.ControlContractError("control request is invalid")
+    if len(body) != int(content_length):
+        raise stateful_control.ControlContractError("control request is invalid")
+    return bytes(body)
+
+
+@app.post(_RAILWAY_CONTROL_COMMAND_PATH, include_in_schema=False)
+async def railway_control_command(request: Request):
+    """Stage one command; only the root supervisor may promote its bytes."""
+
+    if not _railway_control_origin_allowed(request):
+        return _railway_control_not_found()
+    try:
+        body = await _bounded_control_body(request)
+        submitted = await asyncio.to_thread(
+            stateful_control.submit_command,
+            body,
+            os.environ,
+        )
+    except Exception:  # noqa: BLE001 - control validation details remain private
+        return _railway_control_not_found()
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "command_id": submitted.command_id,
+            "lifecycle": submitted.lifecycle,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.api_route(
+    _RAILWAY_CONTROL_COMMAND_PATH,
+    methods=["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def railway_control_command_wrong_method():
+    return _railway_control_not_found()
+
+
+@app.get(
+    _RAILWAY_CONTROL_RECOVERY_PREFIX + "{request_id}/{member}",
+    include_in_schema=False,
+)
+async def railway_control_recovery_member(
+    request_id: str,
+    member: str,
+    request: Request,
+):
+    if not _railway_control_origin_allowed(request):
+        return _railway_control_not_found()
+    authorization = request.headers.get("authorization")
+    if (
+        not isinstance(authorization, str)
+        or not authorization.startswith("Bearer ")
+        or authorization.count(" ") != 1
+    ):
+        return _railway_control_not_found()
+    try:
+        opened = await asyncio.to_thread(
+            stateful_control.open_recovery_member,
+            request_id,
+            member,
+            authorization.removeprefix("Bearer "),
+            os.environ,
+        )
+    except Exception:  # noqa: BLE001 - capability/filesystem details remain private
+        return _railway_control_not_found()
+    return StreamingResponse(
+        stateful_control.stream_recovery_member(opened),
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store, no-transform",
+            "Content-Length": str(opened.size),
+            "X-Seiche-Content-SHA256": opened.sha256,
+            "Content-Disposition": f'attachment; filename="{opened.name}"',
+        },
+    )
+
+
+@app.api_route(
+    _RAILWAY_CONTROL_RECOVERY_PREFIX + "{request_id}/{member}",
+    methods=["POST", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def railway_control_recovery_wrong_method(request_id: str, member: str):
+    return _railway_control_not_found()
 
 
 def _health_response(

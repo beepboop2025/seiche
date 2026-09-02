@@ -1267,6 +1267,7 @@ def publish_authority_documents(
     edge_token: str | None = None,
     railway: Mapping[str, str] | None = None,
     now: datetime | None = None,
+    require_fresh: bool = True,
     runtime_gid: int = migration.RUNTIME_GID,
 ) -> tuple[str, str]:
     _validate_digest(request_id, label="authority publication request")
@@ -1292,6 +1293,7 @@ def publish_authority_documents(
         root / "authority-fences" / f"{fence_digest}.json",
         expected_sha256=fence_digest,
         now=now,
+        require_current=require_fresh,
     )
     request = load_request(
         request_path,
@@ -1299,6 +1301,7 @@ def publish_authority_documents(
         source_bundle,
         fence,
         now=now,
+        require_fresh=require_fresh,
     )
     candidate_path = root / "cutover-receipts" / f"{request_id}.candidate.json"
     try:
@@ -1334,6 +1337,7 @@ def publish_authority_documents(
         candidate_receipt=candidate,
         edge_token_digest=edge_token_sha256(token),
         now=now,
+        require_fresh=require_fresh,
     )
     validate_public_candidate_probe(
         probe_value,
@@ -1666,6 +1670,68 @@ def _start_writer_children(
         raise
 
 
+def _control_enabled(environment: Mapping[str, str]) -> bool:
+    return environment.get("SEICHE_RAILWAY_CONTROL_ENABLED") == "1"
+
+
+def _emit_stateful_log_result(
+    evidence: Mapping[str, Any],
+    *,
+    kind: str,
+    lifecycle: str,
+    request_id: str,
+    environment: Mapping[str, str],
+    runtime_started_at: str | None,
+) -> None:
+    if not _control_enabled(environment):
+        return
+    from seiche import stateful_control
+
+    print(
+        stateful_control.render_log_result(
+            evidence,
+            kind=kind,
+            lifecycle=lifecycle,
+            request_id=request_id,
+            environment=environment,
+            runtime_started_at=runtime_started_at or migration._iso_now(),
+        ),
+        flush=True,
+    )
+
+
+def _promote_activation_control_commands(
+    candidate: Mapping[str, str],
+    *,
+    platform_root: Path,
+) -> None:
+    if not _control_enabled(candidate):
+        return
+    from seiche import stateful_control
+
+    pending = stateful_control.pending_commands(
+        candidate,
+        operations=frozenset({stateful_control.ACTIVATION_OPERATION}),
+        platform_root=platform_root,
+    )
+    for proposal in pending:
+        payload = proposal.command.document["payload"]
+        public_probe_body = migration.canonical_document(payload["public_probe"])
+        grant_body = migration.canonical_document(payload["grant"])
+        publish_authority_documents(
+            proposal.command.request_id,
+            public_probe_body,
+            grant_body,
+            platform_root=platform_root,
+            railway=migration.railway_identity(candidate),
+            require_fresh=False,
+        )
+        stateful_control.seal_command(
+            proposal,
+            platform_root=platform_root,
+        )
+
+
 def _serve_production(
     production: Mapping[str, str],
     *,
@@ -1673,7 +1739,9 @@ def _serve_production(
     api: subprocess.Popen[bytes],
     commands: Mapping[str, list[str]],
     poll_seconds: int,
+    runtime_started_at: str | None = None,
 ) -> int:
+    from seiche import stateful_control
     from seiche import stateful_recovery as recovery
 
     stopping = False
@@ -1690,13 +1758,24 @@ def _serve_production(
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
+        recovery.reemit_latest_recovery_results(
+            production,
+            runtime_started_at=runtime_started_at,
+        )
         while not stopping:
             exited = next(
                 (child for child in children() if child.poll() is not None), None
             )
             if exited is not None:
                 return exited.returncode or 1
-            request = recovery.next_pending_request(production)
+            claimed_exports = recovery.promote_control_commands(
+                production,
+                runtime_started_at=runtime_started_at,
+            ) or {}
+            request = recovery.next_pending_request(
+                production,
+                claimed_request_ids=frozenset(claimed_exports),
+            )
             if request is None or request["request_id"] in failed_requests:
                 time.sleep(poll_seconds)
                 continue
@@ -1749,6 +1828,14 @@ def _serve_production(
             if stopping:
                 break
             writers_restarted_at = migration._iso_now()
+            expected_receipt_path = (
+                migration.PLATFORM_ROOT
+                / "recovery-receipts"
+                / f"{request['snapshot_id']}-{request['request_id']}.json"
+            )
+            receipt_existed = (
+                expected_receipt_path.exists() or expected_receipt_path.is_symlink()
+            )
             try:
                 receipt_path, receipt = recovery.finalize_receipt(
                     production,
@@ -1769,6 +1856,17 @@ def _serve_production(
                     flush=True,
                 )
                 continue
+            proposal = claimed_exports.get(str(request["request_id"]))
+            if proposal is not None:
+                stateful_control.seal_command(proposal)
+            _emit_stateful_log_result(
+                receipt,
+                kind="recovery_created",
+                lifecycle="reused" if receipt_existed else "created",
+                request_id=str(request["request_id"]),
+                environment=production,
+                runtime_started_at=runtime_started_at,
+            )
             print(
                 "seiche Railway recovery: export receipted "
                 f"request={request['request_id']} "
@@ -1785,6 +1883,7 @@ def supervise_production(
     production: Mapping[str, str],
     *,
     poll_seconds: int = 2,
+    runtime_started_at: str | None = None,
 ) -> int:
     if not 1 <= poll_seconds <= 60:
         raise CutoverContractError("cutover poll interval is invalid")
@@ -1812,6 +1911,7 @@ def supervise_production(
         api=api,
         commands=commands,
         poll_seconds=poll_seconds,
+        runtime_started_at=runtime_started_at,
     )
 
 
@@ -1851,6 +1951,7 @@ def activate_and_supervise(
     *,
     activation_path: Path,
     poll_seconds: int = 2,
+    runtime_started_at: str | None = None,
 ) -> int:
     if not 1 <= poll_seconds <= 60:
         raise CutoverContractError("cutover poll interval is invalid")
@@ -1897,6 +1998,14 @@ def activate_and_supervise(
             receipt_path=activation_path,
         )
         validate_activation_runtime(production)
+        _emit_stateful_log_result(
+            activation,
+            kind="activation",
+            lifecycle="created",
+            request_id=str(candidate_receipt["request"]["id"]),
+            environment=production,
+            runtime_started_at=runtime_started_at,
+        )
         children.append(_spawn(api_command(production.get("PORT", "")), production))
     except Exception:
         _terminate_children(children)
@@ -1907,6 +2016,7 @@ def activate_and_supervise(
         api=children[2],
         commands=commands,
         poll_seconds=poll_seconds,
+        runtime_started_at=runtime_started_at,
     )
 
 
@@ -1945,6 +2055,7 @@ def supervise_cutover(
     *,
     grant_path: Path,
     poll_seconds: int = 2,
+    runtime_started_at: str | None = None,
 ) -> int:
     if not 1 <= poll_seconds <= 60:
         raise CutoverContractError("cutover poll interval is invalid")
@@ -1965,6 +2076,10 @@ def supervise_cutover(
         while not stopping:
             if children[0].poll() is not None:
                 return children[0].returncode or 1
+            _promote_activation_control_commands(
+                candidate,
+                platform_root=grant_path.parent.parent,
+            )
             if grant_path.exists() or grant_path.is_symlink():
                 grant = validate_grant(
                     _load_cutover_document(grant_path, label="activation grant"),
@@ -1985,6 +2100,7 @@ def supervise_cutover(
                     grant,
                     activation_path=activation_path,
                     poll_seconds=poll_seconds,
+                    runtime_started_at=runtime_started_at,
                 )
             if datetime.now(UTC).replace(microsecond=0) > fence_expires:
                 raise CutoverContractError("authority fence expired before activation")
@@ -2001,6 +2117,7 @@ def run(
     source_bundle: Path = Path("/migration/source.bundle"),
     platform_root: Path = migration.PLATFORM_ROOT,
 ) -> int:
+    runtime_started_at = migration._iso_now()
     if os.geteuid() != 0 or os.getegid() != 0:
         raise CutoverContractError("cutover supervisor must start as root")
     expected_fence = os.environ.get("SEICHE_RAILWAY_AUTHORITY_FENCE_SHA256", "")
@@ -2043,6 +2160,14 @@ def run(
     base_dsn = os.environ.get("DATABASE_URL", "").strip()
     if not base_dsn:
         raise CutoverContractError("Railway PostgreSQL URL is absent")
+    candidate_receipt_path = (
+        platform_root
+        / "cutover-receipts"
+        / f"{request['request_id']}.candidate.json"
+    )
+    candidate_path_existed = (
+        candidate_receipt_path.exists() or candidate_receipt_path.is_symlink()
+    )
     restore = restore_candidate(
         request,
         fence,
@@ -2063,6 +2188,23 @@ def run(
         runtime_gid=migration.RUNTIME_GID,
     )
     validate_candidate_runtime(environment)
+    if _control_enabled(environment):
+        from seiche import stateful_control
+
+        stateful_control.prepare_control_dropbox(platform_root=platform_root)
+        _promote_activation_control_commands(
+            environment,
+            platform_root=platform_root,
+        )
+        has_grant = grant_path.exists() or grant_path.is_symlink()
+    _emit_stateful_log_result(
+        restore.receipt,
+        kind="candidate",
+        lifecycle="reused" if candidate_path_existed else "created",
+        request_id=str(request["request_id"]),
+        environment=environment,
+        runtime_started_at=runtime_started_at,
+    )
     _prepare_authority_directory(grant_path.parent)
     if has_grant:
         grant = validate_grant(
@@ -2091,7 +2233,18 @@ def run(
                 "seiche Railway cutover: receipted production authority resumed",
                 flush=True,
             )
-            return supervise_production(production)
+            _emit_stateful_log_result(
+                activation,
+                kind="activation",
+                lifecycle="reused",
+                request_id=str(request["request_id"]),
+                environment=production,
+                runtime_started_at=runtime_started_at,
+            )
+            return supervise_production(
+                production,
+                runtime_started_at=runtime_started_at,
+            )
         print(
             "seiche Railway cutover: resuming interrupted granted activation",
             flush=True,
@@ -2101,6 +2254,7 @@ def run(
             restore.receipt,
             grant,
             activation_path=activation_path,
+            runtime_started_at=runtime_started_at,
         )
     print(
         "seiche Railway cutover: candidate ready; both writer planes fenced", flush=True
@@ -2109,6 +2263,7 @@ def run(
         environment,
         restore.receipt,
         grant_path=grant_path,
+        runtime_started_at=runtime_started_at,
     )
 
 
