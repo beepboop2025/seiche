@@ -296,14 +296,14 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-71722bd77b1971b3-r16",
-        "releaseId": "corpus-71722bd77b1971b3",
+        "tag": "market-corpus-receipt-corpus-7cb1695c6affa707-r1",
+        "releaseId": "corpus-7cb1695c6affa707",
         "indexSha256": (
-            "b0f74ddb507b8325387e4a2e127cf81429db8fe163331bdf3baed4781cee57e0"
+            "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
         ),
         "indexArtifactId": (
-            "liquilens-engine-public-index-v1:corpus-71722bd77b1971b3:"
-            "b0f74ddb507b8325387e4a2e127cf81429db8fe163331bdf3baed4781cee57e0"
+            "liquilens-engine-public-index-v1:corpus-7cb1695c6affa707:"
+            "29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36"
         ),
         "inventorySha256": (
             "05c5b08074c65299e59e09285a85e8aaffe895e64a8d840a3a81bbdca4a83f64"
@@ -376,9 +376,9 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-71722bd77b1971b3-r16"
+    assert tag == "market-corpus-receipt-corpus-7cb1695c6affa707-r1"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
-        "corpus-71722bd77b1971b3"
+        "corpus-7cb1695c6affa707"
     )
 
     def stale_receipt_tag(_root, *, tag, head, git_config):
@@ -481,7 +481,7 @@ def test_market_corpus_entry_rejects_untrusted_identity(mutation, message):
 def test_market_corpus_receipts_bind_deep_health_catalog_and_tools():
     receipt = _verify_market(*_market_receipts())
 
-    assert receipt["releaseId"] == "corpus-71722bd77b1971b3"
+    assert receipt["releaseId"] == "corpus-7cb1695c6affa707"
     assert receipt["bisRows"] == 76_342_888
     assert receipt["tools"] == list(gate.MARKET_CORPUS_TOOLS)
 

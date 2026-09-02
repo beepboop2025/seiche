@@ -180,7 +180,7 @@
         "availabilityClaim": "declared_endpoint_verify_with_corpus_health",
         "humanPage": "https://seiche.info/#corpus",
         "requestTimeMonolithScan": false,
-        "publicationReceipt": "{\"bisAggregateRows\":76342888,\"bisApiOnly\":1,\"bisBulkFlat\":27,\"bisFlows\":29,\"bisRegistryOnly\":1,\"engineAttempts\":1118,\"engineDatasets\":1122,\"engineRecoveredObjects\":8,\"engineVerifiedObjects\":1110,\"indexArtifactId\":\"liquilens-engine-public-index-v1:corpus-71722bd77b1971b3:b0f74ddb507b8325387e4a2e127cf81429db8fe163331bdf3baed4781cee57e0\",\"indexSha256\":\"b0f74ddb507b8325387e4a2e127cf81429db8fe163331bdf3baed4781cee57e0\",\"inventorySha256\":\"05c5b08074c65299e59e09285a85e8aaffe895e64a8d840a3a81bbdca4a83f64\",\"releaseId\":\"corpus-71722bd77b1971b3\",\"schemaVersion\":\"1.0.0\",\"tag\":\"market-corpus-receipt-corpus-71722bd77b1971b3-r16\"}"
+        "publicationReceipt": "{\"bisAggregateRows\":76342888,\"bisApiOnly\":1,\"bisBulkFlat\":27,\"bisFlows\":29,\"bisRegistryOnly\":1,\"engineAttempts\":1118,\"engineDatasets\":1122,\"engineRecoveredObjects\":8,\"engineVerifiedObjects\":1110,\"indexArtifactId\":\"liquilens-engine-public-index-v1:corpus-7cb1695c6affa707:29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"indexSha256\":\"29bcd84daf10acb94a74779facebe3a0484b0f9dc0b16f7b5be5727e2e956b36\",\"inventorySha256\":\"05c5b08074c65299e59e09285a85e8aaffe895e64a8d840a3a81bbdca4a83f64\",\"releaseId\":\"corpus-7cb1695c6affa707\",\"schemaVersion\":\"1.0.0\",\"tag\":\"market-corpus-receipt-corpus-7cb1695c6affa707-r1\"}"
       }
     },
     {
