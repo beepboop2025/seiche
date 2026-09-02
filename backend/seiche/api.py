@@ -622,6 +622,8 @@ if not _mcp_activation_log.handlers:
     _mcp_activation_handler.setFormatter(logging.Formatter("%(message)s"))
     _mcp_activation_log.addHandler(_mcp_activation_handler)
 
+_X402_CONFIGURATION_WIRE_ERROR = "payment service is temporarily unavailable"
+
 # CORS is applied once at the edge (Caddy on api.seiche.info); a second copy
 # here produced duplicate Access-Control-Allow-Origin headers that browsers
 # reject. Local dev uses the vite same-origin proxy, so no CORS is needed.
@@ -3824,11 +3826,31 @@ def mcp_http(
         config_error = x402.configuration_error()
         if config_error is not None and (pay_header is not None or priced is not None):
             message_id = single.get("id") if single is not None else None
+            # Correlate repeated failures without retaining the diagnostic.
+            # Configuration errors can carry provider names, paths, or other
+            # implementation detail, so neither logs nor the public JSON-RPC
+            # boundary receive any fragment of the original text.
+            diagnostic = config_error.encode("utf-8", errors="replace")
+            diagnostic_sha256 = hashlib.sha256(diagnostic).hexdigest()
+            logging.getLogger("seiche.api").error(
+                "x402_activation_rejected product=seiche "
+                "failure_class=configuration_error diagnostic_sha256=%s "
+                "diagnostic_bytes=%d",
+                diagnostic_sha256,
+                len(diagnostic),
+                extra={
+                    "event": "x402_activation_rejected",
+                    "product": "seiche",
+                    "failure_class": "configuration_error",
+                    "diagnostic_sha256": diagnostic_sha256,
+                    "diagnostic_bytes": len(diagnostic),
+                },
+            )
             return JSONResponse(
                 mcp_server._error(
                     message_id,
                     MCP_SERVER_ERROR,
-                    f"x402 activation rejected: {config_error}",
+                    _X402_CONFIGURATION_WIRE_ERROR,
                 ),
                 status_code=503,
                 headers={"Cache-Control": "no-store", "Retry-After": "60"},

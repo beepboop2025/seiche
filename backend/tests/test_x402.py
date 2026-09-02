@@ -6,7 +6,9 @@ verify-before-settle ordering around one priced MCP call.
 """
 
 import base64
+import hashlib
 import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -115,10 +117,14 @@ def test_pay_to_only_is_explicitly_rejected_before_facilitator(client, monkeypat
         lambda path, body: calls.append((path, body)) or {"isValid": True},
     )
 
+    assert "SEICHE_X402_PROFILE is required" in x402.configuration_error()
     response = client.post("/mcp", json=_call(PAID_TOOL))
 
     assert response.status_code == 503
-    assert "SEICHE_X402_PROFILE is required" in response.json()["error"]["message"]
+    assert (
+        response.json()["error"]["message"]
+        == "payment service is temporarily unavailable"
+    )
     assert response.headers["Cache-Control"] == "no-store"
     assert calls == []
     # A broken dormant rail cannot take down the permanent free surface.
@@ -176,22 +182,68 @@ def test_malformed_facilitator_url_is_controlled_configuration_error(
     _enable_testnet(monkeypatch)
     monkeypatch.setenv("SEICHE_X402_FACILITATOR", "https://[")
 
+    assert "must be a valid HTTPS URL" in x402.configuration_error()
     response = client.post("/mcp", json=_call(PAID_TOOL))
 
     assert response.status_code == 503
-    assert "must be a valid HTTPS URL" in response.json()["error"]["message"]
+    assert (
+        response.json()["error"]["message"]
+        == "payment service is temporarily unavailable"
+    )
 
 
 def test_profile_without_pay_to_is_explicitly_rejected(client, monkeypatch):
     monkeypatch.setenv("SEICHE_X402_PROFILE", "base-sepolia-testnet")
+    assert "20-byte EVM address" in x402.configuration_error()
     response = client.post("/mcp", json=_call(PAID_TOOL))
     assert response.status_code == 503
-    assert "20-byte EVM address" in response.json()["error"]["message"]
+    assert (
+        response.json()["error"]["message"]
+        == "payment service is temporarily unavailable"
+    )
 
 
-def test_mainnet_profile_is_explicitly_dormant_before_facilitator(
-    client, monkeypatch
+def test_configuration_diagnostic_is_logged_but_never_returned(
+    client, monkeypatch, caplog
 ):
+    _enable_testnet(monkeypatch)
+    private_detail = (
+        "Traceback /srv/seiche/x402.py provider=https://internal.example "
+        "credential=do-not-return"
+    )
+    monkeypatch.setattr(x402, "configuration_error", lambda: private_detail)
+
+    with caplog.at_level(logging.ERROR, logger="seiche.api"):
+        response = client.post("/mcp", json=_call(PAID_TOOL))
+
+    assert response.status_code == 503
+    assert response.json()["error"]["message"] == (
+        "payment service is temporarily unavailable"
+    )
+    assert private_detail not in response.text
+    markers = ("Traceback", "/srv/seiche", "internal.example", "credential")
+    for marker in markers:
+        assert marker not in response.text
+
+    record = next(
+        item
+        for item in caplog.records
+        if getattr(item, "event", None) == "x402_activation_rejected"
+    )
+    assert record.product == "seiche"
+    assert record.failure_class == "configuration_error"
+    assert (
+        record.diagnostic_sha256
+        == hashlib.sha256(private_detail.encode("utf-8")).hexdigest()
+    )
+    assert record.diagnostic_bytes == len(private_detail.encode("utf-8"))
+    serialized_records = repr([item.__dict__ for item in caplog.records])
+    for marker in markers:
+        assert marker not in caplog.text
+        assert marker not in serialized_records
+
+
+def test_mainnet_profile_is_explicitly_dormant_before_facilitator(client, monkeypatch):
     monkeypatch.setenv("SEICHE_X402_PROFILE", "base-mainnet-authenticated")
     monkeypatch.setenv("SEICHE_X402_PAY_TO", PAY_TO)
     monkeypatch.setenv("SEICHE_X402_FACILITATOR", CDP_FACILITATOR)
