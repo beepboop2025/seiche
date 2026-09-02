@@ -18,7 +18,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 from typing import NoReturn
 
 
@@ -27,9 +26,39 @@ RESULT_SCHEMA = "seiche.railway-gate-result.v1"
 REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 SOURCE_REF = "refs/heads/main"
-INSTALL_COMMAND = "python -m pip install -q ./backend[dev,collectors]"
+INSTALL_COMMAND = (
+    "python -m pip install -q ./backend[dev,collectors] && "
+    "python -m pip install --disable-pip-version-check --only-binary=:all: "
+    "--require-hashes -r ops/requirements-social-cards.txt"
+)
+SOURCE_ROOT = Path("/workspace")
+SOURCE_BACKEND = SOURCE_ROOT / "backend"
+RUNTIME_ROOT = Path("/var/lib/seiche-railway-gate-runtime")
+PYTEST_CACHE_DIR = RUNTIME_ROOT / "pytest-cache"
+RUNTIME_DATA_DIR = RUNTIME_ROOT / "data"
+RUNTIME_TMP_DIR = RUNTIME_ROOT / "tmp"
+VALIDATION_DIR = RUNTIME_DATA_DIR / "market-validation"
+XDG_CACHE_DIR = RUNTIME_ROOT / "xdg-cache"
+GIT = Path("/usr/bin/git")
+PYTEST_ARGUMENTS = (
+    "-P",
+    "-m",
+    "pytest",
+    "backend/tests",
+    "-q",
+    "--memray",
+    "-o",
+    "faulthandler_timeout=300",
+    "-o",
+    f"cache_dir={PYTEST_CACHE_DIR}",
+)
 TEST_COMMAND = (
-    "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+    f"HOME={RUNTIME_ROOT} "
+    f"TMPDIR={RUNTIME_TMP_DIR} "
+    f"PYTHONPATH={SOURCE_BACKEND} "
+    f"SEICHE_RUNTIME_DATA_DIR={RUNTIME_DATA_DIR} "
+    f"SEICHE_VALIDATION_DIR={VALIDATION_DIR} "
+    f"python {' '.join(PYTEST_ARGUMENTS)}"
 )
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
@@ -37,9 +66,7 @@ RUNNER_IMAGE = (
 )
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
-UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 REGION_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 REQUEST_KEYS = {
@@ -57,20 +84,17 @@ REQUEST_KEYS = {
 }
 RUN_UID = 65532
 RUN_GID = 65532
+FAILURE_MARKER = "SEICHE_RAILWAY_GATE_FAILURE_V1=1"
 
 
 def fail(message: str) -> NoReturn:
+    print(FAILURE_MARKER, file=sys.stderr, flush=True)
     print(f"railway gate: {message}", file=sys.stderr, flush=True)
     raise SystemExit(1)
 
 
 def utc_now() -> str:
-    return (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def file_sha256(path: Path) -> str:
@@ -190,6 +214,74 @@ def verify_extracted_source(
             fail("source archive contains no backend test suite")
 
 
+def verify_git_identity(
+    source_root: Path,
+    request: Mapping[str, str],
+    *,
+    expected_uid: int = 0,
+) -> None:
+    """Bind the read-only worktree's real commit and tree to the request."""
+
+    try:
+        canonical_source = source_root.resolve(strict=True)
+        git_metadata = canonical_source / ".git"
+        for candidate in (git_metadata, *git_metadata.rglob("*")):
+            info = candidate.lstat()
+            if (
+                (not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode))
+                or info.st_uid != expected_uid
+                or stat.S_IMODE(info.st_mode) & 0o222
+            ):
+                fail("verified Git metadata is writable or has unsafe metadata")
+    except OSError as exc:
+        fail(f"verified Git metadata cannot be inspected safely: {exc}")
+
+    integrity = subprocess.run(
+        [
+            str(GIT),
+            "-c",
+            f"safe.directory={canonical_source}",
+            "-C",
+            str(canonical_source),
+            "fsck",
+            "--full",
+            "--strict",
+            "--no-progress",
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if integrity.returncode != 0:
+        fail("verified Git object graph is incomplete or corrupt")
+
+    observed: dict[str, str] = {}
+    for key, revision in (("commit", "HEAD^{commit}"), ("tree", "HEAD^{tree}")):
+        result = subprocess.run(
+            [
+                str(GIT),
+                "-c",
+                f"safe.directory={canonical_source}",
+                "-C",
+                str(canonical_source),
+                "rev-parse",
+                "--verify",
+                revision,
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        value = result.stdout.strip()
+        if result.returncode != 0 or SHA1_RE.fullmatch(value) is None:
+            fail(f"verified Git {key} cannot be resolved")
+        observed[key] = value
+    if observed != {"commit": request["commit"], "tree": request["tree"]}:
+        fail("verified Git commit/tree differs from the canonical request")
+
+
 def validate_runtime_identity() -> None:
     if os.getuid() != RUN_UID or os.getgid() != RUN_GID:
         fail(
@@ -198,20 +290,119 @@ def validate_runtime_identity() -> None:
         )
 
 
-def build_test_environment() -> dict[str, str]:
-    private_home = tempfile.mkdtemp(prefix="seiche-railway-gate-", dir="/tmp")
+def validate_runtime_ancestry(path: Path) -> None:
+    """Require every runtime path component to have a trusted owner and mode."""
+
+    if not path.is_absolute():
+        fail(f"test runtime path is not absolute: {path}")
+    runner_identity = (os.getuid(), os.getgid())
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except OSError as exc:
+            fail(f"test runtime ancestry cannot be inspected safely: {exc}")
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or not (
+                metadata.st_uid == 0
+                or (metadata.st_uid, metadata.st_gid) == runner_identity
+            )
+            or stat.S_IMODE(metadata.st_mode) & 0o022
+        ):
+            fail(f"test runtime ancestry has unsafe metadata: {current}")
+
+
+def build_test_environment(
+    source_root: Path,
+    *,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> dict[str, str]:
+    try:
+        canonical_source = source_root.resolve(strict=True)
+        source_backend = (canonical_source / "backend").resolve(strict=True)
+        if source_backend.parent != canonical_source or not source_backend.is_dir():
+            fail("verified source backend is not a canonical directory")
+        runtime_root.mkdir(mode=0o700, exist_ok=True)
+        pytest_cache = runtime_root / "pytest-cache"
+        runtime_data = runtime_root / "data"
+        runtime_tmp = runtime_root / "tmp"
+        xdg_cache = runtime_root / "xdg-cache"
+        for path in (pytest_cache, runtime_data, runtime_tmp, xdg_cache):
+            path.mkdir(mode=0o700, exist_ok=True)
+        for path in (runtime_root, pytest_cache, runtime_data, runtime_tmp, xdg_cache):
+            validate_runtime_ancestry(path)
+            info = path.lstat()
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                fail(f"test runtime directory has unsafe metadata: {path}")
+    except OSError as exc:
+        fail(f"test runtime directory cannot be prepared safely: {exc}")
     return {
-        "HOME": private_home,
+        "HOME": str(runtime_root),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONHASHSEED": "0",
+        "PYTHONPATH": str(source_backend),
+        "PYTHONSAFEPATH": "1",
         "PYTHONUNBUFFERED": "1",
-        "TMPDIR": "/tmp",
+        "SEICHE_RUNTIME_DATA_DIR": str(runtime_data),
+        "SEICHE_VALIDATION_DIR": str(runtime_data / "market-validation"),
+        "TMPDIR": str(runtime_tmp),
         "TZ": "UTC",
-        "XDG_CACHE_HOME": f"{private_home}/.cache",
+        "XDG_CACHE_HOME": str(xdg_cache),
     }
+
+
+def verify_test_import(source_root: Path, environment: Mapping[str, str]) -> None:
+    """Fail before the long suite unless `seiche` comes from the verified tree."""
+
+    expected_module = (source_root / "backend" / "seiche" / "__init__.py").resolve(
+        strict=True
+    )
+    expected_data = Path(environment["SEICHE_RUNTIME_DATA_DIR"]).resolve(strict=True)
+    expected_home = Path(environment["HOME"]).resolve(strict=True)
+    expected_tmp = Path(environment["TMPDIR"]).resolve(strict=True)
+    if expected_tmp != expected_home / "tmp":
+        fail("test interpreter temporary directory is outside the runtime root")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-c",
+            (
+                "import json; from pathlib import Path; import tempfile; import seiche; "
+                "from seiche.config import DATA_DIR; "
+                "print(json.dumps({'data_dir': str(DATA_DIR.resolve()), "
+                "'module': str(Path(seiche.__file__).resolve()), "
+                "'temp_dir': str(Path(tempfile.gettempdir()).resolve())}, "
+                "sort_keys=True, separators=(',', ':')))"
+            ),
+        ],
+        check=False,
+        cwd=source_root,
+        env=dict(environment),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        observed = json.loads(result.stdout) if result.returncode == 0 else None
+    except json.JSONDecodeError:
+        observed = None
+    if observed != {
+        "data_dir": str(expected_data),
+        "module": str(expected_module),
+        "temp_dir": str(expected_tmp),
+    }:
+        fail("test interpreter did not bind the verified source and runtime data")
 
 
 def dependency_snapshot_sha256() -> str:
@@ -266,21 +457,16 @@ def parse_pytest_summary(output: str) -> dict[str, int | float]:
 
 
 def run_tests(source_root: Path) -> tuple[dict[str, int | float], str, str]:
+    if source_root != SOURCE_ROOT:
+        fail("test source root does not match the reviewed runtime contract")
     started_at = utc_now()
-    command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "backend/tests",
-        "-q",
-        "--memray",
-        "-o",
-        "faulthandler_timeout=300",
-    ]
+    environment = build_test_environment(source_root)
+    verify_test_import(source_root, environment)
+    command = [sys.executable, *PYTEST_ARGUMENTS]
     process = subprocess.Popen(
         command,
         cwd=source_root,
-        env=build_test_environment(),
+        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -360,9 +546,9 @@ def build_result(
 
 
 def canonical_json(payload: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
 
 
 def serve(result: bytes) -> NoReturn:
@@ -405,14 +591,16 @@ def serve(result: bytes) -> NoReturn:
 def main() -> NoReturn:
     request_path = Path(os.environ.get("SEICHE_GATE_REQUEST", "/gate/request.json"))
     archive_path = Path(os.environ.get("SEICHE_GATE_ARCHIVE", "/gate/source.tar"))
-    source_root = Path(os.environ.get("SEICHE_GATE_SOURCE_ROOT", "/workspace"))
+    source_root = SOURCE_ROOT
     if not source_root.is_dir() or not (source_root / "backend" / "tests").is_dir():
         fail("extracted exact-source tree is missing")
     validate_runtime_identity()
     request = load_request(request_path, archive_path)
+    verify_git_identity(source_root, request)
     verify_extracted_source(archive_path, source_root)
     tests, started_at, completed_at = run_tests(source_root)
     verify_extracted_source(archive_path, source_root)
+    verify_git_identity(source_root, request)
     payload = build_result(request, tests, started_at, completed_at, os.environ)
     result = canonical_json(payload)
     encoded = base64.b64encode(result).decode("ascii")

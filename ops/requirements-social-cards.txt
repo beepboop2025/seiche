@@ -1,0 +1,11 @@
+# Build-only renderer dependency. This file deliberately sits outside the
+# signed Python package identity checked by verify_catalog_publication.py.
+# GitHub's static publisher is Linux x86_64 on CPython 3.12; the first digest
+# is the only compatible production wheel. The three reviewed macOS arm64
+# hashes let the repository's Python 3.12+ contributor contract run locally
+# without weakening production's platform selection.
+Pillow==12.3.0 \
+    --hash=sha256:78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91 \
+    --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7 \
+    --hash=sha256:d69141514cc30b774ceea5e3ed3a6635c8d8a96edf664689b890f4089111fb35 \
+    --hash=sha256:e158cb00350dc278f3b91551101aa7d12415a66ebf2c91d8d5ac14e56ddd3ad0

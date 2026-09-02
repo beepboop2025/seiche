@@ -9,8 +9,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 # contract suite invokes Git, ssh-keygen, systemd-analyze, setpriv/flock, ps and
 # curl; python:slim deliberately omits those host-contract tools.
 RUN printf '%s\n' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250814T000000Z bookworm main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250814T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20250929T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20250929T000000Z bookworm-security main' \
       > /etc/apt/sources.list \
     && find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -type f -delete \
     && apt-get update \
@@ -33,25 +33,30 @@ RUN test "$(uname -m)" = x86_64 \
 
 WORKDIR /build
 ADD source.tar /build/
-RUN python -m pip install -q "./backend[dev,collectors]"
+RUN python -m pip install -q "./backend[dev,collectors]" \
+    && python -m pip install --disable-pip-version-check --only-binary=:all: \
+      --require-hashes -r ops/requirements-social-cards.txt
 
 FROM gate-build AS gate-runtime
 
-WORKDIR /workspace
-
-# The workflow creates source.tar with `git archive` from the exact main SHA.
-# Install from one extracted tree above, then test a second clean extraction.
-# The test tree stays root-owned and read-only; dependencies/build hooks cannot
-# add an untracked pytest control file before admission.
-COPY source.tar /gate/source.tar
-ADD source.tar /workspace/
-
+# The archive remains the canonical byte inventory. A full-history Git bundle
+# supplies the matching immutable commit object required by Seiche's runtime
+# release-identity check; the runner independently binds HEAD/tree/archive.
+WORKDIR /gate
+COPY source.tar source.bundle /gate/
 COPY gate-request.json /gate/request.json
 COPY run-gate.py /gate/run-gate.py
-RUN chmod 0444 /gate/source.tar /gate/request.json /gate/run-gate.py \
+RUN git clone --quiet /gate/source.bundle /workspace \
+    && git config --system --add safe.directory /workspace \
+    && install -d -o 65532 -g 65532 -m 0700 \
+      /var/lib/seiche-railway-gate-runtime \
+    && chmod 0555 /gate \
+    && chmod 0444 /gate/source.tar /gate/source.bundle \
+      /gate/request.json /gate/run-gate.py \
     && chmod -R a-w /workspace \
     && { test -e /usr/bin/python3 || ln -s /usr/local/bin/python /usr/bin/python3; }
 
+WORKDIR /workspace
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["python", "/gate/run-gate.py"]

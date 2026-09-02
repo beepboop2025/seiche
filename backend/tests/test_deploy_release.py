@@ -1083,7 +1083,22 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
     assert "{$SEICHE_API_UPSTREAM:127.0.0.1:8787}" in snippet
     assert "{$SEICHE_RAILWAY_EDGE_TOKEN:local-edge-token-unused}" in snippet
     assert "header_up Host {upstream_hostport}" in snippet
-    assert caddy.count("import seiche_stateful_upstream") == 4
+    importer_handlers: list[str] = []
+    current_handler: str | None = None
+    for line in caddy.splitlines():
+        match = re.fullmatch(r"\s*handle (@[a-z0-9_]+) \{", line)
+        if match is not None:
+            current_handler = match.group(1)
+        if line.strip() == "import seiche_stateful_upstream":
+            assert current_handler is not None
+            importer_handlers.append(current_handler)
+    assert importer_handlers == [
+        "@origin_api_catalog",
+        "@event_analysis",
+        "@public",
+        "@login",
+        "@mcp",
+    ]
     private_delivery = caddy[
         caddy.index("@world_model_delivery {") : caddy.index(
             "@world_model_delivery_non_get"
@@ -1285,6 +1300,18 @@ case "$url" in
         type=application/json
         body='{{"canonicalCatalog":"https://seiche.info/.well-known/ai-catalog.json","servers":[{{"name":"io.github.beepboop2025/seiche","url":"https://api.seiche.info/mcp"}}]}}'
         ;;
+    */.well-known/api-catalog)
+        type='application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"'
+        body='{{"linkset":[{{"anchor":"https://api.seiche.info/api/v2/corpus"}}]}}'
+        ;;
+    */api/v2/corpus/healthz)
+        type=application/json
+        body='{{"service":"liquilens-market-corpus","status":"ok"}}'
+        ;;
+    */api/v2/corpus/v1/catalog)
+        type=application/json
+        body='{{"service":"liquilens-market-corpus","corpora":{{}}}}'
+        ;;
     */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
     */riptide/openapi.json)
@@ -1400,6 +1427,18 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         assert (
             f"GET|/.well-known/mcp.json|200|application/json|{identity}" in definitions
         )
+    assert (
+        "GET|/.well-known/api-catalog|200|application/linkset+json|"
+        '"anchor":"https://api.seiche.info/api/v2/corpus"'
+    ) in definitions
+    assert (
+        "GET|/api/v2/corpus/healthz|200|application/json|"
+        '"service":"liquilens-market-corpus"'
+    ) in definitions
+    assert (
+        'GET|/api/v2/corpus/v1/catalog|200|application/json|"corpora":{'
+        in definitions
+    )
     assert ('GET|/riptide/|200|application/json|"name": "riptide"') in definitions
     assert (
         'GET|/riptide/openapi.json|200|application/json|"title": "Riptide Public API"'
@@ -1430,6 +1469,9 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert result.returncode == 0, result.stdout + result.stderr
     assert "https://edge.invalid/api/subscribe" in calls.read_text()
     assert "https://edge.invalid/.well-known/mcp.json" in calls.read_text()
+    assert "https://edge.invalid/.well-known/api-catalog" in calls.read_text()
+    assert "https://edge.invalid/api/v2/corpus/healthz" in calls.read_text()
+    assert "https://edge.invalid/api/v2/corpus/v1/catalog" in calls.read_text()
     for route in palimpsest_host_routes:
         assert f"https://edge.invalid{route}" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
@@ -3806,6 +3848,41 @@ def test_private_world_model_delivery_has_an_exact_least_privilege_seam():
     assert "setfacl" not in relay_installer
 
 
+def test_market_corpus_edge_precedes_the_broad_seiche_api_matcher():
+    caddy = CADDYFILE.read_text()
+    prefix = "/api/v2/corpus"
+    read_matcher = caddy.index("@market_corpus_read {")
+    read_handler = caddy.index("handle @market_corpus_read {")
+    mcp_matcher = caddy.index("@market_corpus_mcp {")
+    mcp_handler = caddy.index("handle @market_corpus_mcp {")
+    public_matcher = caddy.index("@public {")
+    corpus_edge = caddy[read_matcher:public_matcher]
+
+    assert read_matcher < read_handler < mcp_matcher < mcp_handler < public_matcher
+    assert f"path {prefix} {prefix}/*" in corpus_edge
+    assert "method GET HEAD" in corpus_edge
+    assert f"path {prefix}/mcp" in corpus_edge
+    assert "method POST" in corpus_edge
+    assert corpus_edge.count(f"uri strip_prefix {prefix}") == 2
+    assert corpus_edge.count("reverse_proxy 127.0.0.1:8801") == 2
+    assert "max_size 64KiB" in corpus_edge
+    assert "/api/v2/*" not in corpus_edge
+
+
+def test_origin_api_catalog_reaches_fastapi_for_405_semantics():
+    caddy = CADDYFILE.read_text()
+    catalog_matcher = caddy.index("@origin_api_catalog path")
+    catalog_handler = caddy.index("handle @origin_api_catalog {")
+    corpus_matcher = caddy.index("@market_corpus_read {")
+    block = caddy[catalog_matcher:corpus_matcher]
+
+    assert catalog_matcher < catalog_handler < corpus_matcher
+    assert "@origin_api_catalog path /.well-known/api-catalog" in block
+    assert "method " not in block
+    assert "import seiche_stateful_upstream" in block
+    assert "respond " not in block
+
+
 def test_release_health_capability_is_loopback_only():
     caddy = CADDYFILE.read_text()
     route = "/api/internal/v1/release-health"
@@ -4073,6 +4150,13 @@ def test_snapshot_promotion_unit_and_installer_are_fixed_and_sandboxed():
     assert "systemctl enable seiche-snapshot-promote.service" not in installer
     api_dropin = installer[installer.index('cat >"$DROPIN"') :]
     assert "EnvironmentFile=-$ENV_DIR/release.env" in api_dropin
+    for variable in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        assert api_dropin.count(f"Environment={variable}=1") == 1
 
 
 def test_deploy_controller_writes_only_atomic_root_owned_fixed_requests():
@@ -4327,7 +4411,11 @@ def test_release_poller_prefers_remote_gate_and_retains_local_break_glass():
     assert 'SEICHE_EXPECTED_TARGET_SHA="$target"' in wrapper_handoff
     assert '"$CANDIDATE_DIR/backend[dev,collectors]"' in poller
     gate_slice = poller[detached:gate_receipt]
-    assert gate_slice.count("run_candidate_gate_stage") == 3
+    assert gate_slice.count("run_candidate_gate_stage") == 4
+    assert "candidate social-card test dependency installation" in gate_slice
+    assert "ops/requirements-social-cards.txt" in gate_slice
+    assert "--only-binary=:all:" in gate_slice
+    assert "--require-hashes" in gate_slice
     assert "-o faulthandler_timeout=300" in gate_slice
     assert "--pystack-threshold" not in gate_slice
     assert "EnvironmentFile" not in gate_slice
@@ -4613,7 +4701,12 @@ def _release_receipt_pair(
         "started_at": started,
         "completed_at": completed,
         "conclusion": "success",
-        "install_command": "python -m pip install -q -e ./backend[dev,collectors]",
+        "install_command": (
+            "python -m pip install -q -e ./backend[dev,collectors] && "
+            "python -m pip install --disable-pip-version-check "
+            "--only-binary=:all: --require-hashes "
+            "-r ops/requirements-social-cards.txt"
+        ),
         "test_command": (
             "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
         ),
@@ -6080,6 +6173,7 @@ def test_release_poller_allows_only_the_reviewed_setgid_export_boundary():
     assert "/var/lib/seiche-nbs" in writable_paths
     assert "/var/lib/seiche-deploy" in writable_paths
     assert "/opt/seiche-nbs-intake" in writable_paths
+    assert "/opt/seiche-palimpsest-china" in writable_paths
 
     # Allowing that one setgid collaboration directory does not reopen the
     # controller's host namespace or privilege-escalation surfaces.
@@ -6470,7 +6564,7 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     caddy = CADDYFILE.read_text()
     block = caddy[
         caddy.index("# Palimpsest exposes four additional") : caddy.index(
-            "# ScamShield publishes one atomic"
+            "# Palimpsest exposes one signature-admitted"
         )
     ]
     routes = {
@@ -6491,6 +6585,40 @@ def test_palimpsest_host_readings_edge_preserves_exact_static_allowlist():
     assert block.count("root * /var/lib/palimpsest/readings") == 4
     assert block.count("file_server") == 4
     assert "handle_path /palimpsest/" not in block
+    assert "reverse_proxy" not in block
+
+
+def test_palimpsest_evidence_lake_metrics_edge_is_an_exact_atomic_generation():
+    caddy = CADDYFILE.read_text()
+    block = caddy[
+        caddy.index("# Palimpsest exposes one signature-admitted") : caddy.index(
+            "# ScamShield publishes one atomic"
+        )
+    ]
+    matcher = (
+        "@palimpsest_evidence_lake_metrics {\n"
+        "        method GET HEAD\n"
+        "        path "
+        "/palimpsest/evidence-lake-metrics/evidence-lake-metrics-latest.json "
+        "/palimpsest/evidence-lake-metrics/"
+        "evidence-lake-metrics-producer-receipt.json\n"
+        "    }"
+    )
+
+    assert matcher in block
+    assert block.count("method GET HEAD") == 1
+    assert block.count("path /palimpsest/evidence-lake-metrics/") == 1
+    assert "path /palimpsest/evidence-lake-metrics/*" not in block
+    assert "handle_path /palimpsest/evidence-lake-metrics" not in block
+    assert "uri strip_prefix /palimpsest/evidence-lake-metrics" in block
+    assert block.count("root * /var/lib/palimpsest/evidence-lake-metrics/current") == 1
+    assert 'header Access-Control-Allow-Origin "https://palimpsest.info"' in block
+    assert 'header Cache-Control "no-store, no-transform"' in block
+    assert 'header Content-Disposition "inline"' in block
+    assert 'header X-Content-Type-Options "nosniff"' in block
+    assert block.count("file_server") == 1
+    assert "root * /var/lib/palimpsest/readings" not in block
+    assert "browse" not in block
     assert "reverse_proxy" not in block
 
 

@@ -4,7 +4,7 @@
  * itself from its own DOM at click time (h2 title, .sub line, .kv readings).
  * Charts inside cards keep their own share bar; this chip shares the numbers.
  */
-import { composeStatCard, copyCard, deepLink, fileName, nativeShare, savePng } from "./share";
+import { composeStatCard, contextualLink, copyCard, fileName, nativeShare, savePng } from "./share";
 
 const clean = (el: Element | null): string =>
   el ? (el as HTMLElement).innerText.replace(/\s+/g, " ").trim() : "";
@@ -15,7 +15,7 @@ function harvest(card: HTMLElement) {
   const stats = [...card.querySelectorAll(".kv .item")]
     .map((it) => ({ k: clean(it.querySelector(".k")), v: clean(it.querySelector(".v")) }))
     .filter((s) => s.k && s.v);
-  return { title, body, stats, link: deepLink() };
+  return { title, body, stats, link: contextualLink(card) };
 }
 
 // A second navigator.share() while the first is still open throws
@@ -61,6 +61,9 @@ function onShare(card: HTMLElement, chip: HTMLButtonElement) {
 
 function decorate(root: ParentNode) {
   root.querySelectorAll<HTMLElement>(".tabview .card").forEach((card) => {
+    // Do not manufacture a public link for unbounded replay/corpus surfaces or
+    // private account state. Those tabs deliberately expose no share chip.
+    if (card.closest("[data-share-disabled]")) return;
     if (card.querySelector(":scope > .cardshare")) return;
     if (!card.querySelector("h2")) return;
     const chip = document.createElement("button");

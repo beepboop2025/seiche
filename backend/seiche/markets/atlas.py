@@ -64,6 +64,7 @@ _SOURCE_URLS = {
     "fred_weekly": "https://fred.stlouisfed.org/",
     "fiscaldata": "https://fiscaldata.treasury.gov/",
     "nyfed_rates": "https://markets.newyorkfed.org/static/docs/markets-api.html",
+    "nyfed_unsecured_rates": "https://markets.newyorkfed.org/static/docs/markets-api.html",
     "nyfed_facilities": "https://www.newyorkfed.org/markets/domestic-market-operations/monetary-policy-implementation",
     "ecb_benchmark": "https://data.ecb.europa.eu/data/datasets/EST",
     "ecb_policy": "https://data.ecb.europa.eu/data/datasets/FM",
@@ -87,6 +88,50 @@ _SOURCE_URLS = {
     "rbnz_policy": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
     "rbnz_wholesale": "https://www.rbnz.govt.nz/statistics/series/exchange-and-interest-rates",
 }
+_SOURCE_PUBLISHERS = {
+    "fred_daily": "Federal Reserve Bank of St. Louis",
+    "fred_weekly": "Federal Reserve Bank of St. Louis",
+    "fiscaldata": "U.S. Department of the Treasury, Bureau of the Fiscal Service",
+    "nyfed_rates": "Federal Reserve Bank of New York",
+    "nyfed_unsecured_rates": "Federal Reserve Bank of New York",
+    "nyfed_facilities": "Federal Reserve Bank of New York",
+    "ecb_benchmark": "European Central Bank",
+    "ecb_policy": "European Central Bank",
+    "ecb_liquidity": "European Central Bank",
+    "boe_sonia": "Bank of England",
+    "boe_policy": "Bank of England",
+    "boj_rates": "Bank of Japan",
+    "boj_accounts": "Bank of Japan",
+    "bok_ecos_policy": "Bank of Korea",
+    "bok_ecos_money_market": "Bank of Korea",
+    "bok_facilities": "Bank of Korea",
+    "ksd_kofr": "Korea Securities Depository",
+    "cfets_rates": "China Foreign Exchange Trade System",
+    "pbc_operations": "People's Bank of China",
+    "rbi_official": "Reserve Bank of India",
+    "ccil_market": "Clearing Corporation of India Limited",
+    "hkma_official": "Hong Kong Monetary Authority",
+    "tma_benchmarks": "Treasury Markets Association",
+    "mas_sora": "Monetary Authority of Singapore",
+    "mas_rates": "Monetary Authority of Singapore",
+    "rba_cash": "Reserve Bank of Australia",
+    "rba_policy": "Reserve Bank of Australia",
+    "rbnz_policy": "Reserve Bank of New Zealand",
+    "rbnz_wholesale": "Reserve Bank of New Zealand",
+}
+
+
+def market_source_reference(adapter_id: str) -> dict[str, str | None]:
+    """Return the public publisher anchor declared for a canonical adapter.
+
+    A missing URL remains ``None``.  In particular, this function never turns
+    a generic licensed-feed identifier into an invented public citation.
+    """
+
+    return {
+        "publisher": _SOURCE_PUBLISHERS.get(adapter_id),
+        "source_url": _SOURCE_URLS.get(adapter_id),
+    }
 
 # Markets outside the registered canonical packs remain visible.  This is a
 # source-audited discovery ledger, not a claim that Seiche already serves an

@@ -1,0 +1,107 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price",
+  "product": "seiche",
+  "slug": "2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price",
+  "date": "2026-08-31",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "Dollar-funding warning shifts to the calendar as plumbing outruns price signals",
+  "dek": "Seiche’s board reads STRAIN, but the case is prospective rather than a live cash squeeze: dated reserve pressure leads while SOFR remains below IORB.",
+  "canonical_url": "https://seiche.info/articles/2026-08-31-dollar-funding-warning-shifts-to-the-calendar-as-plumbing-outruns-price/",
+  "published_at": "2026-08-31T17:58:11Z",
+  "evidence_as_of": "2026-08-31",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-31-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 60,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 0,
+      "material_composite_change": 0,
+      "regime_transition": 20,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 895,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:c69e080b54817510bbd8fb0f4ee626bdf978d51c5388e04bb26a65fb525af46e",
+    "memory_fingerprint": "sha256:f5da1f6b466f2456a7128f159b24e01e0bfa58a0159b1633b2d9ca2d45eeabc7",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "76da7500978838562e77a25091a345aadae0355b13c017fcaebe8a5110198721",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the thesis as a conditional calendar-capacity warning rather than a claim of current scarcity.",
+      "Strengthened the counter-case so calm post-settlement plumbing would falsify the thesis.",
+      "Removed unsupported digital-market exposition and retained explicit product and research boundaries.",
+      "Preserved source limits and added the required allowed-source links.",
+      "Removed the rejected reserve-gap dollar figure.",
+      "Retained the calendar-led thesis as conditional rather than evidence of current scarcity.",
+      "Made calm post-settlement plumbing an explicit falsification condition.",
+      "Preserved source limits, allowed links, and the research boundary."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:c69e080b54817510bbd8fb0f4ee626bdf978d51c5388e04bb26a65fb525af46e",
+      "memory_fingerprint": "sha256:f5da1f6b466f2456a7128f159b24e01e0bfa58a0159b1633b2d9ca2d45eeabc7",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}

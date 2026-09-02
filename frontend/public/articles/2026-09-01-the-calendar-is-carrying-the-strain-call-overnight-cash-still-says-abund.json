@@ -1,0 +1,102 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-09-01-the-calendar-is-carrying-the-strain-call-overnight-cash-still-says-abund",
+  "product": "seiche",
+  "slug": "2026-09-01-the-calendar-is-carrying-the-strain-call-overnight-cash-still-says-abund",
+  "date": "2026-09-01",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "The calendar is carrying the strain call; overnight cash still says abundance",
+  "dek": "Seiche’s board reads STRAIN, led by the dated reserve path. But SOFR remains below IORB on the matched comparison, Standing Repo Facility use is minimal, and market stress is subdued: the calendar has not yet become a funding event.",
+  "canonical_url": "https://seiche.info/articles/2026-09-01-the-calendar-is-carrying-the-strain-call-overnight-cash-still-says-abund/",
+  "published_at": "2026-09-01T15:22:00Z",
+  "evidence_as_of": "2026-09-01",
+  "related_dispatch": "https://seiche.info/dispatches/2026-09-01-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1065,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:3b1bb8b903f61835cfc4d62fb3086f216570eb9c6afc53b1a94718d7c26888ae",
+    "memory_fingerprint": "sha256:b7d58fa7c7130067e800cf046490a554697c06b1ff5f0a636df73e9db9c6b0e1",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 2,
+    "dossier_sha256": "de91e729cdd18727b9d99524728d6b7642fa16af9659621ac14745eb5f200faf",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the thesis as a dated-capacity risk rather than an established funding squeeze.",
+      "Strengthened the market-based counter-case and made settlement-period validation observable.",
+      "Preserved source, model, historical-context, and product-scope boundaries; added required source links and research boundary."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:3b1bb8b903f61835cfc4d62fb3086f216570eb9c6afc53b1a94718d7c26888ae",
+      "memory_fingerprint": "sha256:b7d58fa7c7130067e800cf046490a554697c06b1ff5f0a636df73e9db9c6b0e1",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}

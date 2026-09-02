@@ -1,57 +1,59 @@
 {
-  "date": "2026-08-26",
+  "date": "2026-09-01",
   "reported_prev": {
-    "2y Treasury constant maturity yield": "2026-08-21",
     "Sri Lankan rupees per USD (H.10)": "2026-08-21"
   },
   "reported": {
-    "2y Treasury constant maturity yield": "2026-08-24",
-    "Sri Lankan rupees per USD (H.10)": "2026-08-21"
+    "SRF accepted": "2026-09-01",
+    "ON RRP take-up": "2026-08-31",
+    "ON RRP take-up, referee history": "2026-08-31",
+    "3-month T-bill secondary market rate": "2026-08-28",
+    "2y Treasury constant maturity yield": "2026-08-28"
   },
   "letter_prev": {
     "regime": "STRAIN",
-    "value": 45.2,
+    "value": 45.1,
     "decomp": {
       "weather": 11.0,
-      "kink": 7.4,
+      "kink": 7.3,
       "resonance": 6.7,
-      "rvxray": 6.1,
+      "rvxray": 6.0,
       "buffers": 3.0,
       "undertow": 2.8,
-      "confession": 2.7,
-      "warehouse": 2.4,
-      "tails": 2.2,
-      "auctions": 1.0,
-      "hydrophone": 0.0
-    },
-    "crunch": {
-      "date": "2026-08-27",
-      "worst_case_b": 2896.7,
-      "settlement_b": 95.0
-    },
-    "tell": 30.5
-  },
-  "letter": {
-    "regime": "STRAIN",
-    "value": 45.2,
-    "decomp": {
-      "weather": 11.0,
-      "kink": 7.4,
-      "resonance": 6.7,
-      "rvxray": 6.1,
-      "buffers": 3.0,
-      "undertow": 2.8,
-      "confession": 2.7,
+      "confession": 2.6,
       "warehouse": 2.4,
       "tails": 2.1,
-      "auctions": 1.0,
+      "auctions": 1.3,
       "hydrophone": 0.0
     },
     "crunch": {
       "date": "2026-08-31",
-      "worst_case_b": 2883.9,
-      "settlement_b": 114.0
+      "worst_case_b": 2893.5,
+      "settlement_b": null
     },
-    "tell": 29.5
+    "tell": 44.1
+  },
+  "letter": {
+    "regime": "STRAIN",
+    "value": 45.7,
+    "decomp": {
+      "weather": 11.0,
+      "kink": 7.3,
+      "resonance": 6.8,
+      "rvxray": 6.0,
+      "buffers": 2.9,
+      "undertow": 2.8,
+      "tails": 2.6,
+      "confession": 2.6,
+      "warehouse": 2.4,
+      "auctions": 1.3,
+      "hydrophone": 0.0
+    },
+    "crunch": {
+      "date": "2026-08-31",
+      "worst_case_b": 2905.9,
+      "settlement_b": null
+    },
+    "tell": 31.5
   }
 }

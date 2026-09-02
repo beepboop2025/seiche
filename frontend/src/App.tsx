@@ -15,6 +15,7 @@ import Gauge from "./motion/Gauge";
 import Odo from "./motion/Odo";
 import LivePulse from "./motion/LivePulse";
 import { useChangeFlash } from "./motion/useLive";
+import { tabSharePath } from "./shareRoutes";
 
 const CommandPalette = lazy(() => import("./CommandPalette"));
 const Basin = lazy(() => import("./Basin"));
@@ -41,6 +42,7 @@ const Dispatches = lazy(() => import("./tabs/Dispatches"));
 const Today = lazy(() => import("./tabs/Today"));
 const Board = lazy(() => import("./tabs/Board"));
 const MoneyMarkets = lazy(() => import("./tabs/MoneyMarkets"));
+const Corpus = lazy(() => import("./tabs/Corpus"));
 const Forecast = lazy(() => import("./tabs/Forecast"));
 const Physics = lazy(() => import("./tabs/Physics"));
 const Helm = lazy(() => import("./tabs/Helm"));
@@ -67,13 +69,14 @@ const Account = lazy(() => import("./tabs/Account"));
 // DISPATCHES sits second because the frozen letters are the public record of
 // what the desk said before outcomes arrived.
 // MONEY MARKETS follows the core board as the native-frequency global cash
-// desk. GLOBAL, FX×MATERIALS and OIL×FUNDING then carry offshore-dollar
+// desk. CORPUS is promoted beside it as the drill-down from registered lake to
+// exact canonical observation. GLOBAL, FX×MATERIALS and OIL×FUNDING then carry offshore-dollar
 // coupling, the physical-cash transmission channel and the barrel's
 // bidirectional funding loop as context surfaces, never hidden composite
 // inputs. SCARCITY and SUPPLY carry the two forward-looking Fed plumbing views.
 // Digit shortcuts index TABS positionally; hash routes remain name-based.
 const TABS = [
-  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
+  "TODAY", "DISPATCHES", "BOARD", "MONEY MARKETS", "CORPUS", "GLOBAL", "FX×MATERIALS", "OIL×FUNDING", "SCARCITY", "SUPPLY", "FORECAST", "PHYSICS", "HELM", "MARKET",
   "CALENDAR", "POSITIONING", "RESONANCE", "TIME MACHINE", "PROOF", "REFEREE", "SYSTEM", "ACCOUNT",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -333,6 +336,7 @@ function AppInner() {
     : compositeCoverage === null
       ? "dependent views may be degraded"
       : `dependent views may be degraded; composite coverage remains ${compositeCoverage.toFixed(1)}%`;
+  const tabCardPath = tabSharePath(tab);
 
   if (descending) {
     return (
@@ -400,9 +404,10 @@ function AppInner() {
             <a
               href={`#${t.toLowerCase()}`}
               className={t === tab ? "active" : ""}
+              aria-current={t === tab ? "page" : undefined}
               onClick={(e) => { e.preventDefault(); goTab(t); }}
             >
-              {t}
+              {t === "CORPUS" ? "MARKET ATLAS" : t}
             </a>
             {t === "BOARD" && (
               <a href="/use-cases" aria-label="Seiche use cases and selection guide">
@@ -448,11 +453,17 @@ function AppInner() {
       )}
 
       <Suspense fallback={<TabSkeleton />}>
-        <div className="tabview" key={tab}>
+        <div
+          className="tabview"
+          key={tab}
+          data-share-path={tabCardPath ?? undefined}
+          data-share-disabled={tabCardPath ? undefined : "true"}
+        >
           {tab === "TODAY" && <Today snap={snap} live={live} />}
           {tab === "DISPATCHES" && <Dispatches />}
           {tab === "BOARD" && <Board snap={snap} live={live} />}
           {tab === "MONEY MARKETS" && <MoneyMarkets snap={snap} />}
+          {tab === "CORPUS" && <Corpus />}
           {tab === "SCARCITY" && <Scarcity snap={snap} />}
           {tab === "SUPPLY" && <Supply snap={snap} />}
           {tab === "FORECAST" && <Forecast snap={snap} />}

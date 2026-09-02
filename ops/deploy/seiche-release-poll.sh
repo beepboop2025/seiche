@@ -47,9 +47,10 @@ ADMISSION_RETRY_SECONDS="${SEICHE_CONTROL_ADMISSION_RETRY_SECONDS:-30}"
 SUPERSESSION_POLL_SECONDS="${SEICHE_CONTROL_SUPERSESSION_POLL_SECONDS:-15}"
 SUPERSESSION_CHECK_TIMEOUT_SECONDS="${SEICHE_CONTROL_SUPERSESSION_CHECK_TIMEOUT_SECONDS:-30}"
 RELEASE_TIMER_UNIT="${SEICHE_CONTROL_RELEASE_TIMER_UNIT:-seiche-release-poll.timer}"
-INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors]"
-REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors]"
+INSTALL_COMMAND="python -m pip install -q -e ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
+REMOTE_GATE_INSTALL_COMMAND="python -m pip install -q ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
 TEST_COMMAND="python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+REMOTE_GATE_TEST_COMMAND="HOME=/var/lib/seiche-railway-gate-runtime TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache"
 REMOTE_GATE_REPOSITORY="beepboop2025/seiche"
 REMOTE_GATE_WORKFLOW="beepboop2025/seiche/.github/workflows/railway-release-gate.yml"
 REMOTE_GATE_ARTIFACT_REPOSITORY="ghcr.io/beepboop2025/seiche-release-gates"
@@ -433,6 +434,7 @@ validate_receipt() {
   local snapshot_digest="${6:-}"
   "$SYSTEM_PYTHON" - "$path" "$kind" "$commit" "$tree" \
     "$INSTALL_COMMAND" "$REMOTE_GATE_INSTALL_COMMAND" "$TEST_COMMAND" \
+    "$REMOTE_GATE_TEST_COMMAND" \
     "$gate_digest" "$snapshot_digest" \
     "$RECEIPT_UID" "$RECEIPT_GID" "$RECEIPT_MODE" \
     "$REMOTE_GATE_REPOSITORY" "$REMOTE_GATE_WORKFLOW" \
@@ -451,6 +453,7 @@ import sys
     install_command,
     remote_install_command,
     test_command,
+    remote_test_command,
     gate_digest,
     snapshot_digest,
     expected_uid,
@@ -573,7 +576,9 @@ try:
         assert payload["install_command"] == (
             remote_install_command if provider == "railway" else install_command
         )
-        assert payload["test_command"] == test_command
+        assert payload["test_command"] == (
+            remote_test_command if provider == "railway" else test_command
+        )
         if provider == "local-break-glass":
             assert payload["break_glass"] == {
                 "acknowledgement": "SEICHE_CONTROL_LOCAL_GATE_BREAK_GLASS=1"
@@ -1572,6 +1577,12 @@ if [ "$LOCAL_GATE_BREAK_GLASS" = 1 ]; then
     "candidate dependency install failed or timed out" \
     "$TIMEOUT" -k 30 600 "$VENV/bin/python" -m pip install -q -e \
     "$CANDIDATE_DIR/backend[dev,collectors]"
+  run_candidate_gate_stage \
+    "candidate social-card test dependency installation" \
+    "candidate social-card dependency install failed or timed out" \
+    "$TIMEOUT" -k 30 300 "$VENV/bin/python" -m pip install \
+    --disable-pip-version-check --only-binary=:all: --require-hashes \
+    -r "$CANDIDATE_DIR/ops/requirements-social-cards.txt"
   # The candidate shell receives its values only through positional arguments.
   # shellcheck disable=SC2016
   run_candidate_gate_stage \

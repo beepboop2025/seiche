@@ -25,9 +25,21 @@ SOURCE_REF = "refs/heads/main"
 ARTIFACT_REPOSITORY = "ghcr.io/beepboop2025/seiche-release-gates"
 ARTIFACT_TYPE = "application/vnd.seiche.railway-gate-result.v1"
 RECEIPT_MEDIA_TYPE = "application/vnd.seiche.railway-gate-result.v1+json"
-INSTALL_COMMAND = "python -m pip install -q ./backend[dev,collectors]"
+PUBLIC_OCI_GH_TOKEN = "public-oci-bundle-verification-no-api"
+INSTALL_COMMAND = (
+    "python -m pip install -q ./backend[dev,collectors] && "
+    "python -m pip install --disable-pip-version-check --only-binary=:all: "
+    "--require-hashes -r ops/requirements-social-cards.txt"
+)
 TEST_COMMAND = (
-    "python -m pytest backend/tests -q --memray -o faulthandler_timeout=300"
+    "HOME=/var/lib/seiche-railway-gate-runtime "
+    "TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp "
+    "PYTHONPATH=/workspace/backend "
+    "SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data "
+    "SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation "
+    "python -P -m pytest backend/tests -q --memray "
+    "-o faulthandler_timeout=300 "
+    "-o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache"
 )
 RUNNER_IMAGE = (
     "docker.io/library/python:3.12.11-slim-bookworm@"
@@ -41,9 +53,7 @@ ENV = Path("/usr/bin/env")
 SHA1_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 DIGEST_RE = re.compile(r"sha256:([0-9a-f]{64})")
-UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-)
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 REGION_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 REMOTE_KEYS = {
@@ -85,9 +95,9 @@ def defer(message: str) -> NoReturn:
 
 
 def canonical_json(payload: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
 
 
 def load_canonical_receipt(body: bytes) -> dict[str, object]:
@@ -158,11 +168,15 @@ def verify_local_git(app: Path, service_user: str, target: str, tree: str) -> st
     result = service_git(app, service_user, ["rev-parse", f"{target}^{{tree}}"])
     assert isinstance(result, subprocess.CompletedProcess)
     if result.returncode != 0:
-        fail(f"target tree cannot be resolved: {result.stderr.decode(errors='replace')}")
+        fail(
+            f"target tree cannot be resolved: {result.stderr.decode(errors='replace')}"
+        )
     if result.stdout.strip() != tree.encode("ascii"):
         fail("target tree differs from the controller-selected tree")
 
-    process = service_git(app, service_user, ["archive", "--format=tar", target], stdout=None)
+    process = service_git(
+        app, service_user, ["archive", "--format=tar", target], stdout=None
+    )
     assert isinstance(process, subprocess.Popen)
     if process.stdout is None or process.stderr is None:
         fail("git archive streams are unavailable")
@@ -191,6 +205,10 @@ def anonymous_environment(root: Path) -> dict[str, str]:
         "LC_ALL": "C",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "DOCKER_CONFIG": str(docker_config),
+        # gh requires a non-empty token before any attestation subcommand,
+        # including --bundle-from-oci. This fixed non-secret value has no API
+        # authority; the empty Docker config still forces public OCI retrieval.
+        "GH_TOKEN": PUBLIC_OCI_GH_TOKEN,
     }
 
 

@@ -6,6 +6,8 @@
  * canvas, no network round trip, no new server path.
  */
 
+import { stableShareUrl } from "./shareRoutes";
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const S = 2; // supersample: crisp on retina and on every platform recompress
 export const CARD_W = 1200;
@@ -38,6 +40,20 @@ export function cardTitle(node: HTMLElement | null, fallback: string): string {
 
 export function deepLink(): string {
   return window.location.href;
+}
+
+/** Resolve the stable server-visible share path declared by a data surface.
+ * Hash fragments remain useful inside the SPA, but unfurlers never receive
+ * them. A card without an explicit path keeps the existing deep-link fallback. */
+export function contextualLink(node: Element | null): string {
+  const owner = node?.closest<HTMLElement>("[data-share-path]");
+  const declared = owner?.dataset.sharePath?.trim();
+  if (!declared) return deepLink();
+  try {
+    return stableShareUrl(declared);
+  } catch {
+    return deepLink();
+  }
 }
 
 const slug = (s: string) =>
@@ -204,6 +220,8 @@ export interface ChartCardMeta {
   cssH: number;
   /** unix ms of the last data point, if known */
   dataThrough?: number | null;
+  /** path-based URL visible to link unfurlers */
+  link?: string;
 }
 
 export function composeChartCard(src: HTMLCanvasElement, meta: ChartCardMeta): HTMLCanvasElement {
@@ -246,7 +264,7 @@ export function composeChartCard(src: HTMLCanvasElement, meta: ChartCardMeta): H
   const clock =
     (meta.dataThrough ? `data through ${fmtDay(meta.dataThrough)} · ` : "") +
     `exported ${fmtStamp(Date.now())}`;
-  cardFooter(ctx, footRule, deepLink(), clock);
+  cardFooter(ctx, footRule, meta.link ?? deepLink(), clock);
   return cv;
 }
 

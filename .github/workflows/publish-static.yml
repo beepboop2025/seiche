@@ -1,10 +1,11 @@
 name: publish-static
 
-# Fast path: passthrough files in frontend/public/ (support page, QR assets,
-# robots.txt, …) go straight to the live seiche-site repo without waiting for
-# the ~40-minute engine build. Data plus the dispatch, discovery and methodology
-# surfaces are owned by the full publish pipeline and are never touched here —
-# copying repository snapshots over them would regress the live evidence cut.
+# Fast path: build the exact-head Vite UI, reapply no-JS and root social-card
+# postprocessing over the sealed live evidence cut, and copy safe passthrough
+# files from frontend/public/ (support page, QR assets, robots.txt, …), without
+# waiting for the ~40-minute engine build. Generated and postprocessed surfaces
+# remain owned by the full publish pipeline; repository snapshots must never
+# regress the live evidence cut.
 
 on:
   workflow_dispatch:
@@ -12,10 +13,35 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/publish-static.yml"
+      - "backend/seiche/dispatch_daily.py"
+      - "backend/seiche/dispatch_pages.py"
+      - "backend/seiche/evidence_boundary.py"
+      - "backend/seiche/newsroom.py"
+      - "backend/seiche/prerender.py"
+      - "backend/seiche/public_view.py"
+      - "backend/seiche/social_cards.py"
+      - "frontend/index.html"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/src/**"
+      - "frontend/tsconfig.json"
+      - "frontend/vite.config.ts"
       - "frontend/public/**"
       - "!frontend/public/data/**"
+      - "!frontend/public/dispatches/**"
+      - "!frontend/public/articles/**"
+      - "!frontend/public/share/**"
+      - "!frontend/public/views/**"
+      - "!frontend/public/sitemap.xml"
+      - "!frontend/public/llms.txt"
+      - "!frontend/public/llms-full.txt"
+      - "!frontend/public/methodology.html"
+      - "!frontend/public/skeptic.html"
+      - "!frontend/public/ampleness.html"
+      - "!frontend/public/referee.html"
       - "ops/release/verify_catalog_publication.py"
       - "ops/release/verify_public_dataset.py"
+      - "ops/requirements-social-cards.txt"
 
 permissions:
   contents: read
@@ -37,6 +63,28 @@ jobs:
         with:
           python-version: "3.12.12"
 
+      - name: Install hash-locked root-card renderer
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --only-binary=:all:
+          --require-hashes
+          -r ops/requirements-social-cards.txt
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Test and build exact-head frontend
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          npm run build
+
       - name: Fetch the exact declared release tag
         run: |
           set -euo pipefail
@@ -47,29 +95,139 @@ jobs:
           print(json.loads(Path("server.json").read_text())["version"])
           PY
           )"
+          corpus_version="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("frontend/public/.well-known/ai-catalog.json").read_text())
+          matches = [
+              entry for entry in catalog["entries"]
+              if entry.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Market Atlas catalog entry is not unique")
+          print(matches[0]["version"])
+          PY
+          )"
+          corpus_receipt_tag="$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          catalog = json.loads(Path("frontend/public/.well-known/ai-catalog.json").read_text())
+          matches = [
+              entry for entry in catalog["entries"]
+              if entry.get("identifier") == "urn:air:seiche.info:mcp:market-corpus"
+          ]
+          if len(matches) != 1:
+              raise SystemExit("Market Atlas catalog entry is not unique")
+          receipt = json.loads(matches[0]["metadata"]["publicationReceipt"])
+          print(receipt["tag"])
+          PY
+          )"
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$corpus_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$corpus_receipt_tag" =~ ^market-corpus-receipt-corpus-[0-9a-f]{16}-r[1-9][0-9]*$ ]]
           git fetch --force --no-tags origin \
-            "+refs/tags/v${version}:refs/tags/v${version}"
+            "+refs/tags/v${version}:refs/tags/v${version}" \
+            "+refs/tags/market-corpus-v${corpus_version}:refs/tags/market-corpus-v${corpus_version}" \
+            "+refs/tags/${corpus_receipt_tag}:refs/tags/${corpus_receipt_tag}"
 
       - name: Gate catalog on the signed release, runtime, and PyPI receipts
         env:
           RELEASE_SIGNING_KEY_FINGERPRINT: ${{ vars.RELEASE_SIGNING_KEY_FINGERPRINT }}
-        run: >-
-          python -I -S ops/release/verify_catalog_publication.py
-          --root .
-          --expected-sha "$GITHUB_SHA"
-          --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
+        run: |
+          set -euo pipefail
+          verifier="${RUNNER_TEMP}/verify_catalog_publication.py"
+          git show "${GITHUB_SHA}:ops/release/verify_catalog_publication.py" >"$verifier"
+          test "$(git hash-object "$verifier")" = "$(git rev-parse "${GITHUB_SHA}:ops/release/verify_catalog_publication.py")"
+          python -I -S "$verifier" \
+            --root . \
+            --expected-sha "$GITHUB_SHA" \
+            --signer-fingerprint "$RELEASE_SIGNING_KEY_FINGERPRINT"
 
       - name: Push static files to the live site repo
+        id: publish-site
         env:
           DEPLOY_KEY: ${{ secrets.SEICHE_SITE_DEPLOY_KEY }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
           echo "$DEPLOY_KEY" > ~/.ssh/site_key
           chmod 600 ~/.ssh/site_key
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           git clone --depth 1 git@github.com:beepboop2025/seiche-site.git /tmp/site
-          rsync -a --exclude data/ --exclude dispatches/ --exclude sitemap.xml --exclude llms.txt --exclude llms-full.txt --exclude methodology.html --exclude skeptic.html --exclude ampleness.html --exclude referee.html frontend/public/ /tmp/site/
+          python -I -S - frontend/public frontend/dist /tmp/site <<'PY'
+          import sys
+          from pathlib import Path
+
+          for raw_root in sys.argv[1:]:
+              root = Path(raw_root)
+              if root.is_symlink() or not root.is_dir():
+                  raise SystemExit(f"unsafe publication root: {root}")
+              for path in root.rglob("*"):
+                  if root.name == "site" and ".git" in path.relative_to(root).parts:
+                      continue
+                  if path.is_symlink() or not (path.is_file() or path.is_dir()):
+                      raise SystemExit(f"unsafe publication entry: {path}")
+          PY
+          rsync -a \
+            --exclude /index.html \
+            --exclude /assets/ \
+            --exclude /data/ \
+            --exclude /dispatches/ \
+            --exclude /articles/ \
+            --exclude /share/ \
+            --exclude /views/ \
+            --exclude /markets/index.html \
+            --exclude /markets/forex/index.html \
+            --exclude /markets/capital-markets/index.html \
+            --exclude /markets/china-macro/index.html \
+            --exclude /money-markets/index.html \
+            --exclude /sitemap.xml \
+            --exclude /llms.txt \
+            --exclude /llms-full.txt \
+            --exclude /methodology.html \
+            --exclude /skeptic.html \
+            --exclude /ampleness.html \
+            --exclude /referee.html \
+            frontend/public/ /tmp/site/
+          # Rebuild only the Vite-owned shell/assets, then reapply the exact-head
+          # no-JS and root-card postprocessors over the mirror's sealed evidence.
+          test -f frontend/dist/index.html
+          test -d frontend/dist/assets
+          test ! -L frontend/dist/index.html
+          test ! -L frontend/dist/assets
+          test ! -L /tmp/site/index.html
+          test ! -L /tmp/site/assets
+          if find frontend/dist/assets -type l -print -quit | grep -q .; then
+            echo "::error title=Unsafe Vite output::frontend/dist/assets contains a symbolic link"
+            exit 1
+          fi
+          install -m 0644 frontend/dist/index.html /tmp/site/index.html
+          mkdir -p /tmp/site/assets
+          rsync -a --safe-links frontend/dist/assets/ /tmp/site/assets/
+          python -I -S - "$GITHUB_WORKSPACE/backend" /tmp/site <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, sys.argv[1])
+          from seiche import prerender
+
+          body_length = prerender.build(Path(sys.argv[2]))
+          if body_length < 1000:
+              raise SystemExit(f"prerendered no-JS body is unexpectedly small: {body_length}")
+          print(f"prerendered no-JS body characters={body_length}")
+          PY
+          python -I - "$GITHUB_WORKSPACE/backend" /tmp/site <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, sys.argv[1])
+          from seiche import social_cards
+
+          print(json.dumps(social_cards.refresh_root(Path(sys.argv[2])), sort_keys=True))
+          PY
           cd /tmp/site
           git config user.name "seiche-publish"
           git config user.email "noreply@seiche"
@@ -78,10 +236,44 @@ jobs:
             echo "mirror already contains the static files"
           else
             git commit -q -m "static fast-path $(date -u +%Y-%m-%dT%H:%MZ)"
-            git push -q origin main || (git pull --rebase -q origin main && git push -q origin main)
+            git -C "$GITHUB_WORKSPACE" fetch --quiet --force --no-tags origin \
+              "+refs/heads/main:refs/remotes/origin/main"
+            current_main="$(git -C "$GITHUB_WORKSPACE" rev-parse --verify refs/remotes/origin/main)"
+            if [ "$current_main" != "$GITHUB_SHA" ]; then
+              echo "::error title=Stale static publish::origin/main is $current_main, not triggering SHA $GITHUB_SHA"
+              exit 1
+            fi
+            git push -q origin main
           fi
+          prepared_site_sha="$(git rev-parse --verify HEAD)"
+          remote_site_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')"
+          if [ "$remote_site_sha" != "$prepared_site_sha" ]; then
+            echo "::error title=Site mirror compare-and-swap lost::remote is $remote_site_sha, prepared content is $prepared_site_sha"
+            exit 1
+          fi
+          echo "site-sha=$prepared_site_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Stage exact mirror and refuse stale exact-head deployment
+        env:
+          EXPECTED_SITE_SHA: ${{ steps.publish-site.outputs.site-sha }}
+        run: |
+          set -euo pipefail
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o StrictHostKeyChecking=accept-new"
           mkdir -p /tmp/cloudflare-site
           rsync -a --delete --exclude .git /tmp/site/ /tmp/cloudflare-site/
+          local_site_sha="$(git -C /tmp/site rev-parse --verify HEAD)"
+          remote_site_sha="$(git -C /tmp/site ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')"
+          if [ "$local_site_sha" != "$EXPECTED_SITE_SHA" ] || [ "$remote_site_sha" != "$EXPECTED_SITE_SHA" ]; then
+            echo "::error title=Site mirror changed before deploy::expected $EXPECTED_SITE_SHA, local $local_site_sha, remote $remote_site_sha"
+            exit 1
+          fi
+          git fetch --quiet --force --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          current_main="$(git rev-parse --verify refs/remotes/origin/main)"
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            echo "::error title=Stale static deploy::origin/main is $current_main, not triggering SHA $GITHUB_SHA"
+            exit 1
+          fi
 
       # seiche.info is served by Cloudflare Pages, while seiche-site is the
       # durable GitHub mirror. Deploy the just-updated mirror so passthrough

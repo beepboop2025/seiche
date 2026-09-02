@@ -1,0 +1,105 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-08-27-a-0-10b-srf-print-puts-dollar-funding-on-watch-but-the-calendar-not-over",
+  "product": "seiche",
+  "slug": "2026-08-27-a-0-10b-srf-print-puts-dollar-funding-on-watch-but-the-calendar-not-over",
+  "date": "2026-08-27",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "A $0.10B SRF print puts dollar funding on watch, but the calendar—not overnight pricing—is carrying the strain call",
+  "dek": "Standing Repo Facility acceptance reached $0.10B, an extreme move from a near-zero base but not a large flow. Seiche’s board reads EROSION as dated reserve pressure approaches; SOFR still signals abundant overnight cash.",
+  "canonical_url": "https://seiche.info/articles/2026-08-27-a-0-10b-srf-print-puts-dollar-funding-on-watch-but-the-calendar-not-over/",
+  "published_at": "2026-08-27T20:59:33Z",
+  "evidence_as_of": "2026-08-27",
+  "related_dispatch": "https://seiche.info/dispatches/2026-08-27-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 90,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 20,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1066,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:573fe1422ff3b228ddc22e05fa2e0076078a9ef7accd17021b2983899262ef30",
+    "memory_fingerprint": "sha256:4659dd4c23edd621d282f6d5e763b370df0606539790d0fb46e8c38031723278",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 3,
+    "dossier_sha256": "c2478a961ae9f080ceb840d21cc3214d6cad091f0952f6a6dc787845065dfaf5",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the SRF print as a monitoring signal rather than evidence of broad facility demand.",
+      "Made the calendar-to-reserve-distribution-to-pricing mechanism explicit and conditional.",
+      "Strengthened the counter-case around SOFR, limited SRF use and calm market pricing.",
+      "Specified an observable falsification test and retained scenario, model and source-time limits.",
+      "Removed the unsupported reserve-gap figure while retaining the documented below-kink finding and fit limitation.",
+      "Preserved the calendar-to-reserves-to-pricing mechanism, counter-case, observable test, source links and research boundary."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:573fe1422ff3b228ddc22e05fa2e0076078a9ef7accd17021b2983899262ef30",
+      "memory_fingerprint": "sha256:4659dd4c23edd621d282f6d5e763b370df0606539790d0fb46e8c38031723278",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}

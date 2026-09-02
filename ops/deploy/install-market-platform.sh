@@ -2132,6 +2132,13 @@ RequiresMountsFor=$STATE_DIR $NBS_STATE_DIR $BACKUP_DIR
 EnvironmentFile=-$ENV_DIR/market.env
 EnvironmentFile=-$ENV_DIR/release.env
 EnvironmentFile=-$DELIVERY_ENV_FILE
+# Seiche's scientific matrices are small. On the 16-vCPU production host,
+# OpenMP/OpenBLAS fan-out costs more than it saves and can pin the shared box
+# during walk-forward refreshes. These late unit values override env files.
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=NUMEXPR_NUM_THREADS=1
 Environment=SEICHE_NBS_PUBLIC_DIR=$NBS_PUBLIC_DIR
 # Caddy owns privacy-filtered edge request telemetry; Uvicorn's raw path logger
 # includes the query string and would create a second, unredacted copy.

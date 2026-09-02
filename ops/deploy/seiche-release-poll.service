@@ -35,13 +35,13 @@ ProtectSystem=strict
 ProtectHome=read-only
 # Candidate checkout, controller state (including its root-owned deploy
 # wrapper), the market repository/export, the separately permissioned NBS
-# evidence root, and the rollback-owned acceptance marker are the only
-# application data this root controller may change. /root, unrelated /opt and
-# /usr/local (including ExecStart), other homes, and unrelated /var state stay
-# read-only in the service mount namespace.
+# evidence root, the signed Palimpsest China runtime, and the rollback-owned
+# acceptance marker are the only application data this root controller may
+# change. /root, unrelated /opt and /usr/local (including ExecStart), other
+# homes, and unrelated /var state stay read-only in the service mount namespace.
 ReadWritePaths=/home/seiche
 ReadWritePaths=/var/lib/seiche-control /var/lib/seiche-deploy /var/lib/seiche /var/lib/seiche-nbs /var/backups/seiche-market
-ReadWritePaths=/opt/seiche-nbs-intake
+ReadWritePaths=/opt/seiche-nbs-intake /opt/seiche-palimpsest-china
 ReadWritePaths=/run/seiche-control /run/seiche-deploy /run/seiche-release /run/lock
 # These roots contain only root-owned release configuration. The rc paths are
 # needed because Debian's `systemctl enable postgresql` synchronizes its SysV

@@ -102,15 +102,23 @@ GitHub independently verifies and OIDC-attests the exact private receipt
   runs the tests against a second clean, root-owned, read-only extraction. The
   image deliberately includes Git, OpenSSH, systemd-analyze, util-linux and
   procps because the full deploy-contract suite invokes those host tools.
-- `ops/railway/run-gate.py` re-hashes the source archive, runs exactly
-  `python -m pytest backend/tests -q --memray -o faulthandler_timeout=300`,
-  records the Railway deployment/project/environment/service IDs, test counts,
-  Python version, and dependency snapshot digest, then exposes `/healthz` only
-  after the gate is complete. Railway therefore cannot mark the deployment
-  successful before the suite is green.
+- `ops/railway/run-gate.py` re-hashes the source archive, proves `seiche`
+  imports from the verified `/workspace/backend` tree, binds the read-only Git
+  bundle's exact commit/tree to that archive, and runs exactly
+  `HOME=/var/lib/seiche-railway-gate-runtime TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache`.
+  The private external cache, database root, and validation root preserve the
+  read-only source invariant. The runner proves both import and data-root
+  identity before it records the Railway deployment/project/environment/service
+  IDs, test counts, Python version, and dependency snapshot digest, then exposes
+  `/healthz` only after the gate is complete. Railway therefore cannot mark the
+  deployment successful before the suite is green. While health remains closed,
+  Actions polls deployment-only logs for an explicit fail-closed runner marker,
+  so a failed suite is reported promptly instead of waiting out Railway's full
+  health-check window.
 - `ops/deploy/seiche-remote-gate-verify.py` resolves the SHA tag to an immutable
   OCI digest, validates the one-layer artifact, runs `gh attestation verify`
-  anonymously with exact workflow/source constraints, recreates the local Git
+  with a fixed non-secret CLI-preflight sentinel and an empty Docker credential
+  store under exact workflow/source constraints, recreates the local Git
   archive digest, and renders `seiche.release-receipt.v2`.
 - `ops/deploy/seiche-release-poll.sh` defaults to that remote verifier. The
   release receipt continues to hash the root-owned gate receipt, preserving the
@@ -120,16 +128,26 @@ GitHub independently verifies and OIDC-attests the exact private receipt
 
 - `.github/workflows/railway-snapshot-prebuild.yml` serializes a second,
   dedicated Railway service. It builds an exact source archive and canonical
-  request, waits for the selected deployment, extracts
-  `/result/snapshot-result.json` over the Railway control plane, independently
-  validates it, publishes it to
+  request, verifies the service-instance health/restart policy, derives its
+  unique Railway-generated port-8080 origin from the project-scoped API, and
+  waits for deployment- and request-bound `/healthz` bytes. The request carries
+  only the SHA-256 digest and expiry of a one-run 256-bit result token. The
+  dedicated stable Railway origin is only a route: without that bearer, the
+  result path returns a generic 404. After the snapshot is complete, the
+  workflow proves the route is closed, retries transient old-route responses,
+  downloads the bounded canonical result over authenticated HTTPS, and
+  independently validates the bytes before publishing them to
   `ghcr.io/beepboop2025/seiche-release-snapshots`, OIDC-attests the immutable
   manifest, and proves anonymous retrieval.
 - `ops/railway/Dockerfile.snapshot` and `ops/railway/run-snapshot.py` run as
   uid/gid 65532 with a root-owned read-only source tree and an isolated runtime
   data directory. The child receives no Railway token, database URL, production
   secret, deploy credential, or writable source path. It can only emit the
-  bounded canonical result into `/result` and expose `/healthz` after success.
+  bounded canonical result into `/result`, expose `/healthz` after success, and
+  return those exact bytes on the closed bearer route before its request-bound
+  expiry. The raw bearer is never persisted by Railway and exists there only
+  transiently in the edge and service request; only its digest is stored in the
+  image request. The Actions copy is held in a mode-0600 ephemeral runner file.
 - `seiche.remote_snapshot_build` calls the normal assembly pipeline with
   `publish=False`. Collection, engines, deep layers, Navigator, sanitization,
   and rights checks still run, but PIT records, notary evidence, SQLite state,
@@ -233,9 +251,12 @@ has moved or that `RAILWAY_TELEGRAM_PHASE7_ENABLED` may be set.
 
 1. Create a dedicated project with isolated services named
    `seiche-release-gate` and `seiche-snapshot-prebuild` in the paid workspace.
-   Do not attach a volume, database, public domain, or GitHub autodeploy source
-   to either service. Each workflow uploads its exact source bundle with
-   `railway up`; a connected source would create an untracked competing deploy.
+   Do not attach a volume, database, or GitHub autodeploy source to either
+   service, and keep the gate service domainless. Give only the snapshot service
+   one Railway-generated HTTPS domain targeting port 8080; the rotating,
+   expiring bearer is its result security boundary. Each workflow uploads its
+   exact source bundle with `railway up`; a connected source would create an
+   untracked competing deploy.
 2. Give each service one replica in the desired region and enough CPU/RAM for its
    memray suite. Start with 8 vCPU and 16 GiB RAM, then use the first three gate
    receipts and Railway metrics to right-size it. Pro billing removes account
@@ -257,6 +278,9 @@ has moved or that `RAILWAY_TELEGRAM_PHASE7_ENABLED` may be set.
    Each workflow checks its four required names before checkout or any network
    action. Missing configuration fails red immediately and reports names only,
    never values.
+   The snapshot workflow derives the generated HTTPS origin from the exact
+   service instance and rejects custom, multiple, or non-port-8080 domains; no
+   separately maintained origin variable is required.
 4. Ensure the existing `ghcr-release` GitHub environment permits both workflows'
    source-free publication jobs. Make both
    `ghcr.io/beepboop2025/seiche-release-gates` and
@@ -273,8 +297,12 @@ durable resources and a different protected authority boundary. Follow
 `RAILWAY-STATEFUL-MIGRATION.md`; do not attach a volume or PostgreSQL reference
 to either stateless Phase 1/2 service.
 
-The tracked Railway config uses a one-hour health-check window and
-`restartPolicyType=NEVER`. A red test never emits a receipt, never serves
+The tracked Railway config documents the one-hour health-check window and
+`restartPolicyType=NEVER`, but Railway no longer applies legacy config-as-code
+to newly created services. Set those three service-instance fields during
+bootstrap. Both workflows read them back through the project-scoped API before
+uploading source and reject `SUCCESS` unless the exact deployment metadata
+contains the same values. A red test never emits a receipt, never serves
 `/healthz`, and must leave the exact Railway deployment `FAILED` rather than
 restarting into ambiguous logs.
 

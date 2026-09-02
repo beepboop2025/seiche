@@ -68,7 +68,10 @@ from seiche.domain.observation import (
 )
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.base import CapabilityStatus, PackSupportStatus
-from seiche.markets.atlas import build_global_money_market_atlas
+from seiche.markets.atlas import (
+    build_global_money_market_atlas,
+    market_source_reference,
+)
 from seiche.markets.calibration import get_local_calibration
 from seiche.markets.materialize import PUBLIC_SNAPSHOT_VISIBILITY
 from seiche.markets.registry import UnknownMarketError, default_registry
@@ -111,12 +114,14 @@ async def _keep_warm() -> None:
     log = logging.getLogger("seiche.api")
     while True:
         started = monotonic()
+        completed = False
         try:
             # Schedule a real build, but accept one that another owner finishes
-            # after this request begins.  Starting the next cycle one minute
-            # after completion leaves the rest of the 15-minute freshness
-            # window for the heavy analytics build.
+            # after this request begins. The delay below budgets the next
+            # completion inside the 15-minute freshness window from the
+            # duration of this cycle.
             await assemble.refresh_snapshot()
+            completed = True
         except Exception:  # noqa: BLE001 — the loop must outlive any bad cycle
             log.exception("background board refresh failed; retrying next cycle")
         elapsed = max(0.0, monotonic() - started)
@@ -128,7 +133,16 @@ async def _keep_warm() -> None:
                 _REFRESH_BUILD_BUDGET_S,
                 assemble.CACHE_MIN * 60,
             )
-        await asyncio.sleep(_REFRESH_INTERVAL_S)
+        # Target completions, not starts, inside the freshness horizon.  A
+        # quick build earns a longer quiet period; a slow or failed build gets
+        # the one-minute retry floor.  This avoids keeping the shared host at
+        # full scientific-library CPU between otherwise healthy rebuilds.
+        delay = (
+            max(_REFRESH_INTERVAL_S, _REFRESH_BUILD_BUDGET_S - elapsed)
+            if completed
+            else _REFRESH_INTERVAL_S
+        )
+        await asyncio.sleep(delay)
 
 
 @asynccontextmanager
@@ -172,6 +186,240 @@ app = FastAPI(
 )
 
 
+API_CATALOG_URL = "https://api.seiche.info/.well-known/api-catalog"
+API_CATALOG_MEDIA_TYPE = (
+    'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"'
+)
+API_CATALOG = {
+    "linkset": [
+        {
+            "anchor": "https://api.seiche.info/api",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/api/openapi.json",
+                    "type": "application/json",
+                }
+            ],
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://seiche.info/.well-known/ai-catalog.json",
+                    "type": "application/json",
+                }
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/api/health",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/mcp",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fseiche/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": "https://seiche.info/.well-known/ai-catalog.json",
+                    "type": "application/json",
+                },
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/api/v2/corpus",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/#corpus",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+                    "type": "application/json",
+                }
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/healthz",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/api/v2/corpus/mcp",
+            "service-doc": [
+                {
+                    "href": "https://seiche.info/#corpus",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/undertow/x402/",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/openapi.json",
+                    "type": "application/json",
+                }
+            ],
+            "service-doc": [
+                {
+                    "href": "https://liquilens-undertow.com/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/.well-known/x402",
+                    "type": "application/json",
+                },
+                {
+                    "href": (
+                        "https://liquilens-undertow.com/.well-known/ai-catalog.json"
+                    ),
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+            "status": [
+                {
+                    "href": "https://api.seiche.info/undertow/x402/health",
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/undertow/mcp",
+            "service-doc": [
+                {
+                    "href": "https://liquilens-undertow.com/developers/",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fundertow/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": (
+                        "https://liquilens-undertow.com/.well-known/ai-catalog.json"
+                    ),
+                    "type": "application/ai-catalog+json",
+                },
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/riptide/",
+            "service-desc": [
+                {
+                    "href": "https://api.seiche.info/riptide/openapi.json",
+                    "type": "application/json",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Friptide/versions/latest"
+                    ),
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/riptide/mcp",
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Friptide/versions/latest"
+                    ),
+                    "type": "application/json",
+                }
+            ],
+        },
+        {
+            "anchor": "https://api.seiche.info/palimpsest/mcp",
+            "service-doc": [
+                {
+                    "href": "https://palimpsest.info/developers.html",
+                    "type": "text/html",
+                }
+            ],
+            "service-meta": [
+                {
+                    "href": (
+                        "https://registry.modelcontextprotocol.io/v0.1/servers/"
+                        "io.github.beepboop2025%2Fpalimpsest/versions/latest"
+                    ),
+                    "type": "application/json",
+                },
+                {
+                    "href": "https://palimpsest.info/.well-known/ai-catalog.json",
+                    "type": "application/json",
+                },
+            ],
+        },
+    ]
+}
+
+
+@app.api_route(
+    "/.well-known/api-catalog",
+    methods=["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+def api_catalog(request: Request) -> Response:
+    """Publish RFC 9727 discovery for every API sharing this origin."""
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Expose-Headers": "Link",
+        "Allow": "GET, HEAD, OPTIONS",
+        "Cache-Control": "public, max-age=300",
+        "Content-Type": API_CATALOG_MEDIA_TYPE,
+        "Link": (
+            f'<{API_CATALOG_URL}>; rel="api-catalog"; type="application/linkset+json"'
+        ),
+        "X-Content-Type-Options": "nosniff",
+    }
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=headers)
+    if request.method == "HEAD":
+        return Response(status_code=200, headers=headers)
+    if request.method != "GET":
+        return JSONResponse(
+            {"detail": "Method Not Allowed"}, status_code=405, headers=headers
+        )
+    return JSONResponse(API_CATALOG, headers=headers)
+
+
 @app.get("/.well-known/mcp.json", include_in_schema=False)
 def mcp_directory_discovery(response: Response) -> dict[str, Any]:
     """Publish the same-origin discovery document required by MCPub.
@@ -204,7 +452,25 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
                 "status": "active",
-            }
+            },
+            {
+                "name": "io.github.beepboop2025/seiche-market-corpus",
+                "title": "Seiche Market Atlas — structured evidence corpus",
+                "description": (
+                    "Rights-aware dataset receipts, bounded BIS records and "
+                    "canonical Seiche market discovery with explicit evidence clocks."
+                ),
+                "version": "1.0.0",
+                "transport": "streamable-http",
+                "url": "https://api.seiche.info/api/v2/corpus/mcp",
+                "authentication": {
+                    "type": "none",
+                    "scope": "public read-only discovery and rights-approved records",
+                },
+                "documentation": "https://seiche.info/#corpus",
+                "availability": "declared_endpoint_verify_with_corpus_health",
+                "health": "https://api.seiche.info/api/v2/corpus/healthz?deep=true",
+            },
         ],
     }
 
@@ -793,6 +1059,35 @@ def api_index() -> dict[str, Any]:
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
+        "corpus": {
+            "catalog": "https://api.seiche.info/api/v2/corpus/v1/catalog",
+            "datasets": "https://api.seiche.info/api/v2/corpus/v1/datasets",
+            "bis_flows_for_seiche": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/flows?product=seiche"
+            ),
+            "bis_records": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/records"
+                "?flow_id=WS_GLI&limit=100"
+            ),
+            "bis_flow_manifest": (
+                "https://api.seiche.info/api/v2/corpus/v1/bis/flows/WS_GLI/manifest"
+            ),
+            "canonical_market_series": (
+                "https://api.seiche.info/api/v2/markets/US-USD/series?n=200"
+            ),
+            "seiche_markets": (
+                "https://api.seiche.info/api/v2/corpus/v1/seiche/markets"
+            ),
+            "seiche_exports": (
+                "https://api.seiche.info/api/v2/corpus/v1/seiche/exports"
+            ),
+            "mcp": "https://api.seiche.info/api/v2/corpus/mcp",
+            "boundary": (
+                "Discovery and public research evidence only. Catalog classes are "
+                "not model, training, scoring, execution, or redistribution permission; "
+                "restricted exports retain download=null."
+            ),
+        },
         "rest": {
             "openapi": "/api/openapi.json",
             "public_snapshot": "/api/public",
@@ -1705,6 +2000,7 @@ def market_series_v2(
         adapter = pack.adapter_map[instrument.source_adapter_id]
         if adapter.redistribution_status is RedistributionStatus.PROHIBITED:
             continue
+        source_reference = market_source_reference(adapter.adapter_id)
         instruments.append(
             {
                 "instrument_id": instrument.instrument_id,
@@ -1712,6 +2008,8 @@ def market_series_v2(
                 "semantic_role": instrument.semantic_role.value,
                 "canonical_unit": instrument.canonical_unit.value,
                 "source_adapter": adapter.adapter_id,
+                "publisher": source_reference["publisher"],
+                "source_url": source_reference["source_url"],
                 "connector_classification": adapter.classification.value,
                 "redistribution_status": adapter.redistribution_status.value,
                 "expected_cadence": adapter.expected_cadence,

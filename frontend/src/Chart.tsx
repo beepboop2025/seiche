@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import ShareBar from "./ShareBar";
-import { CHART_EXPORT_W, cardTitle, composeChartCard } from "./share";
+import { CHART_EXPORT_W, cardTitle, composeChartCard, contextualLink } from "./share";
 import { CopyCSV, fmt } from "./lib";
 import "./styles-editorial.css";
 
@@ -32,6 +32,8 @@ interface Props {
   asOf?: string | null;
   /** precision/caveat note specific to this chart */
   note?: string;
+  /** exact publish-time card route, only when this plot has a matching view */
+  sharePath?: string;
 }
 
 type RangeKey = "1Y" | "3Y" | "ALL";
@@ -103,7 +105,7 @@ function gesturePlugin(): uPlot.Plugin {
   };
 }
 
-export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines, source, asOf, note }: Props) {
+export default function Chart({ rows, series, height = 170, yLabel, refLine, vlines, source, asOf, note, sharePath }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -463,6 +465,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
         cssW: Math.round(src.width / dpr),
         cssH: Math.round(src.height / dpr),
         dataThrough: lastX,
+        link: contextualLink(ref.current),
       });
       return card;
     } finally {
@@ -517,6 +520,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
   return (
     <div
       className={`chart-shell${expanded ? " chart-shell--expanded" : ""}`}
+      data-share-path={sharePath}
       role={expanded ? "dialog" : undefined}
       aria-modal={expanded ? true : undefined}
       aria-label={expanded ? `${chartTitle} explorer` : undefined}
@@ -597,6 +601,7 @@ export default function Chart({ rows, series, height = 170, yLabel, refLine, vli
           <ShareBar
             compose={composeExport}
             title={() => cardTitle(ref.current, yLabel ?? series[0]?.label ?? "seiche")}
+            link={() => contextualLink(ref.current)}
           />
           <CopyCSV rows={[["date", ...series.map((item) => item.label)], ...rows]} label="copy data" />
         </div>

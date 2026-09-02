@@ -17,8 +17,8 @@ concurrency:
 
 env:
   ARTIFACT_REPOSITORY: ghcr.io/beepboop2025/seiche-release-gates
-  INSTALL_COMMAND: python -m pip install -q ./backend[dev,collectors]
-  TEST_COMMAND: python -m pytest backend/tests -q --memray -o faulthandler_timeout=300
+  INSTALL_COMMAND: "python -m pip install -q ./backend[dev,collectors] && python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r ops/requirements-social-cards.txt"
+  TEST_COMMAND: HOME=/var/lib/seiche-railway-gate-runtime TMPDIR=/var/lib/seiche-railway-gate-runtime/tmp PYTHONPATH=/workspace/backend SEICHE_RUNTIME_DATA_DIR=/var/lib/seiche-railway-gate-runtime/data SEICHE_VALIDATION_DIR=/var/lib/seiche-railway-gate-runtime/data/market-validation python -P -m pytest backend/tests -q --memray -o faulthandler_timeout=300 -o cache_dir=/var/lib/seiche-railway-gate-runtime/pytest-cache
   RUNNER_IMAGE: docker.io/library/python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
 
 jobs:
@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Build the canonical exact-source Railway request
@@ -85,6 +85,8 @@ jobs:
           [[ "$tree" =~ ^[0-9a-f]{40}$ ]]
           mkdir -p "$UPLOAD_ROOT"
           git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
+          git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
+          git bundle verify "$UPLOAD_ROOT/source.bundle"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           [[ "$source_archive_sha256" =~ ^[0-9a-f]{64}$ ]]
           request_id=$(printf '%s\n' \
@@ -123,7 +125,18 @@ jobs:
               encoding="utf-8",
           )
           PY
-          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 5
+          required_uploads=(
+            Dockerfile
+            gate-request.json
+            railway.json
+            run-gate.py
+            source.bundle
+            source.tar
+          )
+          for name in "${required_uploads[@]}"; do
+            test -f "$UPLOAD_ROOT/$name"
+          done
+          test "$(find "$UPLOAD_ROOT" -maxdepth 1 -type f | wc -l)" -eq 6
           {
             echo "target=$GITHUB_SHA"
             echo "tree=$tree"
@@ -133,14 +146,14 @@ jobs:
 
       - name: Install the checksum-pinned Railway CLI
         run: |
-          archive="${RUNNER_TEMP}/railway-v5.43.1-linux-amd64.tar.gz"
+          archive="${RUNNER_TEMP}/railway-v5.44.1-linux-amd64.tar.gz"
           tool_dir="${RUNNER_TEMP}/railway-tools"
           mkdir -p "$tool_dir"
           curl --fail --silent --show-error --location \
             --proto '=https' --tlsv1.2 \
-            'https://github.com/railwayapp/cli/releases/download/v5.43.1/railway-v5.43.1-x86_64-unknown-linux-gnu.tar.gz' \
+            'https://github.com/railwayapp/cli/releases/download/v5.44.1/railway-v5.44.1-x86_64-unknown-linux-gnu.tar.gz' \
             --output "$archive"
-          echo '88fb44b35b74ded67d383fe6f8b69161d8cc4ca5e3f9b8c6c338293f65f52ee9  '"$archive" |
+          echo 'd3197e0868576e90fc1926795014c398fdfd8a8b006be07eb3e8e5215ee0a3ca  '"$archive" |
             sha256sum --check --strict
           test "$(tar -tzf "$archive")" = railway
           tar -xzf "$archive" -C "$tool_dir" railway
@@ -148,6 +161,43 @@ jobs:
           echo "$tool_dir" >>"$GITHUB_PATH"
           export PATH="$tool_dir:$PATH"
           railway --version
+
+      - name: Verify the Railway runtime contract
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          query_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+          }, separators=(",", ":")))
+          PY
+          )
+          railway api \
+            'query Runtime($serviceId: String!, $environmentId: String!) { serviceInstance(serviceId: $serviceId, environmentId: $environmentId) { healthcheckPath healthcheckTimeout restartPolicyType domains { customDomains { domain targetPort } serviceDomains { domain targetPort } } } }' \
+            --variables "$query_variables" >"${RUNNER_TEMP}/railway-runtime.json"
+          RUNTIME_PATH="${RUNNER_TEMP}/railway-runtime.json" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runtime = json.loads(Path(os.environ["RUNTIME_PATH"]).read_text())
+          expected = {
+              "healthcheckPath": "/healthz",
+              "healthcheckTimeout": 3600,
+              "restartPolicyType": "NEVER",
+              "domains": {"customDomains": [], "serviceDomains": []},
+          }
+          if runtime != {"data": {"serviceInstance": expected}}:
+              raise SystemExit("Railway runtime contract differs from bootstrap")
+          PY
 
       - name: Upload the exact request to the dedicated Railway gate service
         id: deploy
@@ -204,11 +254,16 @@ jobs:
         run: |
           set -euo pipefail
           for _attempt in $(seq 1 360); do
-            railway deployment list \
+            rm -f "${RUNNER_TEMP}/deployments-status.json"
+            if ! railway deployment list \
               --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --limit 100 --json >"${RUNNER_TEMP}/deployments-status.json"
+              --limit 100 --json >"${RUNNER_TEMP}/deployments-status.json"; then
+              echo "Railway status poll $_attempt/360 failed; retrying" >&2
+              sleep 10
+              continue
+            fi
             status=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" \
               STATUS_PATH="${RUNNER_TEMP}/deployments-status.json" \
               python3 -I -S - <<'PY'
@@ -223,7 +278,26 @@ jobs:
           ]
           if len(matches) != 1 or not isinstance(matches[0].get("status"), str):
               raise SystemExit("exact Railway deployment disappeared")
-          print(matches[0]["status"].upper())
+          deployment = matches[0]
+          status = deployment["status"].upper()
+          if status == "SUCCESS":
+              try:
+                  runtime = deployment["meta"]["serviceManifest"]["deploy"]
+              except (KeyError, TypeError):
+                  raise SystemExit(
+                      "exact Railway deployment has no effective runtime metadata"
+                  ) from None
+              expected = {
+                  "healthcheckPath": "/healthz",
+                  "healthcheckTimeout": 3600,
+                  "restartPolicyType": "NEVER",
+              }
+              observed = {key: runtime.get(key) for key in expected}
+              if observed != expected:
+                  raise SystemExit(
+                      "exact Railway deployment ignored the runtime contract"
+                  )
+          print(status)
           PY
             )
             case "$status" in
@@ -232,10 +306,32 @@ jobs:
                 echo "Railway gate deployment ended in $status" >&2
                 railway logs "$DEPLOYMENT_ID" --service "$RAILWAY_SERVICE_ID" \
                   --project "$RAILWAY_PROJECT_ID" \
-                  --environment "$RAILWAY_ENVIRONMENT_ID" --lines 1000 || true
+                  --environment "$RAILWAY_ENVIRONMENT_ID" \
+                  --deployment --lines 1000 || true
                 exit 1
                 ;;
-              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED) sleep 10 ;;
+              BUILDING|DEPLOYING|INITIALIZING|WAITING|QUEUED)
+                if ((_attempt % 6 == 0)); then
+                  rm -f "${RUNNER_TEMP}/railway-deployment.log"
+                  if railway logs "$DEPLOYMENT_ID" \
+                    --project "$RAILWAY_PROJECT_ID" \
+                    --service "$RAILWAY_SERVICE_ID" \
+                    --environment "$RAILWAY_ENVIRONMENT_ID" \
+                    --deployment --lines 1000 \
+                    >"${RUNNER_TEMP}/railway-deployment.log"; then
+                    if grep -qx 'SEICHE_RAILWAY_GATE_FAILURE_V1=1' \
+                      "${RUNNER_TEMP}/railway-deployment.log"; then
+                      echo "Railway gate runner emitted its failure marker" >&2
+                      sed -n '1,1000p' \
+                        "${RUNNER_TEMP}/railway-deployment.log" >&2
+                      exit 1
+                    fi
+                  else
+                    echo "Railway deployment log poll failed; status polling continues" >&2
+                  fi
+                fi
+                sleep 10
+                ;;
               *) echo "unknown Railway deployment state: $status" >&2; exit 1 ;;
             esac
           done
@@ -254,11 +350,28 @@ jobs:
           EXPECTED_REQUEST_ID: ${{ steps.request.outputs.request_id }}
         run: |
           set -euo pipefail
-          railway logs "$DEPLOYMENT_ID" \
-            --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --lines 10000 >"${RUNNER_TEMP}/railway-gate.log"
+          marker_count=0
+          for _attempt in $(seq 1 60); do
+            rm -f "${RUNNER_TEMP}/railway-gate.log"
+            if ! railway logs "$DEPLOYMENT_ID" \
+              --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment \
+              --lines 1000 >"${RUNNER_TEMP}/railway-gate.log"; then
+              echo "Railway log poll $_attempt/60 failed; retrying" >&2
+              sleep 5
+              continue
+            fi
+            marker_count=$(grep -c '^SEICHE_RAILWAY_GATE_RESULT_V1=' \
+              "${RUNNER_TEMP}/railway-gate.log" || true)
+            case "$marker_count" in
+              1) break ;;
+              0) sleep 5 ;;
+              *) echo "Railway emitted repeated gate receipt markers" >&2; exit 1 ;;
+            esac
+          done
+          test "$marker_count" -eq 1
           LOG_PATH="${RUNNER_TEMP}/railway-gate.log" \
             RECEIPT_PATH="${RUNNER_TEMP}/gate.json" \
             python3 -I -S - <<'PY'
@@ -453,7 +566,11 @@ jobs:
             >"${RUNNER_TEMP}/public-gate.json"
           echo "${RECEIPT_SHA256}  ${RUNNER_TEMP}/public-gate.json" |
             sha256sum --check --strict
-          env -u GH_TOKEN -u GITHUB_TOKEN DOCKER_CONFIG="$anonymous" \
+          # gh 2.98 requires a non-empty token before --bundle-from-oci. This
+          # fixed non-secret sentinel has no API authority and fails closed if used.
+          env -u GITHUB_TOKEN \
+            GH_TOKEN=public-oci-bundle-verification-no-api \
+            DOCKER_CONFIG="$anonymous" \
             gh attestation verify "oci://$reference" \
               --bundle-from-oci \
               --repo beepboop2025/seiche \
