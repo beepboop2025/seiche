@@ -12,7 +12,15 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
-from seiche import accounts, agent_room, api, attest, mcp_server, stateful_migration
+from seiche import (
+    accounts,
+    agent_room,
+    api,
+    attest,
+    mcp_server,
+    stateful_migration,
+    usage,
+)
 
 
 def _private_key(seed: int) -> Ed25519PrivateKey:
@@ -109,6 +117,10 @@ def room_client(tmp_path, monkeypatch):
         private_dir / "agent-room.sqlite", server_private_key=_private_key(99)
     )
     monkeypatch.setattr(mcp_server, "_agent_room_store_instance", store)
+    # Keep the commercial meter out of the packaged-data path. A clean checkout
+    # has no backend/data directory, and the release workflow deliberately runs
+    # under umask 0077 to match the hardened host service.
+    monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
     monkeypatch.setattr(accounts, "DB_PATH", tmp_path / "accounts.sqlite")
     monkeypatch.setenv("SEICHE_AUTH_SECRET", "agent-room-transport-test-secret")
     accounts.add_user("alice", "correct horse battery", tier="pro")
