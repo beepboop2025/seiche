@@ -51,6 +51,9 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
     tools = tmp_path / "tools"
     tools.mkdir()
     calls = tmp_path / "calls.log"
+    verifier_module = tmp_path / "agent-room-verifier.py"
+    shutil.copyfile(ROOT / "backend" / "seiche" / "agent_room.py", verifier_module)
+    verifier_module.chmod(0o600)
     setpriv = _executable(
         tools / "setpriv",
         """
@@ -289,15 +292,28 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "SEICHE_DATE_BIN": str(date),
         "SEICHE_PYTHON_BIN": sys.executable,
         "SEICHE_AGENT_ROOM_PYTHON_BIN": sys.executable,
-        "SEICHE_AGENT_ROOM_VERIFIER_MODULE": str(
-            ROOT / "backend" / "seiche" / "agent_room.py"
-        ),
+        "SEICHE_AGENT_ROOM_VERIFIER_MODULE": str(verifier_module),
         "SEICHE_CMP_BIN": "/usr/bin/cmp",
         "SEICHE_PALIMPSEST_CHINA_AUDIT_BIN": str(palimpsest_audit),
         "SEICHE_BACKUP_MIN_DUMP_BYTES": "1",
         "FAKE_CALLS": str(calls),
     }
     return env, calls
+
+
+def test_backup_tools_use_current_owner_private_agent_room_verifier(tmp_path):
+    env, _calls = _tools(tmp_path)
+
+    verifier = Path(env["SEICHE_AGENT_ROOM_VERIFIER_MODULE"])
+    metadata = verifier.stat()
+    assert verifier != ROOT / "backend" / "seiche" / "agent_room.py"
+    assert (
+        verifier.read_bytes()
+        == (ROOT / "backend" / "seiche" / "agent_room.py").read_bytes()
+    )
+    assert metadata.st_uid == os.geteuid()
+    assert metadata.st_nlink == 1
+    assert metadata.st_mode & 0o777 == 0o600
 
 
 def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
