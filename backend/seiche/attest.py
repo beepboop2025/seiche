@@ -922,8 +922,13 @@ def parse_ots_fragment(digest: bytes, fragment: bytes) -> list[dict]:
     {"kind": "pending", "uri": ..., "commitment": hex} or
     {"kind": "bitcoin", "height": ..., "commitment": hex}. Raises ValueError
     on structures this bounded parser does not support."""
-    if len(digest) != 32:
-        raise ValueError("OTS starting commitment must be 32 bytes")
+    # Timestamp messages are arbitrary bounded byte strings.  Our initial
+    # record submission is a 32-byte SHA-256 digest, but a calendar continuation
+    # starts at the exact PendingAttestation commitment and that intermediate
+    # message may be longer.  The final Bitcoin attestation remains restricted
+    # to a 32-byte commitment in consume().
+    if not digest or len(digest) > _MAX_OTS_OP_BYTES:
+        raise ValueError("OTS starting commitment exceeds the protocol bound")
     if not fragment or len(fragment) > _MAX_OTS_FRAGMENT_BYTES:
         raise ValueError("OTS fragment is empty or exceeds the verification bound")
     buf = io.BytesIO(fragment)
@@ -968,9 +973,16 @@ def parse_ots_fragment(digest: bytes, fragment: bytes) -> list[dict]:
                 raise ValueError("truncated OTS attestation tag")
             payload = _read_varbytes(buf, max_len=_MAX_OTS_ATTESTATION_PAYLOAD_BYTES)
             if tag8 == _OTS_TAG_PENDING:
-                if len(commitment) != 32:
+                # A remote calendar may return a PendingAttestation at an
+                # intermediate operation result.  Unlike a Bitcoin block
+                # header attestation, that commitment is not required to be
+                # a 32-byte digest.  The calendar hashes raw commitments when
+                # it later aggregates them into its Merkle tree.  Keep the
+                # generic operation-result bound here and reserve the strict
+                # 32-byte rule for final Bitcoin attestations below.
+                if not commitment or len(commitment) > _MAX_OTS_OP_BYTES:
                     raise ValueError(
-                        "pending attestation commitment must be exactly 32 bytes"
+                        "pending attestation commitment exceeds the protocol bound"
                     )
                 payload_buffer = io.BytesIO(payload)
                 uri_bytes = _read_varbytes(
@@ -1048,7 +1060,10 @@ def _matching_pending_attestations(anchor: dict, parsed: list[dict]) -> list[dic
         if attestation.get("kind") == "pending"
         and isinstance(attestation.get("uri"), str)
         and attestation["uri"].rstrip("/") == expected_calendar
-        and _SHA256_RE.fullmatch(str(attestation.get("commitment", ""))) is not None
+        and isinstance(attestation.get("commitment"), str)
+        and 2 <= len(attestation["commitment"]) <= _MAX_OTS_OP_BYTES * 2
+        and len(attestation["commitment"]) % 2 == 0
+        and re.fullmatch(r"[0-9a-f]+", attestation["commitment"]) is not None
     ]
 
 

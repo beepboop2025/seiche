@@ -436,6 +436,22 @@ def test_parse_ots_fragment_bitcoin():
     assert atts[0]["kind"] == "bitcoin" and atts[0]["height"] == 903211
 
 
+def test_parse_ots_fragment_accepts_bounded_pending_continuation_start():
+    pending_commitment = hashlib.sha256(b"commitment").digest() + b"calendar-tip"
+    atts = attest.parse_ots_fragment(
+        pending_commitment, _bitcoin_fragment(pending_commitment, 903211)
+    )
+    assert atts[0]["kind"] == "bitcoin" and atts[0]["height"] == 903211
+
+
+@pytest.mark.parametrize("commitment", (b"", b"x" * (attest._MAX_OTS_OP_BYTES + 1)))
+def test_parse_ots_fragment_bounds_starting_commitment(commitment):
+    with pytest.raises(ValueError, match="starting commitment exceeds"):
+        attest.parse_ots_fragment(
+            commitment, _pending_attestation("https://cal.example")
+        )
+
+
 def test_parse_ots_fragment_rejects_ignored_trailing_bytes():
     commitment = hashlib.sha256(b"commitment").digest()
     fragment = _bitcoin_fragment(commitment, 903211) + b"\x00"
@@ -483,13 +499,93 @@ def test_parse_ots_fragment_rejects_non_sha256_bitcoin_commitment():
         attest.parse_ots_fragment(commitment, fragment)
 
 
-def test_parse_ots_fragment_rejects_non_sha256_pending_commitment():
+def test_parse_ots_fragment_accepts_bounded_intermediate_pending_commitment():
     commitment = hashlib.sha256(b"commitment").digest()
-    fragment = bytes([attest._OTS_OP_RIPEMD160]) + _pending_attestation(
-        "https://cal.example"
+    fragment = (
+        bytes([attest._OTS_OP_APPEND])
+        + _varbytes(b"calendar-branch")
+        + _pending_attestation("https://cal.example")
     )
-    with pytest.raises(ValueError, match="exactly 32 bytes"):
-        attest.parse_ots_fragment(commitment, fragment)
+    parsed = attest.parse_ots_fragment(commitment, fragment)
+    assert parsed == [
+        {
+            "kind": "pending",
+            "uri": "https://cal.example",
+            "commitment": (commitment + b"calendar-branch").hex(),
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("record_hash", "fragment_b64", "expected_commitment"),
+    (
+        (
+            "7c149b92ca634211ff84f8c166b36d4fc33bc59c83dce33f018480be0a92c165",
+            "8AgIpMZ0MMlIbwjwEGfq2GDHcQfhmrD9zW7NOzkI8SC9zOZYFSWwAq9igF/WahkY8ZGu2debsZBfU5sKgOU1kQjwICAhxpSLEbrqiCBDIyIK82YBLxvjjaRFLmrVtvhOiq5tCPEEalQ+dvAIV2j/mEdYB4wAg9/jDS75DI4uLWh0dHBzOi8vYWxpY2UuYnRjLmNhbGVuZGFyLm9wZW50aW1lc3RhbXBzLm9yZw==",
+            "6a543e767d80cb2c9e7fde166cdab9509c37b3a654e97ba0f06de6e3ad38c42917f1bbe65768ff984758078c",
+        ),
+        (
+            "849589eef603d6046fec8bf1b70b68dc85ba696c0a9b3ed686ab39eaf16d665b",
+            "8AgDDTex4pqHbgjwIJr5YkusX2gnvzOC80NCvMlDfmYzvAb4pnwYm9W2jKAPCPAggtbsjgUZhIs3MSTB89xaBcMaNazLkojjvPr6lMAc8foI8BD46oqyotg4mVagyoxDc+W8CPEg55HqCs5K7PHeSrF+MO2pY00CI5ACJteujFhFN+5TJDII8SCqu7NTOgbGgImV88Dp3J25r1GSlEyQkOM/Dr1F5MRewAjxBGpUPbDwCNPAIyavJOmHAIPf4w0u+QyOLi1odHRwczovL2FsaWNlLmJ0Yy5jYWxlbmRhci5vcGVudGltZXN0YW1wcy5vcmc=",
+            "6a543db0a9f06f68b57a494deeca4e1af82e0706fc6d92f27c2413bb2756d670eb3b480fd3c02326af24e987",
+        ),
+    ),
+)
+def test_parse_real_calendar_pending_fragments_with_long_commitments(
+    record_hash, fragment_b64, expected_commitment
+):
+    """Regression fixtures copied byte-for-byte from the public OTS ledger."""
+    parsed = attest.parse_ots_fragment(
+        bytes.fromhex(record_hash), base64.b64decode(fragment_b64, validate=True)
+    )
+    assert parsed == [
+        {
+            "kind": "pending",
+            "uri": "https://alice.btc.calendar.opentimestamps.org",
+            "commitment": expected_commitment,
+        }
+    ]
+
+
+def test_parse_real_calendar_bitcoin_continuation_from_long_commitment():
+    """The public ledger's first completed continuation is a forked OTS tree."""
+    pending_commitment = bytes.fromhex(
+        "6a543e767d80cb2c9e7fde166cdab9509c37b3a654e97ba0f06de6e3ad38c429"
+        "17f1bbe65768ff984758078c"
+    )
+    fragment = base64.b64decode(
+        "CPEg/xjKBwz915KYATztbpJcl/Uk2sxAfi9DZnSW7hOgeKcI8CBS8vKClAMxdzzG"
+        "cVOiCQM1lYgYJr1iiWoVAGLtu+PJlgjxIJJEHQMHN79DQTEULUuKc77Y5BeAmNJE"
+        "cPWX6xzQmhK+CPAgH2vs0d7YDbuPL3zAhn6SQ+H4tOtwMc9h4EUQTXtnlokI8SD7"
+        "FgxELciJImWureTH7WeOxCs4z/fg1UO7SYr2/DvU0AjxIIYazCqLsO5mJ4YQwq+1"
+        "nvkx3zGD09aQVH+UejQeUBBKCPAgGoDnIbbSOFZxwi4DzQQk5lairf6xYwTnVj9S"
+        "uDJy04QI8CDyMPrsUP6V3JpxfWHJKWO1pqBDaHbu9ka3s0p8MEmeVQjxIH1vTqpS"
+        "qmftn8Voj4A8uLe6M+pSI8gKvlliVsPhKJM1CPAgEDEHNeFzFwP+6P8HJkBzkA6R"
+        "rRkjwmQULUWpxXg5yqkI8SCxTKd86jqOV7EdQ4otUGZgywYts9cSaeMFVg8BhiuF"
+        "qwjxWQEAAAABi4Q5r5VdeAr+wTAiYhG1hjlOtGWuUhUWis0UIGTndRUAAAAAAP7/"
+        "//8CkFIAAAAAAAAWABTFbpfqGjlv/fKMYoIn3QUAQKDpwgAAAAAAAAAAImog8ARY"
+        "nQ4ACAjwIMgi3NbyCfryKc7G4LzXZt6s7FKih+d5ShqQqZdedKZpCAjxIBSERPq/"
+        "iZ9bopHzit/DwuhN7v+HolnAWF4hDeslfzLlCAjwIKAhEWVNF+UTiDPWZFdkjvK0"
+        "KWVqAJAorpWWD/gi+Oj5CAjxIPnk8tON3+a7gV7qM3X+5vbD4/WyIDk9SvZN+YRk"
+        "jnJpCAjwIIBvZ8MZwz0RFwfsz37ANx3ftO5xp5iZ4OjEE5RuqM4eCAjxIMLflunH"
+        "ARIB36AEM24nXuR3s7p90axPKNW1jHLm5F1OCAjxIJg9Nb7dhxn7BnUuBvaDV+xX"
+        "tPyQ6eNEsAQsm42hjl9CCAjwIMx9MGUnDvfAMO7s93mnLqVu9W64aIs2hWqFT0fX"
+        "n2PpCAjxIP2MAJl4GSOhwb4SbTwC3txymet5t6k/4NGv8WyRDEA0CAjxIKeWgIan"
+        "m4ZXT0XBIOKzmZxoHSnFi+XG2MKh5x3TvaJdCAjwIFwkIdMqqSrYgdNiniUPNZa2"
+        "zEZz0rY7nvbDppyTZPpmCAjxIPcrRYGGFtZdbBvdFJnB1qYqf3gVlAAuL8J0RBwI"
+        "DLgOCAjwIM+VMgf0RDEN/ivCGIWyoRW56lEB7PJFIyeZ8ahKGFA4CAgABYiWDXPX"
+        "GQED2bo6",
+        validate=True,
+    )
+    assert attest.parse_ots_fragment(pending_commitment, fragment) == [
+        {
+            "kind": "bitcoin",
+            "height": 957785,
+            "commitment": (
+                "c55c5ef567b2ca8589d763c3e867f447bec1bfaea07909923056d5956415f9bd"
+            ),
+        }
+    ]
 
 
 def test_parse_ots_fragment_enforces_recursion_and_node_bounds(monkeypatch):
