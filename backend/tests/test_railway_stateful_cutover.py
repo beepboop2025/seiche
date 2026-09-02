@@ -22,6 +22,7 @@ from seiche import stateful_migration as migration
 
 ROOT = Path(__file__).resolve().parents[2]
 CUTOVER_WORKFLOW = ROOT / ".github" / "workflows" / "railway-stateful-cutover.yml"
+CUTOVER_RUNBOOK = ROOT / "ops" / "deploy" / "RAILWAY-STATEFUL-CUTOVER.md"
 CUTOVER_FENCE = ROOT / "ops" / "deploy" / "seiche-railway-cutover-fence.sh"
 CUTOVER_EDGE = ROOT / "ops" / "deploy" / "seiche-railway-edge-mode.sh"
 STATEFUL_DOCKERFILE = ROOT / "ops" / "railway" / "Dockerfile.stateful"
@@ -1251,6 +1252,49 @@ def test_cutover_workflow_and_host_tools_cannot_auto_move_authority() -> None:
         assert f'"ops/deploy/{name}": "100755"' in wrapper
         assert f"/etc/seiche/libexec/{name}" in wrapper
         assert f"/etc/seiche/libexec/{name}" in installer
+
+
+def test_cutover_volume_file_commands_use_pinned_cli_ordering() -> None:
+    workflow = CUTOVER_WORKFLOW.read_text(encoding="utf-8")
+    runbook = CUTOVER_RUNBOOK.read_text(encoding="utf-8")
+
+    logical_workflow = workflow.replace("\\\n", " ")
+    workflow_commands = [
+        " ".join(line[line.index("railway volume ") :].split())
+        for line in logical_workflow.splitlines()
+        if "railway volume " in line and " files " in line
+    ]
+    workflow_prefix = (
+        'railway volume --project "$RAILWAY_PROJECT_ID" '
+        '--environment "$RAILWAY_ENVIRONMENT_ID" '
+        '--service "$RAILWAY_SERVICE_ID" files '
+        '--volume "$RAILWAY_VOLUME_ID" '
+    )
+    assert len(workflow_commands) == 4
+    assert all(command.startswith(workflow_prefix) for command in workflow_commands)
+    workflow_operations = [
+        command.removeprefix(workflow_prefix).split()[0]
+        for command in workflow_commands
+    ]
+    assert workflow_operations.count("list") == 1
+    assert workflow_operations.count("download") == 3
+    assert "railway volume files" not in workflow
+
+    logical_runbook = runbook.replace("\\\n", " ")
+    runbook_commands = [
+        " ".join(line[line.index("railway volume ") :].split())
+        for line in logical_runbook.splitlines()
+        if "railway volume " in line and " files " in line
+    ]
+    runbook_prefix = (
+        "railway volume --project REVIEWED_PROJECT_ID "
+        "--environment REVIEWED_ENVIRONMENT_ID "
+        "--service REVIEWED_SERVICE_ID files "
+        "--volume REVIEWED_VOLUME_ID upload "
+    )
+    assert len(runbook_commands) == 2
+    assert all(command.startswith(runbook_prefix) for command in runbook_commands)
+    assert "railway volume files" not in runbook
 
 
 def test_historical_authority_requires_a_grant_inside_the_original_fence(

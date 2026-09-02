@@ -130,7 +130,10 @@ jobs:
             --service "$RAILWAY_SERVICE_ID" --json >domains.json
           railway variable list --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --json >variables.json
-          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" list \
             "/inbox/$SNAPSHOT_ID" --json >snapshot-files.json
           EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" ORIGIN="$RAILWAY_ORIGIN" \
             python3 -I -S - <<'PY'
@@ -203,10 +206,16 @@ jobs:
           rm -f variables.json
           for member in SHA256SUMS manifest.env deployed-sha.txt table-counts.txt \
             palimpsest-china-state.json; do
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/inbox/$SNAPSHOT_ID/$member" "$CONTROL_ROOT/evidence/$member"
           done
-          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" download \
             "/authority-fences/$FENCE_SHA256.json" \
             "$CONTROL_ROOT/evidence/AUTHORITY-FENCE.json"
           chmod go-w "$CONTROL_ROOT"/evidence/*
@@ -649,7 +658,10 @@ jobs:
           PY
           fence_sha256=$(tail -n 1 "$GITHUB_OUTPUT" | cut -d= -f2)
           [[ "$fence_sha256" =~ ^[0-9a-f]{64}$ ]]
-          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" download \
             "/authority-fences/$fence_sha256.json" \
             "$EVIDENCE_ROOT/AUTHORITY-FENCE.json"
           edge_digest=$(RAILWAY_EDGE_TOKEN="$RAILWAY_EDGE_TOKEN" python3 -I -S - <<'PY'
