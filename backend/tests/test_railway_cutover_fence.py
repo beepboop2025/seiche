@@ -350,6 +350,15 @@ import sys
 
 arguments = sys.argv[1:]
 body = Path(arguments[arguments.index("--output") + 1])
+url = arguments[-1]
+with Path({str(calls)!r}).open("a", encoding="utf-8") as handle:
+    handle.write(f"curl {{url}}\\n")
+
+if "/api/internal/" in url:
+    body.write_text("not here", encoding="utf-8")
+    print("404", end="")
+    raise SystemExit(0)
+
 headers = Path(arguments[arguments.index("--dump-header") + 1])
 body.write_text('{{"version":"0.11.0"}}\\n', encoding="utf-8")
 headers.write_text(
@@ -398,6 +407,17 @@ print("200", end="")
     assert hashlib.sha256(token.encode()).hexdigest() in receipt
     assert "systemctl daemon-reload" in calls.read_text(encoding="utf-8")
     assert "systemctl restart caddy" in calls.read_text(encoding="utf-8")
+    edge_calls = calls.read_text(encoding="utf-8")
+    assert "curl https://api.seiche.info/api/internal/v1/railway-control/commands" in edge_calls
+    assert (
+        "curl https://api.seiche.info/api/internal/v1/railway-control/recovery/"
+        "not-a-request/not-a-member" in edge_calls
+    )
+    assert "curl https://api.seiche.info/api/internal/v1/stateful-control" in edge_calls
+    assert (
+        "curl https://api.seiche.info/api/internal/v1/recovery-exports/"
+        "not-a-request/not-a-member" in edge_calls
+    )
 
     rollback_environment = {
         **environment,
