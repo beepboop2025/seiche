@@ -132,18 +132,24 @@ Using the existing reviewed operator channel, copy the final snapshot's nine
 files and the canonical fence to a private workstation. Verify the snapshot
 file set and both digests before upload.
 
-Upload each snapshot member without replacement:
+Upload each snapshot member without replacement. Railway CLI v5.43.1 requires
+the reviewed project, environment, and service context before `files`, and the
+volume selector before the `upload` operation:
 
 ```bash
 for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
   palimpsest-china-state.json api-data.tgz table-counts.txt deployed-sha.txt \
   manifest.env SHA256SUMS; do
-  railway volume files upload --volume REVIEWED_VOLUME_ID \
+  railway volume --project REVIEWED_PROJECT_ID \
+    --environment REVIEWED_ENVIRONMENT_ID \
+    --service REVIEWED_SERVICE_ID files --volume REVIEWED_VOLUME_ID upload \
     "PRIVATE_FINAL_SNAPSHOT/$member" \
     "/inbox/FINAL_SNAPSHOT_ID/$member"
 done
 
-railway volume files upload --volume REVIEWED_VOLUME_ID \
+railway volume --project REVIEWED_PROJECT_ID \
+  --environment REVIEWED_ENVIRONMENT_ID \
+  --service REVIEWED_SERVICE_ID files --volume REVIEWED_VOLUME_ID upload \
   PRIVATE_AUTHORITY_FENCE.json \
   "/authority-fences/AUTHORITY_FENCE_SHA256.json"
 ```

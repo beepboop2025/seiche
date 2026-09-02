@@ -763,12 +763,18 @@ jobs:
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-backups.json
-          if ! railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" list \
               /recovery-receipts --json >recovery-receipts.json; then
             test "$ALLOW_EMPTY_EXPORT_PROOF" = true
             printf '%s\n' '{"files":[]}' >recovery-receipts.json
           fi
-          if ! railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" list \
               /offsite-receipts --json >offsite-receipts.json; then
             test "$ALLOW_EMPTY_EXPORT_PROOF" = true
             printf '%s\n' '{"files":[]}' >offsite-receipts.json
@@ -960,14 +966,26 @@ jobs:
           if [ "$ALLOW_EMPTY_EXPORT_PROOF" != true ]; then
             proof_base=$(grep '^proof_base=' "$GITHUB_OUTPUT" | cut -d= -f2)
             request_id=${proof_base#*-}
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/recovery-receipts/$proof_base.json" recovery-receipt.json
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/offsite-receipts/$proof_base.json" offsite-receipt.json
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/recovery-requests/$request_id.json" request.json
             mkdir activation-candidates shadow-candidates
-            railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" list \
               /cutover-receipts --json >cutover-receipts.json
             python3 -I -S - <<'PY' >activation-paths.txt
           import json
@@ -988,7 +1006,10 @@ jobs:
           PY
             test -s activation-paths.txt
             while IFS= read -r remote; do
-              railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              railway volume --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service "$RAILWAY_SERVICE_ID" files \
+                --volume "$RAILWAY_VOLUME_ID" download \
                 "$remote" "activation-candidates/$(basename "$remote")"
             done <activation-paths.txt
             python3 -I -S - <<'PY'
@@ -1027,10 +1048,16 @@ jobs:
           )
           PY
             candidate_request_id=$(cat candidate-request-id.txt)
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/cutover-receipts/$candidate_request_id.candidate.json" \
               candidate-receipt.json
-            railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" list \
               /receipts --json >shadow-receipts.json
             python3 -I -S - <<'PY' >shadow-paths.txt
           import json
@@ -1051,7 +1078,10 @@ jobs:
           PY
             test -s shadow-paths.txt
             while IFS= read -r remote; do
-              railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+              railway volume --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service "$RAILWAY_SERVICE_ID" files \
+                --volume "$RAILWAY_VOLUME_ID" download \
                 "$remote" "shadow-candidates/$(basename "$remote")"
             done <shadow-paths.txt
             python3 -I -S - <<'PY'
@@ -1204,7 +1234,10 @@ jobs:
           railway link --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" --json >proof/link.json
-          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" list \
             /cutover-receipts --json >proof/cutover-receipts.json
           python -I -S - <<'PY' >proof/activation-paths.txt
           import json
@@ -1226,7 +1259,10 @@ jobs:
           test -s proof/activation-paths.txt
           while IFS= read -r remote; do
             name=$(basename "$remote")
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "$remote" "activation-candidates/$name"
           done <proof/activation-paths.txt
           DEPLOYMENT_ID="$DEPLOYMENT_ID" RELEASE_SHA="$RELEASE_SHA" \
@@ -1264,7 +1300,10 @@ jobs:
           )
           PY
           candidate_request_id=$(cat proof/candidate-request-id.txt)
-          railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" download \
             "/cutover-receipts/$candidate_request_id.candidate.json" \
             candidate-receipt.json
           python -I -S - <<'PY'
@@ -1282,7 +1321,7 @@ jobs:
           if (
               body != canonical
               or candidate.get("schema")
-              != "seiche.railway-cutover-candidate-receipt.v3"
+              != "seiche.railway-cutover-candidate-receipt.v4"
               or hashlib.sha256(body).hexdigest()
               != activation.get("candidate_receipt_sha256")
               or not isinstance(state, dict)
@@ -1297,7 +1336,10 @@ jobs:
           ):
               raise SystemExit("activation-bound candidate identity is invalid")
           PY
-          railway volume files list --volume "$RAILWAY_VOLUME_ID" \
+          railway volume --project "$RAILWAY_PROJECT_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --service "$RAILWAY_SERVICE_ID" files \
+            --volume "$RAILWAY_VOLUME_ID" list \
             /receipts --json >proof/shadow-receipts.json
           python -I -S - <<'PY' >proof/shadow-paths.txt
           import json
@@ -1318,7 +1360,10 @@ jobs:
           PY
           test -s proof/shadow-paths.txt
           while IFS= read -r remote; do
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "$remote" "shadow-candidates/$(basename "$remote")"
           done <proof/shadow-paths.txt
           python -I -S - <<'PY'
@@ -1410,7 +1455,10 @@ jobs:
           ready=0
           for _attempt in $(seq 1 90); do
             receipt_attempt="proof/recovery-receipt-attempt-${_attempt}.json"
-            if railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            if railway volume --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service "$RAILWAY_SERVICE_ID" files \
+                --volume "$RAILWAY_VOLUME_ID" download \
                 "$receipt_remote" "$receipt_attempt" 2>/dev/null; then
               mv "$receipt_attempt" recovery-receipt.json
               ready=1
@@ -1427,7 +1475,10 @@ jobs:
           for member in SHA256SUMS seiche.dump var-lib-seiche.tgz \
             palimpsest-china.tgz palimpsest-china-state.json api-data.tgz \
             table-counts.txt deployed-sha.txt manifest.env; do
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "/recovery-snapshots/$snapshot_id/$member" "bundle/$member"
           done
           receipt_sha256=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B \
@@ -1759,9 +1810,15 @@ jobs:
               raise SystemExit("immutable off-site receipt proof failed")
           PY
           remote="/offsite-receipts/$SNAPSHOT_ID-$REQUEST_ID.json"
-          if ! railway volume files upload --volume "$RAILWAY_VOLUME_ID" \
+          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" upload \
               offsite-receipt.json "$remote"; then
-            railway volume files download --volume "$RAILWAY_VOLUME_ID" \
+            railway volume --project "$RAILWAY_PROJECT_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --service "$RAILWAY_SERVICE_ID" files \
+              --volume "$RAILWAY_VOLUME_ID" download \
               "$remote" proof/existing-offsite-receipt.json
             cmp offsite-receipt.json proof/existing-offsite-receipt.json
           fi

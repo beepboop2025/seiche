@@ -1001,6 +1001,8 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "api-continuity.failed" in text
     assert "seiche.railway-reverse-restore-proof.v1" in text
     assert "seiche.railway-offsite-recovery-receipt.v3" in text
+    assert "seiche.railway-cutover-candidate-receipt.v4" in text
+    assert "seiche.railway-cutover-candidate-receipt.v3" not in text
     assert '"palimpsest_china_state": receipt["palimpsest_china_state"]' in text
     assert '"palimpsest_china_state": recovery["palimpsest_china_state"]' in text
     assert text.count("--candidate candidate-receipt.json") == 3
@@ -1030,6 +1032,29 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         "RAILWAY_BECOMES_SOLE_WRITER",
     ):
         assert forbidden not in text
+
+
+def test_recovery_volume_file_commands_use_pinned_cli_ordering() -> None:
+    workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
+    logical_workflow = workflow.replace("\\\n", " ")
+    commands = [
+        " ".join(line[line.index("railway volume ") :].split())
+        for line in logical_workflow.splitlines()
+        if "railway volume " in line and " files " in line
+    ]
+    prefix = (
+        'railway volume --project "$RAILWAY_PROJECT_ID" '
+        '--environment "$RAILWAY_ENVIRONMENT_ID" '
+        '--service "$RAILWAY_SERVICE_ID" files '
+        '--volume "$RAILWAY_VOLUME_ID" '
+    )
+    assert len(commands) == 19
+    assert all(command.startswith(prefix) for command in commands)
+    operations = [command.removeprefix(prefix).split()[0] for command in commands]
+    assert operations.count("list") == 6
+    assert operations.count("download") == 12
+    assert operations.count("upload") == 1
+    assert "railway volume files" not in workflow
 
 
 @pytest.mark.skipif(
