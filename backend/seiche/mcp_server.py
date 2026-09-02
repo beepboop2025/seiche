@@ -23,19 +23,24 @@ Two transports share one dispatch:
   * **HTTP** (``POST /mcp`` in api.py) — the hosted, metered endpoint an agent
     adds by URL, no install. That layer decides the surface per request.
 
-Surface: the *public* surface is the eleven tools flagged ``is_public`` in
+Surface: the *public* surface is the twelve tools flagged ``is_public`` in
 ``TOOLS``: ``latest_article``, ``funding_stress_now``, ``historical_analogs``,
 ``proof_backtest``, ``data_health``, ``crypto_stress_record``,
 ``institutional_flows``, ``oil_funding_context`` and
 ``fx_materials_passage``, ``money_market_context`` and
-``world_markets_context``. That is the published
+``world_markets_context``, plus ``trade_safety_risk_context``. That is the published
 editorial, the conclusion, the precedent, the honest record, the freshness of
 the inputs, granular USD money-market evidence, and cross-market transmission
-context; it is free to everyone with no token. The *full* surface adds the five
-that read the gated derived engines:
+context; it is free to everyone with no token. The authenticated hosted surface
+adds five tools that read the gated derived engines:
 ``funding_stress_forecast``, ``replay_asof``, ``positioning_book``,
-``desk_brief`` and ``ask_desk``. For stdio the surface is fixed by
-``SEICHE_MCP_PUBLIC``; for HTTP an anonymous caller is always the public one.
+``desk_brief`` and ``ask_desk``; and five identity-bound Agent Room tools for
+key registration, room creation, signed append, verified listing, and complete
+chain verification. Agent Room is a private non-executable preview: it cannot
+accept, order, execute, settle, pay, or hold custody. Local stdio has no bearer
+principal and therefore never exposes Agent Room. For stdio the analysis
+surface is fixed by ``SEICHE_MCP_PUBLIC``; for HTTP an anonymous caller is
+always the public one.
 
 The line to hold is *conclusion free, engine not*: ``institutional_flows`` is
 public and still withholds its ``method_versions``, and the earlier docstring
@@ -52,14 +57,18 @@ import contextlib
 import json
 import os
 import re
+import stat
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import UTC, date as calendar_date, datetime
+from pathlib import Path
 from typing import Any
 
+from seiche import agent_room
+from seiche.config import DATA_DIR
 from seiche.evidence_boundary import historical_evidence as _historical_evidence
 from seiche.engines import money_market as money_market_engine
 from seiche.markets.world import (
@@ -241,6 +250,19 @@ def _get_completed_snapshot() -> dict | None:
     return None
 
 
+def _get_in_memory_completed_snapshot() -> dict | None:
+    """Return only an already-hydrated board, without durable restoration.
+
+    Trade Safety uses this narrower seam because a cold request must not turn
+    into PostgreSQL or SQLite I/O. Process startup and the normal board path own
+    restoration; until either has populated memory, the guard context is
+    deliberately unavailable.
+    """
+    from seiche import assemble
+
+    return _rights_safe_memo(assemble.cached_snapshot())
+
+
 def _get_asof(date: str) -> dict:
     from seiche import assemble
 
@@ -259,6 +281,385 @@ def _stdout_to_stderr():
 class ToolError(Exception):
     """Raised by a tool handler for an expected, reportable failure (surfaced to
     the agent as an isError result, not a protocol error)."""
+
+
+class StructuredToolError(ToolError):
+    """Expected failure with a bounded machine-readable retry contract."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__(str(payload.get("reason") or "tool request failed"))
+        self.payload = payload
+
+
+_agent_room_store_instance: agent_room.AgentRoomStore | None = None
+_agent_room_store_lock = threading.Lock()
+_agent_room_readiness_lock = threading.Lock()
+_agent_room_readiness_passed = False
+
+
+def _production_environment() -> bool:
+    return os.getenv("SEICHE_ENV", "").strip().lower() == "production"
+
+
+def _stateful_preactivation_environment() -> bool:
+    """Return whether this process must verify state without changing it."""
+
+    return os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
+        "shadow",
+        "cutover_candidate",
+    }
+
+
+def _stateful_agent_room_expected_key_id() -> str | None:
+    """Return the receipt-bound key, empty unprovisioned sentinel, or no gate."""
+
+    mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip()
+    if mode not in {"shadow", "cutover_candidate", "production"}:
+        return None
+    value = os.getenv("SEICHE_AGENT_ROOM_EXPECTED_KEY_ID", "").strip()
+    if value == "unprovisioned":
+        return ""
+    if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise agent_room.AgentRoomValidationError(
+            "stateful Agent Room key binding is invalid"
+        )
+    return value
+
+
+def _assert_agent_room_expected_key(public_key_hex: str) -> None:
+    expected = _stateful_agent_room_expected_key_id()
+    if expected is not None and (
+        not expected or agent_room.ed25519_key_id(public_key_hex) != expected
+    ):
+        raise agent_room.AgentRoomIntegrityError(
+            "Agent Room operator key differs from the immutable runtime receipt"
+        )
+
+
+def _agent_room_database_path() -> Path:
+    """Resolve the private room database without sharing Seiche's 0644 cache DB."""
+
+    configured = os.getenv("SEICHE_AGENT_ROOM_DB_PATH", "").strip()
+    using_default = not configured
+    production = _production_environment()
+    canonical = DATA_DIR / "_agent_room" / "agent-room.sqlite"
+    path = Path(configured) if configured else canonical
+    if not path.is_absolute():
+        raise agent_room.AgentRoomValidationError(
+            "SEICHE_AGENT_ROOM_DB_PATH must be absolute"
+        )
+    if production and (
+        path != canonical
+        or os.path.normpath(os.fspath(path)) != os.fspath(path)
+        or os.path.normpath(os.fspath(canonical)) != os.fspath(canonical)
+    ):
+        raise agent_room.AgentRoomValidationError(
+            "production Agent Room database must use the canonical runtime path"
+        )
+    parent = path.parent
+    if parent.is_symlink() or path.is_symlink():
+        raise agent_room.AgentRoomValidationError(
+            "Agent Room database path must not be a symlink"
+        )
+    if not _stateful_preactivation_environment():
+        try:
+            parent.mkdir(mode=0o700, parents=False, exist_ok=True)
+        except OSError as exc:
+            raise agent_room.AgentRoomValidationError(
+                "Agent Room private database directory is unavailable"
+            ) from exc
+    elif not parent.exists():
+        # A receipted never-provisioned shadow/candidate must stay byte-for-byte
+        # unchanged.  Its absence was already audited by the restore boundary;
+        # do not turn a readiness probe into state creation.
+        return path
+    if using_default or production:
+        try:
+            parent_mode = stat.S_IMODE(parent.stat().st_mode)
+        except OSError as exc:
+            raise agent_room.AgentRoomValidationError(
+                "Agent Room private database directory is unavailable"
+            ) from exc
+        if parent_mode != 0o700:
+            raise agent_room.AgentRoomValidationError(
+                "production/default Agent Room database directory must have mode 0700"
+            )
+    return path
+
+
+def _assert_agent_room_root_members(database_path: Path) -> None:
+    """Reject stale copies and aliases while allowing SQLite crash recovery."""
+
+    try:
+        members = {entry.name for entry in database_path.parent.iterdir()}
+    except OSError as exc:
+        raise agent_room.AgentRoomValidationError(
+            "Agent Room private database directory is unavailable"
+        ) from exc
+    allowed = {database_path.name, f"{database_path.name}-journal"}
+    if not members <= allowed or (
+        f"{database_path.name}-journal" in members and database_path.name not in members
+    ):
+        raise agent_room.AgentRoomValidationError(
+            "Agent Room database directory contains unexpected state"
+        )
+
+
+def _agent_room_initialization_seal_path(attest_path: Path) -> Path:
+    return attest_path / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+
+
+def _unchecked_agent_room_store() -> agent_room.AgentRoomStore:
+    """Build the process store before the production readiness gate is set."""
+
+    global _agent_room_store_instance
+    from seiche import attest
+
+    database_path = _agent_room_database_path()
+    attest_path = attest._attest_dir_path()
+    with _agent_room_store_lock:
+        if _agent_room_store_instance is None:
+            canonical_runtime = database_path == (
+                DATA_DIR / "_agent_room" / "agent-room.sqlite"
+            )
+            if not canonical_runtime:
+                private_key, _public_key = attest.load_or_create_keypair()
+                _agent_room_store_instance = agent_room.AgentRoomStore(
+                    database_path,
+                    server_private_key=private_key,
+                )
+                return _agent_room_store_instance
+            if _stateful_preactivation_environment():
+                _assert_agent_room_root_members(database_path)
+                private_key, public_key = attest.load_existing_keypair(
+                    str(attest_path),
+                    expected_owner_uid=os.geteuid(),
+                )
+                _assert_agent_room_expected_key(public_key)
+                seal_path = _agent_room_initialization_seal_path(attest_path)
+                agent_room.verify_initialization_seal(
+                    seal_path,
+                    server_private_key=private_key,
+                    expected_owner_uid=os.geteuid(),
+                )
+                _agent_room_store_instance = agent_room.AgentRoomStore.open_existing(
+                    database_path,
+                    server_private_key=private_key,
+                    expected_owner_uid=os.geteuid(),
+                )
+                return _agent_room_store_instance
+            _assert_agent_room_root_members(database_path)
+            expected_key_id = _stateful_agent_room_expected_key_id()
+            if expected_key_id is not None:
+                if not expected_key_id:
+                    raise agent_room.AgentRoomIntegrityError(
+                        "Agent Room was not provisioned by the immutable runtime receipt"
+                    )
+                private_key, public_key = attest.load_existing_keypair(
+                    str(attest_path),
+                    expected_owner_uid=os.geteuid(),
+                )
+                _assert_agent_room_expected_key(public_key)
+            else:
+                private_key, _public_key = attest.load_or_create_keypair()
+            seal_path = _agent_room_initialization_seal_path(attest_path)
+            initialized = seal_path.exists() or seal_path.is_symlink()
+            database_exists = database_path.exists()
+            if initialized:
+                agent_room.verify_initialization_seal(
+                    seal_path,
+                    server_private_key=private_key,
+                )
+            store = agent_room.AgentRoomStore(
+                database_path,
+                server_private_key=private_key,
+                require_existing=initialized or database_exists,
+            )
+            # Seal only a completely audited store. If the process dies after
+            # SQLite creation but before this atomic write, the next startup
+            # audits the existing database and completes the same transition.
+            audit = store.audit_all_rooms()
+            if audit.get("ok") is not True:
+                raise agent_room.AgentRoomIntegrityError(
+                    "Agent Room initialization audit did not pass"
+                )
+            if not initialized:
+                agent_room.create_initialization_seal(
+                    seal_path,
+                    server_private_key=private_key,
+                )
+            _agent_room_store_instance = store
+        return _agent_room_store_instance
+
+
+def initialize_agent_room_readiness() -> None:
+    """Open and audit the canonical production room store exactly at startup.
+
+    Only the pass/fail bit is retained. Counts, hashes, paths, and key identity
+    stay inside the store and operator logs rather than becoming health data.
+    """
+
+    global _agent_room_readiness_passed
+    with _agent_room_readiness_lock:
+        _agent_room_readiness_passed = False
+        expected_key_id = _stateful_agent_room_expected_key_id()
+        if expected_key_id == "":
+            # A receipt with no pre-existing operator key is an explicit
+            # provisioning gate, not permission to mint an unrelated identity
+            # after activation. Other attestation features may later create a
+            # key, but Agent Room remains unavailable until a future reviewed
+            # receipt binds it.
+            from seiche.stateful_migration import audit_agent_room_state
+
+            result = audit_agent_room_state(
+                DATA_DIR,
+                expected_owner_uid=os.geteuid(),
+            )
+            if result.get("result") != "absent_uninitialized":
+                raise agent_room.AgentRoomIntegrityError(
+                    "unprovisioned Agent Room contains durable room state"
+                )
+            _agent_room_readiness_passed = True
+            return
+        if _stateful_preactivation_environment():
+            # Migration/cutover already established the point-in-time receipt,
+            # but the serving uid repeats the cryptographic audit.  This helper
+            # deliberately has no create path: absent means never provisioned,
+            # while partial, corrupt, or key-mismatched state aborts startup.
+            from seiche.stateful_migration import audit_agent_room_state
+
+            result = audit_agent_room_state(
+                DATA_DIR,
+                expected_owner_uid=os.geteuid(),
+            )
+            if expected_key_id is not None and (
+                result.get("server_key_id") != expected_key_id
+            ):
+                raise agent_room.AgentRoomIntegrityError(
+                    "Agent Room operator key differs from the immutable runtime receipt"
+                )
+            if result.get("result") == "verified":
+                store = _unchecked_agent_room_store()
+                store_result = store.audit_all_rooms()
+                if (
+                    not isinstance(store_result, dict)
+                    or store_result.get("ok") is not True
+                    or store_result.get("schema") != agent_room.AGENT_ROOM_AUDIT_SCHEMA
+                ):
+                    raise agent_room.AgentRoomIntegrityError(
+                        "Agent Room startup audit did not return a valid result"
+                    )
+            _agent_room_readiness_passed = True
+            return
+        store = _unchecked_agent_room_store()
+        result = store.audit_all_rooms()
+        if (
+            not isinstance(result, dict)
+            or result.get("ok") is not True
+            or result.get("schema") != agent_room.AGENT_ROOM_AUDIT_SCHEMA
+        ):
+            raise agent_room.AgentRoomIntegrityError(
+                "Agent Room startup audit did not return a valid result"
+            )
+        _agent_room_readiness_passed = True
+
+
+def agent_room_release_ready() -> bool:
+    """Return only the cached startup-audit readiness state."""
+
+    with _agent_room_readiness_lock:
+        return _agent_room_readiness_passed
+
+
+def _agent_room_store() -> agent_room.AgentRoomStore:
+    """Return the audited process store, failing closed in production."""
+
+    if _production_environment():
+        if _stateful_agent_room_expected_key_id() == "":
+            raise agent_room.AgentRoomIntegrityError(
+                "Agent Room was not provisioned by the immutable runtime receipt"
+            )
+        # Revalidate both exact paths on every production access. This is cheap
+        # and prevents a post-start environment drift from selecting alternate
+        # durable state while retaining an old readiness bit.
+        database_path = _agent_room_database_path()
+        from seiche import attest
+
+        attest_path = attest._attest_dir_path()
+        seal_path = _agent_room_initialization_seal_path(attest_path)
+        if not agent_room_release_ready():
+            raise agent_room.AgentRoomIntegrityError(
+                "Agent Room production readiness audit has not passed"
+            )
+        if _stateful_preactivation_environment() and not database_path.exists():
+            raise agent_room.AgentRoomIntegrityError(
+                "Agent Room is not initialized in read-only pre-activation mode"
+            )
+        _assert_agent_room_root_members(database_path)
+        if not database_path.exists() or database_path.is_symlink():
+            raise agent_room.AgentRoomIntegrityError(
+                "initialized Agent Room database is unavailable"
+            )
+        store = _unchecked_agent_room_store()
+        expected_key_id = _stateful_agent_room_expected_key_id()
+        if expected_key_id is not None and store.server_key_id != expected_key_id:
+            raise agent_room.AgentRoomIntegrityError(
+                "Agent Room operator key differs from the immutable runtime receipt"
+            )
+        store.verify_initialization_seal(seal_path)
+        return store
+    return _unchecked_agent_room_store()
+
+
+def _agent_room_actor(identity: dict[str, Any] | None) -> str:
+    actor = identity.get("username") if isinstance(identity, dict) else None
+    if not isinstance(actor, str) or not actor:
+        raise StructuredToolError(
+            {
+                "ok": False,
+                "status": "FAILED",
+                "category": "authentication_required",
+                "reason": "Agent Room requires a valid Authorization bearer token",
+            }
+        )
+    return actor
+
+
+def _raise_agent_room_tool_error(exc: agent_room.AgentRoomError) -> None:
+    category = "invalid_request"
+    retry: dict[str, Any] = {}
+    if isinstance(exc, agent_room.AgentRoomSequenceConflict):
+        category = "sequence_conflict"
+        retry = {
+            "current_sequence": exc.current_sequence,
+            "current_head": exc.current_head,
+        }
+    elif isinstance(exc, agent_room.AgentRoomReplayError):
+        category = "replay_rejected"
+    elif isinstance(exc, agent_room.AgentRoomClosedError):
+        category = "room_closed"
+    elif isinstance(exc, agent_room.AgentRoomCapacityError):
+        category = "capacity_exhausted"
+    elif isinstance(exc, agent_room.AgentRoomAuthorizationError):
+        category = "not_authorized"
+    elif isinstance(exc, agent_room.AgentRoomSignatureError):
+        category = "signature_rejected"
+    elif isinstance(exc, agent_room.AgentRoomIntegrityError):
+        category = "integrity_failure"
+    reason = (
+        "Agent Room integrity verification failed"
+        if isinstance(exc, agent_room.AgentRoomIntegrityError)
+        else str(exc)
+    )
+    raise StructuredToolError(
+        {
+            "ok": False,
+            "status": "FAILED",
+            "category": category,
+            "reason": reason,
+            **retry,
+        }
+    ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -931,6 +1332,109 @@ def tool_world_markets(args: dict, _public: bool) -> Any:
     )
 
 
+def tool_trade_safety_risk_context(args: dict, _public: bool) -> Any:
+    """Serve the deterministic, cache-only, non-executable risk projection."""
+
+    if not isinstance(args, dict):
+        raise ToolError("arguments must be an object")
+    if args:
+        raise ToolError(
+            "unknown argument(s): " + ", ".join(sorted(str(key) for key in args))
+        )
+    from seiche import trade_safety
+
+    return trade_safety.project(
+        _get_in_memory_completed_snapshot(),
+        evaluation_at=datetime.now(UTC).replace(microsecond=0),
+    )
+
+
+def tool_agent_room_register_key(
+    args: dict, _public: bool, identity: dict[str, Any] | None
+) -> Any:
+    """Bind the authenticated subscriber identity to one Ed25519 public key."""
+
+    actor = _agent_room_actor(identity)
+    try:
+        return _agent_room_store().provision_participant(
+            actor, args.get("public_key_hex")
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_tool_error(exc)
+
+
+def tool_agent_room_create(
+    args: dict, _public: bool, identity: dict[str, Any] | None
+) -> Any:
+    """Create a private room whose owner is the authenticated subscriber."""
+
+    actor = _agent_room_actor(identity)
+    try:
+        return _agent_room_store().create_room(
+            agent_room.derive_external_room_id(actor, args.get("room_id")),
+            owner_id=actor,
+            participant_ids=args.get("participant_ids", []),
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_tool_error(exc)
+
+
+def tool_agent_room_append_event(
+    args: dict, _public: bool, identity: dict[str, Any] | None
+) -> Any:
+    """Verify and append one client-signed, non-executable room event."""
+
+    actor = _agent_room_actor(identity)
+    event = args.get("event")
+    if not isinstance(event, dict) or event.get("room_id") != args.get("room_id"):
+        _raise_agent_room_tool_error(
+            agent_room.AgentRoomValidationError(
+                "signed event room_id must equal the tool room_id"
+            )
+        )
+    if event.get("actor_id") != actor:
+        _raise_agent_room_tool_error(
+            agent_room.AgentRoomAuthorizationError(
+                "signed actor_id must equal the authenticated bearer identity"
+            )
+        )
+    try:
+        return _agent_room_store().append_event(
+            event, client_signature_hex=args.get("client_signature_hex")
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_tool_error(exc)
+
+
+def tool_agent_room_list_events(
+    args: dict, _public: bool, identity: dict[str, Any] | None
+) -> Any:
+    """Return a verified room cursor and its bounded event page."""
+
+    actor = _agent_room_actor(identity)
+    try:
+        return _agent_room_store().room_page(
+            args.get("room_id"),
+            requester_id=actor,
+            after_sequence=args.get("after_sequence", -1),
+            limit=args.get("limit", 100),
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_tool_error(exc)
+
+
+def tool_agent_room_verify(
+    args: dict, _public: bool, identity: dict[str, Any] | None
+) -> Any:
+    """Recompute the authenticated room's hash and signature chain."""
+
+    actor = _agent_room_actor(identity)
+    try:
+        return _agent_room_store().verify_room(args.get("room_id"), requester_id=actor)
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_tool_error(exc)
+
+
 def tool_ask(args: dict, public: bool) -> Any:
     if public:
         raise ToolError(
@@ -967,6 +1471,50 @@ def _is_iso_date(s: str) -> bool:
     return y.isdigit() and m.isdigit() and d.isdigit()
 
 
+_AGENT_ROOM_EVENT_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "schema": {
+            "type": "string",
+            "const": agent_room.AGENT_ROOM_CLIENT_EVENT_SCHEMA,
+        },
+        "room_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "actor_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "client_key_id": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "kind": {"type": "string", "enum": sorted(agent_room.EVENT_KINDS)},
+        "expected_sequence": {"type": "integer", "minimum": 0, "maximum": 4095},
+        "expected_head_hash": {"type": "string", "pattern": r"^[0-9a-f]{64}$"},
+        "nonce": {
+            "type": "string",
+            "minLength": agent_room.MIN_NONCE_CHARS,
+            "maxLength": agent_room.MAX_NONCE_CHARS,
+            "pattern": r"^[A-Za-z0-9_-]+$",
+        },
+        "client_created_at": {"type": "string", "minLength": 20, "maxLength": 32},
+        "in_reply_to": {"type": ["string", "null"]},
+        "non_executable": {"type": "boolean", "const": True},
+        "payload": {"type": "object"},
+        "evidence": {"type": ["object", "null"]},
+    },
+    "required": [
+        "schema",
+        "room_id",
+        "actor_id",
+        "client_key_id",
+        "kind",
+        "expected_sequence",
+        "expected_head_hash",
+        "nonce",
+        "client_created_at",
+        "in_reply_to",
+        "non_executable",
+        "payload",
+        "evidence",
+    ],
+    "additionalProperties": False,
+}
+
+
 # name -> (title, description, input JSON Schema, handler, is_public)
 TOOLS: dict[str, tuple] = {
     "latest_article": (
@@ -990,6 +1538,132 @@ TOOLS: dict[str, tuple] = {
         {"type": "object", "properties": {}, "additionalProperties": False},
         tool_stress_now,
         True,
+    ),
+    "trade_safety_risk_context": (
+        "Cache-only Seiche context for trade-safety guards",
+        "A deterministic, bounded projection of the last completed Seiche board: "
+        "funding regime, 0-100 stress index, coverage, source staleness counts, "
+        "snapshot clock, and conservative evidence clock. It repeats the rights "
+        "check and never collects, fits, calls a network source, reads a notary "
+        "ledger, or contacts a broker. This is metadata-only derived context, "
+        "not order-bound, non-executable, never real-money eligible, and it does "
+        "not evaluate stream attestations or treat them as per-order authority.",
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        tool_trade_safety_risk_context,
+        True,
+    ),
+    "agent_room_register_key": (
+        "Agent Room: register signing key",
+        "Bind the authenticated bearer identity to one Ed25519 public key. "
+        "The server stores no client private key. This is an authenticated "
+        "self-service control-plane operation, not anonymous enrollment.",
+        {
+            "type": "object",
+            "properties": {
+                "public_key_hex": {
+                    "type": "string",
+                    "pattern": r"^[0-9a-f]{64}$",
+                }
+            },
+            "required": ["public_key_hex"],
+            "additionalProperties": False,
+        },
+        tool_agent_room_register_key,
+        False,
+    ),
+    "agent_room_create": (
+        "Agent Room: create private room",
+        "Create an immutable private membership set. The authenticated bearer "
+        "becomes owner and may invite only already-registered participant IDs. "
+        "The supplied room_id is a caller-local alias; use the opaque room_id "
+        "returned by this call for every signed event and later request. "
+        "The room can record negotiation messages but has no acceptance, order, "
+        "execution, settlement, payment, or custody authority.",
+        {
+            "type": "object",
+            "properties": {
+                "room_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "participant_ids": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1, "maxLength": 128},
+                    "maxItems": agent_room.MAX_PARTICIPANTS - 1,
+                    "uniqueItems": True,
+                    "default": [],
+                },
+            },
+            "required": ["room_id"],
+            "additionalProperties": False,
+        },
+        tool_agent_room_create,
+        False,
+    ),
+    "agent_room_append_event": (
+        "Agent Room: append signed event",
+        "Verify and append one canonical Ed25519-signed proposal, counter, "
+        "question, evidence, acknowledgement, decline, withdrawal, or close. "
+        "The signed actor must be the authenticated bearer and the optimistic "
+        "sequence plus chain-head cursor must match. Events remain explicitly "
+        "non-executable.",
+        {
+            "type": "object",
+            "properties": {
+                "room_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "event": _AGENT_ROOM_EVENT_INPUT_SCHEMA,
+                "client_signature_hex": {
+                    "type": "string",
+                    "pattern": r"^[0-9a-f]{128}$",
+                },
+            },
+            "required": ["room_id", "event", "client_signature_hex"],
+            "additionalProperties": False,
+        },
+        tool_agent_room_append_event,
+        False,
+    ),
+    "agent_room_list_events": (
+        "Agent Room: read verified event page",
+        "Read a bounded event page after full membership, hash-chain, client "
+        "signature, and server co-signature verification. Returns the current "
+        "room cursor so clients can safely prepare the next signed append.",
+        {
+            "type": "object",
+            "properties": {
+                "room_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "after_sequence": {
+                    "type": "integer",
+                    "minimum": -1,
+                    "maximum": agent_room.MAX_EVENTS_PER_ROOM - 1,
+                    "default": -1,
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": agent_room.MAX_LIST_LIMIT,
+                    "default": 100,
+                },
+            },
+            "required": ["room_id"],
+            "additionalProperties": False,
+        },
+        tool_agent_room_list_events,
+        False,
+    ),
+    "agent_room_verify": (
+        "Agent Room: verify complete room chain",
+        "Recompute the authenticated room's membership manifest, genesis hash, "
+        "client signatures, server co-signatures, transitions, and chain head. "
+        "Integrity verification does not establish truth, suitability, legality, "
+        "acceptance, or regulatory compliance.",
+        {
+            "type": "object",
+            "properties": {
+                "room_id": {"type": "string", "minLength": 1, "maxLength": 128}
+            },
+            "required": ["room_id"],
+            "additionalProperties": False,
+        },
+        tool_agent_room_verify,
+        False,
     ),
     "money_market_context": (
         "Institutional USD money-market desk",
@@ -1235,15 +1909,37 @@ TOOLS: dict[str, tuple] = {
     ),
 }
 
-# Every Seiche tool is a read of the board: no writes, no side effects, and
-# nothing beyond the server's own data. One annotation set fits all, and
-# stating it lets cautious clients auto-approve calls instead of prompting.
-TOOL_ANNOTATIONS = {
+# Board and verification tools are read-only. Registration, creation, and
+# append mutate the private Agent Room log and must never inherit that hint.
+READ_ONLY_TOOL_ANNOTATIONS = {
     "readOnlyHint": True,
     "idempotentHint": True,
     "destructiveHint": False,
     "openWorldHint": False,
 }
+MUTATING_AGENT_ROOM_TOOLS = frozenset(
+    {"agent_room_register_key", "agent_room_create", "agent_room_append_event"}
+)
+AGENT_ROOM_TOOLS = frozenset(
+    {
+        "agent_room_register_key",
+        "agent_room_create",
+        "agent_room_append_event",
+        "agent_room_list_events",
+        "agent_room_verify",
+    }
+)
+
+
+def _tool_annotations(name: str) -> dict[str, bool]:
+    if name not in MUTATING_AGENT_ROOM_TOOLS:
+        return dict(READ_ONLY_TOOL_ANNOTATIONS)
+    return {
+        "readOnlyHint": False,
+        "idempotentHint": name == "agent_room_register_key",
+        "destructiveHint": False,
+        "openWorldHint": False,
+    }
 
 
 # MCP clients can only treat ``structuredContent`` as a dependable contract
@@ -1272,6 +1968,7 @@ def _output_schema(
     description: str,
     properties: dict[str, dict],
     *success_variants: tuple[tuple[str, ...], dict[str, Any]],
+    additional_properties: bool = True,
 ) -> dict[str, Any]:
     """Build one extensible object schema with explicit success/failure arms.
 
@@ -1296,7 +1993,7 @@ def _output_schema(
         "anyOf": variants,
         # Source adapters and engine versions may add evidence fields. Stable
         # top-level fields above remain typed and required by a success arm.
-        "additionalProperties": True,
+        "additionalProperties": additional_properties,
     }
 
 
@@ -1304,6 +2001,41 @@ _STRING_OR_NULL = {"type": ["string", "null"]}
 _NUMBER_OR_NULL = {"type": ["number", "null"]}
 _OBJECT_OR_NULL = {"type": ["object", "null"]}
 _CONTAINER_OR_NULL = {"type": ["object", "array", "null"]}
+
+_TRADE_SAFETY_RISK_CONTEXT_FIELDS = (
+    "ok",
+    "schema",
+    "status",
+    "reason",
+    "state",
+    "evidence_class",
+    "rights_status",
+    "context_only",
+    "executable",
+    "executable_quote",
+    "real_money_eligible",
+    "can_authorize_order",
+    "projection_mode",
+    "request_time_collection",
+    "request_time_model_fitting",
+    "request_time_network",
+    "request_time_notary",
+    "request_time_broker",
+    "attestation_state",
+    "source_url",
+    "source_snapshot_version",
+    "regime",
+    "stress_index",
+    "coverage_pct",
+    "fault_count",
+    "staleness",
+    "clocks",
+    "attestation",
+    "limitations",
+    "disclaimer",
+    "projection_sha256",
+    "canonicalization",
+)
 
 CHINA_MACRO_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -1454,6 +2186,135 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             ("as_of", "headline", "composite", "tell", "faults", "version", "reading"),
             {},
         ),
+    ),
+    "trade_safety_risk_context": _output_schema(
+        "Cache-only Seiche risk context with fail-closed execution boundaries.",
+        {
+            "ok": {"type": "boolean"},
+            "schema": {"type": "string"},
+            "status": {
+                "type": "string",
+                "enum": ["available", "unavailable", "FAILED"],
+            },
+            "reason": _STRING_OR_NULL,
+            "state": {"type": "string", "enum": ["context_only", "unavailable"]},
+            "evidence_class": {"type": "string", "enum": ["derived", "unavailable"]},
+            "rights_status": {"const": "metadata_only"},
+            "context_only": {"const": True},
+            "executable": {"const": False},
+            "executable_quote": {"const": False},
+            "real_money_eligible": {"const": False},
+            "can_authorize_order": {"const": False},
+            "projection_mode": {"const": "cache_only"},
+            "request_time_collection": {"const": False},
+            "request_time_model_fitting": {"const": False},
+            "request_time_network": {"const": False},
+            "request_time_notary": {"const": False},
+            "request_time_broker": {"const": False},
+            "attestation_state": {"const": "not_evaluated"},
+            "source_url": {
+                "const": "https://api.seiche.info/api/trade-safety/risk-context"
+            },
+            "source_snapshot_version": _STRING_OR_NULL,
+            "regime": {"type": ["string", "null"]},
+            "stress_index": _NUMBER_OR_NULL,
+            "coverage_pct": _NUMBER_OR_NULL,
+            "fault_count": {"type": ["integer", "null"]},
+            "staleness": {
+                "type": "object",
+                "required": ["fresh", "aging", "stale", "dead", "unknown", "total"],
+                "properties": {
+                    state: {"type": "integer", "minimum": 0}
+                    for state in ("fresh", "aging", "stale", "dead", "unknown", "total")
+                },
+                "additionalProperties": False,
+            },
+            "clocks": {
+                "type": "object",
+                "required": [
+                    "snapshot_generated_at",
+                    "evidence_as_of",
+                    "evaluated_at",
+                    "snapshot_age_seconds",
+                    "evidence_age_seconds",
+                    "basis",
+                ],
+                "properties": {
+                    "snapshot_generated_at": _STRING_OR_NULL,
+                    "evidence_as_of": _STRING_OR_NULL,
+                    "evaluated_at": _STRING_OR_NULL,
+                    "snapshot_age_seconds": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "evidence_age_seconds": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "basis": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "attestation": {
+                "type": "object",
+                "required": [
+                    "status",
+                    "ed25519_status",
+                    "ots_status",
+                    "bitcoin_anchor_claimed",
+                    "ledger_read",
+                    "reason",
+                    "disclosure",
+                ],
+                "properties": {
+                    "status": {"const": "not_evaluated"},
+                    "ed25519_status": {"const": "not_evaluated"},
+                    "ots_status": {"const": "not_evaluated"},
+                    "bitcoin_anchor_claimed": {"const": False},
+                    "ledger_read": {"const": False},
+                    "reason": {
+                        "const": "attestation_ledger_not_evaluated_by_this_projection"
+                    },
+                    "disclosure": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            "limitations": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+            "disclaimer": {"type": "string"},
+            "projection_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+            },
+            "canonicalization": {
+                "const": "python-json-sort-keys-utf8-no-nan-server-internal-v1"
+            },
+        },
+        (
+            _TRADE_SAFETY_RISK_CONTEXT_FIELDS,
+            {
+                "ok": True,
+                "schema": "seiche.risk-context.v1",
+                "status": "available",
+                "state": "context_only",
+                "evidence_class": "derived",
+            },
+        ),
+        (
+            _TRADE_SAFETY_RISK_CONTEXT_FIELDS,
+            {
+                "ok": False,
+                "schema": "seiche.risk-context.v1",
+                "status": "unavailable",
+                "state": "unavailable",
+                "evidence_class": "unavailable",
+            },
+        ),
+        additional_properties=False,
     ),
     "money_market_context": _output_schema(
         "Chartless USD money-market desk envelope for every supported selector.",
@@ -1890,6 +2751,162 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
 }
 
+OUTPUT_SCHEMAS.update(
+    {
+        "agent_room_register_key": _output_schema(
+            "Authenticated identity-to-key binding; no private key is stored.",
+            {
+                "participant_id": {"type": "string"},
+                "public_key_hex": {"type": "string"},
+                "key_id": {"type": "string"},
+                "created_at": {"type": "string"},
+                "private_key_stored": {"type": "boolean"},
+            },
+            (
+                (
+                    "participant_id",
+                    "public_key_hex",
+                    "key_id",
+                    "created_at",
+                    "private_key_stored",
+                ),
+                {"private_key_stored": False},
+            ),
+        ),
+        "agent_room_create": _output_schema(
+            "Private immutable-membership Agent Room manifest and signed genesis.",
+            {
+                "schema": {"type": "string"},
+                "room_id": {"type": "string"},
+                "owner_id": {"type": "string"},
+                "participants": {"type": "array"},
+                "status": {"type": "string"},
+                "next_sequence": {"type": "integer"},
+                "genesis_hash": {"type": "string"},
+                "head_hash": {"type": "string"},
+                "genesis_signature": {"type": "string"},
+                "non_executable": {"type": "boolean"},
+                "execution_authority": {"type": "string"},
+            },
+            (
+                (
+                    "schema",
+                    "room_id",
+                    "owner_id",
+                    "participants",
+                    "status",
+                    "next_sequence",
+                    "genesis_hash",
+                    "head_hash",
+                    "genesis_signature",
+                    "non_executable",
+                    "execution_authority",
+                ),
+                {
+                    "schema": agent_room.AGENT_ROOM_ROOM_SCHEMA,
+                    "non_executable": True,
+                    "execution_authority": "none",
+                },
+            ),
+        ),
+        "agent_room_append_event": _output_schema(
+            "Client-signed and server-co-signed non-executable Agent Room record.",
+            {
+                "schema": {"type": "string"},
+                "room_id": {"type": "string"},
+                "sequence": {"type": "integer"},
+                "event_id": {"type": "string"},
+                "client_event": {"type": "object"},
+                "previous_hash": {"type": "string"},
+                "record_sha256": {"type": "string"},
+                "server_signature": {"type": "string"},
+                "non_executable": {"type": "boolean"},
+                "execution_authority": {"type": "string"},
+            },
+            (
+                (
+                    "schema",
+                    "room_id",
+                    "sequence",
+                    "event_id",
+                    "client_event",
+                    "previous_hash",
+                    "record_sha256",
+                    "server_signature",
+                    "non_executable",
+                    "execution_authority",
+                ),
+                {
+                    "schema": agent_room.AGENT_ROOM_EVENT_SCHEMA,
+                    "non_executable": True,
+                    "execution_authority": "none",
+                },
+            ),
+        ),
+        "agent_room_list_events": _output_schema(
+            "Verified room cursor with one bounded page of signed events.",
+            {
+                "schema": {"type": "string"},
+                "room": {"type": "object"},
+                "after_sequence": {"type": "integer"},
+                "events": {"type": "array"},
+                "non_executable": {"type": "boolean"},
+                "execution_authority": {"type": "string"},
+            },
+            (
+                (
+                    "schema",
+                    "room",
+                    "after_sequence",
+                    "events",
+                    "non_executable",
+                    "execution_authority",
+                ),
+                {
+                    "schema": "seiche.agent-room.events.v1",
+                    "non_executable": True,
+                    "execution_authority": "none",
+                },
+            ),
+        ),
+        "agent_room_verify": _output_schema(
+            "Full Agent Room hash-chain and signature verification receipt.",
+            {
+                "ok": {"type": "boolean"},
+                "schema": {"type": "string"},
+                "room_id": {"type": "string"},
+                "status": {"type": "string"},
+                "event_count": {"type": "integer"},
+                "genesis_hash": {"type": "string"},
+                "head_hash": {"type": "string"},
+                "server_key_id": {"type": "string"},
+                "non_executable": {"type": "boolean"},
+                "execution_authority": {"type": "string"},
+            },
+            (
+                (
+                    "ok",
+                    "schema",
+                    "room_id",
+                    "status",
+                    "event_count",
+                    "genesis_hash",
+                    "head_hash",
+                    "server_key_id",
+                    "non_executable",
+                    "execution_authority",
+                ),
+                {
+                    "ok": True,
+                    "schema": agent_room.AGENT_ROOM_ROOM_SCHEMA,
+                    "non_executable": True,
+                    "execution_authority": "none",
+                },
+            ),
+        ),
+    }
+)
+
 STRUCTURED_OUTPUT_TOOLS = frozenset(OUTPUT_SCHEMAS)
 
 # Prompts: reusable playbooks MCP clients surface as slash commands. Each
@@ -2051,17 +3068,37 @@ PROMPTS: dict[str, tuple] = {
 BILLABLE_METHODS = {"tools/call"}
 
 
-def _visible_tools(public: bool | None = None) -> dict[str, tuple]:
+def _visible_tools(
+    public: bool | None = None, identity: dict[str, Any] | None = None
+) -> dict[str, tuple]:
     pub = _resolve_public(public)
     if pub:
         return {k: v for k, v in TOOLS.items() if v[4]}
+    if identity is None:
+        # Local stdio and paid-anonymous calls have no verified bearer identity.
+        # They retain the established analysis surface but cannot discover or
+        # invoke identity-bound Agent Room operations.
+        return {k: v for k, v in TOOLS.items() if k not in AGENT_ROOM_TOOLS}
     return TOOLS
 
 
-def _visible_prompts(public: bool | None = None) -> dict[str, tuple]:
+def _visible_prompts(
+    public: bool | None = None, identity: dict[str, Any] | None = None
+) -> dict[str, tuple]:
     """Only offer a prompt whose whole recipe the caller can actually run."""
-    visible = set(_visible_tools(public))
+    visible = set(_visible_tools(public, identity))
     return {k: v for k, v in PROMPTS.items() if visible.issuperset(v[4])}
+
+
+AGENT_ROOM_SERVER_INSTRUCTIONS = (
+    "For private agent-to-agent discussion, authenticated hosted callers may use "
+    "the five agent_room_* tools. Derive identity only from the bearer principal, "
+    "keep client private keys outside Seiche, sign the exact canonical event, and "
+    "treat acknowledge as receipt rather than acceptance. Room records are always "
+    "non-executable and provide no order, execution, payment, settlement, custody, "
+    "truth, suitability, or legal-compliance authority. A paid x402 data call is "
+    "never an Agent Room identity. See docs/AGENT-ROOM.md for the preview contract."
+)
 
 
 SERVER_INSTRUCTIONS = (
@@ -2179,19 +3216,34 @@ def _schema_error(value: Any, schema: dict, path: str) -> str | None:
     """Validate the bounded JSON-Schema subset published by ``TOOLS``.
 
     This is deliberately stdlib-only. Tool schemas currently need object,
-    scalar and array types, required/properties/additionalProperties, string
-    bounds/pattern/date, enums and array items. Unknown schema keywords remain
-    annotations rather than silently widening one of these enforced bounds.
+    scalar, nullable-union and array types, constants/enums, numeric/string/array
+    bounds, required/properties/additionalProperties, patterns/dates, uniqueness
+    and array items. Unknown schema keywords remain annotations rather than
+    silently widening one of these enforced bounds.
     """
     expected = schema.get("type")
-    if isinstance(expected, str) and not _schema_type_matches(value, expected):
-        return f"{path} must be {expected}"
+    matched_type: str | None = None
+    if isinstance(expected, str):
+        if not _schema_type_matches(value, expected):
+            return f"{path} must be {expected}"
+        matched_type = expected
+    elif isinstance(expected, list):
+        allowed_types = [item for item in expected if isinstance(item, str)]
+        matched_type = next(
+            (item for item in allowed_types if _schema_type_matches(value, item)),
+            None,
+        )
+        if matched_type is None:
+            return f"{path} must be one of the types: {', '.join(allowed_types)}"
+
+    if "const" in schema and value != schema["const"]:
+        return f"{path} must equal its required constant"
 
     choices = schema.get("enum")
     if isinstance(choices, list) and value not in choices:
         return f"{path} must be one of {choices}"
 
-    if expected == "object":
+    if matched_type == "object":
         properties = schema.get("properties") or {}
         required = schema.get("required") or []
         missing = [name for name in required if name not in value]
@@ -2207,13 +3259,34 @@ def _schema_error(value: Any, schema: dict, path: str) -> str | None:
                 if error:
                     return error
 
-    if expected == "array" and isinstance(schema.get("items"), dict):
-        for index, item in enumerate(value):
-            error = _schema_error(item, schema["items"], f"{path}[{index}]")
-            if error:
-                return error
+    if matched_type == "array":
+        minimum_items = schema.get("minItems")
+        maximum_items = schema.get("maxItems")
+        if isinstance(minimum_items, int) and len(value) < minimum_items:
+            return f"{path} must contain at least {minimum_items} item(s)"
+        if isinstance(maximum_items, int) and len(value) > maximum_items:
+            return f"{path} must contain at most {maximum_items} item(s)"
+        if schema.get("uniqueItems") is True:
+            for index, item in enumerate(value):
+                if any(item == earlier for earlier in value[:index]):
+                    return f"{path} must contain unique items"
+        if isinstance(schema.get("items"), dict):
+            for index, item in enumerate(value):
+                error = _schema_error(
+                    value=item, schema=schema["items"], path=f"{path}[{index}]"
+                )
+                if error:
+                    return error
 
-    if expected == "string":
+    if matched_type in {"integer", "number"}:
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and value < minimum:
+            return f"{path} must be at least {minimum}"
+        if isinstance(maximum, (int, float)) and value > maximum:
+            return f"{path} must be at most {maximum}"
+
+    if matched_type == "string":
         minimum = schema.get("minLength")
         maximum = schema.get("maxLength")
         if isinstance(minimum, int) and len(value) < minimum:
@@ -2281,7 +3354,12 @@ def _server_version() -> str:
         return "0.2.0"
 
 
-def _handle_initialize(msg_id: Any, params: dict) -> dict:
+def _handle_initialize(
+    msg_id: Any,
+    params: dict,
+    public: bool | None,
+    identity: dict[str, Any] | None,
+) -> dict:
     client_ver = (params or {}).get("protocolVersion")
     version = (
         client_ver if client_ver in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
@@ -2300,12 +3378,20 @@ def _handle_initialize(msg_id: Any, params: dict) -> dict:
                 "version": _server_version(),
                 "websiteUrl": "https://seiche.info",
             },
-            "instructions": SERVER_INSTRUCTIONS,
+            "instructions": (
+                f"{SERVER_INSTRUCTIONS}\n\n{AGENT_ROOM_SERVER_INSTRUCTIONS}"
+                if not _resolve_public(public) and identity is not None
+                else SERVER_INSTRUCTIONS
+            ),
         },
     )
 
 
-def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
+def _handle_tools_list(
+    msg_id: Any,
+    public: bool | None,
+    identity: dict[str, Any] | None = None,
+) -> dict:
     tools = [
         {
             "name": name,
@@ -2317,10 +3403,10 @@ def _handle_tools_list(msg_id: Any, public: bool | None) -> dict:
                 if name in STRUCTURED_OUTPUT_TOOLS
                 else {}
             ),
-            "annotations": {"title": title, **TOOL_ANNOTATIONS},
+            "annotations": {"title": title, **_tool_annotations(name)},
         }
         for name, (title, desc, schema, _handler, _pub) in _visible_tools(
-            public
+            public, identity
         ).items()
     ]
     return _result(msg_id, {"tools": tools})
@@ -2366,15 +3452,39 @@ def _handle_prompts_get(msg_id: Any, params: dict, public: bool | None) -> dict:
     )
 
 
-def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
+def _handle_tools_call(
+    msg_id: Any,
+    params: dict,
+    public: bool | None,
+    identity: dict[str, Any] | None = None,
+) -> dict:
     name = (params or {}).get("name")
-    args = (params or {}).get("arguments") or {}
-    entry = _visible_tools(public).get(name)
+    if not isinstance(name, str) or not name:
+        return _error(msg_id, INVALID_PARAMS, "tools/call name must be a string")
+    entry = _visible_tools(public, identity).get(name)
     if entry is None:
         return _error(msg_id, INVALID_PARAMS, f"unknown tool '{name}'")
+    args = (params or {}).get("arguments", {})
+    schema_error = _schema_error(args, entry[2], "arguments")
+    if schema_error is not None:
+        return _error(msg_id, INVALID_PARAMS, schema_error)
     handler = entry[3]
     try:
-        payload = handler(args, _resolve_public(public))
+        if name in AGENT_ROOM_TOOLS:
+            payload = handler(args, _resolve_public(public), identity)
+        else:
+            payload = handler(args, _resolve_public(public))
+    except StructuredToolError as exc:
+        payload = exc.payload
+        text = str(payload.get("reason") or "tool request failed")
+        return _result(
+            msg_id,
+            {
+                "content": [{"type": "text", "text": f"ERROR: {text}"}],
+                "structuredContent": payload,
+                "isError": True,
+            },
+        )
     except ToolError as exc:
         raw_reason = exc.args[0] if len(exc.args) == 1 else None
         projected = sanitize_public_fault_payload(
@@ -2410,7 +3520,12 @@ def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
                 "isError": True,
             },
         )
-    if isinstance(payload, dict):
+    # Agent Room results contain client/server signatures over the exact nested
+    # document. The collector-fault sanitizer is intentionally inapplicable:
+    # rewriting an ordinary payload key such as ``reason`` would invalidate the
+    # record after both parties signed it. Agent Room validation already rejects
+    # secrets and unsafe URLs before persistence.
+    if isinstance(payload, dict) and name not in AGENT_ROOM_TOOLS:
         payload = sanitize_public_fault_payload(payload)
     text = (
         payload
@@ -2427,9 +3542,14 @@ def _handle_tools_call(msg_id: Any, params: dict, public: bool | None) -> dict:
     return _result(msg_id, result)
 
 
-def dispatch(msg: dict, public: bool | None = None) -> dict | None:
+def dispatch(
+    msg: dict,
+    public: bool | None = None,
+    identity: dict[str, Any] | None = None,
+) -> dict | None:
     """Route one JSON-RPC message. Returns a response dict, or None for
     notifications (which take no reply). `public` selects the tool surface;
+    `identity` is a verified transport bearer and is required for Agent Room;
     None uses the transport default (the stdio env flag)."""
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return _error(
@@ -2451,13 +3571,13 @@ def dispatch(msg: dict, public: bool | None = None) -> dict | None:
     if not isinstance(params, dict):
         params = {}
     if method == "initialize":
-        return _handle_initialize(msg_id, params)
+        return _handle_initialize(msg_id, params, public, identity)
     if method == "ping":
         return _result(msg_id, {})
     if method == "tools/list":
-        return _handle_tools_list(msg_id, public)
+        return _handle_tools_list(msg_id, public, identity)
     if method == "tools/call":
-        return _handle_tools_call(msg_id, params, public)
+        return _handle_tools_call(msg_id, params, public, identity)
     if method == "prompts/list":
         return _handle_prompts_list(msg_id, public)
     if method == "prompts/get":

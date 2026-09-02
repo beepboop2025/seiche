@@ -2,6 +2,13 @@
 # Read-only probes only: this file must never subscribe an address or mutate data.
 GET|/api/health|200|application/json|"generated_at"
 GET|/api/public|200|application/json|"conclusion"
+GET|/api/trade-safety/risk-context|200|application/json|"schema":"seiche.risk-context.v1"
+GET|/api/trade-safety/risk-context|200|application/json|"status":"available"
+GET|/api/trade-safety/risk-context|200|application/json|"real_money_eligible":false
+GET|/api/trade-safety/risk-context|200|application/json|"can_authorize_order":false
+GET|/api/trade-safety/risk-context|200|application/json|"request_time_network":false
+GET|/api/trade-safety/risk-context|200|application/json|"attestation_state":"not_evaluated"
+GET|/api/agent-room/rooms/nonexistent/events|401|application/json|Agent Room requires a valid bearer token
 GET|/api/money-markets|200|application/json|"schema":"seiche.money-market-desk.v1"
 GET|/api/money-markets|200|application/json|"ok":true
 GET|/api/money-markets|200|application/json|"id":"policy_corridor"

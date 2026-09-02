@@ -24,7 +24,8 @@ from seiche import mcp_server
 REPO = Path(__file__).resolve().parents[2]
 
 PUBLIC = {n for n, t in mcp_server.TOOLS.items() if t[4]}
-GATED = {n for n, t in mcp_server.TOOLS.items() if not t[4]}
+AGENT_ROOM = set(mcp_server.AGENT_ROOM_TOOLS)
+GATED = {n for n, t in mcp_server.TOOLS.items() if not t[4]} - AGENT_ROOM
 
 # Prose that names the anonymous surface. Each must list every public tool and
 # no gated one anywhere near that claim, so the file is checked whole.
@@ -36,17 +37,20 @@ DOCS = [
     REPO / "integrations" / "hermes" / "AGENTS.md",
     REPO / "integrations" / "hermes" / "README.md",
     REPO / "integrations" / "hermes" / "BOOTSTRAP.md",
+    REPO / "integrations" / "openai" / "README.md",
 ]
 
 
-def test_the_surface_is_eleven_tools():
+def test_the_surface_is_twelve_tools():
     """A guard on the guard: if this number moves, every sentence below moves
     with it, and someone has to decide that deliberately."""
-    assert len(PUBLIC) == 11, sorted(PUBLIC)
+    assert len(PUBLIC) == 12, sorted(PUBLIC)
     assert len(GATED) == 5, sorted(GATED)
+    assert len(AGENT_ROOM) == 5, sorted(AGENT_ROOM)
     assert PUBLIC == {
         "latest_article",
-        "funding_stress_now", "historical_analogs", "proof_backtest",
+        "funding_stress_now", "trade_safety_risk_context",
+        "historical_analogs", "proof_backtest",
         "data_health", "crypto_stress_record", "institutional_flows",
         "oil_funding_context", "fx_materials_passage", "money_market_context",
         "world_markets_context",
@@ -64,7 +68,7 @@ def test_hermes_persona_tool_map_is_exactly_the_runtime_surface():
     """The persona is operational input, so an obsolete map is a runtime bug."""
     text = (REPO / "integrations" / "hermes" / "AGENTS.md").read_text()
     match = re.search(
-        r"Public \(eleven anonymous tools\):(.*?)\nSubscriber \(five",
+        r"Public \(twelve anonymous tools\):(.*?)\nSubscriber \(five",
         text,
         re.DOTALL,
     )
@@ -131,8 +135,11 @@ def test_account_copy_matches_the_authenticated_mcp_surface():
     support = (REPO / "frontend" / "public" / "support.html").read_text()
     assert "exists for exactly one thing" not in account
     assert len(GATED) == 5
-    assert "five additional hosted MCP tools" in account
-    assert "five bearer-token MCP tools" in support
+    assert "five analysis tools plus five private" in account
+    assert "Five private Agent Room preview tools" in support
+    agent_doc = (REPO / "docs" / "AGENT-ROOM.md").read_text()
+    for name in AGENT_ROOM:
+        assert name in agent_doc
 
 
 def test_support_page_exposes_github_sponsors_as_support_not_product_access():

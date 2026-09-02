@@ -5,15 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import textwrap
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from seiche import agent_room
 from seiche import nbs_intake as nbs
 from seiche import nbs_trust
 from seiche import palimpsest_china_activation as activation
@@ -29,6 +34,10 @@ TEST_UNTRUSTED_NBS_PUBLIC_KEY = (
     .public_key()
     .public_bytes_raw()
     .hex()
+)
+TEST_AGENT_ROOM_SERVER_KEY = Ed25519PrivateKey.from_private_bytes(bytes([71]) * 32)
+TEST_AGENT_ROOM_SERVER_KEY_ID = agent_room.ed25519_key_id(
+    TEST_AGENT_ROOM_SERVER_KEY.public_key().public_bytes_raw().hex()
 )
 
 
@@ -137,7 +146,7 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
             handle.write("tar " + " ".join(args) + "\\n")
         if "--create" in args:
             target = Path(args[args.index("--file") + 1])
-            if target.name == "palimpsest-china.tgz":
+            if target.name in {"palimpsest-china.tgz", "api-data.tgz"}:
                 source = Path(args[args.index("--directory") + 1]) / args[-1]
                 with tarfile.open(target, "w:gz") as archive:
                     archive.add(source, arcname=source.name, recursive=True)
@@ -146,7 +155,7 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
                 target.write_bytes(prefix + b"-payload")
         elif "--list" in args:
             target = Path(args[args.index("--file") + 1])
-            if target.name == "palimpsest-china.tgz":
+            if target.name in {"palimpsest-china.tgz", "api-data.tgz"}:
                 with tarfile.open(target, "r:gz") as archive:
                     for member in archive.getmembers():
                         print(member.name)
@@ -162,15 +171,9 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         elif "--extract" in args:
             archive = Path(args[args.index("--file") + 1])
             target = Path(args[args.index("--directory") + 1])
-            if archive.name == "palimpsest-china.tgz":
+            if archive.name in {"palimpsest-china.tgz", "api-data.tgz"}:
                 with tarfile.open(archive, "r:gz") as source:
                     source.extractall(target, filter="data")
-            elif archive.read_bytes().startswith(b"api-data-archive"):
-                restored = target / "api-data"
-                restored.mkdir(parents=True)
-                import sqlite3
-                with sqlite3.connect(restored / "seiche.sqlite") as database:
-                    database.execute("CREATE TABLE restored (value TEXT)")
             else:
                 restored = target / "seiche" / "raw"
                 restored.mkdir(parents=True)
@@ -285,6 +288,10 @@ def _tools(tmp_path: Path) -> tuple[dict[str, str], Path]:
         "SEICHE_SYNC_BIN": str(sync),
         "SEICHE_DATE_BIN": str(date),
         "SEICHE_PYTHON_BIN": sys.executable,
+        "SEICHE_AGENT_ROOM_PYTHON_BIN": sys.executable,
+        "SEICHE_AGENT_ROOM_VERIFIER_MODULE": str(
+            ROOT / "backend" / "seiche" / "agent_room.py"
+        ),
         "SEICHE_CMP_BIN": "/usr/bin/cmp",
         "SEICHE_PALIMPSEST_CHINA_AUDIT_BIN": str(palimpsest_audit),
         "SEICHE_BACKUP_MIN_DUMP_BYTES": "1",
@@ -315,6 +322,58 @@ def _layout(tmp_path: Path, env: dict[str, str]) -> tuple[Path, Path, Path]:
     with sqlite3.connect(api_data / "seiche.sqlite") as database:
         database.execute("CREATE TABLE accounts (username TEXT PRIMARY KEY)")
         database.execute("INSERT INTO accounts VALUES ('researcher')")
+    agent_room_dir = api_data / "_agent_room"
+    agent_room_dir.mkdir(mode=0o700)
+    agent_room_dir.chmod(0o700)
+    server_key = TEST_AGENT_ROOM_SERVER_KEY
+    participant_key = Ed25519PrivateKey.from_private_bytes(bytes([72]) * 32)
+    attest_dir = api_data / "_attest"
+    attest_dir.mkdir(mode=0o700)
+    attest_dir.chmod(0o700)
+    operator_key = attest_dir / "operator_key.pem"
+    operator_key.write_bytes(
+        server_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    operator_key.chmod(0o600)
+    room_store = agent_room.AgentRoomStore(
+        agent_room_dir / "agent-room.sqlite",
+        server_private_key=server_key,
+    )
+    room_store.provision_participant(
+        "researcher",
+        participant_key.public_key().public_bytes_raw().hex(),
+    )
+    created = room_store.create_room("fixture-room", owner_id="researcher")
+    client_event = agent_room.build_client_event(
+        room_id="fixture-room",
+        actor_id="researcher",
+        client_key_id=agent_room.ed25519_key_id(
+            participant_key.public_key().public_bytes_raw().hex()
+        ),
+        kind="proposal",
+        expected_sequence=0,
+        expected_head_hash=str(created["genesis_hash"]),
+        nonce="fixture-nonce-000000001",
+        client_created_at=datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        payload={"instrument": "USD funding", "side": "context-only"},
+    )
+    room_store.append_event(
+        client_event,
+        client_signature_hex=participant_key.sign(
+            agent_room.client_signing_bytes(client_event)
+        ).hex(),
+    )
+    agent_room.create_initialization_seal(
+        attest_dir / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME,
+        server_private_key=server_key,
+    )
     (api_data / "brief-cache.json").write_text('{"status":"real"}\n')
     backup = tmp_path / "backups"
     marker = tmp_path / "deployed-sha"
@@ -461,6 +520,55 @@ def _rewrite_manifest_and_inventory(
         digest = hashlib.sha256((snapshot / name).read_bytes()).hexdigest()
         inventory.append(f"{digest}  {name}")
     (snapshot / "SHA256SUMS").write_text("\n".join(inventory) + "\n")
+
+
+def _mutate_agent_room_state(api_data: Path, mutation: str) -> None:
+    if mutation == "client_signature":
+        with sqlite3.connect(
+            api_data / "_agent_room" / "agent-room.sqlite"
+        ) as database:
+            database.execute(
+                "UPDATE agent_room_events SET client_signature = ?",
+                ("0" * 128,),
+            )
+            assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+        return
+    if mutation == "operator_key":
+        replacement = Ed25519PrivateKey.from_private_bytes(bytes([99]) * 32)
+        path = api_data / "_attest" / "operator_key.pem"
+        path.write_bytes(
+            replacement.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        path.chmod(0o600)
+        return
+    if mutation == "initialization_seal":
+        (
+            api_data / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+        ).unlink()
+        return
+    raise AssertionError(f"unknown Agent Room mutation: {mutation}")
+
+
+def _rewrite_api_archive(
+    snapshot: Path,
+    scratch: Path,
+    transform,
+) -> None:
+    extracted = scratch / "rewritten-api-archive"
+    extracted.mkdir()
+    archive_path = snapshot / "api-data.tgz"
+    with tarfile.open(archive_path, "r:gz") as archive:
+        archive.extractall(extracted, filter="data")
+    transform(extracted / "api-data")
+    replacement = scratch / "replacement-api-data.tgz"
+    with tarfile.open(replacement, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+        archive.add(extracted / "api-data", arcname="api-data", recursive=True)
+    shutil.move(replacement, archive_path)
+    _rewrite_manifest_and_inventory(snapshot, lambda manifest: manifest)
 
 
 def _canonical_json(record: object) -> bytes:
@@ -709,6 +817,11 @@ def test_backup_commits_verified_snapshot_and_never_replaces_it(tmp_path: Path):
     assert "SHOW port" in log
     assert "--port=5544" in log
     assert "cp -R --" in log
+    with tarfile.open(snapshot / "api-data.tgz", "r:gz") as archive:
+        room_member = archive.getmember("api-data/_agent_room/agent-room.sqlite")
+        assert room_member.mode == 0o600
+        seal_member = archive.getmember("api-data/_attest/agent-room-initialized.json")
+        assert seal_member.mode == 0o600
     nbs_state = Path(env["SEICHE_NBS_STATE_DIR"])
     assert (
         f"--directory {state.parent} {state.name} "
@@ -826,7 +939,7 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "snapshot=20260810T020000Z" in status
     assert "critical_table_counts=11|12|13|14" in status
     assert "critical_table_count_floor=11|12|13|14" in status
-    assert "schema=seiche.market-backup-restore-check.v5" in status
+    assert "schema=seiche.market-backup-restore-check.v6" in status
     assert "source_backup_schema=seiche.market-backup.v4" in status
     assert "database_restore=pass" in status
     assert "state_archive_restore=pass" in status
@@ -843,6 +956,15 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "palimpsest_china_bundle_count=0" in status
     assert "palimpsest_china_receipt_count=0" in status
     assert "api_data_archive_restore=pass" in status
+    assert "agent_room_restore_audit=verified" in status
+    assert "agent_room_audit_schema=seiche.agent-room.restore-audit.v1" in status
+    assert "agent_room_participant_count=1" in status
+    assert "agent_room_room_count=1" in status
+    assert "agent_room_event_count=1" in status
+    assert f"agent_room_server_key_id={TEST_AGENT_ROOM_SERVER_KEY_ID}" in status
+    assert re.search(r"^agent_room_state_sha256=[0-9a-f]{64}$", status, re.MULTILINE)
+    assert "agent_room_non_executable=true" in status
+    assert "agent_room_execution_authority=none" in status
     assert not list(status_path.parent.glob(".backup-state-restore.*"))
     assert not list(status_path.parent.glob(".backup-api-data-restore.*"))
     assert not list(status_path.parent.glob(".backup-palimpsest-restore.*"))
@@ -852,6 +974,104 @@ def test_restore_check_uses_scratch_database_and_commits_status(tmp_path: Path):
     assert "createdb --template=template0" in log
     assert sum(line.startswith("dropdb ") for line in log.splitlines()) == 1
     assert "--port=5544" in log
+
+
+@pytest.mark.parametrize(
+    "mutation", ("client_signature", "operator_key", "initialization_seal")
+)
+def test_backup_rejects_cryptographically_invalid_agent_room(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    _mutate_agent_room_state(Path(env["SEICHE_API_DATA_DIR"]), mutation)
+
+    result = _run(BACKUP_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "staged Agent Room failed full cryptographic audit" in result.stderr
+    assert not (backup / "20260810T020000Z").exists()
+    assert not list(backup.glob(".stage-*"))
+
+
+@pytest.mark.parametrize(
+    "mutation", ("client_signature", "operator_key", "initialization_seal")
+)
+def test_restore_rejects_rechecksummed_agent_room_tampering(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    env, calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    assert _run(BACKUP_SCRIPT, env).returncode == 0
+    snapshot = backup / "20260810T020000Z"
+    _rewrite_api_archive(
+        snapshot,
+        tmp_path,
+        lambda api_data: _mutate_agent_room_state(api_data, mutation),
+    )
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(snapshot)
+
+    result = _run(RESTORE_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "restored Agent Room failed full cryptographic audit" in result.stderr
+    assert not Path(env["SEICHE_RESTORE_STATUS_PATH"]).exists()
+    assert not any(
+        line.startswith("createdb ") for line in calls.read_text().splitlines()
+    )
+
+
+def test_backup_restore_records_explicit_uninitialized_agent_room(
+    tmp_path: Path,
+) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    api_data = Path(env["SEICHE_API_DATA_DIR"])
+    shutil.rmtree(api_data / "_agent_room")
+    (api_data / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME).unlink()
+
+    backed_up = _run(BACKUP_SCRIPT, env)
+    assert backed_up.returncode == 0, backed_up.stdout + backed_up.stderr
+    env["SEICHE_RESTORE_SNAPSHOT"] = str(backup / "20260810T020000Z")
+    restored = _run(RESTORE_SCRIPT, env)
+
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    status = Path(env["SEICHE_RESTORE_STATUS_PATH"]).read_text()
+    assert "agent_room_restore_audit=absent_uninitialized\n" in status
+    assert "agent_room_server_key_id=none\n" in status
+    assert "agent_room_participant_count=0\n" in status
+    assert "agent_room_room_count=0\n" in status
+    assert "agent_room_event_count=0\n" in status
+    assert "agent_room_state_sha256=none\n" in status
+
+
+def test_backup_rejects_initialized_agent_room_database_loss(tmp_path: Path) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    database = Path(env["SEICHE_API_DATA_DIR"]) / "_agent_room" / "agent-room.sqlite"
+    database.rename(tmp_path / "displaced-agent-room.sqlite")
+
+    result = _run(BACKUP_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "staged Agent Room failed full cryptographic audit" in result.stderr
+    assert not (backup / "20260810T020000Z").exists()
+
+
+def test_backup_rejects_partial_uninitialized_agent_room(tmp_path: Path) -> None:
+    env, _calls = _tools(tmp_path)
+    _state, backup, _marker = _layout(tmp_path, env)
+    room_root = Path(env["SEICHE_API_DATA_DIR"]) / "_agent_room"
+    (room_root / "agent-room.sqlite").unlink()
+    (room_root / "unexpected.partial").write_bytes(b"partial\n")
+
+    result = _run(BACKUP_SCRIPT, env)
+
+    assert result.returncode != 0
+    assert "uninitialized Agent Room contains partial or unsafe state" in result.stderr
+    assert not (backup / "20260810T020000Z").exists()
 
 
 def test_backup_restore_preserves_an_active_palimpsest_china_state(

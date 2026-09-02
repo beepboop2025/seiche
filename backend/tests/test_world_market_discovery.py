@@ -380,7 +380,7 @@ def test_home_and_developer_surfaces_link_the_new_citation_layer():
         assert route in developers
     assert 'href="/markets/"' in app
     assert 'code: "WLD"' in commands and 'url: "/markets/"' in commands
-    assert "eleven MCP tools" in developers
+    assert "twelve MCP tools" in developers
     assert "world_markets_context" in developers
 
 

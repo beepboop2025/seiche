@@ -27,10 +27,9 @@ from typing import Any, Mapping, NamedTuple
 
 from seiche import stateful_migration as migration
 
-
 FENCE_SCHEMA = "seiche.railway-authority-fence.v1"
 REQUEST_SCHEMA = "seiche.railway-stateful-cutover-request.v1"
-CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v3"
+CANDIDATE_RECEIPT_SCHEMA = "seiche.railway-cutover-candidate-receipt.v4"
 GRANT_SCHEMA = "seiche.railway-authority-grant.v1"
 ACTIVATION_RECEIPT_SCHEMA = "seiche.railway-activation-receipt.v1"
 PUBLIC_PROBE_SCHEMA = "seiche.railway-public-candidate-probe.v1"
@@ -81,8 +80,7 @@ FENCED_UNITS = (
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _SHA64_RE = re.compile(r"[0-9a-f]{64}")
 _UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-" r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
 _DOMAIN_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -410,6 +408,7 @@ def render_candidate_receipt(
     railway: Mapping[str, str],
     generation_digests: Mapping[str, str],
     nbs_audit_result: str,
+    agent_room_audit: Mapping[str, Any],
     started_at: str,
     completed_at: str,
 ) -> dict[str, Any]:
@@ -459,6 +458,7 @@ def render_candidate_receipt(
             "generation": _generation_name(request),
             "tree_sha256": dict(generation_digests),
             "api_sqlite_quick_check": "pass",
+            "agent_room_audit": migration.validate_agent_room_audit(agent_room_audit),
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": nbs_audit_result,
             "palimpsest_china_state_audit_contract": (
@@ -587,6 +587,7 @@ def validate_candidate_receipt(
             "generation",
             "tree_sha256",
             "api_sqlite_quick_check",
+            "agent_room_audit",
             "nbs_full_store_audit_contract",
             "nbs_full_store_audit_result",
             "palimpsest_china_state_audit_contract",
@@ -611,6 +612,7 @@ def validate_candidate_receipt(
     ):
         raise CutoverContractError("candidate receipt filesystem is invalid")
     try:
+        migration.validate_agent_room_audit(filesystem.get("agent_room_audit"))
         migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
@@ -726,6 +728,12 @@ def validate_source_shadow_receipt(
         raise CutoverContractError(str(exc)) from exc
     if shadow_state != expected_state:
         raise CutoverContractError("cutover Palimpsest China state differs from shadow")
+    try:
+        migration.validate_agent_room_audit(
+            value.get("filesystem", {}).get("agent_room_audit")
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
     return dict(value)
 
 
@@ -777,7 +785,10 @@ def restore_candidate(
     railway: Mapping[str, str],
     runtime_uid: int = migration.RUNTIME_UID,
     runtime_gid: int = migration.RUNTIME_GID,
+    active_resume: bool = False,
 ) -> CutoverRestore:
+    if not isinstance(active_resume, bool):
+        raise TypeError("active_resume must be a boolean")
     if (
         bundle.schema != migration.BACKUP_SCHEMA
         or bundle.palimpsest_china_state_audit is None
@@ -791,10 +802,13 @@ def restore_candidate(
         )
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
-    load_source_shadow_receipt(
+    source_shadow_receipt = load_source_shadow_receipt(
         platform_root,
         request=request,
         expected_palimpsest_china_state=palimpsest_china_state,
+    )
+    source_agent_room_audit = migration.validate_agent_room_audit(
+        source_shadow_receipt.get("filesystem", {}).get("agent_room_audit")
     )
     started_at = migration._iso_now()
     generations = platform_root / "generations"
@@ -821,20 +835,56 @@ def restore_candidate(
                 fence=fence,
                 railway=railway,
             )
-            migration.validate_receipted_generation(
-                generation_path,
-                receipt,
-                runtime_uid=runtime_uid,
-                runtime_gid=runtime_gid,
-            )
-            dsn = migration._target_dsn(base_dsn, receipt["database"]["name"])
-            if migration.inspect_postgres_counts(dsn) != tuple(
-                receipt["database"]["critical_table_counts"]
+            if (
+                migration.validate_agent_room_audit(
+                    receipt["filesystem"].get("agent_room_audit")
+                )
+                != source_agent_room_audit
             ):
-                raise CutoverContractError("candidate PostgreSQL counts changed")
+                raise CutoverContractError(
+                    "cutover Agent Room state differs from shadow"
+                )
+            if active_resume:
+                migration.validate_active_generation(
+                    generation_path,
+                    receipt,
+                    runtime_uid=runtime_uid,
+                    runtime_gid=runtime_gid,
+                )
+            else:
+                migration.validate_receipted_generation(
+                    generation_path,
+                    receipt,
+                    runtime_uid=runtime_uid,
+                    runtime_gid=runtime_gid,
+                )
+            dsn = migration._target_dsn(base_dsn, receipt["database"]["name"])
+            observed_counts = migration.inspect_postgres_counts(dsn)
+            receipt_counts = tuple(receipt["database"]["critical_table_counts"])
+            if (
+                any(
+                    observed < expected
+                    for observed, expected in zip(
+                        observed_counts,
+                        receipt_counts,
+                        strict=True,
+                    )
+                )
+                if active_resume
+                else observed_counts != receipt_counts
+            ):
+                raise CutoverContractError(
+                    "active PostgreSQL counts regressed"
+                    if active_resume
+                    else "candidate PostgreSQL counts changed"
+                )
             return CutoverRestore(receipt, dsn, receipt_path, generation_path)
         except migration.MigrationContractError as exc:
             raise CutoverContractError(str(exc)) from exc
+    if active_resume:
+        raise CutoverContractError(
+            "activation exists without its immutable candidate receipt"
+        )
     if generation_path.exists() or generation_path.is_symlink():
         raise CutoverContractError(
             "unreceipted cutover generation needs reconciliation"
@@ -844,12 +894,16 @@ def restore_candidate(
         raise CutoverContractError("stale cutover staging needs reconciliation")
     staging.mkdir(mode=0o700)
     try:
+        agent_room_audit: dict[str, Any] = {}
         nbs_result, tree_digests = migration.restore_filesystem_generation(
             bundle,
             staging,
             runtime_uid=runtime_uid,
             runtime_gid=runtime_gid,
+            agent_room_audit_out=agent_room_audit,
         )
+        if agent_room_audit != source_agent_room_audit:
+            raise CutoverContractError("cutover Agent Room state differs from shadow")
         database = migration.restore_postgres(bundle, base_dsn)
         (staging / "generation").rename(generation_path)
         migration._fsync_directory(generations)
@@ -861,6 +915,7 @@ def restore_candidate(
             railway=railway,
             generation_digests=tree_digests,
             nbs_audit_result=nbs_result,
+            agent_room_audit=agent_room_audit,
             started_at=started_at,
             completed_at=migration._iso_now(),
         )
@@ -936,10 +991,15 @@ def candidate_environment(
                 "RAILWAY_API_TOKEN",
                 "PYTHONHOME",
                 "PYTHONPATH",
+                "SEICHE_RUNTIME_DATA_DIR",
+                "SEICHE_AGENT_ROOM_DB_PATH",
+                "SEICHE_ATTEST_DIR",
+                "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID",
             }
             | palimpsest_environment_names
         )
     }
+    runtime_data = root / "api"
     environment.update(
         {
             "HOME": "/tmp/seiche-home",
@@ -950,7 +1010,16 @@ def candidate_environment(
             "SEICHE_ENV": "production",
             "SEICHE_RELEASE_SHA": str(receipt["request"]["commit"]),
             "SEICHE_DATABASE_URL": restore.database_dsn,
-            "SEICHE_RUNTIME_DATA_DIR": str(root / "api"),
+            "SEICHE_RUNTIME_DATA_DIR": str(runtime_data),
+            "SEICHE_AGENT_ROOM_DB_PATH": str(
+                runtime_data / "_agent_room" / "agent-room.sqlite"
+            ),
+            "SEICHE_ATTEST_DIR": str(runtime_data / "_attest"),
+            "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID": (
+                migration.agent_room_expected_key_binding(
+                    receipt["filesystem"].get("agent_room_audit")
+                )
+            ),
             "SEICHE_RAW_CAPTURE_DIR": str(root / "market" / "raw"),
             "SEICHE_NORMALIZED_DIR": str(root / "market" / "normalized"),
             "SEICHE_BACKFILL_STATE_DIR": str(root / "market" / "backfill"),
@@ -983,9 +1052,11 @@ def candidate_environment(
     return environment
 
 
-def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]:
-    if environment.get("SEICHE_RAILWAY_STATEFUL_MODE") != "cutover_candidate":
-        raise CutoverContractError("Railway candidate mode is invalid")
+def _validate_bound_candidate_runtime_receipt(
+    environment: Mapping[str, str],
+) -> tuple[dict[str, Any], str]:
+    """Load the exact candidate that owns runtime paths and room identity."""
+
     path = Path(environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_PATH", ""))
     if (
         not path.is_absolute()
@@ -998,8 +1069,10 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
         value = migration._decode_canonical_json(body, label="candidate receipt")
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
+    receipt_sha256 = _digest(body)
     if (
-        _digest(body) != environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256")
+        receipt_sha256
+        != environment.get("SEICHE_RAILWAY_CANDIDATE_RECEIPT_SHA256")
         or value.get("schema") != CANDIDATE_RECEIPT_SCHEMA
         or value.get("request", {}).get("id")
         != environment.get("SEICHE_RAILWAY_CUTOVER_REQUEST_ID")
@@ -1011,9 +1084,23 @@ def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]
     ):
         raise CutoverContractError("Railway candidate receipt binding is invalid")
     try:
+        agent_room_audit = migration.validate_agent_room_audit(
+            value.get("filesystem", {}).get("agent_room_audit")
+        )
         migration.validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
+    if environment.get("SEICHE_AGENT_ROOM_EXPECTED_KEY_ID") != (
+        migration.agent_room_expected_key_binding(agent_room_audit)
+    ):
+        raise CutoverContractError("Railway Agent Room key binding is invalid")
+    return value, receipt_sha256
+
+
+def validate_candidate_runtime(environment: Mapping[str, str]) -> dict[str, Any]:
+    if environment.get("SEICHE_RAILWAY_STATEFUL_MODE") != "cutover_candidate":
+        raise CutoverContractError("Railway candidate mode is invalid")
+    value, _receipt_sha256 = _validate_bound_candidate_runtime_receipt(environment)
     if edge_token_sha256(
         environment.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     ) != environment.get("SEICHE_RAILWAY_EDGE_TOKEN_SHA256"):
@@ -1415,6 +1502,9 @@ def validate_activation_runtime(environment: Mapping[str, str]) -> dict[str, Any
         value = migration._decode_canonical_json(body, label="activation receipt")
     except migration.MigrationContractError as exc:
         raise CutoverContractError(str(exc)) from exc
+    candidate, candidate_sha256 = _validate_bound_candidate_runtime_receipt(
+        environment
+    )
     if (
         _digest(body) != environment.get("SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256")
         or value.get("schema") != ACTIVATION_RECEIPT_SCHEMA
@@ -1429,6 +1519,9 @@ def validate_activation_runtime(environment: Mapping[str, str]) -> dict[str, Any
             "railway_writers_started": True,
             "public_traffic_enabled": True,
         }
+        or value.get("candidate_receipt_sha256") != candidate_sha256
+        or value.get("commit") != candidate.get("request", {}).get("commit")
+        or value.get("request_id") != candidate.get("request", {}).get("id")
     ):
         raise CutoverContractError("Railway activation receipt binding is invalid")
     return value
@@ -1619,7 +1712,9 @@ def _serve_production(
                     runtime_uid=migration.RUNTIME_UID,
                     runtime_gid=migration.RUNTIME_GID,
                 )
-            except Exception as exc:  # noqa: BLE001 - retain production, retry on restart
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - retain production, retry on restart
                 if stopping:
                     break
                 api_returncode = api.poll()
@@ -1663,7 +1758,9 @@ def _serve_production(
                     writers_restarted_at=writers_restarted_at,
                     worker_commands=commands,
                 )
-            except Exception as exc:  # noqa: BLE001 - bundle remains for restart recovery
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - bundle remains for restart recovery
                 failed_requests.add(str(request["request_id"]))
                 print(
                     "seiche Railway recovery: receipt sealing deferred "
@@ -1718,6 +1815,35 @@ def supervise_production(
     )
 
 
+def _validate_candidate_activation_boundary(
+    candidate: Mapping[str, str],
+    candidate_receipt: Mapping[str, Any],
+) -> None:
+    """Repeat the exact point-in-time proof immediately before writers start."""
+
+    validated = validate_candidate_runtime(candidate)
+    if _digest(_canonical(validated)) != _digest(_canonical(candidate_receipt)):
+        raise CutoverContractError("activation candidate receipt changed")
+    generation = str(validated["filesystem"]["generation"])
+    generation_path = migration.PLATFORM_ROOT / "generations" / generation
+    if Path(candidate.get("SEICHE_RUNTIME_DATA_DIR", "")) != generation_path / "api":
+        raise CutoverContractError("activation candidate runtime path changed")
+    try:
+        migration.validate_receipted_generation(
+            generation_path,
+            validated,
+            runtime_uid=migration.RUNTIME_UID,
+            runtime_gid=migration.RUNTIME_GID,
+        )
+        observed_counts = migration.inspect_postgres_counts(
+            candidate.get("SEICHE_DATABASE_URL", "")
+        )
+    except migration.MigrationContractError as exc:
+        raise CutoverContractError(str(exc)) from exc
+    if observed_counts != tuple(validated["database"]["critical_table_counts"]):
+        raise CutoverContractError("activation candidate PostgreSQL counts changed")
+
+
 def activate_and_supervise(
     candidate: Mapping[str, str],
     candidate_receipt: Mapping[str, Any],
@@ -1728,6 +1854,10 @@ def activate_and_supervise(
 ) -> int:
     if not 1 <= poll_seconds <= 60:
         raise CutoverContractError("cutover poll interval is invalid")
+    # The candidate API is stopped by the caller before this handoff. Repeat
+    # its complete point-in-time filesystem, Agent Room, and PostgreSQL proof
+    # before the first writer is spawned, closing the candidate-serving window.
+    _validate_candidate_activation_boundary(candidate, candidate_receipt)
     Path("/tmp/seiche-home").mkdir(mode=0o700, exist_ok=True)
     os.chown("/tmp/seiche-home", migration.RUNTIME_UID, migration.RUNTIME_GID)
     commands = worker_commands()
@@ -1922,6 +2052,7 @@ def run(
         railway=railway,
         runtime_uid=migration.RUNTIME_UID,
         runtime_gid=migration.RUNTIME_GID,
+        active_resume=has_activation,
     )
     edge_token = os.environ.get("SEICHE_RAILWAY_EDGE_TOKEN", "")
     environment = candidate_environment(

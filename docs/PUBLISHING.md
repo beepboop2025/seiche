@@ -46,7 +46,7 @@ Pillow is not part of the signed Seiche package identity. Static and full-suite
 CI lanes install the reviewed CPython 3.12 Linux wheel from
 `ops/requirements-social-cards.txt` with `--only-binary=:all:` and
 `--require-hashes` before collecting the card tests or invoking the renderer.
-This keeps `backend/pyproject.toml` identical to the signed `v0.11.1` release
+This keeps `backend/pyproject.toml` identical to the signed `v0.12.0` release
 while retaining a fail-closed, reproducible image toolchain.
 
 The shared corpus is an explicit gap in the finite publisher. Dataset IDs are
@@ -82,6 +82,28 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    curl -sX POST https://api.seiche.info/mcp -H 'content-type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'
    ```
+
+   After the exact commit is live and the catalog's corpus receipt values have
+   been verified against that deployment, create the catalog-declared receipt
+   tag on that exact commit. This receipt is independent of the corpus version
+   tag: it binds the current catalog bytes and live release evidence to the
+   workflow SHA. Never move or reuse an existing receipt tag.
+   ```bash
+   release_sha="$(git rev-parse HEAD)"
+   test "$release_sha" = "$(git rev-parse origin/main)"
+   receipt_tag=market-corpus-receipt-corpus-71722bd77b1971b3-r16
+   test "$(jq -r '.entries[] | select(.identifier == "urn:air:seiche.info:mcp:market-corpus") | .metadata.publicationReceipt | fromjson | .tag' frontend/public/.well-known/ai-catalog.json)" = "$receipt_tag"
+   ! git rev-parse --verify --quiet "refs/tags/$receipt_tag"
+   ! git ls-remote --exit-code --tags origin "refs/tags/$receipt_tag"
+   git tag -s -m "Seiche exact-SHA Railway release r16" \
+     "$receipt_tag" "$release_sha"
+   git -c gpg.format=ssh \
+     -c gpg.ssh.allowedSignersFile=ops/deploy/release-allowed-signers \
+     verify-tag "$receipt_tag"
+   test "$(git rev-list -n 1 "$receipt_tag")" = "$release_sha"
+   git push origin "refs/tags/$receipt_tag"
+   ```
+
 3. **Create and push the annotated SSH-signed version tag.** A tag push starts
    `publish-pypi.yml`. Four separate runners enforce the boundary: an
    unprivileged build produces reproducible candidates; an independent verifier
@@ -95,8 +117,8 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    ```bash
    gh workflow run publish-pypi.yml \
      --repo beepboop2025/seiche \
-     --ref v0.11.1 \
-     -f release_tag=v0.11.1
+     --ref v0.12.0 \
+     -f release_tag=v0.12.0
    ```
    Do not run a local token-backed `twine upload`: PyPI versions are immutable,
    and bypassing the signed-tag/OIDC gate would sever the artifact-to-commit
@@ -112,13 +134,13 @@ license review, evidence class, event/knowledge clocks, `restricted`,
 4. **Wait for the immutable PyPI receipt.** Do not create the GitHub Release
    while the tag-triggered PyPI workflow is queued or failing. Watch that run to
    completion, then confirm PyPI exposes exactly one wheel and one source archive
-   for `0.11.1` and retain their server-reported SHA-256 digests:
+   for `0.12.0` and retain their server-reported SHA-256 digests:
    ```bash
    gh run list --repo beepboop2025/seiche \
      --workflow publish-pypi.yml --event push --limit 10
    gh run watch RUN_ID --repo beepboop2025/seiche --exit-status
    curl --fail --show-error --silent \
-     https://pypi.org/pypi/seiche/0.11.1/json |
+     https://pypi.org/pypi/seiche/0.12.0/json |
      jq -r '.urls[] | [.filename, .digests.sha256] | @tsv'
    ```
    The workflow already verifies the immutable PyPI bytes against the signed
@@ -139,7 +161,7 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    and verify that `beepboop2025/seiche` is toggled **On**. Zenodo archives new
    GitHub releases only after repository enablement. The repository's
    [`.zenodo.json` follows Zenodo's documented GitHub authoring format](https://help.zenodo.org/docs/github/describe-software/zenodo-json/) and
-   explicitly carries version `0.11.1`, language `eng`, `upload_type`, license,
+   explicitly carries version `0.12.0`, language `eng`, `upload_type`, license,
    access, creators, related identifiers, and the research boundary. Because
    Zenodo ignores `CITATION.cff` whenever `.zenodo.json` is present, all required
    release metadata must remain complete in this file. CI pins and checks the
@@ -148,8 +170,8 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    schema is not the raw `.zenodo.json` authoring contract.
    Confirm that no release exists yet:
    ```bash
-   if gh release view v0.11.1 --repo beepboop2025/seiche >/dev/null 2>&1; then
-     echo "v0.11.1 already released; inspect receipts instead of recreating it" >&2
+   if gh release view v0.12.0 --repo beepboop2025/seiche >/dev/null 2>&1; then
+     echo "v0.12.0 already released; inspect receipts instead of recreating it" >&2
      exit 1
    fi
    ```
@@ -158,10 +180,10 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    starts Zenodo archival plus the MCP and GHCR publishers. It must happen only
    after steps 4 and 5 are green:
    ```bash
-   gh release create v0.11.1 \
+   gh release create v0.12.0 \
      --repo beepboop2025/seiche \
      --verify-tag \
-     --title "Seiche 0.11.1" \
+     --title "Seiche 0.12.0" \
      --generate-notes
    ```
    Do not delete and recreate the release as a retry mechanism. Use the
@@ -171,16 +193,16 @@ license review, evidence class, event/knowledge clocks, `restricted`,
 7. **Receipt the three release-triggered surfaces.** Treat these as separate
    outcomes even though the GitHub Release starts them concurrently:
 
-   - **Zenodo:** wait for the integration to archive `v0.11.1`; open the record,
-     confirm version `0.11.1`, software type, open access, creator, license, and
+   - **Zenodo:** wait for the integration to archive `v0.12.0`; open the record,
+     confirm version `0.12.0`, software type, open access, creator, license, and
      GitHub relationship, then record the version DOI, concept DOI, record URL,
      and archive checksum. Do not claim a DOI while only `.zenodo.json` exists.
    - **MCP Registry:** watch `publish-mcp.yml`, then query the owner namespace and
-     retain the workflow URL plus the returned `0.11.1` record. Recovery must use
+     retain the workflow URL plus the returned `0.12.0` record. Recovery must use
      the tag as both workflow ref and explicit input:
      ```bash
      gh workflow run publish-mcp.yml --repo beepboop2025/seiche \
-       --ref v0.11.1 -f release_tag=v0.11.1
+       --ref v0.12.0 -f release_tag=v0.12.0
      curl --fail --show-error --silent \
        'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.beepboop2025%2Fseiche/versions/latest'
      ```
@@ -219,8 +241,8 @@ license review, evidence class, event/knowledge clocks, `restricted`,
    ```bash
    gh workflow run publish-openbb.yml \
      --repo beepboop2025/seiche \
-     --ref v0.11.1 \
-     -f release_tag=v0.11.1 \
+     --ref v0.12.0 \
+     -f release_tag=v0.12.0 \
      -f openbb_version=0.1.0
    ```
    After the immutable PyPI page and clean-install receipt are public, use

@@ -26,11 +26,12 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping, NamedTuple
 
-
 REQUEST_SCHEMA = "seiche.railway-stateful-shadow-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v3"
+RECEIPT_SCHEMA = "seiche.railway-stateful-shadow-receipt.v4"
 BACKUP_SCHEMA = "seiche.market-backup.v4"
 LEGACY_BACKUP_SCHEMA = "seiche.market-backup.v3"
+AGENT_ROOM_RESTORE_AUDIT_SCHEMA = "seiche.agent-room.restore-audit.v1"
+AGENT_ROOM_UNPROVISIONED_KEY = "unprovisioned"
 REPOSITORY = "beepboop2025/seiche"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-shadow.yml"
 SOURCE_REF = "refs/heads/main"
@@ -45,8 +46,7 @@ PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA = "seiche.palimpsest-china-activation-state.
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _SHA64_RE = re.compile(r"[0-9a-f]{64}")
 _UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-" r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _REGION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
@@ -746,6 +746,230 @@ def _validate_sqlite(path: Path) -> None:
             raise MigrationContractError("restored API SQLite database is corrupt")
 
 
+def absent_agent_room_audit(
+    *, server_key_id: str | None = None
+) -> dict[str, Any]:
+    """Return the explicit receipt for a never-initialized Agent Room.
+
+    An already-existing operator key is retained as the independent identity
+    under which a later production bootstrap may occur.  ``None`` means no
+    key was present at the receipted boundary and therefore no automatic
+    Agent Room bootstrap is authorized.
+    """
+
+    if server_key_id is not None and _SHA64_RE.fullmatch(server_key_id) is None:
+        raise MigrationContractError("absent Agent Room key identity is invalid")
+
+    return {
+        "schema": AGENT_ROOM_RESTORE_AUDIT_SCHEMA,
+        "result": "absent_uninitialized",
+        "server_key_id": server_key_id,
+        "participant_count": 0,
+        "room_count": 0,
+        "event_count": 0,
+        "state_sha256": None,
+        "non_executable": True,
+        "execution_authority": "none",
+    }
+
+
+def validate_agent_room_audit(value: object) -> dict[str, Any]:
+    """Validate the bounded recovery projection of the full Agent Room audit."""
+
+    expected = {
+        "schema",
+        "result",
+        "server_key_id",
+        "participant_count",
+        "room_count",
+        "event_count",
+        "state_sha256",
+        "non_executable",
+        "execution_authority",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise MigrationContractError("Agent Room recovery audit fields are invalid")
+    if (
+        value.get("schema") != AGENT_ROOM_RESTORE_AUDIT_SCHEMA
+        or value.get("result") not in {"verified", "absent_uninitialized"}
+        or value.get("non_executable") is not True
+        or value.get("execution_authority") != "none"
+    ):
+        raise MigrationContractError("Agent Room recovery audit policy is invalid")
+    counts = tuple(
+        value.get(name) for name in ("participant_count", "room_count", "event_count")
+    )
+    if any(
+        isinstance(item, bool)
+        or not isinstance(item, int)
+        or not 0 <= item <= 2_000_000
+        for item in counts
+    ):
+        raise MigrationContractError("Agent Room recovery audit counts are invalid")
+    participant_count, room_count, event_count = counts
+    if event_count > room_count * 4_096 or (room_count and not participant_count):
+        raise MigrationContractError(
+            "Agent Room recovery audit counts are inconsistent"
+        )
+    if value["result"] == "absent_uninitialized":
+        if (
+            counts != (0, 0, 0)
+            or value.get("state_sha256") is not None
+            or (
+                value.get("server_key_id") is not None
+                and (
+                    not isinstance(value.get("server_key_id"), str)
+                    or _SHA64_RE.fullmatch(value["server_key_id"]) is None
+                )
+            )
+        ):
+            raise MigrationContractError(
+                "absent Agent Room recovery audit contains durable state"
+            )
+    elif (
+        not isinstance(value.get("server_key_id"), str)
+        or _SHA64_RE.fullmatch(value["server_key_id"]) is None
+        or not isinstance(value.get("state_sha256"), str)
+        or _SHA64_RE.fullmatch(value["state_sha256"]) is None
+    ):
+        raise MigrationContractError("verified Agent Room audit identity is invalid")
+    return dict(value)
+
+
+def agent_room_expected_key_binding(audit: object) -> str:
+    """Project a receipt audit into the closed runtime provisioning gate."""
+
+    validated = validate_agent_room_audit(audit)
+    key_id = validated["server_key_id"]
+    return key_id if isinstance(key_id, str) else AGENT_ROOM_UNPROVISIONED_KEY
+
+
+def audit_agent_room_state(
+    api_data: Path,
+    *,
+    expected_owner_uid: int | None = None,
+) -> dict[str, Any]:
+    """Cryptographically audit an extracted Agent Room under its restored key."""
+
+    from seiche import agent_room, attest
+
+    room_root = api_data / "_agent_room"
+    database_path = room_root / "agent-room.sqlite"
+    attest_root = api_data / "_attest"
+    seal_path = attest_root / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+    key_path = attest_root / "operator_key.pem"
+    seal_present = seal_path.exists() or seal_path.is_symlink()
+    if not database_path.exists() and not database_path.is_symlink():
+        if room_root.exists() or room_root.is_symlink():
+            if room_root.is_symlink() or not room_root.is_dir():
+                raise MigrationContractError("restored Agent Room path is unsafe")
+            try:
+                entries = tuple(room_root.iterdir())
+            except OSError as exc:
+                raise MigrationContractError(
+                    "restored Agent Room path is unavailable"
+                ) from exc
+            if entries:
+                raise MigrationContractError(
+                    "uninitialized Agent Room contains partial state"
+                )
+        if seal_present:
+            try:
+                private_key, _public_key = attest.load_existing_keypair(
+                    str(api_data / "_attest"),
+                    expected_owner_uid=expected_owner_uid,
+                )
+                agent_room.verify_initialization_seal(
+                    seal_path,
+                    server_private_key=private_key,
+                    expected_owner_uid=expected_owner_uid,
+                )
+            except Exception as exc:
+                raise MigrationContractError(
+                    "restored Agent Room initialization seal failed"
+                ) from exc
+            raise MigrationContractError(
+                "initialized Agent Room database is unavailable"
+            )
+        server_key_id = None
+        if attest_root.exists() or attest_root.is_symlink():
+            if attest_root.is_symlink() or not attest_root.is_dir():
+                raise MigrationContractError(
+                    "restored Agent Room key path is unsafe"
+                )
+            if key_path.exists() or key_path.is_symlink():
+                try:
+                    _private_key, public_key = attest.load_existing_keypair(
+                        str(attest_root),
+                        expected_owner_uid=expected_owner_uid,
+                    )
+                    server_key_id = agent_room.ed25519_key_id(public_key)
+                except Exception as exc:
+                    raise MigrationContractError(
+                        "restored Agent Room bootstrap key failed"
+                    ) from exc
+        return absent_agent_room_audit(server_key_id=server_key_id)
+    try:
+        if room_root.is_symlink() or not room_root.is_dir():
+            raise MigrationContractError("restored Agent Room path is unsafe")
+        if {entry.name for entry in room_root.iterdir()} != {"agent-room.sqlite"}:
+            raise MigrationContractError("restored Agent Room members are not closed")
+        if not seal_present:
+            raise MigrationContractError("initialized Agent Room seal is unavailable")
+        private_key, _public_key = attest.load_existing_keypair(
+            str(api_data / "_attest"),
+            expected_owner_uid=expected_owner_uid,
+        )
+        agent_room.verify_initialization_seal(
+            seal_path,
+            server_private_key=private_key,
+            expected_owner_uid=expected_owner_uid,
+        )
+        store = agent_room.AgentRoomStore.open_existing(
+            database_path,
+            server_private_key=private_key,
+            expected_owner_uid=expected_owner_uid,
+        )
+        raw = store.audit_all_rooms()
+    except MigrationContractError:
+        raise
+    except Exception as exc:
+        raise MigrationContractError(
+            "restored Agent Room cryptographic audit failed"
+        ) from exc
+    if (
+        not isinstance(raw, dict)
+        or set(raw)
+        != {
+            "ok",
+            "schema",
+            "server_key_id",
+            "participant_count",
+            "room_count",
+            "event_count",
+            "state_sha256",
+            "non_executable",
+            "execution_authority",
+        }
+        or raw.get("ok") is not True
+        or raw.get("schema") != agent_room.AGENT_ROOM_AUDIT_SCHEMA
+    ):
+        raise MigrationContractError("restored Agent Room audit result is invalid")
+    return validate_agent_room_audit(
+        {
+            "schema": AGENT_ROOM_RESTORE_AUDIT_SCHEMA,
+            "result": "verified",
+            "server_key_id": raw["server_key_id"],
+            "participant_count": raw["participant_count"],
+            "room_count": raw["room_count"],
+            "event_count": raw["event_count"],
+            "state_sha256": raw["state_sha256"],
+            "non_executable": raw["non_executable"],
+            "execution_authority": raw["execution_authority"],
+        }
+    )
+
+
 def _audit_nbs(root: Path) -> str:
     from seiche.nbs_intake import NBSIntakeStore
 
@@ -764,6 +988,7 @@ def restore_filesystem_generation(
     *,
     runtime_uid: int,
     runtime_gid: int,
+    agent_room_audit_out: dict[str, Any] | None = None,
 ) -> tuple[str, Mapping[str, str]]:
     state_stage = staging / "state-archive"
     api_stage = staging / "api-archive"
@@ -841,6 +1066,10 @@ def restore_filesystem_generation(
     nbs = state_stage / "seiche-nbs"
     api_data = api_stage / "api-data"
     _validate_sqlite(api_data / "seiche.sqlite")
+    agent_room_audit = audit_agent_room_state(api_data)
+    if agent_room_audit_out is not None:
+        agent_room_audit_out.clear()
+        agent_room_audit_out.update(agent_room_audit)
     _prepare_nbs_reader_group(nbs, gid=runtime_gid)
     nbs_result = _audit_nbs(nbs)
     _chown_tree(market, uid=runtime_uid, gid=runtime_gid)
@@ -1026,6 +1255,7 @@ def render_receipt(
     generation_name: str,
     generation_digests: Mapping[str, str],
     nbs_audit_result: str,
+    agent_room_audit: Mapping[str, Any],
     railway: Mapping[str, str],
     started_at: str,
     completed_at: str,
@@ -1071,6 +1301,7 @@ def render_receipt(
             "generation": generation_name,
             "tree_sha256": dict(generation_digests),
             "api_sqlite_quick_check": "pass",
+            "agent_room_audit": validate_agent_room_audit(agent_room_audit),
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": nbs_audit_result,
             "palimpsest_china_state_audit_contract": (
@@ -1208,6 +1439,7 @@ def validate_receipt_document(
             "generation",
             "tree_sha256",
             "api_sqlite_quick_check",
+            "agent_room_audit",
             "nbs_full_store_audit_contract",
             "nbs_full_store_audit_result",
             "palimpsest_china_state_audit_contract",
@@ -1231,6 +1463,7 @@ def validate_receipt_document(
         )
     ):
         raise MigrationContractError("shadow receipt filesystem is invalid")
+    validate_agent_room_audit(filesystem.get("agent_room_audit"))
     validate_palimpsest_china_state(value.get("palimpsest_china_state"))
     observed_railway = value.get("railway")
     if not isinstance(observed_railway, dict) or set(observed_railway) != {
@@ -1381,6 +1614,15 @@ def validate_receipted_generation(
     if observed != expected:
         raise MigrationContractError("accepted shadow generation digest changed")
     _validate_sqlite(generation_path / "api" / "seiche.sqlite")
+    expected_agent_room_audit = validate_agent_room_audit(
+        receipt["filesystem"].get("agent_room_audit")
+    )
+    observed_agent_room_audit = audit_agent_room_state(
+        generation_path / "api",
+        expected_owner_uid=runtime_uid,
+    )
+    if observed_agent_room_audit != expected_agent_room_audit:
+        raise MigrationContractError("accepted shadow Agent Room audit result changed")
     if (
         _audit_nbs(generation_path / "nbs")
         != receipt["filesystem"]["nbs_full_store_audit_result"]
@@ -1414,6 +1656,160 @@ def validate_receipted_generation(
         raise MigrationContractError(
             "accepted shadow Palimpsest China state identity changed"
         )
+
+
+def validate_active_generation(
+    generation_path: Path,
+    receipt: Mapping[str, Any],
+    *,
+    runtime_uid: int = RUNTIME_UID,
+    runtime_gid: int = RUNTIME_GID,
+) -> dict[str, Any]:
+    """Validate a previously activated, intentionally mutable generation.
+
+    Candidate receipts remain exact point-in-time proofs.  Once writer
+    authority has moved, the API and market trees legitimately advance, so a
+    production restart verifies their safe layout and semantic state instead
+    of comparing them to stale byte hashes.  NBS and Palimpsest China remain
+    immutable in this runtime and retain exact receipt-digest equality.
+    """
+
+    filesystem = receipt.get("filesystem")
+    expected_generation = (
+        filesystem.get("generation") if isinstance(filesystem, Mapping) else None
+    )
+    if (
+        not isinstance(expected_generation, str)
+        or generation_path.name != expected_generation
+        or generation_path.parent.name != "generations"
+        or not generation_path.is_dir()
+        or generation_path.is_symlink()
+    ):
+        raise MigrationContractError("active generation path is invalid")
+    names = {"market", "nbs", "api", "palimpsest-china"}
+    try:
+        entries = tuple(generation_path.iterdir())
+    except OSError as exc:
+        raise MigrationContractError("active generation is unavailable") from exc
+    if {entry.name for entry in entries} != names or any(
+        entry.is_symlink() or not entry.is_dir() for entry in entries
+    ):
+        raise MigrationContractError("active generation members are not closed")
+
+    expected_trees = filesystem.get("tree_sha256")
+    if not isinstance(expected_trees, Mapping) or set(expected_trees) != names:
+        raise MigrationContractError("active generation receipt is invalid")
+    # These two trees have no Railway runtime writer. Keep their original
+    # byte-and-mode identity exact, while the market/API trees are checked by
+    # their live semantic contracts below.
+    immutable_names = ("nbs", "palimpsest-china")
+    observed_immutable = {
+        name: hash_tree(generation_path / name) for name in immutable_names
+    }
+    if any(observed_immutable[name] != expected_trees[name] for name in immutable_names):
+        raise MigrationContractError("active immutable generation digest changed")
+
+    # Walk both writable trees before opening their databases. This rejects
+    # symlink, device, socket, FIFO, and hard-link substitutions without
+    # pretending that legitimate new market observations have their old hash.
+    writable_paths = {
+        name: _walk_real_tree(generation_path / name)
+        for name in ("market", "api")
+    }
+    for paths in writable_paths.values():
+        for path in paths:
+            metadata = path.lstat()
+            if (
+                metadata.st_uid != runtime_uid
+                or metadata.st_gid != runtime_gid
+                or stat.S_IMODE(metadata.st_mode) & 0o002
+            ):
+                raise MigrationContractError(
+                    "active writable generation metadata is unsafe"
+                )
+    _validate_sqlite(generation_path / "api" / "seiche.sqlite")
+
+    expected_agent_room = validate_agent_room_audit(
+        filesystem.get("agent_room_audit")
+    )
+    observed_agent_room = audit_agent_room_state(
+        generation_path / "api",
+        expected_owner_uid=runtime_uid,
+    )
+    if expected_agent_room["result"] == "verified":
+        expected_counts = tuple(
+            int(expected_agent_room[name])
+            for name in ("participant_count", "room_count", "event_count")
+        )
+        observed_counts = tuple(
+            int(observed_agent_room[name])
+            for name in ("participant_count", "room_count", "event_count")
+        )
+        if (
+            observed_agent_room["result"] != "verified"
+            or observed_agent_room["server_key_id"]
+            != expected_agent_room["server_key_id"]
+            or any(
+                observed < expected
+                for observed, expected in zip(
+                    observed_counts,
+                    expected_counts,
+                    strict=True,
+                )
+            )
+            or (
+                observed_counts == expected_counts
+                and observed_agent_room["state_sha256"]
+                != expected_agent_room["state_sha256"]
+            )
+        ):
+            raise MigrationContractError(
+                "active Agent Room state does not extend its candidate state"
+            )
+    else:
+        expected_key_id = expected_agent_room["server_key_id"]
+        if observed_agent_room["result"] == "verified":
+            if (
+                expected_key_id is None
+                or observed_agent_room["server_key_id"] != expected_key_id
+            ):
+                raise MigrationContractError(
+                    "active Agent Room bootstrap identity is not receipt-bound"
+                )
+        elif expected_key_id is not None and observed_agent_room != expected_agent_room:
+            raise MigrationContractError(
+                "active Agent Room bootstrap key state changed"
+            )
+
+    if (
+        _audit_nbs(generation_path / "nbs")
+        != filesystem["nbs_full_store_audit_result"]
+    ):
+        raise MigrationContractError("active NBS audit result changed")
+    try:
+        from seiche.palimpsest_china_activation import audit_activation_state
+
+        palimpsest_audit = audit_activation_state(
+            generation_path / "palimpsest-china",
+            root_uid=os.geteuid(),
+            root_gid=os.getegid(),
+            api_uid=runtime_uid,
+            api_gid=runtime_gid,
+            declared_state_root=Path("/var/lib/seiche-palimpsest-china"),
+        )
+    except Exception as exc:
+        raise MigrationContractError(
+            "active Palimpsest China audit failed"
+        ) from exc
+    if (
+        filesystem.get("palimpsest_china_state_audit_result") != "verified"
+        or palimpsest_china_state_from_audit(palimpsest_audit)
+        != validate_palimpsest_china_state(receipt.get("palimpsest_china_state"))
+    ):
+        raise MigrationContractError(
+            "active Palimpsest China state identity changed"
+        )
+    return observed_agent_room
 
 
 def palimpsest_runtime_environment(
@@ -1481,7 +1877,7 @@ def restore_shadow(
     started_at = _iso_now()
     if bundle.schema != BACKUP_SCHEMA or bundle.palimpsest_china_state_audit is None:
         raise MigrationContractError(
-            "shadow receipt v3 requires the current Palimpsest-state backup contract"
+            "shadow receipt v4 requires the current Palimpsest-state backup contract"
         )
     for path in (platform_root, bundle.root):
         if not path.is_absolute() or path == Path("/") or path.is_symlink():
@@ -1527,11 +1923,13 @@ def restore_shadow(
         shutil.rmtree(staging)
     staging.mkdir(mode=0o700)
     try:
+        agent_room_audit: dict[str, Any] = {}
         nbs_result, generation_digests = restore_filesystem_generation(
             bundle,
             staging,
             runtime_uid=runtime_uid,
             runtime_gid=runtime_gid,
+            agent_room_audit_out=agent_room_audit,
         )
         database = restore_postgres(bundle, base_dsn)
         (staging / "generation").rename(generation_path)
@@ -1543,6 +1941,7 @@ def restore_shadow(
             generation_name=generation_name,
             generation_digests=generation_digests,
             nbs_audit_result=nbs_result,
+            agent_room_audit=agent_room_audit,
             railway=railway,
             started_at=started_at,
             completed_at=_iso_now(),
@@ -1582,10 +1981,15 @@ def runtime_environment(
                 "RAILWAY_API_TOKEN",
                 "PYTHONHOME",
                 "PYTHONPATH",
+                "SEICHE_RUNTIME_DATA_DIR",
+                "SEICHE_AGENT_ROOM_DB_PATH",
+                "SEICHE_ATTEST_DIR",
+                "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID",
             }
             | palimpsest_environment_names
         )
     }
+    runtime_data = root / "api"
     environment.update(
         {
             "HOME": "/tmp/seiche-home",
@@ -1596,7 +2000,14 @@ def runtime_environment(
             "SEICHE_ENV": "production",
             "SEICHE_RELEASE_SHA": str(receipt["request"]["commit"]),
             "SEICHE_DATABASE_URL": database_dsn,
-            "SEICHE_RUNTIME_DATA_DIR": str(root / "api"),
+            "SEICHE_RUNTIME_DATA_DIR": str(runtime_data),
+            "SEICHE_AGENT_ROOM_DB_PATH": str(
+                runtime_data / "_agent_room" / "agent-room.sqlite"
+            ),
+            "SEICHE_ATTEST_DIR": str(runtime_data / "_attest"),
+            "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID": agent_room_expected_key_binding(
+                receipt["filesystem"].get("agent_room_audit")
+            ),
             "SEICHE_RAW_CAPTURE_DIR": str(root / "market" / "raw"),
             "SEICHE_NORMALIZED_DIR": str(root / "market" / "normalized"),
             "SEICHE_BACKFILL_STATE_DIR": str(root / "market" / "backfill"),
@@ -1655,6 +2066,13 @@ def validate_runtime_receipt(environment: Mapping[str, str]) -> dict[str, Any]:
     ):
         raise MigrationContractError("Railway runtime receipt binding is invalid")
     validate_palimpsest_china_state(value.get("palimpsest_china_state"))
+    agent_room_audit = validate_agent_room_audit(
+        value.get("filesystem", {}).get("agent_room_audit")
+    )
+    if environment.get("SEICHE_AGENT_ROOM_EXPECTED_KEY_ID") != (
+        agent_room_expected_key_binding(agent_room_audit)
+    ):
+        raise MigrationContractError("Railway Agent Room key binding is invalid")
     return value
 
 

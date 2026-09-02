@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PUBLIC_STRUCTURED_CALLS = {
     "latest_article": {},
     "funding_stress_now": {},
+    "trade_safety_risk_context": {},
     "money_market_context": {},
     "world_markets_context": {},
     "historical_analogs": {},
@@ -67,9 +68,9 @@ def _assert_schema(value: Any, schema: dict, path: str = "$") -> None:
     if isinstance(expected, str):
         assert _type_matches(value, expected), f"{path} is not {expected}"
     elif isinstance(expected, list):
-        assert any(_type_matches(value, item) for item in expected), (
-            f"{path} does not match any declared type {expected}"
-        )
+        assert any(
+            _type_matches(value, item) for item in expected
+        ), f"{path} does not match any declared type {expected}"
 
     if "const" in schema:
         assert value == schema["const"], f"{path} != {schema['const']!r}"
@@ -82,9 +83,9 @@ def _assert_schema(value: Any, schema: dict, path: str = "$") -> None:
 
     if isinstance(value, dict):
         required = schema.get("required", [])
-        assert set(required) <= set(value), (
-            f"{path} is missing {set(required) - set(value)}"
-        )
+        assert set(required) <= set(
+            value
+        ), f"{path} is missing {set(required) - set(value)}"
         properties = schema.get("properties", {})
         for key, child_schema in properties.items():
             if key in value:
@@ -162,27 +163,38 @@ def plugin_runtime(monkeypatch, fake_snap, asof_snap):
 
 
 def test_tool_descriptors_publish_complete_openai_contracts():
-    full = mcp.dispatch(_rpc("tools/list"), public=False)["result"]["tools"]
+    analysis = mcp.dispatch(_rpc("tools/list"), public=False)["result"]["tools"]
+    authenticated = mcp.dispatch(
+        _rpc("tools/list"), public=False, identity={"username": "alice"}
+    )["result"]["tools"]
     public = mcp.dispatch(_rpc("tools/list"), public=True)["result"]["tools"]
-    full_by_name = {tool["name"]: tool for tool in full}
+    analysis_by_name = {tool["name"]: tool for tool in analysis}
+    authenticated_by_name = {tool["name"]: tool for tool in authenticated}
     public_by_name = {tool["name"]: tool for tool in public}
 
-    assert len(full) == 16
-    assert len(public) == 11
+    assert len(analysis) == 17
+    assert len(authenticated) == 22
+    assert len(public) == 12
     assert set(public_by_name) == set(PUBLIC_STRUCTURED_CALLS)
     assert set(mcp.STRUCTURED_OUTPUT_TOOLS) == set(mcp.TOOLS) - {"desk_brief"}
     assert {
-        name for name, tool in full_by_name.items() if "outputSchema" in tool
+        name for name, tool in analysis_by_name.items() if "outputSchema" in tool
+    } == set(mcp.STRUCTURED_OUTPUT_TOOLS) - set(mcp.AGENT_ROOM_TOOLS)
+    assert {
+        name for name, tool in authenticated_by_name.items() if "outputSchema" in tool
     } == set(mcp.STRUCTURED_OUTPUT_TOOLS)
-    assert "outputSchema" not in full_by_name["desk_brief"]
+    assert "outputSchema" not in authenticated_by_name["desk_brief"]
 
-    for tool in full:
+    for tool in authenticated:
         assert tool["title"] and tool["description"]
         assert tool["inputSchema"]["type"] == "object"
+        mutating = tool["name"] in mcp.MUTATING_AGENT_ROOM_TOOLS
         assert tool["annotations"] == {
             "title": tool["title"],
-            "readOnlyHint": True,
-            "idempotentHint": True,
+            "readOnlyHint": not mutating,
+            "idempotentHint": (
+                not mutating or tool["name"] == "agent_room_register_key"
+            ),
             "destructiveHint": False,
             "openWorldHint": False,
         }
@@ -300,10 +312,9 @@ def test_world_markets_unavailable_and_invalid_results_match_schema(
         "world_markets_context",
         {"section": "charts"},
         public=True,
-    )["result"]
-    assert invalid["isError"] is True
-    assert invalid["structuredContent"]["status"] == "FAILED"
-    _assert_schema(invalid["structuredContent"], schema)
+    )
+    assert invalid["error"]["code"] == mcp.INVALID_PARAMS
+    assert "arguments.section must be one of" in invalid["error"]["message"]
 
     try:
         import jsonschema
@@ -344,7 +355,7 @@ def test_submission_pack_has_review_cases_without_fake_portal_evidence():
 
     assert len(positive) >= 5
     assert len(negative) >= 3
-    assert cases["surface"] == "anonymous_public_eleven_tools"
+    assert cases["surface"] == "anonymous_public_twelve_tools"
     assert any(
         any(
             call.startswith("world_markets_context")

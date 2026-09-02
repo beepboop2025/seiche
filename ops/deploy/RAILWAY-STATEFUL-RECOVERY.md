@@ -156,13 +156,15 @@ The monitor runs at minute 17 every six hours. A portable export runs daily at
 backup, portable receipt, off-site receipt, PITR probe, volume threshold, or
 production identity is stale or invalid.
 
-Portable identity receipts are strict v3 contracts:
+The portable receipts have independent, strict current contracts:
 
-- `seiche.railway-recovery-export-receipt.v3`; and
-- `seiche.railway-offsite-recovery-receipt.v3`.
+- `seiche.railway-recovery-export-receipt.v4`; and
+- `seiche.railway-offsite-recovery-receipt.v3` (the unchanged off-site
+  transport envelope).
 
-No v2 receipt is parsed as current evidence. Before pausing writers, the
-runtime recovers the activation-bound v3 candidate and the exact v3 shadow
+No v3 export, candidate, or shadow receipt is parsed as current evidence, and
+no v2 off-site receipt is accepted. Before pausing writers, the runtime
+recovers the activation-bound v4 candidate and the exact v4 shadow
 receipt named by that candidate. Shadow, candidate, live generation, exported
 backup audit, isolated reverse restore, recovery receipt, and off-site receipt
 must all carry the same closed `palimpsest_china_state` identity. Its fields are
@@ -174,18 +176,50 @@ The production monitor downloads the bound shadow and candidate receipts again
 and rejects any schema downgrade or state mismatch before accepting the latest
 Railway/off-site pair.
 
-Immediately after deploying the v3 consumer, dispatch one `export-recovery`
-operation to establish a v3 recovery/off-site pair. That operation deliberately
-permits an absent prior proof, but does not accept a v2 proof. Scheduled and
-manual `monitor` operations remain fail closed until the v3 pair exists.
+The v4 recovery receipt also embeds a closed
+`seiche.agent-room.restore-audit.v1` result. The exporter takes an online copy
+of initialized Agent Room SQLite state, loads the restored operator key,
+verifies its independent key-bound initialization seal, verifies every
+participant key binding, and audits each room's signed genesis and event
+hash/signature chain. A retained seal with a missing database, or a database
+without its seal, fails as state loss. It then restores the exact portable bundle in
+isolation and requires the restored audit to match before committing the
+snapshot. Bundle-backed receipt validation repeats that isolated restore and
+compares the Agent Room audit along with the NBS result and filesystem tree
+digests. Never-initialized state is explicit; its audit retains an existing
+operator-key ID as the only authorized later bootstrap identity, or records a
+closed unprovisioned state when no key exists. Partial state, key mismatch, or
+chain drift fails closed.
+
+Recovery and reverse-restore receipts remain exact point-in-time proofs of the
+complete API and market trees; mutable Agent Room bytes are not excluded and
+their hashes are not replaced by a semantic-only backup digest. An activated
+process restart is intentionally different: it binds the exact candidate,
+grant, activation receipt, runtime paths, and key identity, keeps NBS and
+Palimpsest byte hashes exact, then performs current SQLite, ownership, layout,
+and Agent Room chain audits while allowing legitimate post-activation growth.
+
+That local current-chain audit is tamper-evident, not rollback-proof. The
+candidate receipt rejects truncation below its recorded baseline, but cannot
+by itself distinguish a valid older state created after activation. Detecting
+post-activation rollback requires a later independently retained, published,
+or off-site Agent Room head checkpoint. A completed v4 recovery/off-site pair
+provides historical evidence for its export time; startup does not claim that
+the candidate baseline is the latest checkpoint.
+
+Immediately after deploying the v4 consumer, dispatch one `export-recovery`
+operation to establish a v4 recovery/v3 off-site pair. That operation
+deliberately permits an absent prior proof, but does not accept a v3 recovery
+export or v2 off-site proof. Scheduled and manual `monitor` operations remain
+fail closed until the current mixed-version pair exists.
 
 ## Evidence contract
 
 Each successful export produces:
 
 - a canonical activation-bound request;
-- the exact v3 source shadow and activation-bound candidate receipts;
-- the immutable Railway recovery receipt;
+- the exact v4 source shadow and activation-bound candidate receipts;
+- the immutable v4 Railway recovery receipt with its restored Agent Room audit;
 - the exact nine-member backup-v4 generation, including the immutable
   Palimpsest China state archive and canonical audit receipt;
 - a canonical reverse-restore proof containing NBS audit result, filesystem

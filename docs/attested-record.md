@@ -76,9 +76,13 @@ Everything is off by default. Enabling it changes nothing about the readings.
 * `SEICHE_ATTEST_OTS=1` additionally submits unanchored days to the
   OpenTimestamps calendars during the hook (needs network). The
   cron friendly alternative is the CLI below.
-* `SEICHE_PIT_LEDGER_DIR` and `SEICHE_ATTEST_DIR` override the storage
-  locations (defaults: `backend/data/_pit_ledger/` and
-  `backend/data/_attest/`).
+* `SEICHE_PIT_LEDGER_DIR` overrides the ledger location. A non-production
+  development or test process may also use `SEICHE_ATTEST_DIR` to isolate its
+  key directory (defaults: `backend/data/_pit_ledger/` and
+  `backend/data/_attest/`). Production requires `SEICHE_ATTEST_DIR`, when set,
+  to equal `DATA_DIR/_attest` exactly; alternate, `..`-normalized, and symlink
+  alias paths fail closed so the signing key cannot drift outside the backed-up
+  runtime state.
 
 The CLI is idempotent and safe to run from cron:
 

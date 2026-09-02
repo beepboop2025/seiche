@@ -38,8 +38,8 @@ drop-in replacement for the hosted deployment.
 
 Published images use these tags:
 
-- the release version, such as `0.11.1`;
-- the Git tag, such as `v0.11.1`;
+- the release version, such as `0.12.0`;
+- the Git tag, such as `v0.12.0`;
 - the first 12 hexadecimal characters of the source commit, prefixed with
   `sha-`;
 - `latest` for a non-prerelease GitHub Release.
@@ -69,7 +69,7 @@ IMAGE=ghcr.io/beepboop2025/seiche
 ROOT_DIGEST=sha256:<index-digest>
 AMD64_DIGEST=sha256:<amd64-child-digest>
 ARM64_DIGEST=sha256:<arm64-child-digest>
-RELEASE_TAG=v0.11.1
+RELEASE_TAG=v0.12.0
 SOURCE_SHA=<40-hex-signed-commit>
 for platform in linux/amd64 linux/arm64; do
   DOCKER_CONFIG="$ANONYMOUS_DOCKER_CONFIG" docker pull \

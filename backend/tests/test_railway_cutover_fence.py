@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "ops" / "deploy" / "seiche-railway-cutover-fence.sh"
 EDGE_SCRIPT = ROOT / "ops" / "deploy" / "seiche-railway-edge-mode.sh"
@@ -102,7 +101,7 @@ if command == "start":
         (snapshot / "SHA256SUMS").write_text("\\n".join(inventory) + "\\n", encoding="ascii")
     elif unit == "seiche-market-restore-check.service":
         Path(os.environ["FAKE_RESTORE_STATUS"]).write_text(
-            "schema=seiche.market-backup-restore-check.v5\\n"
+            f"schema={{os.environ.get('FAKE_RESTORE_SCHEMA', 'seiche.market-backup-restore-check.v6')}}\\n"
             "snapshot=20260823T031000Z\\n"
             "source_backup_schema=seiche.market-backup.v4\\n"
             f"deployed_sha={{os.environ['FAKE_EXPECTED_SHA']}}\\n"
@@ -110,7 +109,16 @@ if command == "start":
             "state_archive_restore=pass\\n"
             "palimpsest_china_state_archive_restore=verified\\n"
             "palimpsest_china_state_audit_contract=seiche.palimpsest-china-activation-state.v1\\n"
-            "api_data_archive_restore=pass\\n",
+            "api_data_archive_restore=pass\\n"
+            f"agent_room_restore_audit={{os.environ.get('FAKE_AGENT_ROOM_RESTORE_AUDIT', 'verified')}}\\n"
+            "agent_room_audit_schema=seiche.agent-room.restore-audit.v1\\n"
+            f"agent_room_server_key_id={{'c' * 64}}\\n"
+            "agent_room_participant_count=1\\n"
+            "agent_room_room_count=1\\n"
+            "agent_room_event_count=1\\n"
+            f"agent_room_state_sha256={{'d' * 64}}\\n"
+            "agent_room_non_executable=true\\n"
+            "agent_room_execution_authority=none\\n",
             encoding="utf-8",
         )
     else:
@@ -277,6 +285,28 @@ def test_prepare_rollback_and_activation_boundary(tmp_path: Path) -> None:
     refused = _run(rollback_environment, "rollback", COMMIT)
     assert refused.returncode != 0
     assert "forbidden after Railway activation" in refused.stderr
+
+
+def test_prepare_rejects_invalid_agent_room_restore_projection(
+    tmp_path: Path,
+) -> None:
+    environment, _state_dir, _systemctl_state = _fixture(tmp_path)
+    environment["FAKE_AGENT_ROOM_RESTORE_AUDIT"] = "absent_uninitialized"
+
+    prepared = _run(environment, "prepare", COMMIT)
+
+    assert prepared.returncode != 0
+    assert "restore receipt did not prove the Agent Room archive" in prepared.stderr
+
+
+def test_prepare_rejects_restore_receipt_v5(tmp_path: Path) -> None:
+    environment, _state_dir, _systemctl_state = _fixture(tmp_path)
+    environment["FAKE_RESTORE_SCHEMA"] = "seiche.market-backup-restore-check.v5"
+
+    prepared = _run(environment, "prepare", COMMIT)
+
+    assert prepared.returncode != 0
+    assert "restore receipt schema is invalid" in prepared.stderr
 
 
 def test_edge_switch_is_receipted_secret_safe_and_pre_activation_only(

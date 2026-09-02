@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from seiche import api, mcp_server, usage, world_model_delivery, x402
+from seiche import accounts, api, mcp_server, usage, world_model_delivery, x402
 
 
 @pytest.fixture()
@@ -32,13 +32,20 @@ def client(tmp_path, monkeypatch, fake_snap):
 
     monkeypatch.setattr(api, "datetime", FrozenDateTime)
     monkeypatch.setattr(mcp_server, "datetime", FrozenDateTime)
-    # isolated meter
+    # Isolate both mutable stores. Current account rows are authoritative for
+    # bearer access, so the signed tier inside a token is never sufficient.
     monkeypatch.setattr(usage, "DB_PATH", tmp_path / "usage.sqlite")
+    monkeypatch.setattr(accounts, "DB_PATH", tmp_path / "accounts.sqlite")
+    monkeypatch.setattr(
+        api, "_mcp_limiter", api._RateLimiter(api.MCP_RATE_LIMIT_PER_MIN)
+    )
     # deterministic auth
     monkeypatch.setenv("SEICHE_AUTH_SECRET", "test-secret-not-for-prod")
     # The fully-open default serves everyone the full surface; these tests
     # pin the RE-GATED configuration where anonymous shaping still applies.
     monkeypatch.setenv("SEICHE_BOARD_AUTH", "1")
+    accounts.add_user("desk_pro", "correct horse battery", tier="pro")
+    accounts.add_user("founder_1", "correct horse battery", tier="founder")
     return TestClient(api.app)
 
 
@@ -166,7 +173,7 @@ def test_same_origin_mcp_directory_discovery_is_bounded_and_edge_visible(client)
     assert server["url"] == "https://api.seiche.info/mcp"
     assert server["authentication"] == {
         "type": "none",
-        "scope": "eleven anonymous public evidence tools",
+        "scope": "twelve anonymous public evidence tools",
     }
     assert "tools" not in server
     corpus = document["servers"][1]
@@ -218,9 +225,28 @@ def test_edge_allows_undertow_modern_mcp_headers():
     allow_headers = next(
         line for line in undertow.splitlines() if "Access-Control-Allow-Headers" in line
     )
+    expose_headers = next(
+        line
+        for line in undertow.splitlines()
+        if "Access-Control-Expose-Headers" in line
+    )
     assert "MCP-Protocol-Version" in allow_headers
     assert "Mcp-Method" in allow_headers
     assert "Mcp-Name" in allow_headers
+    assert "X-MCP-Trade-Safety-Usage-Used" in expose_headers
+    assert "X-MCP-Trade-Safety-Usage-Limit" in expose_headers
+    assert "X-MCP-Trade-Safety-Usage-Remaining" in expose_headers
+
+
+def test_undertow_curated_discovery_tracks_the_public_tool_count():
+    caddy = (Path(__file__).resolve().parents[2] / "ops" / "Caddyfile").read_text(
+        encoding="utf-8"
+    )
+    block = caddy.split("@undertow_index path", 1)[1].split(
+        "handle_path /undertow/*", 1
+    )[0]
+    assert '"authentication":"none for ten public tools"' in block
+    assert "none for nine public tools" not in block
 
 
 def test_public_api_discovery_is_curated(client):
@@ -228,7 +254,7 @@ def test_public_api_discovery_is_curated(client):
     assert r.status_code == 200
     payload = r.json()
     assert payload["mcp"]["first_tool"] == "latest_article"
-    assert payload["mcp"]["authentication"] == "none for the eleven public tools"
+    assert payload["mcp"]["authentication"] == "none for the twelve public tools"
     assert payload["delivery"]["url"].endswith("?start=agent_api")
     assert "11:30 UTC" in payload["delivery"]["outcome"]
     assert payload["rest"]["small_gauge"] == "/api/gauge"
@@ -276,6 +302,7 @@ def test_public_openapi_is_curated_and_importable(client):
     unavailable = health["responses"]["503"]["content"]["application/json"]["schema"]
     assert unavailable["required"] == ["status", "version"]
     assert unavailable["properties"]["status"]["enum"] == [
+        "agent_room_not_ready",
         "warming_or_unavailable",
         "rebuilding_from_last_known_good",
         "rebuilt_without_market_evidence",
@@ -354,20 +381,31 @@ def test_activation_logger_emits_info_without_root_configuration(monkeypatch):
 
 
 def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
+    monkeypatch.setenv("SEICHE_X402_PROFILE", "base-sepolia-testnet")
     monkeypatch.setenv(
         "SEICHE_X402_PAY_TO", "0x000000000000000000000000000000000000dEaD"
     )
     monkeypatch.setattr(x402, "decode_payment", lambda header: {"payment": "safe"})
+    monkeypatch.setattr(
+        x402, "payment_resource_matches", lambda payment, tool, resource: True
+    )
     monkeypatch.setattr(x402, "verify", lambda payment, reqs: (True, ""))
     monkeypatch.setattr(
         x402,
         "settle",
-        lambda payment, reqs: (True, {"success": True, "transaction": "0xtx"}),
+        lambda payment, reqs: (
+            True,
+            {
+                "success": True,
+                "transaction": "0x" + "ab" * 32,
+                "network": reqs["network"],
+            },
+        ),
     )
     dispatched = []
 
-    def dispatch(message, public):
-        dispatched.append((message["params"]["name"], public))
+    def dispatch(message, public, identity=None):
+        dispatched.append((message["params"]["name"], public, identity))
         return {
             "jsonrpc": "2.0",
             "id": message["id"],
@@ -382,11 +420,13 @@ def test_paid_x402_dispatch_logs_paid_surface(client, monkeypatch, caplog):
             json=_rpc(
                 "tools/call", {"name": "funding_stress_forecast", "arguments": {}}
             ),
-            headers={"X-PAYMENT": "private-payment-marker"},
+            headers={"PAYMENT-SIGNATURE": "private-payment-marker"},
         )
 
     assert r.status_code == 200
-    assert dispatched == [("funding_stress_forecast", False)]
+    assert "PAYMENT-RESPONSE" in r.headers
+    assert "X-PAYMENT-RESPONSE" not in r.headers
+    assert dispatched == [("funding_stress_forecast", False, None)]
     events = [
         record.getMessage()
         for record in caplog.records
@@ -422,6 +462,7 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
     )
     public_good = (
         "funding_stress_now",
+        "trade_safety_risk_context",
         "historical_analogs",
         "proof_backtest",
         "data_health",
@@ -444,13 +485,13 @@ def test_board_gate_never_decides_mcp_entitlements(client, monkeypatch):
             ]
         }
         for engine in engines:
-            assert engine not in names, (
-                f"{engine} anonymous with SEICHE_BOARD_AUTH={gate!r}"
-            )
+            assert (
+                engine not in names
+            ), f"{engine} anonymous with SEICHE_BOARD_AUTH={gate!r}"
         for free in public_good:
-            assert free in names, (
-                f"{free} must stay free with SEICHE_BOARD_AUTH={gate!r}"
-            )
+            assert (
+                free in names
+            ), f"{free} must stay free with SEICHE_BOARD_AUTH={gate!r}"
 
 
 def test_anonymous_flows_carries_the_reading_but_not_the_engine(client, monkeypatch):
@@ -510,6 +551,7 @@ def test_anonymous_sees_only_public_tools(client):
     assert names == {
         "latest_article",
         "funding_stress_now",
+        "trade_safety_risk_context",
         "historical_analogs",
         "proof_backtest",
         "data_health",
@@ -536,7 +578,7 @@ def test_anonymous_tool_descriptors_are_openai_plugin_ready(client):
     tools = response.json()["result"]["tools"]
 
     assert response.status_code == 200
-    assert len(tools) == 11
+    assert len(tools) == 12
     for tool in tools:
         assert tool["outputSchema"]["type"] == "object"
         assert tool["annotations"] == {
@@ -622,9 +664,9 @@ def test_anonymous_money_market_tool_is_bounded_granular_and_chartless(
             msg_id=3,
         ),
     )
-    invalid = invalid_response.json()["result"]
-    assert invalid["isError"] is True
-    assert "must be one of" in invalid["content"][0]["text"]
+    invalid = invalid_response.json()
+    assert invalid["error"]["code"] == mcp_server.INVALID_PARAMS
+    assert "arguments.section must be one of" in invalid["error"]["message"]
 
 
 @pytest.mark.parametrize(

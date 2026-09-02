@@ -48,7 +48,7 @@ Works against any of the three Seiche MCP wirings: local stdio
 
 ## Anonymous tool contract
 
-The hosted endpoint exposes these eleven tools without a token. The list is
+The hosted endpoint exposes these twelve tools without a token. The list is
 tested against the server registry so a runtime change cannot leave this kit
 silently teaching an obsolete surface.
 
@@ -63,13 +63,19 @@ silently teaching an obsolete surface.
 | `institutional_flows` | Public positioning and flow context |
 | `money_market_context` | Bounded USD desk sections, sources, and methodology |
 | `world_markets_context` | Money, FX, capital-market, and rights-safe China context |
+| `trade_safety_risk_context` | Cache-only regime/index/coverage/clocks for non-executable Trade Safety guards |
 | `oil_funding_context` | Oil/funding observations, market structure, and separate scenarios |
 | `fx_materials_passage` | FX/material pressure and holdout-tested Passage links |
 
-The five subscriber tools remain `funding_stress_forecast`, `replay_asof`,
+The five subscriber analysis tools remain `funding_stress_forecast`, `replay_asof`,
 `desk_brief`, `positioning_book`, and `ask_desk`. Hermes must treat an auth or
 quota refusal as an access condition, not as evidence that the public board is
 down.
+
+An authenticated hosted connection also discovers five private Agent Room
+preview tools. They are non-executable signed discussion primitives, not a
+trading connector; follow [`docs/AGENT-ROOM.md`](../../docs/AGENT-ROOM.md) and
+never turn an acknowledgement into acceptance or execution.
 
 Not investment advice; every reading the agent relays is backed by the
 public PROOF scoreboard, misses included.

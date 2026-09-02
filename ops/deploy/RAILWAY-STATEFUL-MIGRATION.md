@@ -136,7 +136,8 @@ The workflow then:
 5. runs SQLite `PRAGMA quick_check`, the strict full NBS store audit, a fresh
    generation-specific PostgreSQL restore, and four table-count floors;
 6. writes a canonical, immutable, group-readable shadow receipt;
-7. starts only the API as uid/gid 10001, with control tokens removed;
+7. starts only the API as uid/gid 10001, with control tokens removed and the
+   stateful pre-activation read-only guard enabled;
 8. retrieves and independently validates the receipt, probes `/healthz`
    through the exact active instance, retains private evidence for 90 days,
    and OIDC-attests those exact receipt bytes.
@@ -146,7 +147,7 @@ downloaded canonical receipt. A Railway `SUCCESS`, a green health check, or an
 uploaded artifact alone is insufficient.
 
 The shadow receipt contract is
-`seiche.railway-stateful-shadow-receipt.v3`; v2 receipts are deliberately not
+`seiche.railway-stateful-shadow-receipt.v4`; v3 receipts are deliberately not
 accepted. It contains one closed `palimpsest_china_state` identity with exactly
 `audit_schema`, `tree_sha256`, `active_activation_id`, and
 `pending_candidate_activation_id`. Those values come from the canonical
@@ -156,6 +157,34 @@ tree as the configured uid/gid 10001 reader and requires the semantic tree and
 active activation ID to remain byte-for-byte equal to the receipt. The
 independent filesystem-tree digest remains a separate whole-tree integrity
 bound; neither digest substitutes for the other.
+
+The v4 filesystem proof also embeds a closed
+`seiche.agent-room.restore-audit.v1` result. For initialized Agent Room state,
+the restore loads the restored operator key without creating or replacing it,
+opens the existing SQLite store, verifies every participant key binding, and
+audits each room's signed genesis and client/server-signed event hash chain.
+The receipt records the verified server-key ID, bounded counts, state digest,
+and the fixed non-executable/no-authority policy. It also verifies the immutable,
+key-bound initialization seal stored under `_attest`; a seal without its
+database or an initialized database without its seal is state loss, not an empty
+bootstrap. A truly never-initialized room is recorded explicitly as
+`absent_uninitialized` only when both database and seal are absent, with zero
+counts and a null state digest. If the restored attestation directory already
+contains an operator key, the receipt records that key ID as the only identity
+under which production may later bootstrap the room. If no key exists, the
+receipt carries a closed `unprovisioned` runtime gate: shadow, candidate, and
+the resulting production release may not mint a room identity. Partial state,
+an unbound or changed key, or signed-chain drift fails both the initial restore
+and restart/reuse validation.
+
+The shadow API does not start the warm loop, rebuild or reseal a board, create
+an attestation key, database, or initialization seal, or open the legacy
+SQLite fallback. It hydrates only an already validated active PostgreSQL
+handoff produced by this exact release; absence or another release remains
+unready. The Agent Room is either absent or opened through its read-only audit
+path, and every non-read HTTP method is rejected before routing. These guards
+preserve the point-in-time tree hashes: any pre-activation byte or semantic
+mutation still fails restart/reuse validation.
 
 ## Repeat and reconcile
 
@@ -182,7 +211,8 @@ three runs have:
 - database counts at or above their floors;
 - no Railway public domain and no Railway writer;
 - successful restart/reuse validation of the receipted generation; and
-- a v3 Palimpsest China identity with no pending activation transaction; and
+- a v4 shadow receipt carrying the closed Palimpsest China identity, restored
+  Agent Room audit, and no pending activation transaction; and
 - an operator-reviewed rollback and authority-fencing rehearsal.
 
 Phase 5 uses a bounded maintenance freeze, one final snapshot, a content-bound

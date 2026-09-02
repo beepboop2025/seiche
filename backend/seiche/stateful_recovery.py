@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
@@ -27,9 +28,8 @@ from typing import Any, Mapping, NamedTuple
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
 
-
 REQUEST_SCHEMA = "seiche.railway-recovery-export-request.v1"
-RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v3"
+RECEIPT_SCHEMA = "seiche.railway-recovery-export-receipt.v4"
 OFFSITE_RECEIPT_SCHEMA = "seiche.railway-offsite-recovery-receipt.v3"
 WORKFLOW = "beepboop2025/seiche/.github/workflows/railway-stateful-recovery.yml"
 CONFIRMATION = "EXPORT_WITHOUT_AUTHORITY_CHANGE"
@@ -41,8 +41,7 @@ MAX_SHADOW_RECEIPT_BYTES = 64 * 1024 * 1024
 _SNAPSHOT_RE = re.compile(r"20[0-9]{6}T[0-9]{6}Z")
 _SHA40_RE = re.compile(r"[0-9a-f]{40}")
 _UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-" r"[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
 _REQUEST_KEYS = frozenset(
     {
@@ -124,6 +123,7 @@ class RecoveryContractError(RuntimeError):
 class RecoveryExport(NamedTuple):
     bundle: migration.BackupBundle
     nbs_audit_result: str
+    agent_room_audit: Mapping[str, Any]
     tree_sha256: Mapping[str, str]
     palimpsest_china_state: Mapping[str, Any]
     started_at: str
@@ -318,6 +318,12 @@ def validate_candidate_chain(
             or _SHA40_RE.fullmatch(candidate_request[name]) is None
         ):
             raise RecoveryContractError(f"candidate request {name} is invalid")
+    try:
+        migration.validate_agent_room_audit(
+            value.get("filesystem", {}).get("agent_room_audit")
+        )
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
     _palimpsest_china_state(value.get("palimpsest_china_state"))
     return dict(value)
 
@@ -425,6 +431,17 @@ def validate_shadow_chain(
         raise RecoveryContractError(
             "cutover Palimpsest China state differs from shadow"
         )
+    try:
+        shadow_agent_room_audit = migration.validate_agent_room_audit(
+            value.get("filesystem", {}).get("agent_room_audit")
+        )
+        candidate_agent_room_audit = migration.validate_agent_room_audit(
+            candidate_receipt.get("filesystem", {}).get("agent_room_audit")
+        )
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
+    if shadow_agent_room_audit != candidate_agent_room_audit:
+        raise RecoveryContractError("cutover Agent Room state differs from shadow")
     return dict(value)
 
 
@@ -588,7 +605,13 @@ def _archive_roots(destination: Path, roots: Mapping[str, Path]) -> None:
         raise RecoveryContractError("recovery archive creation failed") from exc
 
 
-def _snapshot_api(source: Path, destination: Path) -> None:
+def _snapshot_api(
+    source: Path,
+    destination: Path,
+    *,
+    source_owner_uid: int | None = None,
+) -> Mapping[str, Any]:
+    expected_source_uid = os.geteuid() if source_owner_uid is None else source_owner_uid
     if destination.exists() or destination.is_symlink():
         raise RecoveryContractError("recovery API staging path already exists")
     shutil.copytree(source, destination, symlinks=True)
@@ -608,11 +631,82 @@ def _snapshot_api(source: Path, destination: Path) -> None:
                 live.backup(snapshot)
                 if snapshot.execute("PRAGMA quick_check").fetchone() != ("ok",):
                     raise RecoveryContractError("recovery SQLite backup is corrupt")
+        source_room_root = source / "_agent_room"
+        source_room_database = source_room_root / "agent-room.sqlite"
+        destination_room_root = destination / "_agent_room"
+        if destination_room_root.is_dir() and not destination_room_root.is_symlink():
+            shutil.rmtree(destination_room_root)
+        elif destination_room_root.exists() or destination_room_root.is_symlink():
+            raise RecoveryContractError("recovery Agent Room staging path is unsafe")
+        if source_room_database.exists() or source_room_database.is_symlink():
+            root_metadata = source_room_root.lstat()
+            database_metadata = source_room_database.lstat()
+            room_members = {entry.name for entry in source_room_root.iterdir()}
+            if (
+                source_room_root.is_symlink()
+                or not source_room_root.is_dir()
+                or root_metadata.st_uid != expected_source_uid
+                or stat.S_IMODE(root_metadata.st_mode) & 0o022
+                or source_room_database.is_symlink()
+                or not stat.S_ISREG(database_metadata.st_mode)
+                or database_metadata.st_nlink != 1
+                or database_metadata.st_uid != expected_source_uid
+                or stat.S_IMODE(database_metadata.st_mode) & 0o077
+                or not {"agent-room.sqlite"} <= room_members
+                or not room_members
+                <= {"agent-room.sqlite", "agent-room.sqlite-journal"}
+            ):
+                raise RecoveryContractError("recovery Agent Room source is unsafe")
+            destination_room_root.mkdir(mode=0o700)
+            destination_room_root.chmod(0o700)
+            target_room_database = destination_room_root / "agent-room.sqlite"
+            with sqlite3.connect(
+                f"file:{source_room_database}?mode=ro", uri=True
+            ) as live_room:
+                with sqlite3.connect(target_room_database) as snapshot_room:
+                    live_room.backup(snapshot_room)
+                    if snapshot_room.execute("PRAGMA quick_check").fetchone() != (
+                        "ok",
+                    ):
+                        raise RecoveryContractError(
+                            "recovery Agent Room SQLite backup is corrupt"
+                        )
+            target_room_database.chmod(0o600)
+            after = source_room_database.lstat()
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_uid,
+            ) != (
+                database_metadata.st_dev,
+                database_metadata.st_ino,
+                database_metadata.st_mode,
+                database_metadata.st_nlink,
+                database_metadata.st_uid,
+            ):
+                raise RecoveryContractError(
+                    "recovery Agent Room source changed during snapshot"
+                )
+        elif source_room_root.exists() or source_room_root.is_symlink():
+            root_metadata = source_room_root.lstat()
+            if (
+                source_room_root.is_symlink()
+                or not source_room_root.is_dir()
+                or root_metadata.st_uid != expected_source_uid
+                or stat.S_IMODE(root_metadata.st_mode) & 0o022
+                or any(source_room_root.iterdir())
+            ):
+                raise RecoveryContractError(
+                    "recovery Agent Room source contains partial state"
+                )
         migration._walk_real_tree(destination)
     except RecoveryContractError:
         raise
     except (sqlite3.Error, migration.MigrationContractError) as exc:
         raise RecoveryContractError("recovery SQLite backup failed") from exc
+    return migration.audit_agent_room_state(destination)
 
 
 def _dump_postgres(destination: Path, database_dsn: str) -> None:
@@ -711,16 +805,19 @@ def _restored_filesystem_identity(
     scratch_parent: Path,
     runtime_uid: int = migration.RUNTIME_UID,
     runtime_gid: int = migration.RUNTIME_GID,
-) -> tuple[str, Mapping[str, str]]:
+) -> tuple[str, Mapping[str, str], Mapping[str, Any]]:
     scratch = Path(tempfile.mkdtemp(prefix=".recovery-inspect.", dir=scratch_parent))
     try:
         try:
-            return migration.restore_filesystem_generation(
+            agent_room_audit: dict[str, Any] = {}
+            nbs_result, tree_digests = migration.restore_filesystem_generation(
                 bundle,
                 scratch,
                 runtime_uid=runtime_uid,
                 runtime_gid=runtime_gid,
+                agent_room_audit_out=agent_room_audit,
             )
+            return nbs_result, tree_digests, agent_room_audit
         except migration.MigrationContractError as exc:
             raise RecoveryContractError(str(exc)) from exc
     finally:
@@ -763,7 +860,7 @@ def export_snapshot(
             snapshot_id=snapshot_id,
             commit=str(validated["commit"]),
         )
-        nbs_result, tree_digests = _restored_filesystem_identity(
+        nbs_result, tree_digests, agent_room_audit = _restored_filesystem_identity(
             bundle,
             scratch_parent=snapshots,
             runtime_uid=runtime_uid,
@@ -777,6 +874,7 @@ def export_snapshot(
         return RecoveryExport(
             bundle,
             nbs_result,
+            agent_room_audit,
             tree_digests,
             observed_palimpsest_state,
             started_at,
@@ -851,7 +949,11 @@ def export_snapshot(
             stage / "palimpsest-china-state.json",
             migration.canonical_document(palimpsest_audit),
         )
-        _snapshot_api(api, api_stage)
+        staged_agent_room_audit = _snapshot_api(
+            api,
+            api_stage,
+            source_owner_uid=runtime_uid,
+        )
         tree_digests["api"] = migration.hash_tree(api_stage)
         _archive_roots(stage / "api-data.tgz", {"api-data": api_stage})
         shutil.rmtree(api_stage)
@@ -903,6 +1005,21 @@ def export_snapshot(
             snapshot_id=snapshot_id,
             commit=str(validated["commit"]),
         )
+        restored_nbs_result, restored_tree_digests, restored_agent_room_audit = (
+            _restored_filesystem_identity(
+                bundle,
+                scratch_parent=snapshots,
+                runtime_uid=runtime_uid,
+                runtime_gid=runtime_gid,
+            )
+        )
+        if (
+            restored_nbs_result != nbs_result
+            or restored_agent_room_audit != staged_agent_room_audit
+        ):
+            raise RecoveryContractError(
+                "recovery archive restore proof differs from staged state"
+            )
         stage.rename(final)
         migration._fsync_directory(snapshots)
         stage = None
@@ -913,8 +1030,9 @@ def export_snapshot(
         )
         return RecoveryExport(
             bundle,
-            nbs_result,
-            tree_digests,
+            restored_nbs_result,
+            restored_agent_room_audit,
+            restored_tree_digests,
             observed_palimpsest_state,
             started_at,
             _iso_now(),
@@ -982,6 +1100,9 @@ def render_receipt(
         "filesystem": {
             "tree_sha256": dict(export.tree_sha256),
             "nbs_full_store_audit_result": export.nbs_audit_result,
+            "agent_room_audit": migration.validate_agent_room_audit(
+                export.agent_room_audit
+            ),
             "palimpsest_china_state_audit_contract": (
                 "seiche.palimpsest-china-activation-state.v1"
             ),
@@ -1014,6 +1135,8 @@ def validate_receipt(
     shadow_receipt: Mapping[str, Any],
     railway: Mapping[str, str] | None = None,
     bundle_root: Path | None = None,
+    runtime_uid: int | None = None,
+    runtime_gid: int | None = None,
 ) -> dict[str, Any]:
     validate_request(
         request,
@@ -1105,6 +1228,7 @@ def validate_receipt(
         != {
             "tree_sha256",
             "nbs_full_store_audit_result",
+            "agent_room_audit",
             "palimpsest_china_state_audit_contract",
             "palimpsest_china_state_audit_result",
         }
@@ -1122,6 +1246,10 @@ def validate_receipt(
         or filesystem.get("palimpsest_china_state_audit_result") != "verified"
     ):
         raise RecoveryContractError("recovery receipt filesystem proof is invalid")
+    try:
+        migration.validate_agent_room_audit(filesystem.get("agent_room_audit"))
+    except migration.MigrationContractError as exc:
+        raise RecoveryContractError(str(exc)) from exc
     palimpsest_china_state = _palimpsest_china_state(
         value.get("palimpsest_china_state")
     )
@@ -1192,6 +1320,20 @@ def validate_receipt(
             raise RecoveryContractError(
                 "recovery receipt Palimpsest China state differs from bundle"
             )
+        restored_nbs, restored_trees, restored_agent_room = (
+            _restored_filesystem_identity(
+                bundle,
+                scratch_parent=bundle_root.parent,
+                runtime_uid=(os.geteuid() if runtime_uid is None else runtime_uid),
+                runtime_gid=(os.getegid() if runtime_gid is None else runtime_gid),
+            )
+        )
+        if (
+            restored_nbs != filesystem["nbs_full_store_audit_result"]
+            or dict(restored_trees) != filesystem["tree_sha256"]
+            or dict(restored_agent_room) != filesystem["agent_room_audit"]
+        ):
+            raise RecoveryContractError("recovery filesystem audit differs from bundle")
     return dict(value)
 
 

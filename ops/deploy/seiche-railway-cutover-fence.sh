@@ -213,7 +213,7 @@ commit_final_snapshot() {
     || fail "restore receipt does not bind the final snapshot"
   grep -Fx "deployed_sha=$EXPECTED_SHA" "$RESTORE_STATUS" >/dev/null \
     || fail "restore receipt does not bind the final release"
-  grep -Fx 'schema=seiche.market-backup-restore-check.v5' "$RESTORE_STATUS" >/dev/null \
+  grep -Fx 'schema=seiche.market-backup-restore-check.v6' "$RESTORE_STATUS" >/dev/null \
     || fail "restore receipt schema is invalid"
   grep -Fx 'source_backup_schema=seiche.market-backup.v4' \
     "$RESTORE_STATUS" >/dev/null \
@@ -231,6 +231,66 @@ commit_final_snapshot() {
     || fail "restore receipt did not prove the state archive"
   grep -Fx 'api_data_archive_restore=pass' "$RESTORE_STATUS" >/dev/null \
     || fail "restore receipt did not prove the API data archive"
+  "$PYTHON" -I -B - "$RESTORE_STATUS" <<'PY' \
+    || fail "restore receipt did not prove the Agent Room archive"
+import re
+import sys
+from pathlib import Path
+
+body = Path(sys.argv[1]).read_bytes()
+if not body.endswith(b"\n") or not 1 <= len(body) <= 64 * 1024:
+    raise SystemExit(1)
+fields = {}
+for line in body.decode("ascii", "strict").splitlines():
+    if line.count("=") != 1:
+        raise SystemExit(1)
+    key, value = line.split("=", 1)
+    if not key or key in fields:
+        raise SystemExit(1)
+    fields[key] = value
+
+raw_counts = tuple(
+    fields.get(name, "")
+    for name in (
+        "agent_room_participant_count",
+        "agent_room_room_count",
+        "agent_room_event_count",
+    )
+)
+if any(
+    len(value) > 7 or re.fullmatch(r"(?:0|[1-9][0-9]*)", value) is None
+    for value in raw_counts
+):
+    raise SystemExit(1)
+counts = tuple(int(value) for value in raw_counts)
+participants, rooms, events = counts
+if (
+    any(count > 2_000_000 for count in counts)
+    or events > rooms * 4096
+    or (rooms > 0 and participants == 0)
+    or fields.get("agent_room_audit_schema")
+    != "seiche.agent-room.restore-audit.v1"
+    or fields.get("agent_room_non_executable") != "true"
+    or fields.get("agent_room_execution_authority") != "none"
+):
+    raise SystemExit(1)
+result = fields.get("agent_room_restore_audit")
+server_key_id = fields.get("agent_room_server_key_id", "")
+state_sha256 = fields.get("agent_room_state_sha256", "")
+if result == "verified":
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", server_key_id) is None
+        or re.fullmatch(r"[0-9a-f]{64}", state_sha256) is None
+    ):
+        raise SystemExit(1)
+elif not (
+    result == "absent_uninitialized"
+    and server_key_id == "none"
+    and state_sha256 == "none"
+    and counts == (0, 0, 0)
+):
+    raise SystemExit(1)
+PY
 }
 
 write_fence() {

@@ -14,9 +14,18 @@ _FAKE_SNAP = {
     "generated_at": "2026-07-10T00:00:00Z",
     "version": "0.2.0-test",
     "faults": [],
-    "provenance": {"WALCL": {"fresh": True, "age_h": 3}},
+    "provenance": {
+        "WALCL": {
+            "fresh": True,
+            "age_h": 3,
+            "asof": "2026-07-09",
+            "fetched_at": "2026-07-10T00:00:00Z",
+            "staleness": "fresh",
+        }
+    },
     "engines": {
         "composite": {
+            "ok": True,
             "value": 41.0,
             "regime": "EROSION",
             "coverage_pct": 96,

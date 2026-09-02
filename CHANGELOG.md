@@ -11,6 +11,54 @@ they change a public contract, methodology, or release artifact.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-02
+
+### Added
+
+- Added the Market Atlas and its structured, rights-aware public corpus with
+  bounded snapshot cursors, explicit evidence states, and MCP exploration.
+- Added contextual share routes and content-addressed cards so a shared market
+  view retains its own evidence context instead of collapsing to the homepage.
+- Added exact snapshot hydration, a prebuilt deep cache, and Palimpsest China
+  evidence-lake intake with explicit provenance and activation boundaries.
+- Added an external watchdog for LiquiLens runner-maintenance debt, including
+  source-bound status ingestion, deadline escalation, and recovery proof.
+- Added a deterministic `seiche.risk-context.v1` REST/MCP projection for Trade
+  Safety integrations. It reads only a completed cache, repeats rights and
+  clock validation, and carries regime, index, coverage, staleness counts, and
+  conservative snapshot/evidence clocks.
+- Added the private Agent Room preview: five bearer-identity REST/MCP
+  capabilities, Ed25519 client signatures, server co-signatures, immutable
+  membership, optimistic sequence control, nonce replay defense, bounded
+  rights-aware evidence metadata, and a verified per-room hash chain.
+
+### Changed
+
+- Bound Railway release gates, snapshot prebuilds, runtime roots, deployment
+  logs, and recovery handoffs to exact source and OIDC-attested receipts.
+- Bounded production snapshot refresh cost and strengthened market-corpus
+  readability, publication receipts, and public discovery contracts.
+- Advanced the canonical application, package, MCP, OpenAPI, citation, and
+  scientific metadata identity together to `0.12.0`; the independent market
+  corpus remains version `1.0.0`.
+
+### Security
+
+- Added root-sealed release, recovery, and watchdog receipts with exact-SHA
+  admission, transactional installation, and fail-closed authority checks.
+- Kept the Trade Safety projection metadata-only, derived, non-executable, and
+  ineligible for real-money use. It performs no request-time collection,
+  fitting, network, notary, or broker work. It does not inspect the attestation
+  ledger or treat a separately verified stream attestation as per-order
+  execution authority.
+- Kept Agent Room permanently outside order, execution, payment, settlement,
+  and custody authority. Anonymous and x402 callers cannot discover it; actor
+  identity comes only from a verified bearer, payloads reject secret-shaped and
+  executable fields, and the dedicated owner-only SQLite database is captured
+  through online backup and isolated restore verification.
+- Kept protected exports, restricted sources, incomplete evidence, and
+  cross-product health claims outside publication authority.
+
 ## [0.11.1] - 2026-08-24
 
 ### Fixed
@@ -135,7 +183,8 @@ they change a public contract, methodology, or release artifact.
 - Published the construction-point-in-time evidence boundary and aligned public
   MCP/catalog descriptions with the shipped surface.
 
-[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/beepboop2025/seiche/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/beepboop2025/seiche/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/beepboop2025/seiche/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/beepboop2025/seiche/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/beepboop2025/seiche/compare/v0.10.0...v0.10.1

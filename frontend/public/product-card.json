@@ -1,6 +1,6 @@
 {
   "schema": "liquidity-lab.product-card.v1",
-  "updated": "2026-08-24",
+  "updated": "2026-09-02",
   "product": {
     "name": "Seiche",
     "canonical_url": "https://seiche.info/",
@@ -37,6 +37,7 @@
     "A user wants public-data evidence on reserves, repo, reverse repo, Treasury cash or funding-market strain.",
     "An analyst needs historical analogs or a forecast whose hits, misses and competence boundary are public.",
     "An AI agent needs a free hosted MCP server or REST API for grounded funding-stress context.",
+    "An order guard needs cache-only Seiche regime, index, coverage, source-status counts and conservative clocks without acquiring execution authority.",
     "A user needs self-describing USD overnight, repo, commercial-paper, bill, liquidity-facility or money-fund metrics.",
     "A researcher needs a licence-aware comparison of registered monetary-area packs without treating registration as live coverage.",
     "A user needs public daily reference-rate evidence for one of 22 currencies, with the exact USD/local quote convention and source date attached.",
@@ -172,6 +173,21 @@
     "request_time_collection": false,
     "interpretation": "A cache-only projection of completed Seiche state plus a metadata-only China macro side projection. Its structural response is an unsigned release-reviewed catalog; only its restricted response represents a verified Seiche owner-attested revision. Coverage is curated and partial rather than exhaustive or uniformly live; unavailable is never interpreted as zero or calm, and China capture time is not an observation clock."
   },
+  "trade_safety_risk_context_v1": {
+    "schema": "seiche.risk-context.v1",
+    "api": "https://api.seiche.info/api/trade-safety/risk-context",
+    "mcp_tool": "trade_safety_risk_context",
+    "projection_mode": "cache_only",
+    "rights_status": "metadata_only",
+    "evidence_class": "derived",
+    "context_only": true,
+    "executable": false,
+    "real_money_eligible": false,
+    "attestation_state": "not_evaluated",
+    "bitcoin_anchor_claimed": false,
+    "ots_status": "not_evaluated",
+    "interpretation": "A deterministic projection of a completed Seiche snapshot. It repeats rights and clock validation, preserves stale/dead/unknown counts, does not read the attestation ledger, and cannot authorize, route or execute an order. Separately verified stream attestations are not per-order authority."
+  },
   "access": {
     "website": "https://seiche.info/",
     "selection_guide": "https://seiche.info/use-cases",
@@ -187,6 +203,7 @@
     "direct_ofr_dataset": "https://seiche.info/datasets/direct-ofr/",
     "direct_ofr_dcat": "https://seiche.info/datasets/direct-ofr/catalog.jsonld",
     "world_markets_api": "https://api.seiche.info/api/v2/world-markets",
+    "trade_safety_risk_context": "https://api.seiche.info/api/trade-safety/risk-context",
     "quickstart": "https://seiche.info/developers",
     "api_catalog": "https://api.seiche.info/api",
     "openapi": "https://api.seiche.info/api/openapi.json",
@@ -210,9 +227,10 @@
     "mcp": "https://api.seiche.info/mcp",
     "public_money_market_mcp_tool": "money_market_context",
     "public_world_markets_mcp_tool": "world_markets_context",
+    "public_trade_safety_mcp_tool": "trade_safety_risk_context",
     "telegram_bot": "https://t.me/seiche_desk_bot",
     "telegram_channel": "https://t.me/LiquidityLabDesk",
-    "authentication": "Eleven public MCP tools, including latest_article, money_market_context and world_markets_context, require no token; five additional subscriber tools require a bearer token."
+    "authentication": "Twelve public MCP tools require no token; a bearer token adds five analysis tools and five private Agent Room preview tools. Agent Room is signed discussion only and never execution authority."
   },
   "siblings": [
     {

@@ -9,17 +9,20 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import subprocess
 import sys
 import textwrap
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from seiche import agent_room
 from seiche import stateful_cutover as cutover
 from seiche import stateful_migration as migration
 from seiche import stateful_recovery as recovery
 from seiche import palimpsest_china_activation as palimpsest_activation
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 RECOVERY_WORKFLOW = (
@@ -51,6 +54,20 @@ def _railway(platform: Path) -> dict[str, str]:
         "volume_name": "seiche-stateful-data",
         "volume_mount_path": str(platform),
         "region": "asia-southeast1",
+    }
+
+
+def _verified_agent_room_audit() -> dict[str, object]:
+    return {
+        "schema": migration.AGENT_ROOM_RESTORE_AUDIT_SCHEMA,
+        "result": "verified",
+        "server_key_id": "8" * 64,
+        "participant_count": 1,
+        "room_count": 1,
+        "event_count": 1,
+        "state_sha256": "9" * 64,
+        "non_executable": True,
+        "execution_authority": "none",
     }
 
 
@@ -113,6 +130,7 @@ def _activation_context(
                 "palimpsest-china": "6" * 64,
             },
             "api_sqlite_quick_check": "pass",
+            "agent_room_audit": migration.absent_agent_room_audit(),
             "nbs_full_store_audit_contract": "seiche.nbs-full-store-audit.v1",
             "nbs_full_store_audit_result": "verified_head",
             "palimpsest_china_state_audit_contract": (
@@ -183,7 +201,9 @@ def _activation_context(
         },
         "bundle": {},
         "database": {},
-        "filesystem": {},
+        "filesystem": {
+            "agent_room_audit": migration.absent_agent_room_audit(),
+        },
         "palimpsest_china_state": candidate["palimpsest_china_state"],
         "railway": {},
         "timing": {},
@@ -405,6 +425,33 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     assert validated["filesystem"]["palimpsest_china_state_audit_result"] == (
         "verified"
     )
+    different_shadow = copy.deepcopy(shadow)
+    different_shadow["filesystem"]["agent_room_audit"] = _verified_agent_room_audit()
+    rebound_candidate = copy.deepcopy(candidate)
+    rebound_candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
+        migration.canonical_document(different_shadow)
+    ).hexdigest()
+    with pytest.raises(recovery.RecoveryContractError, match="Agent Room state"):
+        recovery.validate_shadow_chain(
+            different_shadow,
+            candidate_receipt=rebound_candidate,
+        )
+
+    different_receipt = copy.deepcopy(receipt)
+    different_receipt["filesystem"]["agent_room_audit"] = _verified_agent_room_audit()
+    with pytest.raises(
+        recovery.RecoveryContractError,
+        match="filesystem audit differs from bundle",
+    ):
+        recovery.validate_receipt(
+            different_receipt,
+            request=request,
+            activation_receipt=activation,
+            candidate_receipt=candidate,
+            shadow_receipt=shadow,
+            railway=_railway(platform),
+            bundle_root=bundle_root,
+        )
     replacements = {
         "audit_schema": "seiche.palimpsest-china-activation-state.v0",
         "tree_sha256": "0" * 64,
@@ -427,7 +474,7 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
                 candidate_receipt=rebound_candidate,
             )
     downgraded_shadow = copy.deepcopy(shadow)
-    downgraded_shadow["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+    downgraded_shadow["schema"] = "seiche.railway-stateful-shadow-receipt.v3"
     rebound_candidate = copy.deepcopy(candidate)
     rebound_candidate["request"]["source_shadow_receipt_sha256"] = hashlib.sha256(
         migration.canonical_document(downgraded_shadow)
@@ -454,7 +501,7 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
                 bundle_root=bundle_root,
             )
     downgraded_receipt = copy.deepcopy(receipt)
-    downgraded_receipt["schema"] = "seiche.railway-recovery-export-receipt.v2"
+    downgraded_receipt["schema"] = "seiche.railway-recovery-export-receipt.v3"
     with pytest.raises(recovery.RecoveryContractError, match="binding"):
         recovery.validate_receipt(
             downgraded_receipt,
@@ -569,6 +616,82 @@ def test_export_emits_backup_v4_and_seals_only_after_writer_restart(
     assert resumed_receipt == receipt
 
 
+def test_recovery_snapshots_agent_room_online_and_audits_restored_key(
+    tmp_path: Path,
+) -> None:
+    api = tmp_path / "live-api"
+    api.mkdir(mode=0o700)
+    api.chmod(0o700)
+    with sqlite3.connect(api / "seiche.sqlite") as database:
+        database.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
+        database.execute("INSERT INTO sample(value) VALUES ('ready')")
+    server_key = Ed25519PrivateKey.from_private_bytes(bytes([51]) * 32)
+    participant_key = Ed25519PrivateKey.from_private_bytes(bytes([52]) * 32)
+    attest_root = api / "_attest"
+    attest_root.mkdir(mode=0o700)
+    attest_root.chmod(0o700)
+    operator_key = attest_root / "operator_key.pem"
+    operator_key.write_bytes(
+        server_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    operator_key.chmod(0o600)
+    room_root = api / "_agent_room"
+    room_root.mkdir(mode=0o700)
+    room_root.chmod(0o700)
+    source_database = room_root / "agent-room.sqlite"
+    store = agent_room.AgentRoomStore(
+        source_database,
+        server_private_key=server_key,
+    )
+    public_key = participant_key.public_key().public_bytes_raw().hex()
+    store.provision_participant("recovery-agent", public_key)
+    created = store.create_room("recovery-room", owner_id="recovery-agent")
+    event = agent_room.build_client_event(
+        room_id="recovery-room",
+        actor_id="recovery-agent",
+        client_key_id=agent_room.ed25519_key_id(public_key),
+        kind="proposal",
+        expected_sequence=0,
+        expected_head_hash=str(created["genesis_hash"]),
+        nonce="recovery-fixture-000001",
+        client_created_at=datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        payload={"purpose": "portable-recovery-proof"},
+    )
+    store.append_event(
+        event,
+        client_signature_hex=participant_key.sign(
+            agent_room.client_signing_bytes(event)
+        ).hex(),
+    )
+    seal = attest_root / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+    agent_room.create_initialization_seal(
+        seal,
+        server_private_key=server_key,
+    )
+    destination = tmp_path / "snapshot-api"
+
+    audit = recovery._snapshot_api(api, destination)
+
+    restored_database = destination / "_agent_room" / "agent-room.sqlite"
+    assert audit["result"] == "verified"
+    assert audit["participant_count"] == 1
+    assert audit["room_count"] == 1
+    assert audit["event_count"] == 1
+    assert restored_database.stat().st_ino != source_database.stat().st_ino
+    assert stat.S_IMODE(restored_database.stat().st_mode) == 0o600
+    assert (
+        destination / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+    ).is_file()
+    assert migration.audit_agent_room_state(destination) == audit
+
+
 def test_recovery_export_rejects_active_candidate_state_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -636,6 +759,7 @@ def test_recovery_restore_probe_propagates_production_runtime_identity(
         *,
         runtime_uid: int,
         runtime_gid: int,
+        agent_room_audit_out: dict[str, object] | None = None,
     ) -> tuple[str, dict[str, str]]:
         observed.update(
             {
@@ -645,6 +769,8 @@ def test_recovery_restore_probe_propagates_production_runtime_identity(
                 "runtime_gid": runtime_gid,
             }
         )
+        if agent_room_audit_out is not None:
+            agent_room_audit_out.update(migration.absent_agent_room_audit())
         return "verified_head", {"palimpsest-china": "d" * 64}
 
     monkeypatch.setattr(migration, "restore_filesystem_generation", restore)
@@ -655,7 +781,11 @@ def test_recovery_restore_probe_propagates_production_runtime_identity(
         runtime_gid=10_001,
     )
 
-    assert result == ("verified_head", {"palimpsest-china": "d" * 64})
+    assert result == (
+        "verified_head",
+        {"palimpsest-china": "d" * 64},
+        migration.absent_agent_room_audit(),
+    )
     assert observed == {
         "bundle": bundle,
         "staging_parent": tmp_path,

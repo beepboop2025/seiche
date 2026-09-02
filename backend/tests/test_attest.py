@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,43 @@ def _signature_record(private_key, public_key, stream, record):
         "algo": attest.ALGO,
         "signed_at": "2026-07-12T00:00:00+00:00",
     }
+
+
+@pytest.mark.parametrize("kind", ["custom", "traversal"])
+def test_production_attest_directory_rejects_noncanonical_override(
+    tmp_path, monkeypatch, kind
+):
+    data = tmp_path / "runtime-data"
+    data.mkdir()
+    canonical = data / "_attest"
+    override = (
+        tmp_path / "other-attest"
+        if kind == "custom"
+        else Path(f"{data}/nested/../_attest")
+    )
+    monkeypatch.setattr(attest, "DATA_DIR", data)
+    monkeypatch.setenv("SEICHE_ENV", "production")
+    monkeypatch.setenv("SEICHE_ATTEST_DIR", str(override))
+
+    with pytest.raises(ValueError, match="canonical runtime path"):
+        attest._attest_dir_path()
+
+    monkeypatch.setenv("SEICHE_ATTEST_DIR", str(canonical))
+    assert attest._attest_dir_path() == canonical
+
+
+def test_production_attest_directory_rejects_canonical_symlink(tmp_path, monkeypatch):
+    data = tmp_path / "runtime-data"
+    data.mkdir()
+    outside = tmp_path / "outside-attest"
+    outside.mkdir()
+    (data / "_attest").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(attest, "DATA_DIR", data)
+    monkeypatch.setenv("SEICHE_ENV", "production")
+    monkeypatch.delenv("SEICHE_ATTEST_DIR", raising=False)
+
+    with pytest.raises(ValueError, match="canonical runtime path"):
+        attest._attest_dir_path()
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +254,120 @@ def test_keypair_created_once_and_private(dirs):
     assert pub1 == pub2 and len(pub1) == 64
     mode = os.stat(os.path.join(att, "operator_key.pem")).st_mode & 0o777
     assert mode == 0o600
+
+
+def test_keypair_accepts_owner_read_only_legacy_mode(dirs):
+    _, att = dirs
+    _, expected = attest.load_or_create_keypair(att)
+    private_path = os.path.join(att, "operator_key.pem")
+    os.chmod(private_path, 0o400)
+
+    _, observed = attest.load_or_create_keypair(att)
+
+    assert observed == expected
+    assert os.stat(private_path).st_mode & 0o777 == 0o400
+
+
+def test_existing_keypair_loader_is_non_mutating(dirs):
+    _, att = dirs
+    _, expected = attest.load_or_create_keypair(att)
+    public_path = Path(att) / "operator_key.pub"
+    public_before = public_path.stat()
+
+    _, observed = attest.load_existing_keypair(att)
+
+    public_after = public_path.stat()
+    assert observed == expected
+    assert (
+        public_after.st_ino,
+        public_after.st_mtime_ns,
+        public_after.st_ctime_ns,
+    ) == (
+        public_before.st_ino,
+        public_before.st_mtime_ns,
+        public_before.st_ctime_ns,
+    )
+
+
+def test_existing_keypair_loader_does_not_create_missing_state(dirs):
+    _, att = dirs
+    attest_root = Path(att)
+
+    with pytest.raises((FileNotFoundError, ValueError)):
+        attest.load_existing_keypair(att)
+
+    assert not attest_root.exists()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        pytest.param(0o640, id="group-readable"),
+        pytest.param(0o620, id="group-writable"),
+        pytest.param(0o604, id="world-readable"),
+        pytest.param(0o602, id="world-writable"),
+        pytest.param(0o700, id="owner-executable"),
+    ],
+)
+def test_keypair_rejects_unsafe_existing_private_key_mode(dirs, mode):
+    _, att = dirs
+    attest.load_or_create_keypair(att)
+    private_path = os.path.join(att, "operator_key.pem")
+    os.chmod(private_path, mode)
+
+    with pytest.raises(ValueError, match="owner-only regular file"):
+        attest.load_or_create_keypair(att)
+
+
+@pytest.mark.parametrize("mutation", ["symlink", "hardlink", "directory"])
+def test_keypair_rejects_unsafe_existing_private_key_object(dirs, tmp_path, mutation):
+    _, att = dirs
+    attest.load_or_create_keypair(att)
+    private_path = os.path.join(att, "operator_key.pem")
+    if mutation == "symlink":
+        outside = tmp_path / "outside-private-key.pem"
+        outside.write_bytes(Path(private_path).read_bytes())
+        os.chmod(outside, 0o600)
+        os.unlink(private_path)
+        os.symlink(outside, private_path)
+    elif mutation == "hardlink":
+        os.link(private_path, tmp_path / "operator-key-alias.pem")
+    else:
+        os.unlink(private_path)
+        os.mkdir(private_path, mode=0o700)
+
+    with pytest.raises(ValueError, match="private key"):
+        attest.load_or_create_keypair(att)
+
+
+def test_keypair_rejects_wrong_private_key_owner(dirs, monkeypatch):
+    _, att = dirs
+    attest.load_or_create_keypair(att)
+    monkeypatch.setattr(
+        attest,
+        "_expected_private_key_uid",
+        lambda: os.geteuid() + 1,
+    )
+
+    with pytest.raises(ValueError, match="owner-only regular file"):
+        attest.load_or_create_keypair(att)
+
+
+def test_keypair_creation_replaces_public_symlink_without_touching_target(
+    dirs, tmp_path
+):
+    _, att = dirs
+    os.makedirs(att, exist_ok=True)
+    outside = tmp_path / "outside-public-key"
+    outside.write_text("do not overwrite\n")
+    os.symlink(outside, os.path.join(att, "operator_key.pub"))
+
+    _, public_key = attest.load_or_create_keypair(att)
+
+    assert outside.read_text() == "do not overwrite\n"
+    public_path = Path(att) / "operator_key.pub"
+    assert not public_path.is_symlink()
+    assert public_path.read_text() == public_key + "\n"
 
 
 # ---------------------------------------------------------------------------

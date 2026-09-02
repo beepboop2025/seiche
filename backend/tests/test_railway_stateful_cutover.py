@@ -20,7 +20,6 @@ from seiche import stateful_cutover as cutover
 from seiche import stateful_entrypoint
 from seiche import stateful_migration as migration
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CUTOVER_WORKFLOW = ROOT / ".github" / "workflows" / "railway-stateful-cutover.yml"
 CUTOVER_FENCE = ROOT / "ops" / "deploy" / "seiche-railway-cutover-fence.sh"
@@ -138,6 +137,20 @@ def _empty_palimpsest_state(generation: Path) -> None:
     (state / "receipts").mkdir(mode=0o700)
 
 
+def _verified_agent_room_audit() -> dict[str, object]:
+    return {
+        "schema": migration.AGENT_ROOM_RESTORE_AUDIT_SCHEMA,
+        "result": "verified",
+        "server_key_id": "7" * 64,
+        "participant_count": 1,
+        "room_count": 1,
+        "event_count": 1,
+        "state_sha256": "8" * 64,
+        "non_executable": True,
+        "execution_authority": "none",
+    }
+
+
 def _candidate(
     tmp_path: Path,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
@@ -163,6 +176,7 @@ def _candidate(
             "palimpsest-china": "6" * 64,
         },
         nbs_audit_result="verified_head",
+        agent_room_audit=migration.absent_agent_room_audit(),
         started_at="2026-08-23T03:06:00Z",
         completed_at="2026-08-23T03:09:00Z",
     )
@@ -213,7 +227,15 @@ def test_cutover_rejects_shared_directory_symlinks_without_mutating_target(
     target_before = target.stat()
     link = platform / name
     link.symlink_to(target, target_is_directory=True)
-    monkeypatch.setattr(cutover, "load_source_shadow_receipt", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        cutover,
+        "load_source_shadow_receipt",
+        lambda *_a, **_k: {
+            "filesystem": {
+                "agent_room_audit": migration.absent_agent_room_audit(),
+            }
+        },
+    )
 
     with pytest.raises(cutover.CutoverContractError, match="directory is unsafe"):
         cutover.restore_candidate(
@@ -243,6 +265,161 @@ def test_cutover_rejects_shared_directory_symlinks_without_mutating_target(
     )
     assert link.is_symlink()
     assert link.readlink() == target
+
+
+def test_cutover_rejects_agent_room_state_different_from_shadow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fence = _fence()
+    request = _request(fence)
+    platform = tmp_path / "platform"
+    source_audit = migration.absent_agent_room_audit()
+    restored_audit = _verified_agent_room_audit()
+    monkeypatch.setattr(
+        cutover,
+        "load_source_shadow_receipt",
+        lambda *_args, **_kwargs: {"filesystem": {"agent_room_audit": source_audit}},
+    )
+
+    def restore(
+        _bundle_value: migration.BackupBundle,
+        _staging: Path,
+        *,
+        runtime_uid: int,
+        runtime_gid: int,
+        agent_room_audit_out: dict[str, object] | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        assert runtime_uid == os.geteuid()
+        assert runtime_gid == os.getegid()
+        assert agent_room_audit_out is not None
+        agent_room_audit_out.update(restored_audit)
+        return "verified_head", {
+            name: "9" * 64 for name in ("market", "nbs", "api", "palimpsest-china")
+        }
+
+    monkeypatch.setattr(migration, "restore_filesystem_generation", restore)
+    monkeypatch.setattr(
+        migration,
+        "restore_postgres",
+        lambda *_args, **_kwargs: pytest.fail(
+            "PostgreSQL restore must not run after Agent Room mismatch"
+        ),
+    )
+
+    with pytest.raises(cutover.CutoverContractError, match="Agent Room state differs"):
+        cutover.restore_candidate(
+            request,
+            fence,
+            _bundle(tmp_path, request),
+            platform_root=platform,
+            base_dsn="postgresql://unused",
+            railway=_railway(),
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("counts", "error"),
+    (((12, 22, 32, 42), None), ((10, 22, 32, 42), "counts regressed")),
+)
+def test_activated_candidate_resume_uses_semantic_generation_and_count_floors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    counts: tuple[int, int, int, int],
+    error: str | None,
+) -> None:
+    fence, request, receipt = _candidate(tmp_path)
+    platform = tmp_path / "platform"
+    candidate_receipts = platform / "cutover-receipts"
+    candidate_receipts.mkdir(parents=True)
+    receipt_path = candidate_receipts / f"{request['request_id']}.candidate.json"
+    receipt_path.write_bytes(migration.canonical_document(receipt))
+    generation = platform / "generations" / str(receipt["filesystem"]["generation"])
+    generation.mkdir(parents=True)
+    semantic_calls: list[Path] = []
+    monkeypatch.setattr(
+        cutover,
+        "load_source_shadow_receipt",
+        lambda *_args, **_kwargs: {
+            "filesystem": {
+                "agent_room_audit": migration.absent_agent_room_audit(),
+            }
+        },
+    )
+    monkeypatch.setattr(
+        migration,
+        "validate_active_generation",
+        lambda path, *_args, **_kwargs: semantic_calls.append(path) or {},
+    )
+    monkeypatch.setattr(
+        migration,
+        "validate_receipted_generation",
+        lambda *_args, **_kwargs: pytest.fail(
+            "activated restart must not compare mutable bytes to candidate receipt"
+        ),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_target_dsn",
+        lambda _base, _name: "postgresql://generation-only",
+    )
+    monkeypatch.setattr(migration, "inspect_postgres_counts", lambda _dsn: counts)
+
+    def operation():
+        return cutover.restore_candidate(
+            request,
+            fence,
+            _bundle(tmp_path, request),
+            platform_root=platform,
+            base_dsn="postgresql://control/seiche",
+            railway=_railway(),
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+            active_resume=True,
+        )
+    if error is not None:
+        with pytest.raises(cutover.CutoverContractError, match=error):
+            operation()
+    else:
+        restored = operation()
+        assert restored.receipt == receipt
+        assert restored.generation_path == generation
+    assert semantic_calls == [generation]
+
+
+def test_activated_candidate_resume_requires_immutable_candidate_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fence, request, _receipt = _candidate(tmp_path)
+    platform = tmp_path / "platform"
+    monkeypatch.setattr(
+        cutover,
+        "load_source_shadow_receipt",
+        lambda *_args, **_kwargs: {
+            "filesystem": {
+                "agent_room_audit": migration.absent_agent_room_audit(),
+            }
+        },
+    )
+
+    with pytest.raises(
+        cutover.CutoverContractError,
+        match="activation exists without its immutable candidate receipt",
+    ):
+        cutover.restore_candidate(
+            request,
+            fence,
+            _bundle(tmp_path, request),
+            platform_root=platform,
+            base_dsn="postgresql://control/seiche",
+            railway=_railway(),
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+            active_resume=True,
+        )
 
 
 def test_fence_requires_every_writer_inactive_disabled_and_masked() -> None:
@@ -309,7 +486,7 @@ def test_candidate_receipt_has_no_writer_and_cannot_publish(tmp_path: Path) -> N
         fence=fence,
         railway=_railway(),
     )
-    assert validated["schema"] == "seiche.railway-cutover-candidate-receipt.v3"
+    assert validated["schema"] == "seiche.railway-cutover-candidate-receipt.v4"
     assert validated["palimpsest_china_state"] == {
         "audit_schema": migration.PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA,
         "tree_sha256": "5" * 64,
@@ -335,7 +512,7 @@ def test_candidate_receipt_has_no_writer_and_cannot_publish(tmp_path: Path) -> N
         ("pending_candidate_activation_id", "0" * 64),
     ),
 )
-def test_candidate_receipt_v3_binds_exact_active_palimpsest_state(
+def test_candidate_receipt_v4_binds_exact_active_palimpsest_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     field: str,
@@ -387,9 +564,9 @@ def test_candidate_receipt_v3_binds_exact_active_palimpsest_state(
         )
 
 
-def test_candidate_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
+def test_candidate_receipt_rejects_v3_downgrade(tmp_path: Path) -> None:
     fence, request, receipt = _candidate(tmp_path)
-    receipt["schema"] = "seiche.railway-cutover-candidate-receipt.v2"
+    receipt["schema"] = "seiche.railway-cutover-candidate-receipt.v3"
 
     with pytest.raises(cutover.CutoverContractError, match="authority"):
         cutover.validate_candidate_receipt(
@@ -399,7 +576,7 @@ def test_candidate_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
         )
 
 
-def test_cutover_requires_exact_v3_shadow_state_before_restore(tmp_path: Path) -> None:
+def test_cutover_requires_exact_v4_shadow_state_before_restore(tmp_path: Path) -> None:
     _fence_value, request, candidate = _candidate(tmp_path)
     state = copy.deepcopy(candidate["palimpsest_china_state"])
     state["active_activation_id"] = "a" * 64
@@ -424,7 +601,9 @@ def test_cutover_requires_exact_v3_shadow_state_before_restore(tmp_path: Path) -
         },
         "bundle": {},
         "database": {},
-        "filesystem": {},
+        "filesystem": {
+            "agent_room_audit": migration.absent_agent_room_audit(),
+        },
         "palimpsest_china_state": state,
         "railway": {},
         "timing": {},
@@ -466,7 +645,7 @@ def test_cutover_requires_exact_v3_shadow_state_before_restore(tmp_path: Path) -
             )
 
     downgraded = copy.deepcopy(shadow)
-    downgraded["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+    downgraded["schema"] = "seiche.railway-stateful-shadow-receipt.v3"
     rebound = dict(request)
     rebound["source_shadow_receipt_sha256"] = hashlib.sha256(
         migration.canonical_document(downgraded)
@@ -539,6 +718,38 @@ def test_edge_token_is_constant_time_bound_and_candidate_posts_fail_closed(
     assert allowed.headers["X-Seiche-Railway-Authority"] == "candidate"
     assert allowed.headers["X-Seiche-Railway-Deployment"] == _railway()["deployment_id"]
     assert allowed.headers["X-Seiche-Release-SHA"] == "a" * 40
+
+
+def test_shadow_posts_fail_closed_before_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "shadow")
+    routed = False
+
+    async def call_next(_request: Request) -> Response:
+        nonlocal routed
+        routed = True
+        return Response(content=b"unexpected", status_code=200)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/agent-room/participants/self",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "https",
+            "server": ("shadow.invalid", 443),
+            "client": ("127.0.0.1", 1),
+        }
+    )
+
+    response = asyncio.run(api._railway_cutover_edge_guard(request, call_next))
+
+    assert response.status_code == 503
+    assert json.loads(response.body) == {"status": "shadow_read_only"}
+    assert response.headers["Retry-After"] == "10"
+    assert routed is False
 
 
 def test_activation_grant_binds_public_probe_edge_token_and_deployment(
@@ -625,6 +836,7 @@ def test_authority_publication_is_atomic_idempotent_and_immutable(
             "palimpsest-china": "6" * 64,
         },
         nbs_audit_result="verified_head",
+        agent_room_audit=migration.absent_agent_room_audit(),
         started_at="2026-08-23T03:06:00Z",
         completed_at="2026-08-23T03:09:00Z",
     )
@@ -751,6 +963,15 @@ def test_production_receipt_preserves_irreversible_authority_boundary(
     assert validated["activated_at"] == grant["activated_at"]
     assert validated["workers_started_at"] == "2026-08-23T03:15:00Z"
 
+    tampered = copy.deepcopy(activation)
+    tampered["candidate_receipt_sha256"] = "0" * 64
+    with pytest.raises(cutover.CutoverContractError, match="binding is invalid"):
+        cutover.validate_activation_receipt(
+            tampered,
+            candidate_receipt=candidate,
+            grant=grant,
+        )
+
 
 def test_candidate_environment_drops_control_database_and_tokens(
     tmp_path: Path,
@@ -793,6 +1014,10 @@ def test_candidate_environment_drops_control_database_and_tokens(
             "PORT": "8080",
             "DATABASE_URL": "postgresql://control-secret",
             "RAILWAY_TOKEN": "drop-me",
+            "SEICHE_RUNTIME_DATA_DIR": "/poison/runtime",
+            "SEICHE_AGENT_ROOM_DB_PATH": "/poison/rooms.sqlite",
+            "SEICHE_ATTEST_DIR": "/poison/attest",
+            "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID": "f" * 64,
         },
         restore,
         edge_token="edge-token-" + "x" * 32,
@@ -801,6 +1026,14 @@ def test_candidate_environment_drops_control_database_and_tokens(
     assert "RAILWAY_TOKEN" not in environment
     assert environment["SEICHE_DATABASE_URL"] == "postgresql://generation-only"
     assert environment["SEICHE_RAILWAY_STATEFUL_MODE"] == "cutover_candidate"
+    assert environment["SEICHE_RUNTIME_DATA_DIR"] == str(generation_path / "api")
+    assert environment["SEICHE_AGENT_ROOM_DB_PATH"] == str(
+        generation_path / "api" / "_agent_room" / "agent-room.sqlite"
+    )
+    assert environment["SEICHE_ATTEST_DIR"] == str(generation_path / "api" / "_attest")
+    assert environment["SEICHE_AGENT_ROOM_EXPECTED_KEY_ID"] == (
+        migration.AGENT_ROOM_UNPROVISIONED_KEY
+    )
     assert observed == {
         "state_root": generation_path / "palimpsest-china",
         "runtime_uid": 10_001,
@@ -808,10 +1041,114 @@ def test_candidate_environment_drops_control_database_and_tokens(
     }
 
 
+def test_activation_runtime_binds_exact_candidate_and_agent_room_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    platform = tmp_path / "platform"
+    monkeypatch.setattr(migration, "PLATFORM_ROOT", platform)
+    _fence_value, _request_value, candidate = _candidate(tmp_path)
+    generation = str(candidate["filesystem"]["generation"])
+    generation_path = platform / "generations" / generation
+    generation_path.mkdir(parents=True)
+    candidate_path = (
+        platform
+        / "cutover-receipts"
+        / f"{candidate['request']['id']}.candidate.json"
+    )
+    candidate_path.parent.mkdir()
+    candidate_path.write_bytes(migration.canonical_document(candidate))
+    monkeypatch.setattr(
+        migration,
+        "palimpsest_runtime_environment",
+        lambda _root, **_kwargs: {},
+    )
+    candidate_environment = cutover.candidate_environment(
+        {"PORT": "8080"},
+        cutover.CutoverRestore(
+            receipt=candidate,
+            database_dsn="postgresql://generation-only",
+            receipt_path=candidate_path,
+            generation_path=generation_path,
+        ),
+        edge_token="edge-token-" + "x" * 32,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    assert cutover.validate_candidate_runtime(candidate_environment) == candidate
+    validated_paths: list[Path] = []
+    monkeypatch.setattr(
+        migration,
+        "validate_receipted_generation",
+        lambda path, *_args, **_kwargs: validated_paths.append(path),
+    )
+    monkeypatch.setattr(
+        migration,
+        "inspect_postgres_counts",
+        lambda _dsn: tuple(candidate["database"]["critical_table_counts"]),
+    )
+    cutover._validate_candidate_activation_boundary(
+        candidate_environment,
+        candidate,
+    )
+    assert validated_paths == [generation_path]
+
+    monkeypatch.setattr(
+        migration,
+        "inspect_postgres_counts",
+        lambda _dsn: (0, 0, 0, 0),
+    )
+    with pytest.raises(cutover.CutoverContractError, match="PostgreSQL counts changed"):
+        cutover._validate_candidate_activation_boundary(
+            candidate_environment,
+            candidate,
+        )
+
+    grant = {
+        "public_base_url": "https://api.seiche.info",
+        "public_probe_sha256": "1" * 64,
+        "activated_at": "2026-08-23T03:14:00Z",
+    }
+    activation = cutover.render_activation_receipt(
+        candidate,
+        grant,
+        worker_commands=cutover.worker_commands(),
+        workers_started_at="2026-08-23T03:15:00Z",
+    )
+    activation_path = (
+        platform
+        / "cutover-receipts"
+        / f"{candidate['request']['id']}.activation.json"
+    )
+    activation_path.write_bytes(migration.canonical_document(activation))
+    production = cutover.production_environment(
+        candidate_environment,
+        activation,
+        receipt_path=activation_path,
+    )
+    assert cutover.validate_activation_runtime(production) == activation
+
+    replaced_key = dict(production)
+    replaced_key["SEICHE_AGENT_ROOM_EXPECTED_KEY_ID"] = "f" * 64
+    with pytest.raises(cutover.CutoverContractError, match="key binding"):
+        cutover.validate_activation_runtime(replaced_key)
+
+    rebound = copy.deepcopy(activation)
+    rebound["candidate_receipt_sha256"] = "e" * 64
+    activation_path.write_bytes(migration.canonical_document(rebound))
+    rebound_environment = dict(production)
+    rebound_environment["SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256"] = hashlib.sha256(
+        migration.canonical_document(rebound)
+    ).hexdigest()
+    with pytest.raises(cutover.CutoverContractError, match="activation receipt binding"):
+        cutover.validate_activation_runtime(rebound_environment)
+
+
 def test_healthz_distinguishes_candidate_from_production(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "cutover_candidate")
+    monkeypatch.setattr(api.mcp_server, "agent_room_release_ready", lambda: True)
     monkeypatch.setattr(
         cutover,
         "validate_candidate_runtime",
@@ -1010,6 +1347,7 @@ def test_expired_cutover_restart_uses_durable_grant_state(
             "palimpsest-china": "6" * 64,
         },
         nbs_audit_result="verified_head",
+        agent_room_audit=migration.absent_agent_room_audit(),
         started_at="2026-08-23T03:06:00Z",
         completed_at="2026-08-23T03:09:00Z",
     )
@@ -1087,7 +1425,13 @@ def test_expired_cutover_restart_uses_durable_grant_state(
         "palimpsest_runtime_environment",
         lambda _root, **_kwargs: {},
     )
-    monkeypatch.setattr(cutover, "restore_candidate", lambda *_args, **_kwargs: restore)
+    restore_modes: list[bool] = []
+
+    def restore_for_restart(*_args, **kwargs):
+        restore_modes.append(kwargs["active_resume"])
+        return restore
+
+    monkeypatch.setattr(cutover, "restore_candidate", restore_for_restart)
     monkeypatch.setattr(cutover, "_prepare_authority_directory", lambda _path: None)
     calls: list[str] = []
     monkeypatch.setattr(
@@ -1109,3 +1453,4 @@ def test_expired_cutover_restart_uses_durable_grant_state(
     )
     assert result == (71 if with_activation else 72)
     assert calls == (["production"] if with_activation else ["activation"])
+    assert restore_modes == [with_activation]

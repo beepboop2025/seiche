@@ -21,7 +21,6 @@ import selectors
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
@@ -957,8 +956,7 @@ esac
 """,
     )
     fake_stat = tmp_path / "stat"
-    fake_stat.write_text(
-        """#!/usr/bin/env python3
+    fake_stat.write_text("""#!/usr/bin/env python3
 import os
 import stat
 import sys
@@ -974,8 +972,7 @@ rendered = (
     .replace("%Y", str(int(value.st_mtime)))
 )
 print(rendered)
-"""
-    )
+""")
     fake_stat.chmod(0o755)
     env = os.environ | {
         "FAKE_SYSTEMCTL_STATE": str(fake_state),
@@ -1012,7 +1009,7 @@ def _caddy_env(
 
     caddy = _executable(
         tmp_path / "caddy",
-        f'''config=""
+        f"""config=""
 want_config=0
 for arg in "$@"; do
     if [ "$want_config" = 1 ]; then config="$arg"; want_config=0; continue; fi
@@ -1024,22 +1021,22 @@ echo "caddy $1 config=$config content=$content" >> "{calls}"
 if [ "$1" = validate ]; then exit 0; fi
 if [ "${{REJECT_NEW_RELOAD:-0}}" = 1 ] && [ "$content" = NEW ]; then exit 1; fi
 exit 0
-''',
+""",
     )
     systemctl = _executable(
         tmp_path / "systemctl",
-        f'''echo "systemctl $* $(tr -d '\\n' < "${{SEICHE_CADDY_DEST}}")" >> "{calls}"
+        f"""echo "systemctl $* $(tr -d '\\n' < "${{SEICHE_CADDY_DEST}}")" >> "{calls}"
 if [ "${{REJECT_NEW_RELOAD:-0}}" = 1 ] && grep -q NEW "${{SEICHE_CADDY_DEST}}"; then exit 1; fi
 exit 0
-''',
+""",
     )
     _executable(
         tmp_path / "mv",
-        f'''printf 'mv' >> "{calls}"
+        f"""printf 'mv' >> "{calls}"
 for arg in "$@"; do printf ' <%s>' "$arg" >> "{calls}"; done
 printf '\\n' >> "{calls}"
 exec /bin/mv "$@"
-''',
+""",
     )
     env = {
         **os.environ,
@@ -1094,11 +1091,25 @@ def test_caddy_railway_origin_is_secret_injected_and_route_bounded():
             importer_handlers.append(current_handler)
     assert importer_handlers == [
         "@origin_api_catalog",
+        "@agent_room",
         "@event_analysis",
         "@public",
         "@login",
         "@mcp",
     ]
+    agent_room_route = caddy[
+        caddy.index("@agent_room {") : caddy.index(
+            "# OpenAI plugin domain verification"
+        )
+    ]
+    assert "method GET POST" in agent_room_route
+    assert "path /api/agent-room/*" in agent_room_route
+    assert "max_size 64KiB" in agent_room_route
+    assert "import seiche_stateful_upstream" in agent_room_route
+    assert "/api/agent-room/" not in caddy[caddy.index("@public {") :]
+    mcp_route = caddy[caddy.index("handle @mcp {") : caddy.index("# Glama")]
+    assert "max_size 1MiB" in mcp_route
+    assert "import seiche_stateful_upstream" in mcp_route
     private_delivery = caddy[
         caddy.index("@world_model_delivery {") : caddy.index(
             "@world_model_delivery_non_get"
@@ -1253,22 +1264,34 @@ def _smoke_env(tmp_path: Path, scenario: str = "success") -> tuple[dict, Path]:
     calls = tmp_path / "curl.log"
     _executable(
         tmp_path / "curl",
-        f'''out=""
+        f"""out=""
 url=""
+request_method="GET"
+data=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --output) out="$2"; shift 2 ;;
+        --request) request_method="$2"; shift 2 ;;
+        --data-binary) data="$2"; shift 2 ;;
         http://*|https://*) url="$1"; shift ;;
         *) shift ;;
     esac
 done
-echo "$url $*" >> "{calls}"
+echo "$request_method $url" >> "{calls}"
 status=200
 case "$url" in
     */api/health)
         type=application/json; body='{{"generated_at":"2026-08-10T00:00:00Z"}}'
         ;;
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
+    */api/trade-safety/risk-context)
+        type=application/json
+        body='{{"schema":"seiche.risk-context.v1","status":"available","real_money_eligible":false,"can_authorize_order":false,"request_time_network":false,"attestation_state":"not_evaluated"}}'
+        ;;
+    */api/agent-room/rooms/nonexistent/events)
+        status=401; type=application/json
+        body='{{"detail":"Agent Room requires a valid bearer token"}}'
+        ;;
     */api/money-markets)
         type=application/json
         body='{{"ok":true,"schema":"seiche.money-market-desk.v1","sections":[{{"id":"policy_corridor"}},{{"id":"secured_distributions"}},{{"id":"repo_segments"}},{{"id":"unsecured_funding"}},{{"id":"bills_cash_curve"}},{{"id":"liquidity_buffers"}},{{"id":"mmf_plumbing"}}]}}'
@@ -1312,7 +1335,22 @@ case "$url" in
         type=application/json
         body='{{"service":"liquilens-market-corpus","corpora":{{}}}}'
         ;;
-    */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
+    */mcp)
+        if [ "$request_method" = POST ]; then
+            type=application/json
+            case "$data" in
+                *tools/list*)
+                    body='{{"jsonrpc":"2.0","result":{{"tools":[{{"name":"trade_safety_risk_context"}}]}}}}'
+                    ;;
+                *tools/call*)
+                    body='{{"jsonrpc":"2.0","result":{{"structuredContent":{{"schema":"seiche.risk-context.v1","status":"available","real_money_eligible":false,"can_authorize_order":false,"request_time_network":false,"attestation_state":"not_evaluated"}}}}}}'
+                    ;;
+                *) body='{{"jsonrpc":"2.0","error":{{"code":-32600}}}}' ;;
+            esac
+        else
+            type='text/event-stream; charset=utf-8'; body=': stateless transport'
+        fi
+        ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
     */riptide/openapi.json)
         type=application/json; body='{{"title": "Riptide Public API"}}'
@@ -1351,7 +1389,7 @@ if [ "${{SMOKE_SCENARIO:-success}}" = atlas_read_fault ] && [[ "$url" = */api/v2
 fi
 printf '%s' "$body" > "$out"
 printf '%s|%s' "$status" "$type"
-''',
+""",
     )
     env = {
         **os.environ,
@@ -1366,6 +1404,21 @@ printf '%s|%s' "$status" "$type"
 def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
     definitions = EXTERNAL_ROUTES.read_text()
     assert 'GET|/api/health|200|application/json|"generated_at"' in definitions
+    for identity in (
+        '"schema":"seiche.risk-context.v1"',
+        '"status":"available"',
+        '"real_money_eligible":false',
+        '"can_authorize_order":false',
+        '"request_time_network":false',
+        '"attestation_state":"not_evaluated"',
+    ):
+        assert (
+            "GET|/api/trade-safety/risk-context|200|application/json|" f"{identity}"
+        ) in definitions
+    assert (
+        "GET|/api/agent-room/rooms/nonexistent/events|401|application/json|"
+        "Agent Room requires a valid bearer token"
+    ) in definitions
     assert (
         "GET|/api/money-markets|200|application/json|"
         '"schema":"seiche.money-market-desk.v1"'
@@ -1436,8 +1489,7 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
         '"service":"liquilens-market-corpus"'
     ) in definitions
     assert (
-        'GET|/api/v2/corpus/v1/catalog|200|application/json|"corpora":{'
-        in definitions
+        'GET|/api/v2/corpus/v1/catalog|200|application/json|"corpora":{' in definitions
     )
     assert ('GET|/riptide/|200|application/json|"name": "riptide"') in definitions
     assert (
@@ -1472,6 +1524,9 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert "https://edge.invalid/.well-known/api-catalog" in calls.read_text()
     assert "https://edge.invalid/api/v2/corpus/healthz" in calls.read_text()
     assert "https://edge.invalid/api/v2/corpus/v1/catalog" in calls.read_text()
+    assert "POST https://edge.invalid/mcp" in calls.read_text()
+    assert "tools/list -> trade_safety_risk_context" in result.stdout
+    assert "tools/call -> fail-closed Trade Safety context" in result.stdout
     for route in palimpsest_host_routes:
         assert f"https://edge.invalid{route}" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()
@@ -1536,9 +1591,9 @@ def test_forced_command_bootstrap_converges_in_one_workflow_run(tmp_path):
     calls = tmp_path / "ssh.log"
     ssh = _executable(
         tmp_path / "ssh",
-        f'''for arg in "$@"; do printf '<%s>' "$arg" >> "{calls}"; done
+        f"""for arg in "$@"; do printf '<%s>' "$arg" >> "{calls}"; done
 printf '\\n' >> "{calls}"
-''',
+""",
     )
     key = tmp_path / "key"
     known = tmp_path / "known_hosts"
@@ -2963,6 +3018,9 @@ def test_recovery_seal_proves_health_before_activating_readiness_timer() -> None
         worker_start < proof < freshness < readiness < timer < final_identity < receipt
     )
     assert "candidate_health_once" in recovery[freshness:timer]
+    assert "seiche.market-backup-restore-check.v6" in recovery
+    assert "def valid_agent_room_restore" in recovery
+    assert "or not valid_agent_room_restore(fields)" in recovery
 
 
 def test_recovery_seal_holds_the_outer_activation_lock_through_receipt_write() -> None:
@@ -3087,7 +3145,9 @@ def test_palimpsest_activation_releases_inner_locks_before_durability_units() ->
     )
     assert backup < restore < offsite < final_audit < seal
     assert "seiche.palimpsest-china-durability-request.v1" in launcher
-    assert "seiche.market-backup-restore-check.v5" in launcher
+    assert "seiche.market-backup-restore-check.v6" in launcher
+    assert "seiche.agent-room.restore-audit.v1" in launcher
+    assert "agent_room_non_executable" in launcher
     assert "seiche.market-offsite-backup-status.v4" in launcher
     assert "live activation remains provisional" in launcher
     durable_resume = launcher[
@@ -3299,6 +3359,20 @@ def test_market_platform_units_are_independent_and_postgres_backed():
     assert "must be inactive before the forward-chain migration" in installer
     assert "duplicate forward children exist outside" in installer
     assert "SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw" in installer
+    assert "SEICHE_RUNTIME_DATA_DIR=$API_DATA_DIR" in installer
+    assert (
+        "SEICHE_AGENT_ROOM_DB_PATH=$API_DATA_DIR/_agent_room/agent-room.sqlite"
+        in installer
+    )
+    assert "SEICHE_ATTEST_DIR=$API_DATA_DIR/_attest" in installer
+    assert (
+        "install -d -o seiche -g seiche -m 0700 \\\n"
+        '    "$API_DATA_DIR/_agent_room" "$API_DATA_DIR/_attest"' in installer
+    )
+    assert (
+        "ReadWritePaths=$STATE_DIR $API_DATA_DIR/_agent_room $API_DATA_DIR/_attest"
+        in installer
+    )
     assert 'NBS_STATE_DIR="${SEICHE_NBS_STATE_DIR:-/var/lib/seiche-nbs}"' in installer
     assert "ensure_nbs_evidence_tree" in installer
     assert 'grp.getgrnam("seiche").gr_gid' in installer
@@ -4017,6 +4091,37 @@ def test_deploy_wrapper_converges_pull_unit_only_after_candidate_health():
     assert "restore_market_services" in promotion_failure
     assert "healthy running candidate kept in place" in promotion_failure
     assert "accepted release did not recover strict health" in already
+
+
+def test_deploy_wrapper_proves_trade_safety_through_the_public_edge():
+    wrapper = DEPLOY_WRAPPER.read_text(encoding="utf-8")
+    function = wrapper[
+        wrapper.index("trade_safety_edge_health()") : wrapper.index(
+            "deploy_market_platform()"
+        )
+    ]
+
+    assert "https://api.seiche.info/api/trade-safety/risk-context" in function
+    assert "--max-redirs 0" in function
+    assert 'value["schema"] == "seiche.risk-context.v1"' in function
+    assert 'value["status"] == "available"' in function
+    assert 'value["real_money_eligible"] is False' in function
+    assert 'value["can_authorize_order"] is False' in function
+    assert 'value["request_time_network"] is False' in function
+    assert 'value["attestation_state"] == "not_evaluated"' in function
+
+    accepted_start = wrapper.index(
+        'if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]'
+    )
+    normal_start = wrapper.index('HEALTHY=""', accepted_start)
+    accepted = wrapper[accepted_start:normal_start]
+    normal = wrapper[normal_start:]
+    for branch in (accepted, normal):
+        assert (
+            branch.index("deploy_caddy")
+            < branch.index("trade_safety_edge_health")
+            < branch.index("sync_verdict")
+        )
 
 
 @pytest.mark.parametrize(
@@ -5637,7 +5742,7 @@ def test_release_poller_installer_restores_files_and_timer_on_reload_failure(
     reload_count = tmp_path / "reload.count"
     systemctl = _executable(
         tmp_path / "systemctl",
-        f'''
+        f"""
 printf '%s\n' "$*" >>"{calls}"
 case "$1" in
   is-enabled|is-active) exit 0 ;;
@@ -5651,7 +5756,7 @@ case "$1" in
   enable|start|disable|stop) exit 0 ;;
   *) exit 64 ;;
 esac
-''',
+""",
     )
     always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
     installed_signer = tmp_path / "seiche-release.allowed-signers"
@@ -5839,13 +5944,13 @@ def test_release_poller_installer_bootstraps_private_control_wrapper(
     calls = tmp_path / "systemctl.calls"
     systemctl = _executable(
         tmp_path / "systemctl",
-        f'''printf '%s\n' "$*" >>"{calls}"
+        f"""printf '%s\n' "$*" >>"{calls}"
 case "$1" in
   is-enabled|is-active) exit 1 ;;
   daemon-reload|enable|start|disable|stop) exit 0 ;;
   *) exit 64 ;;
 esac
-''',
+""",
     )
     always_ok = _executable(tmp_path / "always-ok", "exit 0\n")
     installed_signer = tmp_path / "seiche-release.allowed-signers"

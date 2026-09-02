@@ -380,7 +380,7 @@ _build_generation = 0  # completed build/lock epochs; restores do not advance it
 # the board has carried since v0.2 (deep-water, forecast-layer, physics-layer,
 # scenarios, microseism, tier1, estuary) and rides along on the citation footers, where
 # it is worth something to a reader.
-VERSION = "0.11.1"
+VERSION = "0.12.0"
 RELEASE = "estuary"
 VERSION_LABEL = f"{VERSION} {RELEASE}"
 
@@ -2575,7 +2575,16 @@ def _servable_snapshot(payload: object) -> bool:
     )
 
 
-def restore_cached_snapshot() -> str | None:
+def _stateful_preactivation_read_only() -> bool:
+    """Return whether this API process has verification but no writer authority."""
+
+    return os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip() in {
+        "shadow",
+        "cutover_candidate",
+    }
+
+
+def restore_cached_snapshot(*, read_only: bool = False) -> str | None:
     """Hydrate the in-process cache without fetching or running an engine.
 
     The repository's controller-accepted handoff is preferred.  The legacy
@@ -2584,8 +2593,15 @@ def restore_cached_snapshot() -> str | None:
     Restored payloads are marked stale so the normal background owner rebuilds
     immediately while readers continue to receive the dated prior reading.
     Returns the source name for startup logging, or ``None`` when no safe
-    snapshot exists.
+    snapshot exists. ``read_only`` disables the legacy SQLite fallback so a
+    shadow/candidate readiness check cannot run schema convergence against its
+    receipt-hashed API tree.
     """
+    if not isinstance(read_only, bool):
+        raise TypeError("read_only must be a boolean")
+    # Do not let an indirect cache-hydration caller accidentally reopen the
+    # legacy SQLite migration path inside a point-in-time shadow/candidate.
+    read_only = read_only or _stateful_preactivation_read_only()
     if _safe_memory_snapshot() is not None:
         return "memory"
 
@@ -2627,10 +2643,34 @@ def restore_cached_snapshot() -> str | None:
 
         active = repository.load_active_release_handoff()
         if active is not None:
-            durable, _, _, _ = _validated_handoff(active)
+            active_payload, active_receipt, active_sha, active_handoff_id = (
+                _validated_handoff(active)
+            )
+            if read_only:
+                # A shadow/candidate cannot rebuild or reseal its board without
+                # invalidating the point-in-time filesystem receipt.  The
+                # controller-activated handoff restored from the same snapshot
+                # is already content-bound; admit it only when its producer is
+                # this exact release, and retain its receipt in memory so the
+                # strict health gate can prove a complete board without a write.
+                expected_sha = capture_process_release_sha()
+                if active_sha != expected_sha:
+                    raise ValueError(
+                        "active release handoff belongs to another release"
+                    )
+                _cache.update(
+                    at=time.time(),
+                    payload=active_payload,
+                    source="prebuilt",
+                    release_receipt=active_receipt,
+                    release_handoff_id=active_handoff_id,
+                    producer_sha=active_sha,
+                )
+                return "prebuilt"
+            durable = active_payload
     except Exception:  # noqa: BLE001 - a broken handoff must fall through
         log.exception("could not load active repository snapshot handoff")
-    if durable is None:
+    if durable is None and not read_only:
         try:
             durable = store.load_blob(LAST_GOOD_SNAPSHOT_KEY)
         except Exception:  # noqa: BLE001 - a broken handoff must fall through
@@ -3047,6 +3087,16 @@ async def snapshot(force: bool = False) -> dict:
     """
     global _refreshing
     cached = _safe_memory_snapshot()
+    if _stateful_preactivation_read_only():
+        # The restored handoff is the complete candidate board.  Staleness is
+        # still visible in its timestamps, but neither TTL expiry nor an
+        # authenticated `force` parameter may transfer writer authority to a
+        # pre-activation API process.
+        if cached is None:
+            raise RuntimeError(
+                "stateful pre-activation snapshot is not hydrated"
+            )
+        return cached
     if not force and cached is not None:
         if time.time() - _cache["at"] < CACHE_MIN * 60:
             return cached

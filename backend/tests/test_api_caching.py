@@ -213,6 +213,23 @@ def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
     assert "/api/internal/v1/release-health" not in api.app.openapi()["paths"]
 
 
+def test_production_release_health_requires_cached_agent_room_readiness(
+    client, monkeypatch
+):
+    monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setattr(mcp_server, "agent_room_release_ready", lambda: False)
+
+    result = client.get("/api/internal/v1/release-health")
+
+    assert result.status_code == 503
+    assert result.json() == {
+        "status": "agent_room_not_ready",
+        "version": assemble.VERSION_LABEL,
+    }
+    assert result.headers["cache-control"] == "no-store"
+    assert set(result.json()) == {"status", "version"}
+
+
 def test_health_openapi_lists_every_runtime_unavailable_status():
     schema = api._public_openapi_document()["paths"]["/api/health"]["get"]
     statuses = schema["responses"]["503"]["content"]["application/json"][
@@ -220,6 +237,7 @@ def test_health_openapi_lists_every_runtime_unavailable_status():
     ]["properties"]["status"]["enum"]
 
     assert set(statuses) == {
+        "agent_room_not_ready",
         "warming_or_unavailable",
         "rebuilding_from_last_known_good",
         "rebuilt_without_market_evidence",
@@ -293,6 +311,77 @@ def test_restart_restores_durable_snapshot_as_stale_without_building(
     assert assemble._cache["at"] == 0.0
     assert assemble.cached_snapshot_was_rebuilt() is False
     assert assemble.cached_snapshot_release_receipt() is None
+
+
+def test_read_only_restore_never_opens_legacy_sqlite(
+    clean_cache,
+    monkeypatch,
+    fake_snap,
+    tmp_path,
+):
+    static = tmp_path / "overview.json"
+    static.write_text(json.dumps(fake_snap))
+    monkeypatch.setattr(repository, "get_repository", _NoActiveRepository)
+    monkeypatch.setattr(
+        assemble.store,
+        "load_blob",
+        lambda _key: pytest.fail("read-only hydration must not open legacy SQLite"),
+    )
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", static)
+
+    assert assemble.restore_cached_snapshot(read_only=True) == "static"
+    assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
+
+
+def test_read_only_restore_admits_exact_active_handoff_without_rebuild(
+    clean_cache,
+    monkeypatch,
+    fake_snap,
+    tmp_path,
+):
+    release_sha = "a" * 40
+    receipt = _release_receipt(fake_snap)
+    envelope = assemble._build_handoff(fake_snap, receipt, release_sha)
+
+    class ActiveRepository:
+        @staticmethod
+        def load_active_release_handoff():
+            return envelope
+
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "cutover_candidate")
+    monkeypatch.setattr(repository, "get_repository", ActiveRepository)
+    monkeypatch.setattr(assemble, "capture_process_release_sha", lambda: release_sha)
+    monkeypatch.setattr(
+        assemble.store,
+        "load_blob",
+        lambda _key: pytest.fail("read-only hydration must not open legacy SQLite"),
+    )
+    monkeypatch.setattr(assemble, "STATIC_SNAPSHOT_PATH", tmp_path / "missing.json")
+
+    assert assemble.restore_cached_snapshot() == "prebuilt"
+    assert assemble.cached_snapshot() is fake_snap
+    assert assemble.cached_snapshot_was_rebuilt() is True
+    assert assemble.cached_snapshot_release_receipt() == receipt
+    assert assemble.cached_snapshot_release_handoff() == {
+        "producer_sha": release_sha,
+        "activation_token": envelope["handoff_id"],
+    }
+
+
+def test_preactivation_snapshot_never_rebuilds_on_ttl_or_force(
+    clean_cache,
+    monkeypatch,
+    fake_snap,
+):
+    async def forbidden_build():
+        raise AssertionError("pre-activation reads must not rebuild")
+
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "shadow")
+    monkeypatch.setattr(assemble, "_build_snapshot", forbidden_build)
+    assemble._cache.update(payload=fake_snap, at=0.0, source="prebuilt")
+
+    assert asyncio.run(assemble.snapshot()) is fake_snap
+    assert asyncio.run(assemble.snapshot(force=True)) is fake_snap
 
 
 def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
@@ -768,6 +857,11 @@ def test_production_lifespan_restores_before_background_refresh(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setattr(
+        mcp_server,
+        "initialize_agent_room_readiness",
+        lambda: events.append("agent-room"),
+    )
     monkeypatch.setattr(assemble, "capture_process_release_sha", capture_identity)
     monkeypatch.setattr(assemble, "restore_cached_snapshot", restore)
     monkeypatch.setattr(api, "_keep_warm", refresh_forever)
@@ -778,9 +872,72 @@ def test_production_lifespan_restores_before_background_refresh(monkeypatch):
                 if "refresh" in events:
                     break
                 await asyncio.sleep(0)
-            assert events == ["identity", "restore", "refresh"]
+            assert events == ["agent-room", "identity", "restore", "refresh"]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["shadow", "cutover_candidate"])
+def test_preactivation_lifespan_never_starts_background_writer(monkeypatch, mode):
+    events = []
+
+    monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", mode)
+    monkeypatch.setattr(
+        mcp_server,
+        "initialize_agent_room_readiness",
+        lambda: events.append("agent-room-read-only"),
+    )
+    monkeypatch.setattr(
+        assemble,
+        "capture_process_release_sha",
+        lambda: events.append("identity") or "a" * 40,
+    )
+    def restore(*, read_only=False):
+        assert read_only is True
+        events.append("restore")
+        return "durable"
+
+    monkeypatch.setattr(assemble, "restore_cached_snapshot", restore)
+
+    async def forbidden_refresh():
+        events.append("unexpected-refresh")
+
+    monkeypatch.setattr(api, "_keep_warm", forbidden_refresh)
+
+    async def scenario():
+        async with api._lifespan(api.app):
+            await asyncio.sleep(0)
+            assert events == ["agent-room-read-only", "identity", "restore"]
+
+    asyncio.run(scenario())
+
+
+def test_production_lifespan_aborts_before_release_identity_when_room_audit_fails(
+    monkeypatch,
+):
+    events = []
+
+    def fail_audit():
+        events.append("agent-room-failed")
+        raise ValueError("private storage detail")
+
+    monkeypatch.setattr(api, "_PROD", True)
+    monkeypatch.setattr(mcp_server, "initialize_agent_room_readiness", fail_audit)
+    monkeypatch.setattr(
+        assemble,
+        "capture_process_release_sha",
+        lambda: events.append("identity"),
+    )
+    monkeypatch.setattr(api, "_keep_warm", lambda: events.append("refresh"))
+
+    async def scenario():
+        with pytest.raises(ValueError, match="private storage detail"):
+            async with api._lifespan(api.app):
+                pytest.fail("failed room audit must not start the application")
+
+    asyncio.run(scenario())
+    assert events == ["agent-room-failed"]
 
 
 def test_keep_warm_budgets_coalesced_snapshot_refresh_every_cycle(monkeypatch):

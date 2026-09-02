@@ -20,7 +20,8 @@ mcp_servers:
   #     Authorization: "Bearer YOUR_TOKEN"   # omit for the anonymous surface
 
   # (c) Hosted, zero install. Anonymous = public tools with a small daily
-  #     cap; a subscriber token unlocks the full surface at your tier.
+  #     cap; a subscriber token unlocks gated analysis and the private,
+  #     non-executable Agent Room preview at your tier.
   # seiche:
   #   url: "https://api.seiche.info/mcp"
   #   headers:

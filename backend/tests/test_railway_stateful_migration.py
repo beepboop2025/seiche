@@ -14,12 +14,16 @@ import tarfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Response
 
+from seiche import agent_room
 from seiche import api
+from seiche import attest
+from seiche import mcp_server
 from seiche import palimpsest_china_activation as activation
 from seiche import stateful_migration as migration
-
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "railway-stateful-shadow.yml"
@@ -80,6 +84,7 @@ def _bundle_fixture(
     tmp_path: Path,
     *,
     schema: str = migration.BACKUP_SCHEMA,
+    with_agent_room: bool = False,
 ) -> tuple[Path, Path, Path, dict[str, object]]:
     source_archive, source_bundle = _source_files(tmp_path)
     request = _base_request(source_archive, source_bundle)
@@ -104,14 +109,86 @@ def _bundle_fixture(
             ("seiche-nbs/public/revisions", None, 0o2750),
         ],
     )
-    _tar_directory(
-        root / "api-data.tgz",
-        [
-            ("api-data", None, 0o750),
-            ("api-data/seiche.sqlite", sqlite_body, 0o640),
-            ("api-data/fixture.json", b"{}\n", 0o640),
-        ],
-    )
+    api_entries: list[tuple[str, bytes | None, int]] = [
+        ("api-data", None, 0o750),
+        ("api-data/seiche.sqlite", sqlite_body, 0o640),
+        ("api-data/fixture.json", b"{}\n", 0o640),
+    ]
+    if with_agent_room:
+        room_fixture = tmp_path / "agent-room-fixture"
+        room_fixture.mkdir(mode=0o700)
+        room_fixture.chmod(0o700)
+        room_root = room_fixture / "_agent_room"
+        room_root.mkdir(mode=0o700)
+        room_root.chmod(0o700)
+        attest_root = room_fixture / "_attest"
+        attest_root.mkdir(mode=0o700)
+        attest_root.chmod(0o700)
+        server_key = Ed25519PrivateKey.from_private_bytes(bytes([41]) * 32)
+        participant_key = Ed25519PrivateKey.from_private_bytes(bytes([42]) * 32)
+        private_key_path = attest_root / "operator_key.pem"
+        private_key_path.write_bytes(
+            server_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        private_key_path.chmod(0o600)
+        store = agent_room.AgentRoomStore(
+            room_root / "agent-room.sqlite",
+            server_private_key=server_key,
+        )
+        participant_public = participant_key.public_key().public_bytes_raw().hex()
+        store.provision_participant("fixture-agent", participant_public)
+        created = store.create_room("fixture-room", owner_id="fixture-agent")
+        client_event = agent_room.build_client_event(
+            room_id="fixture-room",
+            actor_id="fixture-agent",
+            client_key_id=agent_room.ed25519_key_id(participant_public),
+            kind="proposal",
+            expected_sequence=0,
+            expected_head_hash=str(created["genesis_hash"]),
+            nonce="migration-fixture-000001",
+            client_created_at=datetime.now(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            payload={"purpose": "restore-proof"},
+        )
+        store.append_event(
+            client_event,
+            client_signature_hex=participant_key.sign(
+                agent_room.client_signing_bytes(client_event)
+            ).hex(),
+        )
+        seal_path = attest_root / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+        agent_room.create_initialization_seal(
+            seal_path,
+            server_private_key=server_key,
+        )
+        api_entries.extend(
+            (
+                ("api-data/_attest", None, 0o700),
+                (
+                    "api-data/_attest/operator_key.pem",
+                    private_key_path.read_bytes(),
+                    0o600,
+                ),
+                (
+                    "api-data/_attest/agent-room-initialized.json",
+                    seal_path.read_bytes(),
+                    0o600,
+                ),
+                ("api-data/_agent_room", None, 0o700),
+                (
+                    "api-data/_agent_room/agent-room.sqlite",
+                    (room_root / "agent-room.sqlite").read_bytes(),
+                    0o600,
+                ),
+            )
+        )
+    _tar_directory(root / "api-data.tgz", api_entries)
     members = migration._BACKUP_MEMBERS
     manifest_fields = [
         f"schema={schema}",
@@ -322,6 +399,78 @@ def _railway_identity() -> dict[str, str]:
     }
 
 
+def _receipted_generation(
+    tmp_path: Path,
+    *,
+    with_agent_room: bool = False,
+    bind_absent_agent_room_key: bool = False,
+) -> tuple[Path, dict[str, object]]:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(
+        tmp_path,
+        with_agent_room=with_agent_room,
+    )
+    bundle = migration.validate_bundle(root, request)
+    platform = tmp_path / "platform"
+    generations = platform / "generations"
+    generations.mkdir(parents=True)
+    staging = platform / "staging"
+    staging.mkdir()
+    agent_room_audit: dict[str, object] = {}
+    nbs_result, digests = migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+        agent_room_audit_out=agent_room_audit,
+    )
+    if bind_absent_agent_room_key:
+        assert not with_agent_room
+        api_data = staging / "generation" / "api"
+        attest_root = api_data / "_attest"
+        attest_root.mkdir(mode=0o700)
+        attest_root.chmod(0o700)
+        server_key = Ed25519PrivateKey.from_private_bytes(bytes([61]) * 32)
+        private_key_path = attest_root / "operator_key.pem"
+        private_key_path.write_bytes(
+            server_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        private_key_path.chmod(0o600)
+        public_key = server_key.public_key().public_bytes_raw().hex()
+        public_key_path = attest_root / "operator_key.pub"
+        public_key_path.write_text(public_key + "\n")
+        public_key_path.chmod(0o644)
+        agent_room_audit.clear()
+        agent_room_audit.update(migration.audit_agent_room_state(api_data))
+        digests["api"] = migration.hash_tree(api_data)
+    generation_name = f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}"
+    receipt = migration.render_receipt(
+        request,
+        bundle,
+        migration.RestoredDatabase(
+            migration.derive_database_name(
+                bundle.snapshot_id,
+                bundle.content_set_sha256,
+            ),
+            "postgresql://runtime-only",
+            bundle.counts_floor,
+        ),
+        generation_name=generation_name,
+        generation_digests=digests,
+        nbs_audit_result=nbs_result,
+        agent_room_audit=agent_room_audit,
+        railway=_railway_identity(),
+        started_at="2026-08-23T02:00:00Z",
+        completed_at="2026-08-23T02:03:00Z",
+    )
+    generation = generations / generation_name
+    (staging / "generation").rename(generation)
+    return generation, receipt
+
+
 def test_request_and_backup_v4_bytes_are_bound_exactly(tmp_path: Path) -> None:
     root, source_archive, source_bundle, request = _bundle_fixture(tmp_path)
     request_path = tmp_path / "request.json"
@@ -439,6 +588,132 @@ def test_filesystem_restore_runs_sqlite_and_full_nbs_audits(tmp_path: Path) -> N
     assert all(len(value) == 64 for value in digests.values())
     assert (staging / "generation" / "api" / "seiche.sqlite").is_file()
     assert (staging / "generation" / "market" / "raw" / "fixture.bin").is_file()
+
+
+@pytest.mark.parametrize("mutation", ("client_signature", "operator_key"))
+def test_receipted_generation_reaudits_agent_room_key_and_chain(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(
+        tmp_path,
+        with_agent_room=True,
+    )
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "agent-room-staging"
+    staging.mkdir()
+    audit: dict[str, object] = {}
+    nbs_result, digests = migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+        agent_room_audit_out=audit,
+    )
+    assert audit["result"] == "verified"
+    assert audit["participant_count"] == 1
+    assert audit["room_count"] == 1
+    assert audit["event_count"] == 1
+    receipt = migration.render_receipt(
+        request,
+        bundle,
+        migration.RestoredDatabase(
+            migration.derive_database_name(
+                bundle.snapshot_id,
+                bundle.content_set_sha256,
+            ),
+            "postgresql://runtime-only",
+            bundle.counts_floor,
+        ),
+        generation_name=f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}",
+        generation_digests=digests,
+        nbs_audit_result=nbs_result,
+        agent_room_audit=audit,
+        railway=_railway_identity(),
+        started_at="2026-08-23T02:00:00Z",
+        completed_at="2026-08-23T02:03:00Z",
+    )
+    generation = staging / "generation"
+    migration.validate_receipted_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+
+    if mutation == "client_signature":
+        room_database = generation / "api" / "_agent_room" / "agent-room.sqlite"
+        with sqlite3.connect(room_database) as database:
+            database.execute(
+                "UPDATE agent_room_events SET client_signature = ?",
+                ("0" * 128,),
+            )
+            assert database.execute("PRAGMA quick_check").fetchone() == ("ok",)
+    else:
+        replacement = Ed25519PrivateKey.from_private_bytes(bytes([99]) * 32)
+        key_path = generation / "api" / "_attest" / "operator_key.pem"
+        key_path.write_bytes(
+            replacement.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        key_path.chmod(0o600)
+    receipt["filesystem"]["tree_sha256"]["api"] = migration.hash_tree(
+        generation / "api"
+    )
+
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="Agent Room cryptographic audit failed",
+    ):
+        migration.validate_receipted_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("lost_member", "message"),
+    (
+        ("database", "initialized Agent Room database is unavailable"),
+        ("seal", "initialized Agent Room seal is unavailable"),
+    ),
+)
+def test_restore_audit_distinguishes_never_provisioned_from_initialized_loss(
+    tmp_path: Path,
+    lost_member: str,
+    message: str,
+) -> None:
+    root, _source_archive, _source_bundle, request = _bundle_fixture(
+        tmp_path,
+        with_agent_room=True,
+    )
+    bundle = migration.validate_bundle(root, request)
+    staging = tmp_path / "agent-room-loss-staging"
+    staging.mkdir()
+    migration.restore_filesystem_generation(
+        bundle,
+        staging,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    api_data = staging / "generation" / "api"
+    member = (
+        api_data / "_agent_room" / "agent-room.sqlite"
+        if lost_member == "database"
+        else api_data / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+    )
+    member.rename(tmp_path / f"displaced-{member.name}")
+
+    with pytest.raises(migration.MigrationContractError, match=message):
+        migration.audit_agent_room_state(
+            api_data,
+            expected_owner_uid=os.geteuid(),
+        )
 
 
 def test_active_palimpsest_state_restores_and_renders_exact_runtime_paths(
@@ -594,6 +869,7 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
             "palimpsest-china": "5" * 64,
         },
         nbs_audit_result="not_onboarded",
+        agent_room_audit=migration.absent_agent_room_audit(),
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
@@ -604,7 +880,10 @@ def test_receipt_is_shadow_only_and_contains_no_database_secret(tmp_path: Path) 
         request=request,
         railway=_railway_identity(),
     )
-    assert validated["schema"] == "seiche.railway-stateful-shadow-receipt.v3"
+    assert validated["schema"] == "seiche.railway-stateful-shadow-receipt.v4"
+    assert validated["filesystem"]["agent_room_audit"] == (
+        migration.absent_agent_room_audit()
+    )
     assert validated["palimpsest_china_state"] == {
         "audit_schema": migration.PALIMPSEST_CHINA_STATE_AUDIT_SCHEMA,
         "tree_sha256": bundle.palimpsest_china_state_audit["tree_sha256"],
@@ -720,6 +999,7 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
             "palimpsest-china": "5" * 64,
         },
         nbs_audit_result="not_onboarded",
+        agent_room_audit=migration.absent_agent_room_audit(),
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
@@ -732,16 +1012,23 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
     receipts = palimpsest / "receipts"
     receipts.mkdir(mode=0o700)
     receipts.chmod(0o700)
+    receipt_path = platform / "receipts" / "c.json"
+    receipt_path.parent.mkdir()
+    receipt_path.write_bytes(migration.canonical_document(receipt))
     environment = migration.runtime_environment(
         {
             "PORT": "8080",
             "DATABASE_URL": "postgresql://control-database-secret",
             "RAILWAY_TOKEN": "drop-me",
             "RAILWAY_API_TOKEN": "drop-me-too",
+            "SEICHE_RUNTIME_DATA_DIR": "/poison/runtime",
+            "SEICHE_AGENT_ROOM_DB_PATH": "/poison/rooms.sqlite",
+            "SEICHE_ATTEST_DIR": "/poison/attest",
+            "SEICHE_AGENT_ROOM_EXPECTED_KEY_ID": "f" * 64,
         },
         receipt,
         database_dsn=database.dsn,
-        receipt_path=platform / "receipts" / "c.json",
+        receipt_path=receipt_path,
         runtime_uid=os.geteuid(),
         runtime_gid=os.getegid(),
     )
@@ -753,12 +1040,27 @@ def test_child_environment_uses_one_generation_and_drops_control_tokens(
     assert environment["SEICHE_COLLECTOR_HEARTBEAT_REQUIRED"] == "0"
     assert environment["SEICHE_SOURCE_HEARTBEAT_REQUIRED"] == "0"
     assert environment["SEICHE_RUNTIME_DATA_DIR"].endswith(f"/{generation}/api")
+    assert environment["SEICHE_AGENT_ROOM_DB_PATH"] == (
+        environment["SEICHE_RUNTIME_DATA_DIR"] + "/_agent_room/agent-room.sqlite"
+    )
+    assert environment["SEICHE_ATTEST_DIR"] == (
+        environment["SEICHE_RUNTIME_DATA_DIR"] + "/_attest"
+    )
+    assert environment["SEICHE_AGENT_ROOM_EXPECTED_KEY_ID"] == (
+        migration.AGENT_ROOM_UNPROVISIONED_KEY
+    )
+    assert migration.validate_runtime_receipt(environment) == receipt
+    replaced_key = dict(environment)
+    replaced_key["SEICHE_AGENT_ROOM_EXPECTED_KEY_ID"] = "f" * 64
+    with pytest.raises(migration.MigrationContractError, match="key binding"):
+        migration.validate_runtime_receipt(replaced_key)
 
 
 def test_healthz_requires_receipt_and_keeps_shadow_non_authoritative(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "shadow")
+    monkeypatch.setattr(api.mcp_server, "agent_room_release_ready", lambda: True)
     monkeypatch.setattr(
         migration,
         "validate_runtime_receipt",
@@ -789,16 +1091,36 @@ def test_healthz_requires_receipt_and_keeps_shadow_non_authoritative(
     }
 
 
+def test_healthz_fails_closed_before_receipt_when_agent_room_is_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", "shadow")
+    monkeypatch.setattr(api.mcp_server, "agent_room_release_ready", lambda: False)
+    monkeypatch.setattr(
+        migration,
+        "validate_runtime_receipt",
+        lambda _environment: pytest.fail("receipt must not bypass room readiness"),
+    )
+
+    result = asyncio.run(api.railway_stateful_health(Response()))
+
+    assert result.status_code == 503
+    assert json.loads(result.body) == {"status": "agent_room_not_ready"}
+    assert result.headers["cache-control"] == "no-store"
+
+
 def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
     root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
     bundle = migration.validate_bundle(root, request)
     staging = tmp_path / "staging"
     staging.mkdir()
+    agent_room_audit: dict[str, object] = {}
     nbs_result, digests = migration.restore_filesystem_generation(
         bundle,
         staging,
         runtime_uid=os.geteuid(),
         runtime_gid=os.getegid(),
+        agent_room_audit_out=agent_room_audit,
     )
     database = migration.RestoredDatabase(
         migration.derive_database_name(bundle.snapshot_id, bundle.content_set_sha256),
@@ -812,6 +1134,7 @@ def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
         generation_name=f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}",
         generation_digests=digests,
         nbs_audit_result=nbs_result,
+        agent_room_audit=agent_room_audit,
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
@@ -834,6 +1157,366 @@ def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
         )
 
 
+def _configure_agent_room_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    api_data: Path,
+    *,
+    mode: str,
+    expected_key_id: str,
+) -> None:
+    monkeypatch.setattr(mcp_server, "DATA_DIR", api_data)
+    monkeypatch.setattr(attest, "DATA_DIR", api_data)
+    monkeypatch.setattr(mcp_server, "_agent_room_store_instance", None)
+    monkeypatch.setattr(mcp_server, "_agent_room_readiness_passed", False)
+    monkeypatch.setenv("SEICHE_ENV", "production")
+    monkeypatch.setenv("SEICHE_RAILWAY_STATEFUL_MODE", mode)
+    monkeypatch.setenv("SEICHE_AGENT_ROOM_EXPECTED_KEY_ID", expected_key_id)
+    monkeypatch.setenv(
+        "SEICHE_AGENT_ROOM_DB_PATH",
+        str(api_data / "_agent_room" / "agent-room.sqlite"),
+    )
+    monkeypatch.setenv("SEICHE_ATTEST_DIR", str(api_data / "_attest"))
+
+
+def test_active_generation_accepts_absent_room_bootstrap_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation, receipt = _receipted_generation(
+        tmp_path,
+        bind_absent_agent_room_key=True,
+    )
+    api_data = generation / "api"
+    initial_audit = receipt["filesystem"]["agent_room_audit"]
+    assert initial_audit["result"] == "absent_uninitialized"
+    assert isinstance(initial_audit["server_key_id"], str)
+    migration.validate_receipted_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    expected_key_id = receipt["filesystem"]["agent_room_audit"]["server_key_id"]
+    assert isinstance(expected_key_id, str)
+    _configure_agent_room_runtime(
+        monkeypatch,
+        api_data,
+        mode="production",
+        expected_key_id=expected_key_id,
+    )
+
+    mcp_server.initialize_agent_room_readiness()
+    first = migration.validate_active_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    assert first["result"] == "verified"
+    assert first["participant_count"] == 0
+    assert first["room_count"] == 0
+    assert first["event_count"] == 0
+
+    monkeypatch.setattr(mcp_server, "_agent_room_store_instance", None)
+    monkeypatch.setattr(mcp_server, "_agent_room_readiness_passed", False)
+    mcp_server.initialize_agent_room_readiness()
+    restarted = migration.validate_active_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+    assert restarted == first
+    with pytest.raises(migration.MigrationContractError, match="digest changed"):
+        migration.validate_receipted_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+def test_active_generation_accepts_legitimate_agent_room_progress(
+    tmp_path: Path,
+) -> None:
+    generation, receipt = _receipted_generation(
+        tmp_path,
+        with_agent_room=True,
+    )
+    api_data = generation / "api"
+    private_key, _public_key = attest.load_existing_keypair(
+        str(api_data / "_attest"),
+        expected_owner_uid=os.geteuid(),
+    )
+    store = agent_room.AgentRoomStore(
+        api_data / "_agent_room" / "agent-room.sqlite",
+        server_private_key=private_key,
+        require_existing=True,
+    )
+    participant_key = Ed25519PrivateKey.from_private_bytes(bytes([73]) * 32)
+    store.provision_participant(
+        "post-activation-agent",
+        participant_key.public_key().public_bytes_raw().hex(),
+    )
+
+    observed = migration.validate_active_generation(
+        generation,
+        receipt,
+        runtime_uid=os.geteuid(),
+        runtime_gid=os.getegid(),
+    )
+
+    expected = receipt["filesystem"]["agent_room_audit"]
+    assert observed["server_key_id"] == expected["server_key_id"]
+    assert observed["participant_count"] == expected["participant_count"] + 1
+    assert observed["state_sha256"] != expected["state_sha256"]
+
+
+def test_active_generation_rejects_replacement_first_boot_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation, receipt = _receipted_generation(
+        tmp_path,
+        bind_absent_agent_room_key=True,
+    )
+    api_data = generation / "api"
+    expected_key_id = receipt["filesystem"]["agent_room_audit"]["server_key_id"]
+    assert isinstance(expected_key_id, str)
+    _configure_agent_room_runtime(
+        monkeypatch,
+        api_data,
+        mode="production",
+        expected_key_id=expected_key_id,
+    )
+    mcp_server.initialize_agent_room_readiness()
+
+    replacement_key = Ed25519PrivateKey.from_private_bytes(bytes([91]) * 32)
+    replacement_private = api_data / "_attest" / "operator_key.pem"
+    replacement_private.write_bytes(
+        replacement_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    replacement_private.chmod(0o600)
+    replacement_public = api_data / "_attest" / "operator_key.pub"
+    replacement_public.write_text(
+        replacement_key.public_key().public_bytes_raw().hex() + "\n"
+    )
+    replacement_public.chmod(0o644)
+    room_database = api_data / "_agent_room" / "agent-room.sqlite"
+    room_database.unlink()
+    replacement_store = agent_room.AgentRoomStore(
+        room_database,
+        server_private_key=replacement_key,
+    )
+    replacement_store.audit_all_rooms()
+    replacement_seal = (
+        api_data / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+    )
+    replacement_seal.unlink()
+    agent_room.create_initialization_seal(
+        replacement_seal,
+        server_private_key=replacement_key,
+    )
+
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="bootstrap identity is not receipt-bound",
+    ):
+        migration.validate_active_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+def test_active_generation_rejects_store_created_for_unprovisioned_candidate(
+    tmp_path: Path,
+) -> None:
+    generation, receipt = _receipted_generation(tmp_path)
+    api_data = generation / "api"
+    assert receipt["filesystem"]["agent_room_audit"] == (
+        migration.absent_agent_room_audit()
+    )
+    replacement_key = Ed25519PrivateKey.from_private_bytes(bytes([92]) * 32)
+    attest_root = api_data / "_attest"
+    attest_root.mkdir(mode=0o700)
+    private_key_path = attest_root / "operator_key.pem"
+    private_key_path.write_bytes(
+        replacement_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    private_key_path.chmod(0o600)
+    public_key_path = attest_root / "operator_key.pub"
+    public_key_path.write_text(
+        replacement_key.public_key().public_bytes_raw().hex() + "\n"
+    )
+    public_key_path.chmod(0o644)
+    room_root = api_data / "_agent_room"
+    room_root.mkdir(mode=0o700)
+    store = agent_room.AgentRoomStore(
+        room_root / "agent-room.sqlite",
+        server_private_key=replacement_key,
+    )
+    store.audit_all_rooms()
+    agent_room.create_initialization_seal(
+        attest_root / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME,
+        server_private_key=replacement_key,
+    )
+
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="bootstrap identity is not receipt-bound",
+    ):
+        migration.validate_active_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+def test_active_generation_rejects_valid_truncation_below_candidate_baseline(
+    tmp_path: Path,
+) -> None:
+    generation, receipt = _receipted_generation(tmp_path, with_agent_room=True)
+    api_data = generation / "api"
+    database_path = api_data / "_agent_room" / "agent-room.sqlite"
+    with sqlite3.connect(database_path) as connection:
+        genesis_hash = connection.execute(
+            "SELECT genesis_hash FROM agent_rooms WHERE room_id='fixture-room'"
+        ).fetchone()[0]
+        connection.execute(
+            "DELETE FROM agent_room_events WHERE room_id='fixture-room'"
+        )
+        connection.execute(
+            "UPDATE agent_rooms SET next_sequence=0, head_hash=?, status='open' "
+            "WHERE room_id='fixture-room'",
+            (genesis_hash,),
+        )
+    rolled_back = migration.audit_agent_room_state(
+        api_data,
+        expected_owner_uid=os.geteuid(),
+    )
+    assert rolled_back["result"] == "verified"
+    assert rolled_back["event_count"] == 0
+
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="does not extend its candidate state",
+    ):
+        migration.validate_active_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+@pytest.mark.parametrize("corruption", ["seal", "event_chain"])
+def test_active_generation_rejects_corrupt_agent_room_state(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    generation, receipt = _receipted_generation(
+        tmp_path,
+        with_agent_room=True,
+    )
+    api_data = generation / "api"
+    if corruption == "seal":
+        seal = (
+            api_data
+            / "_attest"
+            / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+        )
+        body = bytearray(seal.read_bytes())
+        body[-2] = ord("0") if body[-2] != ord("0") else ord("1")
+        seal.write_bytes(bytes(body))
+        seal.chmod(0o600)
+    else:
+        database = api_data / "_agent_room" / "agent-room.sqlite"
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "UPDATE agent_room_events SET client_signature=?",
+                ("0" * 128,),
+            )
+
+    with pytest.raises(
+        migration.MigrationContractError,
+        match="Agent Room .*failed",
+    ):
+        migration.validate_active_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["immutable_bytes", "generation_member", "writable_metadata"],
+)
+def test_active_generation_rejects_immutable_or_path_tamper(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    generation, receipt = _receipted_generation(tmp_path)
+    if tamper == "immutable_bytes":
+        (generation / "nbs" / "unexpected.bin").write_bytes(b"tampered\n")
+        message = "immutable generation digest changed"
+    else:
+        if tamper == "generation_member":
+            (generation / "unexpected-component").mkdir()
+            message = "members are not closed"
+        else:
+            (generation / "market" / "raw").chmod(0o777)
+            message = "writable generation metadata is unsafe"
+
+    with pytest.raises(migration.MigrationContractError, match=message):
+        migration.validate_active_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
+def test_preactivation_exact_receipt_still_rejects_agent_room_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation, receipt = _receipted_generation(
+        tmp_path,
+        bind_absent_agent_room_key=True,
+    )
+    api_data = generation / "api"
+    expected_key_id = receipt["filesystem"]["agent_room_audit"]["server_key_id"]
+    assert isinstance(expected_key_id, str)
+    _configure_agent_room_runtime(
+        monkeypatch,
+        api_data,
+        mode="production",
+        expected_key_id=expected_key_id,
+    )
+    mcp_server.initialize_agent_room_readiness()
+
+    with pytest.raises(migration.MigrationContractError, match="digest changed"):
+        migration.validate_receipted_generation(
+            generation,
+            receipt,
+            runtime_uid=os.geteuid(),
+            runtime_gid=os.getegid(),
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     (
@@ -843,7 +1526,7 @@ def test_receipted_generation_rejects_changed_bytes(tmp_path: Path) -> None:
         ("pending_candidate_activation_id", "0" * 64),
     ),
 )
-def test_shadow_receipt_v3_binds_exact_active_palimpsest_state(
+def test_shadow_receipt_v4_binds_exact_active_palimpsest_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     field: str,
@@ -855,11 +1538,13 @@ def test_shadow_receipt_v3_binds_exact_active_palimpsest_state(
     bundle = migration.validate_bundle(root, request)
     staging = tmp_path / "identity-staging"
     staging.mkdir()
+    agent_room_audit: dict[str, object] = {}
     nbs_result, digests = migration.restore_filesystem_generation(
         bundle,
         staging,
         runtime_uid=os.geteuid(),
         runtime_gid=os.getegid(),
+        agent_room_audit_out=agent_room_audit,
     )
     receipt = migration.render_receipt(
         request,
@@ -875,11 +1560,12 @@ def test_shadow_receipt_v3_binds_exact_active_palimpsest_state(
         generation_name=f"{bundle.snapshot_id}-{bundle.content_set_sha256[:16]}",
         generation_digests=digests,
         nbs_audit_result=nbs_result,
+        agent_room_audit=agent_room_audit,
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
     )
-    assert receipt["schema"] == "seiche.railway-stateful-shadow-receipt.v3"
+    assert receipt["schema"] == "seiche.railway-stateful-shadow-receipt.v4"
     assert receipt["palimpsest_china_state"]["active_activation_id"] is not None
     assert receipt["palimpsest_china_state"]["pending_candidate_activation_id"] is None
 
@@ -894,7 +1580,7 @@ def test_shadow_receipt_v3_binds_exact_active_palimpsest_state(
         )
 
 
-def test_shadow_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
+def test_shadow_receipt_rejects_v3_downgrade(tmp_path: Path) -> None:
     root, _source_archive, _source_bundle, request = _bundle_fixture(tmp_path)
     bundle = migration.validate_bundle(root, request)
     receipt = migration.render_receipt(
@@ -913,11 +1599,12 @@ def test_shadow_receipt_rejects_v2_downgrade(tmp_path: Path) -> None:
             name: "1" * 64 for name in ("market", "nbs", "api", "palimpsest-china")
         },
         nbs_audit_result="not_onboarded",
+        agent_room_audit=migration.absent_agent_room_audit(),
         railway=_railway_identity(),
         started_at="2026-08-23T02:00:00Z",
         completed_at="2026-08-23T02:03:00Z",
     )
-    receipt["schema"] = "seiche.railway-stateful-shadow-receipt.v2"
+    receipt["schema"] = "seiche.railway-stateful-shadow-receipt.v3"
 
     with pytest.raises(migration.MigrationContractError, match="policy"):
         migration.validate_receipt_document(receipt, request=request)

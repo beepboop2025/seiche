@@ -20,7 +20,6 @@ import sys
 import time
 from typing import NoReturn
 
-
 LAUNCHER = Path("/etc/seiche/libexec/seiche-palimpsest-china-activate.py")
 DEPLOY_LOCK = Path("/run/seiche-deploy/deploy.lock")
 TRANSACTION_LOCK = Path("/run/seiche-deploy/palimpsest-china-transaction.lock")
@@ -68,11 +67,61 @@ _RESTORE_STATUS_KEYS = frozenset(
         "database_restore",
         "state_archive_restore",
         "api_data_archive_restore",
+        "agent_room_restore_audit",
+        "agent_room_audit_schema",
+        "agent_room_server_key_id",
+        "agent_room_participant_count",
+        "agent_room_room_count",
+        "agent_room_event_count",
+        "agent_room_state_sha256",
+        "agent_room_non_executable",
+        "agent_room_execution_authority",
         "research_only",
         "can_publish",
         "can_execute",
     }
 )
+
+
+def _valid_agent_room_restore(fields: dict[str, str]) -> bool:
+    count_names = (
+        "agent_room_participant_count",
+        "agent_room_room_count",
+        "agent_room_event_count",
+    )
+    raw_counts = tuple(fields.get(name, "") for name in count_names)
+    if any(
+        len(value) > 7 or re.fullmatch(r"(?:0|[1-9][0-9]*)", value) is None
+        for value in raw_counts
+    ):
+        return False
+    counts = tuple(int(value) for value in raw_counts)
+    participants, rooms, events = counts
+    if (
+        any(count > 2_000_000 for count in counts)
+        or events > rooms * 4096
+        or (rooms > 0 and participants == 0)
+        or fields.get("agent_room_audit_schema") != "seiche.agent-room.restore-audit.v1"
+        or fields.get("agent_room_non_executable") != "true"
+        or fields.get("agent_room_execution_authority") != "none"
+    ):
+        return False
+    result = fields.get("agent_room_restore_audit")
+    server_key_id = fields.get("agent_room_server_key_id", "")
+    state_sha256 = fields.get("agent_room_state_sha256", "")
+    if result == "verified":
+        return (
+            re.fullmatch(r"[0-9a-f]{64}", server_key_id) is not None
+            and re.fullmatch(r"[0-9a-f]{64}", state_sha256) is not None
+        )
+    return (
+        result == "absent_uninitialized"
+        and server_key_id == "none"
+        and state_sha256 == "none"
+        and counts == (0, 0, 0)
+    )
+
+
 _OFFSITE_STATUS_KEYS = frozenset(
     {
         "schema",
@@ -897,7 +946,7 @@ def _run_activation_durability(activation: object, paths: object) -> dict[str, o
         restore = _status_fields(restore_body, label="activation restore receipt")
         if (
             set(restore) != _RESTORE_STATUS_KEYS
-            or restore.get("schema") != "seiche.market-backup-restore-check.v5"
+            or restore.get("schema") != "seiche.market-backup-restore-check.v6"
             or restore.get("snapshot") != snapshot
             or restore.get("source_backup_schema") != "seiche.market-backup.v4"
             or restore.get("deployed_sha") != release_sha
@@ -935,6 +984,7 @@ def _run_activation_durability(activation: object, paths: object) -> dict[str, o
                 restore.get("critical_table_count_floor", ""),
             )
             is None
+            or not _valid_agent_room_restore(restore)
         ):
             _fail("local restore receipt does not prove the exact live activation")
 

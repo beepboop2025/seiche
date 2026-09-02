@@ -20,7 +20,7 @@ gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
 
 
-def _receipts(version: str = "0.11.1"):
+def _receipts(version: str = "0.12.0"):
     wheel_url = f"https://files.pythonhosted.org/packages/seiche-{version}.whl"
     sdist_url = f"https://files.pythonhosted.org/packages/seiche-{version}.tar.gz"
     bodies = {wheel_url: b"canonical wheel", sdist_url: b"canonical sdist"}
@@ -74,7 +74,7 @@ def _verify(pypi, health, discovery, bodies):
         return bodies[url]
 
     return gate.verify_public_receipts(
-        "0.11.1", fetch_json=fetch_json, fetch_bytes=fetch_bytes
+        "0.12.0", fetch_json=fetch_json, fetch_bytes=fetch_bytes
     )
 
 
@@ -192,8 +192,9 @@ def _verify_market(health, catalog, discovery, tools, *, entry=None):
 def test_local_catalog_release_identity_is_internally_exact():
     version, entry = gate.verify_local_identity(ROOT)
 
-    assert version == "0.11.1"
-    assert len(entry["capabilities"]) == 11
+    assert version == "0.12.0"
+    assert len(entry["capabilities"]) == 12
+    assert "trade_safety_risk_context" in entry["capabilities"]
     assert entry["prompts"] == [
         "is_now_dangerous",
         "money_market_deep_dive",
@@ -295,7 +296,7 @@ def test_signed_publication_receipt_has_exact_release_generation():
 
     assert receipt == {
         "schemaVersion": "1.0.0",
-        "tag": "market-corpus-receipt-corpus-71722bd77b1971b3-r11",
+        "tag": "market-corpus-receipt-corpus-71722bd77b1971b3-r16",
         "releaseId": "corpus-71722bd77b1971b3",
         "indexSha256": (
             "b0f74ddb507b8325387e4a2e127cf81429db8fe163331bdf3baed4781cee57e0"
@@ -375,7 +376,7 @@ def test_publication_receipt_tag_must_target_exact_workflow_head(monkeypatch):
         expected_sha=expected_sha,
         signer_fingerprint="SHA256:" + "A" * 43,
     )
-    assert tag == "market-corpus-receipt-corpus-71722bd77b1971b3-r11"
+    assert tag == "market-corpus-receipt-corpus-71722bd77b1971b3-r16"
     assert gate._market_corpus_publication_receipt(entry)["releaseId"] == (
         "corpus-71722bd77b1971b3"
     )
@@ -655,10 +656,10 @@ def test_local_identity_rejects_an_unsafe_package_readme(tmp_path, unsafe_readme
 def test_public_receipts_require_both_exact_pypi_bodies_and_live_runtime():
     receipt = _verify(*_receipts())
 
-    assert receipt["version"] == "0.11.1"
+    assert receipt["version"] == "0.12.0"
     assert [item["filename"] for item in receipt["artifacts"]] == [
-        "seiche-0.11.1-py3-none-any.whl",
-        "seiche-0.11.1.tar.gz",
+        "seiche-0.12.0-py3-none-any.whl",
+        "seiche-0.12.0.tar.gz",
     ]
 
 
@@ -755,14 +756,14 @@ def test_signed_release_gate_rejects_malformed_external_pins_before_git_use():
     with pytest.raises(gate.PublicationGateError, match="SHA is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.11.1",
+            version="0.12.0",
             expected_sha="main",
             signer_fingerprint="SHA256:" + "A" * 43,
         )
     with pytest.raises(gate.PublicationGateError, match="fingerprint is malformed"):
         gate.verify_signed_release(
             ROOT,
-            version="0.11.1",
+            version="0.12.0",
             expected_sha="a" * 40,
             signer_fingerprint="untrusted",
         )

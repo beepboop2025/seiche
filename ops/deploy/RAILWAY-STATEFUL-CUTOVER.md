@@ -163,19 +163,41 @@ Dispatch `railway-stateful-cutover` on the exact main SHA with:
 The candidate job proves the service, volume, sole Railway domain, PostgreSQL
 reference, closed final snapshot, canonical fence, exact source archive/bundle,
 restored filesystem/database generation, table floors, and direct authenticated
-origin response. It starts only an unprivileged API. Mutation methods return
-503, and requests without the token return 404.
+origin response. It starts only an unprivileged API. The pre-activation API
+does not run the board warm/rebuild loop or initialize Agent Room state.
+Mutation methods return 503, and requests without the token return 404.
+Readiness requires the exact same-release active PostgreSQL handoff restored
+into memory; it never repairs a missing handoff by writing candidate state.
 
 The candidate receipt is exactly
-`seiche.railway-cutover-candidate-receipt.v3`; v2 is not a fallback. Its closed
+`seiche.railway-cutover-candidate-receipt.v4`; v3 is not a fallback. Its closed
 `palimpsest_china_state` object records the audit schema, semantic tree digest,
 active activation ID, and null pending candidate ID from the final backup-v4
 audit. The candidate request also exposes the exact source shadow-receipt
-SHA-256. The workflow must recover that one canonical v3 shadow receipt and
+SHA-256. The workflow must recover that one canonical v4 shadow receipt and
 require its four-field state identity to equal the final candidate before any
 cutover proof is accepted. Candidate restart/reuse independently re-audits the
 restored tree with the Railway uid/gid 10001 reader and refuses any tree or
 activation-ID drift.
+
+The v4 candidate also carries the closed restored Agent Room audit from its
+source v4 shadow receipt. Candidate creation loads the restored operator key,
+verifies the independent key-bound initialization seal, every participant key
+binding, and each room's signed genesis and event hash/signature chain, and
+requires the result to equal the source shadow audit exactly. Restart/reuse
+repeats that audit, so missing database/seal state, restored-key, server-key ID,
+count, state-digest, or signed-chain drift fails closed. A never-initialized
+Agent Room remains an explicit `absent_uninitialized` result only when both the
+database and seal are absent, rather than an omitted proof. An existing
+operator key is bound into that absent result and is the only permitted later
+bootstrap identity. If it is absent too, the candidate emits an explicit
+`unprovisioned` runtime gate and Agent Room stays unavailable for this release.
+Production activation inherits and revalidates the exact candidate receipt and
+key binding; changing only the runtime environment cannot authorize a
+replacement key or store. After the candidate API stops and before the first
+Railway writer starts, the supervisor repeats the exact four-tree digest,
+Agent Room audit, and PostgreSQL count equality checks. Any mutation during the
+read-only serving window therefore aborts activation.
 
 Record from the green artifact and attestation:
 

@@ -67,13 +67,15 @@ Then make the toolset available to your platform (`platform_toolsets:` in
 the same file) and confirm with `hermes tools` that the seiche tools
 appear.
 
-The hosted anonymous surface is exactly eleven tools: `latest_article`,
+The hosted anonymous surface is exactly twelve tools: `latest_article`,
 `funding_stress_now`, `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record`, `institutional_flows`, `money_market_context`,
-`world_markets_context`, `oil_funding_context`, and
+`world_markets_context`, `trade_safety_risk_context`, `oil_funding_context`, and
 `fx_materials_passage`. The bootstrap checks this list before it schedules
-work. A bearer token may add five subscriber tools; it must never remove or
-silently replace the public evidence views.
+work. A bearer token adds five subscriber analysis tools and may expose five
+private Agent Room preview tools; it must never remove or silently replace the
+public evidence views. Hermes must not treat Agent Room acknowledgements as
+acceptance or route them to an execution system.
 
 ### 4. Gateway
 

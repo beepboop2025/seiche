@@ -1508,6 +1508,15 @@ install -d -o seiche -g seiche -m 0750 \
     "$STATE_DIR" "$STATE_DIR/raw" "$STATE_DIR/normalized" "$STATE_DIR/backfill" \
     "$STATE_DIR/validation" "$STATE_DIR/exports" \
     "$FUNDING_EXPORT_DIR"
+# The API's signed Agent Room state is backed up as part of API_DATA_DIR. Pin
+# and pre-create both halves of that identity here so production can neither
+# inherit an alternate path nor bootstrap keys outside the backup boundary.
+if [ ! -d "$API_DATA_DIR" ] || [ -L "$API_DATA_DIR" ]; then
+    echo "market platform: API data root is unavailable or unsafe" >&2
+    exit 1
+fi
+install -d -o seiche -g seiche -m 0700 \
+    "$API_DATA_DIR/_agent_room" "$API_DATA_DIR/_attest"
 # Owner-supplied NBS browser exports are evidence, not market-pack inputs. Keep
 # the signed raw envelope root-only and give the API read-only access solely to
 # the separately materialized, metadata-only public projection. The root is an
@@ -1590,6 +1599,9 @@ cleanup() {
 trap cleanup EXIT
 cat >"$ENV_STAGE" <<EOF
 SEICHE_DATABASE_URL=postgresql:///seiche?host=/var/run/postgresql&port=$POSTGRES_PORT
+SEICHE_RUNTIME_DATA_DIR=$API_DATA_DIR
+SEICHE_AGENT_ROOM_DB_PATH=$API_DATA_DIR/_agent_room/agent-room.sqlite
+SEICHE_ATTEST_DIR=$API_DATA_DIR/_attest
 SEICHE_RAW_CAPTURE_DIR=$STATE_DIR/raw
 SEICHE_NORMALIZED_DIR=$STATE_DIR/normalized
 SEICHE_BACKFILL_STATE_DIR=$STATE_DIR/backfill
@@ -2143,7 +2155,7 @@ Environment=SEICHE_NBS_PUBLIC_DIR=$NBS_PUBLIC_DIR
 # Caddy owns privacy-filtered edge request telemetry; Uvicorn's raw path logger
 # includes the query string and would create a second, unredacted copy.
 Environment=UVICORN_ACCESS_LOG=false
-ReadWritePaths=$STATE_DIR
+ReadWritePaths=$STATE_DIR $API_DATA_DIR/_agent_room $API_DATA_DIR/_attest
 ReadOnlyPaths=$NBS_PUBLIC_DIR
 InaccessiblePaths=$NBS_RESTRICTED_DIR
 EOF

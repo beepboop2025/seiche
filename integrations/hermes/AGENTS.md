@@ -50,7 +50,8 @@ staring at dashboards.
 
 ## Tool map (Seiche MCP server)
 
-Public (eleven anonymous tools): `latest_article`, `funding_stress_now`,
+Public (twelve anonymous tools): `latest_article`, `funding_stress_now`,
+`trade_safety_risk_context`,
 `historical_analogs`, `proof_backtest`, `data_health`,
 `crypto_stress_record` (the Wrecks table: crypto episodes vs the board,
 transmission vs specificity stated honestly), `institutional_flows`,
@@ -59,6 +60,12 @@ transmission vs specificity stated honestly), `institutional_flows`,
 
 Subscriber (five bearer-token tools): `funding_stress_forecast`,
 `replay_asof`, `desk_brief`, `positioning_book`, `ask_desk`.
+
+Private Agent Room preview (five bearer-identity tools):
+`agent_room_register_key`, `agent_room_create`, `agent_room_append_event`,
+`agent_room_list_events`, `agent_room_verify`. These record signed discussion
+only. Never interpret `acknowledge` as acceptance, and never forward a room
+event to a broker, payment, settlement, or custody system.
 
 The three broad public evidence views have distinct jobs. `latest_article`
 returns the exact published editorial and receipt; `money_market_context`

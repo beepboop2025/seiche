@@ -157,18 +157,20 @@ no longer complete; these are deliberately different signals.
   of clock skew, or contains collector/critical faults;
 - either collector heartbeat is missing or overdue;
 - the newest backup is older than 36 hours or implausibly future-dated;
-- the exact v5 restore receipt is missing, invalid, older than eight days,
-  future-dated, or does not record a strictly verified NBS full-store and
-  Palimpsest China activation-state archive;
+- the exact v6 restore receipt is missing, invalid, older than eight days,
+  future-dated, or does not record a strictly verified NBS full-store,
+  Palimpsest China activation-state archive, and restored-key Agent Room
+  initialization-seal/full-chain audit (or an explicit result where both the
+  database and seal were never initialized);
 - the live Palimpsest China marker is provisional without an exact immutable
-  durability receipt, or the restore-v5/offsite-v4 activation ID, canonical
+  durability receipt, or the restore-v6/offsite-v4 activation ID, canonical
   tree digest, snapshot, receipt digest, or scheduled mode differs from that
   receipt (a newer-looking inactive or older-activation snapshot still fails);
 - a required service/timer is inactive, or a required timer is disabled for
   the next boot; or
 - block or inode use reaches 90 percent on a monitored filesystem.
 
-On a fresh host or the first v5 receipt rollout, installation does not enable the
+On a fresh host or the first v6 receipt rollout, installation does not enable the
 readiness timer immediately. It starts the source worker, runs a real backup,
 restores and checks that snapshot in isolation, executes readiness once without
 requiring its not-yet-active timer, and enables the timer only after that proof
@@ -257,14 +259,14 @@ upload because they lack the Palimpsest China state commitments. A version 1
 record that reached receipt intent remains an unresolved boundary and still
 requires operator reconciliation.
 
-Activation durability additionally seals the exact restore-v5 receipt bytes
+Activation durability additionally seals the exact restore-v6 receipt bytes
 and digest inside the root-only immutable activation receipt, plus the
 scheduled offsite-v4 immutable remote receipt key, digest, and verified clock.
 That embedded closed restore proof remains authoritative after the ordinary
 21-day local snapshot retention policy removes its historical snapshot; the
 mutable current restore receipt must still be a non-regressed successor.
 The mutable latest restore/offsite status may advance after a later release,
-but readiness accepts it only as a successor: schema v5/v4, the same live
+but readiness accepts it only as a successor: schema v6/v4, the same live
 activation ID and canonical tree, no pending candidate, a non-regressing proof
 clock, and an equal immutable receipt identity whenever the snapshot is the
 same. A fresh inactive or older snapshot never satisfies that contract.
@@ -279,7 +281,7 @@ equal, and preserves the historical activation ID and release SHA when the same
 bundle is resumed by a later signed Seiche release. It creates no owner
 acceptance or durability claim. Malformed or unknown v1 fails without rewrite;
 a crash before the atomic marker rename retries the same activation, while an
-already committed v2 is idempotent. Restore-v5, scheduled offsite-v4, final
+already committed v2 is idempotent. Restore-v6, scheduled offsite-v4, final
 live audit, and the outside-tree seal remain mandatory after migration. The
 seal's release SHA is the current trusted release that produced those durability
 proofs and must equal the embedded restore's deployed SHA and scheduled offsite

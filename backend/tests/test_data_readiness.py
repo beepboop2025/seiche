@@ -65,7 +65,7 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     recovery_proof_dir.chmod(0o750)
     restore_receipt = recovery_proof_dir / "backup-restore-check.status"
     restore_receipt.write_text(
-        "schema=seiche.market-backup-restore-check.v5\n"
+        "schema=seiche.market-backup-restore-check.v6\n"
         f"checked_at={(NOW - timedelta(hours=1)).isoformat()}\n"
         "snapshot=20260822T020000Z\n"
         "source_backup_schema=seiche.market-backup.v4\n"
@@ -85,6 +85,15 @@ def _layout(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "palimpsest_china_bundle_count=0\n"
         "palimpsest_china_receipt_count=0\n"
         "api_data_archive_restore=pass\n"
+        "agent_room_restore_audit=absent_uninitialized\n"
+        "agent_room_audit_schema=seiche.agent-room.restore-audit.v1\n"
+        "agent_room_server_key_id=none\n"
+        "agent_room_participant_count=0\n"
+        "agent_room_room_count=0\n"
+        "agent_room_event_count=0\n"
+        "agent_room_state_sha256=none\n"
+        "agent_room_non_executable=true\n"
+        "agent_room_execution_authority=none\n"
         "research_only=true\n"
         "can_publish=false\n"
         "can_execute=false\n"
@@ -435,7 +444,7 @@ def _write_durable_activation(
         "activation_state_tree_sha256": tree,
         "local_backup_snapshot": snapshot,
         "local_backup_inventory_sha256": hashlib.sha256(inventory_body).hexdigest(),
-        "local_restore_schema": "seiche.market-backup-restore-check.v5",
+        "local_restore_schema": "seiche.market-backup-restore-check.v6",
         "local_restore_activation_id": activation_id,
         "local_restore_tree_sha256": tree,
         "local_restore_checked_at": local_checked_at,
@@ -491,6 +500,35 @@ def test_healthy_host_passes_and_ignores_stale_discontinued_provenance(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "seiche data readiness: ready\n"
     assert result.stderr == ""
+
+
+def test_healthy_host_accepts_verified_agent_room_restore(tmp_path: Path) -> None:
+    env, _backup_dir, restore_receipt = _layout(tmp_path)
+    body = restore_receipt.read_text()
+    replacements = {
+        "agent_room_restore_audit=absent_uninitialized": (
+            "agent_room_restore_audit=verified"
+        ),
+        "agent_room_server_key_id=none": f"agent_room_server_key_id={'a' * 64}",
+        "agent_room_participant_count=0": "agent_room_participant_count=1",
+        "agent_room_room_count=0": "agent_room_room_count=1",
+        "agent_room_event_count=0": "agent_room_event_count=1",
+        "agent_room_state_sha256=none": f"agent_room_state_sha256={'b' * 64}",
+    }
+    for old, new in replacements.items():
+        body = body.replace(old, new)
+    restore_receipt.write_text(body)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_fresh_inactive_restore_cannot_mask_a_live_provisional_activation(
@@ -851,9 +889,9 @@ def test_scheduled_mode_rejects_impossible_producer_status_shape(
     if drift == "version":
         document["last_success"]["ciphertext_version_id"] = "has spaces"
     elif drift == "receipt_key":
-        document["last_success"]["remote_receipt_key"] = (
-            "seiche/market-backups/v1/custom/RECEIPT.json"
-        )
+        document["last_success"][
+            "remote_receipt_key"
+        ] = "seiche/market-backups/v1/custom/RECEIPT.json"
     elif drift == "endpoint":
         document["last_success"]["destination"]["endpoint"] = "wrong.example"
     elif drift == "top_bucket":
@@ -1244,8 +1282,8 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
     ("old", "new"),
     [
         (
+            "schema=seiche.market-backup-restore-check.v6",
             "schema=seiche.market-backup-restore-check.v5",
-            "schema=seiche.market-backup-restore-check.v4",
         ),
         ("database_restore=pass", "database_restore=failed"),
         ("state_archive_restore=pass", "state_archive_restore=failed"),
@@ -1267,13 +1305,28 @@ def test_missing_backup_and_restore_receipt_fail_closed(tmp_path: Path) -> None:
         ),
         ("nbs_public_revision_store=not_onboarded", ""),
         ("api_data_archive_restore=pass", "api_data_archive_restore=failed"),
+        (
+            "agent_room_restore_audit=absent_uninitialized",
+            "agent_room_restore_audit=verified",
+        ),
+        (
+            "agent_room_audit_schema=seiche.agent-room.restore-audit.v1",
+            "agent_room_audit_schema=unknown",
+        ),
+        ("agent_room_server_key_id=none", f"agent_room_server_key_id={'a' * 64}"),
+        ("agent_room_participant_count=0", "agent_room_participant_count=1"),
+        ("agent_room_room_count=0", "agent_room_room_count=1"),
+        ("agent_room_event_count=0", "agent_room_event_count=1"),
+        ("agent_room_state_sha256=none", f"agent_room_state_sha256={'b' * 64}"),
+        ("agent_room_non_executable=true", "agent_room_non_executable=false"),
+        ("agent_room_execution_authority=none", "agent_room_execution_authority=trade"),
         ("research_only=true", "research_only=false"),
         ("can_publish=false", "can_publish=true"),
         ("can_execute=false", "can_execute=true"),
         ("critical_table_counts=11|12|13|14", "critical_table_counts=11|12"),
     ],
 )
-def test_restore_receipt_requires_the_complete_v4_pass_contract(
+def test_restore_receipt_requires_the_complete_v6_pass_contract(
     tmp_path: Path,
     old: str,
     new: str,

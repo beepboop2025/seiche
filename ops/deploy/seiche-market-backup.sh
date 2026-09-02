@@ -25,8 +25,10 @@ CP_BIN="${SEICHE_CP_BIN:-cp}"
 SHA256SUM_BIN="${SEICHE_SHA256SUM_BIN:-sha256sum}"
 SYNC_BIN="${SEICHE_SYNC_BIN:-sync}"
 DATE_BIN="${SEICHE_DATE_BIN:-date}"
-GIT_BIN="${SEICHE_GIT_BIN:-git}"
+GIT_BIN="${SEICHE_GIT_BIN:-/usr/bin/git}"
 PYTHON_BIN="${SEICHE_PYTHON_BIN:-/usr/bin/python3}"
+AGENT_ROOM_PYTHON_BIN="${SEICHE_AGENT_ROOM_PYTHON_BIN:-$APP_DIR/backend/.venv/bin/python}"
+AGENT_ROOM_VERIFIER_MODULE="${SEICHE_AGENT_ROOM_VERIFIER_MODULE:-}"
 CMP_BIN="${SEICHE_CMP_BIN:-/usr/bin/cmp}"
 DEPLOYED_SHA_PATH="${SEICHE_DEPLOYED_SHA_PATH:-/var/lib/seiche-deploy/deployed-sha}"
 DURABILITY_REQUEST_PATH="${SEICHE_PALIMPSEST_CHINA_DURABILITY_REQUEST_PATH:-/run/seiche-deploy/palimpsest-china-durability-request.json}"
@@ -61,6 +63,14 @@ elif [ "$CURRENT_EUID" -ne 0 ]; then
 else
     [ "$PYTHON_BIN" = /usr/bin/python3 ] \
         || fail "production Python runtime is fixed at /usr/bin/python3"
+    [ "$APP_DIR" = /home/seiche/app ] \
+        || fail "production application checkout is fixed at /home/seiche/app"
+    [ "$GIT_BIN" = /usr/bin/git ] \
+        || fail "production Git runtime is fixed at /usr/bin/git"
+    [ "$AGENT_ROOM_PYTHON_BIN" = /home/seiche/app/backend/.venv/bin/python ] \
+        || fail "production Agent Room Python runtime is fixed"
+    [ -z "$AGENT_ROOM_VERIFIER_MODULE" ] \
+        || fail "production Agent Room verifier cannot be overridden"
     [ "$NBS_STATE_DIR" = /var/lib/seiche-nbs ] \
         || fail "production NBS state root is fixed at /var/lib/seiche-nbs"
     [ "$PALIMPSEST_CHINA_STATE_DIR" = /var/lib/seiche-palimpsest-china ] \
@@ -106,6 +116,7 @@ if find "$API_DATA_DIR" -type l -print -quit | grep -q .; then
     fail "API data directory cannot contain symlinks"
 fi
 [ -x "$PYTHON_BIN" ] || fail "Python runtime is unavailable"
+[ -x "$AGENT_ROOM_PYTHON_BIN" ] || fail "Agent Room Python runtime is unavailable"
 [ ! -L "$BACKUP_DIR" ] || fail "backup directory cannot be a symlink"
 if [ "$ALLOW_NON_ROOT_TEST" = "1" ]; then
     mkdir -p "$BACKUP_DIR"
@@ -122,6 +133,298 @@ run_as_postgres() {
     fi
     "$SETPRIV_BIN" --reuid="$POSTGRES_USER" --regid="$postgres_group" \
         --init-groups --inh-caps=-all -- "$@"
+}
+
+prepare_agent_room_verifier() {
+    local destination="$1"
+    local release_sha="$2"
+    if [ "$ALLOW_NON_ROOT_TEST" = "1" ]; then
+        case "$AGENT_ROOM_VERIFIER_MODULE" in
+            /*) ;;
+            *) fail "non-root Agent Room verifier override must be absolute" ;;
+        esac
+        [ -f "$AGENT_ROOM_VERIFIER_MODULE" ] \
+            && [ ! -L "$AGENT_ROOM_VERIFIER_MODULE" ] \
+            || fail "non-root Agent Room verifier override is unsafe"
+        "$PYTHON_BIN" -I -B - \
+            "$AGENT_ROOM_VERIFIER_MODULE" "$destination" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import stat
+import sys
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+descriptor = os.open(
+    source,
+    os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+)
+try:
+    before = os.fstat(descriptor)
+    visible = source.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_uid != os.geteuid()
+        or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        or not 1 <= before.st_size <= 2 * 1024 * 1024
+    ):
+        raise SystemExit("Agent Room verifier override metadata is unsafe")
+    body = os.read(descriptor, 2 * 1024 * 1024 + 1)
+    after = os.fstat(descriptor)
+    identity = lambda item: (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_nlink,
+        item.st_uid,
+        item.st_gid,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+    if len(body) != before.st_size or identity(before) != identity(after):
+        raise SystemExit("Agent Room verifier override changed while read")
+finally:
+    os.close(descriptor)
+output = os.open(
+    destination,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o600,
+)
+try:
+    view = memoryview(body)
+    while view:
+        written = os.write(output, view)
+        if written <= 0:
+            raise OSError("Agent Room verifier copy made no progress")
+        view = view[written:]
+    os.fsync(output)
+finally:
+    os.close(output)
+PY
+    else
+        "$GIT_BIN" -C "$APP_DIR" cat-file -e "${release_sha}^{commit}" \
+            || fail "deployed commit is unavailable to Agent Room verifier"
+        "$GIT_BIN" -C "$APP_DIR" show \
+            "${release_sha}:backend/seiche/agent_room.py" >"$destination" \
+            || fail "exact-release Agent Room verifier is unavailable"
+    fi
+    [ -s "$destination" ] && [ ! -L "$destination" ] \
+        || fail "exact-release Agent Room verifier is empty or unsafe"
+    chmod 0400 "$destination"
+}
+
+audit_agent_room_snapshot() {
+    local api_root="$1"
+    local verifier="$2"
+    local expected_uid="$3"
+    "$AGENT_ROOM_PYTHON_BIN" -I -B - \
+        "$verifier" "$api_root" "$expected_uid" <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import types
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+verifier_path = Path(sys.argv[1])
+api_root = Path(sys.argv[2])
+expected_uid = int(sys.argv[3])
+sha_re = re.compile(r"[0-9a-f]{64}")
+
+
+def identity(item: os.stat_result) -> tuple[int, ...]:
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_nlink,
+        item.st_uid,
+        item.st_gid,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+
+
+def read_regular(
+    path: Path,
+    *,
+    owner_uid: int,
+    modes: set[int],
+    maximum_bytes: int,
+) -> bytes:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        before = os.fstat(descriptor)
+        visible = path.lstat()
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != owner_uid
+            or stat.S_IMODE(before.st_mode) not in modes
+            or not 1 <= before.st_size <= maximum_bytes
+            or (before.st_dev, before.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise ValueError(f"unsafe private file: {path.name}")
+        body = bytearray()
+        while len(body) <= maximum_bytes:
+            chunk = os.read(
+                descriptor,
+                min(65536, maximum_bytes + 1 - len(body)),
+            )
+            if not chunk:
+                break
+            body.extend(chunk)
+        after = os.fstat(descriptor)
+        visible_after = path.lstat()
+        if (
+            len(body) != before.st_size
+            or len(body) > maximum_bytes
+            or identity(before) != identity(after)
+            or identity(before) != identity(visible_after)
+        ):
+            raise ValueError(f"private file changed while read: {path.name}")
+        return bytes(body)
+    finally:
+        os.close(descriptor)
+
+
+def checked_directory(path: Path, *, owner_uid: int) -> set[str]:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        visible = path.lstat()
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or opened.st_uid != owner_uid
+            or stat.S_IMODE(opened.st_mode) & 0o022
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise ValueError(f"unsafe private directory: {path.name}")
+        return set(os.listdir(descriptor))
+    finally:
+        os.close(descriptor)
+
+
+module_body = read_regular(
+    verifier_path,
+    owner_uid=os.geteuid(),
+    modes={0o400},
+    maximum_bytes=2 * 1024 * 1024,
+)
+module = types.ModuleType("_seiche_exact_release_agent_room")
+module.__file__ = str(verifier_path)
+sys.modules[module.__name__] = module
+exec(compile(module_body, str(verifier_path), "exec"), module.__dict__)
+
+checked_directory(api_root, owner_uid=expected_uid)
+room_root = api_root / "_agent_room"
+try:
+    room_names = checked_directory(room_root, owner_uid=expected_uid)
+except FileNotFoundError:
+    room_names = set()
+seal_path = (
+    api_root
+    / "_attest"
+    / module.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
+)
+seal_present = seal_path.exists() or seal_path.is_symlink()
+if not room_names:
+    if seal_present:
+        raise SystemExit("initialized Agent Room database is unavailable")
+    print(
+        "absent_uninitialized|seiche.agent-room.restore-audit.v1|"
+        "none|0|0|0|none|true|none"
+    )
+    raise SystemExit(0)
+if room_names != {"agent-room.sqlite"}:
+    raise SystemExit("Agent Room directory members are not exact")
+
+attest_root = api_root / "_attest"
+checked_directory(attest_root, owner_uid=expected_uid)
+pem = read_regular(
+    attest_root / "operator_key.pem",
+    owner_uid=expected_uid,
+    modes={0o400, 0o600},
+    maximum_bytes=16 * 1024,
+)
+private_key = serialization.load_pem_private_key(pem, password=None)
+if not isinstance(private_key, Ed25519PrivateKey):
+    raise SystemExit("restored operator key is not Ed25519")
+if not seal_present:
+    raise SystemExit("initialized Agent Room seal is unavailable")
+module.verify_initialization_seal(
+    seal_path,
+    server_private_key=private_key,
+    expected_owner_uid=expected_uid,
+)
+store = module.AgentRoomStore.open_existing(
+    room_root / "agent-room.sqlite",
+    server_private_key=private_key,
+    expected_owner_uid=expected_uid,
+)
+audit = store.audit_all_rooms()
+expected_fields = {
+    "ok",
+    "schema",
+    "server_key_id",
+    "participant_count",
+    "room_count",
+    "event_count",
+    "state_sha256",
+    "non_executable",
+    "execution_authority",
+}
+counts = tuple(
+    audit.get(name)
+    for name in ("participant_count", "room_count", "event_count")
+)
+if (
+    type(audit) is not dict
+    or set(audit) != expected_fields
+    or audit.get("ok") is not True
+    or audit.get("schema") != "seiche.agent-room.audit.v1"
+    or audit.get("non_executable") is not True
+    or audit.get("execution_authority") != "none"
+    or sha_re.fullmatch(audit.get("server_key_id") or "") is None
+    or sha_re.fullmatch(audit.get("state_sha256") or "") is None
+    or any(type(count) is not int or not 0 <= count <= 2_000_000 for count in counts)
+    or counts[2] > counts[1] * 4096
+    or (counts[1] and not counts[0])
+):
+    raise SystemExit("Agent Room aggregate audit result is invalid")
+print(
+    "|".join(
+        (
+            "verified",
+            "seiche.agent-room.restore-audit.v1",
+            audit["server_key_id"],
+            *(str(count) for count in counts),
+            audit["state_sha256"],
+            "true",
+            "none",
+        )
+    )
+)
+PY
 }
 
 POSTGRES_PORT=$(run_as_postgres "$PSQL_BIN" --no-psqlrc -tAc "SHOW port" \
@@ -221,6 +524,16 @@ case "$STAMP" in
 esac
 FINAL="$BACKUP_DIR/$STAMP"
 [ ! -e "$FINAL" ] || fail "refusing to replace existing snapshot $STAMP"
+DEPLOYED_SHA=$(cat "$DEPLOYED_SHA_PATH" 2>/dev/null || true)
+if ! printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+    DEPLOYED_SHA=$($GIT_BIN -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)
+fi
+printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+    || fail "cannot bind the snapshot to a deployed commit"
+if [ -n "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
+        && [ "$DEPLOYED_SHA" != "$DURABILITY_EXPECTED_RELEASE_SHA" ]; then
+    fail "snapshot release differs from the activation durability request"
+fi
 STAGE=$(mktemp -d "$BACKUP_DIR/.stage-$STAMP.XXXXXX")
 cleanup() {
     [ -z "${STAGE:-}" ] || rm -rf -- "$STAGE"
@@ -405,6 +718,82 @@ with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
         if result != ("ok",):
             raise SystemExit("SQLite online backup failed PRAGMA quick_check")
 PY
+
+# Agent Room uses a distinct owner-only SQLite database. A recursive copy can
+# race an append, so discard that copy and, when the preview has been used,
+# replace it with a transactionally consistent online backup. Absence is valid
+# before first registration; an unsafe or partially initialized path is not.
+AGENT_ROOM_SOURCE="$API_DATA_DIR/_agent_room/agent-room.sqlite"
+rm -rf -- "$API_STAGE/_agent_room"
+if [ -e "$AGENT_ROOM_SOURCE" ] || [ -L "$AGENT_ROOM_SOURCE" ]; then
+    AGENT_ROOM_STAGE="$API_STAGE/_agent_room"
+    mkdir -m 0700 "$AGENT_ROOM_STAGE"
+    "$PYTHON_BIN" -I -B - \
+        "$AGENT_ROOM_SOURCE" "$AGENT_ROOM_STAGE/agent-room.sqlite" <<'PY'
+import os
+from pathlib import Path
+import sqlite3
+import stat
+import sys
+
+source_path = Path(sys.argv[1])
+backup_path = Path(sys.argv[2])
+parent = source_path.parent
+parent_meta = parent.lstat()
+source_meta = source_path.lstat()
+members = {entry.name for entry in parent.iterdir()}
+if (
+    parent.is_symlink()
+    or not stat.S_ISDIR(parent_meta.st_mode)
+    or stat.S_IMODE(parent_meta.st_mode) != 0o700
+    or source_path.is_symlink()
+    or not stat.S_ISREG(source_meta.st_mode)
+    or source_meta.st_nlink != 1
+    or stat.S_IMODE(source_meta.st_mode) != 0o600
+    or source_meta.st_uid != parent_meta.st_uid
+    or not {"agent-room.sqlite"} <= members
+    or not members <= {"agent-room.sqlite", "agent-room.sqlite-journal"}
+):
+    raise SystemExit("live Agent Room database path is unsafe")
+with sqlite3.connect(f"file:{source_path}?mode=ro", uri=True) as source:
+    with sqlite3.connect(backup_path) as backup:
+        source.backup(backup)
+        result = backup.execute("PRAGMA quick_check").fetchone()
+        if result != ("ok",):
+            raise SystemExit("Agent Room online backup failed PRAGMA quick_check")
+os.chmod(backup_path, 0o600)
+PY
+elif [ -e "$API_DATA_DIR/_agent_room" ] \
+        || [ -L "$API_DATA_DIR/_agent_room" ]; then
+    "$PYTHON_BIN" -I -B - "$API_DATA_DIR/_agent_room" <<'PY'
+from pathlib import Path
+import os
+import stat
+import sys
+
+path = Path(sys.argv[1])
+metadata = path.lstat()
+if (
+    path.is_symlink()
+    or not stat.S_ISDIR(metadata.st_mode)
+    or metadata.st_uid != os.geteuid()
+    or stat.S_IMODE(metadata.st_mode) != 0o700
+    or any(path.iterdir())
+):
+    raise SystemExit("uninitialized Agent Room contains partial or unsafe state")
+PY
+fi
+AGENT_ROOM_VERIFIER="$STAGE/.agent-room-verifier.py"
+prepare_agent_room_verifier "$AGENT_ROOM_VERIFIER" "$DEPLOYED_SHA"
+if ! AGENT_ROOM_AUDIT_LINE=$(audit_agent_room_snapshot \
+    "$API_STAGE" "$AGENT_ROOM_VERIFIER" "$CURRENT_EUID"); then
+    fail "staged Agent Room failed full cryptographic audit"
+fi
+case "$AGENT_ROOM_AUDIT_LINE" in
+    verified\|*|absent_uninitialized\|*) ;;
+    *) fail "staged Agent Room audit receipt is invalid" ;;
+esac
+rm -f -- "$AGENT_ROOM_VERIFIER"
 "$TAR_BIN" --create --gzip --file "$STAGE/api-data.tgz" \
     --acls --xattrs --numeric-owner --one-file-system \
     --directory "$STAGE" api-data
@@ -418,16 +807,6 @@ API_STAGE=""
 # the dump larger but must never make a valid restore smaller.
 printf '%s\n' "$COUNTS_BEFORE" >"$STAGE/table-counts.txt"
 
-DEPLOYED_SHA=$(cat "$DEPLOYED_SHA_PATH" 2>/dev/null || true)
-if ! printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-    DEPLOYED_SHA=$($GIT_BIN -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)
-fi
-printf '%s' "$DEPLOYED_SHA" | grep -Eq '^[0-9a-f]{40}$' \
-    || fail "cannot bind the snapshot to a deployed commit"
-if [ -n "$DURABILITY_EXPECTED_RELEASE_SHA" ] \
-        && [ "$DEPLOYED_SHA" != "$DURABILITY_EXPECTED_RELEASE_SHA" ]; then
-    fail "snapshot release differs from the activation durability request"
-fi
 printf '%s\n' "$DEPLOYED_SHA" >"$STAGE/deployed-sha.txt"
 printf '%s\n' \
     "schema=seiche.market-backup.v4" \

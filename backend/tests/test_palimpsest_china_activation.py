@@ -22,7 +22,6 @@ import pytest
 
 from seiche import palimpsest_china_activation as activation
 
-
 RELEASE_SHA = "a" * 40
 PRODUCER_SHA = "b" * 40
 SIGNER = "c" * 64
@@ -50,7 +49,7 @@ def _launcher_restore_status(
     *, activation_id: str, tree_sha256: str, snapshot: str
 ) -> dict[str, str]:
     return {
-        "schema": "seiche.market-backup-restore-check.v5",
+        "schema": "seiche.market-backup-restore-check.v6",
         "checked_at": "2026-08-24T01:02:03Z",
         "snapshot": snapshot,
         "source_backup_schema": "seiche.market-backup.v4",
@@ -72,6 +71,15 @@ def _launcher_restore_status(
         "database_restore": "pass",
         "state_archive_restore": "pass",
         "api_data_archive_restore": "pass",
+        "agent_room_restore_audit": "verified",
+        "agent_room_audit_schema": "seiche.agent-room.restore-audit.v1",
+        "agent_room_server_key_id": "d" * 64,
+        "agent_room_participant_count": "1",
+        "agent_room_room_count": "1",
+        "agent_room_event_count": "1",
+        "agent_room_state_sha256": "e" * 64,
+        "agent_room_non_executable": "true",
+        "agent_room_execution_authority": "none",
         "research_only": "true",
         "can_publish": "false",
         "can_execute": "false",
@@ -136,6 +144,33 @@ def _launcher_offsite_status(
         "last_success": success,
         **common,
     }
+
+
+def test_launcher_agent_room_restore_contract_is_closed() -> None:
+    launcher = _load_launcher()
+    restore = _launcher_restore_status(
+        activation_id="5" * 64,
+        tree_sha256="6" * 64,
+        snapshot="20260824T010000Z",
+    )
+
+    assert launcher._valid_agent_room_restore(restore) is True
+    restore["agent_room_event_count"] = "4097"
+    assert launcher._valid_agent_room_restore(restore) is False
+
+    restore.update(
+        {
+            "agent_room_restore_audit": "absent_uninitialized",
+            "agent_room_server_key_id": "none",
+            "agent_room_participant_count": "0",
+            "agent_room_room_count": "0",
+            "agent_room_event_count": "0",
+            "agent_room_state_sha256": "none",
+        }
+    )
+    assert launcher._valid_agent_room_restore(restore) is True
+    restore["agent_room_participant_count"] = "1"
+    assert launcher._valid_agent_room_restore(restore) is False
 
 
 def test_launcher_recreates_boot_lost_deploy_lock_and_holds_it(
@@ -714,7 +749,7 @@ def _durability_evidence(
     return {
         "local_backup_snapshot": snapshot,
         "local_backup_inventory_sha256": "d" * 64,
-        "local_restore_schema": "seiche.market-backup-restore-check.v5",
+        "local_restore_schema": "seiche.market-backup-restore-check.v6",
         "local_restore_activation_id": active["activation_id"],
         "local_restore_tree_sha256": audit["tree_sha256"],
         "local_restore_checked_at": local_checked_at,
@@ -1378,6 +1413,50 @@ def test_durability_rejects_proof_clocks_before_the_live_activation(
         match="proof chronology regressed",
     ):
         activation.seal_activation_durability(paths, reversed_evidence)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("agent_room_restore_audit", "absent_uninitialized"),
+        ("agent_room_server_key_id", "none"),
+        ("agent_room_event_count", "4097"),
+        ("agent_room_non_executable", "false"),
+        ("agent_room_execution_authority", "trade"),
+    ],
+)
+def test_durability_rejects_invalid_agent_room_restore_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    paths = _paths(tmp_path)
+    sources = _sources(tmp_path / "operator")
+    accepted_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    _fake_verifier(
+        monkeypatch,
+        accepted_by_generation={1: accepted_at},
+        run_by_generation={1: 100},
+    )
+    first = activation.activate_bundle(sources, paths=paths)
+    evidence = _durability_evidence(paths, first)
+    restore = dict(
+        line.split("=", 1)
+        for line in str(evidence["local_restore_receipt"]).splitlines()
+    )
+    restore[field] = value
+    restore_body = "".join(f"{key}={item}\n" for key, item in restore.items())
+    evidence["local_restore_receipt"] = restore_body
+    evidence["local_restore_receipt_sha256"] = hashlib.sha256(
+        restore_body.encode("ascii")
+    ).hexdigest()
+
+    with pytest.raises(
+        activation.PalimpsestChinaActivationError,
+        match="embedded local restore proof changed",
+    ):
+        activation.seal_activation_durability(paths, evidence)
 
 
 def test_activation_state_backup_audit_round_trips_active_tree_and_modes(
@@ -2058,7 +2137,7 @@ def test_rest_mcp_projection_proof_binds_every_installed_file() -> None:
 
     payload["china_macro"]["economic_context"]["provenance"][  # type: ignore[index]
         "producer_main_evidence"
-    ]["sha256"] = "0" * 64
+    ]["sha256"] = ("0" * 64)
     with pytest.raises(
         activation.PalimpsestChinaActivationError,
         match="wrong China economic authority",

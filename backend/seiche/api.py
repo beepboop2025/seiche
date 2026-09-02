@@ -33,10 +33,11 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from seiche import (
     accounts,
+    agent_room,
     assemble,
     context_views,
     mcp_server,
@@ -45,6 +46,7 @@ from seiche import (
     public_view,
     store,
     subscribe as subscribe_list,
+    trade_safety,
     usage,
     world_model_delivery,
     x402,
@@ -155,17 +157,33 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     mcp_server.set_main_loop(asyncio.get_running_loop())
     refresh_task: asyncio.Task[None] | None = None
     if _PROD or os.getenv("SEICHE_BG_REFRESH") == "1":
+        stateful_mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "").strip()
+        preactivation = stateful_mode in {"shadow", "cutover_candidate"}
         # Freeze the process identity before any background work starts. A
         # rollback may later move the editable checkout, but it must never be
         # able to relabel an in-flight candidate build as the old release.
+        if _PROD:
+            # Opening and auditing the exact durable room/key pair is a release
+            # prerequisite. Let any failure abort application startup: serving
+            # without the audit would let health or tool traffic race ahead of
+            # restored-state verification.
+            await asyncio.to_thread(mcp_server.initialize_agent_room_readiness)
         await asyncio.to_thread(assemble.capture_process_release_sha)
-        restored = await asyncio.to_thread(assemble.restore_cached_snapshot)
+        restored = await asyncio.to_thread(
+            assemble.restore_cached_snapshot,
+            **({"read_only": True} if preactivation else {}),
+        )
         if restored is not None:
             logging.getLogger("uvicorn.error").info(
                 "serving %s last-known-good snapshot while board rebuilds",
                 restored,
             )
-        refresh_task = asyncio.create_task(_keep_warm(), name="seiche-keep-warm")
+        # Shadow and cutover-candidate generations are point-in-time restore
+        # evidence.  Their API may verify and read the restored state, but no
+        # background owner may advance SQLite, PIT, attest, market, or handoff
+        # state until the activation receipt transfers writer authority.
+        if not preactivation:
+            refresh_task = asyncio.create_task(_keep_warm(), name="seiche-keep-warm")
     try:
         yield
     finally:
@@ -447,7 +465,7 @@ def mcp_directory_discovery(response: Response) -> dict[str, Any]:
                 "url": "https://api.seiche.info/mcp",
                 "authentication": {
                     "type": "none",
-                    "scope": "eleven anonymous public evidence tools",
+                    "scope": "twelve anonymous public evidence tools",
                 },
                 "repository": "https://github.com/beepboop2025/seiche",
                 "documentation": "https://seiche.info/developers",
@@ -540,6 +558,12 @@ async def _retire_mcp_query_credentials(request: Request, call_next):
 async def _railway_cutover_edge_guard(request: Request, call_next):
     """Keep the Railway candidate private and read-only until authority moves."""
     mode = os.getenv("SEICHE_RAILWAY_STATEFUL_MODE", "")
+    if mode == "shadow" and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "shadow_read_only"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
     if mode not in {"cutover_candidate", "production"}:
         return await call_next(request)
     if request.url.path == "/healthz":
@@ -852,11 +876,15 @@ def _series_effective_staleness(pack, observation, cutoff: datetime) -> Stalenes
     aged = (
         StalenessState.FRESH
         if age_seconds <= cadence_seconds * 2
-        else StalenessState.AGING
-        if age_seconds <= cadence_seconds * 4
-        else StalenessState.STALE
-        if age_seconds <= cadence_seconds * 8
-        else StalenessState.DEAD
+        else (
+            StalenessState.AGING
+            if age_seconds <= cadence_seconds * 4
+            else (
+                StalenessState.STALE
+                if age_seconds <= cadence_seconds * 8
+                else StalenessState.DEAD
+            )
+        )
     )
     return max((observation.staleness, aged), key=_STALENESS_RANK.__getitem__)
 
@@ -916,7 +944,7 @@ def _series_page_coverage(observations) -> list[dict[str, Any]]:
 def _bearer_identity(authorization: str | None) -> dict | None:
     if not authorization or not authorization.startswith("Bearer "):
         return None
-    return accounts.verify_token(authorization.removeprefix("Bearer "))
+    return accounts.verify_current_token(authorization.removeprefix("Bearer "))
 
 
 def require_board(authorization: str | None = Header(default=None)) -> dict | None:
@@ -927,6 +955,30 @@ def require_board(authorization: str | None = Header(default=None)) -> dict | No
     ident = _bearer_identity(authorization)
     if _board_gate_enabled() and ident is None:
         raise HTTPException(401, "the board is a subscriber feature — sign in")
+    return ident
+
+
+def require_agent_room_identity(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Agent Room is private even when the human board is configured open."""
+
+    ident = _bearer_identity(authorization)
+    if ident is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Agent Room requires a valid bearer token",
+            headers={
+                "WWW-Authenticate": 'Bearer realm="seiche-agent-room"',
+                "Cache-Control": "no-store",
+            },
+        )
+    if not _agent_room_limiter.allow(ident["username"]):
+        raise HTTPException(
+            status_code=429,
+            detail="Agent Room rate limit reached",
+            headers={"Retry-After": "60", "Cache-Control": "no-store"},
+        )
     return ident
 
 
@@ -941,6 +993,7 @@ LOGIN_LOCKOUT_SECONDS = 300  # how long that lockout lasts (5 min)
 ASK_RATE_LIMIT_PER_MIN = 20  # max desk-assistant (LLM) calls per IP / minute
 SUBSCRIBE_RATE_LIMIT_PER_MIN = 5  # a human types one address, not five a minute
 MARKET_SERIES_RATE_LIMIT_PER_MIN = 30
+AGENT_ROOM_RATE_LIMIT_PER_MIN = 60
 
 
 class _RateLimiter:
@@ -996,6 +1049,7 @@ _ask_limiter = _RateLimiter(ASK_RATE_LIMIT_PER_MIN)
 _mcp_limiter = _RateLimiter(MCP_RATE_LIMIT_PER_MIN)
 _subscribe_limiter = _RateLimiter(SUBSCRIBE_RATE_LIMIT_PER_MIN)
 _market_series_limiter = _RateLimiter(MARKET_SERIES_RATE_LIMIT_PER_MIN)
+_agent_room_limiter = _RateLimiter(AGENT_ROOM_RATE_LIMIT_PER_MIN)
 
 
 def _client_ip(request: Request) -> str:
@@ -1055,7 +1109,7 @@ def api_index() -> dict[str, Any]:
         "mcp": {
             "url": "https://api.seiche.info/mcp",
             "transport": "streamable-http",
-            "authentication": "none for the eleven public tools",
+            "authentication": "none for the twelve public tools",
             "first_tool": "latest_article",
         },
         "delivery": mcp_server.telegram_delivery("agent_api"),
@@ -1094,6 +1148,7 @@ def api_index() -> dict[str, Any]:
             "small_gauge": "/api/gauge",
             "market_catalog_v2": "/api/v2/markets",
             "world_markets_v2": "/api/v2/world-markets",
+            "trade_safety_risk_context": "/api/trade-safety/risk-context",
             "china_macro_page": "https://seiche.info/markets/china-macro/",
             "global_money_markets_v2": "/api/v2/money-markets",
             "market_coverage_v2": "/api/v2/coverage",
@@ -1287,6 +1342,7 @@ def _public_openapi_document() -> dict[str, Any]:
                                         "status": {
                                             "type": "string",
                                             "enum": [
+                                                "agent_room_not_ready",
                                                 "warming_or_unavailable",
                                                 "rebuilding_from_last_known_good",
                                                 "rebuilt_without_market_evidence",
@@ -1482,6 +1538,43 @@ def _public_openapi_document() -> dict[str, Any]:
                                     },
                                     "additionalProperties": True,
                                 }
+                            }
+                        },
+                    },
+                },
+            },
+        },
+        "/api/trade-safety/risk-context": {
+            "get": {
+                "operationId": "getTradeSafetyRiskContext",
+                "summary": "Read cache-only Seiche context for trade-safety guards",
+                "description": (
+                    "Projects only an already-hydrated in-memory Seiche board. "
+                    "The request never collects, fits, reads an attestation ledger, "
+                    "calls a network source or broker, or authorizes an order. The "
+                    "response is metadata-only derived context, is never real-money "
+                    "eligible, preserves stale/dead/unknown source counts, and does "
+                    "not read or evaluate the attestation ledger. A separately "
+                    "verified stream attestation is never per-order authority."
+                ),
+                "responses": {
+                    "200": {
+                        "description": "Completed context projection",
+                        "content": {
+                            "application/json": {
+                                "schema": mcp_server.OUTPUT_SCHEMAS[
+                                    "trade_safety_risk_context"
+                                ]
+                            }
+                        },
+                    },
+                    "503": {
+                        "description": "Completed context is unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": mcp_server.OUTPUT_SCHEMAS[
+                                    "trade_safety_risk_context"
+                                ]
                             }
                         },
                     },
@@ -1968,21 +2061,28 @@ def market_series_v2(
         instrument_availability[instrument_id] = (
             "RESTRICTED"
             if RedistributionStatus.METADATA_ONLY in effective_policies
-            else "DERIVED_CONTEXT"
-            if RedistributionStatus.DERIVED_ONLY in effective_policies
-            else "UNAVAILABLE"
-            if observation is None
-            or not _observation_value_is_public(pack, observation)
-            or observation.quality in {QualityState.REJECTED, QualityState.UNAVAILABLE}
-            or state is StalenessState.UNAVAILABLE
-            else "STALE"
-            if state
-            in {
-                StalenessState.STALE,
-                StalenessState.DEAD,
-                StalenessState.UNKNOWN,
-            }
-            else "READY"
+            else (
+                "DERIVED_CONTEXT"
+                if RedistributionStatus.DERIVED_ONLY in effective_policies
+                else (
+                    "UNAVAILABLE"
+                    if observation is None
+                    or not _observation_value_is_public(pack, observation)
+                    or observation.quality
+                    in {QualityState.REJECTED, QualityState.UNAVAILABLE}
+                    or state is StalenessState.UNAVAILABLE
+                    else (
+                        "STALE"
+                        if state
+                        in {
+                            StalenessState.STALE,
+                            StalenessState.DEAD,
+                            StalenessState.UNKNOWN,
+                        }
+                        else "READY"
+                    )
+                )
+            )
         )
         current_staleness.setdefault(instrument_id, StalenessState.UNAVAILABLE)
     records = []
@@ -2046,11 +2146,15 @@ def market_series_v2(
     status = (
         "READY"
         if readiness_states == {"READY"}
-        else "STALE"
-        if readiness_states == {"STALE"}
-        else "UNAVAILABLE"
-        if not readiness_states or readiness_states == {"UNAVAILABLE"}
-        else "PARTIAL"
+        else (
+            "STALE"
+            if readiness_states == {"STALE"}
+            else (
+                "UNAVAILABLE"
+                if not readiness_states or readiness_states == {"UNAVAILABLE"}
+                else "PARTIAL"
+            )
+        )
     )
     return {
         "schema": "seiche.market-series.v2",
@@ -2268,6 +2372,217 @@ def world_markets_v2(response: Response, section: str = "all"):
         china_macro_context=china_macro_context,
         china_economic_context=china_economic_context,
     )
+
+
+@app.get("/api/trade-safety/risk-context")
+def trade_safety_risk_context(response: Response):
+    """Read a fail-closed, non-executable projection of completed Seiche state."""
+
+    payload = trade_safety.project(
+        mcp_server._get_in_memory_completed_snapshot(),
+        evaluation_at=datetime.now(UTC).replace(microsecond=0),
+    )
+    if payload["status"] != "available":
+        return JSONResponse(
+            status_code=503,
+            content=payload,
+            headers={
+                "Cache-Control": "no-store",
+                "Retry-After": "30",
+                "X-Seiche-Execution-Authority": "none",
+            },
+        )
+    response.headers["Cache-Control"] = "public, max-age=30, stale-while-revalidate=90"
+    response.headers["X-Seiche-Execution-Authority"] = "none"
+    return payload
+
+
+class AgentRoomRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    public_key_hex: str
+
+
+class AgentRoomCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    room_id: str
+    participant_ids: list[str] = Field(default_factory=list)
+
+
+class AgentRoomAppendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    event: dict[str, Any]
+    client_signature_hex: str
+
+
+_AGENT_ROOM_HEADERS = {
+    "Cache-Control": "no-store, no-transform",
+    "Pragma": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "X-Seiche-Execution-Authority": "none",
+}
+
+
+def _set_agent_room_headers(response: Response) -> None:
+    response.headers.update(_AGENT_ROOM_HEADERS)
+
+
+def _raise_agent_room_http_error(exc: agent_room.AgentRoomError) -> None:
+    status_code = 422
+    category = "invalid_request"
+    detail: dict[str, Any] = {"reason": str(exc)}
+    if isinstance(exc, agent_room.AgentRoomSequenceConflict):
+        status_code = 409
+        category = "sequence_conflict"
+        detail.update(
+            current_sequence=exc.current_sequence,
+            current_head=exc.current_head,
+        )
+    elif isinstance(exc, agent_room.AgentRoomReplayError):
+        status_code, category = 409, "replay_rejected"
+    elif isinstance(exc, agent_room.AgentRoomClosedError):
+        status_code, category = 409, "room_closed"
+    elif isinstance(exc, agent_room.AgentRoomCapacityError):
+        status_code, category = 409, "capacity_exhausted"
+    elif isinstance(exc, agent_room.AgentRoomAuthorizationError):
+        status_code, category = 403, "not_authorized"
+    elif isinstance(exc, agent_room.AgentRoomSignatureError):
+        status_code, category = 422, "signature_rejected"
+    elif isinstance(exc, agent_room.AgentRoomIntegrityError):
+        status_code, category = 503, "integrity_failure"
+        detail = {"reason": "Agent Room integrity verification failed"}
+    detail.update(
+        status="FAILED",
+        category=category,
+        non_executable=True,
+        execution_authority="none",
+    )
+    raise HTTPException(
+        status_code=status_code,
+        detail=detail,
+        headers=dict(_AGENT_ROOM_HEADERS),
+    ) from exc
+
+
+def _charge_agent_room_mutation(ident: dict) -> None:
+    """Share the durable subscriber quota between REST and MCP mutations."""
+
+    meter = usage.charge(
+        usage.key_for(ident, "unused-for-authenticated-principal"),
+        usage.quota_for(ident),
+    )
+    if not meter["allowed"]:
+        raise HTTPException(
+            status_code=429,
+            detail="Agent Room daily mutation quota reached",
+            headers={"Retry-After": "86400", **_AGENT_ROOM_HEADERS},
+        )
+
+
+@app.post("/api/agent-room/participants/self", include_in_schema=False)
+def agent_room_register_key(
+    body: AgentRoomRegisterRequest,
+    response: Response,
+    ident: dict = Depends(require_agent_room_identity),
+):
+    """Bind only the authenticated subscriber identity to its client key."""
+
+    _set_agent_room_headers(response)
+    _charge_agent_room_mutation(ident)
+    try:
+        return mcp_server._agent_room_store().provision_participant(
+            ident["username"], body.public_key_hex
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_http_error(exc)
+
+
+@app.post("/api/agent-room/rooms", include_in_schema=False)
+def agent_room_create(
+    body: AgentRoomCreateRequest,
+    response: Response,
+    ident: dict = Depends(require_agent_room_identity),
+):
+    """Create immutable membership with the bearer as the room owner."""
+
+    _set_agent_room_headers(response)
+    _charge_agent_room_mutation(ident)
+    try:
+        return mcp_server._agent_room_store().create_room(
+            agent_room.derive_external_room_id(ident["username"], body.room_id),
+            owner_id=ident["username"],
+            participant_ids=body.participant_ids,
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_http_error(exc)
+
+
+@app.post("/api/agent-room/rooms/{room_id}/events", include_in_schema=False)
+def agent_room_append_event(
+    room_id: str,
+    body: AgentRoomAppendRequest,
+    response: Response,
+    ident: dict = Depends(require_agent_room_identity),
+):
+    """Verify identity, canonical client signature, cursor, and append policy."""
+
+    _set_agent_room_headers(response)
+    _charge_agent_room_mutation(ident)
+    try:
+        if body.event.get("room_id") != room_id:
+            raise agent_room.AgentRoomValidationError(
+                "signed event room_id must equal the request path"
+            )
+        if body.event.get("actor_id") != ident["username"]:
+            raise agent_room.AgentRoomAuthorizationError(
+                "signed actor_id must equal the authenticated bearer identity"
+            )
+        return mcp_server._agent_room_store().append_event(
+            body.event, client_signature_hex=body.client_signature_hex
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_http_error(exc)
+
+
+@app.get("/api/agent-room/rooms/{room_id}/events", include_in_schema=False)
+def agent_room_list_events(
+    room_id: str,
+    response: Response,
+    after_sequence: int = -1,
+    limit: int = 100,
+    ident: dict = Depends(require_agent_room_identity),
+):
+    """Read a bounded page only after a complete room-chain verification."""
+
+    _set_agent_room_headers(response)
+    try:
+        return mcp_server._agent_room_store().room_page(
+            room_id,
+            requester_id=ident["username"],
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_http_error(exc)
+
+
+@app.get("/api/agent-room/rooms/{room_id}/verify", include_in_schema=False)
+def agent_room_verify(
+    room_id: str,
+    response: Response,
+    ident: dict = Depends(require_agent_room_identity),
+):
+    """Return a fresh full-chain verification receipt to a room participant."""
+
+    _set_agent_room_headers(response)
+    try:
+        return mcp_server._agent_room_store().verify_room(
+            room_id, requester_id=ident["username"]
+        )
+    except agent_room.AgentRoomError as exc:
+        _raise_agent_room_http_error(exc)
 
 
 @app.get("/api/v2/coverage")
@@ -2873,6 +3188,15 @@ def _health_response(
     include_release_candidate: bool,
 ):
     """Return cached health while keeping controller evidence private."""
+    if require_rebuilt and _PROD and not mcp_server.agent_room_release_ready():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "agent_room_not_ready",
+                "version": assemble.VERSION_LABEL,
+            },
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
+        )
     snap = assemble.cached_snapshot()
     if snap is None:
         return JSONResponse(
@@ -3042,6 +3366,12 @@ async def railway_stateful_health(response: Response):
             status_code=404,
             content={"detail": "not found"},
             headers={"Cache-Control": "no-store"},
+        )
+    if not mcp_server.agent_room_release_ready():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "agent_room_not_ready"},
+            headers={"Cache-Control": "no-store", "Retry-After": "10"},
         )
     try:
         if mode == "shadow":
@@ -3258,22 +3588,26 @@ async def attest_stream(stream: str, n: int = 400):
                     "day": record["day"],
                     "record_hash": record["hash"],
                     "prev_hash": record["prev_hash"],
-                    "signature": {
-                        "sig": signature["sig"],
-                        "public_key": signature["public_key"],
-                        "algo": signature["algo"],
-                        "signed_at": signature["signed_at"],
-                    }
-                    if signature
-                    else None,
-                    "anchor": {
-                        "status": latest_anchor["status"],
-                        "calendar": latest_anchor["calendar"],
-                        "bitcoin_height": latest_anchor.get("bitcoin_height"),
-                        "submitted_at": latest_anchor["submitted_at"],
-                    }
-                    if latest_anchor
-                    else None,
+                    "signature": (
+                        {
+                            "sig": signature["sig"],
+                            "public_key": signature["public_key"],
+                            "algo": signature["algo"],
+                            "signed_at": signature["signed_at"],
+                        }
+                        if signature
+                        else None
+                    ),
+                    "anchor": (
+                        {
+                            "status": latest_anchor["status"],
+                            "calendar": latest_anchor["calendar"],
+                            "bitcoin_height": latest_anchor.get("bitcoin_height"),
+                            "submitted_at": latest_anchor["submitted_at"],
+                        }
+                        if latest_anchor
+                        else None
+                    ),
                     # Both the calendar submission and Bitcoin continuation are
                     # required to reproduce the commitment path. Keep the
                     # compact `anchor` object above for existing API clients.
@@ -3452,11 +3786,12 @@ def mcp_http(
             ),
             status_code=413,
         )
-    # x402 pay-per-call: anonymous caller + a priced (subscriber) tool. The
-    # whole branch only exists when the operator set SEICHE_X402_PAY_TO, and
-    # it is fail-closed — no verified-and-settled payment, no tool result.
-    if x402.enabled() and public:
-        pay_header = request.headers.get("X-PAYMENT")
+    # x402 v2 pay-per-call: anonymous caller + a priced analysis tool. A
+    # profile/pay-to value marks an activation attempt, but an incomplete or
+    # inconsistent profile is rejected before any facilitator call. Dormant
+    # deployments and unrelated free calls continue serving normally.
+    if x402.activation_attempted() and public:
+        pay_header = request.headers.get("PAYMENT-SIGNATURE")
         # x402 is a single-request transport extension, not a batch payment.
         # Keep malformed params/name values away from dict/hash lookups so the
         # pre-settlement rejection path itself cannot raise.
@@ -3473,39 +3808,59 @@ def mcp_http(
             else None
         )
         priced = x402.price_usd(tool)
+        # A presented bearer token is an attempt to use subscriber auth, not
+        # permission to fall back to a wallet charge. Preserve that boundary
+        # even if the operator's x402 activation is currently misconfigured.
+        if priced is not None and authorization is not None and ident is None:
+            return JSONResponse(
+                mcp_server._error(
+                    single.get("id"),
+                    MCP_SERVER_ERROR,
+                    "invalid Authorization bearer token",
+                ),
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
+            )
+        config_error = x402.configuration_error()
+        if config_error is not None and (pay_header is not None or priced is not None):
+            message_id = single.get("id") if single is not None else None
+            return JSONResponse(
+                mcp_server._error(
+                    message_id,
+                    MCP_SERVER_ERROR,
+                    f"x402 activation rejected: {config_error}",
+                ),
+                status_code=503,
+                headers={"Cache-Control": "no-store", "Retry-After": "60"},
+            )
         if pay_header is not None and priced is None:
             return JSONResponse(
                 mcp_server._error(
                     None,
                     MCP_SERVER_ERROR,
-                    "X-PAYMENT covers exactly one tools/call for a priced tool",
+                    "PAYMENT-SIGNATURE covers exactly one tools/call for a priced "
+                    "analysis tool",
                 ),
                 status_code=400,
             )
         if priced is not None:
             resource = "https://api.seiche.info/mcp"
             reqs = x402.requirements(tool, resource)
-            # A presented bearer token is an attempt to use subscriber auth,
-            # not permission to silently fall back to a wallet charge. Refuse
-            # a malformed/expired token before touching the facilitator.
-            if authorization is not None and ident is None:
+
+            def payment_challenge(error: str) -> JSONResponse:
+                challenge = x402.payment_required(tool, resource, error)
                 return JSONResponse(
-                    mcp_server._error(
-                        single.get("id"),
-                        MCP_SERVER_ERROR,
-                        "invalid Authorization bearer token",
-                    ),
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Bearer realm="seiche"'},
-                )
-            if pay_header is None:
-                return JSONResponse(
-                    x402.payment_required(
-                        tool,
-                        resource,
-                        f"{tool} is a paid tool on the anonymous surface",
-                    ),
+                    challenge,
                     status_code=402,
+                    headers={
+                        "Cache-Control": "no-store",
+                        "PAYMENT-REQUIRED": x402.payment_required_header(challenge),
+                    },
+                )
+
+            if pay_header is None:
+                return payment_challenge(
+                    f"{tool} is a paid tool on the anonymous surface"
                 )
             # Payment cannot make an invalid request valid. Run the pure MCP
             # envelope/tool/input-schema preflight before verify or settle so
@@ -3516,29 +3871,28 @@ def mcp_http(
                 return JSONResponse(preflight, status_code=400)
             payment = x402.decode_payment(pay_header)
             if payment is None:
-                return JSONResponse(
-                    x402.payment_required(tool, resource, "X-PAYMENT header malformed"),
-                    status_code=402,
+                return payment_challenge(
+                    "PAYMENT-SIGNATURE header is malformed or is not x402 v2"
+                )
+            if not x402.payment_resource_matches(payment, tool, resource):
+                return payment_challenge(
+                    "payment resource does not match the requested Seiche resource"
                 )
             ok, why = x402.verify(payment, reqs)
             if not ok:
-                return JSONResponse(
-                    x402.payment_required(tool, resource, why), status_code=402
-                )
+                return payment_challenge(why)
             settled, receipt = x402.settle(payment, reqs)
             if not settled:
-                return JSONResponse(
-                    x402.payment_required(
-                        tool,
-                        resource,
-                        str(receipt.get("errorReason") or "settlement failed"),
-                    ),
-                    status_code=402,
+                return payment_challenge(
+                    str(receipt.get("errorReason") or "settlement failed")
                 )
             # Paid: this one call runs on the full surface, no quota charged.
             # Settlement and handler execution cannot be one atomic operation;
             # docs/MCP.md states the receipt/retry/refund boundary explicitly.
             try:
+                # Paid anonymous calls unlock only priced analysis tools. They
+                # still have no bearer identity and therefore cannot discover
+                # or invoke Agent Room operations.
                 resp = mcp_server.dispatch(single, public=False)
             except Exception:
                 resp = mcp_server._error(
@@ -3546,7 +3900,11 @@ def mcp_http(
                 )
             _log_mcp_activation(single, resp, "paid", origin)
             return JSONResponse(
-                resp, headers={"X-PAYMENT-RESPONSE": x402.settle_header(receipt)}
+                resp,
+                headers={
+                    "Cache-Control": "no-store",
+                    "PAYMENT-RESPONSE": x402.settle_header(receipt),
+                },
             )
 
     ukey = usage.key_for(ident, ip)
@@ -3566,7 +3924,7 @@ def mcp_http(
                 responses.append(_mcp_quota_result(m.get("id"), meter))
                 continue
         try:
-            resp = mcp_server.dispatch(m, public=public)
+            resp = mcp_server.dispatch(m, public=public, identity=ident)
         except Exception:
             # dispatch is defensive, but never let one bad message 500 the batch.
             mid = m.get("id") if isinstance(m, dict) else None

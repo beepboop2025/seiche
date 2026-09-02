@@ -62,9 +62,9 @@ ledger status. The auditable source of truth is
 | **Academic dataset** | 10 direct-OFR series and 11,163 audited observations, excluding restricted and derived rows ([research kit](distribution/datasets/README.md)) | Validated draft; not submitted |
 | **Data catalogs** | Native-validated Croissant/Frictionless, graph-parsed DCAT 3/RO-Crate 1.3, and a DOI-free DataCite planning draft ([metadata kit](distribution/datasets/)) | Validated as labeled; publication prepared |
 | **AI integrations** | Hosted MCP configs for Claude Code, Cursor, VS Code, Gemini CLI, and Codex; separate OpenAI workspace/submission guidance ([configs](integrations/mcp-clients/)) | Configs usable; OpenAI listing prepared |
-| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | 0.11.0 verified; signed 0.11.1 ownership-marker patch prepared |
+| **PyPI** | Python package and stdio MCP server (`pip install seiche`) | Repository identity 0.12.0; immutable availability is authoritative only on the linked PyPI project |
 
-Eleven evidence tools remain anonymous and free. Five compute-heavy tools are
+Twelve evidence tools remain anonymous and free. Five compute-heavy tools are
 account-gated; client and catalog copy must preserve that boundary. See the
 [distribution and container trust guide](docs/DISTRIBUTION.md) for verification
 and release invariants.
@@ -318,7 +318,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp               # free surface only
 ```
 
 Or, zero-install, over HTTP: the same tools are served at **`/mcp`** on the API
-(`https://api.seiche.info/mcp`). Add the URL and start calling. Eleven tools
+(`https://api.seiche.info/mcp`). Add the URL and start calling. Twelve tools
 answer anonymously, no token, no sign-up, no email:
 
 ```bash
@@ -333,6 +333,7 @@ The copy-paste quickstart and live tool runner are at
 |---|---|
 | `latest_article` | today's exact full-text editorial with its evidence clock and publication receipt |
 | `funding_stress_now` | the live composite, the regime, the decomposition, the Tell |
+| `trade_safety_risk_context` | deterministic cache-only regime/index/coverage/clocks for order guards; context-only and never execution authority |
 | `historical_analogs` | the closest days in the record, and what followed them |
 | `proof_backtest` | the track record with its misses and its confidence intervals |
 | `data_health` | freshness and provenance for every input, before you trust a reading |
@@ -345,19 +346,28 @@ The copy-paste quickstart and live tool runner are at
 
 That is the conclusion, the precedent, the honest record, the freshness, granular
 USD money-market context, unified world-market context and cross-market transmission context, and it stays
-free. Five tools want a bearer
-token because they read gated forecasting, replay, positioning, prose, or LLM
-engines rather than a published contextual conclusion:
+free. Five analysis tools want a bearer token because they read gated
+forecasting, replay, positioning, prose, or LLM engines rather than a published
+contextual conclusion:
 `funding_stress_forecast`, `replay_asof`, `positioning_book`, `desk_brief` and
 `ask_desk`. `institutional_flows` answers anonymously but keeps its
 `method_versions` back for the same reason.
+
+An authenticated hosted caller also sees five private **Agent Room** preview
+tools: `agent_room_register_key`, `agent_room_create`,
+`agent_room_append_event`, `agent_room_list_events`, and `agent_room_verify`.
+They record client-signed, server-co-signed agent discussion in a tamper-evident
+room; every record is non-executable and grants no acceptance, order, execution,
+payment, settlement, or custody authority. The full bearer-authenticated hosted
+catalog is therefore 22 tools (12 public evidence + five gated analysis + five
+Agent Room). See [the exact security and signing contract](docs/AGENT-ROOM.md).
 
 Nothing fails at call time over this: `tools/list` returns exactly the tools the
 caller can run, so an agent never sees a tool it cannot use. Both surfaces are
 rate-limited per caller and metered per UTC day (anonymous callers per IP).
 
 Full setup, the tool catalogue, client config, metering, tokens, and the
-pay-per-call option for the five: **[docs/MCP.md](docs/MCP.md)**.
+pay-per-call option for the five analysis tools: **[docs/MCP.md](docs/MCP.md)**.
 
 Want the board in your pocket instead of a client config? The
 **[Hermes desk-agent kit](integrations/hermes/)** turns
@@ -446,7 +456,7 @@ DV01s. The math never hides an opinion.
 
 ## Non-goals
 
-The eleven-tool public evidence surface needs no account and does not depend on
+The twelve-tool public evidence surface needs no account and does not depend on
 paid upstream data; optional licensed or tenant inputs remain explicitly bounded.
 Five compute-heavy forecast, replay, positioning, prose and LLM tools are
 account-gated. Seiche does not claim intraday-tick coverage: daily cadence plus

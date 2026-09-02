@@ -103,7 +103,7 @@ api.seiche.info {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE"
         header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID"
-        header Access-Control-Expose-Headers "X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining"
+        header Access-Control-Expose-Headers "X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-MCP-Trade-Safety-Usage-Used, X-MCP-Trade-Safety-Usage-Limit, X-MCP-Trade-Safety-Usage-Remaining"
         header X-Content-Type-Options "nosniff"
         @mcp_opts method OPTIONS
         respond @mcp_opts 204
@@ -158,7 +158,7 @@ api.seiche.info {
         header Cache-Control "public, max-age=300"
         header Content-Type "application/json"
         header X-Content-Type-Options "nosniff"
-        respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for nine public tools","first_tool":"latest_article"},"rest":{"article_json_feed":"/undertow/articles-feed.json","free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
+        respond `{"product":"Undertow","job":"market-level liquidity and position-sized exit cost","developer_guide":"https://liquilens-undertow.com/developers/","mcp":{"url":"https://api.seiche.info/undertow/mcp","transport":"streamable-http","authentication":"none for ten public tools","first_tool":"latest_article"},"rest":{"article_json_feed":"/undertow/articles-feed.json","free_summary":"/undertow/x402/summary","sealed_record":"/undertow/sealed_calls.json","public_packs":"/undertow/<pack>.json","machine_payable":"/undertow/x402/"},"disclaimer":"Research and market data, not investment advice."}` 200
     }
 
     # Undertow published packs — static public mirror (board + retail
@@ -433,6 +433,26 @@ api.seiche.info {
         respond "not here" 404
     }
 
+    # Agent Room is a private bearer-authenticated event layer. It is kept out
+    # of @public, capped before JSON parsing, and routed only for its documented
+    # read/append methods. The application derives every actor from the bearer;
+    # the edge never accepts an identity override or an execution endpoint.
+    @agent_room {
+        method GET POST
+        path /api/agent-room/*
+    }
+    handle @agent_room {
+        request_body {
+            max_size 64KiB
+        }
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+        header Cache-Control "no-store, no-transform"
+        header X-Content-Type-Options "nosniff"
+        header X-Seiche-Execution-Authority "none"
+        import seiche_stateful_upstream
+    }
+
     # OpenAI plugin domain verification is deliberately dark unless an operator
     # installs the portal-issued token in Caddy's process environment. Use the
     # runtime {env.*} placeholder, never the parse-time {$ENV} substitution: an
@@ -457,7 +477,7 @@ api.seiche.info {
 
     @public {
         method GET HEAD
-        path /.well-known/mcp.json /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/money-markets /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
+        path /.well-known/mcp.json /api /api/openapi.json /api/health /api/overview /api/public /api/gauge /api/money-markets /api/oil-funding /api/estuary /api/wrecks /api/asof/* /api/v2/* /api/trade-safety/risk-context /api/me /api/dispatch/* /api/alerts/prefs /api/notary /api/notary/proof/* /api/attest/* /api/badge/* /api/series/* /api/subscribe
     }
     # Public POST endpoints live here because @public is GET/HEAD only. The
     # Week Ahead list also keeps GET in @public so the front door can discover
@@ -501,16 +521,22 @@ api.seiche.info {
     handle @preflight {
         header Access-Control-Allow-Origin "*"
         header Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, PAYMENT-SIGNATURE"
         respond 204
     }
     @mcp {
         path /mcp /mcp/usage /api/provision
     }
     handle @mcp {
+        # The application enforces much smaller per-call schemas and a bounded
+        # JSON-RPC batch. This edge ceiling prevents an oversized body from
+        # consuming parser memory before those contracts can run.
+        request_body {
+            max_size 1MiB
+        }
         header Access-Control-Allow-Origin "*"
-        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, X-PAYMENT"
-        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, X-PAYMENT-RESPONSE, Warning, Deprecation, Sunset"
+        header Access-Control-Allow-Headers "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Seiche-Signature, PAYMENT-SIGNATURE"
+        header Access-Control-Expose-Headers "Mcp-Session-Id, X-MCP-Usage-Used, X-MCP-Usage-Limit, X-MCP-Usage-Remaining, PAYMENT-REQUIRED, PAYMENT-RESPONSE, Warning, Deprecation, Sunset"
         header X-Content-Type-Options "nosniff"
         import seiche_stateful_upstream
     }

@@ -51,7 +51,6 @@ from seiche.palimpsest_china_intake import (
     load_accepted_export,
 )
 
-
 ACTIVATION_RECEIPT_SCHEMA = "seiche.palimpsest-china-activation-receipt.v1"
 ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v2"
 LEGACY_ACTIVE_MARKER_SCHEMA = "seiche.palimpsest-china-active.v1"
@@ -181,6 +180,15 @@ _LOCAL_RESTORE_KEYS = frozenset(
         "database_restore",
         "state_archive_restore",
         "api_data_archive_restore",
+        "agent_room_restore_audit",
+        "agent_room_audit_schema",
+        "agent_room_server_key_id",
+        "agent_room_participant_count",
+        "agent_room_room_count",
+        "agent_room_event_count",
+        "agent_room_state_sha256",
+        "agent_room_non_executable",
+        "agent_room_execution_authority",
         "research_only",
         "can_publish",
         "can_execute",
@@ -521,6 +529,45 @@ def _local_restore_fields(body: bytes) -> dict[str, str]:
     if set(fields) != _LOCAL_RESTORE_KEYS:
         _fail("activation durability local restore receipt fields changed")
     return fields
+
+
+def _valid_agent_room_restore(fields: Mapping[str, str]) -> bool:
+    count_names = (
+        "agent_room_participant_count",
+        "agent_room_room_count",
+        "agent_room_event_count",
+    )
+    raw_counts = tuple(fields.get(name, "") for name in count_names)
+    if any(
+        len(value) > 7 or re.fullmatch(r"(?:0|[1-9][0-9]*)", value) is None
+        for value in raw_counts
+    ):
+        return False
+    counts = tuple(int(value) for value in raw_counts)
+    participants, rooms, events = counts
+    if (
+        any(count > 2_000_000 for count in counts)
+        or events > rooms * 4096
+        or (rooms > 0 and participants == 0)
+        or fields.get("agent_room_audit_schema") != "seiche.agent-room.restore-audit.v1"
+        or fields.get("agent_room_non_executable") != "true"
+        or fields.get("agent_room_execution_authority") != "none"
+    ):
+        return False
+    result = fields.get("agent_room_restore_audit")
+    server_key_id = fields.get("agent_room_server_key_id", "")
+    state_sha256 = fields.get("agent_room_state_sha256", "")
+    if result == "verified":
+        return (
+            _SHA256_RE.fullmatch(server_key_id) is not None
+            and _SHA256_RE.fullmatch(state_sha256) is not None
+        )
+    return (
+        result == "absent_uninitialized"
+        and server_key_id == "none"
+        and state_sha256 == "none"
+        and counts == (0, 0, 0)
+    )
 
 
 def _bundle_id(hashes: Mapping[str, str]) -> str:
@@ -1603,7 +1650,7 @@ def _validate_durability_receipt(
         or value["offsite_tree_sha256"] != audit.get("tree_sha256")
     ):
         _fail("activation durability receipt does not bind the live activation")
-    if value["local_restore_schema"] != "seiche.market-backup-restore-check.v5":
+    if value["local_restore_schema"] != "seiche.market-backup-restore-check.v6":
         _fail("activation durability local restore schema changed")
     if value["offsite_status_schema"] != "seiche.market-offsite-backup-status.v4":
         _fail("activation durability offsite status schema changed")
@@ -1663,6 +1710,7 @@ def _validate_durability_receipt(
         != restore["nbs_public_revision_store"]
         or restore["nbs_full_store_audit_result"]
         not in {"not_onboarded", "verified_head"}
+        or not _valid_agent_room_restore(restore)
         or re.fullmatch(count_shape, restore["critical_table_counts"]) is None
         or re.fullmatch(count_shape, restore["critical_table_count_floor"]) is None
         or re.fullmatch(r"[0-9]+", restore["palimpsest_china_bundle_count"]) is None

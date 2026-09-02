@@ -255,7 +255,7 @@ def test_product_and_agent_catalogs_route_to_the_evidence_pair():
         if item["identifier"] == "urn:air:seiche.info:mcp:funding-stress"
     )
     assert mcp["type"] == "application/json"
-    assert mcp["metadata"]["publicToolCount"] == 11
+    assert mcp["metadata"]["publicToolCount"] == 12
     assert "world_markets_context" in mcp["capabilities"]
     assert card["access"]["public_world_markets_mcp_tool"] == ("world_markets_context")
 

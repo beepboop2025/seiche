@@ -72,7 +72,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     registered = json.loads((ROOT / "server.json").read_text())
     assert mcp["data"] == registered
     assert mcp["version"] == registered["version"]
-    assert len(mcp["capabilities"]) == 11
+    assert len(mcp["capabilities"]) == 12
     assert mcp["prompts"] == [
         "is_now_dangerous",
         "money_market_deep_dive",
@@ -93,6 +93,7 @@ def test_ard_catalog_matches_the_registered_mcp_card():
     assert "latest_article" in mcp["capabilities"]
     assert "money_market_context" in mcp["capabilities"]
     assert "world_markets_context" in mcp["capabilities"]
+    assert "trade_safety_risk_context" in mcp["capabilities"]
     corpus_mcp = next(
         entry
         for entry in catalog["entries"]
@@ -378,7 +379,7 @@ def test_financial_evidence_router_is_external_pinned_and_china_complete():
     assert ".agents/skills/financial-evidence" not in json.dumps(catalog)
 
     card = json.loads((PUBLIC / "product-card.json").read_text())
-    assert card["updated"] == "2026-08-24"
+    assert card["updated"] == "2026-09-02"
     assert "financial-evidence-skills" in card["access"]["financial_evidence_skill"]
 
     china = (PUBLIC / "use-cases" / "china-economy-evidence" / "index.html").read_text()

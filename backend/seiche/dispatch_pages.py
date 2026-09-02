@@ -715,8 +715,8 @@ Key facts: the live board is at {SITE} (no sign-in). The plain English guide is
 at {SITE}/guide; the versioned methodology page, with citations, a
 changelog and a cite-as block, is at {SITE}/methodology. The source code
 is at https://github.com/beepboop2025/seiche. Agents can query the live board
-over MCP at https://api.seiche.info/mcp. Eleven tools answer with no auth at all:
-latest_article, funding_stress_now, historical_analogs, proof_backtest, data_health,
+over MCP at https://api.seiche.info/mcp. Twelve tools answer with no auth at all:
+latest_article, funding_stress_now, trade_safety_risk_context, historical_analogs, proof_backtest, data_health,
 crypto_stress_record, institutional_flows, oil_funding_context,
 fx_materials_passage, the section-selectable money_market_context and the
 money/forex/capital section-selectable world_markets_context, metered

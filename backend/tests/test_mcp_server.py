@@ -600,6 +600,7 @@ def test_money_market_tool_publishes_the_exact_bounded_selector_contract():
 PUBLIC_TOOLS = {
     "latest_article",
     "funding_stress_now",
+    "trade_safety_risk_context",
     "historical_analogs",
     "proof_backtest",
     "data_health",
@@ -848,9 +849,13 @@ def test_money_market_unavailable_sanitizes_reason_before_copying_explanation(
 ):
     secret = "mcp-secret-92f1"
     hostile = (
-        "RuntimeError: https://operator:" + secret
-        + "@official.example/data?api_key=" + secret
-        + " /Users/operator/private.env <script>" + secret + "</script>"
+        "RuntimeError: https://operator:"
+        + secret
+        + "@official.example/data?api_key="
+        + secret
+        + " /Users/operator/private.env <script>"
+        + secret
+        + "</script>"
     )
     snap = _snapshot_with_money_market(
         fake_snap,
@@ -910,8 +915,7 @@ def test_expected_tool_error_has_typed_sanitized_structured_content(monkeypatch)
 )
 def test_money_market_rejects_unbounded_selectors(arguments, stubbed):
     response = _call("money_market_context", arguments)
-    assert response["result"]["isError"] is True
-    assert "ERROR:" in response["result"]["content"][0]["text"]
+    assert response["error"]["code"] == mcp.INVALID_PARAMS
 
 
 def test_unexpected_tool_exception_never_echoes_arbitrary_diagnostics(
@@ -934,9 +938,7 @@ def test_unexpected_tool_exception_never_echoes_arbitrary_diagnostics(
     captured = capsys.readouterr()
 
     assert response["result"]["isError"] is True
-    assert response["result"]["content"][0]["text"] == (
-        "ERROR: internal tool failure"
-    )
+    assert response["result"]["content"][0]["text"] == ("ERROR: internal tool failure")
     assert marker not in encoded
     assert marker not in captured.err
 
@@ -978,9 +980,10 @@ def test_replay_carries_final_vintage_claim_boundary(stubbed):
     assert "point-in-time (no lookahead)" not in p["reading"].lower()
 
 
-def test_replay_bad_date_is_tool_error(stubbed):
+def test_replay_bad_date_is_invalid_params(stubbed):
     resp = _call("replay_asof", {"date": "not-a-date"})
-    assert resp["result"]["isError"] is True
+    assert resp["error"]["code"] == mcp.INVALID_PARAMS
+    assert "required pattern" in resp["error"]["message"]
 
 
 def test_replay_missing_data_is_tool_error(stubbed):
@@ -1065,12 +1068,13 @@ def test_oil_funding_context_preserves_nullable_sofr_contract(
     assert payload["schema"] == "seiche.oil-funding.v1"
     assert payload["funding"]["sofr_iorb"]["spread_bp"] is None
     assert payload["scenario"]["funding_rate_evidence"]["basis"] == "unavailable"
-    assert payload["scenario"]["outputs"]["carry"][
-        "required_contango_usd_per_bbl"
-    ] is None
-    assert payload["scenario"]["outputs"]["trade_finance"][
-        "cargo_financing_cost_usd"
-    ] is None
+    assert (
+        payload["scenario"]["outputs"]["carry"]["required_contango_usd_per_bbl"] is None
+    )
+    assert (
+        payload["scenario"]["outputs"]["trade_finance"]["cargo_financing_cost_usd"]
+        is None
+    )
 
 
 def test_fx_materials_passage_keeps_the_holdout_ledger(stubbed):

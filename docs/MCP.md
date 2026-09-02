@@ -90,22 +90,28 @@ single-response mode: `POST /mcp` with a JSON-RPC body, JSON-RPC back.
   fields with HTTP 400. If both are present during the transition, only the
   valid `Authorization` header determines identity. Do not put credentials in
   URLs, where intermediaries and request histories can retain them.
-- **Anonymous** (no token) → eleven tools, named so you can check this against the
+- **Anonymous** (no token) → twelve tools, named so you can check this against the
   code rather than take it on faith: `funding_stress_now`, `historical_analogs`,
   `proof_backtest`, `data_health`, `crypto_stress_record` and
   `institutional_flows`, plus `money_market_context`, `oil_funding_context` and
-  `fx_materials_passage`, `world_markets_context`, plus `latest_article`. The editorial, conclusion, precedent, track record with its
+  `fx_materials_passage`, `world_markets_context`, `trade_safety_risk_context`,
+  plus `latest_article`. The editorial, conclusion, precedent, track record with its
   misses, freshness, crypto transmission record, positioning read, granular USD
   money-market evidence, unified money/FX/capital context, and cross-market oil/FX/material context. Capped per IP
   per day. Zero setup, and it stays free.
-- **Subscriber** (bearer token) → the same eleven plus the five that read the
-  derived engines: `funding_stress_forecast`, `replay_asof`, `positioning_book`,
-  `desk_brief`, `ask_desk`. At your tier's quota.
+- **Subscriber** (bearer token) → the same twelve plus five analysis tools that
+  read derived engines: `funding_stress_forecast`, `replay_asof`,
+  `positioning_book`, `desk_brief`, `ask_desk`; and five private Agent Room
+  preview tools: `agent_room_register_key`, `agent_room_create`,
+  `agent_room_append_event`, `agent_room_list_events`, `agent_room_verify`.
+  The authenticated hosted catalog is 22 tools. Agent Room identity always
+  comes from the bearer and every room/event is non-executable.
 
 `tools/list` returns exactly what the caller can run, so an anonymous agent
 never sees a tool it would be refused on. The list is generated from the
-`is_public` flag on each entry in `TOOLS` (`backend/seiche/mcp_server.py`);
-that flag is the boundary, and this page is downstream of it.
+`is_public` flag on each entry in `TOOLS` (`backend/seiche/mcp_server.py`).
+Agent Room adds a second boundary: a non-public tool is still hidden unless the
+transport supplies a verified bearer identity. This page is downstream of both.
 
 The endpoint lives on the existing FastAPI app behind the same Caddy reverse
 proxy as the rest of the API — no separate service to run or deploy.
@@ -270,6 +276,7 @@ recorded in the `provisions` table for audit.
 |------|-----------------|---------|
 | `latest_article` | Exact full-text daily editorial, evidence clock and passing publication receipt | public |
 | `funding_stress_now` | Current 0–100 stress index, regime, per-component decomposition, the Tell | public |
+| `trade_safety_risk_context` | Deterministic cache-only regime, index, coverage, source staleness counts, and conservative clocks; metadata-only derived context that does not evaluate attestations or grant execution authority | public |
 | `historical_analogs` | The most similar past days + how often they led to a stress event, with a novelty flag | public |
 | `proof_backtest` | Recall/precision with 95% CIs, orthogonal test, every episode incl. misses | public |
 | `data_health` | Freshness, provenance, and fault status for every input series | public |
@@ -299,7 +306,7 @@ caveats in every successful projection.
 
 ## Machine-native support (x402) — dormant by design
 
-Seiche's eleven evidence tools are a permanent free public good. Five
+Seiche's twelve evidence tools are a permanent free public good. Five
 compute-heavy tools are separately account-gated to cover operator cost. The
 codebase also carries a dormant
 [x402](https://docs.cdp.coinbase.com/x402/welcome) rail:
@@ -308,14 +315,44 @@ few cents of USDC per call for the operator-cost tools — support in the
 currency agents hold, not a paywall, and never a condition for the public
 surface, which stays free forever.
 
-The rail is **off by default** and fail-closed (it only exists when the
-operator sets `SEICHE_X402_PAY_TO`; decode/verify/settle failures serve
-nothing). Amounts live in `backend/seiche/config.py` (`X402_PRICES_USD`);
-network and facilitator are env dials (`SEICHE_X402_NETWORK`,
-`SEICHE_X402_FACILITATOR`). When on, the anonymous `tools/list` says which
-tools accept support and how much; a `tools/call` carrying a valid
-`X-PAYMENT` header runs on the full surface, with the settlement receipt
-returned in `X-PAYMENT-RESPONSE`.
+The rail is **off by default** and fail-closed. The v2 code can be deployed
+without any x402 environment variables and does not validate or contact a
+facilitator at startup. Setting only `SEICHE_X402_PAY_TO` is deliberately not
+enough: a paid request then returns an explicit configuration error before any
+facilitator call. Prices live in `backend/seiche/config.py`
+(`X402_PRICES_USD`). Activation requires one coherent profile:
+
+| `SEICHE_X402_PROFILE` | exact network / asset / facilitator contract |
+|---|---|
+| `base-sepolia-testnet` | `eip155:84532`, Base Sepolia USDC, and `https://x402.org/facilitator`; no facilitator authorization value |
+| `base-mainnet-authenticated` | reserved and explicitly rejected until Seiche has a per-request signer for CDP's short-lived, method/host/path-bound JWTs |
+
+The testnet profile requires an EVM receiving address in
+`SEICHE_X402_PAY_TO`. Optional `SEICHE_X402_NETWORK`,
+`SEICHE_X402_ASSET`, and `SEICHE_X402_FACILITATOR` values must exactly match
+the selected profile. The public x402.org facilitator is accepted only by the
+Base Sepolia testnet profile. It cannot be paired with Base mainnet. Selecting
+the reserved mainnet profile returns a local configuration error before any
+facilitator contact; a static bearer credential is deliberately unsupported
+because one JWT cannot authenticate both the `/verify` and `/settle` paths.
+
+When a valid profile is active, anonymous `tools/list` identifies the five
+payable analysis tools. An unpaid `tools/call` returns the x402 v2
+`PaymentRequired` JSON body and the same document base64-encoded in
+`PAYMENT-REQUIRED`. The client retries with a base64 v2 payload in
+`PAYMENT-SIGNATURE`; only an exact requirements match is verified and settled.
+The successful response returns the base64 settlement receipt in
+`PAYMENT-RESPONSE`. Requirements use `x402Version: 2`, CAIP-2 networks, an
+atomic-unit `amount`, and a top-level resource object. Legacy v1 `X-PAYMENT`
+and `X-PAYMENT-RESPONSE` headers are not accepted or emitted.
+
+The release ships this code **dormant**. Production activation still requires
+the owner's receiving wallet, a per-request JWT signer and safe key rotation,
+plus legal/compliance authorization. A deployed code path is not evidence that
+mainnet charging is live.
+
+x402 never exposes or authorizes Agent Room. A wallet payment is not a bearer
+principal, room membership, signature, acceptance, or execution authority.
 
 With a payment header present, Seiche validates bearer-token state, the
 JSON-RPC request shape, method, tool, request ID and the tool's published input
@@ -328,17 +365,17 @@ If a snapshot, upstream dependency or tool handler fails after settlement, the
 JSON-RPC result is an error and the response still carries the settlement
 receipt. Seiche has no application-level idempotency key, automatic rollback or
 automatic refund for that case. A client must not blindly repay or auto-retry;
-it should retain `X-PAYMENT-RESPONSE` and the transaction reference for manual
+it should retain `PAYMENT-RESPONSE` and the transaction reference for manual
 operator reconciliation and, where appropriate, a refund.
 
 The separate Undertow PayPal webhook placeholder is also dormant. Its edge
 contract and mandatory activation checklist are documented in
 [`PAYPAL.md`](PAYPAL.md); it is not an active alternative payment rail.
 
-## Public vs. full surface
+## Public vs. authenticated surface
 
 Set `SEICHE_MCP_PUBLIC=1` to expose only the free tools over **stdio**. This is
-the same eleven the hosted endpoint gives an anonymous caller, so a local run and a
+the same twelve the hosted endpoint gives an anonymous caller, so a local run and a
 no-token HTTP call see the same surface:
 
 ```bash
@@ -349,6 +386,7 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 |---|---|---|
 | `latest_article` | yes | the exact published editorial; no downstream regeneration |
 | `funding_stress_now` | yes | the conclusion, which is the free good |
+| `trade_safety_risk_context` | yes | a cache-only, rights-rechecked context envelope for external order guards; never execution authority |
 | `historical_analogs` | yes | precedent from the public record |
 | `proof_backtest` | yes | the track record, misses included |
 | `data_health` | yes | you should be able to check freshness before trusting a number |
@@ -363,6 +401,11 @@ SEICHE_MCP_PUBLIC=1 seiche-mcp
 | `positioning_book` | no | sleeves, weights, `p_ensemble`, tcost |
 | `desk_brief` | no | the whole board as prose, with driver weights |
 | `ask_desk` | no | runs the operator's LLM budget |
+| `agent_room_register_key` | bearer identity | binds only the bearer username to a client Ed25519 public key |
+| `agent_room_create` | bearer identity | creates immutable private membership with the bearer as owner |
+| `agent_room_append_event` | bearer identity | verifies and chains a client-signed non-executable discussion event |
+| `agent_room_list_events` | bearer identity | verifies membership and the full chain before returning a bounded page |
+| `agent_room_verify` | bearer identity | recomputes the room's genesis, signatures, transitions, and chain head |
 
 The rule behind the column: what Seiche gives away is the **conclusion**; what
 it keeps is the **gated engine that produced a forecast, replay, position or
@@ -370,6 +413,12 @@ LLM answer**. That is why `institutional_flows` is public but drops its
 `method_versions`, while the USD desk and two cross-market tools return chartless
 contextual views and keep calculations, restricted evidence and scenarios visibly
 separate from observations.
+
+Local stdio has no verified bearer principal, so even its normal full-analysis
+mode exposes the established 17 analysis/evidence tools, not Agent Room. The
+five Agent Room tools appear only on authenticated hosted HTTP. Their exact
+event vocabulary, canonical signing bytes, REST twins, private storage, limits,
+and compliance boundary are in [`AGENT-ROOM.md`](AGENT-ROOM.md).
 
 `is_public` on each `TOOLS` entry in `backend/seiche/mcp_server.py` is the one
 place this is decided. Before commit `82d5700` the HTTP layer disagreed with it

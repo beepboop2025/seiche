@@ -36,8 +36,9 @@ changes what the record says, only makes it provable):
 Storage follows the data-dir convention: ledger JSONL under
 backend/data/_pit_ledger/ (SEICHE_PIT_LEDGER_DIR overrides), signature and
 anchor sidecars plus the operator keypair and run receipts under
-backend/data/_attest/ (SEICHE_ATTEST_DIR overrides). All files are
-append-only. Chain verification is pure stdlib; signatures need
+backend/data/_attest/ (SEICHE_ATTEST_DIR may isolate non-production use;
+production pins DATA_DIR/_attest). All files are append-only. Chain
+verification is pure stdlib; signatures need
 `cryptography` (a pinned dependency); anchoring needs network and is gated
 (SEICHE_ATTEST_OTS=1, or the CLI which is always explicit). The snapshot hook
 itself is gated by SEICHE_ATTEST=1 and must never break a reading.
@@ -64,6 +65,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 import stat
 import threading
@@ -102,6 +104,7 @@ GENESIS = "0" * 64
 
 _ledger_lock = threading.Lock()
 _attest_lock = threading.Lock()
+_operator_key_lock = threading.Lock()
 _STREAM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ED25519_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
@@ -114,6 +117,7 @@ _MAX_OTS_PENDING_URI_BYTES = 1000
 _MAX_OTS_RECURSION_DEPTH = 256
 _MAX_OTS_TIMESTAMP_NODES = 4096
 _OTS_PENDING_URI_RE = re.compile(rb"^[A-Za-z0-9._/:\-]{0,1000}$")
+_MAX_PRIVATE_KEY_BYTES = 16 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -358,9 +362,320 @@ def append_record(
 # Paths and keys
 # ---------------------------------------------------------------------------
 def _attest_dir(attest_dir: str | None = None) -> Path:
-    p = Path(attest_dir or os.getenv("SEICHE_ATTEST_DIR") or (DATA_DIR / "_attest"))
-    p.mkdir(parents=True, exist_ok=True)
+    p = _attest_dir_path(attest_dir)
+    p.mkdir(mode=0o700, parents=True, exist_ok=True)
     return p
+
+
+def _attest_dir_path(
+    attest_dir: str | None = None,
+    *,
+    recovery_path: bool = False,
+) -> Path:
+    configured = attest_dir or os.getenv("SEICHE_ATTEST_DIR")
+    canonical = DATA_DIR / "_attest"
+    selected = Path(configured) if configured else canonical
+    if (
+        not recovery_path
+        and os.getenv("SEICHE_ENV", "").strip().lower() == "production"
+        and (
+            not selected.is_absolute()
+            or selected != canonical
+            or os.path.normpath(os.fspath(selected)) != os.fspath(selected)
+            or os.path.normpath(os.fspath(canonical)) != os.fspath(canonical)
+            or selected.is_symlink()
+        )
+    ):
+        raise ValueError(
+            "production attest key directory must use the canonical runtime path"
+        )
+    return selected
+
+
+def _metadata_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _expected_private_key_uid() -> int:
+    return os.geteuid()
+
+
+def _open_attest_directory(
+    path: Path,
+    *,
+    expected_owner_uid: int | None = None,
+) -> int:
+    """Open the key directory without trusting a pathname-only check."""
+
+    owner_uid = os.geteuid() if expected_owner_uid is None else expected_owner_uid
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        visible = path.lstat()
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or not stat.S_ISDIR(visible.st_mode)
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+            or opened.st_uid != owner_uid
+            or stat.S_IMODE(opened.st_mode) & 0o022
+        ):
+            raise ValueError(
+                "operator key directory must be owner-controlled and non-writable "
+                "by group or others"
+            )
+        return descriptor
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
+def _read_private_key_at(
+    directory_fd: int,
+    name: str,
+    *,
+    expected_owner_uid: int | None = None,
+) -> bytes:
+    """Read one stable owner-only private-key inode through a directory fd."""
+
+    owner_uid = (
+        _expected_private_key_uid()
+        if expected_owner_uid is None
+        else expected_owner_uid
+    )
+
+    descriptor = -1
+    try:
+        visible_before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        mode = stat.S_IMODE(visible_before.st_mode)
+        if (
+            not stat.S_ISREG(visible_before.st_mode)
+            or visible_before.st_nlink != 1
+            or visible_before.st_uid != owner_uid
+            or mode not in {0o400, 0o600}
+            or not 1 <= visible_before.st_size <= _MAX_PRIVATE_KEY_BYTES
+        ):
+            raise ValueError(
+                "operator private key must be a single-link, owner-only regular file"
+            )
+        descriptor = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        opened = os.fstat(descriptor)
+        if _metadata_identity(opened) != _metadata_identity(
+            visible_before
+        ) or not stat.S_ISREG(opened.st_mode):
+            raise ValueError("operator private key changed before it was opened")
+        body = bytearray()
+        while len(body) <= _MAX_PRIVATE_KEY_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(4096, _MAX_PRIVATE_KEY_BYTES + 1 - len(body)),
+            )
+            if not chunk:
+                break
+            body.extend(chunk)
+        after = os.fstat(descriptor)
+        visible_after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            not body
+            or len(body) > _MAX_PRIVATE_KEY_BYTES
+            or _metadata_identity(opened) != _metadata_identity(after)
+            or _metadata_identity(opened) != _metadata_identity(visible_after)
+        ):
+            raise ValueError("operator private key changed while it was read")
+        return bytes(body)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError("operator private key is unavailable or unsafe") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _write_all(descriptor: int, body: bytes) -> None:
+    offset = 0
+    while offset < len(body):
+        written = os.write(descriptor, body[offset:])
+        if written <= 0:
+            raise OSError("private-key write made no progress")
+        offset += written
+
+
+def _publish_private_key(directory_fd: int, body: bytes) -> bool:
+    """Publish a complete key without replacing an identity created by a peer."""
+
+    temporary = f".operator_key.pem.{secrets.token_hex(16)}.tmp"
+    descriptor = -1
+    linked = False
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        os.fchmod(descriptor, 0o600)
+        _write_all(descriptor, body)
+        os.fsync(descriptor)
+        created = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(created.st_mode)
+            or created.st_nlink != 1
+            or created.st_uid != _expected_private_key_uid()
+            or stat.S_IMODE(created.st_mode) != 0o600
+            or created.st_size != len(body)
+        ):
+            raise ValueError("new operator private key has unsafe metadata")
+        os.close(descriptor)
+        descriptor = -1
+        try:
+            os.link(
+                temporary,
+                "operator_key.pem",
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            return False
+        linked = True
+        os.unlink(temporary, dir_fd=directory_fd)
+        temporary = ""
+        os.fsync(directory_fd)
+        return True
+    except OSError as exc:
+        raise ValueError("operator private key could not be created safely") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary:
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        if linked and temporary:
+            # This branch is reachable only if unlinking the temporary name
+            # failed after the final name was linked. Leaving two links would
+            # make the next load fail closed, which is safer than guessing.
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+
+
+def _replace_public_key_at(directory_fd: int, body: bytes) -> None:
+    """Atomically refresh the derived public sidecar without following links."""
+
+    temporary = f".operator_key.pub.{secrets.token_hex(16)}.tmp"
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o644,
+            dir_fd=directory_fd,
+        )
+        os.fchmod(descriptor, 0o644)
+        _write_all(descriptor, body)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(
+            temporary,
+            "operator_key.pub",
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        temporary = ""
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise ValueError("operator public key could not be published safely") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary:
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+
+
+def _deserialize_operator_private_key(pem: bytes):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    try:
+        private = serialization.load_pem_private_key(pem, password=None)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("operator private key is not valid PKCS8 PEM") from exc
+    if not isinstance(private, Ed25519PrivateKey):
+        raise ValueError("operator private key is not Ed25519")
+    return private
+
+
+def load_existing_keypair(
+    attest_dir: str | None = None,
+    *,
+    expected_owner_uid: int | None = None,
+):
+    """Load an existing operator key without creating or rewriting sidecars.
+
+    Recovery verifiers use this stricter operation so an absent authority can
+    never be normalized into a newly generated, unrelated identity.
+    """
+
+    d = _attest_dir_path(
+        attest_dir,
+        recovery_path=attest_dir is not None and expected_owner_uid is not None,
+    )
+    with _operator_key_lock:
+        directory_fd = _open_attest_directory(
+            d,
+            expected_owner_uid=expected_owner_uid,
+        )
+        try:
+            pem = _read_private_key_at(
+                directory_fd,
+                "operator_key.pem",
+                expected_owner_uid=expected_owner_uid,
+            )
+        finally:
+            os.close(directory_fd)
+    private = _deserialize_operator_private_key(pem)
+    return private, private.public_key().public_bytes_raw().hex()
 
 
 def load_or_create_keypair(attest_dir: str | None = None):
@@ -373,24 +688,32 @@ def load_or_create_keypair(attest_dir: str | None = None):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     d = _attest_dir(attest_dir)
-    priv_path, pub_path = d / "operator_key.pem", d / "operator_key.pub"
-    if priv_path.exists():
-        private = serialization.load_pem_private_key(
-            priv_path.read_bytes(), password=None
-        )
-    else:
-        private = Ed25519PrivateKey.generate()
-        pem = private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        priv_path.write_bytes(pem)
-        os.chmod(priv_path, stat.S_IRUSR | stat.S_IWUSR)
-        logger.info("attest: generated new Ed25519 operator key at %s", priv_path)
-    pub_hex = private.public_key().public_bytes_raw().hex()
-    if not pub_path.exists() or pub_path.read_text().strip() != pub_hex:
-        pub_path.write_text(pub_hex + "\n")
+    with _operator_key_lock:
+        directory_fd = _open_attest_directory(d)
+        try:
+            try:
+                pem = _read_private_key_at(directory_fd, "operator_key.pem")
+                created = False
+            except FileNotFoundError:
+                candidate = Ed25519PrivateKey.generate()
+                candidate_pem = candidate.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                )
+                created = _publish_private_key(directory_fd, candidate_pem)
+                pem = _read_private_key_at(directory_fd, "operator_key.pem")
+            private = _deserialize_operator_private_key(pem)
+            if created:
+                logger.info(
+                    "attest: generated new Ed25519 operator key at %s",
+                    d / "operator_key.pem",
+                )
+            pub_hex = private.public_key().public_bytes_raw().hex()
+            _replace_public_key_at(directory_fd, (pub_hex + "\n").encode("ascii"))
+        finally:
+            os.close(directory_fd)
+
     trust_path = d / "trusted_operator_keys"
     if not trust_path.exists():
         try:
@@ -1655,9 +1978,11 @@ def attest_stress_reading(
         "ledger": committed,
         "signed": signed,
         "receipt": receipt,
-        "anchoring": anchored
-        if anchored is not None
-        else "off (set SEICHE_ATTEST_OTS=1 or run `python -m seiche.attest anchor`)",
+        "anchoring": (
+            anchored
+            if anchored is not None
+            else "off (set SEICHE_ATTEST_OTS=1 or run `python -m seiche.attest anchor`)"
+        ),
     }
 
 

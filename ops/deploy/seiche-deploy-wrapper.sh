@@ -2394,6 +2394,57 @@ deploy_caddy() {
     /usr/bin/bash "$installer"
 }
 
+# Prove the newly installed exact-path allowlist through public DNS and TLS.
+# Local candidate health alone cannot detect a route omitted from Caddy.
+trade_safety_edge_health() {
+  local body metadata status content_type extra
+  body=$(mktemp) || return 1
+  if ! metadata=$(
+      /usr/bin/curl --fail --silent --show-error --max-time 20 --max-redirs 0 \
+        --output "$body" --write-out '%{http_code}|%{content_type}' \
+        https://api.seiche.info/api/trade-safety/risk-context
+  ); then
+    echo "FAIL: public Trade Safety route is unreachable through DNS and Caddy"
+    rm -f -- "$body"
+    return 1
+  fi
+  IFS='|' read -r status content_type extra <<<"$metadata"
+  if [ "$status" != 200 ] || [ -n "$extra" ]; then
+    echo "FAIL: public Trade Safety route returned invalid HTTP metadata: $metadata"
+    rm -f -- "$body"
+    return 1
+  fi
+  case "${content_type,,}" in
+    application/json*) ;;
+    *)
+      echo "FAIL: public Trade Safety route returned $content_type instead of JSON"
+      rm -f -- "$body"
+      return 1
+      ;;
+  esac
+  if ! /usr/bin/python3 -I -B -c '
+import json
+import sys
+
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8"))
+    assert value["schema"] == "seiche.risk-context.v1"
+    assert value["status"] == "available"
+    assert value["real_money_eligible"] is False
+    assert value["can_authorize_order"] is False
+    assert value["request_time_network"] is False
+    assert value["attestation_state"] == "not_evaluated"
+except (AssertionError, KeyError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+' "$body"; then
+    echo "FAIL: public Trade Safety route returned an invalid safety contract"
+    rm -f -- "$body"
+    return 1
+  fi
+  rm -f -- "$body"
+  echo "edge health: public Trade Safety route is reachable and fail-closed"
+}
+
 deploy_market_platform() {
   local installer="$SIGNED_ASSET_ROOT/ops/deploy/install-market-platform.sh"
   if [ ! -f "$installer" ]; then
@@ -2755,6 +2806,7 @@ if [ "$BEFORE" = "$AFTER" ] && [ "$DEPLOYED" = "$AFTER" ]; then
   }
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
+  trade_safety_edge_health || { echo "FAIL: accepted release lacks public Trade Safety route proof"; exit 1; }
   sync_verdict
   queue_forced_recovery_seal || exit 1
   echo "already deployed ${AFTER:0:7} — application and edge match the repo"
@@ -2796,6 +2848,7 @@ if [ -n "$HEALTHY" ]; then
   start_market_services || { echo "FAIL: market services could not be started"; exit 1; }
   echo "application ${AFTER:0:7} active and healthy — deploying edge config"
   deploy_caddy || { echo "FAIL: application is healthy but the Caddy deploy failed and was rolled back"; exit 1; }
+  trade_safety_edge_health || { echo "FAIL: release lacks public Trade Safety route proof"; exit 1; }
   sync_verdict
   queue_forced_recovery_seal || exit 1
   echo "deployed ${AFTER:0:7} — service active, api healthy, edge config current"

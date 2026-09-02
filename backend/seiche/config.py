@@ -668,7 +668,7 @@ WRECKS_BLOB_KEY = "wrecks:v1"
 
 # x402 pay-per-call prices (USD per tools/call) for the machine-payable MCP
 # surface. Applies only to subscriber tools, only for anonymous callers, and
-# only when the operator enables x402 (SEICHE_X402_PAY_TO set — see x402.py).
+# only when the operator selects a complete activation profile (see x402.py).
 # Public tools stay free.
 X402_PRICES_USD = {
     "funding_stress_forecast": 0.02,
