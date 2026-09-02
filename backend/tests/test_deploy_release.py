@@ -23,6 +23,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDY_INSTALLER = ROOT / "ops" / "deploy" / "install-caddy.sh"
+RAILWAY_EDGE_MODE = ROOT / "ops" / "deploy" / "seiche-railway-edge-mode.sh"
 EXTERNAL_SMOKE = ROOT / "ops" / "deploy" / "external-route-smoke.sh"
 CADDYFILE = ROOT / "ops" / "Caddyfile"
 EXTERNAL_ROUTES = ROOT / "ops" / "deploy" / "external-smoke-routes.txt"
@@ -3967,6 +3968,37 @@ def test_release_health_capability_is_loopback_only():
     assert "reverse_proxy" not in private_edge
     public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
     assert route not in public_edge
+
+
+def test_railway_stateful_control_routes_are_origin_only():
+    caddy = CADDYFILE.read_text()
+    private_edge = caddy[
+        caddy.index("@railway_stateful_control_private path") : caddy.index(
+            "# Agent Room"
+        )
+    ]
+    for route in (
+        "/api/internal/v1/railway-control/commands",
+        "/api/internal/v1/railway-control/recovery/*",
+        "/api/internal/v1/stateful-control",
+        "/api/internal/v1/recovery-exports/*",
+    ):
+        assert route in private_edge
+    assert 'respond "not here" 404' in private_edge
+    assert "reverse_proxy" not in private_edge
+    assert "seiche_stateful_upstream" not in private_edge
+
+    public_edge = caddy[caddy.index("@public {") : caddy.index("@login {")]
+    assert "/api/internal/v1/railway-control" not in public_edge
+
+    edge_mode = RAILWAY_EDGE_MODE.read_text()
+    for route in (
+        "/api/internal/v1/railway-control/commands",
+        "/api/internal/v1/railway-control/recovery/not-a-request/not-a-member",
+        "/api/internal/v1/stateful-control",
+        "/api/internal/v1/recovery-exports/not-a-request/not-a-member",
+    ):
+        assert route in edge_mode
 
 
 def test_event_analysis_edge_is_post_only_and_excluded_from_public_get():

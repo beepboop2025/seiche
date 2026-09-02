@@ -18,6 +18,8 @@ The files implementing that contract are:
   root-only ingress token;
 - `seiche.stateful_cutover`: candidate restore, immutable receipts,
   grant validation, and supervised worker/API transition; and
+- `seiche.stateful_control`: Ed25519 command validation, replay-safe runtime
+  inboxes, and exact-deployment result envelopes; and
 - `.github/workflows/railway-stateful-cutover.yml`: separately
   protected candidate and activation dispatches.
 
@@ -78,8 +80,14 @@ Add the following secrets to both:
   `https://NAME.up.railway.app`)
 - `RAILWAY_EDGE_TOKEN`
 
-The Railway service itself receives only its private `DATABASE_URL`,
-the exact volume identity, snapshot/fence identities, and the edge token. It
+Add `SEICHE_RAILWAY_ACTIVATION_SIGNING_KEY_PEM` only to
+`railway-stateful-activation`. Its public key and operation-scoped key ID are
+pinned in `governance/railway-control-signers.json`; the private key must never
+become a Railway variable, artifact, log, or candidate-environment secret.
+
+The Railway service itself receives only its private `DATABASE_URL`, the exact
+volume identity, snapshot/fence identities, `SEICHE_RAILWAY_CONTROL_ENABLED=1`,
+and the edge token. It
 must not receive Hetzner credentials, an NBS signing key, Telegram credentials,
 GitHub credentials, or a release-control token.
 
@@ -132,27 +140,33 @@ Using the existing reviewed operator channel, copy the final snapshot's nine
 files and the canonical fence to a private workstation. Verify the snapshot
 file set and both digests before upload.
 
-Upload each snapshot member without replacement. Railway CLI v5.43.1 requires
-the reviewed project, environment, and service context before `files`, and the
-volume selector before the `upload` operation:
+This is the single operator-only SFTP handoff at the end of Phase 4, before
+Phase 5 CI begins. Project-token CI cannot open Railway SSH or manipulate
+volume files. Resolve the exact
+Railway-provided SFTP host/port/user for the reviewed service instance, pin its
+host key, and use a short-lived, operation-specific key. First prove both final
+destinations are absent. Upload into a new random staging directory, verify all
+local hashes, then promote the nine snapshot members with `SHA256SUMS` last and
+the canonical fence last of all:
 
 ```bash
-for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
-  palimpsest-china-state.json api-data.tgz table-counts.txt deployed-sha.txt \
-  manifest.env SHA256SUMS; do
-  railway volume --project REVIEWED_PROJECT_ID \
-    --environment REVIEWED_ENVIRONMENT_ID \
-    --service REVIEWED_SERVICE_ID files --volume REVIEWED_VOLUME_ID upload \
-    "PRIVATE_FINAL_SNAPSHOT/$member" \
-    "/inbox/FINAL_SNAPSHOT_ID/$member"
-done
-
-railway volume --project REVIEWED_PROJECT_ID \
-  --environment REVIEWED_ENVIRONMENT_ID \
-  --service REVIEWED_SERVICE_ID files --volume REVIEWED_VOLUME_ID upload \
-  PRIVATE_AUTHORITY_FENCE.json \
-  "/authority-fences/AUTHORITY_FENCE_SHA256.json"
+test -f /secure/railway-sftp-key
+test "$(stat -f '%Lp' /secure/railway-sftp-key)" = 600
+ssh-keygen -F REVIEWED_SFTP_HOST -f /secure/railway-known-hosts >/dev/null
+sftp -b /secure/verified-upload.batch \
+  -i /secure/railway-sftp-key \
+  -o BatchMode=yes -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=/secure/railway-known-hosts \
+  -P REVIEWED_SFTP_PORT REVIEWED_SFTP_USER@REVIEWED_SFTP_HOST
 ```
+
+The reviewed batch must contain only `mkdir`, `put`, `ls`, and final `rename`
+operations for the random staging directory, `/inbox/FINAL_SNAPSHOT_ID`, and
+`/authority-fences/AUTHORITY_FENCE_SHA256.json`. It must not contain `rm`, a
+wildcard, a mutable `latest` path, or a destination outside the mounted volume.
+Re-read and hash every promoted regular file through the same channel, then
+delete the temporary private key locally. The Phase 4 handoff is then closed:
+Phase 5 CI performs no SSH, SFTP, SCP, or Railway volume-file operation.
 
 Never overwrite an inbox, fence, generation, database, grant, or receipt. A
 partial attempt is a reconciliation event, not permission to delete evidence.
@@ -164,10 +178,12 @@ Dispatch `railway-stateful-cutover` on the exact main SHA with:
 - `operation=candidate`
 - `snapshot_id=FINAL_SNAPSHOT_ID`
 - `authority_fence_sha256=AUTHORITY_FENCE_SHA256`
+- `authority_fence_base64=CANONICAL_FENCE_ONE_LINE_BASE64`
 - `confirmation=HETZNER_FROZEN_RAILWAY_READ_ONLY`
 
-The candidate job proves the service, volume, sole Railway domain, PostgreSQL
-reference, closed final snapshot, canonical fence, exact source archive/bundle,
+The candidate job validates the supplied canonical fence bytes against their
+digest, proves the service, volume, sole Railway domain, PostgreSQL reference,
+closed final snapshot, exact source archive/bundle,
 restored filesystem/database generation, table floors, and direct authenticated
 origin response. It starts only an unprivileged API. The pre-activation API
 does not run the board warm/rebuild loop or initialize Agent Room state.
@@ -185,6 +201,12 @@ require its four-field state identity to equal the final candidate before any
 cutover proof is accepted. Candidate restart/reuse independently re-audits the
 restored tree with the Railway uid/gid 10001 reader and refuses any tree or
 activation-ID drift.
+
+The runtime emits the candidate receipt only through a canonical
+`SEICHE_RAILWAY_STATEFUL_RESULT_V1` envelope in the exact deployment log. The
+workflow pins the running replica, validates the created envelope, restarts the
+same deployment, and requires a second replica to emit byte-identical `reused`
+evidence. The receipt is never read from the volume by CI.
 
 The v4 candidate also carries the closed restored Agent Room audit from its
 source v4 shadow receipt. Candidate creation loads the restored operator key,
@@ -232,6 +254,9 @@ writes a root-only environment and systemd drop-in, restarts Caddy, then probes
 `https://api.seiche.info/api/health` without a token. Both responses
 must report `candidate`, the exact deployment UUID, and exact release
 SHA. Only the token digest enters the edge receipt.
+It also proves that the public host returns an exact 404 for both private
+Railway control route families; those handlers never import
+`seiche_stateful_upstream`.
 
 At this point public reads use Railway, while POST/MCP mutation traffic receives
 the bounded maintenance response. There is still no writer.
@@ -269,12 +294,26 @@ Dispatch the same workflow on the exact SHA with:
 - `request_id=ACCEPTED_REQUEST_ID`
 - `candidate_receipt_sha256=ACCEPTED_CANDIDATE_RECEIPT_SHA256`
 - `deployment_id=EXACT_CANDIDATE_DEPLOYMENT_UUID`
+- `candidate_run_id=ATTESTED_CANDIDATE_GITHUB_RUN_ID`
 - `confirmation=PUBLIC_EDGE_PROVES_CANDIDATE_ACTIVATE_RAILWAY`
 
-The separately protected job recovers the candidate chain from the active
-container and volume, directly probes the Railway origin, independently probes
-the public edge, commits an immutable public-probe document and activation
-grant, then waits for the same deployment to report `production`.
+The separately protected job downloads a closed candidate artifact, rejects
+symlinks or extra members, and verifies its GitHub OIDC attestation against the
+exact repository, workflow, main ref, and SHA. It directly probes the Railway
+origin and public edge, builds the immutable public probe and activation grant,
+then signs a short-lived `activation` command with the protected operation key.
+The command binds the exact project, environment, service, deployment, volume,
+request, payload digest, nonce, and release SHA. It is posted over HTTPS only to
+the exact Railway origin with the edge ingress token; its no-port lowercase
+host must equal the runtime `RAILWAY_PUBLIC_DOMAIN`. The supervisor emits the
+activation receipt through the exact-deployment log; CI has no interactive
+shell or volume-file authority.
+The runtime atomically claims the command into its root-owned processing
+journal before publishing authority files and archives it only after those
+immutable files validate. A crash resumes the same signed bytes without
+extending their operation scope. CI separately proves the submission replica
+and the current single running replica, so a restart result is admissible only
+when its evidence is byte-identical to any pre-restart result.
 The supervisor starts both workers, observes them alive, writes the immutable
 activation receipt, and only then admits the production API.
 
@@ -282,13 +321,27 @@ Any failure before the grant may use the pre-activation rollback. Any failure
 after the grant is a Railway recovery incident; never restart Hetzner from its
 old frozen state.
 
+If the signed activation command was accepted and Railway reports production
+but the workflow later failed while collecting logs, uploading, or attesting
+evidence, **do not create or submit a new activation grant**. Dispatch Phase
+6 with `operation=export-recovery` and
+`confirmation=EXPORT_WITHOUT_AUTHORITY_CHANGE`. Its bootstrap path reads only
+filtered `SEICHE_RAILWAY_STATEFUL_RESULT_V1` records for the exact deployment,
+request, release, and current replica, recovers the durable activation-receipt
+digest, then downloads and validates the full receipt as part of the fixed
+recovery chain. Complete the recovery/off-site pair and use those immutable
+bytes for the missing activation evidence. A byte-identical command replay is
+safe only while the original canonical command bytes are available; a fresh
+grant is never a retry mechanism after authority has changed.
+
 Before activation, Phase 6 must already have one accepted native-backup setup,
 one non-production external Object-Lock preflight, and green recovery contract
 tests. A production monitor/export cannot exist before the activation receipt
 that binds it. Merely merging the Phase 6 workflow is not a green recovery
 control.
 
-Immediately after the grant, run Phase 6's first `export-recovery` operation.
+Immediately after the activation receipt is attested, the workflow dispatches
+Phase 6's first `export-recovery` operation automatically.
 Its prerequisite monitor, uninterrupted API log, isolated reverse restore,
 external COMPLIANCE objects, Railway/off-site receipts, and both production
 OIDC attestations must pass before the Hetzner acknowledgement in step 7. A

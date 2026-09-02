@@ -763,23 +763,6 @@ jobs:
             --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_POSTGRES_SERVICE_ID" --json >pitr-backups.json
-          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" list \
-              /recovery-receipts --json >recovery-receipts.json; then
-            test "$ALLOW_EMPTY_EXPORT_PROOF" = true
-            printf '%s\n' '{"files":[]}' >recovery-receipts.json
-          fi
-          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" list \
-              /offsite-receipts --json >offsite-receipts.json; then
-            test "$ALLOW_EMPTY_EXPORT_PROOF" = true
-            printf '%s\n' '{"files":[]}' >offsite-receipts.json
-          fi
-
           origin_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 30 \
             --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
@@ -801,7 +784,7 @@ jobs:
             EXPECTED_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
             EXPECTED_SERVICE_ID="$RAILWAY_SERVICE_ID" \
             EXPECTED_POSTGRES_ID="$RAILWAY_POSTGRES_SERVICE_ID" \
-            ALLOW_EMPTY="$ALLOW_EMPTY_EXPORT_PROOF" OUTPUT="$GITHUB_OUTPUT" \
+            OUTPUT="$GITHUB_OUTPUT" \
             python3 -I -S - <<'PY'
           import json
           import os
@@ -933,189 +916,37 @@ jobs:
           if runtime.get("status") != "ready" or runtime.get("mode") != "production":
               raise SystemExit("Railway activation-aware health is not ready")
 
-          proof_base = ""
-          if os.environ["ALLOW_EMPTY"] != "true":
-              pattern = re.compile(r"^(20[0-9]{6}T[0-9]{6}Z)-[0-9a-f]{64}\.json$")
-              latest = {}
-              for name in ("recovery-receipts.json", "offsite-receipts.json"):
-                  files = load(name).get("files")
-                  candidates = [
-                      (
-                          datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
-                              tzinfo=UTC
-                          ),
-                          str(row["name"]),
-                      )
-                      for row in files if isinstance(row, dict) and row.get("type") == "file"
-                      and (match := pattern.fullmatch(str(row.get("name", ""))))
-                  ] if isinstance(files, list) else []
-                  if not candidates:
-                      raise SystemExit(f"{name} has no fresh immutable proof")
-                  latest[name] = max(candidates)
-                  age = now - latest[name][0]
-                  if not timedelta(0) <= age <= timedelta(hours=26):
-                      raise SystemExit(f"{name} has no fresh immutable proof")
-              if latest["recovery-receipts.json"][1] != latest["offsite-receipts.json"][1]:
-                  raise SystemExit("latest Railway and off-site receipts do not form one pair")
-              proof_base = latest["recovery-receipts.json"][1].removesuffix(".json")
           with open(os.environ["OUTPUT"], "a", encoding="utf-8") as stream:
               stream.write(f"deployment_id={deployment}\nrelease_sha={release}\n")
-              if proof_base:
-                  stream.write(f"proof_base={proof_base}\n")
           PY
+          deployment=$(grep '^deployment_id=' "$GITHUB_OUTPUT" | cut -d= -f2)
+          release=$(grep '^release_sha=' "$GITHUB_OUTPUT" | cut -d= -f2)
+          railway logs "$deployment" --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
+            --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --deployment --json --since 26h \
+            --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
+            >stateful-results.ndjson
           if [ "$ALLOW_EMPTY_EXPORT_PROOF" != true ]; then
-            proof_base=$(grep '^proof_base=' "$GITHUB_OUTPUT" | cut -d= -f2)
-            request_id=${proof_base#*-}
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "/recovery-receipts/$proof_base.json" recovery-receipt.json
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "/offsite-receipts/$proof_base.json" offsite-receipt.json
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "/recovery-requests/$request_id.json" request.json
-            mkdir activation-candidates shadow-candidates
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" list \
-              /cutover-receipts --json >cutover-receipts.json
-            python3 -I -S - <<'PY' >activation-paths.txt
-          import json
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" LOG_PATH=stateful-results.ndjson \
+              DEPLOYMENT_ID="$deployment" RELEASE_SHA="$release" python3 -B - <<'PY'
+          import os
+          from datetime import UTC, datetime
           from pathlib import Path
-          import re
 
-          rows = json.loads(Path("cutover-receipts.json").read_text()).get("files")
-          if not isinstance(rows, list):
-              raise SystemExit("cutover receipt listing is invalid")
-          pattern = re.compile(r"[0-9a-f]{64}\.activation\.json")
-          for row in rows:
-              if (
-                  isinstance(row, dict)
-                  and row.get("type") == "file"
-                  and pattern.fullmatch(str(row.get("name", "")))
-              ):
-                  print(row["path"])
-          PY
-            test -s activation-paths.txt
-            while IFS= read -r remote; do
-              railway volume --project "$RAILWAY_PROJECT_ID" \
-                --environment "$RAILWAY_ENVIRONMENT_ID" \
-                --service "$RAILWAY_SERVICE_ID" files \
-                --volume "$RAILWAY_VOLUME_ID" download \
-                "$remote" "activation-candidates/$(basename "$remote")"
-            done <activation-paths.txt
-            python3 -I -S - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-          import re
+          from seiche.stateful_control import extract_latest_recovery_pair
 
-          recovery = json.loads(Path("recovery-receipt.json").read_bytes())
-          matches = []
-          for path in Path("activation-candidates").iterdir():
-              body = path.read_bytes()
-              if hashlib.sha256(body).hexdigest() != recovery.get(
-                  "activation_receipt_sha256"
-              ):
-                  continue
-              try:
-                  value = json.loads(body)
-              except (UnicodeDecodeError, json.JSONDecodeError):
-                  continue
-              canonical = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-              if body == canonical:
-                  matches.append(body)
-          if len(matches) != 1:
-              raise SystemExit("monitored activation receipt is not unique")
-          Path("activation-receipt.json").write_bytes(matches[0])
-          activation = json.loads(matches[0])
-          request_id = activation.get("request_id")
-          if (
-              not isinstance(request_id, str)
-              or re.fullmatch(r"[0-9a-f]{64}", request_id) is None
-          ):
-              raise SystemExit("activation request identity is malformed")
-          Path("candidate-request-id.txt").write_text(
-              request_id + "\n"
+          body = Path(os.environ["LOG_PATH"]).read_bytes()
+          _created, result = extract_latest_recovery_pair(
+              body,
+              expected_commit=os.environ["RELEASE_SHA"],
+              expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+              now=datetime.now(UTC),
           )
+          paired = result.evidence
+          if paired["recovery_receipt"]["request_id"] != paired["offsite_receipt"]["request_id"]:
+              raise SystemExit("latest Railway and off-site receipts are not paired")
           PY
-            candidate_request_id=$(cat candidate-request-id.txt)
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "/cutover-receipts/$candidate_request_id.candidate.json" \
-              candidate-receipt.json
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" list \
-              /receipts --json >shadow-receipts.json
-            python3 -I -S - <<'PY' >shadow-paths.txt
-          import json
-          from pathlib import Path
-          import re
-
-          rows = json.loads(Path("shadow-receipts.json").read_text()).get("files")
-          if not isinstance(rows, list) or not 1 <= len(rows) <= 1024:
-              raise SystemExit("shadow receipt listing is invalid")
-          pattern = re.compile(r"[0-9a-f]{64}\.json")
-          for row in rows:
-              if (
-                  isinstance(row, dict)
-                  and row.get("type") == "file"
-                  and pattern.fullmatch(str(row.get("name", "")))
-              ):
-                  print(row["path"])
-          PY
-            test -s shadow-paths.txt
-            while IFS= read -r remote; do
-              railway volume --project "$RAILWAY_PROJECT_ID" \
-                --environment "$RAILWAY_ENVIRONMENT_ID" \
-                --service "$RAILWAY_SERVICE_ID" files \
-                --volume "$RAILWAY_VOLUME_ID" download \
-                "$remote" "shadow-candidates/$(basename "$remote")"
-            done <shadow-paths.txt
-            python3 -I -S - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-
-          candidate = json.loads(Path("candidate-receipt.json").read_bytes())
-          expected = candidate["request"]["source_shadow_receipt_sha256"]
-          matches = []
-          for path in Path("shadow-candidates").iterdir():
-              body = path.read_bytes()
-              if hashlib.sha256(body).hexdigest() != expected:
-                  continue
-              value = json.loads(body)
-              canonical = (
-                  json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
-              ).encode()
-              if body == canonical:
-                  matches.append(body)
-          if len(matches) != 1:
-              raise SystemExit("activation-bound shadow receipt is not unique")
-          Path("shadow-receipt.json").write_bytes(matches[0])
-          PY
-            deployment=$(grep '^deployment_id=' "$GITHUB_OUTPUT" | cut -d= -f2)
-            release=$(grep '^release_sha=' "$GITHUB_OUTPUT" | cut -d= -f2)
-            monitor_digests=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python3 -B \
-              -m seiche.stateful_recovery validate-monitor \
-              recovery-receipt.json offsite-receipt.json \
-              --request request.json --activation activation-receipt.json \
-              --candidate candidate-receipt.json \
-              --shadow shadow-receipt.json \
-              --deployment-id "$deployment" --release-sha "$release")
-            [[ "$monitor_digests" =~ ^[0-9a-f]{64}\ [0-9a-f]{64}$ ]]
           fi
           {
             echo "### Railway Phase 6 monitor"
@@ -1211,6 +1042,7 @@ jobs:
           RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
           RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
           RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
           DEPLOYMENT_ID: ${{ needs.monitor.outputs.deployment_id }}
           RELEASE_SHA: ${{ needs.monitor.outputs.release_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
@@ -1220,183 +1052,172 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             test "$CONFIRMATION" = EXPORT_WITHOUT_AUTHORITY_CHANGE
           fi
-          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f-]{36}$ ]]
+          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
           test -n "$RAILWAY_EDGE_TOKEN"
-          mkdir -p "$EVIDENCE_ROOT/activation-candidates" \
-            "$EVIDENCE_ROOT/shadow-candidates" \
-            "$EVIDENCE_ROOT/bundle" "$EVIDENCE_ROOT/proof"
-          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/activation-candidates" \
-            "$EVIDENCE_ROOT/shadow-candidates" \
-            "$EVIDENCE_ROOT/bundle" "$EVIDENCE_ROOT/proof"
+          mkdir -p "$EVIDENCE_ROOT/bundle" "$EVIDENCE_ROOT/proof"
+          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/bundle" \
+            "$EVIDENCE_ROOT/proof"
           cd "$EVIDENCE_ROOT"
           railway link --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" --json >proof/link.json
-          railway volume --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" files \
-            --volume "$RAILWAY_VOLUME_ID" list \
-            /cutover-receipts --json >proof/cutover-receipts.json
-          python -I -S - <<'PY' >proof/activation-paths.txt
+          current_replica() {
+            local destination="$1" variables
+            variables=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
           import json
-          from pathlib import Path
-          import re
-
-          rows = json.loads(Path("proof/cutover-receipts.json").read_text()).get("files")
-          if not isinstance(rows, list):
-              raise SystemExit("cutover receipt listing is invalid")
-          pattern = re.compile(r"[0-9a-f]{64}\.activation\.json")
-          for row in rows:
-              if (
-                  isinstance(row, dict)
-                  and row.get("type") == "file"
-                  and pattern.fullmatch(str(row.get("name", "")))
-              ):
-                  print(row["path"])
+          import os
+          print(json.dumps({"deploymentId": os.environ["DEPLOYMENT_ID"]}, separators=(",", ":")))
           PY
-          test -s proof/activation-paths.txt
-          while IFS= read -r remote; do
-            name=$(basename "$remote")
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "$remote" "activation-candidates/$name"
-          done <proof/activation-paths.txt
-          DEPLOYMENT_ID="$DEPLOYMENT_ID" RELEASE_SHA="$RELEASE_SHA" \
-            python -I -S - <<'PY'
-          import hashlib
+            )
+            # GraphQL variable names are literal, not shell expansions.
+            # shellcheck disable=SC2016
+            railway api \
+              'query Runtime($deploymentId: String!) { deployment(id: $deploymentId) { id projectId environmentId serviceId status instances { id status } } }' \
+              --variables "$variables" >"$destination"
+            RUNTIME="$destination" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              RAILWAY_PROJECT_ID="$RAILWAY_PROJECT_ID" \
+              RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+              RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
           import json
           import os
           from pathlib import Path
-
-          matches = []
-          for path in Path("activation-candidates").iterdir():
-              body = path.read_bytes()
-              try:
-                  value = json.loads(body)
-              except (UnicodeDecodeError, json.JSONDecodeError):
-                  continue
-              canonical = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-              if body != canonical:
-                  continue
-              if (
-                  value.get("schema") == "seiche.railway-activation-receipt.v1"
-                  and value.get("commit") == os.environ["RELEASE_SHA"]
-                  and value.get("railway", {}).get("deployment_id") == os.environ["DEPLOYMENT_ID"]
-                  and value.get("authority", {}).get("source") == "railway"
-              ):
-                  matches.append((path, body))
-          if len(matches) != 1:
-              raise SystemExit("current activation receipt is not unique")
-          Path("activation-receipt.json").write_bytes(matches[0][1])
-          Path("proof/activation.sha256").write_text(
-              hashlib.sha256(matches[0][1]).hexdigest() + "\n"
-          )
-          Path("proof/candidate-request-id.txt").write_text(
-              str(matches[0][0].name).removesuffix(".activation.json") + "\n"
-          )
-          PY
-          candidate_request_id=$(cat proof/candidate-request-id.txt)
-          railway volume --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" files \
-            --volume "$RAILWAY_VOLUME_ID" download \
-            "/cutover-receipts/$candidate_request_id.candidate.json" \
-            candidate-receipt.json
-          python -I -S - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-
-          activation = json.loads(Path("activation-receipt.json").read_bytes())
-          body = Path("candidate-receipt.json").read_bytes()
-          candidate = json.loads(body)
-          canonical = (
-              json.dumps(candidate, sort_keys=True, separators=(",", ":")) + "\n"
-          ).encode()
-          state = candidate.get("palimpsest_china_state")
-          if (
-              body != canonical
-              or candidate.get("schema")
-              != "seiche.railway-cutover-candidate-receipt.v4"
-              or hashlib.sha256(body).hexdigest()
-              != activation.get("candidate_receipt_sha256")
-              or not isinstance(state, dict)
-              or set(state)
-              != {
-                  "audit_schema",
-                  "tree_sha256",
-                  "active_activation_id",
-                  "pending_candidate_activation_id",
-              }
-              or state.get("pending_candidate_activation_id") is not None
-          ):
-              raise SystemExit("activation-bound candidate identity is invalid")
-          PY
-          railway volume --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" files \
-            --volume "$RAILWAY_VOLUME_ID" list \
-            /receipts --json >proof/shadow-receipts.json
-          python -I -S - <<'PY' >proof/shadow-paths.txt
-          import json
-          from pathlib import Path
           import re
 
-          rows = json.loads(Path("proof/shadow-receipts.json").read_text()).get("files")
-          if not isinstance(rows, list) or not 1 <= len(rows) <= 1024:
-              raise SystemExit("shadow receipt listing is invalid")
-          pattern = re.compile(r"[0-9a-f]{64}\.json")
-          for row in rows:
-              if (
-                  isinstance(row, dict)
-                  and row.get("type") == "file"
-                  and pattern.fullmatch(str(row.get("name", "")))
-              ):
-                  print(row["path"])
+          value = json.loads(Path(os.environ["RUNTIME"]).read_text())["data"]["deployment"]
+          expected = {
+              "id": os.environ["DEPLOYMENT_ID"],
+              "projectId": os.environ["RAILWAY_PROJECT_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "status": "SUCCESS",
+          }
+          if any(value.get(key) != item for key, item in expected.items()):
+              raise SystemExit("recovery deployment identity differs")
+          instances = value.get("instances")
+          if not isinstance(instances, list) or len(instances) != 1 or instances[0].get("status") != "RUNNING":
+              raise SystemExit("recovery deployment is not singly RUNNING")
+          replica = instances[0].get("id")
+          if re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              str(replica),
+          ) is None:
+              raise SystemExit("recovery replica identity is invalid")
+          print(replica)
           PY
-          test -s proof/shadow-paths.txt
-          while IFS= read -r remote; do
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "$remote" "shadow-candidates/$(basename "$remote")"
-          done <proof/shadow-paths.txt
-          python -I -S - <<'PY'
+          }
+          replica_id=$(current_replica proof/runtime.json)
+          railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" --environment "$RAILWAY_ENVIRONMENT_ID" \
+            --deployment --json --since 26h \
+            --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
+            >proof/stateful-results.ndjson
+          PYTHONPATH="$GITHUB_WORKSPACE/backend" \
+            LOG_PATH=proof/stateful-results.ndjson DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+            RELEASE_SHA="$RELEASE_SHA" REPLICA_ID="$replica_id" python -B - <<'PY'
+          import base64
           import hashlib
           import json
+          import os
+          from datetime import UTC, datetime
           from pathlib import Path
 
-          candidate = json.loads(Path("candidate-receipt.json").read_bytes())
-          expected = candidate["request"]["source_shadow_receipt_sha256"]
-          matches = []
-          for path in Path("shadow-candidates").iterdir():
-              body = path.read_bytes()
-              if hashlib.sha256(body).hexdigest() != expected:
+          from seiche import stateful_migration as migration
+          from seiche.stateful_control import (
+              LOG_RESULT_MARKER,
+              extract_latest_recovery_pair,
+              extract_log_result,
+          )
+
+          log_body = Path(os.environ["LOG_PATH"]).read_bytes()
+          paired_candidates = []
+          activation_candidates = []
+          for line in log_body.decode().splitlines():
+              record = json.loads(line)
+              message = record.get("message")
+              if not isinstance(message, str) or not message.startswith(LOG_RESULT_MARKER):
                   continue
-              value = json.loads(body)
-              canonical = (
-                  json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
-              ).encode()
-              if body == canonical:
-                  matches.append(body)
-          if len(matches) != 1:
-              raise SystemExit("activation-bound shadow receipt is not unique")
-          Path("shadow-receipt.json").write_bytes(matches[0])
+              body = base64.b64decode(message.removeprefix(LOG_RESULT_MARKER), validate=True)
+              envelope = migration._decode_canonical_json(body, label="activation result")
+              if (
+                  envelope.get("commit") == os.environ["RELEASE_SHA"]
+                  and envelope.get("deployment_id") == os.environ["DEPLOYMENT_ID"]
+              ):
+                  item = (record.get("timestamp"), envelope)
+                  if envelope.get("kind") == "recovery_offsite_paired":
+                      paired_candidates.append(item)
+                  elif envelope.get("kind") == "activation":
+                      activation_candidates.append(item)
+          if paired_candidates:
+              _created, result = extract_latest_recovery_pair(
+                  log_body,
+                  expected_commit=os.environ["RELEASE_SHA"],
+                  expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                  now=datetime.now(UTC),
+              )
+              activation_sha256 = result.evidence["recovery_receipt"][
+                  "activation_receipt_sha256"
+              ]
+              Path("proof/previous-paired-recovery.json").write_bytes(
+                  result.evidence_body
+              )
+          elif activation_candidates:
+              timestamp, selected = max(
+                  activation_candidates, key=lambda item: item[0] or ""
+              )
+              result = extract_log_result(
+                  log_body,
+                  expected_kind="activation",
+                  expected_lifecycle=selected["lifecycle"],
+                  expected_request_id=selected["request_id"],
+                  expected_commit=os.environ["RELEASE_SHA"],
+                  expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                  expected_replica_id=selected["replica_id"],
+                  not_before=str(timestamp),
+              )
+              activation_sha256 = hashlib.sha256(result.evidence_body).hexdigest()
+              Path("proof/bootstrap-activation-receipt.json").write_bytes(
+                  result.evidence_body
+              )
+          else:
+              raise SystemExit("durable recovery pair and activation bootstrap are absent")
+          Path("proof/activation.sha256").write_text(activation_sha256 + "\n")
+          Path("proof/replica-id.txt").write_text(os.environ["REPLICA_ID"] + "\n")
+          Path("proof/submission-replica-id.txt").write_text(
+              os.environ["REPLICA_ID"] + "\n"
+          )
           PY
           snapshot_id=$(date -u +%Y%m%dT%H%M%SZ)
           requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          download_expires_at=$(date -u -d '+110 minutes' +%Y-%m-%dT%H:%M:%SZ)
           activation_sha256=$(cat proof/activation.sha256)
           request_id=$(printf '%s\n' \
             "$GITHUB_REPOSITORY:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT:$DEPLOYMENT_ID:$snapshot_id" |
             sha256sum | awk '{print $1}')
+          bearer_path="$RUNNER_TEMP/seiche-recovery-download-bearer"
+          BEARER_PATH="$bearer_path" python -I -S - <<'PY' >proof/download-bearer.sha256
+          import base64
+          import hashlib
+          import os
+          from pathlib import Path
+          import secrets
+
+          raw = secrets.token_bytes(32)
+          bearer = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+          path = Path(os.environ["BEARER_PATH"])
+          path.write_text(bearer, encoding="ascii")
+          path.chmod(0o600)
+          print(hashlib.sha256(raw).hexdigest())
+          PY
+          trap 'rm -f -- "$bearer_path"' EXIT
+          download_bearer_sha256=$(cat proof/download-bearer.sha256)
           SNAPSHOT_ID="$snapshot_id" REQUESTED_AT="$requested_at" \
             REQUEST_ID="$request_id" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
             RELEASE_SHA="$RELEASE_SHA" ACTIVATION_SHA256="$activation_sha256" \
+            DOWNLOAD_BEARER_SHA256="$download_bearer_sha256" \
+            DOWNLOAD_EXPIRES_AT="$download_expires_at" \
             python -I -S - <<'PY'
           import json
           import os
@@ -1404,7 +1225,7 @@ jobs:
           import shutil
 
           value = {
-              "schema": "seiche.railway-recovery-export-request.v1",
+              "schema": "seiche.railway-recovery-export-request.v2",
               "repository": os.environ["GITHUB_REPOSITORY"],
               "workflow": (
                   "beepboop2025/seiche/"
@@ -1416,13 +1237,14 @@ jobs:
               "request_id": os.environ["REQUEST_ID"],
               "snapshot_id": os.environ["SNAPSHOT_ID"],
               "requested_at": os.environ["REQUESTED_AT"],
+              "download_bearer_sha256": os.environ["DOWNLOAD_BEARER_SHA256"],
+              "download_expires_at": os.environ["DOWNLOAD_EXPIRES_AT"],
               "confirmation": "EXPORT_WITHOUT_AUTHORITY_CHANGE",
           }
           Path("request.json").write_text(
               json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
           )
           PY
-          request_b64=$(base64 -w0 request.json)
           (
             while [ ! -e proof/stop-continuity ]; do
               observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -1445,42 +1267,175 @@ jobs:
             done
           ) &
           continuity_pid=$!
-          trap 'touch proof/stop-continuity; wait "$continuity_pid" || true' EXIT
-          published=$(railway ssh --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" -- \
-            python -I -B -m seiche.stateful_recovery request "$request_b64")
-          test "$published" = "$request_id"
-          receipt_remote="/recovery-receipts/$snapshot_id-$request_id.json"
+          trap 'touch proof/stop-continuity; wait "$continuity_pid" || true; rm -f -- "$bearer_path"' EXIT
+          issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          expires_at=$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          nonce=$(openssl rand -hex 32)
+          ISSUED_AT="$issued_at" EXPIRES_AT="$expires_at" NONCE="$nonce" \
+            COMMAND_PATH=proof/recovery-command.json PYTHONPATH="$GITHUB_WORKSPACE/backend" \
+            python -B - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from seiche import stateful_control as control
+          from seiche import stateful_migration as migration
+
+          private = serialization.load_pem_private_key(
+              os.environ["SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM"].encode(),
+              password=None,
+          )
+          if not isinstance(private, Ed25519PrivateKey):
+              raise SystemExit("recovery signer is not Ed25519")
+          public_raw = private.public_key().public_bytes(
+              serialization.Encoding.Raw,
+              serialization.PublicFormat.Raw,
+          )
+          key_id = hashlib.sha256(public_raw).hexdigest()
+          if key_id != control.RECOVERY_KEY_ID:
+              raise SystemExit("recovery signer is not the governed key")
+          payload = {"request": json.loads(Path("request.json").read_bytes())}
+          environment = {
+              "SEICHE_RELEASE_SHA": os.environ["RELEASE_SHA"],
+              "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
+              "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
+              "RAILWAY_DEPLOYMENT_ID": os.environ["DEPLOYMENT_ID"],
+              "SEICHE_RAILWAY_VOLUME_ID": os.environ["RAILWAY_VOLUME_ID"],
+          }
+          unsigned = control.prepare_unsigned_command(
+              control.RECOVERY_EXPORT_OPERATION,
+              payload,
+              environment,
+              issued_at=os.environ["ISSUED_AT"],
+              expires_at=os.environ["EXPIRES_AT"],
+              nonce=os.environ["NONCE"],
+              key_id=key_id,
+          )
+          signed = {
+              **unsigned,
+              "signature": base64.b64encode(
+                  private.sign(control.command_signing_bytes(unsigned))
+              ).decode("ascii"),
+          }
+          body = migration.canonical_document(signed)
+          control.validate_command(body, environment)
+          Path(os.environ["COMMAND_PATH"]).write_bytes(body)
+          PY
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --header 'Content-Type: application/json' \
+            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+            --data-binary '@proof/recovery-command.json' \
+            --output proof/recovery-command-response.json --write-out '%{http_code}' \
+            "$RAILWAY_ORIGIN/api/internal/v1/railway-control/commands")
+          test "$status" = 202
+          COMMAND=proof/recovery-command.json RESPONSE=proof/recovery-command-response.json \
+            python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+          command = json.loads(Path("proof/recovery-command.json").read_bytes())
+          response = json.loads(Path("proof/recovery-command-response.json").read_bytes())
+          if (
+              set(response) != {"status", "command_id", "lifecycle"}
+              or response.get("status") != "accepted"
+              or response.get("command_id") != command["command_id"]
+              or response.get("lifecycle") not in {"created", "reused"}
+          ):
+              raise SystemExit("recovery command acknowledgement is invalid")
+          PY
+          submission_replica_id=$(cat proof/submission-replica-id.txt)
+          replica_id="$submission_replica_id"
           ready=0
           for _attempt in $(seq 1 90); do
-            receipt_attempt="proof/recovery-receipt-attempt-${_attempt}.json"
-            if railway volume --project "$RAILWAY_PROJECT_ID" \
-                --environment "$RAILWAY_ENVIRONMENT_ID" \
-                --service "$RAILWAY_SERVICE_ID" files \
-                --volume "$RAILWAY_VOLUME_ID" download \
-                "$receipt_remote" "$receipt_attempt" 2>/dev/null; then
-              mv "$receipt_attempt" recovery-receipt.json
+            railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
+              --environment "$RAILWAY_ENVIRONMENT_ID" \
+              --deployment --json --since "$issued_at" \
+              --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
+              >proof/recovery-result.ndjson || true
+            replica_id=$(current_replica proof/recovery-runtime-current.json)
+            printf '%s\n' "$replica_id" >proof/replica-id.txt
+            if PYTHONPATH="$GITHUB_WORKSPACE/backend" LOG_PATH=proof/recovery-result.ndjson \
+                REQUEST_ID="$request_id" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+                RELEASE_SHA="$RELEASE_SHA" REPLICA_ID="$replica_id" \
+                SUBMISSION_REPLICA_ID="$submission_replica_id" \
+                NOT_BEFORE="$issued_at" python -B - <<'PY'
+          import os
+          from pathlib import Path
+          from seiche.stateful_control import ControlContractError, extract_log_result
+
+          results = []
+          body = Path(os.environ["LOG_PATH"]).read_bytes()
+          for lifecycle in ("created", "reused"):
+              for replica_id in {
+                  os.environ["SUBMISSION_REPLICA_ID"],
+                  os.environ["REPLICA_ID"],
+              }:
+                  try:
+                      result = extract_log_result(
+                          body,
+                          expected_kind="recovery_created",
+                          expected_lifecycle=lifecycle,
+                          expected_request_id=os.environ["REQUEST_ID"],
+                          expected_commit=os.environ["RELEASE_SHA"],
+                          expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                          expected_replica_id=replica_id,
+                          not_before=os.environ["NOT_BEFORE"],
+                      )
+                  except ControlContractError:
+                      continue
+                  results.append(result)
+          if not results or len({item.evidence_sha256 for item in results}) != 1:
+              raise SystemExit("exact recovery result is absent or inconsistent")
+          selected = max(results, key=lambda item: item.logged_at_unix_ns)
+          Path("recovery-receipt.json").write_bytes(selected.evidence_body)
+          PY
+            then
               ready=1
               break
             fi
             sleep 10
           done
           test "$ready" = 1
+          cp activation-receipt.json proof/activation-receipt-from-log.json
+          cp recovery-receipt.json proof/recovery-receipt-from-log.json
+          download_bearer=$(cat "$bearer_path")
+          echo "::add-mask::$download_bearer"
+          for member in activation-receipt.json candidate-receipt.json \
+            shadow-receipt.json request.json recovery-receipt.json \
+            seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
+            palimpsest-china-state.json api-data.tgz table-counts.txt \
+            deployed-sha.txt manifest.env SHA256SUMS; do
+            case "$member" in
+              activation-receipt.json|candidate-receipt.json|shadow-receipt.json|request.json|recovery-receipt.json)
+                destination="$member" ;;
+              *) destination="bundle/$member" ;;
+            esac
+            rm -f -- "$destination"
+            status=$(curl --silent --show-error --fail-with-body \
+              --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 5400 \
+              --retry 3 --retry-all-errors \
+              --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+              --header "Authorization: Bearer $download_bearer" \
+              --output "$destination" --write-out '%{http_code}' \
+              "$RAILWAY_ORIGIN/api/internal/v1/railway-control/recovery/$request_id/$member")
+            test "$status" = 200
+            test -s "$destination"
+          done
+          unset download_bearer
+          cmp proof/activation-receipt-from-log.json activation-receipt.json
+          cmp proof/recovery-receipt-from-log.json recovery-receipt.json
           touch proof/stop-continuity
           wait "$continuity_pid"
+          rm -f -- "$bearer_path"
           trap - EXIT
           test ! -e proof/api-continuity.failed
           test "$(wc -l <proof/api-continuity.tsv)" -ge 2
-          for member in SHA256SUMS seiche.dump var-lib-seiche.tgz \
-            palimpsest-china.tgz palimpsest-china-state.json api-data.tgz \
-            table-counts.txt deployed-sha.txt manifest.env; do
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "/recovery-snapshots/$snapshot_id/$member" "bundle/$member"
-          done
           receipt_sha256=$(PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B \
             -m seiche.stateful_recovery validate-receipt recovery-receipt.json \
             --request request.json --activation activation-receipt.json \
@@ -1616,6 +1571,9 @@ jobs:
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
           RAILWAY_VOLUME_ID: ${{ secrets.RAILWAY_STATEFUL_VOLUME_ID }}
+          RAILWAY_ORIGIN: ${{ secrets.RAILWAY_STATEFUL_ORIGIN }}
+          RAILWAY_EDGE_TOKEN: ${{ secrets.RAILWAY_EDGE_TOKEN }}
+          SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM: ${{ secrets.SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM }}
           EVIDENCE_ROOT: ${{ steps.export.outputs.evidence_root }}
           SNAPSHOT_ID: ${{ steps.export.outputs.snapshot_id }}
           REQUEST_ID: ${{ steps.export.outputs.request_id }}
@@ -1624,6 +1582,51 @@ jobs:
         run: |
           set -euo pipefail
           cd "$EVIDENCE_ROOT"
+          current_replica() {
+            local destination="$1" variables
+            variables=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          print(json.dumps({"deploymentId": os.environ["DEPLOYMENT_ID"]}, separators=(",", ":")))
+          PY
+            )
+            # GraphQL variable names are literal, not shell expansions.
+            # shellcheck disable=SC2016
+            railway api \
+              'query Runtime($deploymentId: String!) { deployment(id: $deploymentId) { id projectId environmentId serviceId status instances { id status } } }' \
+              --variables "$variables" >"$destination"
+            RUNTIME="$destination" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+              RAILWAY_PROJECT_ID="$RAILWAY_PROJECT_ID" \
+              RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+              RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+
+          value = json.loads(Path(os.environ["RUNTIME"]).read_text())["data"]["deployment"]
+          expected = {
+              "id": os.environ["DEPLOYMENT_ID"],
+              "projectId": os.environ["RAILWAY_PROJECT_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "status": "SUCCESS",
+          }
+          if any(value.get(key) != item for key, item in expected.items()):
+              raise SystemExit("off-site deployment identity differs")
+          instances = value.get("instances")
+          if not isinstance(instances, list) or len(instances) != 1 or instances[0].get("status") != "RUNNING":
+              raise SystemExit("off-site deployment is not singly RUNNING")
+          replica = instances[0].get("id")
+          if re.fullmatch(
+              r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+              r"[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+              str(replica),
+          ) is None:
+              raise SystemExit("off-site replica identity is invalid")
+          print(replica)
+          PY
+          }
           S3_ENDPOINT="$S3_ENDPOINT" S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
             python -I -S - <<'PY'
           import os
@@ -1809,19 +1812,157 @@ jobs:
           ):
               raise SystemExit("immutable off-site receipt proof failed")
           PY
-          remote="/offsite-receipts/$SNAPSHOT_ID-$REQUEST_ID.json"
-          if ! railway volume --project "$RAILWAY_PROJECT_ID" \
+          submission_replica_id=$(current_replica proof/offsite-runtime-submission.json)
+          printf '%s\n' "$submission_replica_id" >proof/replica-id.txt
+          issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          expires_at=$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          nonce=$(openssl rand -hex 32)
+          ISSUED_AT="$issued_at" EXPIRES_AT="$expires_at" NONCE="$nonce" \
+            COMMAND_PATH=proof/offsite-command.json \
+            PYTHONPATH="$GITHUB_WORKSPACE/backend" python -B - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from cryptography.hazmat.primitives import serialization
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from seiche import stateful_control as control
+          from seiche import stateful_migration as migration
+
+          private = serialization.load_pem_private_key(
+              os.environ["SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM"].encode(),
+              password=None,
+          )
+          if not isinstance(private, Ed25519PrivateKey):
+              raise SystemExit("off-site acknowledgment signer is not Ed25519")
+          public_raw = private.public_key().public_bytes(
+              serialization.Encoding.Raw,
+              serialization.PublicFormat.Raw,
+          )
+          key_id = hashlib.sha256(public_raw).hexdigest()
+          if key_id != control.RECOVERY_KEY_ID:
+              raise SystemExit("off-site signer is not the governed recovery key")
+          recovery_sha256 = hashlib.sha256(Path("recovery-receipt.json").read_bytes()).hexdigest()
+          payload = {
+              "recovery_request_sha256": hashlib.sha256(Path("request.json").read_bytes()).hexdigest(),
+              "recovery_receipt_sha256": recovery_sha256,
+              "offsite_receipt": json.loads(Path("offsite-receipt.json").read_bytes()),
+          }
+          environment = {
+              "SEICHE_RELEASE_SHA": os.environ["RELEASE_SHA"],
+              "RAILWAY_PROJECT_ID": os.environ["RAILWAY_PROJECT_ID"],
+              "RAILWAY_ENVIRONMENT_ID": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "RAILWAY_SERVICE_ID": os.environ["RAILWAY_SERVICE_ID"],
+              "RAILWAY_DEPLOYMENT_ID": os.environ["DEPLOYMENT_ID"],
+              "SEICHE_RAILWAY_VOLUME_ID": os.environ["RAILWAY_VOLUME_ID"],
+          }
+          unsigned = control.prepare_unsigned_command(
+              control.OFFSITE_ACKNOWLEDGMENT_OPERATION,
+              payload,
+              environment,
+              issued_at=os.environ["ISSUED_AT"],
+              expires_at=os.environ["EXPIRES_AT"],
+              nonce=os.environ["NONCE"],
+              key_id=key_id,
+          )
+          signed = {
+              **unsigned,
+              "signature": base64.b64encode(
+                  private.sign(control.command_signing_bytes(unsigned))
+              ).decode("ascii"),
+          }
+          body = migration.canonical_document(signed)
+          control.validate_command(body, environment)
+          Path(os.environ["COMMAND_PATH"]).write_bytes(body)
+          PY
+          status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --header 'Content-Type: application/json' \
+            --header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN" \
+            --data-binary '@proof/offsite-command.json' \
+            --output proof/offsite-command-response.json --write-out '%{http_code}' \
+            "$RAILWAY_ORIGIN/api/internal/v1/railway-control/commands")
+          test "$status" = 202
+          python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+          command = json.loads(Path("proof/offsite-command.json").read_bytes())
+          response = json.loads(Path("proof/offsite-command-response.json").read_bytes())
+          if (
+              set(response) != {"status", "command_id", "lifecycle"}
+              or response.get("status") != "accepted"
+              or response.get("command_id") != command["command_id"]
+              or response.get("lifecycle") not in {"created", "reused"}
+          ):
+              raise SystemExit("off-site command acknowledgement is invalid")
+          PY
+          replica_id="$submission_replica_id"
+          paired=0
+          for _attempt in $(seq 1 60); do
+            railway logs "$DEPLOYMENT_ID" --project "$RAILWAY_PROJECT_ID" \
+              --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" upload \
-              offsite-receipt.json "$remote"; then
-            railway volume --project "$RAILWAY_PROJECT_ID" \
-              --environment "$RAILWAY_ENVIRONMENT_ID" \
-              --service "$RAILWAY_SERVICE_ID" files \
-              --volume "$RAILWAY_VOLUME_ID" download \
-              "$remote" proof/existing-offsite-receipt.json
-            cmp offsite-receipt.json proof/existing-offsite-receipt.json
-          fi
+              --deployment --json --since "$issued_at" \
+              --filter 'SEICHE_RAILWAY_STATEFUL_RESULT_V1=' \
+              >proof/offsite-result.ndjson || true
+            replica_id=$(current_replica proof/offsite-runtime-current.json)
+            printf '%s\n' "$replica_id" >proof/replica-id.txt
+            if PYTHONPATH="$GITHUB_WORKSPACE/backend" LOG_PATH=proof/offsite-result.ndjson \
+                REQUEST_ID="$REQUEST_ID" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+                RELEASE_SHA="$RELEASE_SHA" REPLICA_ID="$replica_id" \
+                SUBMISSION_REPLICA_ID="$submission_replica_id" \
+                NOT_BEFORE="$issued_at" python -B - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from seiche.stateful_control import ControlContractError, extract_log_result
+
+          results = []
+          body = Path(os.environ["LOG_PATH"]).read_bytes()
+          for lifecycle in ("created", "reused"):
+              for replica_id in {
+                  os.environ["SUBMISSION_REPLICA_ID"],
+                  os.environ["REPLICA_ID"],
+              }:
+                  try:
+                      result = extract_log_result(
+                          body,
+                          expected_kind="recovery_offsite_paired",
+                          expected_lifecycle=lifecycle,
+                          expected_request_id=os.environ["REQUEST_ID"],
+                          expected_commit=os.environ["RELEASE_SHA"],
+                          expected_deployment_id=os.environ["DEPLOYMENT_ID"],
+                          expected_replica_id=replica_id,
+                          not_before=os.environ["NOT_BEFORE"],
+                      )
+                  except ControlContractError:
+                      continue
+                  results.append(result)
+          if not results or len({item.evidence_sha256 for item in results}) != 1:
+              raise SystemExit("exact paired recovery result is absent or inconsistent")
+          selected = max(results, key=lambda item: item.logged_at_unix_ns)
+          evidence = selected.evidence
+          expected_recovery = hashlib.sha256(Path("recovery-receipt.json").read_bytes()).hexdigest()
+          expected_offsite = hashlib.sha256(Path("offsite-receipt.json").read_bytes()).hexdigest()
+          if (
+              evidence.get("recovery_receipt_sha256") != expected_recovery
+              or evidence.get("offsite_receipt_sha256") != expected_offsite
+              or evidence.get("recovery_receipt") != json.loads(Path("recovery-receipt.json").read_bytes())
+              or evidence.get("offsite_receipt") != json.loads(Path("offsite-receipt.json").read_bytes())
+          ):
+              raise SystemExit("paired recovery evidence differs from immutable off-site bytes")
+          Path("proof/paired-recovery-evidence.json").write_bytes(selected.evidence_body)
+          PY
+            then
+              paired=1
+              break
+            fi
+            sleep 5
+          done
+          test "$paired" = 1
           echo "receipt_path=$EVIDENCE_ROOT/offsite-receipt.json" >>"$GITHUB_OUTPUT"
           {
             echo "### Railway Phase 6 portable recovery"
