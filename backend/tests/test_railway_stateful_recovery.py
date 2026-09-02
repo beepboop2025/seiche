@@ -286,6 +286,8 @@ def _request(activation: dict[str, object], *, now: datetime) -> dict[str, objec
         "request_id": "c" * 64,
         "snapshot_id": now.strftime("%Y%m%dT%H%M%SZ"),
         "requested_at": _iso(now),
+        "download_bearer_sha256": hashlib.sha256(b"r" * 32).hexdigest(),
+        "download_expires_at": _iso(now + timedelta(hours=1)),
         "confirmation": recovery.CONFIRMATION,
     }
 
@@ -809,7 +811,7 @@ class _Child:
 def test_production_supervisor_orders_pause_export_restart_and_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = {"request_id": "c" * 64}
+    request = {"request_id": "c" * 64, "snapshot_id": "20260902T220000Z"}
     calls: list[str] = []
     initial_writers = [_Child(), _Child()]
     api = _Child()
@@ -819,7 +821,7 @@ def test_production_supervisor_orders_pause_export_restart_and_receipt(
     monkeypatch.setattr(
         recovery,
         "next_pending_request",
-        lambda _environment: request if "export" not in calls else None,
+        lambda _environment, **_kwargs: request if "export" not in calls else None,
     )
 
     def export(
@@ -872,7 +874,7 @@ def test_production_supervisor_does_not_receipt_after_api_exit(
     monkeypatch.setattr(
         recovery,
         "next_pending_request",
-        lambda _environment: request,
+        lambda _environment, **_kwargs: request,
     )
 
     def export(
@@ -921,7 +923,11 @@ def test_production_supervisor_does_not_restart_writers_after_export_and_api_fai
     calls: list[str] = []
     writers = [_Child(), _Child()]
     api = _Child()
-    monkeypatch.setattr(recovery, "next_pending_request", lambda _environment: request)
+    monkeypatch.setattr(
+        recovery,
+        "next_pending_request",
+        lambda _environment, **_kwargs: request,
+    )
 
     def export(
         _environment: dict[str, str],
@@ -1001,12 +1007,13 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "api-continuity.failed" in text
     assert "seiche.railway-reverse-restore-proof.v1" in text
     assert "seiche.railway-offsite-recovery-receipt.v3" in text
-    assert "seiche.railway-cutover-candidate-receipt.v4" in text
     assert "seiche.railway-cutover-candidate-receipt.v3" not in text
+    assert "from seiche.stateful_control import" in text
+    assert "extract_log_result" in text
     assert '"palimpsest_china_state": receipt["palimpsest_china_state"]' in text
     assert '"palimpsest_china_state": recovery["palimpsest_china_state"]' in text
-    assert text.count("--candidate candidate-receipt.json") == 3
-    assert text.count("--shadow shadow-receipt.json") == 3
+    assert text.count("--candidate candidate-receipt.json") == 2
+    assert text.count("--shadow shadow-receipt.json") == 2
     assert "candidate-receipt.json shadow-receipt.json" in text
     assert "seiche.railway-offsite-preflight-receipt.v1" in text
     assert text.count("actions/attest-build-provenance@") == 3
@@ -1034,27 +1041,41 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         assert forbidden not in text
 
 
-def test_recovery_volume_file_commands_use_pinned_cli_ordering() -> None:
+def test_recovery_ci_uses_signed_https_and_fixed_members_not_ssh_or_volume_files() -> None:
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
-    logical_workflow = workflow.replace("\\\n", " ")
-    commands = [
-        " ".join(line[line.index("railway volume ") :].split())
-        for line in logical_workflow.splitlines()
-        if "railway volume " in line and " files " in line
-    ]
-    prefix = (
-        'railway volume --project "$RAILWAY_PROJECT_ID" '
-        '--environment "$RAILWAY_ENVIRONMENT_ID" '
-        '--service "$RAILWAY_SERVICE_ID" files '
-        '--volume "$RAILWAY_VOLUME_ID" '
-    )
-    assert len(commands) == 19
-    assert all(command.startswith(prefix) for command in commands)
-    operations = [command.removeprefix(prefix).split()[0] for command in commands]
-    assert operations.count("list") == 6
-    assert operations.count("download") == 12
-    assert operations.count("upload") == 1
+
+    assert "railway ssh" not in workflow
     assert "railway volume files" not in workflow
+    assert not any(
+        "railway volume " in line and " files " in line
+        for line in workflow.replace("\\\n", " ").splitlines()
+    )
+    assert workflow.count("/api/internal/v1/railway-control/commands") == 2
+    assert workflow.count("prepare_unsigned_command") == 2
+    assert workflow.count("command_signing_bytes") == 2
+    assert "/api/internal/v1/railway-control/recovery/$request_id/$member" in workflow
+    assert '--header "X-Seiche-Edge-Token: $RAILWAY_EDGE_TOKEN"' in workflow
+    assert '--header "Authorization: Bearer $download_bearer"' in workflow
+    members = (
+        "activation-receipt.json",
+        "candidate-receipt.json",
+        "shadow-receipt.json",
+        "request.json",
+        "recovery-receipt.json",
+        "seiche.dump",
+        "var-lib-seiche.tgz",
+        "palimpsest-china.tgz",
+        "palimpsest-china-state.json",
+        "api-data.tgz",
+        "table-counts.txt",
+        "deployed-sha.txt",
+        "manifest.env",
+        "SHA256SUMS",
+    )
+    member_loop = workflow[workflow.index("for member in activation-receipt.json") :]
+    member_loop = member_loop[: member_loop.index("; do")]
+    assert all(name in member_loop for name in members)
+    assert len(members) == 14
 
 
 @pytest.mark.skipif(
