@@ -91,22 +91,23 @@ private local directory. Do not stage from an unqualified off-site `latest`
 key: use the exact ciphertext VersionId and receipt if the off-site recovery
 path is the source.
 
-Link the Railway CLI to the exact project, environment, and stateful service.
-Upload into a new snapshot-specific inbox; the CLI refuses replacement, and a
-partially populated inbox cannot validate:
+Address the exact Railway project, environment, stateful service, and volume
+on every file operation; do not rely on an ambient CLI link. Upload into a new
+snapshot-specific inbox; the CLI refuses replacement, and a partially
+populated inbox cannot validate:
 
 ```bash
-railway link --project REVIEWED_PROJECT_ID \
-  --environment REVIEWED_ENVIRONMENT_ID \
-  --service REVIEWED_STATEFUL_SERVICE_ID
-
 for member in seiche.dump var-lib-seiche.tgz palimpsest-china.tgz \
   palimpsest-china-state.json api-data.tgz table-counts.txt deployed-sha.txt \
   manifest.env SHA256SUMS; do
-  railway volume files upload \
-    --volume REVIEWED_STATEFUL_VOLUME_ID \
+  railway volume \
+    --project REVIEWED_PROJECT_ID \
+    --environment REVIEWED_ENVIRONMENT_ID \
+    --service REVIEWED_STATEFUL_SERVICE_ID \
+    files --volume REVIEWED_STATEFUL_VOLUME_ID upload \
     "REVIEWED_PRIVATE_SNAPSHOT_DIR/$member" \
-    "/inbox/REVIEWED_UTC_SNAPSHOT/$member"
+    "/inbox/REVIEWED_UTC_SNAPSHOT/$member" \
+    --json
 done
 ```
 
