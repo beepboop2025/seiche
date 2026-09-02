@@ -78,15 +78,17 @@ jobs:
             "$SOURCE_RECOVERY_RECEIPT_SHA256"; do
             [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
           done
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$GITHUB_SHA"
           test -z "$(git status --short --untracked-files=no)"
 
           tree=$(git rev-parse 'HEAD^{tree}')
           [[ "$tree" =~ ^[0-9a-f]{40}$ ]]
           mkdir -p "$UPLOAD_ROOT"
           git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
-          git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"
+          git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
           git bundle verify "$UPLOAD_ROOT/source.bundle"
+          test "$(git bundle list-heads "$UPLOAD_ROOT/source.bundle")" = \
+            "$GITHUB_SHA HEAD"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           source_bundle_sha256=$(sha256sum "$UPLOAD_ROOT/source.bundle" | awk '{print $1}')
           request_id=$(printf '%s\n' \

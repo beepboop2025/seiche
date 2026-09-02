@@ -300,9 +300,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$UPLOAD_ROOT"
+          test "$(git rev-parse 'HEAD^{commit}')" = "$GITHUB_SHA"
           git archive --format=tar "$GITHUB_SHA" >"$UPLOAD_ROOT/source.tar"
-          git bundle create "$UPLOAD_ROOT/source.bundle" "$GITHUB_SHA"
+          git bundle create "$UPLOAD_ROOT/source.bundle" HEAD
           git bundle verify "$UPLOAD_ROOT/source.bundle"
+          test "$(git bundle list-heads "$UPLOAD_ROOT/source.bundle")" = \
+            "$GITHUB_SHA HEAD"
           source_archive_sha256=$(sha256sum "$UPLOAD_ROOT/source.tar" | awk '{print $1}')
           source_bundle_sha256=$(sha256sum "$UPLOAD_ROOT/source.bundle" | awk '{print $1}')
           request_id=$(printf '%s\n' \
