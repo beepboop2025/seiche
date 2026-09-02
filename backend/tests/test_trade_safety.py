@@ -34,16 +34,19 @@ def _snapshot() -> dict:
                 "mnemonic": "FRESH",
                 "asof": "2026-09-01",
                 "staleness": "fresh",
+                "freshness_grace_days": 1,
             },
             {
                 "mnemonic": "STALE",
                 "asof": "2026-08-29",
                 "staleness": "stale",
+                "freshness_grace_days": 1,
             },
             {
                 "mnemonic": "DEAD",
                 "asof": "2026-08-28",
                 "staleness": "dead",
+                "freshness_grace_days": 0,
             },
             {
                 "mnemonic": "TABLE",
@@ -223,6 +226,19 @@ def test_staleness_is_advanced_from_native_grace_without_refreshing() -> None:
     }
 
 
+def test_cached_fresh_label_without_cadence_is_never_trusted() -> None:
+    snapshot = _snapshot()
+    row = snapshot["provenance"][0]
+    row.update(asof="2020-01-01", staleness="fresh")
+    row.pop("freshness_grace_days")
+
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+
+    assert payload["status"] == "available"
+    assert payload["staleness"]["fresh"] == 0
+    assert payload["staleness"]["unknown"] == 3
+
+
 def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
     snapshot = _snapshot()
     reads = []
@@ -236,10 +252,14 @@ def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
         reads.append("completed")
         return snapshot
 
+    def forbidden_restore(*_args, **_kwargs):
+        raise AssertionError("Trade Safety risk context must never restore durable state")
+
     async def forbidden_build(*_args, **_kwargs):
         raise AssertionError("Trade Safety risk context must never build the board")
 
-    monkeypatch.setattr(mcp_server, "_get_completed_snapshot", completed)
+    monkeypatch.setattr(assemble, "cached_snapshot", completed)
+    monkeypatch.setattr(assemble, "restore_cached_snapshot", forbidden_restore)
     monkeypatch.setattr(assemble, "snapshot", forbidden_build)
     monkeypatch.setattr(mcp_server, "datetime", FrozenDateTime)
     monkeypatch.setattr(api, "datetime", FrozenDateTime)
@@ -257,7 +277,7 @@ def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
 
 
 def test_rest_fails_closed_without_a_completed_snapshot(monkeypatch) -> None:
-    monkeypatch.setattr(mcp_server, "_get_completed_snapshot", lambda: None)
+    monkeypatch.setattr(mcp_server, "_get_in_memory_completed_snapshot", lambda: None)
 
     with TestClient(api.app) as client:
         response = client.get("/api/trade-safety/risk-context")
@@ -289,3 +309,45 @@ def test_risk_context_is_in_public_rest_and_mcp_discovery() -> None:
     assert descriptor["inputSchema"]["additionalProperties"] is False
     assert descriptor["annotations"]["readOnlyHint"] is True
     assert "not evaluate stream attestations" in descriptor["description"]
+
+
+def test_output_schema_requires_every_authority_fence_and_rejects_extensions() -> None:
+    schema = mcp_server.OUTPUT_SCHEMAS["trade_safety_risk_context"]
+    available = trade_safety.project(_snapshot(), evaluation_at=NOW)
+    authority_fields = (
+        "executable",
+        "executable_quote",
+        "can_authorize_order",
+        "request_time_collection",
+        "request_time_model_fitting",
+        "request_time_network",
+        "request_time_notary",
+        "request_time_broker",
+    )
+    success_arms = [
+        arm
+        for arm in schema["anyOf"]
+        if arm.get("properties", {}).get("schema", {}).get("const")
+        == "seiche.risk-context.v1"
+    ]
+    assert len(success_arms) == 2
+    assert schema["additionalProperties"] is False
+    for arm in success_arms:
+        assert set(authority_fields) <= set(arm["required"])
+
+    try:
+        import jsonschema
+    except ModuleNotFoundError:
+        return
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.validate(available)
+    validator.validate(trade_safety.unavailable("no_completed_snapshot"))
+    for field in authority_fields:
+        incomplete = dict(available)
+        incomplete.pop(field)
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(incomplete)
+
+    widened = {**available, "can_execute": True}
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(widened)

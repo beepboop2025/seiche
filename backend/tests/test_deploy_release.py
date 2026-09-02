@@ -1255,20 +1255,28 @@ def _smoke_env(tmp_path: Path, scenario: str = "success") -> tuple[dict, Path]:
         tmp_path / "curl",
         f'''out=""
 url=""
+request_method="GET"
+data=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --output) out="$2"; shift 2 ;;
+        --request) request_method="$2"; shift 2 ;;
+        --data-binary) data="$2"; shift 2 ;;
         http://*|https://*) url="$1"; shift ;;
         *) shift ;;
     esac
 done
-echo "$url $*" >> "{calls}"
+echo "$request_method $url" >> "{calls}"
 status=200
 case "$url" in
     */api/health)
         type=application/json; body='{{"generated_at":"2026-08-10T00:00:00Z"}}'
         ;;
     */api/public) type=application/json; body='{{"conclusion":"CLEAR"}}' ;;
+    */api/trade-safety/risk-context)
+        type=application/json
+        body='{{"schema":"seiche.risk-context.v1","status":"available","real_money_eligible":false,"can_authorize_order":false,"request_time_network":false,"attestation_state":"not_evaluated"}}'
+        ;;
     */api/money-markets)
         type=application/json
         body='{{"ok":true,"schema":"seiche.money-market-desk.v1","sections":[{{"id":"policy_corridor"}},{{"id":"secured_distributions"}},{{"id":"repo_segments"}},{{"id":"unsecured_funding"}},{{"id":"bills_cash_curve"}},{{"id":"liquidity_buffers"}},{{"id":"mmf_plumbing"}}]}}'
@@ -1312,7 +1320,22 @@ case "$url" in
         type=application/json
         body='{{"service":"liquilens-market-corpus","corpora":{{}}}}'
         ;;
-    */mcp) type='text/event-stream; charset=utf-8'; body=': stateless transport' ;;
+    */mcp)
+        if [ "$request_method" = POST ]; then
+            type=application/json
+            case "$data" in
+                *tools/list*)
+                    body='{{"jsonrpc":"2.0","result":{{"tools":[{{"name":"trade_safety_risk_context"}}]}}}}'
+                    ;;
+                *tools/call*)
+                    body='{{"jsonrpc":"2.0","result":{{"structuredContent":{{"schema":"seiche.risk-context.v1","status":"available","real_money_eligible":false,"can_authorize_order":false,"request_time_network":false,"attestation_state":"not_evaluated"}}}}}}'
+                    ;;
+                *) body='{{"jsonrpc":"2.0","error":{{"code":-32600}}}}' ;;
+            esac
+        else
+            type='text/event-stream; charset=utf-8'; body=': stateless transport'
+        fi
+        ;;
     */riptide/) type=application/json; body='{{"name": "riptide"}}' ;;
     */riptide/openapi.json)
         type=application/json; body='{{"title": "Riptide Public API"}}'
@@ -1366,6 +1389,18 @@ printf '%s|%s' "$status" "$type"
 def test_external_smoke_checks_subscribe_identity_without_following_redirects(tmp_path):
     definitions = EXTERNAL_ROUTES.read_text()
     assert 'GET|/api/health|200|application/json|"generated_at"' in definitions
+    for identity in (
+        '"schema":"seiche.risk-context.v1"',
+        '"status":"available"',
+        '"real_money_eligible":false',
+        '"can_authorize_order":false',
+        '"request_time_network":false',
+        '"attestation_state":"not_evaluated"',
+    ):
+        assert (
+            "GET|/api/trade-safety/risk-context|200|application/json|"
+            f"{identity}"
+        ) in definitions
     assert (
         "GET|/api/money-markets|200|application/json|"
         '"schema":"seiche.money-market-desk.v1"'
@@ -1472,6 +1507,9 @@ def test_external_smoke_checks_subscribe_identity_without_following_redirects(tm
     assert "https://edge.invalid/.well-known/api-catalog" in calls.read_text()
     assert "https://edge.invalid/api/v2/corpus/healthz" in calls.read_text()
     assert "https://edge.invalid/api/v2/corpus/v1/catalog" in calls.read_text()
+    assert "POST https://edge.invalid/mcp" in calls.read_text()
+    assert "tools/list -> trade_safety_risk_context" in result.stdout
+    assert "tools/call -> fail-closed Trade Safety context" in result.stdout
     for route in palimpsest_host_routes:
         assert f"https://edge.invalid{route}" in calls.read_text()
     assert "--location" not in EXTERNAL_SMOKE.read_text()

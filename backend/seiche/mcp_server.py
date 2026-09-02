@@ -241,6 +241,19 @@ def _get_completed_snapshot() -> dict | None:
     return None
 
 
+def _get_in_memory_completed_snapshot() -> dict | None:
+    """Return only an already-hydrated board, without durable restoration.
+
+    Trade Safety uses this narrower seam because a cold request must not turn
+    into PostgreSQL or SQLite I/O. Process startup and the normal board path own
+    restoration; until either has populated memory, the guard context is
+    deliberately unavailable.
+    """
+    from seiche import assemble
+
+    return _rights_safe_memo(assemble.cached_snapshot())
+
+
 def _get_asof(date: str) -> dict:
     from seiche import assemble
 
@@ -943,7 +956,7 @@ def tool_trade_safety_risk_context(args: dict, _public: bool) -> Any:
     from seiche import trade_safety
 
     return trade_safety.project(
-        _get_completed_snapshot(),
+        _get_in_memory_completed_snapshot(),
         evaluation_at=datetime.now(UTC).replace(microsecond=0),
     )
 
@@ -1302,6 +1315,7 @@ def _output_schema(
     description: str,
     properties: dict[str, dict],
     *success_variants: tuple[tuple[str, ...], dict[str, Any]],
+    additional_properties: bool = True,
 ) -> dict[str, Any]:
     """Build one extensible object schema with explicit success/failure arms.
 
@@ -1326,7 +1340,7 @@ def _output_schema(
         "anyOf": variants,
         # Source adapters and engine versions may add evidence fields. Stable
         # top-level fields above remain typed and required by a success arm.
-        "additionalProperties": True,
+        "additionalProperties": additional_properties,
     }
 
 
@@ -1334,6 +1348,41 @@ _STRING_OR_NULL = {"type": ["string", "null"]}
 _NUMBER_OR_NULL = {"type": ["number", "null"]}
 _OBJECT_OR_NULL = {"type": ["object", "null"]}
 _CONTAINER_OR_NULL = {"type": ["object", "array", "null"]}
+
+_TRADE_SAFETY_RISK_CONTEXT_FIELDS = (
+    "ok",
+    "schema",
+    "status",
+    "reason",
+    "state",
+    "evidence_class",
+    "rights_status",
+    "context_only",
+    "executable",
+    "executable_quote",
+    "real_money_eligible",
+    "can_authorize_order",
+    "projection_mode",
+    "request_time_collection",
+    "request_time_model_fitting",
+    "request_time_network",
+    "request_time_notary",
+    "request_time_broker",
+    "attestation_state",
+    "source_url",
+    "source_snapshot_version",
+    "regime",
+    "stress_index",
+    "coverage_pct",
+    "fault_count",
+    "staleness",
+    "clocks",
+    "attestation",
+    "limitations",
+    "disclaimer",
+    "projection_sha256",
+    "canonicalization",
+)
 
 CHINA_MACRO_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -1510,7 +1559,9 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             "request_time_notary": {"const": False},
             "request_time_broker": {"const": False},
             "attestation_state": {"const": "not_evaluated"},
-            "source_url": {"type": "string"},
+            "source_url": {
+                "const": "https://api.seiche.info/api/trade-safety/risk-context"
+            },
             "source_snapshot_version": _STRING_OR_NULL,
             "regime": {"type": ["string", "null"]},
             "stress_index": _NUMBER_OR_NULL,
@@ -1575,37 +1626,23 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
                 "additionalProperties": False,
             },
-            "limitations": {"type": "array", "items": {"type": "string"}},
+            "limitations": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
             "disclaimer": {"type": "string"},
-            "projection_sha256": {"type": "string"},
-            "canonicalization": {"type": "string"},
+            "projection_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+            },
+            "canonicalization": {
+                "const": "python-json-sort-keys-utf8-no-nan-server-internal-v1"
+            },
         },
         (
-            (
-                "ok",
-                "schema",
-                "status",
-                "state",
-                "evidence_class",
-                "rights_status",
-                "context_only",
-                "executable",
-                "executable_quote",
-                "real_money_eligible",
-                "can_authorize_order",
-                "projection_mode",
-                "attestation_state",
-                "source_snapshot_version",
-                "regime",
-                "stress_index",
-                "coverage_pct",
-                "staleness",
-                "clocks",
-                "attestation",
-                "limitations",
-                "projection_sha256",
-                "canonicalization",
-            ),
+            _TRADE_SAFETY_RISK_CONTEXT_FIELDS,
             {
                 "ok": True,
                 "schema": "seiche.risk-context.v1",
@@ -1615,20 +1652,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         ),
         (
-            (
-                "ok",
-                "schema",
-                "status",
-                "reason",
-                "state",
-                "evidence_class",
-                "rights_status",
-                "context_only",
-                "real_money_eligible",
-                "attestation_state",
-                "projection_sha256",
-                "canonicalization",
-            ),
+            _TRADE_SAFETY_RISK_CONTEXT_FIELDS,
             {
                 "ok": False,
                 "schema": "seiche.risk-context.v1",
@@ -1637,6 +1661,7 @@ OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "evidence_class": "unavailable",
             },
         ),
+        additional_properties=False,
     ),
     "money_market_context": _output_schema(
         "Chartless USD money-market desk envelope for every supported selector.",

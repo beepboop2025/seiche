@@ -1495,7 +1495,7 @@ def _public_openapi_document() -> dict[str, Any]:
                 "operationId": "getTradeSafetyRiskContext",
                 "summary": "Read cache-only Seiche context for trade-safety guards",
                 "description": (
-                    "Projects only a completed cached or persisted Seiche board. "
+                    "Projects only an already-hydrated in-memory Seiche board. "
                     "The request never collects, fits, reads an attestation ledger, "
                     "calls a network source or broker, or authorizes an order. The "
                     "response is metadata-only derived context, is never real-money "
@@ -2314,7 +2314,7 @@ def trade_safety_risk_context(response: Response):
     """Read a fail-closed, non-executable projection of completed Seiche state."""
 
     payload = trade_safety.project(
-        mcp_server._get_completed_snapshot(),
+        mcp_server._get_in_memory_completed_snapshot(),
         evaluation_at=datetime.now(UTC).replace(microsecond=0),
     )
     if payload["status"] != "available":

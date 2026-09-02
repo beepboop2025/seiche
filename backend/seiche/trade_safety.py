@@ -35,6 +35,7 @@ _LIMITATIONS = (
     "rows_without_observation_clocks_remain_unknown_and_are_not_treated_as_current",
     _ATTESTATION_LIMITATION,
     "stream_attestation_is_not_per_order_execution_authority",
+    "projection_sha256_is_a_server_internal_change_detector_not_authentication",
 )
 
 
@@ -113,7 +114,9 @@ def _staleness(
             else:
                 state = "dead"
         else:
-            state = str(row.get("staleness") or "unknown").strip().lower()
+            # A cached label has no safe meaning at a later evaluation time
+            # unless its cadence/grace rule is available to recompute it.
+            state = "unknown"
         counts[state if state in STALENESS_STATES[:-1] else "unknown"] += 1
     return {
         **{state: counts[state] for state in STALENESS_STATES},
@@ -183,7 +186,9 @@ def _seal(payload: dict[str, Any]) -> dict[str, Any]:
 
     sealed = {
         **payload,
-        "canonicalization": "json-sort-keys-utf8-no-nan-exclude-projection-sha256-v1",
+        "canonicalization": (
+            "python-json-sort-keys-utf8-no-nan-server-internal-v1"
+        ),
     }
     canonical = json.dumps(
         sealed,
