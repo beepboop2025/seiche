@@ -113,10 +113,16 @@ def room_client(tmp_path, monkeypatch):
     private_dir = tmp_path / "agent-room"
     private_dir.mkdir(mode=0o700)
     private_dir.chmod(0o700)
+    database_path = private_dir / "agent-room.sqlite"
     store = agent_room.AgentRoomStore(
-        private_dir / "agent-room.sqlite", server_private_key=_private_key(99)
+        database_path, server_private_key=_private_key(99)
     )
     monkeypatch.setattr(mcp_server, "_agent_room_store_instance", store)
+    # The transport fixture is intentionally non-production and owns its exact
+    # private path; neither a clean checkout nor ambient deployment controls may
+    # redirect its store lookup into the packaged/runtime data directory.
+    monkeypatch.setenv("SEICHE_ENV", "test")
+    monkeypatch.setenv("SEICHE_AGENT_ROOM_DB_PATH", str(database_path))
     # Keep the commercial meter out of the packaged-data path. A clean checkout
     # has no backend/data directory, and the release workflow deliberately runs
     # under umask 0077 to match the hardened host service.
