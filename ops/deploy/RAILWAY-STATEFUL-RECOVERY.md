@@ -92,18 +92,22 @@ and edge token), plus these credentials for a bucket outside Railway:
 - `SEICHE_OFFSITE_S3_ACCESS_KEY_ID`
 - `SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY`
 - `SEICHE_OFFSITE_S3_REGION`
+- `SEICHE_OFFSITE_S3_SSE_C_KEY_B64` (canonical base64 for one separately
+  retained 32-byte key)
 
-The bucket must have versioning and Object Lock enabled. Its IAM principal must
-be able to put and HEAD objects with COMPLIANCE retention, but it does not need
-delete or retention-shortening permissions. The workflow requires explicit
-AES-256 server-side encryption and at least 29 remaining days when it verifies
-each object.
-
-Both off-site jobs set the AWS CLI's implicit request and response checksum
-defaults to `when_required` for compatibility with Hetzner Object Storage.
-Every upload still supplies an explicit SHA-256 checksum, and every HEAD proof
-still requires the same provider-returned SHA-256, so this compatibility mode
-does not relax the recovery evidence contract.
+The bucket must have versioning and a default COMPLIANCE Object Lock retention
+of at least 30 days enabled. Its principal needs put, HEAD, and version-pinned
+GET access, but no delete or retention-shortening permission. Hetzner Object
+Storage supports SSE-C rather than AWS-managed SSE-S3, so every object uses the
+separately retained 32-byte customer key. The signed upload includes
+`Content-MD5` and immutable SHA-256 metadata. Acceptance requires the same
+metadata, SSE-C key digest, version ID, at least 29 remaining retention days,
+and a matching SHA-256 from an exact-version download. This avoids unsupported
+AWS checksum/SSE-S3 headers without relaxing the recovery evidence contract.
+Retain the same raw key in at least one protected operator recovery store
+outside GitHub; an unreadable GitHub environment secret is not a recovery copy.
+Never put the key in a receipt, log, command argument, Railway variable, or
+Actions artifact.
 
 Never put Railway, GitHub, Hetzner, edge, or off-site credentials in the
 stateful service. The service receives only the canonical export request over
@@ -124,8 +128,9 @@ Do not set `RAILWAY_STATEFUL_PHASE6_ENABLED` yet.
    a production activation receipt and matching public edge.
 4. Manually dispatch `operation=preflight-offsite` with
    `confirmation=PROVE_EXTERNAL_OBJECT_LOCK_ONLY`. Review its non-production
-   canary, provider checksum, version IDs, encryption, COMPLIANCE retention,
-   private artifact, and OIDC attestation.
+   canary, signed `Content-MD5`, metadata and downloaded SHA-256 match, version
+   IDs, encryption, COMPLIANCE retention, private artifact, and OIDC
+   attestation.
 5. Confirm the Phase 6 code, workflow policy, crash-resume, continuity-failure,
    and isolated restore tests are green on the exact Phase 6 candidate SHA.
 
@@ -238,6 +243,33 @@ Each successful export produces:
 The large bundle is not uploaded as a GitHub Actions artifact. Locked external
 objects are the durable portable copy; the 90-day private Actions artifact
 contains only receipts, restore proof, and provider HEAD evidence.
+
+To restore one exact object from a reviewed off-site receipt, create a
+caller-owned mode-0600 environment file containing the helper names
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`,
+`S3_ENDPOINT`, `S3_BUCKET`, and `S3_SSE_C_KEY_B64`. The protected GitHub job
+maps `SEICHE_OFFSITE_S3_SSE_C_KEY_B64` to that last helper name. Then use the
+receipt's immutable tuple without printing any credential:
+
+```bash
+test "$(stat -c '%a:%u' /secure/seiche-credentials/object-storage.env)" = \
+  "600:$(id -u)"
+set -a
+. /secure/seiche-credentials/object-storage.env
+set +a
+install -d -m 0700 /secure/seiche-recovery
+object=seiche.dump
+key=$(jq -er --arg name "$object" '.objects[$name].key' offsite-receipt.json)
+version=$(jq -er --arg name "$object" '.objects[$name].version_id' offsite-receipt.json)
+sha256=$(jq -er --arg name "$object" '.objects[$name].sha256' offsite-receipt.json)
+ops/deploy/seiche-s3-object-lock.sh get-verify \
+  "$key" "$version" "$sha256" "/secure/seiche-recovery/$object"
+```
+
+The helper re-HEADs that exact non-null version with SSE-C, compares its locked
+SHA-256 metadata, downloads only that version, checks the restored SHA-256,
+fsyncs it, and publishes a new mode-0600 file into the caller-owned mode-0700
+directory without overwriting an existing path.
 
 ## Failure handling
 

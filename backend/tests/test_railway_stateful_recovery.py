@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import base64
 import copy
 import hashlib
 import json
@@ -30,6 +31,7 @@ RECOVERY_WORKFLOW = (
 )
 STATEFUL_DOCKERFILE = REPOSITORY_ROOT / "ops" / "railway" / "Dockerfile.stateful"
 RECOVERY_RUNBOOK = REPOSITORY_ROOT / "ops" / "deploy" / "RAILWAY-STATEFUL-RECOVERY.md"
+OBJECT_LOCK_CLIENT = REPOSITORY_ROOT / "ops" / "deploy" / "seiche-s3-object-lock.sh"
 
 
 def _iso(moment: datetime) -> str:
@@ -961,6 +963,7 @@ def test_production_supervisor_does_not_restart_writers_after_export_and_api_fai
 def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     text = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
     dockerfile = STATEFUL_DOCKERFILE.read_text(encoding="utf-8")
+    object_lock_client = OBJECT_LOCK_CLIENT.read_text(encoding="utf-8")
 
     assert 'cron: "17 */6 * * *"' in text
     assert 'cron: "31 2 * * *"' in text
@@ -980,11 +983,21 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "postgres pitr enable" in text
     assert "postgres pitr schedule set --daily --weekly --monthly" in text
     assert "postgres pitr backup lock" in text
-    assert "--object-lock-mode COMPLIANCE" in text
-    assert "--checksum-algorithm SHA256" in text
-    assert "--checksum-mode ENABLED" in text
-    assert text.count("AWS_REQUEST_CHECKSUM_CALCULATION: when_required") == 2
-    assert text.count("AWS_RESPONSE_CHECKSUM_VALIDATION: when_required") == 2
+    assert text.count("SEICHE_OFFSITE_S3_SSE_C_KEY_B64") == 2
+    assert text.count('seiche-s3-object-lock.sh" put-verify') == 4
+    assert (
+        text.count("d2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c")
+        == 2
+    )
+    assert "DownloadedSHA256" in text
+    assert "--content-md5" in object_lock_client
+    assert '"fileb://$KEY_PATH"' in object_lock_client
+    assert "--sse-customer-algorithm AES256" in object_lock_client
+    assert "get-object-lock-configuration" in object_lock_client
+    assert '--version-id "$version_id"' in object_lock_client
+    assert "AWS_REQUEST_CHECKSUM_CALCULATION=when_required" in object_lock_client
+    assert "SSECustomerKeyVerified" in text
+    assert "SSECustomerKeyMD5" not in text
     assert "api-continuity.failed" in text
     assert "seiche.railway-reverse-restore-proof.v1" in text
     assert "seiche.railway-offsite-recovery-receipt.v3" in text
@@ -1016,6 +1029,166 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         "RAILWAY_BECOMES_SOLE_WRITER",
     ):
         assert forbidden not in text
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="helper targets GitHub's Linux runner"
+)
+def test_object_lock_client_pins_versions_and_hides_the_sse_key(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "fake-s3"
+    state.mkdir()
+    fake_aws = fake_bin / "aws"
+    fake_aws.write_text(
+        textwrap.dedent("""\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            state=${FAKE_AWS_STATE:?}
+            log=$state/calls.log
+            [ -z "${S3_SSE_C_KEY_B64:-}" ] || exit 89
+            if [ "${1:-}" = --version ]; then
+                echo 'aws-cli/2.36.35 Python/3.14.6 Linux/fake exe/x86_64.ubuntu.24'
+                exit 0
+            fi
+            for argument in "$@"; do
+                [ "$argument" != "$FAKE_RAW_KEY" ] || exit 90
+            done
+            command_line=" $* "
+            if [[ "$command_line" == *' s3api get-object-lock-configuration '* ]]; then
+                echo 'lock' >>"$log"
+                echo '{"ObjectLockConfiguration":{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":90}}}}'
+                exit 0
+            fi
+            if [[ "$command_line" == *' s3api get-bucket-versioning '* ]]; then
+                echo 'versioning' >>"$log"
+                echo '{"Status":"Enabled"}'
+                exit 0
+            fi
+            operation=
+            body=
+            metadata=
+            version=
+            key_file=
+            output=
+            previous=
+            for argument in "$@"; do
+                case "$previous" in
+                    body) body=$argument ;;
+                    metadata) metadata=$argument ;;
+                    version) version=$argument ;;
+                    key) key_file=${argument#fileb://} ;;
+                esac
+                previous=
+                case "$argument" in
+                    put-object|head-object|get-object) operation=$argument ;;
+                    --body) previous=body ;;
+                    --metadata) previous=metadata ;;
+                    --version-id) previous=version ;;
+                    --sse-customer-key) previous=key ;;
+                    --*) ;;
+                    *) output=$argument ;;
+                esac
+            done
+            [ -n "$key_file" ]
+            [ "$(stat -c '%a:%s' "$key_file")" = 600:32 ]
+            case "$operation" in
+                put-object)
+                    cp -- "$body" "$state/object"
+                    printf '%s\n' "$metadata" >"$state/metadata"
+                    echo 'put' >>"$log"
+                    echo '{}'
+                    ;;
+                head-object)
+                    [ -f "$state/object" ] || exit 1
+                    if [ -n "$version" ]; then
+                        [ "$version" = version-1 ]
+                        echo 'head:pinned:version-1' >>"$log"
+                    else
+                        echo 'head:current' >>"$log"
+                    fi
+                    size=$(stat -c %s "$state/object")
+                    sha=$(sed 's/^sha256=//' "$state/metadata")
+                    key_md5=$(openssl dgst -md5 -binary "$key_file" | base64 -w0)
+                    printf '{"ContentLength":%s,"Metadata":{"sha256":"%s"},"SSECustomerAlgorithm":"AES256","SSECustomerKeyMD5":"%s","ObjectLockMode":"COMPLIANCE","ObjectLockRetainUntilDate":"2099-01-01T00:00:00Z","VersionId":"version-1"}\n' "$size" "$sha" "$key_md5"
+                    ;;
+                get-object)
+                    [ "$version" = version-1 ]
+                    echo 'get:pinned:version-1' >>"$log"
+                    [ "${FAKE_FAIL_GET:-0}" != 1 ] || exit 42
+                    cp -- "$state/object" "$output"
+                    echo '{}'
+                    ;;
+                *) exit 91 ;;
+            esac
+            """),
+        encoding="utf-8",
+    )
+    fake_aws.chmod(0o755)
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir(mode=0o700)
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"closed recovery object\n")
+    encoded_key = base64.b64encode(bytes(range(32))).decode("ascii")
+    environment = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_AWS_STATE": str(state),
+        "FAKE_RAW_KEY": encoded_key,
+        "AWS_ACCESS_KEY_ID": "test-access",
+        "AWS_SECRET_ACCESS_KEY": "test-secret",
+        "AWS_DEFAULT_REGION": "eu-central",
+        "S3_ENDPOINT": "https://objects.example.test",
+        "S3_BUCKET": "locked-recovery",
+        "S3_SSE_C_KEY_B64": encoded_key,
+        "RUNNER_TEMP": str(runner_temp),
+    }
+    bucket_proof = tmp_path / "bucket.json"
+    subprocess.run(
+        [OBJECT_LOCK_CLIENT, "probe-bucket", bucket_proof],
+        check=True,
+        env=environment,
+    )
+    head_proof = tmp_path / "head.json"
+    key = "seiche/recovery/request/object.bin"
+    subprocess.run(
+        [OBJECT_LOCK_CLIENT, "put-verify", source, key, head_proof],
+        check=True,
+        env=environment,
+    )
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    proof = json.loads(head_proof.read_text(encoding="utf-8"))
+    assert proof["VersionId"] == "version-1"
+    assert proof["DownloadedSHA256"] == expected_sha
+    assert proof["SSECustomerKeyVerified"] is True
+    assert "SSECustomerKeyMD5" not in proof
+    restore_root = tmp_path / "restore"
+    restore_root.mkdir(mode=0o700)
+    restored = restore_root / "restored.bin"
+    subprocess.run(
+        [
+            OBJECT_LOCK_CLIENT,
+            "get-verify",
+            key,
+            "version-1",
+            expected_sha,
+            restored,
+        ],
+        check=True,
+        env=environment,
+    )
+    assert restored.read_bytes() == source.read_bytes()
+    calls = (state / "calls.log").read_text(encoding="utf-8")
+    assert "head:pinned:version-1" in calls
+    assert calls.count("get:pinned:version-1") == 2
+    assert encoded_key not in calls
+    failed = subprocess.run(
+        [OBJECT_LOCK_CLIENT, "put-verify", source, key, tmp_path / "failed.json"],
+        check=False,
+        env={**environment, "FAKE_FAIL_GET": "1"},
+        timeout=5,
+    )
+    assert failed.returncode != 0
 
 
 def test_reverse_restore_heredoc_executes_cleanup_and_passes_password_by_env(

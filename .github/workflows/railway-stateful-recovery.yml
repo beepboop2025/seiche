@@ -416,18 +416,36 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install the checksum-pinned AWS CLI
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/awscli-2.36.35.zip"
+          installer="${RUNNER_TEMP}/awscli-installer"
+          install_root="${RUNNER_TEMP}/awscli"
+          tool_dir="${RUNNER_TEMP}/aws-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.35.zip' \
+            --output "$archive"
+          echo 'd2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c  '"$archive" |
+            sha256sum --check --strict
+          mkdir -p "$installer" "$tool_dir"
+          unzip -q "$archive" -d "$installer"
+          "$installer/aws/install" --install-dir "$install_root" \
+            --bin-dir "$tool_dir"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+          "$tool_dir/aws" --version 2>&1 | grep -Eq '^aws-cli/2\.36\.35 '
+
       - name: Prove external Object Lock without production state
         id: preflight
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-          AWS_EC2_METADATA_DISABLED: "true"
           S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
           S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
           S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
           CONFIRMATION: ${{ inputs.confirmation }}
           EVIDENCE_ROOT: ${{ runner.temp }}/railway-recovery-offsite-preflight
         run: |
@@ -435,7 +453,6 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$CONFIRMATION" = PROVE_EXTERNAL_OBJECT_LOCK_ONLY
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          aws --version
           mkdir -p "$EVIDENCE_ROOT"
           chmod 0700 "$EVIDENCE_ROOT"
           cd "$EVIDENCE_ROOT"
@@ -468,7 +485,8 @@ jobs:
               raise SystemExit("off-site prefix is invalid")
           PY
           observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          retain_until=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
+          "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" \
+            probe-bucket bucket-lock.json
           PREFLIGHT_AT="$observed_at" python3 -I -S - <<'PY'
           import json
           import os
@@ -496,18 +514,10 @@ jobs:
           )
           PY
           canary_sha256=$(sha256sum canary.json | awk '{print $1}')
-          canary_checksum=$(printf '%s' "$canary_sha256" | xxd -r -p | base64 -w0)
           canary_key="$S3_PREFIX/preflight/$GITHUB_SHA/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
-          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
-            --bucket "$S3_BUCKET" --key "$canary_key" --body canary.json \
-            --server-side-encryption AES256 --metadata "sha256=$canary_sha256" \
-            --checksum-algorithm SHA256 --checksum-sha256 "$canary_checksum" \
-            --object-lock-mode COMPLIANCE \
-            --object-lock-retain-until-date "$retain_until" >canary.put.json
-          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
-            --bucket "$S3_BUCKET" --key "$canary_key" --checksum-mode ENABLED \
-            >canary.head.json
-          EXPECTED_SHA="$canary_sha256" EXPECTED_CHECKSUM="$canary_checksum" \
+          "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" put-verify \
+            canary.json "$canary_key" canary.head.json
+          EXPECTED_SHA="$canary_sha256" \
             EXPECTED_SIZE="$(stat -c %s canary.json)" \
             S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
             CANARY_KEY="$canary_key" PREFLIGHT_AT="$observed_at" \
@@ -525,9 +535,10 @@ jobs:
           if (
               head.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
               or head.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
-              or head.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or head.get("DownloadedSHA256") != os.environ["EXPECTED_SHA"]
               or head.get("ObjectLockMode") != "COMPLIANCE"
-              or head.get("ServerSideEncryption") != "AES256"
+              or head.get("SSECustomerAlgorithm") != "AES256"
+              or head.get("SSECustomerKeyVerified") is not True
               or not isinstance(head.get("VersionId"), str)
               or not head["VersionId"]
               or retained < datetime.now(UTC) + timedelta(days=29)
@@ -548,9 +559,9 @@ jobs:
                   "key": os.environ["CANARY_KEY"],
                   "sha256": hashlib.sha256(Path("canary.json").read_bytes()).hexdigest(),
                   "size": Path("canary.json").stat().st_size,
-                  "checksum_sha256": head["ChecksumSHA256"],
+                  "downloaded_sha256": head["DownloadedSHA256"],
                   "version_id": head["VersionId"],
-                  "server_side_encryption": "AES256",
+                  "server_side_encryption": "SSE-C AES256",
                   "object_lock_mode": "COMPLIANCE",
                   "retain_until": head["ObjectLockRetainUntilDate"],
               },
@@ -566,18 +577,10 @@ jobs:
           )
           PY
           receipt_sha256=$(sha256sum preflight-receipt.json | awk '{print $1}')
-          receipt_checksum=$(printf '%s' "$receipt_sha256" | xxd -r -p | base64 -w0)
           receipt_key="${canary_key%.json}.receipt.json"
-          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
-            --bucket "$S3_BUCKET" --key "$receipt_key" --body preflight-receipt.json \
-            --server-side-encryption AES256 --metadata "sha256=$receipt_sha256" \
-            --checksum-algorithm SHA256 --checksum-sha256 "$receipt_checksum" \
-            --object-lock-mode COMPLIANCE \
-            --object-lock-retain-until-date "$retain_until" >receipt.put.json
-          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
-            --bucket "$S3_BUCKET" --key "$receipt_key" --checksum-mode ENABLED \
-            >receipt.head.json
-          EXPECTED_SHA="$receipt_sha256" EXPECTED_CHECKSUM="$receipt_checksum" \
+          "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" put-verify \
+            preflight-receipt.json "$receipt_key" receipt.head.json
+          EXPECTED_SHA="$receipt_sha256" \
             EXPECTED_SIZE="$(stat -c %s preflight-receipt.json)" \
             python3 -I -S - <<'PY'
           import json
@@ -592,9 +595,10 @@ jobs:
           if (
               head.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
               or head.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
-              or head.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or head.get("DownloadedSHA256") != os.environ["EXPECTED_SHA"]
               or head.get("ObjectLockMode") != "COMPLIANCE"
-              or head.get("ServerSideEncryption") != "AES256"
+              or head.get("SSECustomerAlgorithm") != "AES256"
+              or head.get("SSECustomerKeyVerified") is not True
               or not isinstance(head.get("VersionId"), str)
               or not head["VersionId"]
               or retained < datetime.now(UTC) + timedelta(days=29)
@@ -1150,7 +1154,22 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" railway
           chmod 0755 "$tool_dir/railway"
           echo "$tool_dir" >>"$GITHUB_PATH"
-          aws --version
+          aws_archive="${RUNNER_TEMP}/awscli-2.36.35.zip"
+          aws_installer="${RUNNER_TEMP}/awscli-installer"
+          aws_install_root="${RUNNER_TEMP}/awscli"
+          aws_tool_dir="${RUNNER_TEMP}/aws-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.36.35.zip' \
+            --output "$aws_archive"
+          echo 'd2dc4df7edbd93913606f27c2fef7dd7ed19e4ebf659251dbf83b759dd5e816c  '"$aws_archive" |
+            sha256sum --check --strict
+          mkdir -p "$aws_installer" "$aws_tool_dir"
+          unzip -q "$aws_archive" -d "$aws_installer"
+          "$aws_installer/aws/install" --install-dir "$aws_install_root" \
+            --bin-dir "$aws_tool_dir"
+          echo "$aws_tool_dir" >>"$GITHUB_PATH"
+          "$aws_tool_dir/aws" --version 2>&1 | grep -Eq '^aws-cli/2\.36\.35 '
 
       - name: Request and download an activation-bound portable export
         id: export
@@ -1537,12 +1556,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.SEICHE_OFFSITE_S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SEICHE_OFFSITE_S3_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.SEICHE_OFFSITE_S3_REGION }}
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-          AWS_EC2_METADATA_DISABLED: "true"
           S3_ENDPOINT: ${{ secrets.SEICHE_OFFSITE_S3_ENDPOINT }}
           S3_BUCKET: ${{ secrets.SEICHE_OFFSITE_S3_BUCKET }}
           S3_PREFIX: ${{ secrets.SEICHE_OFFSITE_S3_PREFIX }}
+          S3_SSE_C_KEY_B64: ${{ secrets.SEICHE_OFFSITE_S3_SSE_C_KEY_B64 }}
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
@@ -1584,9 +1601,10 @@ jobs:
           ):
               raise SystemExit("off-site prefix is invalid")
           PY
-          retain_until=$(date -u -d '+30 days' +%Y-%m-%dT%H:%M:%SZ)
           key_root="$S3_PREFIX/$SNAPSHOT_ID/$REQUEST_ID"
           mkdir -p proof/offsite-heads
+          "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" \
+            probe-bucket proof/offsite-bucket-lock.json
           printf '%s\n' \
             activation-receipt.json candidate-receipt.json shadow-receipt.json \
             request.json recovery-receipt.json \
@@ -1601,24 +1619,10 @@ jobs:
             digest=$(sha256sum "$path" | awk '{print $1}')
             size=$(stat -c %s "$path")
             test "$size" -le 5368709120
-            checksum=$(printf '%s' "$digest" | xxd -r -p | base64 -w0)
             head="proof/offsite-heads/${name//\//_}.json"
-            if ! aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
-                --bucket "$S3_BUCKET" --key "$key" --checksum-mode ENABLED \
-                >"$head" 2>/dev/null; then
-              aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
-                --bucket "$S3_BUCKET" --key "$key" --body "$path" \
-                --server-side-encryption AES256 \
-                --metadata "sha256=$digest" \
-                --checksum-algorithm SHA256 --checksum-sha256 "$checksum" \
-                --object-lock-mode COMPLIANCE \
-                --object-lock-retain-until-date "$retain_until" \
-                >"proof/offsite-heads/${name//\//_}.put.json"
-              aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
-                --bucket "$S3_BUCKET" --key "$key" --checksum-mode ENABLED \
-                >"$head"
-            fi
-            EXPECTED_SHA="$digest" EXPECTED_CHECKSUM="$checksum" \
+            "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" put-verify \
+              "$path" "$key" "$head"
+            EXPECTED_SHA="$digest" \
               EXPECTED_SIZE="$size" \
               EXPECTED_KEY="$key" HEAD="$head" python -I -S - <<'PY'
           import json
@@ -1633,16 +1637,30 @@ jobs:
           if (
               value.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
               or value.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
-              or value.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or value.get("DownloadedSHA256") != os.environ["EXPECTED_SHA"]
               or not isinstance(value.get("VersionId"), str)
               or not value["VersionId"]
               or value.get("ObjectLockMode") != "COMPLIANCE"
-              or value.get("ServerSideEncryption") != "AES256"
+              or value.get("SSECustomerAlgorithm") != "AES256"
+              or value.get("SSECustomerKeyVerified") is not True
               or retained < datetime.now(UTC) + timedelta(days=29)
           ):
               raise SystemExit(f"immutable off-site proof failed for {os.environ['EXPECTED_KEY']}")
           PY
           done <proof/offsite-members.txt
+          retain_until=$(python -I -S - <<'PY'
+          import json
+          from pathlib import Path
+
+          values = [
+              json.loads(path.read_text())["ObjectLockRetainUntilDate"]
+              for path in Path("proof/offsite-heads").glob("*.json")
+          ]
+          if not values:
+              raise SystemExit("off-site retention evidence is empty")
+          print(min(values))
+          PY
+          )
           S3_BUCKET="$S3_BUCKET" S3_PREFIX="$S3_PREFIX" \
             SNAPSHOT_ID="$SNAPSHOT_ID" REQUEST_ID="$REQUEST_ID" \
             RETAIN_UNTIL="$retain_until" python -I -S - <<'PY'
@@ -1713,18 +1731,9 @@ jobs:
           [[ "$monitor_digests" =~ ^[0-9a-f]{64}\ [0-9a-f]{64}$ ]]
           offsite_key="$key_root/offsite-receipt.json"
           offsite_sha256=$(sha256sum offsite-receipt.json | awk '{print $1}')
-          offsite_checksum=$(printf '%s' "$offsite_sha256" | xxd -r -p | base64 -w0)
-          aws --endpoint-url "$S3_ENDPOINT" s3api put-object \
-            --bucket "$S3_BUCKET" --key "$offsite_key" --body offsite-receipt.json \
-            --server-side-encryption AES256 --metadata "sha256=$offsite_sha256" \
-            --checksum-algorithm SHA256 --checksum-sha256 "$offsite_checksum" \
-            --object-lock-mode COMPLIANCE \
-            --object-lock-retain-until-date "$retain_until" \
-            >proof/offsite-receipt.put.json
-          aws --endpoint-url "$S3_ENDPOINT" s3api head-object \
-            --bucket "$S3_BUCKET" --key "$offsite_key" --checksum-mode ENABLED \
-            >proof/offsite-receipt.head.json
-          EXPECTED_SHA="$offsite_sha256" EXPECTED_CHECKSUM="$offsite_checksum" \
+          "$GITHUB_WORKSPACE/ops/deploy/seiche-s3-object-lock.sh" put-verify \
+            offsite-receipt.json "$offsite_key" proof/offsite-receipt.head.json
+          EXPECTED_SHA="$offsite_sha256" \
             EXPECTED_SIZE="$(stat -c %s offsite-receipt.json)" \
             HEAD=proof/offsite-receipt.head.json python -I -S - <<'PY'
           import json
@@ -1739,11 +1748,12 @@ jobs:
           if (
               value.get("ContentLength") != int(os.environ["EXPECTED_SIZE"])
               or value.get("Metadata", {}).get("sha256") != os.environ["EXPECTED_SHA"]
-              or value.get("ChecksumSHA256") != os.environ["EXPECTED_CHECKSUM"]
+              or value.get("DownloadedSHA256") != os.environ["EXPECTED_SHA"]
               or not isinstance(value.get("VersionId"), str)
               or not value["VersionId"]
               or value.get("ObjectLockMode") != "COMPLIANCE"
-              or value.get("ServerSideEncryption") != "AES256"
+              or value.get("SSECustomerAlgorithm") != "AES256"
+              or value.get("SSECustomerKeyVerified") is not True
               or retained < datetime.now(UTC) + timedelta(days=29)
           ):
               raise SystemExit("immutable off-site receipt proof failed")
