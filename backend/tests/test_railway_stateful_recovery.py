@@ -983,6 +983,8 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "--object-lock-mode COMPLIANCE" in text
     assert "--checksum-algorithm SHA256" in text
     assert "--checksum-mode ENABLED" in text
+    assert text.count("AWS_REQUEST_CHECKSUM_CALCULATION: when_required") == 2
+    assert text.count("AWS_RESPONSE_CHECKSUM_VALIDATION: when_required") == 2
     assert "api-continuity.failed" in text
     assert "seiche.railway-reverse-restore-proof.v1" in text
     assert "seiche.railway-offsite-recovery-receipt.v3" in text

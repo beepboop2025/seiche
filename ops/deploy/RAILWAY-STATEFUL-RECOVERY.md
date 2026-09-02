@@ -99,6 +99,12 @@ delete or retention-shortening permissions. The workflow requires explicit
 AES-256 server-side encryption and at least 29 remaining days when it verifies
 each object.
 
+Both off-site jobs set the AWS CLI's implicit request and response checksum
+defaults to `when_required` for compatibility with Hetzner Object Storage.
+Every upload still supplies an explicit SHA-256 checksum, and every HEAD proof
+still requires the same provider-returned SHA-256, so this compatibility mode
+does not relax the recovery evidence contract.
+
 Never put Railway, GitHub, Hetzner, edge, or off-site credentials in the
 stateful service. The service receives only the canonical export request over
 authenticated Railway SSH.
