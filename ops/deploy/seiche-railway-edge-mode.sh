@@ -141,6 +141,27 @@ PY
   trap - RETURN
 }
 
+probe_private_control_denied() {
+  local path status body
+  for path in \
+    /api/internal/v1/railway-control/commands \
+    /api/internal/v1/railway-control/recovery/not-a-request/not-a-member \
+    /api/internal/v1/stateful-control \
+    /api/internal/v1/recovery-exports/not-a-request/not-a-member; do
+    body=$(mktemp "$STATE_DIR/.edge-private-body.XXXXXX")
+    status=$(
+      "$CURL" --silent --show-error --proto '=https' --tlsv1.2 \
+        --connect-timeout 10 --max-time 30 --output "$body" \
+        --write-out '%{http_code}' "https://api.seiche.info$path"
+    )
+    if [ "$status" != 404 ] || [ "$(cat "$body")" != "not here" ]; then
+      rm -f -- "$body"
+      fail "public edge exposed a Railway stateful control route"
+    fi
+    rm -f -- "$body"
+  done
+}
+
 restart_caddy() {
   "$SYSTEMCTL" daemon-reload
   "$SYSTEMCTL" restart caddy
@@ -190,6 +211,7 @@ activate_railway() {
     restart_caddy || true
     fail "Railway edge activation failed and loopback was restored"
   fi
+  probe_private_control_denied
   receipt_stage=$(mktemp "$STATE_DIR/.edge-railway.XXXXXX")
   ORIGIN="$origin" DEPLOYMENT="$expected_deployment" COMMIT="$expected_sha" \
     DESTINATION="$receipt_stage" "$PYTHON" -I -B - <<'PY'

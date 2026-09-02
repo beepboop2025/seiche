@@ -433,6 +433,17 @@ api.seiche.info {
         respond "not here" 404
     }
 
+    # Stateful control commands and portable-recovery capabilities terminate
+    # only at the exact Railway service origin. They must never inherit the
+    # broad public REST/MCP upstream, even if a future public matcher expands.
+    # Keep the earlier design spellings dark as well so a stale controller
+    # cannot accidentally turn an obsolete private route into public surface.
+    @railway_stateful_control_private path /api/internal/v1/railway-control/commands /api/internal/v1/railway-control/recovery /api/internal/v1/railway-control/recovery/* /api/internal/v1/stateful-control /api/internal/v1/recovery-exports /api/internal/v1/recovery-exports/*
+    handle @railway_stateful_control_private {
+        header Cache-Control "no-store"
+        respond "not here" 404
+    }
+
     # Agent Room is a private bearer-authenticated event layer. It is kept out
     # of @public, capped before JSON parsing, and routed only for its documented
     # read/append methods. The application derives every actor from the bearer;

@@ -23,8 +23,11 @@ drill against an isolated runner and ephemeral PostgreSQL database.
 
 ## Implemented control plane
 
-The production supervisor in `seiche.stateful_cutover` checks a closed recovery
-request inbox. For one valid request it:
+The production supervisor in `seiche.stateful_cutover` checks a root-promoted
+closed command inbox. The FastAPI ingress accepts only a fresh, operation-scoped
+Ed25519 command at the exact Railway origin after the edge token, host, release,
+project, environment, service, deployment, and volume identities all match.
+For one valid `recovery_export` command it:
 
 1. keeps the production API online;
 2. stops both Railway writer children;
@@ -94,6 +97,8 @@ and edge token), plus these credentials for a bucket outside Railway:
 - `SEICHE_OFFSITE_S3_REGION`
 - `SEICHE_OFFSITE_S3_SSE_C_KEY_B64` (canonical base64 for one separately
   retained 32-byte key)
+- `SEICHE_RAILWAY_RECOVERY_SIGNING_KEY_PEM` (operation-scoped Ed25519 key for
+  `recovery_export` and `offsite_acknowledgment` only)
 
 The bucket must have versioning and a default COMPLIANCE Object Lock retention
 of at least 30 days enabled. Its principal needs put, HEAD, and version-pinned
@@ -109,9 +114,13 @@ outside GitHub; an unreadable GitHub environment secret is not a recovery copy.
 Never put the key in a receipt, log, command argument, Railway variable, or
 Actions artifact.
 
-Never put Railway, GitHub, Hetzner, edge, or off-site credentials in the
-stateful service. The service receives only the canonical export request over
-authenticated Railway SSH.
+Never put Railway, GitHub, Hetzner, off-site, or signing credentials in the
+stateful service. The edge token is an ingress secret, not signing authority.
+Phase 6 CI has no Railway SSH, SFTP, SCP, or volume-file capability: it submits
+signed commands over the exact HTTPS origin and reads canonical result
+envelopes from exact-deployment logs. The origin's lowercase no-port host must
+equal the runtime `RAILWAY_PUBLIC_DOMAIN`; the edge token is required on every
+command and capability request.
 
 ## Pre-activation bootstrap
 
@@ -143,7 +152,8 @@ design.
 After the Phase 5 writer grant succeeds, do not acknowledge activation on
 Hetzner or enable schedules yet.
 
-1. Immediately dispatch `operation=export-recovery` with
+1. The successful activation workflow immediately dispatches
+   `operation=export-recovery` with
    `confirmation=EXPORT_WITHOUT_AUTHORITY_CHANGE`. Its prerequisite monitor
    proves exact native schedules, fresh backups, both locked canaries, PITR
    coverage/archiver health, at least 20 percent volume headroom, and matching
@@ -161,6 +171,15 @@ Hetzner or enable schedules yet.
 4. Acknowledge Phase 5 activation on the frozen Hetzner host only after these
    proofs pass. Then set repository variable
    `RAILWAY_STATEFUL_PHASE6_ENABLED=true`.
+
+The same explicit export dispatch is the recovery path when Railway accepted
+activation but the Phase 5 job failed before its artifact or attestation was
+retained. Do not rerun activation with a newly signed grant. The export
+bootstrap selects the exact activation result from deployment-filtered logs;
+after the first successful export, every recurring export instead derives the
+activation-receipt digest from the newest fresh `recovery_offsite_paired`
+result. This prevents scheduled recovery from depending on an old activation
+line remaining inside the provider's log-retention window.
 
 The monitor runs at minute 17 every six hours. A portable export runs daily at
 02:31 UTC after the same monitor gate. Both schedules fail closed when a native
@@ -183,9 +202,10 @@ exactly `audit_schema`, `tree_sha256`, `active_activation_id`, and
 `pending_candidate_activation_id`; pending must be null. This equality is
 required even when inactive, and an active ID makes the no-fallback boundary
 explicit: no older bundle or prior activation may silently replace it.
-The production monitor downloads the bound shadow and candidate receipts again
-and rejects any schema downgrade or state mismatch before accepting the latest
-Railway/off-site pair.
+The production monitor selects the newest fresh, same-request
+`recovery_created` and `recovery_offsite_paired` evidence from filtered
+exact-deployment logs and rejects digest, deployment, replica, release, schema,
+or age drift. It never lists or downloads receipt directories.
 
 The v4 recovery receipt also embeds a closed
 `seiche.agent-room.restore-audit.v1` result. The exporter takes an online copy
@@ -228,7 +248,9 @@ fail closed until the current mixed-version pair exists.
 
 Each successful export produces:
 
-- a canonical activation-bound request;
+- a canonical activation-bound
+  `seiche.railway-recovery-export-request.v2` containing only the SHA-256 of a
+  random 32-byte download bearer and a bounded expiry;
 - the exact v4 source shadow and activation-bound candidate receipts;
 - the immutable v4 Railway recovery receipt with its restored Agent Room audit;
 - the exact nine-member backup-v4 generation, including the immutable
@@ -239,6 +261,23 @@ Each successful export produces:
 - a canonical off-site receipt with each object's key, size, SHA-256, and
   version ID plus the same Palimpsest China state identity; and
 - separate OIDC attestations for the Railway and off-site receipts.
+
+After the runtime emits `recovery_created`, the job uses the unlogged bearer for
+at most two hours to download a fixed 14-member allow-list from the exact
+origin: five chain documents plus the nine-member backup-v4 generation. The
+runtime stores only the bearer digest and streams only verified regular files.
+The bearer is deleted before artifact creation. After Object Lock succeeds, the
+job signs `offsite_acknowledgment`; acceptance requires a
+`recovery_offsite_paired` result whose embedded recovery and off-site receipts
+match the locally verified bytes exactly.
+
+The root supervisor keeps each export command in a processing journal until
+the recovery receipt and fixed evidence directory are durably validated. On a
+crash it resumes the same request and snapshot, repairs exact immutable
+evidence, and emits `reused`; after a seal-before-log crash, startup re-emits
+the newest durable recovery/off-site pair. CI re-proves the exact current
+replica during each poll and accepts submission- or restart-replica results
+only when their evidence digests agree.
 
 The large bundle is not uploaded as a GitHub Actions artifact. Locked external
 objects are the durable portable copy; the 90-day private Actions artifact
