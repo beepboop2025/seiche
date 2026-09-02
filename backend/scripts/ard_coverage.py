@@ -105,7 +105,7 @@ PRODUCTS = (
         openapi_identifier="urn:air:seiche.info:openapi:funding-stress",
         openapi_url="https://api.seiche.info/api/openapi.json",
         first_tool="latest_article",
-        public_tool_count=11,
+        public_tool_count=12,
         intent_query="Give me sourced money, forex and capital-market context.",
     ),
     Product(
