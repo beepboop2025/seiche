@@ -266,6 +266,8 @@ def test_workflow_uses_only_project_token_control_plane_evidence() -> None:
     assert "railway ssh" not in workflow
     assert "railway volume files" not in workflow
     assert "RAILWAY_STATEFUL_SSH_PRIVATE_KEY" not in workflow
+    assert "if ! railway deployment list" in workflow
+    assert "Railway deployment poll $_attempt/360 failed; retrying" in workflow
     assert 'railway logs "$RAILWAY_DEPLOYMENT_ID"' in workflow
     assert "--deployment --json --lines 1000" in workflow
     assert "railway restart --project" in workflow
