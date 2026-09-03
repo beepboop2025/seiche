@@ -1,0 +1,166 @@
+{
+  "schema": "seiche.analytical-story.v1",
+  "evidence_contract": "lab-evidence-envelope/v1",
+  "id": "seiche:2026-09-03-daily",
+  "product": "seiche",
+  "slug": "2026-09-03-daily",
+  "canonical_url": "https://seiche.info/dispatches/2026-09-03-daily",
+  "headline": "2y Treasury constant maturity yield moves +0.05 % to 4.39 % on its latest print: 3.2 sigma against its own history",
+  "dek": "The board reads 45 out of 100, EROSION; the dated reserve path contributes 11.0 points; the pooled five-business-day event read is 6.1%; plumbing leads market pricing by +38 percentile points. The index is -0.5 against the last published letter.",
+  "beat": "dollar-funding-plumbing",
+  "editorial_class": "full_story",
+  "publication_status": "PUBLISHED",
+  "published_at": "2026-09-03T14:59:29Z",
+  "clocks": {
+    "event_time": "2026-09-01T00:00:00Z",
+    "source_publication_time": null,
+    "knowledge_time": "2026-09-03T14:59:29Z",
+    "publication_time": "2026-09-03T14:59:29Z",
+    "source_publication_status": "NOT_UNIFORMLY_COLLECTED"
+  },
+  "original_contribution": {
+    "kinds": [
+      "fresh_longitudinal_delta",
+      "cross_signal_divergence",
+      "dated_forward_test"
+    ],
+    "statement": "Seiche's contribution is the change against its accrued point-in-time record, its funding-system attribution and the dated test that follows; raw public prints are evidence, not the finished analysis.",
+    "exclusive_fact_claimed": false
+  },
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "claims": [
+    {
+      "evidence_status": "DERIVED",
+      "statement": "Seiche's composite reads 44.6 in EROSION.",
+      "metric": {
+        "label": "Seiche composite",
+        "value": 44.6,
+        "unit": "index points",
+        "coverage_pct": 100.0
+      },
+      "method_url": "https://seiche.info/methodology"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh 2y Treasury constant maturity yield print entered the mover set.",
+      "metric": {
+        "label": "2y Treasury constant maturity yield",
+        "value": null,
+        "unit": "%",
+        "robust_z": 3.2,
+        "as_of": "2026-09-01"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh Brent crude oil spot, Europe print entered the mover set.",
+      "metric": {
+        "label": "Brent crude oil spot, Europe",
+        "value": null,
+        "unit": "$/bbl",
+        "robust_z": 3.19,
+        "as_of": "2026-09-01"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    },
+    {
+      "evidence_status": "OBSERVED",
+      "statement": "A fresh WTI crude oil spot, Cushing print entered the mover set.",
+      "metric": {
+        "label": "WTI crude oil spot, Cushing",
+        "value": null,
+        "unit": "$/bbl",
+        "robust_z": 2.56,
+        "as_of": "2026-09-01"
+      },
+      "source_url": "https://api.seiche.info/api/series/index.json"
+    }
+  ],
+  "evidence_braid": {
+    "primary_product": "seiche",
+    "relationships": [
+      {
+        "product": "palimpsest",
+        "relation": "topic-surface-only",
+        "context_only": true,
+        "used_in_score": false,
+        "source_url": "https://palimpsest.info/readings/newsroom-latest.json",
+        "as_of": "2026-09-03",
+        "backtestable": false,
+        "status_note": "ACCRUING — 58/250 daily obs; context only until then (never in the composite, never a model feature)",
+        "readings": [
+          {
+            "signal": "fear",
+            "label": "Deletion-threat (top-term score)",
+            "value": 1.9,
+            "unit": "score",
+            "as_of": "2026-09-03",
+            "observations": 58,
+            "change_vs_prior_10_median": 0.76
+          },
+          {
+            "signal": "n_new",
+            "label": "Newly censor-targeted terms",
+            "value": 115.0,
+            "unit": "terms/day",
+            "as_of": "2026-09-03",
+            "observations": 58,
+            "change_vs_prior_10_median": 5.0
+          },
+          {
+            "signal": "gfi",
+            "label": "Generative Firewall Index",
+            "value": 18.0,
+            "unit": "0-100",
+            "as_of": "2026-08-11",
+            "observations": 37,
+            "change_vs_prior_10_median": -1.0
+          }
+        ]
+      }
+    ],
+    "cross_product_score": null
+  },
+  "countercase": [
+    {
+      "claim": "SOFR is 0.9bp below IORB, a current abundance signal rather than a scarcity print.",
+      "asof": "2026-08-26",
+      "source": "NY Fed secured rates and Federal Reserve IORB"
+    },
+    {
+      "claim": "Standing Repo Facility take-up is $0.00B; the backstop is not being tested in size.",
+      "asof": "2026-09-03",
+      "source": "New York Fed operations"
+    },
+    {
+      "claim": "Market stress sits at only the 22nd percentile of its own history.",
+      "asof": "2026-09-02",
+      "source": "VIX, credit spreads and rates volatility"
+    }
+  ],
+  "sealed_call": null,
+  "adjudication": {
+    "status": "NOT_APPLICABLE_TO_THIS_STORY"
+  },
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "claim_fingerprint": "20179e35f8884dd572324645a061178d8a9515429d5d2dd25e733fdec4854d05"
+}

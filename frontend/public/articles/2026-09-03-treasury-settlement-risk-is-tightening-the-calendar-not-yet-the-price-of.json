@@ -1,0 +1,103 @@
+{
+  "schema": "seiche.daily-article.v1",
+  "id": "seiche:article:2026-09-03-treasury-settlement-risk-is-tightening-the-calendar-not-yet-the-price-of",
+  "product": "seiche",
+  "slug": "2026-09-03-treasury-settlement-risk-is-tightening-the-calendar-not-yet-the-price-of",
+  "date": "2026-09-03",
+  "article_type": "current_analysis",
+  "editorial_class": "full_story",
+  "topic": "weather",
+  "headline": "Treasury settlement risk is tightening the calendar, not yet the price of overnight dollars",
+  "dek": "A fresh move in the 2-year Treasury yield has put Seiche’s board at 45, EROSION. The strain signal comes from a dated reserve path and settlement calendar; overnight funding still reads as abundant.",
+  "canonical_url": "https://seiche.info/articles/2026-09-03-treasury-settlement-risk-is-tightening-the-calendar-not-yet-the-price-of/",
+  "published_at": "2026-09-03T14:59:29Z",
+  "evidence_as_of": "2026-09-03",
+  "related_dispatch": "https://seiche.info/dispatches/2026-09-03-daily",
+  "historical_episode": null,
+  "newsworthiness": {
+    "score": 70,
+    "decision": "full_story",
+    "factors": {
+      "fresh_observed_print": 30,
+      "material_composite_change": 0,
+      "regime_transition": 0,
+      "cross_signal_divergence_change": 15,
+      "dated_forward_test": 10,
+      "evidence_coverage": 10,
+      "context_braid": 5,
+      "fault_penalty": 0
+    },
+    "rule": "a full story needs a fresh measured change and at least 55 points; levels, persistence and quiet tapes remain labelled briefs or watch notes"
+  },
+  "word_count": 1253,
+  "funnel": [
+    {
+      "product": "liquilens",
+      "job": "institution risk",
+      "url": "https://liquilens.in/"
+    },
+    {
+      "product": "undertow",
+      "job": "market liquidity and exit cost",
+      "url": "https://liquilens-undertow.com/"
+    },
+    {
+      "product": "liquidity-lab-desk",
+      "job": "one reviewed daily read",
+      "url": "https://t.me/LiquidityLabDesk"
+    }
+  ],
+  "limitations": [
+    "The composite is a Seiche derivation, not an observed market price.",
+    "Source publication time is not yet collected uniformly; event, desk-knowledge and publication clocks remain separate.",
+    "Related Palimpsest readings are context-only and never enter the composite or a model feature."
+  ],
+  "editorial_memory": {
+    "status": "applied",
+    "source_run_id": "sha256:53149087ecbb89ae5b1471429e83925f8ede471bafb5e034f65dcfe113d7ad68",
+    "memory_fingerprint": "sha256:0ca3e44e0ce8510919eb5ce47e06a8002349e4cc236dacb22c3c9b224efae525",
+    "rubric_version": "mqdnse.editorial-rubric.v1",
+    "directives": [
+      "preserve_current_standard"
+    ]
+  },
+  "generation": {
+    "mode": "model_assisted",
+    "model": "openai/gpt-5.6-terra",
+    "passes": 2,
+    "dossier_sha256": "df23d33a2ca78344e73c44ae4379ac92219315cbbdf7844b692670a4e2a37e9f",
+    "fallback_reason": null,
+    "deterministic_boundary_overlay": [
+      "not_investment_advice"
+    ],
+    "review_notes": [
+      "Recast the lede around the fresh 2-year yield print while preserving the finding that overnight funding has not confirmed tightening.",
+      "Removed unsupported claims about balance-sheet distribution, private absorption capacity, and digital-market implications.",
+      "Made the counter-case dispositive and defined observable settlement, funding-price, backstop, and quarter-end tests.",
+      "Added an explicit research boundary and retained only dossier-supported figures and allowed source URLs."
+    ],
+    "editorial_memory": {
+      "status": "applied",
+      "source_run_id": "sha256:53149087ecbb89ae5b1471429e83925f8ede471bafb5e034f65dcfe113d7ad68",
+      "memory_fingerprint": "sha256:0ca3e44e0ce8510919eb5ce47e06a8002349e4cc236dacb22c3c9b224efae525",
+      "rubric_version": "mqdnse.editorial-rubric.v1",
+      "directives": [
+        "preserve_current_standard"
+      ]
+    }
+  },
+  "quality_gate": {
+    "status": "PASS",
+    "checks": [
+      "depth",
+      "structure",
+      "lede",
+      "countercase",
+      "sources",
+      "funnel",
+      "numeric_grounding",
+      "link_grounding",
+      "boundaries"
+    ]
+  }
+}

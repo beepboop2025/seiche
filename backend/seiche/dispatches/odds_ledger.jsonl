@@ -190,11 +190,11 @@
 {"date": "2026-08-28", "model": "tidetables", "horizon_bd": 5, "p": 0.16, "realized": false}
 {"date": "2026-08-28", "model": "stacker", "horizon_bd": 5, "p": 0.061, "realized": false}
 {"date": "2026-08-28", "kind": "spread", "spread_bp": -1.0}
-{"date": "2026-08-29", "model": "bathymetry", "horizon_bd": 5, "p": 0.053}
-{"date": "2026-08-29", "model": "ml", "horizon_bd": 5, "p": 0.012}
-{"date": "2026-08-29", "model": "swell", "horizon_bd": 5, "p": 0.119}
-{"date": "2026-08-29", "model": "tidetables", "horizon_bd": 5, "p": 0.16}
-{"date": "2026-08-29", "model": "stacker", "horizon_bd": 5, "p": 0.061}
+{"date": "2026-08-29", "model": "bathymetry", "horizon_bd": 5, "p": 0.053, "realized": false}
+{"date": "2026-08-29", "model": "ml", "horizon_bd": 5, "p": 0.012, "realized": false}
+{"date": "2026-08-29", "model": "swell", "horizon_bd": 5, "p": 0.119, "realized": false}
+{"date": "2026-08-29", "model": "tidetables", "horizon_bd": 5, "p": 0.16, "realized": false}
+{"date": "2026-08-29", "model": "stacker", "horizon_bd": 5, "p": 0.061, "realized": false}
 {"date": "2026-08-29", "kind": "spread", "spread_bp": -1.0}
 {"date": "2026-08-30", "model": "bathymetry", "horizon_bd": 5, "p": 0.053}
 {"date": "2026-08-30", "model": "ml", "horizon_bd": 5, "p": 0.015}
@@ -220,3 +220,9 @@
 {"date": "2026-09-02", "model": "tidetables", "horizon_bd": 5, "p": 0.12}
 {"date": "2026-09-02", "model": "stacker", "horizon_bd": 5, "p": 0.06}
 {"date": "2026-09-02", "kind": "spread", "spread_bp": 1.0}
+{"date": "2026-09-03", "model": "bathymetry", "horizon_bd": 5, "p": 0.045}
+{"date": "2026-09-03", "model": "ml", "horizon_bd": 5, "p": 0.004}
+{"date": "2026-09-03", "model": "swell", "horizon_bd": 5, "p": 0.041}
+{"date": "2026-09-03", "model": "tidetables", "horizon_bd": 5, "p": 0.08}
+{"date": "2026-09-03", "model": "stacker", "horizon_bd": 5, "p": 0.061}
+{"date": "2026-09-03", "kind": "spread", "spread_bp": 0.0}
