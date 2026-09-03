@@ -23,7 +23,7 @@ def run(request_path: Path = REQUEST_PATH) -> int:
         raise stateful_cutover.CutoverContractError(str(exc)) from exc
     schema = request.get("schema")
     if schema == stateful_migration.REQUEST_SCHEMA:
-        return stateful_migration.run()
+        return stateful_migration.run_shadow()
     if schema == stateful_cutover.REQUEST_SCHEMA:
         return stateful_cutover.run()
     raise stateful_cutover.CutoverContractError(

@@ -379,6 +379,7 @@ def test_activated_candidate_resume_uses_semantic_generation_and_count_floors(
             runtime_gid=os.getegid(),
             active_resume=True,
         )
+
     if error is not None:
         with pytest.raises(cutover.CutoverContractError, match=error):
             operation()
@@ -1052,9 +1053,7 @@ def test_activation_runtime_binds_exact_candidate_and_agent_room_key(
     generation_path = platform / "generations" / generation
     generation_path.mkdir(parents=True)
     candidate_path = (
-        platform
-        / "cutover-receipts"
-        / f"{candidate['request']['id']}.candidate.json"
+        platform / "cutover-receipts" / f"{candidate['request']['id']}.candidate.json"
     )
     candidate_path.parent.mkdir()
     candidate_path.write_bytes(migration.canonical_document(candidate))
@@ -1116,9 +1115,7 @@ def test_activation_runtime_binds_exact_candidate_and_agent_room_key(
         workers_started_at="2026-08-23T03:15:00Z",
     )
     activation_path = (
-        platform
-        / "cutover-receipts"
-        / f"{candidate['request']['id']}.activation.json"
+        platform / "cutover-receipts" / f"{candidate['request']['id']}.activation.json"
     )
     activation_path.write_bytes(migration.canonical_document(activation))
     production = cutover.production_environment(
@@ -1140,7 +1137,9 @@ def test_activation_runtime_binds_exact_candidate_and_agent_room_key(
     rebound_environment["SEICHE_RAILWAY_ACTIVATION_RECEIPT_SHA256"] = hashlib.sha256(
         migration.canonical_document(rebound)
     ).hexdigest()
-    with pytest.raises(cutover.CutoverContractError, match="activation receipt binding"):
+    with pytest.raises(
+        cutover.CutoverContractError, match="activation receipt binding"
+    ):
         cutover.validate_activation_runtime(rebound_environment)
 
 
@@ -1186,6 +1185,12 @@ def test_stateful_entrypoint_dispatches_only_closed_request_schemas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request_path = tmp_path / "request.json"
+    request_path.write_bytes(
+        migration.canonical_document({"schema": migration.REQUEST_SCHEMA})
+    )
+    monkeypatch.setattr(migration, "run_shadow", lambda: 51)
+    assert stateful_entrypoint.run(request_path) == 51
+
     request_path.write_bytes(
         migration.canonical_document({"schema": cutover.REQUEST_SCHEMA})
     )
