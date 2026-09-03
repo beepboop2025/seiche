@@ -1013,8 +1013,8 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         "a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3"
     ) in text
     assert (
-        "FROM postgres:17@sha256:"
-        "a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3"
+        "FROM postgres:17.6-bookworm@sha256:"
+        "45cd22f8d32e189d245403954882f88e7a8714301fda80dab6da90f1265b25a3"
     ) in dockerfile
     assert "PATH=/opt/postgresql/17/bin:$PATH" in dockerfile
     assert "^pg_dump \\(PostgreSQL\\) 17\\." in dockerfile
