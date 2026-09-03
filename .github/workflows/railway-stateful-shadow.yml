@@ -187,13 +187,12 @@ jobs:
             "$RAILWAY_VOLUME_ID"; do
             test -n "$value"
           done
-          mkdir -p "$CONTROL_ROOT/link"
-          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/link"
-          cd "$CONTROL_ROOT/link"
-          railway link --project "$RAILWAY_PROJECT_ID" \
+          mkdir -p "$CONTROL_ROOT"
+          chmod 0700 "$CONTROL_ROOT"
+          cd "$CONTROL_ROOT"
+          railway volume --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --json >link.json
-          railway volume list --json >volumes.json
+            --service "$RAILWAY_SERVICE_ID" list --json >volumes.json
           EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" VOLUMES=volumes.json \
             python3 -I -S - <<'PY'
           import json
@@ -219,7 +218,8 @@ jobs:
           if value not in ([], {}, None):
               raise SystemExit("Phase 4 stateful service must not have a public domain")
           PY
-          railway variable list --service "$RAILWAY_SERVICE_ID" \
+          railway variable list --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --json >variables.json
           VARIABLES=variables.json python3 -I -S - <<'PY'
           import json
@@ -236,6 +236,7 @@ jobs:
           rm -f variables.json
           railway variable set \
             "SEICHE_RAILWAY_VOLUME_ID=$RAILWAY_VOLUME_ID" \
+            --project "$RAILWAY_PROJECT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
 

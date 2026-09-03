@@ -1393,9 +1393,7 @@ def test_active_generation_rejects_valid_truncation_below_candidate_baseline(
         genesis_hash = connection.execute(
             "SELECT genesis_hash FROM agent_rooms WHERE room_id='fixture-room'"
         ).fetchone()[0]
-        connection.execute(
-            "DELETE FROM agent_room_events WHERE room_id='fixture-room'"
-        )
+        connection.execute("DELETE FROM agent_room_events WHERE room_id='fixture-room'")
         connection.execute(
             "UPDATE agent_rooms SET next_sequence=0, head_hash=?, status='open' "
             "WHERE room_id='fixture-room'",
@@ -1431,11 +1429,7 @@ def test_active_generation_rejects_corrupt_agent_room_state(
     )
     api_data = generation / "api"
     if corruption == "seal":
-        seal = (
-            api_data
-            / "_attest"
-            / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
-        )
+        seal = api_data / "_attest" / agent_room.AGENT_ROOM_INITIALIZATION_SEAL_FILENAME
         body = bytearray(seal.read_bytes())
         body[-2] = ord("0") if body[-2] != ord("0") else ord("1")
         seal.write_bytes(bytes(body))
@@ -1629,6 +1623,7 @@ def test_receipt_writer_handles_partial_os_writes(
 
 def test_workflow_and_image_cannot_auto_cut_over() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    logical_workflow = " ".join(workflow.replace("\\\n", " ").split())
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     railway = json.loads(RAILWAY_CONFIG.read_text(encoding="utf-8"))
 
@@ -1638,6 +1633,17 @@ def test_workflow_and_image_cannot_auto_cut_over() -> None:
     assert "HETZNER_REMAINS_SOLE_WRITER" in workflow
     assert 'source_writers_frozen": False' in workflow
     assert 'public_traffic_enabled": False' in workflow
+    assert "railway link" not in workflow
+    assert (
+        'railway volume --project "$RAILWAY_PROJECT_ID" '
+        '--environment "$RAILWAY_ENVIRONMENT_ID" '
+        '--service "$RAILWAY_SERVICE_ID" list --json'
+    ) in logical_workflow
+    assert (
+        'railway variable list --project "$RAILWAY_PROJECT_ID" '
+        '--service "$RAILWAY_SERVICE_ID" '
+        '--environment "$RAILWAY_ENVIRONMENT_ID" --json'
+    ) in logical_workflow
     assert "railway domain list" in workflow
     assert "DATABASE_URL" in workflow
     assert "actions/attest-build-provenance@" in workflow
