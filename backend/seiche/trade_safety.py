@@ -13,7 +13,7 @@ import json
 import math
 from collections import Counter
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 
@@ -32,6 +32,7 @@ _LIMITATIONS = (
     "public_metadata_context_only_not_licensed_for_real_money_execution",
     "not_order_bound_and_cannot_authorize_or_route_an_order",
     "evidence_as_of_is_the_oldest_valid_observation_clock_in_public_provenance",
+    "bounded_next_day_effective_values_use_their_prior_collection_clock",
     "rows_without_observation_clocks_remain_unknown_and_are_not_treated_as_current",
     _ATTESTATION_LIMITATION,
     "stream_attestation_is_not_per_order_execution_authority",
@@ -64,6 +65,43 @@ def _utc_text(value: datetime) -> str:
     return (
         value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
+
+
+def _evidence_clock(
+    row: Mapping[str, Any], *, snapshot_at: datetime
+) -> datetime | None:
+    """Return the clock a provenance row can contribute to evidence age.
+
+    A date-only value exactly one UTC day after the completed snapshot can be
+    a pre-announced effective value, such as IORB. It is admissible only when
+    the row also carries an aware collection timestamp no later than the
+    snapshot. The collection timestamp, not the future effective date, then
+    contributes to the public evidence clock.
+    """
+
+    raw_asof = row.get("asof")
+    observation_at = _utc(raw_asof)
+    if observation_at is None:
+        return None
+    if observation_at <= snapshot_at:
+        return observation_at
+
+    if not isinstance(raw_asof, str) or len(raw_asof.strip()) != 10:
+        return None
+    try:
+        effective_date = date.fromisoformat(raw_asof.strip())
+    except ValueError:
+        return None
+    if effective_date != snapshot_at.date() + timedelta(days=1):
+        return None
+
+    raw_fetched_at = row.get("fetched_at")
+    if not isinstance(raw_fetched_at, str) or len(raw_fetched_at.strip()) == 10:
+        return None
+    fetched_at = _utc(raw_fetched_at)
+    if fetched_at is None or fetched_at > snapshot_at:
+        return None
+    return fetched_at
 
 
 def _finite_percentage(value: object) -> float | None:
@@ -171,8 +209,8 @@ def _base(*, ok: bool, status: str, reason: str | None) -> dict[str, Any]:
             "snapshot_age_seconds": None,
             "evidence_age_seconds": None,
             "basis": (
-                "oldest valid public provenance observation clock; never the "
-                "snapshot build time or HTTP retrieval time"
+                "oldest valid public provenance evidence clock; bounded next-day "
+                "date-only effective values use their prior collection time"
             ),
         },
         "attestation": _attestation_boundary(),
@@ -186,9 +224,7 @@ def _seal(payload: dict[str, Any]) -> dict[str, Any]:
 
     sealed = {
         **payload,
-        "canonicalization": (
-            "python-json-sort-keys-utf8-no-nan-server-internal-v1"
-        ),
+        "canonicalization": ("python-json-sort-keys-utf8-no-nan-server-internal-v1"),
     }
     canonical = json.dumps(
         sealed,
@@ -284,10 +320,10 @@ def project(
         raw_asof = row.get("asof")
         if raw_asof is None:
             continue
-        observation_at = _utc(raw_asof)
-        if observation_at is None or observation_at > snapshot_at:
+        evidence_clock = _evidence_clock(row, snapshot_at=snapshot_at)
+        if evidence_clock is None:
             return unavailable("invalid_evidence_clock")
-        evidence_dates.append(observation_at)
+        evidence_dates.append(evidence_clock)
     if not evidence_dates:
         return unavailable("evidence_clock_unavailable")
 
@@ -307,8 +343,9 @@ def project(
             "snapshot_age_seconds": int((evaluated - snapshot_at).total_seconds()),
             "evidence_age_seconds": int((evaluated - evidence_at).total_seconds()),
             "basis": (
-                "oldest valid public provenance observation clock; rows without "
-                "observation clocks remain unknown and are not treated as current"
+                "oldest valid public provenance evidence clock; bounded next-day "
+                "date-only effective values use their prior collection time; rows "
+                "without observation clocks remain unknown"
             ),
         },
     )

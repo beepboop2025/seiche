@@ -176,6 +176,57 @@ def test_invalid_snapshots_return_typed_unavailable(mutate, reason) -> None:
     assert payload["attestation"]["bitcoin_anchor_claimed"] is False
 
 
+def test_next_day_date_only_effective_value_uses_prior_collection_clock() -> None:
+    snapshot = _snapshot()
+    snapshot["provenance"] = [
+        {
+            "mnemonic": "IORB",
+            "asof": "2026-09-03",
+            "fetched_at": "2026-09-02T11:20:00Z",
+            "staleness": "fresh",
+            "freshness_grace_days": 4,
+        }
+    ]
+
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+
+    assert payload["status"] == "available"
+    assert payload["clocks"]["evidence_as_of"] == "2026-09-02T11:20:00Z"
+    assert payload["clocks"]["evidence_age_seconds"] == 2_400
+    assert (
+        "bounded_next_day_effective_values_use_their_prior_collection_clock"
+        in payload["limitations"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("asof", "fetched_at"),
+    [
+        ("2026-09-04", "2026-09-02T11:20:00Z"),
+        ("2026-09-03T00:00:00Z", "2026-09-02T11:20:00Z"),
+        ("2026-09-03", None),
+        ("2026-09-03", "bad"),
+        ("2026-09-03", "2026-09-02"),
+        ("2026-09-03", "2026-09-02T11:31:00Z"),
+    ],
+)
+def test_other_future_effective_values_still_fail_closed(
+    asof: str, fetched_at: str | None
+) -> None:
+    snapshot = _snapshot()
+    row = snapshot["provenance"][0]
+    row["asof"] = asof
+    if fetched_at is None:
+        row.pop("fetched_at", None)
+    else:
+        row["fetched_at"] = fetched_at
+
+    payload = trade_safety.project(snapshot, evaluation_at=NOW)
+
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "invalid_evidence_clock"
+
+
 def test_rights_boundary_is_rechecked_and_poisoned_cache_is_quarantined() -> None:
     snapshot = _snapshot()
     snapshot["provenance"].append(
@@ -255,7 +306,9 @@ def test_mcp_and_rest_read_only_the_completed_snapshot(monkeypatch) -> None:
         return snapshot
 
     def forbidden_restore(*_args, **_kwargs):
-        raise AssertionError("Trade Safety risk context must never restore durable state")
+        raise AssertionError(
+            "Trade Safety risk context must never restore durable state"
+        )
 
     async def forbidden_build(*_args, **_kwargs):
         raise AssertionError("Trade Safety risk context must never build the board")
