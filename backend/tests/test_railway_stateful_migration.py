@@ -1645,6 +1645,9 @@ def test_workflow_and_image_cannot_auto_cut_over() -> None:
         '--environment "$RAILWAY_ENVIRONMENT_ID" --json'
     ) in logical_workflow
     assert "railway domain list" in workflow
+    assert 'set(value) == {"domains"}' in workflow
+    assert 'value = value["domains"]' in workflow
+    assert "if value != []:" in workflow
     assert "DATABASE_URL" in workflow
     assert "actions/attest-build-provenance@" in workflow
     assert "source.bundle" in dockerfile

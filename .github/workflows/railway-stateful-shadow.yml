@@ -215,7 +215,9 @@ jobs:
           from pathlib import Path
 
           value = json.loads(Path(os.environ["DOMAINS"]).read_text())
-          if value not in ([], {}, None):
+          if isinstance(value, dict) and set(value) == {"domains"}:
+              value = value["domains"]
+          if value != []:
               raise SystemExit("Phase 4 stateful service must not have a public domain")
           PY
           railway variable list --project "$RAILWAY_PROJECT_ID" \
