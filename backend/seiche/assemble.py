@@ -2739,6 +2739,16 @@ def _valid_release_sha(value: object) -> bool:
 
 def _release_sha() -> str:
     checkout = Path(__file__).resolve().parents[2]
+    explicit = os.getenv("SEICHE_RELEASE_SHA")
+    if explicit is not None:
+        explicit = explicit.strip()
+        if not _valid_release_sha(explicit):
+            raise ValueError("SEICHE_RELEASE_SHA is not a canonical commit SHA")
+        explicit = explicit.lower()
+    if not (checkout / ".git").exists():
+        if explicit is None:
+            raise ValueError("could not resolve a canonical release SHA")
+        return explicit
     result = subprocess.run(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"],
         check=True,
@@ -2750,12 +2760,7 @@ def _release_sha() -> str:
     if not _valid_release_sha(resolved):
         raise ValueError("could not resolve a canonical release SHA")
     resolved = resolved.lower()
-    explicit = os.getenv("SEICHE_RELEASE_SHA")
     if explicit is not None:
-        explicit = explicit.strip()
-        if not _valid_release_sha(explicit):
-            raise ValueError("SEICHE_RELEASE_SHA is not a canonical commit SHA")
-        explicit = explicit.lower()
         if explicit != resolved:
             raise ValueError("SEICHE_RELEASE_SHA does not match the checkout HEAD")
     return resolved

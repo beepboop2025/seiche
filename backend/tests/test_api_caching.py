@@ -825,6 +825,39 @@ def test_malformed_explicit_release_sha_fails_closed(monkeypatch):
         assemble._release_sha()
 
 
+def test_explicit_release_sha_supports_archive_without_git_metadata(
+    monkeypatch, tmp_path
+):
+    release_sha = "a" * 40
+    monkeypatch.setattr(
+        assemble,
+        "__file__",
+        str(tmp_path / "backend" / "seiche" / "assemble.py"),
+    )
+    monkeypatch.setenv("SEICHE_RELEASE_SHA", release_sha)
+    monkeypatch.setattr(
+        assemble.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("archive identity must not call git"),
+    )
+
+    assert assemble._release_sha() == release_sha
+
+
+def test_archive_without_git_metadata_or_explicit_sha_fails_closed(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        assemble,
+        "__file__",
+        str(tmp_path / "backend" / "seiche" / "assemble.py"),
+    )
+    monkeypatch.delenv("SEICHE_RELEASE_SHA", raising=False)
+
+    with pytest.raises(ValueError, match="canonical release SHA"):
+        assemble._release_sha()
+
+
 def test_explicit_release_sha_must_match_checkout_head(monkeypatch):
     checkout_sha = "a" * 40
     monkeypatch.setattr(
