@@ -229,11 +229,21 @@ jobs:
           from pathlib import Path
 
           value = json.loads(Path(os.environ["VARIABLES"]).read_text())
-          names = set(value) if isinstance(value, dict) else {
-              item.get("name") for item in value if isinstance(item, dict)
-          }
-          if "DATABASE_URL" not in names:
-              raise SystemExit("stateful service has no Railway PostgreSQL reference")
+          if isinstance(value, dict):
+              database_url = value.get("DATABASE_URL")
+          elif isinstance(value, list):
+              matches = [
+                  item.get("value")
+                  for item in value
+                  if isinstance(item, dict) and item.get("name") == "DATABASE_URL"
+              ]
+              database_url = matches[0] if len(matches) == 1 else None
+          else:
+              database_url = None
+          if not isinstance(database_url, str) or not database_url.strip():
+              raise SystemExit(
+                  "stateful service has no non-empty Railway PostgreSQL reference"
+              )
           PY
           rm -f variables.json
           railway variable set \

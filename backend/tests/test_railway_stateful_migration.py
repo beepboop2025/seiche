@@ -1648,7 +1648,10 @@ def test_workflow_and_image_cannot_auto_cut_over() -> None:
     assert 'set(value) == {"domains"}' in workflow
     assert 'value = value["domains"]' in workflow
     assert "if value != []:" in workflow
-    assert "DATABASE_URL" in workflow
+    assert 'database_url = value.get("DATABASE_URL")' in workflow
+    assert 'item.get("name") == "DATABASE_URL"' in workflow
+    assert "not isinstance(database_url, str) or not database_url.strip()" in workflow
+    assert "no non-empty Railway PostgreSQL reference" in workflow
     assert "actions/attest-build-provenance@" in workflow
     assert "source.bundle" in dockerfile
     assert '"archive"' in dockerfile
