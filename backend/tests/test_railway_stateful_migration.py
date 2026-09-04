@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "railway-stateful-shadow.yml"
 DOCKERFILE = ROOT / "ops" / "railway" / "Dockerfile.stateful"
 RAILWAY_CONFIG = ROOT / "ops" / "railway" / "railway.stateful.json"
+RUNBOOK = ROOT / "ops" / "deploy" / "RAILWAY-STATEFUL-MIGRATION.md"
 
 
 def _tar_directory(
@@ -1619,6 +1620,21 @@ def test_receipt_writer_handles_partial_os_writes(
     migration._write_receipt(target, document, gid=os.getegid())
 
     assert target.read_bytes() == migration.canonical_document(document)
+
+
+def test_runbook_uses_exact_railway_volume_file_argument_order() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+
+    assert (
+        "railway volume \\\n"
+        "    --project REVIEWED_PROJECT_ID \\\n"
+        "    --environment REVIEWED_ENVIRONMENT_ID \\\n"
+        "    --service REVIEWED_STATEFUL_SERVICE_ID \\\n"
+        "    files --volume REVIEWED_STATEFUL_VOLUME_ID upload \\\n"
+    ) in runbook
+    assert "railway link" not in runbook
+    assert "railway volume files upload" not in runbook
+    assert "railway volume files list --volume" not in runbook
 
 
 def test_workflow_and_image_cannot_auto_cut_over() -> None:
