@@ -1652,6 +1652,12 @@ def test_workflow_and_image_cannot_auto_cut_over() -> None:
     assert 'item.get("name") == "DATABASE_URL"' in workflow
     assert "not isinstance(database_url, str) or not database_url.strip()" in workflow
     assert "no non-empty Railway PostgreSQL reference" in workflow
+    assert "mutation ApplyShadowManifest" in workflow
+    assert "serviceInstanceUpdate" in workflow
+    assert '"healthcheckPath": "/healthz"' in workflow
+    assert '"healthcheckTimeout": 3600' in workflow
+    assert '"restartPolicyType": "NEVER"' in workflow
+    assert "shadow service manifest update was not accepted" in workflow
     assert "actions/attest-build-provenance@" in workflow
     assert "source.bundle" in dockerfile
     assert '"archive"' in dockerfile

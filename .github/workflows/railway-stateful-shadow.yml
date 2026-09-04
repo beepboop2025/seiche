@@ -252,6 +252,49 @@ jobs:
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
 
+      - name: Apply the exact shadow service manifest
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_STATEFUL_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          manifest_variables=$(RAILWAY_ENVIRONMENT_ID="$RAILWAY_ENVIRONMENT_ID" \
+            RAILWAY_SERVICE_ID="$RAILWAY_SERVICE_ID" python3 -I -S - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "serviceId": os.environ["RAILWAY_SERVICE_ID"],
+              "environmentId": os.environ["RAILWAY_ENVIRONMENT_ID"],
+              "input": {
+                  "healthcheckPath": "/healthz",
+                  "healthcheckTimeout": 3600,
+                  "restartPolicyType": "NEVER",
+              },
+          }, separators=(",", ":")))
+          PY
+          )
+          # GraphQL variable names are literal, not shell expansions.
+          # shellcheck disable=SC2016
+          railway api \
+            'mutation ApplyShadowManifest($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input) }' \
+            --variables "$manifest_variables" \
+            >"${RUNNER_TEMP}/stateful-manifest-update.json"
+          MANIFEST_UPDATE="${RUNNER_TEMP}/stateful-manifest-update.json" \
+            python3 -I -S - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          value = json.loads(Path(os.environ["MANIFEST_UPDATE"]).read_text())
+          if value.get("errors") or value.get("data", {}).get(
+              "serviceInstanceUpdate"
+          ) is not True:
+              raise SystemExit("shadow service manifest update was not accepted")
+          PY
+          rm -f "${RUNNER_TEMP}/stateful-manifest-update.json"
+
       - name: Deploy the exact shadow runtime
         id: deploy
         env:
