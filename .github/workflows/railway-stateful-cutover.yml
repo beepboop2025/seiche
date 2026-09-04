@@ -165,11 +165,22 @@ jobs:
               raise SystemExit("the exact Railway origin is not uniquely configured")
 
           variables = json.loads(Path("variables.json").read_text())
-          names = set(variables) if isinstance(variables, dict) else {
-              item.get("name") for item in variables if isinstance(item, dict)
-          }
-          if "DATABASE_URL" not in names:
-              raise SystemExit("stateful service has no Railway PostgreSQL reference")
+          if isinstance(variables, dict):
+              entries = variables
+          elif isinstance(variables, list):
+              entries = {
+                  item.get("name"): item.get("value")
+                  for item in variables
+                  if isinstance(item, dict) and isinstance(item.get("name"), str)
+              }
+          else:
+              raise SystemExit("Railway variables response has an unsupported shape")
+          names = set(entries)
+          database_url = entries.get("DATABASE_URL")
+          if not isinstance(database_url, str) or not database_url.strip():
+              raise SystemExit(
+                  "stateful service has no non-empty Railway PostgreSQL reference"
+              )
           forbidden = {
               "HETZNER_DATABASE_URL",
               "NBS_SIGNING_KEY",

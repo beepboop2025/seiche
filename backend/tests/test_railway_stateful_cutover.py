@@ -1266,6 +1266,9 @@ def test_cutover_ci_uses_signed_https_and_logs_not_ssh_or_volume_files() -> None
     assert "railway volume files" not in workflow
     assert 'railway volume --project "$RAILWAY_PROJECT_ID"' in workflow
     assert 'railway variable list --project "$RAILWAY_PROJECT_ID"' in workflow
+    assert 'database_url = entries.get("DATABASE_URL")' in workflow
+    assert "not isinstance(database_url, str) or not database_url.strip()" in workflow
+    assert "no non-empty Railway PostgreSQL reference" in workflow
     assert not any(
         "railway volume " in line and " files " in line
         for line in workflow.replace("\\\n", " ").splitlines()
