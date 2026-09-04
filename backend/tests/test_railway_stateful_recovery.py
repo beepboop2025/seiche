@@ -1016,6 +1016,7 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         "FROM postgres:17.6-bookworm@sha256:"
         "45cd22f8d32e189d245403954882f88e7a8714301fda80dab6da90f1265b25a3"
     ) in dockerfile
+    assert "git config --system --add safe.directory /workspace" in dockerfile
     assert "PATH=/opt/postgresql/17/bin:$PATH" in dockerfile
     assert "^pg_dump \\(PostgreSQL\\) 17\\." in dockerfile
     for forbidden in (

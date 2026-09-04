@@ -41,6 +41,7 @@ COPY source.tar source.bundle request.json /migration/
 # refuses an environment-only release SHA. Verify both representations before
 # installing dependencies, then retain a read-only exact-commit worktree.
 RUN git clone --quiet /migration/source.bundle /workspace \
+    && git config --system --add safe.directory /workspace \
     && python -I -S - <<'PY'
 import hashlib
 import json
