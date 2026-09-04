@@ -1261,8 +1261,11 @@ def test_cutover_ci_uses_signed_https_and_logs_not_ssh_or_volume_files() -> None
     workflow = CUTOVER_WORKFLOW.read_text(encoding="utf-8")
     runbook = CUTOVER_RUNBOOK.read_text(encoding="utf-8")
 
+    assert "railway link" not in workflow
     assert "railway ssh" not in workflow
     assert "railway volume files" not in workflow
+    assert 'railway volume --project "$RAILWAY_PROJECT_ID"' in workflow
+    assert 'railway variable list --project "$RAILWAY_PROJECT_ID"' in workflow
     assert not any(
         "railway volume " in line and " files " in line
         for line in workflow.replace("\\\n", " ").splitlines()
@@ -1275,7 +1278,10 @@ def test_cutover_ci_uses_signed_https_and_logs_not_ssh_or_volume_files() -> None
     assert "railway volume files" not in workflow
 
     assert "single operator-only SFTP handoff at the end of Phase 4" in runbook
-    assert "Phase 5 CI performs no SSH, SFTP, SCP, or Railway volume-file operation" in runbook
+    assert (
+        "Phase 5 CI performs no SSH, SFTP, SCP, or Railway volume-file operation"
+        in runbook
+    )
     assert "sftp -b /secure/verified-upload.batch" in runbook
 
 

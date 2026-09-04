@@ -84,12 +84,9 @@ jobs:
             "$RAILWAY_VOLUME_ID" "$RAILWAY_POSTGRES_SERVICE_ID"; do
             test -n "$value"
           done
-          mkdir -p "$EVIDENCE_ROOT/link"
-          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link"
-          cd "$EVIDENCE_ROOT/link"
-          railway link --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          mkdir -p "$EVIDENCE_ROOT"
+          chmod 0700 "$EVIDENCE_ROOT"
+          cd "$EVIDENCE_ROOT"
 
           cat >volume-instances.graphql <<'GRAPHQL'
           query RecoveryVolume($volumeId: String!) {
@@ -690,12 +687,9 @@ jobs:
             test -n "$value"
           done
           [[ "$RAILWAY_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]{1,251}\.up\.railway\.app$ ]]
-          mkdir -p "$EVIDENCE_ROOT/link"
-          chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/link"
-          cd "$EVIDENCE_ROOT/link"
-          railway link --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --json >link.json
+          mkdir -p "$EVIDENCE_ROOT"
+          chmod 0700 "$EVIDENCE_ROOT"
+          cd "$EVIDENCE_ROOT"
 
           cat >native-proof.graphql <<'GRAPHQL'
           query RecoveryNativeProof($volumeId: String!, $volumeInstanceId: String!) {
@@ -1060,9 +1054,6 @@ jobs:
           chmod 0700 "$EVIDENCE_ROOT" "$EVIDENCE_ROOT/bundle" \
             "$EVIDENCE_ROOT/proof"
           cd "$EVIDENCE_ROOT"
-          railway link --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --json >proof/link.json
           current_replica() {
             local destination="$1" variables
             variables=$(DEPLOYMENT_ID="$DEPLOYMENT_ID" python3 -I -S - <<'PY'

@@ -128,17 +128,17 @@ jobs:
           PY
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --short --untracked-files=no)"
-          mkdir -p "$CONTROL_ROOT/link" "$CONTROL_ROOT/evidence"
-          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/link" "$CONTROL_ROOT/evidence"
-          cd "$CONTROL_ROOT/link"
-          railway link --project "$RAILWAY_PROJECT_ID" \
+          mkdir -p "$CONTROL_ROOT/evidence"
+          chmod 0700 "$CONTROL_ROOT" "$CONTROL_ROOT/evidence"
+          cd "$CONTROL_ROOT"
+          railway volume --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
-            --service "$RAILWAY_SERVICE_ID" --json >link.json
-          railway volume list --json >volumes.json
+            --service "$RAILWAY_SERVICE_ID" list --json >volumes.json
           railway domain list --project "$RAILWAY_PROJECT_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" \
             --service "$RAILWAY_SERVICE_ID" --json >domains.json
-          railway variable list --service "$RAILWAY_SERVICE_ID" \
+          railway variable list --project "$RAILWAY_PROJECT_ID" \
+            --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --json >variables.json
           EXPECTED_VOLUME_ID="$RAILWAY_VOLUME_ID" ORIGIN="$RAILWAY_ORIGIN" \
             python3 -I -S - <<'PY'
@@ -229,10 +229,12 @@ jobs:
             "SEICHE_RAILWAY_CUTOVER_SNAPSHOT_ID=$SNAPSHOT_ID" \
             "SEICHE_RAILWAY_AUTHORITY_FENCE_SHA256=$FENCE_SHA256" \
             "SEICHE_RAILWAY_CONTROL_ENABLED=1" \
+            --project "$RAILWAY_PROJECT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --skip-deploys >/dev/null
           printf '%s' "$RAILWAY_EDGE_TOKEN" |
             railway variable set SEICHE_RAILWAY_EDGE_TOKEN --stdin \
+              --project "$RAILWAY_PROJECT_ID" \
               --service "$RAILWAY_SERVICE_ID" \
               --environment "$RAILWAY_ENVIRONMENT_ID" \
               --skip-deploys >/dev/null
