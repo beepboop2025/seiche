@@ -180,7 +180,10 @@ def test_next_day_date_only_effective_value_uses_prior_collection_clock() -> Non
     snapshot = _snapshot()
     snapshot["provenance"] = [
         {
+            "source": "fred",
             "mnemonic": "IORB",
+            "remote_id": "IORB",
+            "freq": "D",
             "asof": "2026-09-03",
             "fetched_at": "2026-09-02T11:20:00Z",
             "staleness": "fresh",
@@ -194,9 +197,109 @@ def test_next_day_date_only_effective_value_uses_prior_collection_clock() -> Non
     assert payload["clocks"]["evidence_as_of"] == "2026-09-02T11:20:00Z"
     assert payload["clocks"]["evidence_age_seconds"] == 2_400
     assert (
-        "bounded_next_day_effective_values_use_their_prior_collection_clock"
+        "bounded_iorb_forward_effective_values_use_their_prior_collection_clock"
         in payload["limitations"]
     )
+
+
+def test_iorb_holiday_effective_date_uses_prior_collection_clock() -> None:
+    snapshot = _snapshot()
+    snapshot["generated_at"] = "2026-09-04T22:29:43Z"
+    snapshot["provenance"] = [
+        {
+            "source": "fred",
+            "mnemonic": "IORB",
+            "remote_id": "IORB",
+            "freq": "D",
+            "asof": "2026-09-08",
+            "fetched_at": "2026-09-04T22:09:26Z",
+            "staleness": "fresh",
+            "freshness_grace_days": 4,
+        }
+    ]
+
+    payload = trade_safety.project(
+        snapshot,
+        evaluation_at=datetime(2026, 9, 4, 22, 30, tzinfo=UTC),
+    )
+
+    assert payload["status"] == "available"
+    assert payload["clocks"]["evidence_as_of"] == "2026-09-04T22:09:26Z"
+    assert payload["clocks"]["evidence_age_seconds"] == 1_234
+    assert payload["clocks"]["snapshot_age_seconds"] == 17
+
+
+def test_iorb_fourteen_day_effective_date_boundary_is_bounded() -> None:
+    snapshot = _snapshot()
+    snapshot["generated_at"] = "2026-09-04T22:29:43Z"
+    snapshot["provenance"] = [
+        {
+            "source": "fred",
+            "mnemonic": "IORB",
+            "remote_id": "IORB",
+            "freq": "D",
+            "asof": "2026-09-18",
+            "fetched_at": "2026-09-04T22:09:26Z",
+            "staleness": "fresh",
+            "freshness_grace_days": 4,
+        }
+    ]
+
+    payload = trade_safety.project(
+        snapshot,
+        evaluation_at=datetime(2026, 9, 4, 22, 30, tzinfo=UTC),
+    )
+
+    assert payload["status"] == "available"
+    assert payload["clocks"]["evidence_as_of"] == "2026-09-04T22:09:26Z"
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"asof": "2026-09-19"},
+        {"source": "other"},
+        {"mnemonic": "SOFR"},
+        {"remote_id": "SOFR"},
+        {"freq": "W"},
+        {"asof": "2026-09-08T00:00:00Z"},
+        {"asof": "2026-W37-2"},
+        {"fetched_at": None},
+        {"fetched_at": "bad"},
+        {"fetched_at": "2026-09-04"},
+        {"fetched_at": "2026-09-04T22:09:26"},
+        {"fetched_at": "2026-09-04T22:29:44Z"},
+        {"fetched_at": "2026-08-20T22:09:26Z"},
+        {"source": "other", "clock_role": "scheduled_effective"},
+    ],
+)
+def test_other_iorb_forward_effective_rows_still_fail_closed(
+    updates: dict[str, str | None],
+) -> None:
+    snapshot = _snapshot()
+    snapshot["generated_at"] = "2026-09-04T22:29:43Z"
+    row = {
+        "source": "fred",
+        "mnemonic": "IORB",
+        "remote_id": "IORB",
+        "freq": "D",
+        "asof": "2026-09-08",
+        "fetched_at": "2026-09-04T22:09:26Z",
+        "staleness": "fresh",
+        "freshness_grace_days": 4,
+    }
+    row.update(updates)
+    if row["fetched_at"] is None:
+        row.pop("fetched_at")
+    snapshot["provenance"] = [row]
+
+    payload = trade_safety.project(
+        snapshot,
+        evaluation_at=datetime(2026, 9, 4, 22, 30, tzinfo=UTC),
+    )
+
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "invalid_evidence_clock"
 
 
 @pytest.mark.parametrize(

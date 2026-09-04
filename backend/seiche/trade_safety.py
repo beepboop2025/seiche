@@ -13,8 +13,9 @@ import json
 import math
 from collections import Counter
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 RISK_CONTEXT_SCHEMA = "seiche.risk-context.v1"
@@ -28,11 +29,14 @@ _ATTESTATION_DISCLOSURE = (
     "ledger. Verify stream attestations separately; even a verified stream "
     "attestation is not per-order execution authority."
 )
+_FORWARD_EFFECTIVE_CLOCK_POLICIES = {
+    ("fred", "IORB", "IORB", "D"): ("America/New_York", 14),
+}
 _LIMITATIONS = (
     "public_metadata_context_only_not_licensed_for_real_money_execution",
     "not_order_bound_and_cannot_authorize_or_route_an_order",
     "evidence_as_of_is_the_oldest_valid_observation_clock_in_public_provenance",
-    "bounded_next_day_effective_values_use_their_prior_collection_clock",
+    "bounded_iorb_forward_effective_values_use_their_prior_collection_clock",
     "rows_without_observation_clocks_remain_unknown_and_are_not_treated_as_current",
     _ATTESTATION_LIMITATION,
     "stream_attestation_is_not_per_order_execution_authority",
@@ -72,11 +76,12 @@ def _evidence_clock(
 ) -> datetime | None:
     """Return the clock a provenance row can contribute to evidence age.
 
-    A date-only value exactly one UTC day after the completed snapshot can be
-    a pre-announced effective value, such as IORB. It is admissible only when
-    the row also carries an aware collection timestamp no later than the
-    snapshot. The collection timestamp, not the future effective date, then
-    contributes to the public evidence clock.
+    A canonical FRED IORB daily row can carry a pre-announced effective date
+    up to fourteen source-local calendar days after collection. It is
+    admissible only when the row also carries an aware collection timestamp
+    no later than the snapshot. The collection timestamp, not the future
+    effective date, then contributes to the public evidence clock. Every
+    other future provenance identity remains invalid.
     """
 
     raw_asof = row.get("asof")
@@ -92,7 +97,14 @@ def _evidence_clock(
         effective_date = date.fromisoformat(raw_asof.strip())
     except ValueError:
         return None
-    if effective_date != snapshot_at.date() + timedelta(days=1):
+    if effective_date.isoformat() != raw_asof.strip():
+        return None
+
+    identity = tuple(
+        row.get(field) for field in ("source", "mnemonic", "remote_id", "freq")
+    )
+    policy = _FORWARD_EFFECTIVE_CLOCK_POLICIES.get(identity)
+    if policy is None:
         return None
 
     raw_fetched_at = row.get("fetched_at")
@@ -100,6 +112,15 @@ def _evidence_clock(
         return None
     fetched_at = _utc(raw_fetched_at)
     if fetched_at is None or fetched_at > snapshot_at:
+        return None
+
+    source_timezone, max_forward_days = policy
+    try:
+        collection_date = fetched_at.astimezone(ZoneInfo(source_timezone)).date()
+    except ZoneInfoNotFoundError:
+        return None
+    forward_days = (effective_date - collection_date).days
+    if not 1 <= forward_days <= max_forward_days:
         return None
     return fetched_at
 
@@ -209,8 +230,8 @@ def _base(*, ok: bool, status: str, reason: str | None) -> dict[str, Any]:
             "snapshot_age_seconds": None,
             "evidence_age_seconds": None,
             "basis": (
-                "oldest valid public provenance evidence clock; bounded next-day "
-                "date-only effective values use their prior collection time"
+                "oldest valid public provenance evidence clock; bounded FRED IORB "
+                "date-only forward effective values use their prior collection time"
             ),
         },
         "attestation": _attestation_boundary(),
@@ -343,8 +364,8 @@ def project(
             "snapshot_age_seconds": int((evaluated - snapshot_at).total_seconds()),
             "evidence_age_seconds": int((evaluated - evidence_at).total_seconds()),
             "basis": (
-                "oldest valid public provenance evidence clock; bounded next-day "
-                "date-only effective values use their prior collection time; rows "
+                "oldest valid public provenance evidence clock; bounded FRED IORB "
+                "date-only forward effective values use their prior collection time; rows "
                 "without observation clocks remain unknown"
             ),
         },
