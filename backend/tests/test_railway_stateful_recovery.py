@@ -1041,9 +1041,12 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
         assert forbidden not in text
 
 
-def test_recovery_ci_uses_signed_https_and_fixed_members_not_ssh_or_volume_files() -> None:
+def test_recovery_ci_uses_signed_https_and_fixed_members_not_ssh_or_volume_files() -> (
+    None
+):
     workflow = RECOVERY_WORKFLOW.read_text(encoding="utf-8")
 
+    assert "railway link" not in workflow
     assert "railway ssh" not in workflow
     assert "railway volume files" not in workflow
     assert not any(
