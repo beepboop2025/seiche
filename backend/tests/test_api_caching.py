@@ -53,6 +53,7 @@ def client(monkeypatch, fake_snap):
 
 # ---- /api/overview wire format ------------------------------------------------
 
+
 def test_overview_gzips_when_accepted(client, fake_snap):
     r = client.get("/api/overview", headers={"Accept-Encoding": "gzip"})
     assert r.status_code == 200
@@ -91,7 +92,9 @@ def test_overview_wire_serialized_once_per_payload(client, fake_snap):
     client.get("/api/overview")
     assert api._OVERVIEW_WIRE["body"] is body_first  # same bytes object reused
     # and the gzip really is the body
-    assert json.loads(gzip.decompress(api._OVERVIEW_WIRE["gz"])) == json.loads(body_first)
+    assert json.loads(gzip.decompress(api._OVERVIEW_WIRE["gz"])) == json.loads(
+        body_first
+    )
 
 
 def test_overview_answers_head_for_monitors(client):
@@ -126,9 +129,10 @@ def test_health_reads_only_the_completed_snapshot(client, monkeypatch, fake_snap
     }
     assert r.status_code == 200
     assert r.json() == expected
-    assert r.content == json.dumps(
-        expected, ensure_ascii=False, separators=(",", ":")
-    ).encode()
+    assert (
+        r.content
+        == json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode()
+    )
     assert r.headers["cache-control"] == "no-store"
 
 
@@ -155,7 +159,8 @@ def test_health_cold_cache_is_immediately_unavailable(client, monkeypatch):
 
 
 def test_health_treats_a_stale_completed_snapshot_as_ready(
-        client, clean_cache, monkeypatch, fake_snap):
+    client, clean_cache, monkeypatch, fake_snap
+):
     async def boom(force=False):
         raise AssertionError("health must not refresh a stale snapshot")
 
@@ -170,7 +175,8 @@ def test_health_treats_a_stale_completed_snapshot_as_ready(
 
 
 def test_health_can_gate_on_a_snapshot_rebuilt_by_this_process(
-        client, monkeypatch, fake_snap):
+    client, monkeypatch, fake_snap
+):
     monkeypatch.setattr(assemble, "cached_snapshot", lambda: fake_snap)
     monkeypatch.setattr(assemble, "cached_snapshot_was_rebuilt", lambda: False)
     monkeypatch.setattr(assemble, "cached_snapshot_release_handoff", lambda: None)
@@ -232,9 +238,9 @@ def test_production_release_health_requires_cached_agent_room_readiness(
 
 def test_health_openapi_lists_every_runtime_unavailable_status():
     schema = api._public_openapi_document()["paths"]["/api/health"]["get"]
-    statuses = schema["responses"]["503"]["content"]["application/json"][
-        "schema"
-    ]["properties"]["status"]["enum"]
+    statuses = schema["responses"]["503"]["content"]["application/json"]["schema"][
+        "properties"
+    ]["status"]["enum"]
 
     assert set(statuses) == {
         "agent_room_not_ready",
@@ -255,6 +261,7 @@ def test_asof_replay_is_cacheable_for_a_day(client, monkeypatch):
 
 
 # ---- stale-while-revalidate snapshot cache -------------------------------------
+
 
 @pytest.fixture()
 def clean_cache(monkeypatch):
@@ -280,8 +287,7 @@ def test_fresh_cache_served_without_building(clean_cache, monkeypatch):
     assert asyncio.run(assemble.snapshot()) is fresh
 
 
-def test_cached_snapshot_is_passive_for_empty_and_stale_cache(
-        clean_cache, monkeypatch):
+def test_cached_snapshot_is_passive_for_empty_and_stale_cache(clean_cache, monkeypatch):
     async def boom():
         raise AssertionError("cached_snapshot must never build")
 
@@ -295,7 +301,8 @@ def test_cached_snapshot_is_passive_for_empty_and_stale_cache(
 
 
 def test_restart_restores_durable_snapshot_as_stale_without_building(
-        clean_cache, monkeypatch, fake_snap, tmp_path):
+    clean_cache, monkeypatch, fake_snap, tmp_path
+):
     async def boom():
         raise AssertionError("restart hydration must not build")
 
@@ -385,7 +392,8 @@ def test_preactivation_snapshot_never_rebuilds_on_ttl_or_force(
 
 
 def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
-        clean_cache, monkeypatch, fake_snap, tmp_path):
+    clean_cache, monkeypatch, fake_snap, tmp_path
+):
     static = tmp_path / "overview.json"
     static.write_text(json.dumps(fake_snap))
     monkeypatch.setattr(repository, "get_repository", _NoActiveRepository)
@@ -397,7 +405,8 @@ def test_restart_falls_back_to_ci_snapshot_when_durable_copy_is_invalid(
 
 
 def test_restart_falls_back_to_ci_snapshot_when_durable_read_fails(
-        clean_cache, monkeypatch, fake_snap, tmp_path):
+    clean_cache, monkeypatch, fake_snap, tmp_path
+):
     static = tmp_path / "overview.json"
     static.write_text(json.dumps(fake_snap))
 
@@ -412,8 +421,7 @@ def test_restart_falls_back_to_ci_snapshot_when_durable_read_fails(
     assert assemble.cached_snapshot()["generated_at"] == fake_snap["generated_at"]
 
 
-def test_release_evidence_receipt_requires_both_sealed_products(
-        monkeypatch, fake_snap):
+def test_release_evidence_receipt_requires_both_sealed_products(monkeypatch, fake_snap):
     from seiche.markets.us_usd import materialize
 
     monkeypatch.setattr(
@@ -467,7 +475,8 @@ def test_release_evidence_receipt_requires_both_sealed_products(
 
 
 def test_only_a_receipted_rebuild_stages_the_durable_handoff(
-        clean_cache, monkeypatch, fake_snap):
+    clean_cache, monkeypatch, fake_snap
+):
     persisted = []
 
     def persist(payload, receipt):
@@ -508,35 +517,47 @@ def test_only_a_receipted_rebuild_stages_the_durable_handoff(
 @pytest.mark.parametrize(
     "case",
     [
-        "composite", "tell", "stacker", "members_now", "navigator",
-        "modelcourt", "court_ensemble", "backtest", "event_capture",
-        "episodes", "calendar", "crunch_windows", "tell_missing_fields",
-        "fault_row", "provenance_row",
+        "composite",
+        "tell",
+        "stacker",
+        "members_now",
+        "navigator",
+        "modelcourt",
+        "court_ensemble",
+        "backtest",
+        "event_capture",
+        "episodes",
+        "calendar",
+        "crunch_windows",
+        "tell_missing_fields",
+        "fault_row",
+        "provenance_row",
     ],
 )
-def test_restart_rejects_nested_shapes_that_would_break_public_routes(
-        fake_snap, case):
+def test_restart_rejects_nested_shapes_that_would_break_public_routes(fake_snap, case):
     payload = json.loads(json.dumps(fake_snap))
     mutations = {
         "composite": lambda p: p["engines"].__setitem__("composite", "bad"),
         "tell": lambda p: p["deep"].__setitem__("tell", "bad"),
         "stacker": lambda p: p["deep"].__setitem__("stacker", "bad"),
         "members_now": lambda p: p["deep"].__setitem__(
-            "stacker", {"members_now": "bad"}),
+            "stacker", {"members_now": "bad"}
+        ),
         "navigator": lambda p: p.__setitem__("navigator", []),
         "modelcourt": lambda p: p["deep"].__setitem__("modelcourt", "bad"),
         "court_ensemble": lambda p: p["deep"].__setitem__(
-            "modelcourt", {"ensemble": []}),
+            "modelcourt", {"ensemble": []}
+        ),
         "backtest": lambda p: p["deep"].__setitem__("backtest", "bad"),
         "event_capture": lambda p: p["deep"].__setitem__(
-            "backtest", {"event_capture": []}),
-        "episodes": lambda p: p["deep"].__setitem__(
-            "backtest", {"episodes": ["bad"]}),
+            "backtest", {"event_capture": []}
+        ),
+        "episodes": lambda p: p["deep"].__setitem__("backtest", {"episodes": ["bad"]}),
         "calendar": lambda p: p.__setitem__("calendar", []),
         "crunch_windows": lambda p: p.__setitem__(
-            "calendar", {"crunch_windows": "bad"}),
-        "tell_missing_fields": lambda p: p["deep"].__setitem__(
-            "tell", {"ok": True}),
+            "calendar", {"crunch_windows": "bad"}
+        ),
+        "tell_missing_fields": lambda p: p["deep"].__setitem__("tell", {"ok": True}),
         "fault_row": lambda p: p.__setitem__("faults", ["bad"]),
         "provenance_row": lambda p: p.__setitem__("provenance", ["bad"]),
     }
@@ -554,8 +575,7 @@ def test_optional_legacy_calendar_none_still_renders_a_brief(fake_snap):
 
 
 @pytest.mark.parametrize("legacy_backtest", [None, {"status": "UNVERIFIED"}])
-def test_optional_legacy_or_unverified_backtest_is_servable(
-        fake_snap, legacy_backtest):
+def test_optional_legacy_or_unverified_backtest_is_servable(fake_snap, legacy_backtest):
     payload = json.loads(json.dumps(fake_snap))
     if legacy_backtest is None:
         payload["deep"].pop("backtest", None)
@@ -573,7 +593,8 @@ def test_optional_legacy_or_unverified_backtest_is_servable(
     ],
 )
 def test_optional_null_engine_blocks_are_safe_for_durable_consumers(
-        section, engine, consumer):
+    section, engine, consumer
+):
     payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
     payload[section][engine] = None
 
@@ -582,9 +603,9 @@ def test_optional_null_engine_blocks_are_safe_for_durable_consumers(
 
 
 def test_packaged_static_snapshot_satisfies_the_boot_contract(monkeypatch):
-    assert assemble.STATIC_SNAPSHOT_PATH.parent == Path(
-        assemble.__file__
-    ).resolve().parent
+    assert (
+        assemble.STATIC_SNAPSHOT_PATH.parent == Path(assemble.__file__).resolve().parent
+    )
     payload = json.loads(assemble.STATIC_SNAPSHOT_PATH.read_text())
 
     assert assemble._servable_snapshot(payload) is True
@@ -644,7 +665,8 @@ def test_completed_snapshot_handoff_is_staged_with_digest(monkeypatch, fake_snap
 
 
 def test_controller_activation_is_bound_to_exact_payload_and_receipt(
-        monkeypatch, fake_snap):
+    monkeypatch, fake_snap
+):
     from seiche.markets.us_usd import materialize
 
     release_sha = "a" * 40
@@ -687,30 +709,30 @@ def test_controller_activation_is_bound_to_exact_payload_and_receipt(
     token = envelope["handoff_id"]
     assert assemble.verify_pending_snapshot(release_sha, token) is True
     assert assemble.activate_pending_snapshot(release_sha, token) is True
-    assert activated == [(
-        token,
-        release_sha,
+    assert activated == [
         (
+            token,
+            release_sha,
             (
-                "overview",
-                receipt["products"]["overview"]["snapshot_id"],
-                receipt["products"]["overview"]["forward_record_id"],
-                receipt["products"]["overview"]["snapshot_row_sha256"],
+                (
+                    "overview",
+                    receipt["products"]["overview"]["snapshot_id"],
+                    receipt["products"]["overview"]["forward_record_id"],
+                    receipt["products"]["overview"]["snapshot_row_sha256"],
+                ),
+                (
+                    "gauge",
+                    receipt["products"]["gauge"]["snapshot_id"],
+                    receipt["products"]["gauge"]["forward_record_id"],
+                    receipt["products"]["gauge"]["snapshot_row_sha256"],
+                ),
             ),
-            (
-                "gauge",
-                receipt["products"]["gauge"]["snapshot_id"],
-                receipt["products"]["gauge"]["forward_record_id"],
-                receipt["products"]["gauge"]["snapshot_row_sha256"],
-            ),
-        ),
-    )]
+        )
+    ]
     assert legacy == [(assemble.LAST_GOOD_SNAPSHOT_KEY, fake_snap)]
 
     tampered = json.loads(json.dumps(envelope))
-    tampered["release_receipt"]["products"]["gauge"][
-        "forward_record_id"
-    ] = "e" * 64
+    tampered["release_receipt"]["products"]["gauge"]["forward_record_id"] = "e" * 64
     FakeRepository.current = tampered
     activated.clear()
     assert assemble.verify_pending_snapshot(release_sha, token) is False
@@ -728,7 +750,8 @@ def test_controller_activation_is_bound_to_exact_payload_and_receipt(
 
 
 def test_accepted_release_keeps_lkg_fresh_across_later_rebuild_and_restart(
-        clean_cache, monkeypatch, fake_snap, tmp_path):
+    clean_cache, monkeypatch, fake_snap, tmp_path
+):
     from seiche.markets.us_usd import materialize
 
     release_sha = "b" * 40
@@ -751,8 +774,7 @@ def test_accepted_release_keeps_lkg_fresh_across_later_rebuild_and_restart(
             return cls.handoffs.get(cls.active_id)
 
         @classmethod
-        def activate_release_handoff(
-                cls, handoff_id, producer_sha, snapshot_bindings):
+        def activate_release_handoff(cls, handoff_id, producer_sha, snapshot_bindings):
             cls.active_id = handoff_id
 
     monkeypatch.setattr(repository, "get_repository", FakeRepository)
@@ -825,6 +847,39 @@ def test_malformed_explicit_release_sha_fails_closed(monkeypatch):
         assemble._release_sha()
 
 
+def test_explicit_release_sha_supports_archive_without_git_metadata(
+    monkeypatch, tmp_path
+):
+    release_sha = "a" * 40
+    monkeypatch.setattr(
+        assemble,
+        "__file__",
+        str(tmp_path / "backend" / "seiche" / "assemble.py"),
+    )
+    monkeypatch.setenv("SEICHE_RELEASE_SHA", release_sha)
+    monkeypatch.setattr(
+        assemble.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("archive identity must not call git"),
+    )
+
+    assert assemble._release_sha() == release_sha
+
+
+def test_archive_without_git_metadata_or_explicit_sha_fails_closed(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        assemble,
+        "__file__",
+        str(tmp_path / "backend" / "seiche" / "assemble.py"),
+    )
+    monkeypatch.delenv("SEICHE_RELEASE_SHA", raising=False)
+
+    with pytest.raises(ValueError, match="canonical release SHA"):
+        assemble._release_sha()
+
+
 def test_explicit_release_sha_must_match_checkout_head(monkeypatch):
     checkout_sha = "a" * 40
     monkeypatch.setattr(
@@ -893,6 +948,7 @@ def test_preactivation_lifespan_never_starts_background_writer(monkeypatch, mode
         "capture_process_release_sha",
         lambda: events.append("identity") or "a" * 40,
     )
+
     def restore(*, read_only=False):
         assert read_only is True
         events.append("restore")
@@ -978,9 +1034,9 @@ def test_stale_cache_served_instantly_then_refreshed_once(clean_cache, monkeypat
     assemble._cache.update(payload=stale, at=time.time() - assemble.CACHE_MIN * 60 - 1)
 
     async def scenario():
-        got = await assemble.snapshot()          # must not block on the rebuild
-        second = await assemble.snapshot()       # while refreshing: still stale, no 2nd task
-        for _ in range(100):                     # let the background refresh land
+        got = await assemble.snapshot()  # must not block on the rebuild
+        second = await assemble.snapshot()  # while refreshing: still stale, no 2nd task
+        for _ in range(100):  # let the background refresh land
             if calls:
                 break
             await asyncio.sleep(0.01)
