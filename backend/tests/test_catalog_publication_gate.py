@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -674,7 +675,6 @@ def test_generated_content_rejects_merge_and_empty_commits(content_repo):
         gate._verify_generated_content_descendants(root, release=empty, head=head)
 
 
-
 def _signed_controller_fixture(root):
     for relative in gate.PUBLICATION_CONTROLLER_PATHS:
         path = root / relative
@@ -687,12 +687,15 @@ def _signed_controller_fixture(root):
 
 def _controller_commit(root, changes, *, sign=True, author=None, subject=None):
     head = _content_commit(
-        root, changes,
+        root,
+        changes,
         author=author or gate.PUBLICATION_CONTROLLER_AUTHOR.decode(),
         subject=subject or "publication-controller: repair publication contracts",
     )
     if sign:
-        _content_git(root, "commit", "-q", "--amend", "--no-edit", "--allow-empty", "-S")
+        _content_git(
+            root, "commit", "-q", "--amend", "--no-edit", "--allow-empty", "-S"
+        )
         head = _content_git(root, "rev-parse", "HEAD")
     return head
 
@@ -702,24 +705,34 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
 ):
     root = content_repo
     release, fingerprint = _signed_controller_fixture(root)
-    controller = _controller_commit(root, {
-        relative: "# reviewed publication repair\n"
-        for relative in gate.PUBLICATION_CONTROLLER_PATHS
-    })
+    controller = _controller_commit(
+        root,
+        {
+            relative: "# reviewed publication repair\n"
+            for relative in gate.PUBLICATION_CONTROLLER_PATHS
+        },
+    )
     for head in (
         controller,
         _content_commit(root, {"frontend/public/articles/cash.md": "daily"}),
         _content_commit(
-            root, {"frontend/public/dispatches/week.md": "weekly"},
+            root,
+            {"frontend/public/dispatches/week.md": "weekly"},
             subject="week ahead: funding calendar",
         ),
     ):
         # Check the real signed-release and corpus gates at each publication head.
         current = _content_git(root, "rev-parse", "HEAD")
         _content_git(root, "checkout", "-q", "--detach", head)
-        assert gate.verify_signed_release(
-            root, version="0.12.3", expected_sha=head, signer_fingerprint=fingerprint
-        ) == "v0.12.3"
+        assert (
+            gate.verify_signed_release(
+                root,
+                version="0.12.3",
+                expected_sha=head,
+                signer_fingerprint=fingerprint,
+            )
+            == "v0.12.3"
+        )
         receipt, _ = gate.verify_market_corpus_release(
             root, expected_sha=head, signer_fingerprint=fingerprint
         )
@@ -730,10 +743,19 @@ def test_signed_controller_then_daily_weekly_keeps_original_release_receipts(
     # is a separate concern and is intentionally stubbed in this offline test.
     monkeypatch.setattr(gate, "verify_public_receipts", lambda _version: {})
     monkeypatch.setattr(gate, "verify_market_corpus_receipts", lambda _entry: {})
-    assert gate.main([
-        "--root", str(root), "--expected-sha", head,
-        "--signer-fingerprint", fingerprint,
-    ]) == 0
+    assert (
+        gate.main(
+            [
+                "--root",
+                str(root),
+                "--expected-sha",
+                head,
+                "--signer-fingerprint",
+                fingerprint,
+            ]
+        )
+        == 0
+    )
     report = json.loads(capsys.readouterr().out)
     assert report["revision"] == head
     assert report["releaseRevision"] == release
@@ -753,29 +775,103 @@ def test_controller_descendants_require_the_pinned_signature(content_repo, failu
         )
         _content_git(root, "config", "user.signingkey", str(key))
     head = _controller_commit(
-        root, {"backend/tests/test_publish_scripts.py": "# repaired\n"},
+        root,
+        {"backend/tests/test_publish_scripts.py": "# repaired\n"},
         sign=failure != "unsigned",
     )
     with pytest.raises(gate.PublicationGateError, match="signature|pinned signer"):
         gate._verify_generated_content_descendants(
-            root, release=release, head=head,
+            root,
+            release=release,
+            head=head,
             signer_fingerprint=None if failure == "missing-pin" else fingerprint,
         )
 
 
-@pytest.mark.parametrize("path", [
-    ".github/workflows/publish.yml",
-    "backend/seiche/assemble.py",
-    "backend/tests/unreviewed_test.py",
-    "ops/release/unreviewed.py",
-    "frontend/public/articles/mixed.md",
-])
+@pytest.mark.skipif(
+    shutil.which("gpg") is None,
+    reason="requires GPG for signature-algorithm regression",
+)
+def test_valid_gpg_controller_signature_does_not_satisfy_the_ssh_pin(
+    content_repo, monkeypatch
+):
+    root = content_repo
+    release, fingerprint = _signed_controller_fixture(root)
+    # Keep Unix socket names below the platform limit even when pytest's
+    # temporary repository path is long. This keyring never uses the real HOME.
+    with tempfile.TemporaryDirectory(prefix="seiche-gpg-", dir="/tmp") as keyring:
+        monkeypatch.setenv("GNUPGHOME", keyring)
+        try:
+            subprocess.run(
+                [
+                    "gpg",
+                    "--batch",
+                    "--pinentry-mode",
+                    "loopback",
+                    "--passphrase",
+                    "",
+                    "--quick-generate-key",
+                    "controller-fixture <fixture@example.invalid>",
+                    "ed25519",
+                    "sign",
+                    "0",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            keys = subprocess.check_output(
+                ["gpg", "--batch", "--with-colons", "--list-secret-keys"],
+                text=True,
+            )
+            gpg_fingerprint = next(
+                line.split(":")[9]
+                for line in keys.splitlines()
+                if line.startswith("fpr:")
+            )
+            _content_git(root, "config", "gpg.format", "openpgp")
+            _content_git(root, "config", "user.signingkey", gpg_fingerprint)
+            head = _controller_commit(
+                root, {"backend/tests/test_publish_scripts.py": "# repair\n"}
+            )
+            # Git considers this real signature valid, but it is not the pinned SSH key.
+            _content_git(root, "verify-commit", head)
+            with pytest.raises(
+                gate.PublicationGateError, match="differs from the pinned signer"
+            ):
+                gate._verify_generated_content_descendants(
+                    root,
+                    release=release,
+                    head=head,
+                    signer_fingerprint=fingerprint,
+                )
+        finally:
+            subprocess.run(
+                ["gpgconf", "--homedir", keyring, "--kill", "gpg-agent"],
+                check=False,
+                capture_output=True,
+            )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/publish.yml",
+        "backend/seiche/assemble.py",
+        "backend/tests/unreviewed_test.py",
+        "ops/release/unreviewed.py",
+        "frontend/public/articles/mixed.md",
+    ],
+)
 def test_signed_controller_rejects_every_unlisted_path(content_repo, path):
     root = content_repo
     release, fingerprint = _signed_controller_fixture(root)
-    head = _controller_commit(root, {
-        "backend/tests/test_publish_scripts.py": "# repair\n", path: "# forbidden\n",
-    })
+    head = _controller_commit(
+        root,
+        {
+            "backend/tests/test_publish_scripts.py": "# repair\n",
+            path: "# forbidden\n",
+        },
+    )
     with pytest.raises(gate.PublicationGateError, match="forbidden path or file mode"):
         gate._verify_generated_content_descendants(
             root, release=release, head=head, signer_fingerprint=fingerprint
@@ -783,11 +879,16 @@ def test_signed_controller_rejects_every_unlisted_path(content_repo, path):
 
 
 @pytest.mark.parametrize("failure", ["wrong-author", "wrong-subject", "empty"])
-def test_signed_controller_requires_explicit_identity_and_changes(content_repo, failure):
+def test_signed_controller_requires_explicit_identity_and_changes(
+    content_repo, failure
+):
     root = content_repo
     release, fingerprint = _signed_controller_fixture(root)
     head = _controller_commit(
-        root, {} if failure == "empty" else {
+        root,
+        {}
+        if failure == "empty"
+        else {
             "backend/tests/test_publish_scripts.py": "# repair\n",
         },
         author="intruder@example.com" if failure == "wrong-author" else None,
@@ -828,15 +929,29 @@ def test_signed_controller_merge_and_reverted_code_drift_remain_rejected(content
             root, release=release, head=reverted, signer_fingerprint=fingerprint
         )
     _content_git(root, "checkout", "-q", "--detach", release)
-    left = _controller_commit(root, {"backend/tests/test_publish_scripts.py": "# left\n"})
+    left = _controller_commit(
+        root, {"backend/tests/test_publish_scripts.py": "# left\n"}
+    )
     _content_git(root, "checkout", "-q", "--detach", release)
-    _controller_commit(root, {"backend/tests/test_railway_stateful_control.py": "# right\n"})
-    _content_git(root, "merge", "--no-ff", "-q", "-S", "-m", "publication-controller: merge", left)
+    _controller_commit(
+        root, {"backend/tests/test_railway_stateful_control.py": "# right\n"}
+    )
+    _content_git(
+        root,
+        "merge",
+        "--no-ff",
+        "-q",
+        "-S",
+        "-m",
+        "publication-controller: merge",
+        left,
+    )
     head = _content_git(root, "rev-parse", "HEAD")
     with pytest.raises(gate.PublicationGateError, match="single-parent"):
         gate._verify_generated_content_descendants(
             root, release=release, head=head, signer_fingerprint=fingerprint
         )
+
 
 def test_release_identity_rejects_an_unknown_unsigned_catalog_entry(tmp_path):
     catalog_path = tmp_path / gate.AI_CATALOG_PATH
