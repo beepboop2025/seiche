@@ -1162,7 +1162,7 @@ jobs:
       id-token: write
     services:
       postgres:
-        image: postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3
+        image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
         env:
           POSTGRES_PASSWORD: phase6-restore-only
         ports:
@@ -1693,14 +1693,14 @@ jobs:
           shutil.rmtree(proof_root)
           PY
           docker run --rm --network host --env PGPASSWORD \
-            postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
+            postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af \
             psql --host 127.0.0.1 --username postgres --dbname postgres \
               --set ON_ERROR_STOP=1 --command \
               "CREATE DATABASE seiche_phase6_restore TEMPLATE template0 ENCODING 'UTF8';"
           docker run --rm --network host \
             --env PGPASSWORD \
             --volume "$EVIDENCE_ROOT/bundle:/recovery:ro" \
-            postgres:17@sha256:a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3 \
+            postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af \
             pg_restore --exit-on-error --no-owner --no-privileges \
               --host 127.0.0.1 --username postgres \
               --dbname=seiche_phase6_restore \

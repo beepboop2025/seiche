@@ -367,6 +367,14 @@ monitor exist, do not claim the Seiche bot workload has moved to Railway.
 
 ## Native PostgreSQL health probe authentication
 
+The deployed PostgreSQL server uses major 18. The stateful image therefore
+copies PostgreSQL 18 dump and restore tools from a digest-pinned Bookworm image;
+the isolated reverse-restore job uses the same image. An older `pg_dump` cannot
+export a newer server, even when an older dump restored successfully during
+migration. Release CI runs a real dump/restore round-trip using the copied
+runtime tools. Recovery targets must provide PostgreSQL 18 or a separately
+validated newer major; restoring these exports into major 17 is not supported.
+
 The native-backup admin and monitor environments additionally hold
 `RAILWAY_RECOVERY_PROBE_SSH_KEY`. Railway's PITR status command probes
 pgBackRest and `pg_stat_archiver` through SSH; an API project token alone

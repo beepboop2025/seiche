@@ -117,6 +117,10 @@ jobs:
       - name: Run Telegram bot contracts
         run: python -m pytest -q bot/tests
 
+      - name: Prove the stateful runtime tools can back up PostgreSQL 18
+        timeout-minutes: 8
+        run: bash ops/railway/test-postgres-tools.sh
+
       - name: Prove the Linux control API and root journal permission boundary
         timeout-minutes: 2
         run: >-

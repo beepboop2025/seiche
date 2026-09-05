@@ -1018,16 +1018,16 @@ def test_recovery_workflow_is_gated_portable_and_non_authoritative() -> None:
     assert "seiche.railway-offsite-preflight-receipt.v1" in text
     assert text.count("actions/attest-build-provenance@") == 3
     assert (
-        "postgres:17@sha256:"
-        "a65e6a841f6c4dbc4abda3d67fa3bc21824e9611064fcd82e87ea67aad60a0c3"
+        "postgres:18.6-bookworm@sha256:"
+        "1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af"
     ) in text
     assert (
-        "FROM postgres:17.6-bookworm@sha256:"
-        "45cd22f8d32e189d245403954882f88e7a8714301fda80dab6da90f1265b25a3"
+        "FROM postgres:18.6-bookworm@sha256:"
+        "1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af"
     ) in dockerfile
     assert "git config --system --add safe.directory /workspace" in dockerfile
-    assert "PATH=/opt/postgresql/17/bin:$PATH" in dockerfile
-    assert "^pg_dump \\(PostgreSQL\\) 17\\." in dockerfile
+    assert "PATH=/opt/postgresql/18/bin:$PATH" in dockerfile
+    assert "^pg_dump \\(PostgreSQL\\) 18\\." in dockerfile
     for forbidden in (
         "volume files delete",
         "volumeInstanceBackupDelete",
