@@ -1,13 +1,17 @@
-"""Execute the cutover's real Git identity checks across distinct revisions."""
+"""Execute the cutover's Git identity and Railway restart proof checks."""
 
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import subprocess
 import textwrap
 
 import pytest
+
+from seiche import stateful_control as control
+from seiche import stateful_migration as migration
 
 
 WORKFLOW = (
@@ -154,3 +158,108 @@ def test_tree_check_works_outside_the_checkout(signed_repository) -> None:
         ["bash", "-ec", script], cwd=repository.parent, env=environment
     )
     assert failed.returncode != 0
+
+
+def _restart_script(marker: str) -> str:
+    block = WORKFLOW.read_text().split(marker, 1)[1]
+    return textwrap.dedent(
+        block.split("<<'PY'", 1)[1].split("\n", 1)[1].split("\n          PY", 1)[0]
+    )
+
+
+@pytest.mark.parametrize("same_replica", [True, False])
+def test_restarted_runtime_accepts_retained_or_replaced_uuid(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    same_replica: bool,
+) -> None:
+    deployment = "11111111-1111-4111-8111-111111111111"
+    created = "22222222-2222-4222-8222-222222222222"
+    reused = created if same_replica else "33333333-3333-4333-8333-333333333333"
+    runtime = tmp_path / "runtime.json"
+    value = {
+        "id": deployment,
+        "status": "SUCCESS",
+        "instances": [{"id": reused, "status": "RUNNING"}],
+    }
+    runtime.write_text(json.dumps({"data": {"deployment": value}}))
+    monkeypatch.setenv("RUNTIME", str(runtime))
+    monkeypatch.setenv("DEPLOYMENT_ID", deployment)
+    monkeypatch.setenv("CREATED_REPLICA_ID", created)
+    script = _restart_script("reused_replica_id=$(RUNTIME=")
+    exec(compile(script, str(WORKFLOW), "exec"), {})
+    assert capsys.readouterr().out.strip() == reused
+    value["instances"].append({"id": created, "status": "RUNNING"})
+    runtime.write_text(json.dumps({"data": {"deployment": value}}))
+    with pytest.raises(SystemExit):
+        exec(compile(script, str(WORKFLOW), "exec"), {})
+
+
+@pytest.mark.parametrize("same_replica", [True, False])
+@pytest.mark.parametrize("fresh_runtime", [True, False])
+def test_restart_proof_requires_new_runtime_even_when_old_log_is_delayed(
+    tmp_path: Path,
+    monkeypatch,
+    same_replica: bool,
+    fresh_runtime: bool,
+) -> None:
+    commit, request = "a" * 40, "b" * 64
+    deployment = "11111111-1111-4111-8111-111111111111"
+    created = "22222222-2222-4222-8222-222222222222"
+    reused = created if same_replica else "33333333-3333-4333-8333-333333333333"
+    evidence = {
+        "request": {"id": request, "commit": commit},
+        "railway": {"deployment_id": deployment},
+    }
+    receipt = tmp_path / "receipt.json"
+    receipt.write_bytes(migration.canonical_document(evidence))
+    logs = tmp_path / "logs.ndjson"
+    rows = []
+    for lifecycle, replica, started, logged in (
+        ("created", created, "2026-09-05T03:00:00Z", "2026-09-05T03:01:00Z"),
+        (
+            "reused",
+            reused,
+            "2026-09-05T03:06:00Z" if fresh_runtime else "2026-09-05T03:00:00Z",
+            "2026-09-05T03:07:00Z",
+        ),
+    ):
+        rows.append(
+            json.dumps(
+                {
+                    "timestamp": logged,
+                    "message": control.render_log_result(
+                        evidence,
+                        kind="candidate",
+                        lifecycle=lifecycle,
+                        request_id=request,
+                        environment={
+                            "SEICHE_RELEASE_SHA": commit,
+                            "RAILWAY_DEPLOYMENT_ID": deployment,
+                            "RAILWAY_REPLICA_ID": replica,
+                        },
+                        runtime_started_at=started,
+                    ),
+                }
+            )
+        )
+    logs.write_text("\n".join(rows) + "\n")
+    for key, value in {
+        "SOURCE_SHA": commit,
+        "REQUEST_ID": request,
+        "DEPLOYMENT_ID": deployment,
+        "CREATED_REPLICA_ID": created,
+        "REUSED_REPLICA_ID": reused,
+        "NOT_BEFORE": "2026-09-05T02:59:00Z",
+        "RESTART_NOT_BEFORE": "2026-09-05T03:05:00Z",
+        "LOG_PATH": str(logs),
+        "RECEIPT_PATH": str(receipt),
+    }.items():
+        monkeypatch.setenv(key, value)
+    script = _restart_script('PYTHONPATH=backend LOG_PATH="$reused_logs"')
+    if fresh_runtime:
+        exec(compile(script, str(WORKFLOW), "exec"), {})
+    else:
+        with pytest.raises(SystemExit, match="fresh restart"):
+            exec(compile(script, str(WORKFLOW), "exec"), {})

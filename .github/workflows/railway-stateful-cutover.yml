@@ -572,6 +572,7 @@ jobs:
           if value["railway"]["deployment_id"] != os.environ["EXPECTED_DEPLOYMENT"]:
               raise SystemExit("candidate receipt belongs to another deployment")
           PY
+          restart_not_before=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           restart_json=$(railway restart --project "$RAILWAY_PROJECT_ID" \
             --service "$RAILWAY_SERVICE_ID" \
             --environment "$RAILWAY_ENVIRONMENT_ID" --yes --json)
@@ -596,7 +597,7 @@ jobs:
               'query Runtime($deploymentId: String!) { deployment(id: $deploymentId) { id status instances { id status } } }' \
               --variables "$variables" >"$EVIDENCE_ROOT/candidate-reused-runtime.json"
             reused_replica_id=$(RUNTIME="$EVIDENCE_ROOT/candidate-reused-runtime.json" \
-              DEPLOYMENT_ID="$DEPLOYMENT_ID" CREATED_REPLICA_ID="$CREATED_REPLICA_ID" \
+              DEPLOYMENT_ID="$DEPLOYMENT_ID" \
               python3 -I -S - <<'PY' || true
           import json
           import os
@@ -609,10 +610,9 @@ jobs:
           if not isinstance(instances, list) or len(instances) != 1 or instances[0].get("status") != "RUNNING":
               raise SystemExit(1)
           replica = instances[0].get("id")
-          if (
-              replica == os.environ["CREATED_REPLICA_ID"]
-              or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", str(replica)) is None
-          ):
+          # Railway may retain the replica UUID across a restart. The fresh
+          # runtime boundary and immutable receipt below prove the restart.
+          if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", str(replica)) is None:
               raise SystemExit(1)
           print(replica)
           PY
@@ -635,10 +635,12 @@ jobs:
             REQUEST_ID="$REQUEST_ID" DEPLOYMENT_ID="$DEPLOYMENT_ID" \
             CREATED_REPLICA_ID="$CREATED_REPLICA_ID" \
             REUSED_REPLICA_ID="$reused_replica_id" NOT_BEFORE="$DEPLOYMENT_NOT_BEFORE" \
+            RESTART_NOT_BEFORE="$restart_not_before" \
             python3 -B - <<'PY'
           import os
           from pathlib import Path
           from seiche.stateful_control import extract_log_results
+          from seiche.stateful_migration import rfc3339_utc_nanoseconds
 
           results = extract_log_results(
               Path(os.environ["LOG_PATH"]).read_bytes(),
@@ -654,6 +656,21 @@ jobs:
           )
           if results["created"].evidence_body != Path(os.environ["RECEIPT_PATH"]).read_bytes():
               raise SystemExit("candidate restart changed the accepted receipt")
+          boundary = rfc3339_utc_nanoseconds(
+              os.environ["RESTART_NOT_BEFORE"], label="candidate restart boundary",
+          )
+          created_start = rfc3339_utc_nanoseconds(
+              results["created"].runtime_started_at, label="created runtime start",
+          )
+          reused_start = rfc3339_utc_nanoseconds(
+              results["reused"].runtime_started_at, label="reused runtime start",
+          )
+          if (
+              results["reused"].logged_at_unix_ns <= boundary
+              or reused_start < boundary
+              or reused_start <= created_start
+          ):
+              raise SystemExit("candidate reuse does not prove a fresh restart")
           PY
           status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
             --connect-timeout 10 --max-time 30 \
