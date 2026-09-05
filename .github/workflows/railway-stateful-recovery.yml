@@ -95,14 +95,14 @@ jobs:
           root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
           root.mkdir(mode=0o700)
           private = root / "identity"
-          private.write_text(key)
+          private.write_text(key.replace("\r\n", "\n").strip() + "\n")
           private.chmod(0o600)
           # The CLI preflights local key discovery before invoking its transport.
           agent = subprocess.check_output(["ssh-agent", "-s", "-a", str(root / "agent.sock")], text=True)
           agent_pid = re.search(r"SSH_AGENT_PID=(\d+);", agent).group(1)
+          (root / "agent-pid").write_text(agent_pid)
           agent_env = dict(os.environ, SSH_AUTH_SOCK=str(root / "agent.sock"), SSH_AGENT_PID=agent_pid)
           subprocess.run(["ssh-add", str(private)], env=agent_env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-          (root / "agent-pid").write_text(agent_pid)
           with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
               stream.write("SSH_AUTH_SOCK=" + str(root / "agent.sock") + "\nSSH_AGENT_PID=" + agent_pid + "\n")
           known = root / "known_hosts"
@@ -786,14 +786,14 @@ jobs:
           root = Path(os.environ["RUNNER_TEMP"]) / "postgres-health-probe"
           root.mkdir(mode=0o700)
           private = root / "identity"
-          private.write_text(key)
+          private.write_text(key.replace("\r\n", "\n").strip() + "\n")
           private.chmod(0o600)
           # The CLI preflights local key discovery before invoking its transport.
           agent = subprocess.check_output(["ssh-agent", "-s", "-a", str(root / "agent.sock")], text=True)
           agent_pid = re.search(r"SSH_AGENT_PID=(\d+);", agent).group(1)
+          (root / "agent-pid").write_text(agent_pid)
           agent_env = dict(os.environ, SSH_AUTH_SOCK=str(root / "agent.sock"), SSH_AGENT_PID=agent_pid)
           subprocess.run(["ssh-add", str(private)], env=agent_env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-          (root / "agent-pid").write_text(agent_pid)
           with Path(os.environ["GITHUB_ENV"]).open("a") as stream:
               stream.write("SSH_AUTH_SOCK=" + str(root / "agent.sock") + "\nSSH_AGENT_PID=" + agent_pid + "\n")
           known = root / "known_hosts"

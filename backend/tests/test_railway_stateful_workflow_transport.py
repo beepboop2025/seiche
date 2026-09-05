@@ -5,10 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 import io
 import json
+import os
 import re
 import runpy
+import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 from types import SimpleNamespace
 
@@ -144,6 +147,54 @@ def test_postgres_probe_refuses_wrong_project_before_writing_key(tmp_path, monke
     with pytest.raises(AssertionError):
         exec(compile(setup, "probe-setup", "exec"), {})
     assert not (tmp_path / "postgres-health-probe").exists()
+
+
+@pytest.fixture
+def short_socket_root():
+    # AF_UNIX paths have a smaller limit than macOS pytest temp directories.
+    with tempfile.TemporaryDirectory(prefix="seiche-probe-", dir="/tmp") as directory:
+        yield Path(directory)
+
+
+def test_postgres_probe_loads_secret_without_final_newline(short_socket_root, monkeypatch):
+    """GitHub's secret transport must still yield an OpenSSH-readable identity."""
+    tmp_path = short_socket_root
+    generated = tmp_path / "generated-key"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(generated)],
+        check=True,
+    )
+    setup = textwrap.dedent(
+        re.findall(r"<<'PYPROBE'\n(.*?)\n          PYPROBE", _workflow(RECOVERY), re.S)[0]
+    )
+    for key, value in {
+        "PROBE_SSH_KEY": generated.read_text().rstrip().replace("\n", "\r\n"),
+        "RAILWAY_PROJECT_ID": "project",
+        "RAILWAY_ENVIRONMENT_ID": "env",
+        "RAILWAY_POSTGRES_SERVICE_ID": "pg",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_PATH": str(tmp_path / "job-path"),
+        "GITHUB_ENV": str(tmp_path / "job-env"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    response = {"data": {
+        "environment": {"id": "env", "projectId": "project"},
+        "serviceInstance": {"id": "00000000-0000-4000-8000-000000000001",
+                            "environmentId": "env", "serviceId": "pg"},
+    }}
+    real_check_output = subprocess.check_output
+    monkeypatch.setattr(subprocess, "check_output", lambda args, **kw:
+        json.dumps(response) if args[0] == "railway" else real_check_output(args, **kw))
+    try:
+        exec(compile(setup, "probe-setup", "exec"), {})
+        installed = tmp_path / "postgres-health-probe" / "identity"
+        actual_public = real_check_output(["ssh-keygen", "-y", "-f", str(installed)], text=True)
+        expected_public = real_check_output(["ssh-keygen", "-y", "-f", str(generated)], text=True)
+        assert actual_public == expected_public
+    finally:
+        pid_file = tmp_path / "postgres-health-probe" / "agent-pid"
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
 
 
 def test_detached_checkout_bundles_advertise_the_exact_head() -> None:
